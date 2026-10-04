@@ -457,6 +457,13 @@ import or approves product photos. New source files: `product-images.ts`,
 the existing merchant Help wording. Prompt versions are `read-beta-v23` /
 `draft-action-beta-v44`; registry versions `read-beta-v19` / `draft-beta-v34`.
 
+The pending 0155 Help replacement targets the attachment wording introduced
+by 0112 (`not attachments`), rather than the superseded `not supported`
+sentence. Production and dev/staging ledgers were checked before this
+unapplied migration was corrected; applied migration SQL and checksums stay
+immutable. Historical-copy regression coverage checks every 0155 replacement
+and its one-time Help postconditions against the preceding guide text.
+
 ### Mink Phase 8E — Automatic multimodal input (2026-09-20)
 
 `app/dashboard/mink-multimodal-input.tsx` is the unified composer attachment
@@ -2216,6 +2223,8 @@ wholesip/
 │                              # runtime-only. Cloud Build owns the complete Cloud Run env,
 │                              # including default-on Mink + fail-closed invitation substitutions.
 │                              # Build linux/amd64 (Cloud Build or --platform).
+│                              # Migration and scheduled drift jobs also use Node 24,
+│                              # matching the application container and dependency engines.
 │                              # ★ SINCE 2026-10-04 ALSO capture-build (parallel with
 │                              # build-push) and capture-deploy (after deploy): the Theme
 │                              # Studio capture job is released WITH the web service. It was

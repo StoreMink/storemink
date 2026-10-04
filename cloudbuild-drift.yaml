@@ -20,7 +20,7 @@
 # both match the committed baseline; any other verdict exits 1 and fails the
 # build, which is what surfaces in Cloud Build history and Error Reporting.
 steps:
-  - name: node:20
+  - name: node:24
     id: drift
     entrypoint: bash
     secretEnv: ["DB_ADMIN_PASSWORD"]

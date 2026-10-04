@@ -149,6 +149,6 @@ UPDATE public.help_articles SET body=replace(body,
 WHERE slug='use-mink-ai-in-your-dashboard' AND status='published';
 
 UPDATE public.help_articles SET body=replace(body,
-  $old$video, spreadsheets and long documents are not supported$old$,
-  $new$video, Excel workbooks and long documents are not supported; product CSV files use the chat import workflow$new$),updated_at=now()
+  $old$Audio files, video, spreadsheets and long documents are not attachments: use the microphone for dictation.$old$,
+  $new$Audio files, video, Excel workbooks and long documents are not attachments; product CSV files use the chat import workflow. Use the microphone for dictation.$new$),updated_at=now()
 WHERE slug='use-mink-ai-in-your-dashboard' AND status='published';

@@ -192,7 +192,7 @@ steps:
   # implementation — so its checksum, ordering, environment-name and
   # postcondition guards all still apply here.
   - id: migrate
-    name: node:20
+    name: node:24
     entrypoint: bash
     secretEnv: ["DB_ADMIN_PASSWORD"]
     env:
