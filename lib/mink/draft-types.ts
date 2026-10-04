@@ -1,3 +1,4 @@
+import { parseMinkProductImages } from "./product-images";
 import { parseMinkBulkPriceDraftLines } from "./bulk-price-policy";
 export {
   MAX_MINK_BULK_PRICE_LINES,
@@ -8,6 +9,7 @@ export {
 export const MINK_DRAFT_KINDS = [
   "product_description",
   "product_seo",
+  "product_images",
   "blog",
   "coupon_email",
   "customer_message",
@@ -78,6 +80,26 @@ export const MINK_DRAFT_CONFIG: Record<
         required: true,
         multiline: true,
         maxLength: 3_000,
+      },
+    ],
+  },
+  product_images: {
+    label: "Product photos",
+    expectedCredits: 1,
+    fields: [
+      {
+        key: "image_url",
+        label: "Primary photo",
+        required: true,
+        multiline: false,
+        maxLength: 2048,
+      },
+      {
+        key: "images_json",
+        label: "Gallery photos",
+        required: true,
+        multiline: true,
+        maxLength: 42000,
       },
     ],
   },
@@ -814,7 +836,8 @@ export function normalizeMinkDraftContent(
       // The design payload holds no prose -- only hex, allowlisted font keys
       // and integers -- but its digest is what the approval is bound to, so
       // any rewrite between store and re-read is a false integrity failure.
-      (kind === "storefront_design" && field.key === "design_json");
+      (kind === "storefront_design" && field.key === "design_json") ||
+      kind === "product_images";
     const text =
       typeof input === "string"
         ? preserveCode
@@ -830,6 +853,19 @@ export function normalizeMinkDraftContent(
       );
     }
     result[field.key] = text;
+  }
+  if (kind === "product_images" && !historicalSnapshot) {
+    const urls = parseMinkProductImages(result.images_json);
+    if (
+      !urls.length ||
+      urls.some((url) => !url.trim()) ||
+      urls[0] !== result.image_url
+    )
+      throw new Error("The primary photo must be the first gallery photo.");
+    if (urls.some((url) => url.includes("/mink-generated/")))
+      throw new Error(
+        "Use an authentic uploaded product photo, not generated artwork.",
+      );
   }
   if (kind === "inventory_adjustment") {
     const quantityChange = Number(result.quantity_change);

@@ -916,6 +916,7 @@ describe("Mink read-tool declarations", () => {
         },
       }).filter((name) => name.startsWith("propose_")),
     ).toEqual([
+      "propose_product_images",
       "propose_current_product_description",
       "propose_current_product_seo",
       "propose_blog_draft",

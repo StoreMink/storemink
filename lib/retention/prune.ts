@@ -38,6 +38,7 @@ import {
   billingWebhookEvents,
   dataJobIssues,
   dataJobs,
+  minkCsvFiles,
   emailLogs,
   notifications,
   posParkedSales,
@@ -189,6 +190,7 @@ function batchDeleter(
     | typeof activityEvents
     | typeof emailLogs
     | typeof dataJobs
+    | typeof minkCsvFiles
     | typeof dataJobIssues
     | typeof billingWebhookEvents
     | typeof storefrontEvents
@@ -317,6 +319,17 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       "Holds rendered BODIES, so it is the heaviest of the three and gets the shortest " +
       "life. 90 days still answers 'did last quarter's order confirmation go out?'.",
     deleteBatch: batchDeleter(emailLogs, emailLogs.id, emailLogs.createdAt),
+  },
+  {
+    table: "mink_csv_files",
+    days: 7,
+    reason:
+      "Private chat CSV versions are kept briefly for error correction and failed-row retries.",
+    deleteBatch: batchDeleter(
+      minkCsvFiles,
+      minkCsvFiles.id,
+      minkCsvFiles.createdAt,
+    ),
   },
   // ── CSV import/export history ──────────────────────────────────────────
   // ★ ISSUES BEFORE JOBS. `data_job_issues.job_id` is ON DELETE CASCADE from

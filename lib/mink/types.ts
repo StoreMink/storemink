@@ -116,6 +116,23 @@ export interface MinkStorefrontDesignSummary {
 
 export type MinkArtifact =
   | {
+      type: "product_import";
+      fileId: string;
+      filename: string;
+      rows: number;
+      errorCount: number;
+      warningCount: number;
+      changes: string[];
+      jobId: string | null;
+      issues: Array<{
+        line: number;
+        column: string | null;
+        severity: "error" | "warning";
+        message: string;
+        value?: string | null;
+      }>;
+    }
+  | {
       type: "clarification";
       title: string;
       question: string;

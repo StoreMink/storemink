@@ -1,4 +1,5 @@
 import "server-only";
+import { minkProductImportTools } from "./product-import-tools";
 import { listMinkWatches } from "../watches";
 
 import { and, asc, desc, eq, ilike, or } from "drizzle-orm";
@@ -1960,6 +1961,7 @@ export const minkReadToolRegistry = new MinkToolRegistry([
   // ⚠ Unmarked: these create proposals, charge credits, or generate an image
   // that costs real money per call.
   ...minkDraftTools,
+  ...minkProductImportTools,
   ...minkStorefrontCodeTools,
   ...minkStorefrontLayoutTools,
   ...minkStorefrontDesignTools,

@@ -309,6 +309,12 @@ export async function applySlice(
   const stored = await recordIssues(job.id, job.storeId, issues);
   await addProgress(job.id, job.storeId, {
     processed: rows.length,
+    failedLines: [
+      ...badRows.map((row) => row.line),
+      ...results
+        .filter((row) => row.outcome === "failed")
+        .flatMap((row) => row.lines),
+    ],
     created,
     updated,
     skipped,

@@ -3,6 +3,7 @@ import type { MinkDraftContent } from "./draft-types";
 export const MINK_PRODUCT_ACTION_TOOLS = [
   "apply_product_description",
   "apply_product_seo",
+  "apply_product_images",
 ] as const;
 
 export const MINK_DOMAIN_ACTION_TOOLS = [
@@ -133,6 +134,7 @@ export function isMinkActionTool(value: unknown): value is MinkActionTool {
 export const MINK_ACTION_TOOL_LABELS: Record<MinkActionTool, string> = {
   apply_product_description: "Product descriptions",
   apply_product_seo: "Product SEO",
+  apply_product_images: "Product photos",
   create_product: "Draft product creation",
   create_coupon: "Disabled coupon creation",
   update_coupon: "Disabled coupon updates",
@@ -159,12 +161,14 @@ export function actionToolForDraftKind(
 ): MinkProductActionTool | null {
   if (kind === "product_description") return "apply_product_description";
   if (kind === "product_seo") return "apply_product_seo";
+  if (kind === "product_images") return "apply_product_images";
   return null;
 }
 
 export function actionFieldsForTool(
   tool: MinkProductActionTool,
 ): readonly string[] {
+  if (tool === "apply_product_images") return ["image_url", "images_json"];
   return tool === "apply_product_description"
     ? ["description"]
     : ["seo_title", "seo_description"];

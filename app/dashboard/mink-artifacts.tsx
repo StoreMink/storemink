@@ -9,6 +9,7 @@ import {
   PanelsTopLeft,
 } from "lucide-react";
 import type { MinkArtifact } from "@/lib/mink/types";
+import { MinkProductImportCard } from "./mink-product-import-card";
 import { MinkProposalCard } from "./mink-proposal-card";
 import { MinkStorefrontCodeProposalCard } from "./mink-storefront-code-proposal-card";
 import { MinkStorefrontDesignProposalCard } from "./mink-storefront-design-proposal-card";
@@ -29,6 +30,15 @@ export function MinkArtifacts({
   return (
     <div className="mt-2 space-y-2">
       {artifacts.map((artifact, index) => {
+        if (artifact.type === "product_import")
+          return (
+            <MinkProductImportCard
+              key={`${artifact.type}-${artifact.fileId}`}
+              artifact={artifact}
+              onPrompt={onPrompt}
+              promptDisabled={promptDisabled}
+            />
+          );
         if (artifact.type === "clarification") {
           return (
             <ClarificationArtifact

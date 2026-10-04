@@ -13,6 +13,7 @@ const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "storefront_design_proposal",
   "media_image_proposal",
   "workflow",
+  "product_import",
 ]);
 
 export function readMinkArtifacts(value: unknown): MinkArtifact[] {
@@ -25,6 +26,37 @@ export function readMinkArtifacts(value: unknown): MinkArtifact[] {
         typeof type === "string" &&
         MINK_ARTIFACT_TYPES.has(type as MinkArtifact["type"]);
       if (!allowed) return false;
+      if (type === "product_import") {
+        const row = artifact as Record<string, unknown>;
+        return (
+          isUuid(row.fileId) &&
+          isBoundedText(row.filename, 160) &&
+          [row.rows, row.errorCount, row.warningCount].every(
+            (value) =>
+              typeof value === "number" &&
+              Number.isInteger(value) &&
+              value >= 0,
+          ) &&
+          Array.isArray(row.changes) &&
+          row.changes.length <= 102 &&
+          row.changes.every(
+            (value) => typeof value === "string" && value.length <= 400,
+          ) &&
+          (row.jobId === null || isUuid(row.jobId)) &&
+          Array.isArray(row.issues) &&
+          row.issues.length <= 50 &&
+          row.issues.every(
+            (issue) =>
+              isRecord(issue) &&
+              typeof issue.line === "number" &&
+              Number.isInteger(issue.line) &&
+              issue.line >= 0 &&
+              (issue.column === null || isBoundedText(issue.column, 200)) &&
+              ["error", "warning"].includes(String(issue.severity)) &&
+              isBoundedText(issue.message, 1000),
+          )
+        );
+      }
       if (type === "clarification") {
         const clarification = artifact as Record<string, unknown>;
         return (
