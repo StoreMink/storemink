@@ -80,7 +80,7 @@ type Props = {
   initialShop?: ShopQuery;
   // Grocery theme: swap the WholeSip-branded hero/ticker for a clean header.
   grocery?: boolean;
-  /** Theme `layout.shopFilters`: the toolbar, filters and "Load more". */
+  /** Shared toolbar, filters and "Load more"; enabled by default. */
   shopFilters?: boolean;
   /** Theme `layout.collectionBanner`: a collection's image + description. */
   collectionBanner?: boolean;
@@ -120,7 +120,7 @@ export default function ShopClient({
   initialQuery,
   initialShop = DEFAULT_SHOP_QUERY,
   grocery = false,
-  shopFilters = false,
+  shopFilters = true,
   collectionBanner = false,
   storeLowStockThreshold = 0,
   offerBadges,

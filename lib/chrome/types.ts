@@ -84,7 +84,7 @@ export interface ResolvedStorefrontAppearance {
   stickyAddToCart: boolean;
   gridColumnsMobile: 1 | 2;
   gridColumnsDesktop: 3 | 4 | 5;
-  /** Theme-driven: the shop toolbar (sort, filters, load more). */
+  /** Shared shopping controls, available for every theme. */
   shopFilters: boolean;
   /** Theme-driven: a collection page's image-and-description banner. */
   collectionBanner: boolean;
@@ -400,7 +400,9 @@ export function resolveStorefrontAppearance(
       theme?.gridColumnsDesktop === 3 || theme?.gridColumnsDesktop === 5
         ? theme.gridColumnsDesktop
         : 4,
-    shopFilters: theme?.shopFilters === true,
+    // Existing pinned themes may omit this flag or store false. Discovery
+    // controls are core storefront behaviour, independent of theme styling.
+    shopFilters: true,
     collectionBanner: theme?.collectionBanner === true,
     productDetail:
       overrides.productDetail === "theme"

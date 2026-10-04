@@ -169,9 +169,9 @@ export interface ThemeLayout {
   gridColumnsMobile?: 1 | 2;
   /** Shop grid columns on a wide desktop (>1100px). Absent = 4. */
   gridColumnsDesktop?: 3 | 4 | 5;
-  /** Shop and collection pages gain a sort menu, availability and price
-   *  filters, and show products 24 at a time behind "Load more". Opt-in: it
-   *  adds a toolbar and hides products past the first page. Absent = off. */
+  /** Legacy package field, retained for installed themes and request replay.
+   *  Shop/collection sorting, price/availability filters and Load more are
+   *  always available; false or absence cannot hide them at runtime. */
   shopFilters?: boolean;
   /** A collection page opens with its category's image and description.
    *  Absent = off: the page is titled with the category name only. */

@@ -136,7 +136,7 @@ describe("resolveStorefrontAppearance", () => {
       stickyAddToCart: false,
       gridColumnsMobile: 1,
       gridColumnsDesktop: 4,
-      shopFilters: false,
+      shopFilters: true,
       collectionBanner: false,
       productDetail: "editorial",
       cart: "compact",
@@ -167,13 +167,13 @@ describe("resolveStorefrontAppearance", () => {
     ).toBe(false);
   });
 
-  it("keeps shopping chrome off unless the theme opts in", () => {
-    // No existing storefront gains a sticky bar or a new grid.
+  it("keeps filters available while other shopping chrome remains optional", () => {
+    // Filters work on existing themes; sticky bars and grid density stay optional.
     expect(resolveStorefrontAppearance(undefined)).toMatchObject({
       stickyAddToCart: false,
       gridColumnsMobile: 1,
       gridColumnsDesktop: 4,
-      shopFilters: false,
+      shopFilters: true,
       collectionBanner: false,
     });
     expect(
@@ -191,13 +191,17 @@ describe("resolveStorefrontAppearance", () => {
       shopFilters: true,
       collectionBanner: true,
     });
-    // Only a real `true` opts in — a stored string does not.
+    // A legacy false or malformed filter flag cannot hide shared controls.
+    expect(
+      resolveStorefrontAppearance({ shopFilters: false }).shopFilters,
+    ).toBe(true);
+    // Other optional controls still require the correct stored value.
     expect(
       resolveStorefrontAppearance({
         shopFilters: "true" as never,
         collectionBanner: 1 as never,
       }),
-    ).toMatchObject({ shopFilters: false, collectionBanner: false });
+    ).toMatchObject({ shopFilters: true, collectionBanner: false });
     // A stored value outside the choices falls back to the default rather
     // than emitting a class nothing styles.
     expect(
@@ -237,7 +241,7 @@ describe("resolveStorefrontAppearance", () => {
       stickyAddToCart: false,
       gridColumnsMobile: 1,
       gridColumnsDesktop: 4,
-      shopFilters: false,
+      shopFilters: true,
       collectionBanner: false,
       productDetail: "classic",
       cart: "classic",
