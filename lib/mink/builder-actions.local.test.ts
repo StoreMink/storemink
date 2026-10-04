@@ -15,8 +15,9 @@ import {
   vi,
 } from "vitest";
 import * as schema from "@/drizzle/schema";
+import * as relations from "@/drizzle/relations";
 import { postgresStringTimestampTypes } from "@/lib/db/pg-types";
-import { DEFAULT_CHROME } from "@/lib/chrome/types";
+import { DEFAULT_CHROME, type StoreChrome } from "@/lib/chrome/types";
 import type { Db } from "@/lib/db/client";
 import type { MinkActorContext } from "./types";
 import { builderDigest, type BuilderOperation } from "./builder-contract";
@@ -74,7 +75,7 @@ describe.skipIf(!enabled)("Website Builder local transactional actions", () => {
     await client.connect();
     await client.query("BEGIN");
     service.client = client;
-    service.db = drizzle(client, { schema }) as Db;
+    service.db = drizzle(client, { schema: { ...schema, ...relations } });
     const manifest = JSON.parse(
       readFileSync("drizzle/migrations/manifest.json", "utf8"),
     );
@@ -194,12 +195,19 @@ describe.skipIf(!enabled)("Website Builder local transactional actions", () => {
     return approveMinkBuilderProposal(actor, id, crypto.randomUUID(), {});
   }
   async function chrome() {
-    return (
+    const row = (
       await service
         .db!.select()
         .from(schema.storeChrome)
         .where(eq(schema.storeChrome.storeId, actor.storeId))
     )[0];
+    // Fixtures and action writes use StoreChrome; retain the raw JSON here so
+    // read-time normalization cannot hide an invalid persisted value.
+    return {
+      ...row,
+      draft: row.draft as StoreChrome,
+      published: row.published as StoreChrome | null,
+    };
   }
   async function auditCount() {
     return (
