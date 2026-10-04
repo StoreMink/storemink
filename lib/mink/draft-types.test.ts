@@ -36,6 +36,7 @@ describe("Mink draft contracts", () => {
       storefront_custom_code: 5,
       storefront_layout: 3,
       storefront_design: 2,
+      website_builder: 2,
       // ★ THREE, and the ladder stops being about the size of the artefact
       // here: every other weight prices how much model work a proposal took,
       // while this one prices a provider call billed per IMAGE. ⚠ Provisional

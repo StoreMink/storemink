@@ -5414,8 +5414,12 @@ export const minkDrafts = pgTable(
       name: "mink_drafts_store_id_fkey",
     }).onDelete("cascade"),
     check(
+      "mink_drafts_builder_target_check",
+      sql`kind <> 'website_builder' OR (destination_type = 'website_builder' AND destination_id IS NULL AND location_id IS NULL AND variant_id IS NULL AND coalesce(jsonb_typeof(content_json->'patch_json'),'') = 'string' AND coalesce(jsonb_typeof(content_json->'patch_digest'),'') = 'string' AND coalesce(jsonb_typeof(content_json->'explanation'),'') = 'string')`,
+    ),
+    check(
       "mink_drafts_kind_check",
-      sql`kind = ANY (ARRAY['product_description'::text, 'product_seo'::text, 'product_images'::text, 'blog'::text, 'coupon_email'::text, 'customer_message'::text, 'product_create'::text, 'coupon_create'::text, 'coupon_update'::text, 'customer_group_create'::text, 'customer_group_update'::text, 'inventory_adjustment'::text, 'bulk_inventory_adjustment'::text, 'order_status_transition'::text, 'bulk_price_update'::text, 'offer_create'::text, 'offer_update'::text, 'offer_activate'::text, 'storefront_custom_code'::text])`,
+      sql`kind = ANY (ARRAY['product_description','product_seo','product_images','blog','coupon_email','customer_message','product_create','coupon_create','coupon_update','customer_group_create','customer_group_update','inventory_adjustment','bulk_inventory_adjustment','order_status_transition','bulk_price_update','offer_create','offer_update','offer_activate','storefront_custom_code','storefront_layout','storefront_design','website_builder','media_image']::text[])`,
     ),
     check(
       "mink_drafts_status_check",
@@ -5583,7 +5587,7 @@ export const minkActionToolAccess = pgTable(
     }).onDelete("cascade"),
     check(
       "mink_action_tool_access_name_check",
-      sql`tool_name = ANY (ARRAY['apply_product_description'::text, 'apply_product_seo'::text, 'apply_product_images'::text, 'create_product'::text, 'create_coupon'::text, 'update_coupon'::text, 'create_customer_group'::text, 'update_customer_group'::text, 'adjust_inventory'::text, 'bulk_adjust_inventory'::text, 'transition_order_status'::text, 'publish_blog'::text, 'send_campaign'::text, 'bulk_update_prices'::text, 'create_offer'::text, 'update_offer'::text, 'activate_offer'::text, 'apply_storefront_code'::text, 'publish_storefront_code'::text])`,
+      sql`tool_name = ANY (ARRAY['apply_product_description','apply_product_seo','apply_product_images','create_product','create_coupon','update_coupon','create_customer_group','update_customer_group','create_offer','update_offer','activate_offer','adjust_inventory','bulk_adjust_inventory','apply_storefront_code','publish_storefront_code','apply_storefront_layout','apply_storefront_design','manage_website_builder','transition_order_status','publish_blog','send_campaign','bulk_update_prices','generate_media_image']::text[])`,
     ),
     check(
       "mink_action_tool_access_enablement_check",
@@ -6064,12 +6068,16 @@ export const minkActionApprovals = pgTable(
       name: "mink_action_approvals_source_store_fkey",
     }).onDelete("cascade"),
     check(
+      "mink_action_approvals_builder_target_check",
+      sql`tool_name <> 'manage_website_builder' OR (resource_type = 'website_builder' AND resource_id = store_id AND resource_id IS NOT NULL AND product_id IS NULL AND location_id IS NULL AND variant_id IS NULL AND operation = 'apply')`,
+    ),
+    check(
       "mink_action_approvals_tool_check",
-      sql`tool_name = ANY (ARRAY['apply_product_description'::text, 'apply_product_seo'::text, 'apply_product_images'::text, 'create_product'::text, 'create_coupon'::text, 'update_coupon'::text, 'create_customer_group'::text, 'update_customer_group'::text, 'adjust_inventory'::text, 'bulk_adjust_inventory'::text, 'transition_order_status'::text, 'publish_blog'::text, 'send_campaign'::text, 'bulk_update_prices'::text, 'create_offer'::text, 'update_offer'::text, 'activate_offer'::text, 'apply_storefront_code'::text, 'publish_storefront_code'::text])`,
+      sql`tool_name = ANY (ARRAY['apply_product_description','apply_product_seo','apply_product_images','create_product','create_coupon','update_coupon','create_customer_group','update_customer_group','create_offer','update_offer','activate_offer','adjust_inventory','bulk_adjust_inventory','apply_storefront_code','publish_storefront_code','apply_storefront_layout','apply_storefront_design','manage_website_builder','transition_order_status','publish_blog','send_campaign','bulk_update_prices','generate_media_image']::text[])`,
     ),
     check(
       "mink_action_approvals_resource_type_check",
-      sql`resource_type = ANY (ARRAY['product'::text, 'coupon'::text, 'customer_group'::text, 'inventory'::text, 'inventory_bulk'::text, 'order'::text, 'blog'::text, 'campaign'::text, 'price_bulk'::text, 'offer'::text, 'storefront_section'::text, 'storefront_page'::text])`,
+      sql`resource_type = ANY (ARRAY['product','coupon','customer_group','inventory','inventory_bulk','order','blog','campaign','price_bulk','offer','storefront_section','storefront_page','storefront_chrome','website_builder']::text[])`,
     ),
     check(
       "mink_action_approvals_operation_check",
@@ -6081,7 +6089,7 @@ export const minkActionApprovals = pgTable(
     ),
     check(
       "mink_action_approvals_draft_version_check",
-      sql`draft_version > 0 OR (tool_name IN ('apply_storefront_code', 'publish_storefront_code') AND draft_version = 0)`,
+      sql`draft_version > 0 OR (tool_name = ANY (ARRAY['apply_storefront_code','publish_storefront_code','apply_storefront_layout','apply_storefront_design','manage_website_builder']::text[]) AND draft_version = 0)`,
     ),
     check(
       "mink_action_approvals_payload_check",
@@ -6225,12 +6233,16 @@ export const minkActionAudit = pgTable(
       name: "mink_action_audit_approval_store_fkey",
     }).onDelete("restrict"),
     check(
+      "mink_action_audit_builder_target_check",
+      sql`tool_name <> 'manage_website_builder' OR (resource_type = 'website_builder' AND resource_id = store_id AND resource_id IS NOT NULL AND product_id IS NULL AND location_id IS NULL AND variant_id IS NULL AND operation = 'apply')`,
+    ),
+    check(
       "mink_action_audit_tool_check",
-      sql`tool_name = ANY (ARRAY['apply_product_description'::text, 'apply_product_seo'::text, 'apply_product_images'::text, 'create_product'::text, 'create_coupon'::text, 'update_coupon'::text, 'create_customer_group'::text, 'update_customer_group'::text, 'adjust_inventory'::text, 'bulk_adjust_inventory'::text, 'transition_order_status'::text, 'publish_blog'::text, 'send_campaign'::text, 'bulk_update_prices'::text, 'create_offer'::text, 'update_offer'::text, 'activate_offer'::text, 'apply_storefront_code'::text, 'publish_storefront_code'::text])`,
+      sql`tool_name = ANY (ARRAY['apply_product_description','apply_product_seo','apply_product_images','create_product','create_coupon','update_coupon','create_customer_group','update_customer_group','create_offer','update_offer','activate_offer','adjust_inventory','bulk_adjust_inventory','apply_storefront_code','publish_storefront_code','apply_storefront_layout','apply_storefront_design','manage_website_builder','transition_order_status','publish_blog','send_campaign','bulk_update_prices','generate_media_image']::text[])`,
     ),
     check(
       "mink_action_audit_resource_type_check",
-      sql`resource_type = ANY (ARRAY['product'::text, 'coupon'::text, 'customer_group'::text, 'inventory'::text, 'inventory_bulk'::text, 'order'::text, 'blog'::text, 'campaign'::text, 'price_bulk'::text, 'offer'::text, 'storefront_section'::text, 'storefront_page'::text])`,
+      sql`resource_type = ANY (ARRAY['product','coupon','customer_group','inventory','inventory_bulk','order','blog','campaign','price_bulk','offer','storefront_section','storefront_page','storefront_chrome','website_builder']::text[])`,
     ),
     check(
       "mink_action_audit_operation_check",
