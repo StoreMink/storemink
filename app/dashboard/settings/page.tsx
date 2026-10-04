@@ -85,7 +85,7 @@ export default async function SettingsPage() {
   }
 
   return (
-    <div className="p-6 max-w-[900px]">
+    <div className="max-w-[900px] sm:p-6">
       <h1 className="text-[22px] font-medium">Settings</h1>
       <p className="mt-1 text-[14px] text-[#6a6a6a]">
         Everything that configures this store.

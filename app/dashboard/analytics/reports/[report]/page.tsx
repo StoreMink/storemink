@@ -1,3 +1,4 @@
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Download } from "lucide-react";
@@ -100,7 +101,7 @@ export default async function AnalyticsReportPage({
     );
     shown = data.length;
     rows = data.length ? (
-      <table className="dash-table w-full min-w-[820px]">
+      <ResponsiveTable className="dash-table w-full min-w-[820px]">
         <thead>
           <tr>
             <th>Date</th>
@@ -127,7 +128,7 @@ export default async function AnalyticsReportPage({
             </tr>
           ))}
         </tbody>
-      </table>
+      </ResponsiveTable>
     ) : (
       <EmptyReport />
     );
@@ -135,7 +136,7 @@ export default async function AnalyticsReportPage({
     const data = await getSalesAnalytics(storeId, location, range);
     shown = data.series.length;
     rows = data.series.length ? (
-      <table className="dash-table w-full min-w-[640px]">
+      <ResponsiveTable className="dash-table w-full min-w-[640px]">
         <thead>
           <tr>
             <th>Period</th>
@@ -158,7 +159,7 @@ export default async function AnalyticsReportPage({
             </tr>
           ))}
         </tbody>
-      </table>
+      </ResponsiveTable>
     ) : (
       <EmptyReport />
     );
@@ -166,7 +167,7 @@ export default async function AnalyticsReportPage({
     const data = await getTopProducts(storeId, location, range, PAGE_ROW_LIMIT);
     shown = data.length;
     rows = data.length ? (
-      <table className="dash-table w-full min-w-[640px]">
+      <ResponsiveTable className="dash-table w-full min-w-[640px]">
         <thead>
           <tr>
             <th>Rank</th>
@@ -187,7 +188,7 @@ export default async function AnalyticsReportPage({
             </tr>
           ))}
         </tbody>
-      </table>
+      </ResponsiveTable>
     ) : (
       <EmptyReport />
     );
@@ -200,7 +201,7 @@ export default async function AnalyticsReportPage({
     );
     shown = data.length;
     rows = data.length ? (
-      <table className="dash-table w-full min-w-[720px]">
+      <ResponsiveTable className="dash-table w-full min-w-[720px]">
         <thead>
           <tr>
             <th>Search term</th>
@@ -227,7 +228,7 @@ export default async function AnalyticsReportPage({
             </tr>
           ))}
         </tbody>
-      </table>
+      </ResponsiveTable>
     ) : (
       <EmptyReport />
     );

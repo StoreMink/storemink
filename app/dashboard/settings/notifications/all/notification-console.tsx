@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 // The notification list — one row per notification, filterable by category and
 // by channel, searchable by name. Clicking a row opens its full configuration.
 //
@@ -269,7 +271,7 @@ export function NotificationConsole({
               </p>
             </div>
           ) : (
-            <table className="dash-table dash-table-wide">
+            <ResponsiveTable className="dash-table dash-table-wide">
               <thead>
                 <tr>
                   <th>Notification</th>
@@ -334,7 +336,7 @@ export function NotificationConsole({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           )}
         </div>
       </section>

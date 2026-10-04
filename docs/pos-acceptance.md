@@ -4277,3 +4277,40 @@ Real and deliberate, so nobody files them as bugs:
 Automated parser, tool, route and UI checks cover the boundaries. Live Vertex,
 Media/storage and background-worker merchant acceptance remains required before
 release; this entry records acceptance stories, not completed production evidence.
+
+## Dashboard mobile layouts (2026-10-04)
+
+**PS-MD.1 — Operational lists on a phone.** At 320px and 390px, open Orders,
+Inventory, POS money and Shifts. Titles and actions wrap; list search remains
+visible; filters are usable; records show labelled fields, amounts/statuses and
+actions without scrolling the whole page sideways. Status strips may scroll
+inside their own control. At tablet/desktop widths the normal table remains.
+
+**PS-MD.2 — Selection retains its meaning.** At one permitted inventory shelf,
+tap a row checkbox, select-all and Clear. Selection never opens a row, the
+indeterminate checkbox still reflects a partial selection, and every bulk action
+fits within the phone viewport. Scroll to the last record while selected. Staff
+without management permission have correctly labelled records without selection
+or action controls. Aggregate inventory remains read-only.
+
+**PS-MD.3 — Order detail does not consume the list.** Tap an order reference on a
+phone: the detail sheet fills the viewport, scrolls independently and exposes
+its close control. Close or press Escape to return to the current list and
+filters. Keyboard users can open the reference button. On desktop, the same
+order detail docks alongside the list. Existing fulfilment, refund and pickup
+controls retain their permission and lifecycle rules.
+
+**PS-MD.4 — Location and staff settings fit.** Open a location editor, creation
+form, POS staff page and invitation dialog at 320px. All labels, fields, header
+buttons and save/cancel controls remain reachable. Text entry uses readable
+sizes; long location names wrap. Resizing to desktop restores the wider layout.
+
+**PS-MD.5 — Analytics retains operational context.** Open sales/product reports
+with one location selected on a phone. Records retain their channel/location
+fields, amounts and export control; date/location filters and the analytics
+editor remain accessible. Resizing never changes the selected scope or data.
+
+Shared-table and existing inventory regression tests cover column mapping,
+selection/action propagation and aggregate/shelf behavior. Browser layout QA
+uses isolated fixtures and the actual components/styles; this is not evidence
+of authenticated production lifecycle acceptance on a physical phone.

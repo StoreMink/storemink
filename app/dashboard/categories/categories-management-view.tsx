@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -149,7 +151,7 @@ export function CategoriesManagementView({
             )}
           </div>
         ) : (
-          <table className="dash-table dash-table-wide">
+          <ResponsiveTable className="dash-table dash-table-wide">
             <thead>
               <tr>
                 <th className="w-14">Image</th>
@@ -234,7 +236,7 @@ export function CategoriesManagementView({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         )}
       </div>
 

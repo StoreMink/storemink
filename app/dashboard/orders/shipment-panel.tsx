@@ -114,7 +114,7 @@ export function ShipmentPanel({
               Confirm the packed parcel measurements. Shiprocket uses them to
               select and bill the courier.
             </p>
-            <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <Measure
                 label="Weight (g)"
                 value={parcel.weightGrams}

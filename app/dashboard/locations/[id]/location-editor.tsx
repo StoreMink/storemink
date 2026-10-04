@@ -164,7 +164,7 @@ export function LocationEditor({
 
   return (
     <div className="dash-page-enter">
-      <header className="dash-page-header flex items-start justify-between gap-4">
+      <header className="dash-page-header row">
         <div>
           <Link
             href="/dashboard/locations"

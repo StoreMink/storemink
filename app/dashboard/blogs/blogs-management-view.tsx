@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -377,7 +379,7 @@ export function BlogsManagementView({
             )}
           </div>
         ) : (
-          <table className="dash-table dash-table-wide">
+          <ResponsiveTable className="dash-table dash-table-wide">
             <thead>
               <tr>
                 {canManage && (
@@ -613,7 +615,7 @@ export function BlogsManagementView({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         )}
 
         <ListPagination

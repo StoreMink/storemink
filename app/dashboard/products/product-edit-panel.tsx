@@ -48,29 +48,8 @@ export function ProductEditorPanel({
       data-mink-resource-type={product ? "product" : undefined}
       data-mink-resource-id={product?.id}
     >
-      {/* Full-width sticky header that sits FLUSH at the top of the scroll
-          area. The scroll container (.dash-content) has 28px top / 32px side
-          padding, and `position: sticky` pins to the container's CONTENT box
-          (inside that padding) — so a plain `top: 0` leaves a 28px strip of
-          content visible above the bar (it looks like a floater). We cancel
-          that padding: the negative margins pull the bar out to the container
-          edges, and `top: -28` makes it pin flush when scrolled. The symmetric
-          14px vertical padding is the bar's own compact height — the negative
-          top margin already covers the 28px gap, so no extra padding is needed.
-          Verified against the 28/32px padding in dashboard.css. */}
-      <header
-        className="sticky z-30 mb-5 flex items-center gap-3 border-b border-[#e5e7eb] bg-[var(--dash-surface,#fff)]"
-        style={{
-          top: -28,
-          marginTop: -28,
-          marginLeft: -32,
-          marginRight: -32,
-          paddingTop: 14,
-          paddingBottom: 14,
-          paddingLeft: 32,
-          paddingRight: 32,
-        }}
-      >
+      {/* Cancel the scroll container's current padding at every breakpoint. */}
+      <header className="dash-editor-header sticky z-30 mb-5 flex items-center gap-3 border-b border-[#e5e7eb] bg-[var(--dash-surface,#fff)]">
         <Link
           href="/dashboard/products"
           aria-label="Back to products"

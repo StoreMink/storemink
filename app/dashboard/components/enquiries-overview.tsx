@@ -1,3 +1,4 @@
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
 import Link from "next/link";
 import { ArrowUpRight, Inbox } from "lucide-react";
 import type { EnquiryStatus } from "@/app/actions/enquiry-actions";
@@ -93,7 +94,7 @@ export async function EnquiriesOverview() {
           </p>
         </div>
       ) : (
-        <table className="dash-table">
+        <ResponsiveTable className="dash-table">
           <thead>
             <tr>
               <th>From</th>
@@ -139,7 +140,7 @@ export async function EnquiriesOverview() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </ResponsiveTable>
       )}
     </div>
   );

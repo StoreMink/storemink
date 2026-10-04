@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -405,7 +407,7 @@ export function InventoryManagementView({
             </p>
           </div>
         ) : (
-          <table className="dash-table dash-table-wide">
+          <ResponsiveTable className="dash-table dash-table-wide">
             <thead>
               <tr>
                 {canEdit && (
@@ -522,7 +524,7 @@ export function InventoryManagementView({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         )}
 
         <ListPagination

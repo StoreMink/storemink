@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 // The import/export history — one row per job, newest first.
 //
 // A LOG, like Email logs beside it: no charts, no summaries. It answers two
@@ -185,7 +187,7 @@ export function JobsView({
             // Scroll the TABLE, never the page — the dashboard body must not
             // shift sideways.
             <div className="-mx-4 overflow-x-auto px-4">
-              <table className="dash-table w-full min-w-[820px]">
+              <ResponsiveTable className="dash-table w-full min-w-[820px]">
                 <thead>
                   <tr>
                     <th>What</th>
@@ -257,7 +259,7 @@ export function JobsView({
                     );
                   })}
                 </tbody>
-              </table>
+              </ResponsiveTable>
             </div>
           )}
         </div>

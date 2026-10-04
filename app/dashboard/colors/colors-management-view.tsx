@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -148,7 +150,7 @@ export function ColorsManagementView({ colors, canManage = true }: Props) {
             )}
           </div>
         ) : (
-          <table className="dash-table dash-table-wide">
+          <ResponsiveTable className="dash-table dash-table-wide">
             <thead>
               <tr>
                 <th className="w-14">Swatch</th>
@@ -213,7 +215,7 @@ export function ColorsManagementView({ colors, canManage = true }: Props) {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         )}
       </div>
 

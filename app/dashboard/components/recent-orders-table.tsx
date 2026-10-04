@@ -1,3 +1,4 @@
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import type { RecentOrder } from "../analytics/data";
@@ -42,7 +43,7 @@ export function RecentOrdersTable({ orders }: { orders: RecentOrder[] }) {
           No orders yet — new orders will show up here.
         </div>
       ) : (
-        <table className="dash-table">
+        <ResponsiveTable className="dash-table">
           <thead>
             <tr>
               <th>Order</th>
@@ -77,7 +78,7 @@ export function RecentOrdersTable({ orders }: { orders: RecentOrder[] }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </ResponsiveTable>
       )}
     </div>
   );

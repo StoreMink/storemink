@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 // SMS Logs — the Email Logs table, with the one column email doesn't need.
 //
 // ★ `Segments` IS THE COLUMN THAT EARNS ITS PLACE. An SMS is billed per
@@ -171,7 +173,7 @@ export function SmsLogsView({
           </p>
         ) : (
           <div className="dash-table-wrap">
-            <table className="dash-table dash-table-wide">
+            <ResponsiveTable className="dash-table dash-table-wide">
               <thead>
                 <tr>
                   <th>To</th>
@@ -222,7 +224,7 @@ export function SmsLogsView({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
         )}
 

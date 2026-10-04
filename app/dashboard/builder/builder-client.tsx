@@ -157,6 +157,9 @@ export function BuilderClient({
       window.localStorage.setItem("sm-builder-left-collapsed", c ? "0" : "1");
       return !c;
     });
+  const [mobileView, setMobileView] = useState<"outline" | "preview" | "edit">(
+    "outline",
+  );
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(
     null,
   );
@@ -286,7 +289,10 @@ export function BuilderClient({
           postToPreview({ type: "sm-chrome", chrome: chromeRef.current });
           break;
         case "sm-select":
-          if (typeof data.id === "string") setSelectedSectionId(data.id);
+          if (typeof data.id === "string") {
+            setSelectedSectionId(data.id);
+            setMobileView("edit");
+          }
           break;
         case "sm-hover":
           setCanvasHoverId(data.id ?? null);
@@ -576,6 +582,7 @@ export function BuilderClient({
       return next;
     });
     setSelectedSectionId(item.id);
+    setMobileView("edit");
     if (type === "custom_code") setCodeEditorOpen(true);
   };
 
@@ -748,7 +755,10 @@ export function BuilderClient({
   });
 
   return (
-    <div className={`sm-builder ${leftCollapsed ? "is-left-collapsed" : ""}`}>
+    <div
+      className={`sm-builder ${leftCollapsed ? "is-left-collapsed" : ""}`}
+      data-mobile-view={mobileView}
+    >
       {/* Top bar */}
       <header className="sm-builder-topbar">
         <div className="sm-builder-topbar-left">
@@ -868,8 +878,24 @@ export function BuilderClient({
         )}
       </header>
 
+      <nav className="sm-builder-mobile-nav" aria-label="Builder panels">
+        {(["outline", "preview", "edit"] as const).map((panel) => (
+          <button
+            key={panel}
+            type="button"
+            aria-pressed={mobileView === panel}
+            onClick={() => setMobileView(panel)}
+          >
+            {panel === "outline"
+              ? "Pages & sections"
+              : panel === "preview"
+                ? "Preview"
+                : "Edit"}
+          </button>
+        ))}
+      </nav>
       <div className="sm-builder-body">
-        {leftCollapsed ? (
+        {leftCollapsed && (
           <div className="sm-builder-rail">
             <button
               className="sm-builder-iconbtn"
@@ -889,38 +915,39 @@ export function BuilderClient({
               <Plus className="h-4 w-4" />
             </button>
           </div>
-        ) : (
-          <OutlinePanel
-            pages={pages}
-            selectedPageId={selectedId}
-            onSelectPage={loadDraft}
-            onNewPage={() => setNewPageOpen(true)}
-            sections={draft?.sections ?? null}
-            selectedSectionId={selectedSectionId}
-            canvasHoverId={canvasHoverId}
-            hiddenSectionIds={hiddenSectionIds}
-            chromeTarget={chromeTarget}
-            onSelectChrome={(t) => {
-              // One inspector, one subject: selecting the header clears any
-              // selected section, and vice versa.
-              setChromeTarget(t);
-              setSelectedSectionId(null);
-            }}
-            onSelectSection={(id) => {
-              setChromeTarget(null);
-              setSelectedSectionId(id);
-              postToPreview({ type: "sm-scroll-to", id });
-            }}
-            onHoverSection={(id) => postToPreview({ type: "sm-highlight", id })}
-            onToggleSection={toggleSection}
-            onReorder={reorderSections}
-            loading={loadingDraft}
-            onAddSection={() => {
-              insertAfterRef.current = undefined;
-              setLibraryOpen(true);
-            }}
-          />
         )}
+        <OutlinePanel
+          pages={pages}
+          selectedPageId={selectedId}
+          onSelectPage={loadDraft}
+          onNewPage={() => setNewPageOpen(true)}
+          sections={draft?.sections ?? null}
+          selectedSectionId={selectedSectionId}
+          canvasHoverId={canvasHoverId}
+          hiddenSectionIds={hiddenSectionIds}
+          chromeTarget={chromeTarget}
+          onSelectChrome={(t) => {
+            // One inspector, one subject: selecting the header clears any
+            // selected section, and vice versa.
+            setChromeTarget(t);
+            setSelectedSectionId(null);
+            setMobileView("edit");
+          }}
+          onSelectSection={(id) => {
+            setChromeTarget(null);
+            setSelectedSectionId(id);
+            setMobileView("edit");
+            postToPreview({ type: "sm-scroll-to", id });
+          }}
+          onHoverSection={(id) => postToPreview({ type: "sm-highlight", id })}
+          onToggleSection={toggleSection}
+          onReorder={reorderSections}
+          loading={loadingDraft}
+          onAddSection={() => {
+            insertAfterRef.current = undefined;
+            setLibraryOpen(true);
+          }}
+        />
 
         {/* Center: preview. The iframe stays mounted through page switches —
             the outgoing page remains visible under the veil (no blank flash). */}
@@ -962,7 +989,10 @@ export function BuilderClient({
           onStyleChange={updateSelectedStyle}
           onDuplicate={duplicateSection}
           onDelete={deleteSection}
-          onClearSelection={() => setSelectedSectionId(null)}
+          onClearSelection={() => {
+            setSelectedSectionId(null);
+            setMobileView("outline");
+          }}
           onOpenCodeEditor={() => setCodeEditorOpen(true)}
           onOpenPageSettings={() => setPageSettingsOpen(true)}
           chromeTarget={chromeTarget}
@@ -972,17 +1002,12 @@ export function BuilderClient({
           themeDefaults={themeDefaults}
           schemeDesign={schemeDesign}
           onBrandChange={updateBrand}
-          onClearChrome={() => setChromeTarget(null)}
+          onClearChrome={() => {
+            setChromeTarget(null);
+            setMobileView("outline");
+          }}
           loading={loadingDraft}
         />
-      </div>
-
-      <div className="sm-builder-smallscreen">
-        <p>
-          The website builder needs a larger screen.
-          <br />
-          Please open it on a tablet or desktop.
-        </p>
       </div>
 
       {/* Page settings (title / slug / SEO) — topbar-triggered dialog */}

@@ -135,6 +135,9 @@ export function BlogEditorDialog({
 }: Props) {
   const isEditing = !!blog;
   const [isPending, startTransition] = useTransition();
+  const [mobilePanel, setMobilePanel] = useState<"content" | "settings">(
+    "content",
+  );
   const [hasUnsaved, setHasUnsaved] = useState(false);
   const autosaveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [mediaPickerTarget, setMediaPickerTarget] = useState<
@@ -337,11 +340,13 @@ export function BlogEditorDialog({
       >
         <DialogContent
           showCloseButton={false}
-          className="fixed inset-0 top-0 left-0 z-50 flex max-w-none translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none border-none bg-[#f2f4f7] p-0 text-[#000000] ring-0 sm:max-w-none data-open:zoom-in-100 data-closed:zoom-out-100"
-          style={{ maxHeight: "100vh", width: "100vw", height: "100vh" }}
+          className="dash-blog-editor fixed inset-0 top-0 left-0 z-50 flex max-w-none translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none border-none bg-[#f2f4f7] p-0 text-[#000000] ring-0 sm:max-w-none data-open:zoom-in-100 data-closed:zoom-out-100"
+          style={{ maxHeight: "100dvh", width: "100vw", height: "100dvh" }}
+          data-mobile-panel={mobilePanel}
         >
           {/* Editor Top Bar */}
           <div
+            className="dash-blog-header"
             style={{
               display: "flex",
               alignItems: "center",
@@ -354,6 +359,7 @@ export function BlogEditorDialog({
           >
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <button
+                aria-label="Back to blogs"
                 onClick={() => {
                   if (hasUnsaved) {
                     if (
@@ -432,8 +438,25 @@ export function BlogEditorDialog({
             </div>
           </div>
 
+          <nav className="dash-blog-mobile-nav" aria-label="Blog editor panels">
+            <button
+              type="button"
+              aria-pressed={mobilePanel === "content"}
+              onClick={() => setMobilePanel("content")}
+            >
+              Content
+            </button>
+            <button
+              type="button"
+              aria-pressed={mobilePanel === "settings"}
+              onClick={() => setMobilePanel("settings")}
+            >
+              Post settings
+            </button>
+          </nav>
           {/* Main content - two columns */}
           <div
+            className="dash-blog-body"
             style={{
               display: "flex",
               flex: 1,
@@ -443,6 +466,7 @@ export function BlogEditorDialog({
           >
             {/* Left: Editor */}
             <div
+              className="dash-blog-content"
               style={{
                 flex: 1,
                 display: "flex",
@@ -454,6 +478,7 @@ export function BlogEditorDialog({
             >
               {/* Toolbar */}
               <div
+                className="dash-blog-toolbar"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -663,6 +688,7 @@ export function BlogEditorDialog({
 
               {/* Editor content */}
               <div
+                className="dash-blog-paper"
                 style={{
                   flex: 1,
                   overflow: "auto",
@@ -750,6 +776,7 @@ export function BlogEditorDialog({
 
             {/* Right sidebar: Settings */}
             <div
+              className="dash-blog-settings"
               style={{
                 width: 360,
                 flexShrink: 0,
