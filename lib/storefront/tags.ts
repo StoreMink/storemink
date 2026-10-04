@@ -1,7 +1,6 @@
-// Cache tags for the storefront's `unstable_cache` reads (lib/storefront/queries.ts).
-// Imported by the dashboard write actions so they can `revalidateTag(...)` the
-// exact entries an edit affects. Kept dependency-free so importing it into a
-// "use server" action doesn't pull in the Supabase client.
+// Compatibility invalidation tags used by dashboard write actions and derived
+// cache consumers. Public storefront queries read current rows each request.
+// Keep this module dependency-free for server action callers.
 export const TAGS = {
   products: "storefront:products",
   categories: "storefront:categories",

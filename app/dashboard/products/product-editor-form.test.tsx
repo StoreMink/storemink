@@ -1,11 +1,23 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ProductEditorForm } from "./product-editor-form";
+import { updateProduct } from "@/app/actions/product-actions";
 import type { Product } from "./page";
 
 vi.mock("@/components/ui/image-upload", () => ({
-  ImageUpload: () => <div data-testid="image-upload" />,
+  ImageUpload: ({
+    onUploadSuccess,
+  }: {
+    onUploadSuccess: (url: string) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => onUploadSuccess("https://example.test/new-photo.webp")}
+    >
+      Upload fixture image
+    </button>
+  ),
 }));
 vi.mock("@/lib/storage/uploads", () => ({ uploadImage: vi.fn() }));
 vi.mock("@/app/actions/product-actions", () => ({
@@ -117,4 +129,112 @@ describe("ProductEditorForm inventory flow", () => {
       screen.getByLabelText("Opening stock for variant 2"),
     ).toBeInTheDocument();
   });
+});
+
+it("saves a Pricing edit to the single sellable variant", async () => {
+  vi.mocked(updateProduct).mockResolvedValue({ success: true });
+  render(
+    <ProductEditorForm
+      product={product}
+      categories={[
+        { id: "category-1", name: "Coffee", slug: "coffee", status: "active" },
+      ]}
+      colors={[]}
+      taxClasses={[]}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Pricing" }));
+  const field = screen
+    .getByText("Selling price ₹")
+    .closest("div")!
+    .querySelector("input")!;
+  fireEvent.change(field, { target: { value: "499" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(updateProduct).toHaveBeenCalled());
+  const saved = vi.mocked(updateProduct).mock.calls.at(-1)![1];
+  expect(saved.selling_price).toBe(499);
+  expect(saved.variants[0].selling_price).toBe(499);
+});
+it("keeps multiple variants independently priced when changing product defaults", async () => {
+  vi.mocked(updateProduct).mockResolvedValue({ success: true });
+  const multi = {
+    ...product,
+    variants: [
+      ...product.variants,
+      {
+        ...product.variants[0],
+        id: "variant-2",
+        name: "1 kg",
+        selling_price: 480,
+      },
+    ],
+  };
+  render(
+    <ProductEditorForm
+      product={multi}
+      categories={[
+        { id: "category-1", name: "Coffee", slug: "coffee", status: "active" },
+      ]}
+      colors={[]}
+      taxClasses={[]}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Pricing" }));
+  const field = screen
+    .getByText("Selling price ₹")
+    .closest("div")!
+    .querySelector("input")!;
+  fireEvent.change(field, { target: { value: "499" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(updateProduct).toHaveBeenCalled());
+  expect(
+    vi
+      .mocked(updateProduct)
+      .mock.calls.at(-1)![1]
+      .variants.map((v) => v.selling_price),
+  ).toEqual([450, 480]);
+});
+
+it("updates a single variant primary photo and retains its extra photos", async () => {
+  vi.mocked(updateProduct).mockResolvedValue({ success: true });
+  render(
+    <ProductEditorForm
+      product={{
+        ...product,
+        image_url: "https://example.test/old.webp",
+        variants: [
+          {
+            ...product.variants[0],
+            images: [
+              "https://example.test/old-variant.webp",
+              "https://example.test/detail.webp",
+            ],
+          },
+        ],
+      }}
+      categories={[
+        { id: "category-1", name: "Coffee", slug: "coffee", status: "active" },
+      ]}
+      colors={[]}
+      taxClasses={[]}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Media", exact: true }));
+  fireEvent.click(
+    screen.getByText("Primary image").closest("div")!.querySelector("button")!,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(updateProduct).toHaveBeenCalled());
+  const saved = vi.mocked(updateProduct).mock.calls.at(-1)![1];
+  expect(saved.image_url).toBe("https://example.test/new-photo.webp");
+  expect(saved.variants[0].images).toEqual([
+    "https://example.test/new-photo.webp",
+    "https://example.test/detail.webp",
+  ]);
 });

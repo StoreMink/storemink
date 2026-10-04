@@ -367,7 +367,7 @@ function Thumb({
         <img
           src={item.image}
           alt=""
-          className="h-full w-full object-cover"
+          className="h-full w-full object-contain"
           loading="lazy"
         />
       ) : (
@@ -411,7 +411,10 @@ function SortableTile({
         isDragging ? "z-10 opacity-50" : ""
       }`}
     >
-      <Thumb item={item} className="mb-2 aspect-square w-full rounded-lg" />
+      <Thumb
+        item={item}
+        className="mb-2 aspect-[4/5] max-h-64 w-full rounded-lg"
+      />
       <span className="line-clamp-2 text-sm font-medium">{item.name}</span>
       {item.variantName && (
         <span className="text-xs text-[var(--pos-ink-2)]">

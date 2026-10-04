@@ -1,4 +1,4 @@
-import { unstable_cache } from "next/cache";
+import { cache } from "react";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { withAnon } from "@/lib/db/client";
 import {
@@ -13,7 +13,6 @@ import {
   storePages,
   taxClasses,
 } from "@/drizzle/schema";
-import { TAGS } from "@/lib/storefront/tags";
 import type { PageSectionItem } from "@/lib/sections/registry";
 import { normalizeMenus, type StoreMenus } from "@/lib/menus";
 import {
@@ -23,31 +22,11 @@ import {
   type TaxClass,
 } from "@/lib/billing/types";
 
-// ---------------------------------------------------------------------------
-// Cached PUBLIC storefront reads.
-//
-// These wrap the anonymous DB scope (withAnon — RLS enforced with no identity,
-// so only the public published/active policy branches match) in
-// `unstable_cache` so the storefront's hot (pages) (home, shop, blog index,
-// product detail) no longer hit Postgres on every request — the previous model
-// re-ran every query per visit because the (pages) were `force-dynamic`.
-//
-// Freshness: each entry carries a coarse tag and a `revalidate` fallback. The
-// dashboard write actions call `revalidateTag(...)` (see app/actions/*) so edits
-// show up near-instantly; the time-based `revalidate` is just a safety net.
-//
-// Reads tolerate a missing table / transient error by returning empty (matching
-// the storefront's existing `?? []` behavior) so a cold deploy never crashes.
-//
-// Multi-tenant: every function takes a required `storeId` and filters on it.
-// `unstable_cache` folds the function arguments into the cache key, so each
-// store gets its own cache entry automatically — one store can never serve
-// another's cached rows. Callers resolve the id via getCurrentStore() (host).
-// ---------------------------------------------------------------------------
-
-// 5 minutes. Edits propagate immediately via revalidateTag; this only bounds
-// how stale things can get if a tag invalidation is ever missed.
-const REVALIDATE = 300;
+// Public, tenant-scoped reads are memoized only within one server render.
+// Cloud Run instances do not share Next's local data cache or invalidations:
+// retaining rows between requests can show yesterday's prices after a save.
+// Each new request reads Postgres; React.cache deduplicates layout/page work.
+// withAnon keeps published/active RLS and store filters as the read boundary.
 
 export interface ProductCardRow {
   id: string;
@@ -117,7 +96,7 @@ export interface BlogCardRow {
   featured: boolean;
 }
 
-export const getPublishedProducts = unstable_cache(
+export const getPublishedProducts = cache(
   async (storeId: string): Promise<ProductCardRow[]> => {
     try {
       return await withAnon(async (db) => {
@@ -146,7 +125,7 @@ export const getPublishedProducts = unstable_cache(
             low_stock_threshold: products.lowStockThreshold,
             allow_backorder: products.allowBackorder,
             // Sitemap lastmod. Selected here rather than in a separate query so
-            // it rides the existing unstable_cache read and costs nothing.
+            // it rides the existing product read.
             content_updated_at: products.contentUpdatedAt,
             created_at: products.createdAt,
             category: categories.name,
@@ -204,13 +183,9 @@ export const getPublishedProducts = unstable_cache(
       return [];
     }
   },
-  // v2: rows gained created_at; a new key keeps an older cached entry (which
-  // lacks it) from being served after a deploy.
-  ["storefront-published-products-v2"],
-  { tags: [TAGS.products], revalidate: REVALIDATE },
 );
 
-export const getActiveCategories = unstable_cache(
+export const getActiveCategories = cache(
   async (storeId: string): Promise<CategoryRow[]> => {
     try {
       return await withAnon((db) =>
@@ -240,12 +215,9 @@ export const getActiveCategories = unstable_cache(
       return [];
     }
   },
-  // v2: rows gained description (see storefront-published-products-v2).
-  ["storefront-active-categories-v2"],
-  { tags: [TAGS.categories], revalidate: REVALIDATE },
 );
 
-export const getPublishedBlogCards = unstable_cache(
+export const getPublishedBlogCards = cache(
   async (storeId: string): Promise<BlogCardRow[]> => {
     try {
       // Crucially excludes `content` (full article HTML), which the
@@ -279,13 +251,11 @@ export const getPublishedBlogCards = unstable_cache(
       return [];
     }
   },
-  ["storefront-published-blog-cards"],
-  { tags: [TAGS.blogs], revalidate: REVALIDATE },
 );
 
 // Category/tag OPTIONS offered by the customer write editor (names only — the
 // storefront never needs row ids). Managed per store in /dashboard/blogs/settings.
-export const getBlogTaxonomyNames = unstable_cache(
+export const getBlogTaxonomyNames = cache(
   async (
     storeId: string,
   ): Promise<{ categories: string[]; tags: string[] }> => {
@@ -314,8 +284,6 @@ export const getBlogTaxonomyNames = unstable_cache(
       return { categories: [], tags: [] };
     }
   },
-  ["storefront-blog-taxonomy"],
-  { tags: [TAGS.blogTaxonomy], revalidate: REVALIDATE },
 );
 
 // A published store_pages row for the storefront. Selects NAMED columns only
@@ -332,7 +300,7 @@ export interface PublishedPage {
   published_sections: PageSectionItem[];
 }
 
-export const getPublishedPage = unstable_cache(
+export const getPublishedPage = cache(
   async (storeId: string, slug: string): Promise<PublishedPage | null> => {
     try {
       const rows = await withAnon((db) =>
@@ -361,14 +329,12 @@ export const getPublishedPage = unstable_cache(
       return null;
     }
   },
-  ["storefront-store-page"],
-  { tags: [TAGS.pages], revalidate: REVALIDATE },
 );
 
 // Per-store navigation (header + footer). Returns normalized menus, falling
 // back to DEFAULT_MENUS for any store without a row (or empty fields). Consumed
 // by the storefront layout → MenuProvider → Header/Footer.
-export const getStoreMenus = unstable_cache(
+export const getStoreMenus = cache(
   async (storeId: string): Promise<StoreMenus> => {
     try {
       const rows = await withAnon((db) =>
@@ -387,14 +353,12 @@ export const getStoreMenus = unstable_cache(
       return normalizeMenus(null);
     }
   },
-  ["storefront-store-menus"],
-  { tags: [TAGS.menus], revalidate: REVALIDATE },
 );
 
 // Per-store tax classes (named rate buckets), sorted for display. Read by the
 // storefront/checkout to resolve a product's tax rate and by the invoice
 // renderer. Empty when the store has none / the table is missing.
-export const getStoreTaxClasses = unstable_cache(
+export const getStoreTaxClasses = cache(
   async (storeId: string): Promise<TaxClass[]> => {
     try {
       const rows = await withAnon((db) =>
@@ -414,13 +378,11 @@ export const getStoreTaxClasses = unstable_cache(
       return [];
     }
   },
-  ["storefront-tax-classes"],
-  { tags: [TAGS.billing], revalidate: REVALIDATE },
 );
 
 // Per-store billing + invoice settings. Falls back to DEFAULT_BILLING_SETTINGS
 // for a store with no row (tax off, generic invoice), so callers never null-check.
-export const getStoreBillingSettings = unstable_cache(
+export const getStoreBillingSettings = cache(
   async (storeId: string): Promise<BillingSettings> => {
     try {
       const rows = await withAnon((db) =>
@@ -453,12 +415,10 @@ export const getStoreBillingSettings = unstable_cache(
       return rowToBillingSettings(null);
     }
   },
-  ["storefront-billing-settings"],
-  { tags: [TAGS.billing], revalidate: REVALIDATE },
 );
 
 // Published page slugs for the current store — used by the sitemap.
-export const getPublishedPageSlugs = unstable_cache(
+export const getPublishedPageSlugs = cache(
   async (
     storeId: string,
   ): Promise<
@@ -496,6 +456,4 @@ export const getPublishedPageSlugs = unstable_cache(
       return [];
     }
   },
-  ["storefront-store-page-slugs"],
-  { tags: [TAGS.pages], revalidate: REVALIDATE },
 );

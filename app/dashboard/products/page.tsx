@@ -113,6 +113,13 @@ export interface Product {
   variants: ProductVariant[];
 }
 
+export type ProductListItem = Omit<Product, "variants"> & {
+  variants: Pick<
+    ProductVariant,
+    "id" | "base_price" | "selling_price" | "special_price" | "sort_order"
+  >[];
+};
+
 export interface CategoryOption {
   id: string;
   name: string;
@@ -173,7 +180,7 @@ export default async function ProductsPage({
   }
   const whereExpr = and(...conds);
 
-  let list: Product[];
+  let list: ProductListItem[];
   let total: number;
   let counts: ProductCounts;
   let categoryOptions: CategoryOption[];
@@ -226,15 +233,18 @@ export default async function ProductsPage({
         .where(eq(categories.storeId, storeId))
         .orderBy(asc(categories.sortOrder), asc(categories.name));
 
-      // The list view only shows a variant COUNT (editing re-fetches the full
-      // product + variants via /dashboard/products/[id]), so pull just variant
-      // ids for the products on this page.
+      // Fetch pricing as well as IDs so the list and storefront price the same
+      // default variant. The editor loads the remaining fields separately.
       const pageIds = rows.map((r) => r.id);
       const variantIds = pageIds.length
         ? await db
             .select({
               id: productVariants.id,
               product_id: productVariants.productId,
+              base_price: productVariants.basePrice,
+              selling_price: productVariants.sellingPrice,
+              special_price: productVariants.specialPrice,
+              sort_order: productVariants.sortOrder,
             })
             .from(productVariants)
             .where(inArray(productVariants.productId, pageIds))
@@ -251,23 +261,34 @@ export default async function ProductsPage({
       };
     });
 
-    const variantsByProduct = new Map<string, { id: string }[]>();
+    const variantsByProduct = new Map<
+      string,
+      Pick<
+        ProductVariant,
+        "id" | "base_price" | "selling_price" | "special_price" | "sort_order"
+      >[]
+    >();
     for (const v of result.variantIds) {
-      const listForProduct = variantsByProduct.get(v.product_id) ?? [];
-      listForProduct.push({ id: v.id });
-      variantsByProduct.set(v.product_id, listForProduct);
+      const { product_id, ...variant } = v;
+      const listForProduct = variantsByProduct.get(product_id) ?? [];
+      listForProduct.push(variant);
+      variantsByProduct.set(product_id, listForProduct);
     }
 
     list = result.rows.map((row) => {
       const { cat_id, cat_name, cat_slug, ...productFields } = row;
       return {
         ...productFields,
+        status:
+          row.status === "published"
+            ? ("published" as const)
+            : ("draft" as const),
         category: cat_id
           ? { id: cat_id, name: cat_name!, slug: cat_slug! }
           : null,
         variants: variantsByProduct.get(row.id) ?? [],
       };
-    }) as unknown as Product[];
+    });
     total = result.total;
     missingCostCount = result.missingCostCount;
 

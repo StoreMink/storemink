@@ -620,6 +620,13 @@ gateway flow after OTP. POS Sales now includes completed website pickups at the
 current shop and its receipt view shows customer, source, completion, line,
 total and tender detail.
 
+**Register catalogue presentation, 2026-10-05.** Sell and the layout editor
+use bounded portrait cards that contain the full product photograph at phone,
+tablet and desktop widths. Prices, stock labels and the Products/Cart phone
+panes remain visible. Single-variant product Pricing edits update the sellable
+variant; multiple variants retain their own prices. PS-MD.6 covers this display
+and price consistency follow-through.
+
 **Mobile register layout, shipped 2026-08-31.** Sell no longer forces the
 desktop's fixed 360px cart beside the catalogue on a phone or portrait tablet.
 Below 1024px, Products and Cart are full-width switchable panes; the product

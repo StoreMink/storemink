@@ -3,24 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MINK_ACTION_TOOLS } from "./product-action-types";
 
-/**
- * The DATABASE's tool vocabulary and the APPLICATION's registry must agree.
- *
- * ★★ THEY DID NOT, AND THE CONSEQUENCE WAS SILENT. `MINK_ACTION_TOOLS` is what
- * `app/actions/mink-operator-actions.ts` upserts when an operator presses
- * Enable Mink AI, and Phase 9B added `apply_storefront_layout` to four database
- * allowlists and to nothing here. So a store enabled AFTER that migration got
- * no `apply_storefront_layout` row at all and every layout save was refused,
- * and a store disabled and re-enabled lost the gate permanently — Disable
- * clears every row for the store, Enable only re-writes the registry's.
- * Neither failure raises anything: `assertToolEnabled` simply reports that
- * support has not enabled the feature, which is indistinguishable from an
- * operator decision.
- *
- * ⚠ `unified-access.postgres.test.ts` already asserts this against a real
- * database — and is OPT-IN, so it is skipped in every ordinary run. This is the
- * same assertion with no credentials, which is why it catches the omission.
- */
+/** Keep the application vocabulary, DB allowlist and automatic provisioning
+ * aligned: a missing provisioned tool silently refuses proposals in new stores. */
 const SQL_DIR = join(process.cwd(), "drizzle", "migrations", "sql");
 const CONSTRAINT = "mink_action_tool_access_name_check";
 
@@ -46,9 +30,26 @@ function latestAllowlist(): string[] {
 
 describe("Mink action-tool registry", () => {
   it("matches the database's own tool allowlist exactly", () => {
-    // Set-equal in BOTH directions: a tool in the database and not here is a
-    // gate the operator switch can never turn on, and one here and not in the
-    // database is an approval insert the database will refuse at runtime.
+    // Unknown names fail at approval time; missing names deny store access.
     expect([...MINK_ACTION_TOOLS].sort()).toEqual(latestAllowlist().sort());
+  });
+  it("provisions every registered tool for existing and new stores", () => {
+    const files = readdirSync(SQL_DIR)
+      .filter((name) => name.endsWith(".sql"))
+      .sort();
+    const sql = files
+      .map((name) => readFileSync(join(SQL_DIR, name), "utf8"))
+      .filter((text) =>
+        /CREATE (?:OR REPLACE )?FUNCTION public.enable_store_mink_access/.test(
+          text,
+        ),
+      )
+      .at(-1);
+    expect(sql).toBeDefined();
+    const array = sql!.match(
+      /FROM unnest\(ARRAY\[([\s\S]*?)\]::text\[\]\)/,
+    )![1];
+    const tools = [...array.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+    expect(tools.sort()).toEqual([...MINK_ACTION_TOOLS].sort());
   });
 });

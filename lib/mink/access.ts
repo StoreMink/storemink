@@ -1,59 +1,28 @@
 import "server-only";
-
-import { eq } from "drizzle-orm";
-import { minkStoreAccess } from "@/drizzle/schema";
-import { withService, type Db } from "@/lib/db/client";
-import { MinkRequestError } from "./errors";
+import type { Db } from "@/lib/db/client";
 
 export interface MinkStoreAccessState {
   enabled: boolean;
   draftingEnabled: boolean;
 }
 
-/** Fail-closed beta eligibility read. The environment flag remains the global kill switch. */
+// Compatibility entry points for actor and worker callers. Store invitations
+// no longer determine availability; authentication and staff authority still do.
 export async function getMinkStoreAccess(
-  storeId: string,
-  existingDb?: Db,
+  _storeId: string,
+  _existingDb?: Db,
 ): Promise<MinkStoreAccessState> {
-  try {
-    const read = (db: Db) =>
-      db
-        .select({
-          enabled: minkStoreAccess.enabled,
-          draftingEnabled: minkStoreAccess.draftingEnabled,
-        })
-        .from(minkStoreAccess)
-        .where(eq(minkStoreAccess.storeId, storeId))
-        .limit(1);
-    const rows = await (existingDb ? read(existingDb) : withService(read));
-    return {
-      enabled: rows[0]?.enabled === true,
-      draftingEnabled:
-        rows[0]?.enabled === true && rows[0]?.draftingEnabled === true,
-    };
-  } catch (error) {
-    // A failed query aborts the shared transaction; let its owner roll back.
-    if (existingDb) throw error;
-    return { enabled: false, draftingEnabled: false };
-  }
+  void [_storeId, _existingDb];
+  return { enabled: true, draftingEnabled: true };
 }
-
-export async function isMinkStoreInvited(storeId: string): Promise<boolean> {
-  return (await getMinkStoreAccess(storeId)).enabled;
+export async function isMinkStoreInvited(_storeId: string): Promise<boolean> {
+  void _storeId;
+  return true;
 }
-
 export async function requireMinkStoreInvite(
-  storeId: string,
-  requireInvite: boolean,
+  _storeId: string,
+  _requireInvite: boolean,
 ): Promise<MinkStoreAccessState> {
-  const access = await getMinkStoreAccess(storeId);
-  if (!requireInvite) {
-    return { enabled: true, draftingEnabled: access.draftingEnabled };
-  }
-  if (access.enabled) return access;
-  throw new MinkRequestError(
-    "mink_beta_not_invited",
-    "Mink AI is currently available only to invited beta stores.",
-    403,
-  );
+  void [_storeId, _requireInvite];
+  return { enabled: true, draftingEnabled: true };
 }

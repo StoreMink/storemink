@@ -6259,6 +6259,60 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261005_0157_catalog_freshness_mink_access",
+      "description": "Automatic Mink availability for existing and new stores, catalogue price freshness and complete POS photo guidance",
+      "file": "sql/20261005_0157_catalog_freshness_mink_access.sql",
+      "transaction": true,
+      "requires": ["20261004_0156_dashboard_mobile"],
+      "verify": {
+        "functions": [
+          "enable_store_mink_access(uuid)",
+          "provision_store_mink_access()"
+        ],
+        "queries": [
+          {
+            "name": "New stores provision Mink access",
+            "sql": "select count(*)::text from pg_trigger where tgrelid='public.stores'::regclass and tgname='stores_provision_mink_access' and tgenabled='O' and not tgisinternal",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Every existing store has Mink read and drafting access",
+            "sql": "select count(*)::text from public.stores s left join public.mink_store_access a on a.store_id=s.id where a.store_id is null or not a.enabled or not a.drafting_enabled",
+            "equals": "0"
+          },
+          {
+            "name": "Every store has the complete action registry",
+            "sql": "select count(*)::text from public.stores s cross join unnest(ARRAY['apply_product_description','apply_product_seo','apply_product_images','create_product','create_coupon','update_coupon','create_customer_group','update_customer_group','create_offer','update_offer','activate_offer','adjust_inventory','bulk_adjust_inventory','transition_order_status','publish_blog','send_campaign','bulk_update_prices','apply_storefront_code','publish_storefront_code','apply_storefront_layout','apply_storefront_design','generate_media_image']::text[]) t(tool) left join public.mink_action_tool_access a on a.store_id=s.id and a.tool_name=t.tool where a.tool_name is null or not a.enabled",
+            "equals": "0"
+          },
+          {
+            "name": "Mink availability guide",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Mink AI is available in every store%'",
+            "equals": "1"
+          },
+          {
+            "name": "Single variant pricing guide",
+            "sql": "select count(*)::text from public.help_articles where slug='set-product-pricing-tax-and-shipping-details' and status='published' and body like '%changing these fields also updates that variant%'",
+            "equals": "1"
+          },
+          {
+            "name": "Complete POS photo guide",
+            "sql": "select count(*)::text from public.help_articles where slug='customize-register-and-scan-products' and status='published' and body like '%complete photo in a portrait card%'",
+            "equals": "1"
+          },
+          {
+            "name": "Obsolete Mink invitation and per-tool enablement instructions removed",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and (body like '%Stores separately enrolled in the drafting beta can ask Mink AI%' or body like '%StoreMink support must enable product-description and product-SEO actions separately for the store. These are independent kill switches on top of the Mink beta and private-drafting gates. The signed-in admin must also have%' or body like '%StoreMink support must enable each live-action tool separately. You must have%' or body like '%StoreMink controls general Mink availability and private drafting separately. Removing the invitation-only rollout requirement does not enable drafting for every store: StoreMink support must still enable the store''s drafting switch, and the signed-in admin still needs the matching Manage permission. Each live-action tool remains independently disabled until support enables it.%' or body like '%permission, and StoreMink support must enable the single-SKU inventory action separately for your store.%' or body like '%Use the separately enabled bulk workflow%' or body like '%Transfers, order-status changes, publishing, campaigns and price updates remain unavailable.%' or body like '%permission, and StoreMink support must enable <strong>Bulk inventory adjustments</strong> separately from the single-SKU action.%' or body like '%permission, drafting access and the separately enabled <strong>Delivery order-status transitions</strong> switch.%' or body like '%permission, Pro email-campaign access, drafting access, configured email delivery and the separately enabled <strong>Coupon email campaigns</strong> switch.%' or body like '%permission, drafting access and the separately enabled <strong>Bulk price updates</strong> switch.%' or body like '%and Mink drafting must be enabled for the store.%' or body like '%Publication and rollback must be switched on separately for your store by StoreMink support, and the AI model is never able to run either of them.%' or body like '%StoreMink support must separately enable <strong>Website Builder draft code saves</strong> for the store.%' or body like '%StoreMink support must separately enable <strong>Checked storefront publication and rollback</strong> for the store.%' or body like '%If drafting tools are unavailable, ask a store owner to check your Manage permission and ask StoreMink support whether the separate drafting beta is enabled.%' or body like '%Drafting does not need to be enabled.%' or body like '%when Mink generation or invitations are disabled%' or body like '%check that Mink AI is switched on for your store and that you hold%' or body like '%Draft saves and publication still need their separate permissions, enabled controls and human approvals.%' or body like '%An access or feature-disabled message is different from a hidden panel: ask your administrator to check Mink availability and your permissions.%')",
+            "equals": "0"
+          }
+        ]
+      }
     }
   ]
 }

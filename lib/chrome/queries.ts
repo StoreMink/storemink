@@ -1,13 +1,10 @@
 import "server-only";
 import { eq } from "drizzle-orm";
-import { unstable_cache } from "next/cache";
+import { cache } from "react";
 import { storeChrome, storeMenus } from "@/drizzle/schema";
 import { withAnon, withService } from "@/lib/db/client";
 import { getManagerUserId } from "@/app/dashboard/lib/access";
-import { TAGS } from "@/lib/storefront/tags";
 import { normalizeChrome, type StoreChrome } from "./types";
-
-const REVALIDATE = 300;
 
 /**
  * The PUBLISHED header + footer for a storefront render.
@@ -19,7 +16,7 @@ const REVALIDATE = 300;
  * A store with no row, or one that has never published, falls back to
  * DEFAULT_CHROME via normalizeChrome rather than rendering a bare page.
  */
-export const getStoreChrome = unstable_cache(
+export const getStoreChrome = cache(
   async (storeId: string): Promise<StoreChrome> => {
     try {
       const rows = await withAnon((db) =>
@@ -37,8 +34,6 @@ export const getStoreChrome = unstable_cache(
       return await legacyMenusAsChrome(storeId);
     }
   },
-  ["store-chrome"],
-  { tags: [TAGS.chrome], revalidate: REVALIDATE },
 );
 
 /**

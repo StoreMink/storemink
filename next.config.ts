@@ -46,6 +46,12 @@ const nextConfig: NextConfig = {
     // Next negotiates per request via the Accept header.
     formats: ["image/avif", "image/webp"],
     remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
+        port: "",
+        pathname: "/**",
+      },
       // Google Cloud Storage (media backend, GCP migration Phase 3).
       {
         protocol: "https",
