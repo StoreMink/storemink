@@ -47,6 +47,10 @@ import { motionRootClasses, revealsOnScroll } from "@/lib/themes/motion";
 import { ScrollReveal } from "@/app/(storefront)/components/scroll-reveal";
 import { typographyRootClasses } from "@/lib/themes/typography";
 import "./storefront-theme.css";
+import { StorefrontRefresh } from "./components/storefront-refresh";
+
+// Storefront requests always read current tenant content across Cloud Run instances.
+export const dynamic = "force-dynamic";
 
 // Per-store default title/template + canonical origin. Individual pages may set
 // their own title; this is the fallback and the "%s | Brand" suffix, and
@@ -256,6 +260,7 @@ export default async function StorefrontLayout({
               >
                 <div className={rootClass} style={themeVars as CSSProperties}>
                   <Header />
+                  <StorefrontRefresh />
                   {children}
                   <Footer />
                 </div>

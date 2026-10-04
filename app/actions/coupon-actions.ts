@@ -1,7 +1,9 @@
 "use server";
 
+import { cache } from "react";
+
 import { and, eq, inArray, ne } from "drizzle-orm";
-import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import {
   withAnon,
   withService,
@@ -655,14 +657,8 @@ export interface AvailableCoupon {
   min_order_amount: number;
 }
 
-// Cached, cookieless read of a store's shopper-visible coupons. Runs in the
-// anonymous scope (only ACTIVE coupons are anon-readable via RLS, and we
-// return no admin-only columns), so it is safe to serve from a shared cache.
-// Keyed by (storeId, showAll) — each store + toggle state gets its own entry —
-// and tagged TAGS.coupons so any coupon create/edit/delete/visibility change
-// (revalidateCoupons) busts it. Called from CouponField on mount; caching keeps
-// that from hitting the DB on every page load.
-const getStorefrontCouponsCached = unstable_cache(
+// Cookieless published coupons/offers, deduplicated within this request only.
+const getStorefrontCouponsCached = cache(
   async (storeId: string, showAll: boolean): Promise<AvailableCoupon[]> => {
     const conds = [eq(coupons.storeId, storeId), eq(coupons.status, "active")];
     if (!showAll) {
@@ -824,8 +820,6 @@ const getStorefrontCouponsCached = unstable_cache(
 
     return couponEntries;
   },
-  ["storefront-available-coupons"],
-  { tags: [TAGS.coupons, TAGS.offers], revalidate: 300 },
 );
 
 export async function getAvailableStorefrontCoupons(): Promise<

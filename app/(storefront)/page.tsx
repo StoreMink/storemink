@@ -26,9 +26,8 @@ import { getStoreSetting } from "@/lib/settings/resolve";
 // same section model, same draft → publish flow, same preview. The hero is just
 // a custom_code section, so it's fully editable too. See CODEBASE.md §11.
 //
-// Storefront reads are cached per store (unstable_cache); the route stays
-// dynamic only because requireStorefrontStoreId reads headers().
-export const revalidate = 300;
+// The storefront layout renders dynamically; reads are deduplicated only
+// within this request so published dashboard changes appear immediately.
 
 const HOME_SLUG = "";
 

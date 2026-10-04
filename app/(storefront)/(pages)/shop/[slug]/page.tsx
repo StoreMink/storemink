@@ -29,10 +29,8 @@ import type { RelatedProduct } from "./related-products";
 import type { ProductReview } from "./reviews-section";
 import "../shop.css";
 
-// ISR: the page render (product + related + reviews) is cached and served
-// statically, revalidated periodically and on-demand via revalidatePath(slug)
-// in product/review actions. Popular slugs are prerendered at build below.
-export const revalidate = 300;
+// The storefront layout renders dynamically so saved catalogue changes appear
+// on the next request; there is no persistent product-page cache.
 
 type PageProps = {
   params: Promise<{ slug: string }>;

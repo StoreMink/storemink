@@ -76,7 +76,7 @@ describe("store host cache", () => {
     expect(H.selects).toBe(2);
   });
 
-  it("still caches a positive store resolution", async () => {
+  it("reads changed store settings on the next request", async () => {
     H.rows = [
       {
         id: "store-1",
@@ -90,8 +90,9 @@ describe("store host cache", () => {
       },
     ];
 
-    expect((await getCurrentStoreOrNull())?.id).toBe("store-1");
-    expect((await getCurrentStoreOrNull())?.id).toBe("store-1");
-    expect(H.selects).toBe(1);
+    expect((await getCurrentStoreOrNull())?.name).toBe("New Shop");
+    H.rows = [{ ...H.rows[0], name: "Updated Shop" }];
+    expect((await getCurrentStoreOrNull())?.name).toBe("Updated Shop");
+    expect(H.selects).toBe(2);
   });
 });

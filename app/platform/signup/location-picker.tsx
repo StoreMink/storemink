@@ -11,9 +11,10 @@
 //     finish signing up. Everything Google-shaped here is progressive
 //     enhancement layered on top of a plain form that already works.
 //
-//  2. "USE MY CURRENT LOCATION" IS FREE AND KEYLESS. It's the browser's own
-//     Geolocation API — no vendor, no key, no billing. It works even when the
-//     map doesn't, which is why it isn't gated behind the map loading.
+//  2. DEVICE LOCATION DOES NOT DEPEND ON THE MAP. Browser geolocation needs
+//     permission but no vendor key. Street/PIN suggestions use the configured
+//     Google geocoder; a keyless locality lookup keeps the button useful when
+//     the map is unavailable. Every suggestion remains editable.
 //
 // The Google Maps JS API is injected by hand rather than via a package: it's a
 // single <script> with a callback, and the repo's convention is to skip an SDK
@@ -28,22 +29,13 @@ const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 /** Where the pin starts when we have nothing better: centre of India. */
 const FALLBACK_CENTRE = { lat: 20.5937, lng: 78.9629 };
 
-export interface PickedLocation {
-  lat: number | null;
-  lng: number | null;
-  /** Formatted address from the geocoder, when one was resolved. */
-  address: string;
-  /** Street/building resolved by Google. Keyless geocoding leaves it blank. */
-  addressLine1: string;
-  /** Locality, used to fill the City field. */
-  city: string;
-  /** State, province or region. */
-  state: string;
-  /** Postal/PIN code, when the geocoder returned one. */
-  postalCode: string;
-  /** ISO-2, used to fill the Country select. */
-  countryCode: string;
-}
+export type { PickedLocation } from "./location-address";
+import {
+  googleAddress,
+  locationNotice,
+  type PickedLocation,
+  type GoogleAddressResult,
+} from "./location-address";
 
 interface ClientGeocodeResult {
   city?: string;
@@ -76,6 +68,7 @@ async function describeCurrentLocation(
   });
   const response = await fetch(
     `https://api.bigdatacloud.net/data/reverse-geocode-client?${params}`,
+    { signal: AbortSignal.timeout(8000) },
   );
   if (!response.ok) throw new Error("reverse geocoding failed");
   const result = (await response.json()) as ClientGeocodeResult;
@@ -100,7 +93,7 @@ async function describeCurrentLocation(
 declare global {
   interface Window {
     google?: any;
-    __smMapsReady?: boolean;
+    __smSignupMapsLoaded?: () => void;
   }
 }
 
@@ -109,19 +102,31 @@ let scriptPromise: Promise<void> | null = null;
 /** Load the Maps script once per page, whatever how many components ask. */
 function loadMaps(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
-  if (window.google?.maps) return Promise.resolve();
+  if (window.google?.maps?.Geocoder && window.google?.maps?.Map)
+    return Promise.resolve();
   if (scriptPromise) return scriptPromise;
 
   scriptPromise = new Promise<void>((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(
-      MAPS_KEY,
-    )}&libraries=places&loading=async`;
+    const timeout = window.setTimeout(() => fail(), 10000);
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      delete window.__smSignupMapsLoaded;
+    };
+    const fail = () => {
+      cleanup();
+      script.remove();
+      scriptPromise = null;
+      reject(new Error("maps script failed to load"));
+    };
+    window.__smSignupMapsLoaded = () => {
+      cleanup();
+      resolve();
+    };
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(MAPS_KEY)}&loading=async&callback=__smSignupMapsLoaded`;
     script.async = true;
-    script.onload = () => resolve();
-    // A rejected key, a referrer restriction, or an ad blocker all land here.
-    // Rejecting lets the caller fall back to the plain form instead of hanging.
-    script.onerror = () => reject(new Error("maps script failed to load"));
+    // With loading=async, script.onload fires before the Maps API is ready.
+    script.onerror = fail;
     document.head.appendChild(script);
   });
   return scriptPromise;
@@ -149,89 +154,74 @@ export function LocationPicker({
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
-  /** Reverse-geocode a pin into an address + city + country, best-effort. */
-  const describe = useCallback(async (lat: number, lng: number) => {
-    if (!geocoder.current) {
-      try {
-        const place = await describeCurrentLocation(lat, lng);
-        onChangeRef.current({ lat, lng, ...place });
-        setGeoError("");
-      } catch {
-        onChangeRef.current({
-          lat,
-          lng,
-          address: "",
-          addressLine1: "",
-          city: "",
-          state: "",
-          postalCode: "",
-          countryCode: "",
-        });
-        setGeoError(
-          "We found your coordinates but couldn't identify the city. Please type it below.",
-        );
+  const requestSequence = useRef(0);
+  /** Resolve the address independently of map rendering, then fill known fields. */
+  const describe = useCallback(
+    async (lat: number, lng: number, currentDevice = false) => {
+      const request = ++requestSequence.current;
+      let place: PickedLocation = {
+        lat,
+        lng,
+        address: "",
+        addressLine1: "",
+        addressLine2: "",
+        city: "",
+        state: "",
+        postalCode: "",
+        countryCode: "",
+      };
+      if (MAPS_KEY) {
+        try {
+          await loadMaps();
+          geocoder.current ??= new window.google.maps.Geocoder();
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          const results = await new Promise<GoogleAddressResult[]>(
+            (resolve, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error("geocoder timed out")),
+                8000,
+              );
+              geocoder.current.geocode(
+                { location: { lat, lng } },
+                (results: GoogleAddressResult[], status: string) => {
+                  clearTimeout(timeout);
+                  if (status === "OK" && results?.length) resolve(results);
+                  else reject(new Error("geocoder unavailable"));
+                },
+              );
+            },
+          ).finally(() => clearTimeout(timeout));
+          place = { lat, lng, ...googleAddress(results) };
+        } catch {
+          /* Continue with current-device locality suggestions below. */
+        }
       }
-      return;
-    }
-    await new Promise<void>((resolve) => {
-      geocoder.current.geocode(
-        { location: { lat, lng } },
-        async (results: any[], status: string) => {
-          if (status !== "OK" || !results?.length) {
-            try {
-              const place = await describeCurrentLocation(lat, lng);
-              onChangeRef.current({ lat, lng, ...place });
-              setGeoError("");
-            } catch {
-              onChangeRef.current({
-                lat,
-                lng,
-                address: "",
-                addressLine1: "",
-                city: "",
-                state: "",
-                postalCode: "",
-                countryCode: "",
-              });
-            }
-            resolve();
-            return;
-          }
-          const best = results[0];
-          const parts: any[] = best.address_components ?? [];
-          const find = (type: string) =>
-            parts.find((c) => c.types?.includes(type));
-          const street = [
-            find("street_number")?.long_name,
-            find("route")?.long_name,
-          ]
-            .filter(Boolean)
-            .join(" ");
-          const premise = String(
-            find("premise")?.long_name ?? find("subpremise")?.long_name ?? "",
-          );
-          onChangeRef.current({
-            lat,
-            lng,
-            address: String(best.formatted_address ?? ""),
-            addressLine1: [premise, street].filter(Boolean).join(", "),
-            city: String(
-              find("locality")?.long_name ??
-                find("postal_town")?.long_name ??
-                find("administrative_area_level_2")?.long_name ??
-                find("administrative_area_level_1")?.long_name ??
-                "",
-            ),
-            state: String(find("administrative_area_level_1")?.long_name ?? ""),
-            postalCode: String(find("postal_code")?.long_name ?? ""),
-            countryCode: String(find("country")?.short_name ?? ""),
-          });
-          setGeoError("");
-          resolve();
-        },
-      );
-    });
-  }, []);
+      // The free client endpoint only permits the device's actual location;
+      // a clicked/dragged map pin must never be sent to it.
+      if (
+        currentDevice &&
+        (!place.city || !place.state || !place.postalCode || !place.countryCode)
+      ) {
+        try {
+          const locality = await describeCurrentLocation(lat, lng);
+          place = {
+            ...place,
+            city: place.city || locality.city,
+            state: place.state || locality.state,
+            postalCode: place.postalCode || locality.postalCode,
+            countryCode: place.countryCode || locality.countryCode,
+            address: place.address || locality.address,
+          };
+        } catch {
+          /* Keep any Google fields, and leave unresolved values editable. */
+        }
+      }
+      if (request !== requestSequence.current) return;
+      onChangeRef.current(place);
+      setGeoError(locationNotice(place));
+    },
+    [],
+  );
 
   // Build the map once the script is in.
   useEffect(() => {
@@ -302,7 +292,7 @@ export function LocationPicker({
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
-        await describe(pos.coords.latitude, pos.coords.longitude);
+        await describe(pos.coords.latitude, pos.coords.longitude, true);
         setLocating(false);
       },
       (err) => {
@@ -333,7 +323,11 @@ export function LocationPicker({
         {locating ? "Finding you…" : "Use my current location"}
       </button>
 
-      {geoError && <p className="text-sm text-amber-700">{geoError}</p>}
+      {geoError && (
+        <p role="status" className="text-sm text-gray-600">
+          {geoError}
+        </p>
+      )}
 
       {mapState !== "off" && (
         <div className="relative h-56 overflow-hidden rounded-xl border border-gray-200 bg-gray-50">

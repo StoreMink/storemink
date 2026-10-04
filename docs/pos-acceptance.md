@@ -4314,3 +4314,13 @@ Shared-table and existing inventory regression tests cover column mapping,
 selection/action propagation and aggregate/shelf behavior. Browser layout QA
 uses isolated fixtures and the actual components/styles; this is not evidence
 of authenticated production lifecycle acceptance on a physical phone.
+
+**PS-MD.6 — Complete catalogue photos and consistent prices.** At 320px, 390px,
+768px and a desktop till, open Sell with portrait and landscape product photos.
+The complete photo fits each card without cropping; name, price and stock stay
+readable. Open Edit layout and the option picker: their photos also fit. Add an
+item, switch Products/Cart on a phone and verify totals. Change a one-variant
+product selling price in dashboard Pricing: the saved variant, storefront and
+next POS sync agree. A multiple-variant product keeps independent option prices,
+and a special variant price still overrides the regular selling price. Validate
+on an authenticated merchant device before release sign-off.

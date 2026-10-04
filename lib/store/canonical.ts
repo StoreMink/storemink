@@ -15,12 +15,9 @@ import "server-only";
 // lapsed Pro plan could keep redirecting to a domain `lookupStoreByHost` has
 // stopped serving. Only the FETCH is local; the judgement is borrowed.
 //
-// ★ WHY A HAND-ROLLED CACHE. `lookupStoreByHost` is wrapped in `unstable_cache`,
-// which needs a render scope and is unavailable in proxy middleware. Rather than
-// pay a database round-trip on every storefront request — the one path this
-// codebase deliberately keeps free of per-request work — the mapping is held in
-// process for a short TTL. Being briefly stale is harmless: the worst case is a
-// newly-verified domain not being redirected to for up to a minute.
+// Canonical redirects use a short process-local cache to avoid a second lookup
+// in proxy middleware. Storefront rendering reads current settings separately
+// on every request; this TTL only affects a newly verified domain's redirect.
 // ---------------------------------------------------------------------------
 
 import { and, eq } from "drizzle-orm";
