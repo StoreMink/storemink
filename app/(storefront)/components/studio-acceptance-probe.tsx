@@ -64,6 +64,33 @@ function violationExamples(violation: AxeResult) {
   return examples;
 }
 
+function contrastMeasurements(violation: AxeResult) {
+  if (violation.id !== "color-contrast") return [];
+  return violation.nodes.slice(0, 40).flatMap((node) =>
+    (node.any ?? []).flatMap((check) => {
+      if (check.id !== "color-contrast") return [];
+      const data = check.data as {
+        contrastRatio?: unknown;
+        expectedContrastRatio?: unknown;
+      } | null;
+      const ratio = Number(data?.contrastRatio);
+      const required = Number(
+        String(data?.expectedContrastRatio ?? "").replace(/:1$/, ""),
+      );
+      const target = String(node.target[0] ?? "").slice(-180);
+      return target &&
+        Number.isFinite(ratio) &&
+        ratio >= 1 &&
+        ratio <= 21 &&
+        Number.isFinite(required) &&
+        required >= 1 &&
+        required <= 21
+        ? [{ target, ratio, required }]
+        : [];
+    }),
+  );
+}
+
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<void> {
   await Promise.race([promise.then(() => undefined), sleep(ms)]);
 }
@@ -429,6 +456,7 @@ async function measure(perf: { lcp: number | null; cls: number }) {
       // Include axe's measured colours and ratio, not just the generic rule
       // name. Both automatic and operator repair use this same evidence.
       examples: violationExamples(violation),
+      contrast: contrastMeasurements(violation),
     })),
     lcpMs: perf.lcp === null ? null : Math.round(perf.lcp),
     cls: Math.round(perf.cls * 10_000) / 10_000,

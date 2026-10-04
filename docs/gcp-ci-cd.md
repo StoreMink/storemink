@@ -60,6 +60,24 @@ merge `staging` to `main` (auto-deploys prod).
 
 ## Release gate: schema before application
 
+**Theme Studio worker release (local changes, 4 October 2026):** after web
+deployment, `cloudbuild.yaml` deploys private generation and QA services from
+the serving image digest and acceptance build ID, then updates the Chromium
+capture job. Both workers use the runtime service account, two CPUs, 2 GiB,
+request concurrency one, maximum two instances and a single DB connection per
+instance. Merchant/payment/admin credentials are excluded. This uses existing
+Run deployment permissions; first scheduler routing additionally needs
+Scheduler administration and is deliberately separate from ordinary CI.
+
+Read [worker rollout and capacity gate](theme-studio-worker-rollout.md) before
+activating schedules. Current prod/dev web ceilings plus the planned workers
+total 34 steady connections. Routing reserves old/new revision overlap (68)
+plus five spare. Verify actual SQL capacity;
+this change does not upgrade the database or reduce merchant web capacity.
+Unrouted workers have minimum zero and do not claim work on their own. Local
+tests do not establish live timing, memory or quality; repeat the eight-theme
+benchmark after routing.
+
 Cloud Build deploys application images; it does **not** own database DDL. A
 `staging` → `main` promotion is allowed only after the checksummed runner in
 [`drizzle/manual/README.md`](../drizzle/manual/README.md) is green.

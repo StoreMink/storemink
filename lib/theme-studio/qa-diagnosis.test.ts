@@ -26,6 +26,30 @@ const scores = {
   brandAdaptability: 4,
 };
 describe("QA diagnosis and progress", () => {
+  const contrast = (ratio: number) =>
+    qaProgress([
+      gate("browser.accessibility", [
+        {
+          code: "color-contrast",
+          where: "phone360 · home",
+          message:
+            "Colour contrast (12 elements, serious) — first: .shop-card-base",
+          contrast: [{ target: ".shop-card-base", ratio, required: 4.5 }],
+        },
+      ]),
+    ]);
+  it("recognises 2.71 to 4.39 contrast repair progress while keeping the 4.5 gate", () => {
+    expect(qaImproved(contrast(4.39), contrast(2.71))).toBe(true);
+    expect(contrast(4.39).patterns).toHaveLength(1);
+    expect(qaImproved(contrast(2.71), contrast(4.39))).toBe(false);
+    expect(qaImproved(contrast(4.4), contrast(4.39))).toBe(false);
+    expect(
+      qaImproved(contrast(4.39), {
+        ...contrast(2.71),
+        contrastDeficits: undefined,
+      }),
+    ).toBe(false);
+  });
   it("routes hit areas to the renderer, contrast and image frames to settings", () => {
     const r = deterministicRepairs([
       gate("browser.tap_targets", [
@@ -46,6 +70,19 @@ describe("QA diagnosis and progress", () => {
       "renderer",
     ]);
     expect(r.some((x) => x.kind === "image")).toBe(false);
+  });
+  it("does not let improved contrast conceal a worsened crop", () => {
+    const before = {
+      ...contrast(2.71),
+      severity: 20,
+      patternSeverity: { contrast: 12, crop: 8 },
+    };
+    const after = {
+      ...contrast(4.39),
+      severity: 20,
+      patternSeverity: { contrast: 11, crop: 9 },
+    };
+    expect(qaImproved(after, before)).toBe(false);
   });
   it("stops unchanged or worse frames, allows a meaningful improvement", () => {
     const p = qaProgress(crop(24));

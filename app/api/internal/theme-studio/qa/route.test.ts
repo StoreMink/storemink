@@ -28,6 +28,15 @@ describe("independent QA worker", () => {
     expect((await POST(request("secret"))).status).toBe(200);
     expect(runQa).toHaveBeenCalledTimes(2);
   });
+  it("runs one QA lane per isolated request and refuses the other role", async () => {
+    vi.stubEnv("THEME_STUDIO_WORKER_ONLY", "true");
+    vi.stubEnv("THEME_STUDIO_WORKER_ROLE", "qa");
+    expect((await POST(request("secret"))).status).toBe(200);
+    expect(runQa).toHaveBeenCalledOnce();
+    vi.stubEnv("THEME_STUDIO_WORKER_ROLE", "generation");
+    expect((await POST(request("secret"))).status).toBe(404);
+    expect(runQa).toHaveBeenCalledOnce();
+  });
   it("does not abandon the other lane on failure", async () => {
     let finish!: () => void;
     runQa

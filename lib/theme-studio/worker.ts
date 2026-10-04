@@ -78,6 +78,8 @@ import {
   queueAutomaticCapture,
 } from "./automatic-work";
 import { createImageCheckpointStore } from "./image-checkpoint-store";
+import { startWorkerLease, WORKER_LEASE_SECONDS } from "./worker-lease";
+import { renewStudioLease } from "./worker-lease-store";
 import {
   IMAGE_CRASH_ATTEMPTS,
   ImageCheckpointError,
@@ -106,7 +108,7 @@ import {
 // brief, a reference, or model output (Phase 0 threat model).
 // ---------------------------------------------------------------------------
 
-const LEASE_SECONDS = THEME_STUDIO_LIMITS.runWallTimeSeconds;
+const LEASE_SECONDS = WORKER_LEASE_SECONDS;
 
 export interface ThemeStudioWorkerResult {
   claimed: number;
@@ -195,6 +197,7 @@ async function claimRun(
   db: Db,
   workerId: string,
   providers: readonly ThemeStudioProvider[],
+  remainingMs = RUN_DEADLINE_MS,
 ): Promise<ClaimedRun | null> {
   const providerList = sql.join(
     providers.map((p) => sql`${p}`),
@@ -208,6 +211,7 @@ async function claimRun(
     ), candidate AS (
       SELECT id FROM theme_studio_runs CROSS JOIN protocol
       WHERE provider IN (${providerList})
+        AND (${remainingMs}::int >= 600000 OR kind='images' OR (kind='revise' AND automatic))
         AND ((status = 'queued' AND cancel_requested_at IS NULL
               AND (retry_not_before IS NULL OR retry_not_before <= now()))
          OR (status = 'running' AND lease_expires_at <= now()
@@ -845,6 +849,8 @@ function imageReviewerFor(provider: string): ThemeImageReviewer | null {
 async function executeImages(
   run: ClaimedRun,
   workerId: string,
+  leaseSignal: AbortSignal,
+  deadlineAt?: number,
 ): Promise<Outcome> {
   if (!getThemeStudioConfig().generationEnabled) {
     return { kind: "failed", errorCode: "generation_disabled" };
@@ -870,7 +876,16 @@ async function executeImages(
     only || hasFinishedArt ? await loadImageSeed(run, input.package) : null;
 
   const controller = new AbortController();
-  const deadline = setTimeout(() => controller.abort(), RUN_DEADLINE_MS);
+  const signal = AbortSignal.any([controller.signal, leaseSignal]);
+  const deadline = setTimeout(
+    () => controller.abort(),
+    Math.min(
+      RUN_DEADLINE_MS,
+      deadlineAt
+        ? Math.max(1, deadlineAt - Date.now() - 15_000)
+        : RUN_DEADLINE_MS,
+    ),
+  );
   const poll = setInterval(() => {
     void cancelRequested(run.id)
       .then((yes) => {
@@ -896,7 +911,7 @@ async function executeImages(
         ...(only ? { only } : {}),
         seed: reuse?.seed ?? null,
       },
-      controller.signal,
+      signal,
       {
         review: resumableImageReview(store, run.imageReviewDeferrals),
         deferUnavailableReviews: true,
@@ -918,8 +933,14 @@ async function executeImages(
   }
 }
 
-async function execute(run: ClaimedRun, workerId: string): Promise<Outcome> {
-  if (run.kind === "images") return executeImages(run, workerId);
+async function execute(
+  run: ClaimedRun,
+  workerId: string,
+  leaseSignal: AbortSignal,
+  deadlineAt?: number,
+): Promise<Outcome> {
+  if (run.kind === "images")
+    return executeImages(run, workerId, leaseSignal, deadlineAt);
   const config = getThemeStudioConfig();
   // Re-checked at execution, not only at queue time: the emergency stop and a
   // disabled model must also stop work that was already waiting.
@@ -947,11 +968,20 @@ async function execute(run: ClaimedRun, workerId: string): Promise<Outcome> {
       : null;
 
   const controller = new AbortController();
+  const signal = AbortSignal.any([controller.signal, leaseSignal]);
   let timedOut = false;
-  const deadline = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, RUN_DEADLINE_MS);
+  const deadline = setTimeout(
+    () => {
+      timedOut = true;
+      controller.abort();
+    },
+    Math.min(
+      RUN_DEADLINE_MS,
+      deadlineAt
+        ? Math.max(1, deadlineAt - Date.now() - 15_000)
+        : RUN_DEADLINE_MS,
+    ),
+  );
   // An operator's Cancel stops the provider call mid-flight rather than paying
   // for the rest of a run that will be thrown away.
   const poll = setInterval(() => {
@@ -1050,19 +1080,19 @@ async function execute(run: ClaimedRun, workerId: string): Promise<Outcome> {
           run.kind === "revise" &&
           themePromptFeatures(run.promptVersion).targetedRepair,
       },
-      controller.signal,
+      signal,
     );
-    if (controller.signal.aborted) {
+    if (signal.aborted) {
       return timedOut
-        ? { kind: "failed", errorCode: "run_timeout", detail: {} }
+        ? { kind: "retry", errorCode: "run_timeout" }
         : { kind: "generated", result, versionNumber: input.versionNumber };
     }
     return { kind: "generated", result, versionNumber: input.versionNumber };
   } catch (error) {
-    if (controller.signal.aborted) {
+    if (signal.aborted) {
       // A cancel is settled by finish(), which sees cancel_requested_at.
       return timedOut
-        ? { kind: "failed", errorCode: "run_timeout" }
+        ? { kind: "retry", errorCode: "run_timeout" }
         : { kind: "failed", errorCode: "cancelled" };
     }
     throw error;
@@ -1105,9 +1135,7 @@ async function finish(
           eq(themeStudioRuns.id, run.id),
           eq(themeStudioRuns.status, "running"),
           eq(themeStudioRuns.leaseOwner, workerId),
-          ...(run.kind === "images"
-            ? [gt(themeStudioRuns.leaseExpiresAt, sql`now()`)]
-            : []),
+          gt(themeStudioRuns.leaseExpiresAt, sql`clock_timestamp()`),
         ),
       )
       .for("update")
@@ -1178,6 +1206,11 @@ async function finish(
     }
 
     if (outcome.kind === "retry") {
+      // A deadline or renewal failure on the final claim must terminate. A
+      // queued row at maxAttempts would make its next claim violate the DB
+      // attempt constraint and could poison every scheduler invocation.
+      if (locked.attemptCount >= locked.maxAttempts)
+        return failRun(outcome.errorCode);
       await db
         .update(themeStudioRuns)
         .set({
@@ -1656,6 +1689,8 @@ export async function runThemeStudioWorker(
     providers?: readonly ThemeStudioProvider[];
     /** The dedicated route gives visual QA its own concurrent lane. */
     skipVisualQa?: boolean;
+    /** Absolute HTTP deadline, including input loading and settlement. */
+    deadlineAt?: number;
   } = {},
 ): Promise<ThemeStudioWorkerResult> {
   const maxRuns = options.maxRuns ?? 5;
@@ -1672,13 +1707,35 @@ export async function runThemeStudioWorker(
   };
   result.reaped = await withService(reapExhaustedLeases);
 
-  while (result.claimed < maxRuns && Date.now() < deadline) {
-    const run = await withService((db) => claimRun(db, workerId, providers));
+  while (
+    result.claimed < maxRuns &&
+    Date.now() < deadline &&
+    (!options.deadlineAt || Date.now() + 240_000 < options.deadlineAt)
+  ) {
+    const claimStarted = Date.now();
+    const run = await withService((db) =>
+      claimRun(
+        db,
+        workerId,
+        providers,
+        options.deadlineAt
+          ? Math.max(0, options.deadlineAt - Date.now())
+          : RUN_DEADLINE_MS,
+      ),
+    );
     if (!run) break;
     result.claimed += 1;
+    const lease = startWorkerLease(
+      () =>
+        withService((db) =>
+          renewStudioLease(db, "generation", run.id, workerId),
+        ),
+      undefined,
+      WORKER_LEASE_SECONDS * 1000 - (Date.now() - claimStarted),
+    );
     let outcome: Outcome;
     try {
-      outcome = await execute(run, workerId);
+      outcome = await execute(run, workerId, lease.signal, options.deadlineAt);
     } catch (error) {
       // Losing the lease to a reclaim is expected and already safe: the
       // variety freeze uses finish()'s own fence (running + lease owner), so
@@ -1702,7 +1759,15 @@ export async function runThemeStudioWorker(
                   : "worker_error",
             };
     }
-    const settled = await finish(workerId, run, outcome);
+    // A lost/uncertain lease must never publish even a successful paid result.
+    if (lease.signal.aborted)
+      outcome = { kind: "retry", errorCode: "lease_renewal_failed" };
+    let settled: Awaited<ReturnType<typeof finish>>;
+    try {
+      settled = await finish(workerId, run, outcome);
+    } finally {
+      await lease.stop();
+    }
     if (settled !== "lost") result[settled] += 1;
     logInfo("theme studio: run settled", {
       runId: run.id,
@@ -1710,6 +1775,7 @@ export async function runThemeStudioWorker(
       modelKey: run.modelKey,
       attempt: run.attemptCount,
       outcome: settled,
+      rssMiB: Math.ceil(process.memoryUsage().rss / 1_048_576),
     });
     // A requeued run is picked up again next pass, not in a tight loop.
     if (settled === "requeued") break;

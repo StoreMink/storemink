@@ -1,5 +1,47 @@
 # Theme Studio generation performance
 
+## Worker recovery and QA changes, local 4 October 2026
+
+Generation and QA now use renewable three-minute leases; expiry watchdogs abort
+stuck renewals, and final-claim timeouts close safely. Free generation lanes
+drain eligible work within an absolute request deadline. Private generation/QA
+services with bounded Sharp and database resources are included in Cloud Build;
+their independent scheduler peers require one-time routing and verified shared
+SQL connection capacity. Screenshot handling is sequential and preserves phone
+width, with readable review strips and required assessments of current flagged
+or unreviewed artwork. Contrast-safe shared rendering and measured contrast
+repair progress address the three failed baseline cases without relaxing gates.
+
+These are local changes, not a new production benchmark. Follow
+[worker rollout and complete validation](theme-studio-worker-rollout.md) before
+claiming lower latency or production robustness. Existing provider/model quality,
+spend limits, publication gates and saved paid checkpoints remain in force.
+
+## Complete production benchmark, 4 October 2026
+
+The deployed `theme-studio-v22` pipeline completed five of eight fresh builds as
+candidates. Successful queue-to-candidate time was 33.73–75.92 minutes, median
+68.28; only two completed without an automatic design revision. Manual cart
+checks passed on all eight drafts. Seven memory-limit events, four worker HTTP
+503s, long stage queues, contrast failures and undersized visual-review inputs
+mean the builder is not yet production-robust. Image calls retained 84 artwork
+slots, including four flagged and two unreviewed; 97 image rate-limit retry
+events were observed. Stored run cost was $16.90715, excluding final visual
+review. This is measured production evidence, not a guaranteed completion time.
+
+Six existing AI themes received full current-build acceptance: Vanta and
+Aurelle passed; Fashion, Luma, Crave and Bubble retained required failures.
+Published Luxe and bundled Vitrine received manual current-preview checks only.
+The observer had an overnight credential gap, so this was not a continuous
+eight-theme stress test. No themes were published or orders submitted.
+
+Read the [benchmark, failure analysis and fix priorities](theme-studio-live-benchmark-2026-10-04.md)
+and [sanitized metrics](../evals/theme-studio/full-live-2026-10-04.json).
+Full layout variety had median pairwise distance 0.6545 and 4/8 non-near-white
+pages, but width and hover-image choices remained identical in all eight;
+the Track V exit bar is still not passed. No merchant-visible change, no Help
+Centre update.
+
 ## Design variety, 3 October 2026
 
 The convergence issue came from preset expansion and prompt guidance:
@@ -47,8 +89,10 @@ luxury/editorial collection openings, and `true` for image-led introductions or
 briefs needing collection descriptions. This is guidance, never a forced switch
 or a rewrite of existing themes. A category photo alone does not require a
 collection banner. The final guidance has local regression coverage, but its live
-eight-case validation is pending: automatic approval review rejected another
-external-provider batch and its estimated $3 spend.
+eight-case validation was pending at that point: automatic approval review
+rejected another external-provider batch and its estimated $3 spend. The
+authorized 4 October production benchmark above subsequently tested full builds:
+collection-banner choices varied, but width and hover-image choices did not.
 
 The completed results and individual choices are recorded in
 [`evals/theme-studio/variety-live-2026-10-03.json`](../evals/theme-studio/variety-live-2026-10-03.json).
@@ -57,8 +101,9 @@ shopping chrome; neither the thresholds nor the exit criteria were relaxed to
 pass those results. Local validation passed 528 Theme Studio/workspace tests,
 five rollback-only PostgreSQL regression files, TypeScript, ESLint and migration
 checks. These are structural variety checks, not reference-fidelity or full
-storefront quality evidence. Deployment and the unpublished end-to-end benchmark
-remain required before claiming complete-theme latency or visual quality.
+storefront quality evidence. At that point deployment and the unpublished
+end-to-end benchmark remained required; the 4 October result above records
+that follow-up and its remaining failures.
 
 No merchant-visible change, no Help Centre update.
 
@@ -366,14 +411,14 @@ can pass its first final review without being counted as an initial first-pass s
 
 After release, run a complete unpublished batch against the same deployment's
 database and credentials. The explicit create mode buys provider work, creates
-four isolated themes and waits for each theme before starting the next:
+eight isolated themes with at most two unfinished at once:
 
 ```bash
-npm run theme-studio:benchmark -- --create --actor-id=<superadmin-UUID> --yes --wait-minutes=60 --out=/tmp/theme-studio-benchmark.json
+npm run theme-studio:benchmark -- --create --actor-id=<superadmin-UUID> --yes --repeats=2 --concurrency=2 --wait-minutes=120 --out=/tmp/theme-studio-benchmark.json
 ```
 
 IDs are saved before queueing and the report is replaced atomically while waiting.
-A timeout stops further creation. Resume reporting without creating or retrying
+A whole-batch timeout stops further creation. Resume reporting without creating or retrying
 anything:
 
 ```bash
