@@ -163,6 +163,16 @@ gcloud iam service-accounts add-iam-policy-binding \
 
 ---
 
+## Signup Maps address autofill
+
+`_NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` is a public browser key passed by Cloud Build
+as a Docker build argument; a runtime environment value cannot repair a client
+bundle built without it. Set it on the existing dev and production triggers.
+Keep its website restrictions on the intended StoreMink origins. The key's
+project needs Maps JavaScript and Geocoding APIs enabled. Signup remains usable
+without either service, but only locality suggestions are available and the
+form explicitly asks for unresolved street/building and PIN details.
+
 ## Create the three triggers
 
 The repo uses a 1st-gen GitHub App connection (`Vansh44/storemink`), so plain

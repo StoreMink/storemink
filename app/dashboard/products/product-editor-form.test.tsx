@@ -225,7 +225,7 @@ it("updates a single variant primary photo and retains its extra photos", async 
       onSaved={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Media", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: /^Media$/ }));
   fireEvent.click(
     screen.getByText("Primary image").closest("div")!.querySelector("button")!,
   );
