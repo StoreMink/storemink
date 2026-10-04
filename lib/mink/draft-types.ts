@@ -28,6 +28,7 @@ export const MINK_DRAFT_KINDS = [
   "storefront_custom_code",
   "storefront_layout",
   "storefront_design",
+  "website_builder",
   "media_image",
 ] as const;
 
@@ -336,6 +337,33 @@ export const MINK_DRAFT_CONFIG: Record<
         required: true,
         multiline: true,
         maxLength: 1_000,
+      },
+    ],
+  },
+  website_builder: {
+    label: "Website Builder change",
+    expectedCredits: 2,
+    fields: [
+      {
+        key: "patch_digest",
+        label: "Exact proposal digest",
+        required: true,
+        multiline: false,
+        maxLength: 64,
+      },
+      {
+        key: "patch_json",
+        label: "Exact Builder change",
+        required: true,
+        multiline: true,
+        maxLength: 140000,
+      },
+      {
+        key: "explanation",
+        label: "Explanation",
+        required: true,
+        multiline: true,
+        maxLength: 1000,
       },
     ],
   },

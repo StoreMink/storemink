@@ -41,6 +41,7 @@ export const MINK_STOREFRONT_ACTION_TOOLS = [
   "publish_storefront_code",
   "apply_storefront_layout",
   "apply_storefront_design",
+  "manage_website_builder",
 ] as const;
 
 /**
@@ -153,6 +154,7 @@ export const MINK_ACTION_TOOL_LABELS: Record<MinkActionTool, string> = {
   publish_storefront_code: "Checked storefront publication and rollback",
   apply_storefront_layout: "Website Builder draft layout saves",
   apply_storefront_design: "Website Builder draft design saves",
+  manage_website_builder: "Website Builder controls and publication",
   generate_media_image: "AI image generation",
 };
 

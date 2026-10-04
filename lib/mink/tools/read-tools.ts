@@ -40,6 +40,7 @@ import { searchHelpCentreTool } from "./help-tool";
 import { minkDraftTools } from "./draft-tools";
 import { minkStorefrontCodeTools } from "./storefront-code-tools";
 import { minkStorefrontDesignTools } from "./storefront-design-tools";
+import { minkBuilderTools } from "./builder-tools";
 import { minkMediaTools } from "./media-tools";
 import { minkStorefrontLayoutTools } from "./storefront-layout-tools";
 
@@ -1965,5 +1966,6 @@ export const minkReadToolRegistry = new MinkToolRegistry([
   ...minkStorefrontCodeTools,
   ...minkStorefrontLayoutTools,
   ...minkStorefrontDesignTools,
+  ...minkBuilderTools,
   ...minkMediaTools,
 ]);

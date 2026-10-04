@@ -149,7 +149,8 @@ describe("Mink system prompt document", () => {
       "telling the merchant to paste, upload or select that URL themselves is an incomplete task",
     );
     expect(template).toContain("answer in at most two short sentences");
-    expect(template).toContain("single Apply to Website Builder draft button");
+    expect(template).toContain("card’s named approval button");
+    expect(template).toContain("propose_website_builder_change");
     expect(template).toContain(
       "Never claim that you clicked a button, saved the Builder draft, ran browser checks, published or rolled back the storefront",
     );

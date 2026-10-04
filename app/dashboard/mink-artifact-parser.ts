@@ -11,6 +11,7 @@ const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "storefront_code_proposal",
   "storefront_layout_proposal",
   "storefront_design_proposal",
+  "builder_proposal",
   "media_image_proposal",
   "workflow",
   "product_import",
@@ -26,6 +27,47 @@ export function readMinkArtifacts(value: unknown): MinkArtifact[] {
         typeof type === "string" &&
         MINK_ARTIFACT_TYPES.has(type as MinkArtifact["type"]);
       if (!allowed) return false;
+      if (type === "builder_proposal") {
+        const row = artifact as Record<string, unknown>;
+        return (
+          isUuid(row.draftId) &&
+          isBoundedText(row.title, 200) &&
+          isBoundedText(row.explanation, 1000) &&
+          typeof row.live === "boolean" &&
+          isCreditCount(row.expectedCredits) &&
+          isCreditCount(row.chargedCredits) &&
+          ["plan", "credit", "mixed", "plan_unlimited"].includes(
+            String(row.creditSource),
+          ) &&
+          [
+            "chrome_update",
+            "chrome_publish",
+            "chrome_revert",
+            "page_create",
+            "page_update",
+            "page_delete",
+            "page_publish",
+            "page_unpublish",
+            "page_revert",
+            "settings_update",
+            "brand_update",
+          ].includes(String(row.operation)) &&
+          typeof row.pageSlug === "string" &&
+          row.pageSlug.length <= 60 &&
+          /^(?:home|[a-z0-9]+(?:-[a-z0-9]+)*)$/.test(row.pageSlug) &&
+          Array.isArray(row.changes) &&
+          row.changes.length <= 2000 &&
+          row.changes.every(
+            (change) =>
+              isRecord(change) &&
+              isBoundedText(change.field, 300) &&
+              typeof change.before === "string" &&
+              change.before.length <= 2 * 1024 * 1024 &&
+              typeof change.after === "string" &&
+              change.after.length <= 2 * 1024 * 1024,
+          )
+        );
+      }
       if (type === "product_import") {
         const row = artifact as Record<string, unknown>;
         return (
