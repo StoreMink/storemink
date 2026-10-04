@@ -183,6 +183,63 @@ function isSymbol(token, symbol) {
   return token?.type === "symbol" && token.value === symbol;
 }
 
+test("product CSV help replaces the attachment guidance left by earlier migrations", async () => {
+  const readTokens = async (file) =>
+    lexSql(await readFile(path.join(migrationDirectory, file), "utf8"), file);
+  const previousTokens = (
+    await Promise.all(
+      [
+        "20260830_0042_mink_phase_4a_product_actions.sql",
+        "20260914_0112_mink_global_voice_provider.sql",
+        "20260921_0121_mink_multi_attachments_campaign_art.sql",
+      ].map(readTokens),
+    )
+  ).flat();
+  const publishedParagraph = (phrase) => {
+    const token = previousTokens.find(
+      (token) =>
+        token.type === "dollar" &&
+        token.tag !== "old" &&
+        token.value.includes(phrase),
+    );
+    assert.ok(token, `Missing historical help fixture: ${phrase}`);
+    return token.value;
+  };
+  let body = [
+    publishedParagraph("A separately enabled product-text action"),
+    publishedParagraph("Product-description approval changes only"),
+    publishedParagraph("or drop up to five supported files"),
+    publishedParagraph(
+      "Audio files, video, spreadsheets and long documents are not attachments",
+    ),
+  ].join("\n");
+  const migrationId = "20261004_0155_mink_product_photos_csv";
+  const tokens = await readTokens(`${migrationId}.sql`);
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].tag !== "old") continue;
+    const replacement = tokens[i + 2];
+    assert.equal(replacement?.tag, "new");
+    assert.ok(
+      body.includes(tokens[i].value),
+      `Replacement does not match the published help: ${tokens[i].value}`,
+    );
+    body = body.replaceAll(tokens[i].value, replacement.value);
+  }
+  const manifest = JSON.parse(
+    await readFile(path.join(migrationDirectory, "../manifest.json"), "utf8"),
+  );
+  const migration = manifest.migrations.find(({ id }) => id === migrationId);
+  for (const check of migration.applyVerify.queries) {
+    const phrase = check.sql.match(/body like '%([^']+)%'/)?.[1];
+    assert.ok(phrase, `Missing copy assertion: ${check.name}`);
+    assert.ok(
+      body.includes(phrase),
+      `Apply verification would fail: ${check.name}`,
+    );
+  }
+  assert.ok(!body.toLowerCase().includes("spreadsheets"));
+});
+
 function parseValuesTuples(tokens, valuesIndex, file) {
   const tuples = [];
   let cursor = valuesIndex + 1;
