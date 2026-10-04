@@ -207,6 +207,17 @@ runs queue and wait; nothing is lost. The path is under `/api/internal/`, not
 `/api/cron/`, because it is a worker rather than a heartbeat. Full rollout list:
 `docs/mink-ai-theme-studio-phase3.md` §6.
 
+**Prepared locally, 4 October:** generation and visual QA leases are now
+180 seconds with thirty-second renewal and an expiry watchdog; a dead worker
+is eligible after its last renewal, plus schedule/capacity wait. The generation
+route drains free lanes under a request deadline. Cloud Build deploys private
+model/QA services from the serving web digest. Moving schedules off the web
+and adding one independent peer per role is a separate first-rollout action,
+with private OIDC/application-header authentication and a checked shared SQL
+connection budget. Until that routing happens, the existing web targets and
+QA fallback remain. See [worker rollout](theme-studio-worker-rollout.md);
+private-service deployment alone does not change scheduler URLs.
+
 Cloud Scheduler **skips ticks while the previous request is outstanding**; a
 one-minute schedule does not create overlapping long workers. The two run
 lanes prevent two already-queued themes from serializing, and a separate QA

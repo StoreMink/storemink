@@ -602,12 +602,12 @@
 }
 
 .shop-listing .shop-card-base {
-  color: var(--sm-ink-soft);
+  color: var(--sm-ink);
 }
 
 .shop-listing .shop-card-off {
   color: var(--sm-ink);
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--sm-cream);
 }
 
 /* ============================================================
@@ -799,7 +799,7 @@
 .pdp-price-base {
   font-size: 1.1rem;
   font-weight: 500;
-  color: var(--shop-text-faint);
+  color: var(--shop-text);
   text-decoration: line-through;
 }
 
@@ -1892,7 +1892,7 @@
 }
 .sm-storefront-grocery .gpdp-price-base {
   font-size: 1.05rem;
-  color: var(--sm-ink-soft);
+  color: var(--sm-ink);
   text-decoration: line-through;
 }
 .sm-storefront-grocery .gpdp-price-off {

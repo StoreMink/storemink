@@ -6162,6 +6162,26 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261004_0154_theme_studio_readable_screenshots",
+      "description": "Preserve native-width tall QA screenshots with bounded PNG fallback while retaining storefront asset limits",
+      "file": "sql/20261004_0154_theme_studio_readable_screenshots.sql",
+      "transaction": true,
+      "requires": ["20261003_0153_theme_studio_variety"],
+      "verify": {
+        "constraints": [
+          "theme_studio_assets_media_type_check",
+          "theme_studio_assets_dimensions_check"
+        ],
+        "queries": [
+          {
+            "name": "QA screenshot media and dimension constraints are validated on assets",
+            "sql": "select count(*)::text from pg_constraint where conrelid='public.theme_studio_assets'::regclass and contype='c' and convalidated and conname in ('theme_studio_assets_media_type_check','theme_studio_assets_dimensions_check')",
+            "equals": "2"
+          }
+        ]
+      }
     }
   ]
 }

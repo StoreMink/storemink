@@ -6,11 +6,15 @@ const mocks = vi.hoisted(() => ({
   drizzle: vi.fn(() => ({ scope: "db" })),
   on: vi.fn(),
   logWarn: vi.fn(),
+  poolOptions: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("pg", () => ({
   Pool: class {
+    constructor(options: unknown) {
+      mocks.poolOptions(options);
+    }
     connect = mocks.connect;
     end = mocks.end;
     on = mocks.on;
@@ -31,6 +35,32 @@ function client(query: (sql: string) => Promise<unknown>) {
 beforeEach(async () => {
   await closePool();
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
+});
+
+it("bounds private worker connections without changing the merchant web pool", async () => {
+  mocks.connect.mockResolvedValue(client(async () => ({})));
+  vi.stubEnv("THEME_STUDIO_WORKER_ONLY", "true");
+  vi.stubEnv("DB_POOL_MAX", "1");
+  await withService(async () => undefined);
+  expect(mocks.poolOptions).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      max: 1,
+      connectionTimeoutMillis: 5_000,
+      statement_timeout: 30_000,
+      idle_in_transaction_session_timeout: 60_000,
+    }),
+  );
+  await closePool();
+  vi.stubEnv("THEME_STUDIO_WORKER_ONLY", "false");
+  await withService(async () => undefined);
+  const options = mocks.poolOptions.mock.lastCall?.[0] as Record<
+    string,
+    unknown
+  >;
+  expect(options).not.toHaveProperty("connectionTimeoutMillis");
+  expect(options).not.toHaveProperty("statement_timeout");
+  expect(options).not.toHaveProperty("idle_in_transaction_session_timeout");
 });
 
 describe("idle pooled connections", () => {

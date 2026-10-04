@@ -31,6 +31,12 @@ it("reports distinct failing elements and axe's contrast measurements", async ()
           ...Array.from({ length: 20 }, (_, i) => ({
             target: [`.shop-card:nth-child(${i + 1}) > .shop-card-base`],
             failureSummary: price,
+            any: [
+              {
+                id: "color-contrast",
+                data: { contrastRatio: 2.1, expectedContrastRatio: "4.5:1" },
+              },
+            ],
           })),
           {
             target: [".shop-card-off"],
@@ -65,6 +71,12 @@ it("reports distinct failing elements and axe's contrast measurements", async ()
       ],
     }),
   ]);
+  expect(
+    (evidence.violations as { contrast: unknown[] }[])[0].contrast,
+  ).toHaveLength(20);
+  expect(
+    (evidence.violations as { contrast: unknown[] }[])[0].contrast[0],
+  ).toMatchObject({ ratio: 2.1, required: 4.5 });
 });
 
 it("distinguishes deliberate clipping and labelled controls from real defects", async () => {

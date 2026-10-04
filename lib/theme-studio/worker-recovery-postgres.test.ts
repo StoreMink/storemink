@@ -595,6 +595,91 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
           )
         ).rows[0],
       ).toEqual({ read: false, write: true, update: false, delete: false });
+      // The final timed-out claim must close, rather than leave an unclaimable
+      // queued row that would violate attempt_count <= max_attempts forever.
+      const deadlineProject = randomUUID(),
+        deadlineMessage = randomUUID(),
+        deadlineRun = randomUUID();
+      await pg.query(
+        "INSERT INTO theme_studio_projects(id,theme_id,name,status,industries,catalog_sizes,model_key,draft_brief,created_by_email) VALUES($1,$2,'Deadline fixture','generating','{home}','{small}','gemini-3.8-flash','Ceramics','test@example.com')",
+        [deadlineProject, `deadline-${deadlineProject}`],
+      );
+      await pg.query(
+        "INSERT INTO theme_studio_messages(id,project_id,kind,body) VALUES($1,$2,'brief','Ceramics')",
+        [deadlineMessage, deadlineProject],
+      );
+      await pg.query(
+        "INSERT INTO theme_studio_runs(id,project_id,message_id,kind,provider,model_key,provider_model,prompt_version,idempotency_key,max_attempts,created_at) VALUES($1,$2,$3,'generate','vertex-gemini','gemini-3.8-flash','fake','test',$4,1,'1800-01-01')",
+        [
+          deadlineRun,
+          deadlineProject,
+          deadlineMessage,
+          `deadline-${deadlineRun}`,
+        ],
+      );
+      // A nearly spent HTTP request leaves full generation queued for a fresh
+      // invocation, without spending its only attempt or calling the provider.
+      generate.mockClear();
+      expect(
+        await runThemeStudioWorker({
+          ...options,
+          deadlineAt: Date.now() + 5 * 60_000,
+        }),
+      ).toMatchObject({ claimed: 0 });
+      expect(generate).not.toHaveBeenCalled();
+      expect(
+        (
+          await pg.query(
+            "SELECT status,attempt_count FROM theme_studio_runs WHERE id=$1",
+            [deadlineRun],
+          )
+        ).rows[0],
+      ).toMatchObject({ status: "queued", attempt_count: 0 });
+      const timer = vi
+        .spyOn(globalThis, "setTimeout")
+        .mockImplementation((handler, ms, ...args) =>
+          realTimeout(handler, ms === 19 * 60_000 ? 1 : ms, ...args),
+        );
+      try {
+        generate.mockImplementation(
+          async (_request: StructuredRequest, signal: AbortSignal) => {
+            if (!signal.aborted)
+              await new Promise<void>((resolve) =>
+                signal.addEventListener("abort", () => resolve(), {
+                  once: true,
+                }),
+              );
+            return { kind: "error", code: "cancelled", usage: ZERO_USAGE };
+          },
+        );
+        expect(await runThemeStudioWorker(options)).toMatchObject({
+          claimed: 1,
+          failed: 1,
+          requeued: 0,
+        });
+        expect(
+          (
+            await pg.query(
+              "SELECT status,error_code,attempt_count FROM theme_studio_runs WHERE id=$1",
+              [deadlineRun],
+            )
+          ).rows[0],
+        ).toMatchObject({
+          status: "failed",
+          error_code: "run_timeout",
+          attempt_count: 1,
+        });
+        expect(
+          (
+            await pg.query(
+              "SELECT count(*)::int AS n FROM theme_studio_versions WHERE run_id=$1",
+              [deadlineRun],
+            )
+          ).rows[0].n,
+        ).toBe(0);
+      } finally {
+        timer.mockRestore();
+      }
       // Invalid checkpoint kinds (including JSON null) and a fifth recovery
       // must fail at the database boundary, not merely in application code.
       for (const statement of [

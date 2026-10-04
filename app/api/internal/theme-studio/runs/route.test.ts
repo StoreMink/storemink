@@ -34,6 +34,7 @@ describe("Theme Studio model worker route", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     if (original === undefined) delete process.env.CRON_SECRET;
     else process.env.CRON_SECRET = original;
   });
@@ -65,14 +66,15 @@ describe("Theme Studio model worker route", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       ok: true,
-      runs: [{ claimed: 1 }, { claimed: 1 }],
+      claimed: 8,
       qa: { claimed: 0 },
     });
-    expect(runStudio).toHaveBeenCalledTimes(2);
+    expect(runStudio).toHaveBeenCalledTimes(8);
     expect(runQa).toHaveBeenCalledTimes(1);
     const options = runStudio.mock.calls[0][0];
     expect(options.maxRuns).toBe(1);
     expect(options.skipVisualQa).toBe(true);
+    expect(options.deadlineAt).toBeGreaterThan(Date.now());
     expect(options.providers).toContain("vertex-gemini");
   });
 
@@ -87,6 +89,43 @@ describe("Theme Studio model worker route", () => {
     );
     expect(response.status).toBe(503);
     expect(JSON.stringify(await response.json())).not.toContain("db down");
+  });
+  it("isolates generation from QA and uses the private worker header behind OIDC", async () => {
+    vi.stubEnv("THEME_STUDIO_WORKER_ONLY", "true");
+    vi.stubEnv("THEME_STUDIO_WORKER_ROLE", "generation");
+    runStudio
+      .mockResolvedValueOnce({ claimed: 1, succeeded: 1 })
+      .mockResolvedValue({ claimed: 0 });
+    const { POST } = await import("./route");
+    const response = await POST(
+      new Request(URL, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer oidc-token",
+          "X-Theme-Studio-Secret": "cron-secret",
+        },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).qa).toBeNull();
+    expect(runStudio).toHaveBeenCalledTimes(2);
+    expect(runQa).not.toHaveBeenCalled();
+  });
+  it("refuses generation calls on an isolated QA service", async () => {
+    vi.stubEnv("THEME_STUDIO_WORKER_ONLY", "true");
+    vi.stubEnv("THEME_STUDIO_WORKER_ROLE", "qa");
+    const { POST } = await import("./route");
+    expect(
+      (
+        await POST(
+          new Request(URL, {
+            method: "POST",
+            headers: { authorization: "Bearer cron-secret" },
+          }),
+        )
+      ).status,
+    ).toBe(404);
+    expect(runStudio).not.toHaveBeenCalled();
   });
 });
 

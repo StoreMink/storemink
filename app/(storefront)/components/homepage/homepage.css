@@ -459,12 +459,12 @@
 }
 
 .home-product-carousel .shop-card-base {
-  color: var(--sm-ink-soft);
+  color: var(--sm-ink);
 }
 
 .home-product-carousel .shop-card-off {
   color: var(--sm-ink);
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--sm-cream);
 }
 
 /* ---- Shop by category ---- */

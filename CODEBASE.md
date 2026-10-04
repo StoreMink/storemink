@@ -5685,7 +5685,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     to read-only reports over explicitly supplied project UUIDs. Explicit
     `--create --actor-id=<superadmin UUID> --yes --wait-minutes=60` queues isolated
     unpublished apparel, food, beauty and home themes through the real deployed
-    pipeline, one at a time, using ordinary intake and capacity gates. It persists
+    pipeline, one at a time by default, using ordinary intake and capacity gates.
+    `--repeats=2 --concurrency=2` runs eight briefs with at most two unfinished;
+    `benchmark-batch.ts` bounds creation by the whole-batch deadline. It persists
     IDs before queueing and saves reports while waiting; timeout stops further
     theme creation and IDs permit read-only resumption. Reports distinguish total
     snapshots from design revisions, first final QA from generation success and
@@ -5952,10 +5954,78 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     structural batch is saved in `evals/theme-studio/variety-live-2026-10-03.json`:
     eight compiled, median distance 0.704, 7/8 non-near-white, but one repeated
     collection-banner setting. Final quiet-direction banner guidance is locally
-    tested; complete live acceptance remains pending, not claimed passed. Reference specs,
+    tested; its subsequent production validation is recorded below. Reference specs,
     screenshot fidelity scoring and renderer additions remain later tracks in
     `docs/theme-studio-variety-and-fidelity.md`. Operator-only change: no
     merchant-visible change, no Help Centre update.
+
+    **Theme Studio production benchmark (2026-10-04):** eight unpublished v22
+    builds on web revision `storemink-web-prod-00122-frg` produced five candidates;
+    median successful queue-to-candidate time 68.28 minutes, only two without an
+    automatic design revision. All eight manual preview cart checks passed.
+    Seven memory-limit events/four worker HTTP 503s, stage queues, renderer
+    contrast defects and undersized visual-review contact sheets remain measured
+    blockers; this is validation evidence, not an implementation or a production
+    robustness claim. Six existing AI themes received current-build full
+    acceptance (Vanta/Aurelle passed; Fashion/Luma/Crave/Bubble failed); published
+    Luxe and bundled Vitrine received manual current-preview checks only.
+    Collection-banner choices varied, but wide page width and hover images were
+    identical across the eight new drafts, so the strict variety exit remains
+    failed. `docs/theme-studio-live-benchmark-2026-10-04.md` records scope,
+    failures and fix priorities; `evals/theme-studio/full-live-2026-10-04.json`
+    stores sanitized timings, gates and choices, with two storefront evidence
+    images alongside it. Observer authentication interrupted the batch before
+    the eighth case; no continuous stress-test claim, no theme publication or
+    order submission. Internal validation only: no merchant-visible change,
+    no Help Centre update.
+
+    **Worker isolation and readable QA (local, 2026-10-04):** `worker-lease.ts`
+    and `worker-lease-store.ts` renew generation/visual-QA ownership every thirty
+    seconds with 180-second clock-fenced leases. Renewal failure or an independent
+    expiry watchdog aborts paid transport; late renewal cannot revive it.
+    All settlements require an unexpired owner. Text deadlines retry with existing
+    paid checkpoints within the claim limit; the last claim fails rather than
+    leaving an unclaimable queued row. `worker-lanes.ts` drains a free generation
+    lane up to eight claims under one absolute 19-minute request budget, reserving
+    four minutes before admission; full generation/manual creative revisions
+    require ten minutes, while images/focused automatic repairs can use shorter
+    windows. Paid work remains awaited on peer failure.
+    `worker-runtime.ts` bounds private Sharp decoder/cache use. Private-only DB
+    pools have acquisition/statement/idle-transaction deadlines.
+    `scripts/theme-studio-workers.py` deploys independent private generation and
+    QA services (2 GiB, 2 CPU, concurrency 1, max 2 instances, pool 1), from the
+    serving web digest and acceptance build ID. Cloud Build releases them with
+    the web and capture job; first scheduler routing is explicit and validates
+    build/role/private IAM plus combined database connection headroom. Each role
+    has two independent minute schedules; the legacy web route retains two run
+    lanes and its QA fallback until routing. Workers accept the application
+    secret in `X-Theme-Studio-Secret` behind Cloud Run OIDC only in worker mode;
+    public web authentication is unchanged. Current web ceilings plus all planned
+    workers total 34 steady connections; routing conservatively reserves 68 for
+    old/new revision overlap plus five spare. SQL capacity must be verified
+    before routing. No SQL tier or merchant web capacity change is included.
+    `visual-evidence.ts` preserves native phone screenshot width and prepares
+    full-page overviews plus readable phone/desktop strips sequentially; visual
+    claims load asset metadata first and full source bytes one at a time.
+    Migration `20261004_0154_theme_studio_readable_screenshots.sql` allows only
+    QA sources to exceed 4096px height (bounded to 50 million pixels); pages
+    above WebP's 16383px dimension limit use PNG storage with the existing
+    10 MiB byte bound. Non-QA artwork keeps its WebP and dimension constraints.
+    Visual prompt v4 uses the original brief and `qa-image-issues.ts` to require
+    assessments of flagged/unreviewed current generated SHA-bound artwork; missing
+    assessments cannot pass. Duplicate full newsletter modules and unsupported
+    factual claims are explicit visual defects. Existing quality/model settings
+    remain required. Contrast evidence retains measured ratios; a >10% deficit
+    improvement without worsening another measured pattern permits another bounded
+    repair while the full acceptance threshold remains unchanged. Badge, compare
+    price and mobile delivery renderer tokens are paired to their actual surfaces.
+    `scripts/theme-studio-contrast-check.mjs` verifies light/dark regressions with
+    broken negative controls. `scripts/theme-studio-visual-evidence-check.mts`
+    profiles thirty synthetic long sources without provider/database calls.
+    `docs/theme-studio-worker-rollout.md` describes
+    rollout, capacity gates, validation and remaining live proof. Implemented
+    locally; the production benchmark above remains the latest live result.
+    No merchant-visible workflow change, no Help Centre update.
 
     **Theme Studio concurrency and capture recovery (2026-09-29).** The
     dedicated run route awaits two independently leased generation/image runs
@@ -15035,6 +15105,12 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   otherwise Cloud Run's `K_REVISION` (so each deploy makes evidence stale);
   the server stage fetches preview pages from **`THEME_STUDIO_ACCEPTANCE_ORIGIN`**
   when set, otherwise `http://127.0.0.1:$PORT`.
+  Dedicated private services set **`THEME_STUDIO_WORKER_ONLY=true`** and
+  **`THEME_STUDIO_WORKER_ROLE=generation|qa`**. They run one lane per request,
+  bound Sharp/DB resources and accept the separate application secret header
+  behind OIDC; these settings must not be applied to the merchant web service.
+  Their **`THEME_STUDIO_BUILD_ID`** is the serving web's build, not the worker
+  revision. See `docs/theme-studio-worker-rollout.md` for first scheduler routing.
   Theme Studio's manual `theme-studio:model-check` uses ADC plus **`THEME_STUDIO_GCP_PROJECT_ID`**
   (fallback `GCP_PROJECT_ID`) and **`THEME_STUDIO_VERTEX_LOCATION`** (default
   `global`). Exact provider ids can be overridden only to a dated/versioned id

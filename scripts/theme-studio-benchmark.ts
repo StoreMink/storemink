@@ -1,7 +1,8 @@
 /** Complete-theme benchmark against the actual deployed worker/capture/QA
  * pipeline. Default is READ ONLY: --projects=<ids> collects existing runs.
  * --create --actor-id=<superadmin UUID> --yes queues four isolated unpublished
- * themes. --wait-minutes=60 polls outcomes and saves the report every 15s.
+ * themes. --repeats=2 --concurrency=2 queues eight with at most two unfinished.
+ * --wait-minutes=120 bounds the entire batch and saves the report every 15s.
  * Resume after interruption with --projects=<ids>; never re-create the batch.
  * Requires service DB credentials pointing at the same deployment as workers.
  * No publication, retries, edits to existing themes or hidden quality bypass.
@@ -21,6 +22,8 @@ async function main() {
   const { withService } = await import("@/lib/db/client");
   const { themeBenchmarkReport, THEME_BENCHMARK_CASES } =
     await import("@/lib/theme-studio/benchmark");
+  const { runThemeBenchmarkBatch } =
+    await import("@/lib/theme-studio/benchmark-batch");
   const {
     isUuid,
     createThemeStudioProject,
@@ -34,6 +37,11 @@ async function main() {
   const minutes = Number(option("wait-minutes") ?? 0);
   if (!Number.isFinite(minutes) || minutes < 0 || minutes > 120)
     throw new Error("--wait-minutes must be 0..120.");
+  const repeats = Number(option("repeats") ?? 1);
+  const concurrency = Number(option("concurrency") ?? 1);
+  if (![1, 2].includes(repeats) || (concurrency !== 1 && concurrency !== 2))
+    throw new Error("--repeats and --concurrency must be 1 or 2.");
+  const deadlineAt = Date.now() + Math.max(1, minutes) * 60_000;
   const ids = (option("projects") ?? "").split(",").filter(Boolean);
   if (ids.some((id) => !isUuid(id)))
     throw new Error("--projects requires UUIDs.");
@@ -49,6 +57,12 @@ async function main() {
           reporterBuildId: currentAcceptanceBuildId(),
           projectIds: ids,
           createdProjectIds: created,
+          ...(process.argv.includes("--create")
+            ? {
+                plannedThemes: THEME_BENCHMARK_CASES.length * repeats,
+                concurrency,
+              }
+            : {}),
           results,
         },
         null,
@@ -122,70 +136,56 @@ async function main() {
     );
     if (actor?.role !== "superadmin")
       throw new Error("Benchmark actor must be a current superadmin.");
-    const cases = THEME_BENCHMARK_CASES;
+    const cases = Array.from(
+      { length: repeats },
+      () => THEME_BENCHMARK_CASES,
+    ).flat();
     const modelKey = option("model") ?? "gemini-3.8-flash";
-    // Queue sequentially, respecting the existing per-operator capacity guard.
-    // Persist each ID before queueing so interruption cannot hide a project.
-    for (const entry of cases) {
-      const suffix = randomUUID().slice(0, 8);
-      const project = await createThemeStudioProject(
-        actor,
-        validateProjectInput({
-          name: `Benchmark ${entry.name} ${suffix}`,
-          themeId: `benchmark-${entry.name.toLowerCase()}-${suffix}`,
-          brief: entry.brief,
-          industries: [entry.industry],
-          catalogSizes: ["small"],
-          requiredFeatures: ["category-navigation"],
-          baseThemeId: null,
-          modelKey,
-        }),
-      );
-      ids.push(project.id);
-      created.push(project.id);
-      await persist([]);
-      await queueThemeStudioGeneration(actor, {
-        projectId: project.id,
-        expectedRevision: 0,
-        idempotencyKey: `benchmark_${randomUUID()}`,
-      });
-      console.log(`Queued ${entry.name}: ${project.id}`);
-      // Only one active benchmark at a time. Wait for a terminal state before
-      // queueing the next; a timeout preserves IDs and stops new paid work.
-      const until = Date.now() + Math.max(1, minutes) * 60_000;
-      for (;;) {
-        await collect();
-        const [current] = await withService((db) =>
-          db
-            .select({ status: schema.themeStudioProjects.status })
-            .from(schema.themeStudioProjects)
-            .where(eq(schema.themeStudioProjects.id, project.id))
-            .limit(1),
+    const batch = await runThemeBenchmarkBatch({
+      cases,
+      concurrency,
+      deadlineAt,
+      collect,
+      sleep: () => new Promise((resolve) => setTimeout(resolve, 15000)),
+      createAndQueue: async (entry) => {
+        const suffix = randomUUID().slice(0, 8);
+        const project = await createThemeStudioProject(
+          actor,
+          validateProjectInput({
+            name: `Benchmark ${entry.name} ${suffix}`,
+            themeId: `benchmark-${entry.name.toLowerCase()}-${suffix}`,
+            brief: entry.brief,
+            industries: [entry.industry],
+            catalogSizes: ["small"],
+            requiredFeatures: ["category-navigation"],
+            baseThemeId: null,
+            modelKey,
+          }),
         );
-        if (current?.status !== "generating") break;
-        if (Date.now() >= until) {
-          console.log(
-            "Benchmark still running; resume reporting with --projects. No further themes queued.",
-          );
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 15000));
-      }
-      const [current] = await withService((db) =>
-        db
-          .select({ status: schema.themeStudioProjects.status })
-          .from(schema.themeStudioProjects)
-          .where(eq(schema.themeStudioProjects.id, project.id))
-          .limit(1),
+        ids.push(project.id);
+        created.push(project.id);
+        await persist([]);
+        await queueThemeStudioGeneration(actor, {
+          projectId: project.id,
+          expectedRevision: 0,
+          idempotencyKey: `benchmark_${randomUUID()}`,
+        });
+        console.log(`Queued ${entry.name}: ${project.id}`);
+        return project.id;
+      },
+    });
+    if (batch.timedOut)
+      console.log(
+        "Benchmark still running; resume reporting with --projects. No further themes queued.",
       );
-      if (current?.status === "generating") break;
-    }
   }
   if (!ids.length)
     throw new Error(
       "Provide --projects=<UUIDs>, or explicitly queue a batch with --create --actor-id=<UUID> --yes --wait-minutes=60.",
     );
-  const until = Date.now() + minutes * 60_000;
+  const until = process.argv.includes("--create")
+    ? deadlineAt
+    : Date.now() + minutes * 60_000;
   for (;;) {
     const results = await collect();
     if (results.every((r) => r.terminal) || Date.now() >= until) {
