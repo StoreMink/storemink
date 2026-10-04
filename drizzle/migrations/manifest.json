@@ -6188,19 +6188,11 @@
       "description": "Human-approved existing product photo changes and private product CSV validation, corrections and failed-row import retries",
       "file": "sql/20261004_0155_mink_product_photos_csv.sql",
       "transaction": true,
-      "requires": [
-        "20261004_0154_theme_studio_readable_screenshots"
-      ],
+      "requires": ["20261004_0154_theme_studio_readable_screenshots"],
       "verify": {
-        "tables": [
-          "mink_csv_files"
-        ],
-        "rlsTables": [
-          "mink_csv_files"
-        ],
-        "constraints": [
-          "mink_drafts_product_images_target_check"
-        ],
+        "tables": ["mink_csv_files"],
+        "rlsTables": ["mink_csv_files"],
+        "constraints": ["mink_drafts_product_images_target_check"],
         "queries": [
           {
             "name": "Import retry lines column exists",
