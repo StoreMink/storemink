@@ -6888,11 +6888,14 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         `shop/shop-view.ts` (server-only) is the ONE loader both pages share
         (products, categories, resolved layout, low-stock threshold, offer
         badges), so /shop and a collection cannot price or badge differently.
-        ★★ SORT, FILTERS AND LOAD MORE ARE THEME OPT-INS: `ThemeLayout.shopFilters`
-        and `.collectionBanner`, resolved `=== true` in
-        `resolveStorefrontAppearance`. Without `shopFilters` the grid renders
-        exactly as before AND ignores `sort`/`stock`/`min`/`max`/`page` in the
-        URL, so no existing store changes. `lib/storefront/shop-filters.ts`
+        **Shared shop filters (2026-10-05).** Sorting, price and availability
+        filters, active-filter chips, result counts and Load more are available
+        on every theme, including existing pinned themes that omit or disable
+        `ThemeLayout.shopFilters`. The legacy package field remains accepted
+        for installed themes and paid-request replay; the appearance resolver
+        returns `shopFilters: true`, and `ShopClient` defaults on. URL filters
+        therefore apply consistently on /shop and /collections/<slug>.
+        `collectionBanner` remains a theme opt-in (`=== true`). `lib/storefront/shop-filters.ts`
         (pure) owns the vocabulary: sorts featured | price-asc | price-desc |
         newest | name, `stock=in`, rupee `min`/`max` (a backwards pair swaps,
         negative or absurd bounds drop), `page` = how many 24-product pages are
@@ -6919,7 +6922,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         package contract, the fake provider and prompt `theme-studio-v8` carry the
         two keys and write `/collections/<slug>` menu links. Help:
         `20260925_0139_collection_pages_help` replaces the categories guide's
-        handle sentence in place.
+        handle sentence in place. `20261005_0160_shared_shop_filters_help`
+        corrects the product-visibility guide's troubleshooting paragraph to
+        explain clearing price/availability filters, sorting and mobile access.
         `storefront: "grocery"` is the deepest variant: it swaps the shared
         product cards, the product-detail page and the cart for a distinct
         premium grocery layout, so a store on such a theme looks NOTHING like the

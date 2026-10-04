@@ -107,16 +107,16 @@ afterEach(() => {
 const lastUrl = () =>
   String(replaceState.mock.calls[replaceState.mock.calls.length - 1]?.[2]);
 
-describe("ShopClient without the shop-filters option", () => {
-  it("renders every product with no toolbar, as before", () => {
+describe("ShopClient with shared shopping controls by default", () => {
+  it("shows filters and sorting without requiring a theme opt-in", () => {
     render(<ShopClient products={products} categories={categories} />);
     expect(names()).toEqual(["Mango", "Apple", "Chips"]);
-    expect(screen.queryByRole("combobox", { name: /sort/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /filter/i })).toBeNull();
+    expect(screen.getByRole("combobox", { name: /sort/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^filter/i })).toBeTruthy();
     expect(screen.getByText("Showing 3 of 3 products")).toBeTruthy();
   });
 
-  it("ignores sort and filter parameters it cannot show", () => {
+  it("applies shared-link sorting and filters without a theme opt-in", () => {
     render(
       <ShopClient
         products={products}
@@ -128,7 +128,8 @@ describe("ShopClient without the shop-filters option", () => {
         }}
       />,
     );
-    expect(names()).toEqual(["Mango", "Apple", "Chips"]);
+    expect(names()).toEqual(["Chips", "Mango"]);
+    expect(screen.getByRole("button", { name: /^in stock/i })).toBeTruthy();
   });
 
   it("links each category chip to its own page", () => {
@@ -147,15 +148,10 @@ describe("ShopClient without the shop-filters option", () => {
   });
 });
 
-describe("ShopClient with the shop-filters option", () => {
+describe("ShopClient filtering, sorting and pagination", () => {
   const renderShop = (extra: Partial<Parameters<typeof ShopClient>[0]> = {}) =>
     render(
-      <ShopClient
-        products={products}
-        categories={categories}
-        shopFilters
-        {...extra}
-      />,
+      <ShopClient products={products} categories={categories} {...extra} />,
     );
 
   it("sorts in place and writes the sort into the URL", () => {
@@ -185,7 +181,6 @@ describe("ShopClient with the shop-filters option", () => {
       <ShopClient
         products={products}
         categories={categories}
-        shopFilters
         initialQuery="apple"
         initialShop={DEFAULT_SHOP_QUERY}
       />,
@@ -240,7 +235,7 @@ describe("ShopClient with the shop-filters option", () => {
     const many = Array.from({ length: 30 }, (_, i) =>
       product(`p${i}`, `Product ${i}`, 100 + i),
     );
-    render(<ShopClient products={many} categories={categories} shopFilters />);
+    render(<ShopClient products={many} categories={categories} />);
     expect(names()).toHaveLength(24);
     expect(screen.getByText("Showing 24 of 30 products")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
@@ -257,7 +252,6 @@ describe("ShopClient with the shop-filters option", () => {
       <ShopClient
         products={many}
         categories={categories}
-        shopFilters
         initialShop={{ ...DEFAULT_SHOP_QUERY, pages: 2 }}
       />,
     );
@@ -266,6 +260,31 @@ describe("ShopClient with the shop-filters option", () => {
 });
 
 describe("ShopClient on a collection page", () => {
+  it("filters within the collection, keeps a shareable URL and clears the choices", () => {
+    window.history.replaceState({}, "", "/collections/juices");
+    render(
+      <ShopClient
+        products={products}
+        categories={categories}
+        collection={categories[0]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^filter/i }));
+    const dialog = screen.getByRole("dialog", { name: "Filter" });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.change(within(dialog).getByLabelText("Minimum price in rupees"), {
+      target: { value: "250" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Show 1 product" }),
+    );
+    expect(names()).toEqual(["Mango"]);
+    expect(lastUrl()).toBe("/collections/juices?stock=in&min=250");
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(names()).toEqual(["Mango", "Apple"]);
+    expect(lastUrl()).toBe("/collections/juices");
+  });
+
   it("shows only that category, titled by it, with no banner by default", () => {
     render(
       <ShopClient
