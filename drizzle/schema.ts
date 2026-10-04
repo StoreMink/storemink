@@ -5415,7 +5415,7 @@ export const minkDrafts = pgTable(
     }).onDelete("cascade"),
     check(
       "mink_drafts_kind_check",
-      sql`kind = ANY (ARRAY['product_description'::text, 'product_seo'::text, 'blog'::text, 'coupon_email'::text, 'customer_message'::text, 'product_create'::text, 'coupon_create'::text, 'coupon_update'::text, 'customer_group_create'::text, 'customer_group_update'::text, 'inventory_adjustment'::text, 'bulk_inventory_adjustment'::text, 'order_status_transition'::text, 'bulk_price_update'::text, 'offer_create'::text, 'offer_update'::text, 'offer_activate'::text, 'storefront_custom_code'::text])`,
+      sql`kind = ANY (ARRAY['product_description'::text, 'product_seo'::text, 'product_images'::text, 'blog'::text, 'coupon_email'::text, 'customer_message'::text, 'product_create'::text, 'coupon_create'::text, 'coupon_update'::text, 'customer_group_create'::text, 'customer_group_update'::text, 'inventory_adjustment'::text, 'bulk_inventory_adjustment'::text, 'order_status_transition'::text, 'bulk_price_update'::text, 'offer_create'::text, 'offer_update'::text, 'offer_activate'::text, 'storefront_custom_code'::text])`,
     ),
     check(
       "mink_drafts_status_check",
@@ -5583,7 +5583,7 @@ export const minkActionToolAccess = pgTable(
     }).onDelete("cascade"),
     check(
       "mink_action_tool_access_name_check",
-      sql`tool_name = ANY (ARRAY['apply_product_description'::text, 'apply_product_seo'::text, 'create_product'::text, 'create_coupon'::text, 'update_coupon'::text, 'create_customer_group'::text, 'update_customer_group'::text, 'adjust_inventory'::text, 'bulk_adjust_inventory'::text, 'transition_order_status'::text, 'publish_blog'::text, 'send_campaign'::text, 'bulk_update_prices'::text, 'create_offer'::text, 'update_offer'::text, 'activate_offer'::text, 'apply_storefront_code'::text, 'publish_storefront_code'::text])`,
+      sql`tool_name = ANY (ARRAY['apply_product_description'::text, 'apply_product_seo'::text, 'apply_product_images'::text, 'create_product'::text, 'create_coupon'::text, 'update_coupon'::text, 'create_customer_group'::text, 'update_customer_group'::text, 'adjust_inventory'::text, 'bulk_adjust_inventory'::text, 'transition_order_status'::text, 'publish_blog'::text, 'send_campaign'::text, 'bulk_update_prices'::text, 'create_offer'::text, 'update_offer'::text, 'activate_offer'::text, 'apply_storefront_code'::text, 'publish_storefront_code'::text])`,
     ),
     check(
       "mink_action_tool_access_enablement_check",
@@ -6065,7 +6065,7 @@ export const minkActionApprovals = pgTable(
     }).onDelete("cascade"),
     check(
       "mink_action_approvals_tool_check",
-      sql`tool_name = ANY (ARRAY['apply_product_description'::text, 'apply_product_seo'::text, 'create_product'::text, 'create_coupon'::text, 'update_coupon'::text, 'create_customer_group'::text, 'update_customer_group'::text, 'adjust_inventory'::text, 'bulk_adjust_inventory'::text, 'transition_order_status'::text, 'publish_blog'::text, 'send_campaign'::text, 'bulk_update_prices'::text, 'create_offer'::text, 'update_offer'::text, 'activate_offer'::text, 'apply_storefront_code'::text, 'publish_storefront_code'::text])`,
+      sql`tool_name = ANY (ARRAY['apply_product_description'::text, 'apply_product_seo'::text, 'apply_product_images'::text, 'create_product'::text, 'create_coupon'::text, 'update_coupon'::text, 'create_customer_group'::text, 'update_customer_group'::text, 'adjust_inventory'::text, 'bulk_adjust_inventory'::text, 'transition_order_status'::text, 'publish_blog'::text, 'send_campaign'::text, 'bulk_update_prices'::text, 'create_offer'::text, 'update_offer'::text, 'activate_offer'::text, 'apply_storefront_code'::text, 'publish_storefront_code'::text])`,
     ),
     check(
       "mink_action_approvals_resource_type_check",
@@ -6226,7 +6226,7 @@ export const minkActionAudit = pgTable(
     }).onDelete("restrict"),
     check(
       "mink_action_audit_tool_check",
-      sql`tool_name = ANY (ARRAY['apply_product_description'::text, 'apply_product_seo'::text, 'create_product'::text, 'create_coupon'::text, 'update_coupon'::text, 'create_customer_group'::text, 'update_customer_group'::text, 'adjust_inventory'::text, 'bulk_adjust_inventory'::text, 'transition_order_status'::text, 'publish_blog'::text, 'send_campaign'::text, 'bulk_update_prices'::text, 'create_offer'::text, 'update_offer'::text, 'activate_offer'::text, 'apply_storefront_code'::text, 'publish_storefront_code'::text])`,
+      sql`tool_name = ANY (ARRAY['apply_product_description'::text, 'apply_product_seo'::text, 'apply_product_images'::text, 'create_product'::text, 'create_coupon'::text, 'update_coupon'::text, 'create_customer_group'::text, 'update_customer_group'::text, 'adjust_inventory'::text, 'bulk_adjust_inventory'::text, 'transition_order_status'::text, 'publish_blog'::text, 'send_campaign'::text, 'bulk_update_prices'::text, 'create_offer'::text, 'update_offer'::text, 'activate_offer'::text, 'apply_storefront_code'::text, 'publish_storefront_code'::text])`,
     ),
     check(
       "mink_action_audit_resource_type_check",
@@ -8119,6 +8119,7 @@ export const dataJobs = pgTable("data_jobs", {
   updatedCount: integer("updated_count").default(0).notNull(),
   skippedCount: integer("skipped_count").default(0).notNull(),
   failedCount: integer("failed_count").default(0).notNull(),
+  failedLines: integer("failed_lines").array().default([]).notNull(),
   warningCount: integer("warning_count").default(0).notNull(),
   /** Issues NOT written because the per-job cap was hit. Without this the log
    *  silently looks complete. */
@@ -8635,5 +8636,33 @@ export const minkMemoryDeletions = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.storeId, table.adminId, table.id] }),
+  ],
+);
+
+/** Private, immutable chat CSV versions. Accessible only through actor-scoped Mink routes/tools. */
+export const minkCsvFiles = pgTable(
+  "mink_csv_files",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => stores.id, { onDelete: "cascade" }),
+    adminId: text("admin_id").notNull(),
+    filename: text().notNull(),
+    csv: text().notNull(),
+    changes: jsonb().default([]).notNull(),
+    jobId: uuid("job_id").references(() => dataJobs.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("mink_csv_files_owner_idx").on(
+      table.storeId,
+      table.adminId,
+      table.createdAt,
+    ),
   ],
 );

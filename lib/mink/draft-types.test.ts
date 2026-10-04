@@ -13,6 +13,7 @@ describe("Mink draft contracts", () => {
     ).toEqual({
       product_description: 2,
       product_seo: 1,
+      product_images: 1,
       blog: 5,
       coupon_email: 2,
       customer_message: 2,

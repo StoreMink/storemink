@@ -59,6 +59,7 @@ is large enough to need its own decisions doc BEFORE any of it is built.
 | —      | Mink read-only Website Builder context + sandbox contract (7A)    | M    | ✅ done |
 | —      | Mink private storefront code proposal + isolated preview (7B)     | M    | ✅ done |
 | —      | Locations fulfilment navigation and aligned routing workspace     | S    | ✅ done |
+| —      | Mink product-photo approvals and private CSV correction/import | M | ◐ code complete; live checks pending |
 | **P1** | **Release verification and high-risk action hardening**           | XL   | ◐ part  |
 | **0**  | **Platform → merchant billing rebuild**                           | XL   | ◐ part  |
 | **1**  | Checkout payment defaults + pickup payment policy                 | S    | ✅ done |

@@ -486,3 +486,34 @@ describe("Mink dictation", () => {
     expect(screen.getByLabelText("Message")).toHaveValue("Existing");
   });
 });
+
+it("uploads an intact CSV privately without calling the visual reader", async () => {
+  const submit = vi.fn();
+  const text = 'Handle,Title,Base Price\nmilk,"Whole Milk",99\n';
+  const file = new File([text], "products.csv", { type: "text/csv" });
+  Object.defineProperty(file, "arrayBuffer", {
+    value: async () => new TextEncoder().encode(text).buffer,
+  });
+  fetchMock.mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      file: {
+        id: "11111111-1111-4111-8111-111111111111",
+        filename: "products.csv",
+      },
+    }),
+  });
+  render(<LiveComposer initial="Import these products" onSubmit={submit} />);
+  fireEvent.change(screen.getByLabelText("Choose image or document"), {
+    target: { files: [file] },
+  });
+  await screen.findByText("products.csv");
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+  expect(fetchMock).toHaveBeenCalledOnce();
+  expect(fetchMock.mock.calls[0][0]).toBe("/api/mink/product-imports");
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body).csv).toBe(text);
+  expect(submit.mock.calls[0][0]).toContain("Private product CSV attachment");
+  expect(submit.mock.calls[0][0]).not.toContain("Whole Milk");
+  expect(media.upload).not.toHaveBeenCalled();
+});

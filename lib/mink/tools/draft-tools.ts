@@ -163,6 +163,145 @@ export const proposeCurrentProductSeoTool: MinkTool = {
   },
 };
 
+export const proposeProductImagesTool: MinkTool = {
+  declaration: {
+    name: "propose_product_images",
+    description:
+      "Update an existing product's authentic photos using exact uploaded current-store image URLs. Resolve the product with search_products first (or use the selected product). replace_primary replaces the main photo and preserves the other gallery photos; add appends photos; replace_gallery replaces the complete gallery. Creates a private proposal for human approval, never a live write. Never generate catalogue photographs.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        product_id: {
+          type: "string",
+          description:
+            "Exact product UUID returned by search_products or get_current_product.",
+        },
+        image_urls: {
+          type: "array",
+          minItems: 1,
+          maxItems: 20,
+          items: { type: "string", maxLength: 2048 },
+        },
+        mode: {
+          type: "string",
+          enum: ["replace_primary", "add", "replace_gallery"],
+        },
+      },
+      required: ["product_id", "image_urls", "mode"],
+      additionalProperties: false,
+    },
+  },
+  permission: { section: "products", action: "manage" },
+  available: draftingAvailable,
+  timeoutMs: 45_000,
+  artifact: proposalArtifact,
+  async execute(actor, args) {
+    const id = readString(args.product_id, "product_id", 36);
+    if (!/^[0-9a-f-]{36}$/i.test(id))
+      throw new MinkToolInputError(
+        "Use an exact product ID from a product read.",
+      );
+    if (
+      !Array.isArray(args.image_urls) ||
+      !args.image_urls.length ||
+      args.image_urls.length > 20 ||
+      args.image_urls.some(
+        (url) => typeof url !== "string" || !url.trim() || url.length > 2048,
+      )
+    )
+      throw new MinkToolInputError("Supply 1–20 exact uploaded image URLs.");
+    if (
+      !["replace_primary", "add", "replace_gallery"].includes(String(args.mode))
+    )
+      throw new MinkToolInputError(
+        "Choose replace_primary, add or replace_gallery.",
+      );
+    const [product] = await withActor(actor, (db) =>
+      db
+        .select({
+          id: products.id,
+          name: products.name,
+          imageUrl: products.imageUrl,
+          images: products.images,
+        })
+        .from(products)
+        .where(and(eq(products.id, id), eq(products.storeId, actor.storeId)))
+        .limit(1),
+    );
+    if (!product)
+      throw new MinkToolInputError(
+        "That product is not available in this store.",
+      );
+    if (
+      (args.image_urls as string[]).some((url) =>
+        url.includes("/mink-generated/"),
+      )
+    )
+      throw new MinkToolInputError(
+        "Use an authentic uploaded product photo, not generated artwork.",
+      );
+    const prepared: MinkPreparedImageResult[] = [];
+    try {
+      for (const url of args.image_urls as string[])
+        prepared.push(
+          await prepareMinkImageForDestination(
+            actor,
+            url.trim(),
+            "product_photo",
+          ),
+        );
+      const incoming = [...new Set(prepared.map((image) => image.url))];
+      const old = product.images.filter(Boolean);
+      const images =
+        args.mode === "replace_gallery"
+          ? incoming
+          : args.mode === "add"
+            ? [...new Set([...old, ...incoming])]
+            : [
+                ...new Set([
+                  ...incoming,
+                  ...old.filter((url) => url !== product.imageUrl),
+                ]),
+              ];
+      if (images.length > 20)
+        throw new MinkToolInputError(
+          "The gallery would exceed 20 photos. Replace photos or use fewer attachments.",
+        );
+      const primary =
+        args.mode === "add" && product.imageUrl
+          ? product.imageUrl
+          : incoming[0];
+      if (!images.includes(primary)) images.unshift(primary);
+      if (images.length > 20)
+        throw new MinkToolInputError("The gallery would exceed 20 photos.");
+      // Primary is always first so the card and catalogue agree.
+      const primaryIndex = images.indexOf(primary);
+      images.splice(primaryIndex, 1);
+      images.unshift(primary);
+      return proposalOutput(
+        await createMinkDraftProposal({
+          actor,
+          kind: "product_images",
+          title: `Photos for ${product.name}`,
+          destinationType: "product",
+          destinationId: product.id,
+          destinationLabel: product.name,
+          destinationPath: `/dashboard/products/${product.id}`,
+          before: {
+            image_url: product.imageUrl ?? "",
+            images_json: JSON.stringify(product.images),
+          },
+          content: { image_url: primary, images_json: JSON.stringify(images) },
+        }),
+      );
+    } catch (error) {
+      for (const image of prepared)
+        await discardPreparedMinkImage(actor, image);
+      throw error;
+    }
+  },
+};
+
 /**
  * Create the proposal, and undo a derivative this run made if it fails.
  *
@@ -1447,6 +1586,7 @@ export const proposeOrderStatusTransitionTool: MinkTool = {
 };
 
 export const minkDraftTools = [
+  proposeProductImagesTool,
   proposeCurrentProductDescriptionTool,
   proposeCurrentProductSeoTool,
   proposeBlogDraftTool,

@@ -121,6 +121,7 @@ export async function recordIssues(
 }
 
 export interface ProgressDelta {
+  failedLines?: number[];
   processed?: number;
   created?: number;
   updated?: number;
@@ -146,6 +147,11 @@ export async function addProgress(
     n ? sql`${col} + ${n}` : undefined;
 
   const patch: Record<string, unknown> = {};
+  if (delta.failedLines?.length)
+    patch.failedLines = sql`${dataJobs.failedLines} || ${sql`ARRAY[${sql.join(
+      delta.failedLines.map((line) => sql`${line}::integer`),
+      sql`, `,
+    )}]`}`;
   const processed = bump(dataJobs.processedRows, delta.processed);
   if (processed) patch.processedRows = processed;
   const created = bump(dataJobs.createdCount, delta.created);

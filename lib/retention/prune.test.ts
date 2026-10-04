@@ -253,14 +253,15 @@ describe("RETENTION_POLICIES", () => {
     expect(byTable.get("pos_parked_sales")).toBe(7);
   });
 
-  it("★ a held sale is the shortest-lived thing here", () => {
+  it("held sales and temporary chat CSVs have the shortest retention", () => {
     // Deliberate: it holds no stock and no prices, so discarding one costs a
     // re-scan. Everything else in this registry is history somebody may need.
     const days = Object.fromEntries(
       RETENTION_POLICIES.map((p) => [p.table, p.days]),
     );
+    expect(days.mink_csv_files).toBe(7);
     const others = Object.entries(days)
-      .filter(([t]) => t !== "pos_parked_sales")
+      .filter(([t]) => t !== "pos_parked_sales" && t !== "mink_csv_files")
       .map(([, d]) => d as number);
     expect(Math.min(...others)).toBeGreaterThan(
       days.pos_parked_sales as number,
