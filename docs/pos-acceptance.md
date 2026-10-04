@@ -4252,3 +4252,28 @@ Real and deliberate, so nobody files them as bugs:
 | **Order detail and cancellation reads can exceed staff location scope** | The main Orders list applies assigned shops, but the current order-detail and cancellation server reads are store-scoped rather than location-scoped; scope lookup errors also fail open. Public Help tells restricted staff not to act and to contact support. Fix the authorization boundary and add negative tests before removing that warning.                                                            |
 | **Priority fulfilment routes on raw on-hand stock**                     | The resolver compares `inventory_levels.on_hand` with demand rather than reservation-adjusted availability. A shop whose remaining units are already reserved can be selected ahead of a genuinely available shop. Route on `on_hand - reserved` and pin the race in resolver tests.                                                                                                                           |
 | **Missing parcel measurements use carrier-facing defaults**             | Rate quoting and booking substitute 500 g and 10×10×5 cm when catalogue measurements are absent. Help discloses this because the fallback can change a carrier quote; replace it with a merchant-visible validation or confirmation step before treating live rates as production-safe.                                                                                                                        |
+
+## Mink product photo and CSV chat workflows (2026-10-04)
+
+- Attach an authentic photo, name an existing product, and ask to replace its
+  primary image: receive a photo proposal showing the current/proposed gallery;
+  save, review and approve it. Only image fields change, and POS/catalogue reads
+  use the approved product photo. Add and full-gallery replacement are explicit modes.
+- Change the product after preview: approval refuses without overwriting it.
+  A safe rollback restores the exact previous image fields. Other-store images
+  and product IDs, revoked access and deleted new Media images are refused.
+- Attach a UTF-8 product CSV to chat and request import: receive exact line/column
+  validation and a human-only import card. Original bytes stay private.
+- Ask Mink to correct a bad column header or a known bad value: inspect a separate
+  corrected copy and the change list; unknown required facts prompt clarification.
+- Approve a clean CSV: duplicate clicks queue one job, closing chat does not stop
+  it, and the card reports progress, completion counts and row errors. Existing
+  handles are skipped; a supplied published Status publishes through normal import.
+- After a partial/failed job, correct and retry: only failed or unprocessed rows
+  reach the new job, even if the issue log was capped. Successful rows are excluded.
+- A role without Products Manage cannot upload, inspect, correct, download or
+  queue these CSVs. Files from another store/admin and expired copies are refused.
+
+Automated parser, tool, route and UI checks cover the boundaries. Live Vertex,
+Media/storage and background-worker merchant acceptance remains required before
+release; this entry records acceptance stories, not completed production evidence.

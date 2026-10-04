@@ -72,6 +72,7 @@ export interface GateFinding {
   code: string;
   message: string;
   where?: string;
+  contrast?: { target: string; ratio: number; required: number }[];
 }
 
 export interface GateResult {
@@ -814,6 +815,7 @@ export interface BrowserSample {
     target?: string;
     /** Bounded representative selectors and axe's measured failure details. */
     examples?: { target: string; summary: string }[];
+    contrast?: { target: string; ratio: number; required: number }[];
   }[];
   lcpMs: number | null;
   cls: number | null;
@@ -948,6 +950,20 @@ export function parseBrowserEvidence(
         help: str(record.help, 200) ?? "",
         ...(target ? { target } : {}),
         ...(examples.length ? { examples } : {}),
+        ...(id === "color-contrast" && Array.isArray(record.contrast)
+          ? {
+              contrast: record.contrast.slice(0, 40).flatMap((item) => {
+                if (!item || typeof item !== "object") return [];
+                const value = item as Record<string, unknown>;
+                const target = str(value.target, 180);
+                const ratio = finiteNumber(value.ratio, 1, 21);
+                const required = finiteNumber(value.required, 1, 21);
+                return target && ratio !== null && required !== null
+                  ? [{ target, ratio, required }]
+                  : [];
+              }),
+            }
+          : {}),
       });
     }
     const offenders = Array.isArray(s.overflowOffenders)
@@ -1105,6 +1121,7 @@ export function evaluateBrowserGates(
               : ""
         }`,
         where,
+        ...(violation.contrast?.length ? { contrast: violation.contrast } : {}),
       };
       if (violation.impact && BLOCKING_IMPACTS.has(violation.impact)) {
         accessibility.push(entry);

@@ -35,6 +35,7 @@ import { MinkMark } from "./mink-mark";
 import { MinkMultimodalInput } from "./mink-multimodal-input";
 import { MinkArtifacts } from "./mink-artifacts";
 import { MinkFeedbackControls } from "./mink-feedback";
+import { readMinkCsvReference } from "@/lib/mink/csv-input";
 import { readReviewedMinkDocument } from "@/lib/mink/document-input";
 import { readSavedMinkMediaReference } from "@/lib/mink/media-attachment";
 import { MINK_MESSAGE_MAX_CHARS } from "@/lib/mink/input-policy";
@@ -1119,6 +1120,16 @@ function MinkUserMessage({ text }: { text: string }) {
   > = [];
 
   while (true) {
+    const csv = readMinkCsvReference(visibleText);
+    if (csv) {
+      visibleText = csv.message;
+      attachments.unshift({
+        kind: "reference",
+        filename: csv.file.filename,
+        sourceKind: "Product CSV",
+      });
+      continue;
+    }
     const document = readReviewedMinkDocument(visibleText);
     if (document) {
       visibleText = document.message;

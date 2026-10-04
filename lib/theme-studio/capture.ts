@@ -1,8 +1,8 @@
 import "server-only";
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, max, sql } from "drizzle-orm";
-import sharp from "sharp";
+import { prepareVisualScreenshot } from "./visual-evidence";
 import {
   platformAdmins,
   themeStudioAssets,
@@ -785,6 +785,7 @@ export async function finishThemeStudioCapture(input: {
   const preparedQa: {
     key: string;
     bytes: Buffer;
+    mediaType: "image/png" | "image/webp";
     width: number;
     height: number;
     sha256: string;
@@ -793,27 +794,9 @@ export async function finishThemeStudioCapture(input: {
   if (capture.automatic) {
     try {
       for (const shot of qaScreenshots) {
-        const originalByteSize = shot.bytes.byteLength;
-        const { data, info } = await sharp(shot.bytes, {
-          failOn: "warning",
-          limitInputPixels: 50_000_000,
-        })
-          .rotate()
-          .resize({
-            width: 4096,
-            height: 4096,
-            fit: "inside",
-            withoutEnlargement: true,
-          })
-          .webp({ quality: 72 })
-          .toBuffer({ resolveWithObject: true });
         preparedQa.push({
           key: shot.key,
-          bytes: data,
-          width: info.width,
-          height: info.height,
-          sha256: createHash("sha256").update(data).digest("hex"),
-          originalByteSize,
+          ...(await prepareVisualScreenshot(shot.bytes)),
         });
       }
     } catch {
@@ -1027,7 +1010,7 @@ export async function finishThemeStudioCapture(input: {
           .values({
             projectId: project.id,
             purpose: "qa_screenshot",
-            mediaType: "image/webp",
+            mediaType: shot.mediaType,
             bytes: shot.bytes,
             byteSize: shot.bytes.byteLength,
             width: shot.width,

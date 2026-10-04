@@ -47,6 +47,7 @@ const DRAFT_PERMISSION: Record<
 > = {
   product_description: { section: "products", action: "manage" },
   product_seo: { section: "products", action: "manage" },
+  product_images: { section: "products", action: "manage" },
   blog: { section: "blogs", action: "manage" },
   coupon_email: { section: "marketing", action: "manage" },
   customer_message: { section: "users", action: "manage" },
@@ -253,7 +254,9 @@ export async function getMinkDraft(
   return {
     ...state,
     lastProductAction:
-      state.kind === "product_description" || state.kind === "product_seo"
+      state.kind === "product_description" ||
+      state.kind === "product_seo" ||
+      state.kind === "product_images"
         ? await getLatestMinkProductAction(actor, draftId)
         : null,
     lastDomainAction: domainActionToolForKind(state.kind)

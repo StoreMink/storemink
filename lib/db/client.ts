@@ -38,6 +38,15 @@ function getPool(): Pool {
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
       max: Number(process.env.DB_POOL_MAX ?? 10),
+      // Dedicated Studio workers renew short leases through this pool. A stuck
+      // connection or statement must not pin their only connection forever.
+      ...(process.env.THEME_STUDIO_WORKER_ONLY === "true"
+        ? {
+            connectionTimeoutMillis: 5_000,
+            statement_timeout: 30_000,
+            idle_in_transaction_session_timeout: 60_000,
+          }
+        : {}),
       // Keep the full PostgreSQL timestamp text. Converting through JS Date
       // would discard microseconds and break exact optimistic-lock predicates.
       types: postgresStringTimestampTypes,

@@ -11,6 +11,8 @@ import {
   products,
 } from "@/drizzle/schema";
 import { withService, type Db } from "@/lib/db/client";
+import { selectOwnedStorefrontImageUrls } from "./storefront-media-read";
+import { parseMinkProductImages } from "./product-images";
 import { normalizeMinkDraftContent } from "./draft-types";
 import { MinkRequestError } from "./errors";
 import {
@@ -84,6 +86,7 @@ export async function previewMinkProductAction(input: {
     const draftContent = normalizeDraftContent(draft.kind, draft.content);
     const before = productValues(tool, product);
     const after = draftContentForAction(tool, draftContent);
+    await assertOwnedImages(db, input.actor.storeId, tool, after, before);
     if (sameValues(tool, before, after)) {
       throw new MinkRequestError(
         "mink_action_no_change",
@@ -273,6 +276,14 @@ export async function executeMinkProductAction(input: {
       };
     }
 
+    if (approval.operation === "apply")
+      await assertOwnedImages(
+        db,
+        input.actor.storeId,
+        approval.toolName,
+        after,
+        before,
+      );
     const now = new Date().toISOString();
     const updated = await db
       .update(products)
@@ -295,6 +306,8 @@ export async function executeMinkProductAction(input: {
         description: products.description,
         seoTitle: products.seoTitle,
         seoDescription: products.seoDescription,
+        imageUrl: products.imageUrl,
+        images: products.images,
         contentUpdatedAt: products.contentUpdatedAt,
       });
     if (!updated[0]) {
@@ -595,6 +608,8 @@ async function readProduct(db: Db, storeId: string, productId: string) {
       description: products.description,
       seoTitle: products.seoTitle,
       seoDescription: products.seoDescription,
+      imageUrl: products.imageUrl,
+      images: products.images,
       contentUpdatedAt: products.contentUpdatedAt,
     })
     .from(products)
@@ -745,8 +760,13 @@ function toApproval(
 
 function productValues(
   tool: MinkProductActionTool,
-  product: Pick<ProductRow, "description" | "seoTitle" | "seoDescription">,
+  product: ProductRow,
 ): MinkProductActionValues {
+  if (tool === "apply_product_images")
+    return {
+      image_url: product.imageUrl,
+      images_json: JSON.stringify(product.images),
+    };
   return tool === "apply_product_description"
     ? { description: product.description }
     : {
@@ -759,6 +779,11 @@ function productUpdate(
   tool: MinkProductActionTool,
   values: MinkProductActionValues,
 ) {
+  if (tool === "apply_product_images")
+    return {
+      imageUrl: values.image_url,
+      images: parseMinkProductImages(values.images_json),
+    };
   return tool === "apply_product_description"
     ? { description: values.description ?? null }
     : {
@@ -795,7 +820,11 @@ function sameValues(
 }
 
 function normalizeDraftContent(kind: string, value: unknown) {
-  if (kind !== "product_description" && kind !== "product_seo") {
+  if (
+    kind !== "product_description" &&
+    kind !== "product_seo" &&
+    kind !== "product_images"
+  ) {
     throw unsupportedDraft();
   }
   try {
@@ -844,7 +873,7 @@ function terminalError(status: MinkProductActionStatus) {
 function unsupportedDraft() {
   return new MinkRequestError(
     "mink_action_draft_unsupported",
-    "Save a product description or product SEO proposal before applying it.",
+    "Save a product description, SEO or photo proposal before applying it.",
     409,
   );
 }
@@ -902,3 +931,32 @@ type ApprovalRow = Omit<
   productId: string;
   productVersion: string;
 };
+
+async function assertOwnedImages(
+  db: Db,
+  storeId: string,
+  tool: MinkProductActionTool,
+  after: MinkProductActionValues,
+  before: MinkProductActionValues,
+) {
+  if (tool !== "apply_product_images") return;
+  const images = parseMinkProductImages(after.images_json);
+  if (after.image_url && !images.includes(after.image_url))
+    throw invalidApproval();
+  // Existing legacy gallery entries may be preserved or restored verbatim. New
+  // entries must still belong to this store at preview AND execution.
+  const previous = new Set([
+    before.image_url,
+    ...parseMinkProductImages(before.images_json),
+  ]);
+  const added = [after.image_url, ...images].filter(
+    (url): url is string => Boolean(url) && !previous.has(url),
+  );
+  const owned = await selectOwnedStorefrontImageUrls(db, storeId, added);
+  if (added.some((url) => !owned.has(url)))
+    throw new MinkRequestError(
+      "mink_image_missing",
+      "A proposed photo is no longer available in this store. Attach it again and create a new proposal.",
+      409,
+    );
+}

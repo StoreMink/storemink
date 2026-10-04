@@ -12,6 +12,8 @@ export interface QaProgress {
   visualDeficit: number | null;
   rejections: string[];
   repairTargets?: string[];
+  contrastDeficits?: Record<string, number>;
+  patternSeverity?: Record<string, number>;
 }
 
 /** Ignore wording, measurements and ordering when identifying a repeated fault.
@@ -26,6 +28,8 @@ export function qaProgress(
 ): QaProgress {
   const patterns: string[] = [];
   let severity = 0;
+  const contrastDeficits: Record<string, number> = {};
+  const patternSeverity: Record<string, number> = {};
   for (const g of gates.filter((g) => g.required && g.status !== "pass")) {
     if (!g.findings.length) patterns.push(`${g.id}:incomplete`);
     for (const f of g.findings) {
@@ -36,9 +40,19 @@ export function qaProgress(
           ? f.message.match(/\(([^)]+)\)/)?.[1]
           : "") ??
         "";
-      patterns.push(`${g.id}:${f.code}:${f.where ?? ""}:${selector}`);
+      const pattern = `${g.id}:${f.code}:${f.where ?? ""}:${selector}`;
+      patterns.push(pattern);
+      if (f.code === "color-contrast") {
+        for (const measurement of f.contrast ?? []) {
+          const key = `${f.where ?? ""}:${measurement.target}`;
+          contrastDeficits[key] = Math.max(
+            0,
+            measurement.required - measurement.ratio,
+          );
+        }
+      }
       const numbers = f.message.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
-      severity +=
+      const findingSeverity =
         f.code === "extreme_crop"
           ? Math.max(0, 35 - (numbers[0] ?? 0))
           : f.code === "small_target"
@@ -51,11 +65,17 @@ export function qaProgress(
                 : f.code === "color-contrast"
                   ? Number(f.message.match(/\((\d+) elements?/)?.[1] ?? 1)
                   : 1;
+      severity += findingSeverity;
+      patternSeverity[pattern] =
+        (patternSeverity[pattern] ?? 0) + findingSeverity;
     }
   }
   return {
     patterns: patterns.sort(),
     severity,
+    ...(Object.keys(contrastDeficits).length
+      ? { contrastDeficits, patternSeverity }
+      : {}),
     visualDeficit: visual
       ? Math.max(
           0,
@@ -78,11 +98,26 @@ export function qaImproved(current: QaProgress, previous: QaProgress): boolean {
   const prior = new Set(previous.patterns);
   const noNew = current.patterns.every((p) => prior.has(p));
   if (current.patterns.length || previous.patterns.length) {
+    const before = previous.contrastDeficits ?? {};
+    const after = current.contrastDeficits ?? {};
+    const keys = Object.keys(before);
+    const ratioProgress =
+      keys.length > 0 &&
+      Object.keys(after).length === keys.length &&
+      keys.every(
+        (key) => typeof after[key] === "number" && after[key] <= before[key],
+      ) &&
+      Object.entries(current.patternSeverity ?? {}).every(
+        ([key, value]) => value <= (previous.patternSeverity?.[key] ?? -1),
+      ) &&
+      keys.reduce((sum, key) => sum + after[key], 0) <
+        keys.reduce((sum, key) => sum + before[key], 0) * 0.9;
     return (
       noNew &&
       (current.patterns.length < previous.patterns.length ||
         (current.patterns.length === previous.patterns.length &&
-          current.severity < previous.severity * 0.9))
+          (current.severity < previous.severity * 0.9 ||
+            (current.severity <= previous.severity && ratioProgress))))
     );
   }
   if (current.visualDeficit === null || previous.visualDeficit === null)

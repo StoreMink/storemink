@@ -431,6 +431,7 @@ export function createFakeModelClient(
             findings: [],
             revisionBrief: null,
             repairs: [],
+            imageAssessments: [],
           },
         };
       }

@@ -21,10 +21,16 @@ import {
   MINK_MESSAGE_MAX_CHARS,
 } from "@/lib/mink/input-policy";
 import { addSavedMinkMediaReference } from "@/lib/mink/media-attachment";
+import {
+  addMinkCsvReference,
+  MINK_CSV_BYTES,
+  validateMinkCsv,
+  type MinkCsvReference,
+} from "@/lib/mink/csv-input";
 import { startMinkRecording } from "@/lib/mink/voice-recorder";
 
 const COMPOSER_FILE_ACCEPT =
-  ".png,.jpg,.jpeg,.webp,.pdf,.txt,.md,image/png,image/jpeg,image/webp,application/pdf,text/plain,text/markdown";
+  ".png,.jpg,.jpeg,.webp,.pdf,.txt,.md,.csv,text/csv,image/png,image/jpeg,image/webp,application/pdf,text/plain,text/markdown";
 
 type ComposerAttachment = {
   id: string;
@@ -32,6 +38,7 @@ type ComposerAttachment = {
   preview: string;
   localText: string | null;
   asset: MediaAsset | null;
+  csvFile: MinkCsvReference | null;
   uploadState: "local" | "uploading" | "ready" | "error";
   /**
    * ★★ A READING SURVIVES A FAILED SEND, so a retry only redoes what failed.
@@ -220,7 +227,19 @@ export function MinkMultimodalInput({
       for (const next of nextFiles) {
         let localText: string | null = null;
         const image = /\.(png|jpe?g|webp)$/i.test(next.name);
-        if (/\.(txt|md)$/i.test(next.name)) {
+        if (/\.csv$/i.test(next.name)) {
+          if (!next.size || next.size > MINK_CSV_BYTES)
+            throw new Error("Choose a non-empty product CSV up to 5 MiB.");
+          let text: string;
+          try {
+            text = new TextDecoder("utf-8", { fatal: true }).decode(
+              await next.arrayBuffer(),
+            );
+          } catch {
+            throw new Error("Save this CSV as UTF-8 and attach it again.");
+          }
+          validateMinkCsv(text);
+        } else if (/\.(txt|md)$/i.test(next.name)) {
           if (next.size > DOCUMENT_BYTES)
             throw new Error("Choose a text file up to 8 KiB.");
           localText = decodeMinkDocument(next.name, await next.arrayBuffer());
@@ -230,7 +249,7 @@ export function MinkMultimodalInput({
             kind = inputKind(next.name);
           } catch {
             throw new Error(
-              "Attach a PNG, JPEG, WebP or PDF, or a .txt or .md file.",
+              "Attach a PNG, JPEG, WebP, PDF, .txt, .md or product .csv file.",
             );
           }
           if (kind === "audio")
@@ -246,6 +265,7 @@ export function MinkMultimodalInput({
           preview: image ? URL.createObjectURL(next) : "",
           localText,
           asset: null,
+          csvFile: null,
           uploadState: image && canSaveMedia ? "uploading" : "local",
           reading: null,
         });
@@ -495,9 +515,41 @@ export function MinkMultimodalInput({
 
       let prepared = current;
       let pendingReadings = staged.filter(
-        (attachment) => attachment.localText === null,
+        (attachment) =>
+          attachment.localText === null &&
+          !/\.csv$/i.test(attachment.file.name),
       ).length;
       for (const attachment of staged) {
+        if (/\.csv$/i.test(attachment.file.name)) {
+          let file = attachment.csvFile;
+          if (!file) {
+            const response = await fetch("/api/mink/product-imports", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: controller.signal,
+              cache: "no-store",
+              body: JSON.stringify({
+                id: attachment.id,
+                filename: attachment.file.name.slice(0, 160),
+                csv: new TextDecoder("utf-8", { fatal: true }).decode(
+                  await attachment.file.arrayBuffer(),
+                ),
+              }),
+            });
+            const data = await response.json();
+            if (!response.ok || typeof data.file?.id !== "string")
+              throw new Error(data.error || "Could not upload this CSV.");
+            file = data.file as MinkCsvReference;
+            updateAttachments((items) =>
+              items.map((item) =>
+                item.id === attachment.id ? { ...item, csvFile: file } : item,
+              ),
+            );
+          }
+          if (id !== generation.current) return;
+          prepared = addMinkCsvReference(prepared, file);
+          continue;
+        }
         const image = Boolean(attachment.preview);
         const asset =
           attachment.asset ??

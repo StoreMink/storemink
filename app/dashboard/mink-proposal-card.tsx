@@ -163,7 +163,9 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
   useUnsavedChangesWarning(dirty);
 
   const supportsProductAction =
-    draft.kind === "product_description" || draft.kind === "product_seo";
+    draft.kind === "product_description" ||
+    draft.kind === "product_seo" ||
+    draft.kind === "product_images";
   const supportsDomainAction =
     domainActionToolForDraftKind(draft.kind) !== null;
   const supportsInventoryAction = draft.kind === "inventory_adjustment";
@@ -490,7 +492,24 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
       </header>
 
       <div className="space-y-3 p-3">
-        {draft.kind === "bulk_inventory_adjustment" ? (
+        {draft.kind === "product_images" ? (
+          <div className="space-y-2">
+            <p className="text-xs">
+              Review the primary photo and ordered gallery. Saving keeps this
+              private; approve the photo change to update the product.
+            </p>
+            <ProductPhotoPreview
+              value={draft.before.images_json}
+              primary={draft.before.image_url}
+              label="Current gallery"
+            />
+            <ProductPhotoPreview
+              value={content.images_json}
+              primary={content.image_url}
+              label="Proposed gallery"
+            />
+          </div>
+        ) : draft.kind === "bulk_inventory_adjustment" ? (
           <BulkInventoryDraftEditor
             value={content.lines_json ?? "[]"}
             disabled={busy !== null || actionBusy !== null}
@@ -900,6 +919,21 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
                     </div>
                   ))
                 )}
+                {"product" in approval &&
+                approval.toolName === "apply_product_images" ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <ProductPhotoPreview
+                      value={approval.before.images_json ?? "[]"}
+                      primary={approval.before.image_url}
+                      label="Current gallery"
+                    />
+                    <ProductPhotoPreview
+                      value={approval.after.images_json ?? "[]"}
+                      primary={approval.after.image_url}
+                      label="Approved gallery"
+                    />
+                  </div>
+                ) : null}
                 {isCampaignApproval(approval) && approval.sample ? (
                   <div className="overflow-hidden rounded-lg border border-[#e4dfef] bg-white">
                     <div className="border-b border-[#eeeaf8] px-2.5 py-2">
@@ -1366,7 +1400,10 @@ function actionScope(kind: MinkDraftKind) {
 function actionSuccessMessage(approval: MinkActionApproval) {
   if (approval.operation === "rollback")
     return "Approved safe rollback completed.";
-  if ("product" in approval) return "Approved text applied to the product.";
+  if ("product" in approval)
+    return approval.toolName === "apply_product_images"
+      ? "Approved photos applied to the product."
+      : "Approved text applied to the product.";
   if (isSingleInventoryApproval(approval)) {
     return "Approved inventory adjustment recorded for the exact SKU and location.";
   }
@@ -2072,4 +2109,46 @@ function formatSignedInr(value: string) {
   if (!Number.isFinite(amount)) return `₹${value}`;
   const sign = amount > 0 ? "+" : amount < 0 ? "−" : "";
   return `${sign}${formatInr(String(Math.abs(amount)))}`;
+}
+
+function ProductPhotoPreview({
+  value,
+  primary,
+  label,
+}: {
+  value?: string;
+  primary?: string | null;
+  label: string;
+}) {
+  let urls: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(value ?? "[]");
+    if (Array.isArray(parsed))
+      urls = parsed
+        .filter(
+          (url): url is string =>
+            typeof url === "string" && isRenderableBlogCover(url),
+        )
+        .slice(0, 20);
+  } catch {}
+  if (primary && isRenderableBlogCover(primary))
+    urls = [primary, ...urls.filter((url) => url !== primary)].slice(0, 20);
+  return (
+    <div>
+      <p className="mb-1 text-xs font-medium">
+        {label} (first photo is primary)
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {urls.map((url, index) => (
+          // eslint-disable-next-line @next/next/no-img-element -- guarded same-origin image proxy
+          <img
+            key={`${url}:${index}`}
+            src={`/api/og-image?url=${encodeURIComponent(url)}`}
+            alt={`${label} photo ${index + 1}`}
+            className="h-20 w-20 rounded-lg border object-contain"
+          />
+        ))}
+      </div>
+    </div>
+  );
 }

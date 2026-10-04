@@ -219,6 +219,21 @@
   max-width: none;
   border-radius: var(--sm-radius-control);
   background: var(--sm-sand);
+  color: var(--sm-ink);
+}
+
+/* The mobile drawer is a page surface, even inside a dark market header.
+   Pair its foreground and background independently of the header's colours. */
+:global(.sm-header-market) .drawerRoot .trigger,
+:global(.sm-header-market) .drawerRoot .trigger:hover {
+  background: var(--sm-cream);
+  color: var(--sm-ink);
+  border-color: var(--sm-border);
+}
+
+:global(.sm-header-market) .drawerRoot .triggerCopy small,
+:global(.sm-header-market) .drawerRoot .trigger > svg:first-child {
+  color: var(--sm-ink);
 }
 
 .drawerRoot .panel {

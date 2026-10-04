@@ -150,6 +150,7 @@ export function themeBenchmarkReport(input: {
       id: r.id,
       kind: r.kind,
       status: r.status,
+      attempts: r.attemptCount ?? null,
       promptVersion: r.promptVersion,
       queueMs: duration(r.createdAt, r.startedAt),
       wallMs: duration(r.startedAt, r.finishedAt),
@@ -163,6 +164,7 @@ export function themeBenchmarkReport(input: {
       status: r.status,
       iteration: r.qaIteration,
       buildId: object(r.browserReport).buildId ?? null,
+      queueMs: duration(r.createdAt, r.startedAt),
       wallMs: duration(r.startedAt, r.finishedAt),
       timing: object(r.browserReport).timing ?? null,
       reusedRoutes: object(r.browserReport).reusedRoutes ?? 0,
@@ -174,6 +176,7 @@ export function themeBenchmarkReport(input: {
       scores: object(r.visionReport).scores ?? null,
       provider: object(r.visionReport).provider ?? null,
       providerModel: object(r.visionReport).providerModel ?? null,
+      imageAssessments: object(r.visionReport).imageAssessments ?? null,
     })),
   };
 }

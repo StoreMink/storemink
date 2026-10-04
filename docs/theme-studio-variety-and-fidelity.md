@@ -2,9 +2,10 @@
 
 **Product requirements + technical requirements**
 
-**Implementation status, 3 October 2026:** Track V (V1–V7) is implemented for
-new v21 runs; the complete live exit criterion is still pending final validation
-of collection-banner guidance (§12). Reference fidelity
+**Implementation status, 4 October 2026:** Track V (V1–V7) is implemented for
+new v21+ runs. Full production validation now confirms varied collection-banner
+choices, but width and hover-image settings remain identical across eight drafts;
+the complete live exit criterion is still not passed (§12). Reference fidelity
 (F1/F2) and renderer additions remain separate pending phases.
 
 |          |                                                                                                                                     |
@@ -513,13 +514,25 @@ unavailable corrections, and reference priority. Rollback-only PostgreSQL checks
 cover real context recovery, own-project exclusion, immutable evidence and
 operator-only permissions. No merchant-visible change, no Help Centre update.
 
-The last complete HIGH-reasoning Gemini 3.8 Flash batch compiled eight themes
+The 3 October HIGH-reasoning Gemini 3.8 Flash structural batch compiled eight themes
 across four industries: median pairwise distance 0.704, seven non-near-white page
 backgrounds, and all nearest comparisons above 0.35 with at least three changed
 axes. It did not clear the full exit bar because `collectionBanner` was identical
 in all eight. Final banner guidance is implemented and locally tested; its live
-batch awaits approval after automatic review rejected external-provider execution
-and estimated spend. The thresholds remain unchanged. Exact results and the 20
+batch awaited approval at that point after automatic review rejected
+external-provider execution and estimated spend. The thresholds remain unchanged.
+Exact results and the 20
 individual tracked choices are saved in
 [`evals/theme-studio/variety-live-2026-10-03.json`](../evals/theme-studio/variety-live-2026-10-03.json);
 timing, cost and scope are described in `docs/theme-studio-performance.md`.
+
+The authorized [4 October production benchmark](theme-studio-live-benchmark-2026-10-04.md)
+used eight fresh v22 builds, normal artwork generation and real browser QA.
+All eight packages compiled; five became candidates. Median pairwise distance
+was 0.6545 and 4/8 page colours were outside the near-white band. Collection
+banners varied, but `pageWidth: wide` and `cardHoverImage: true` were chosen in
+all eight. The original strict exit criterion remains failed. Three drafts
+stopped before artwork, so this measures eight authored layouts rather than
+eight completed image sets. [Stored metrics](../evals/theme-studio/full-live-2026-10-04.json)
+retain every individual choice and pairwise score. This benchmark does not
+implement additional variety or reference-fidelity changes.

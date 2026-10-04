@@ -5,6 +5,7 @@ import {
   themeStudioRuns,
   themeStudioMessages,
   themeStudioCaptures,
+  themeStudioAssets,
 } from "@/drizzle/schema";
 import { gate, GATE_LABELS, type GateId } from "./acceptance-gates";
 import { qaProgress } from "./qa-diagnosis";
@@ -12,6 +13,7 @@ import { repairTargets } from "./targeted-repair";
 import { runThemeGeneration } from "./pipeline";
 import type { ThemeIntent } from "./contracts";
 import { operatorImagePackage } from "./_test-helpers";
+import { qaImageIssues } from "./qa-image-issues";
 
 const { service, generate, verify } = vi.hoisted(() => ({
   service: vi.fn(),
@@ -71,6 +73,10 @@ function fixture({
   failId = "browser.accessibility" as GateId,
   pkg = operatorImagePackage(),
   intent = undefined as ThemeIntent | undefined,
+  imageHistory = undefined as
+    | { sha256: string | null; review: string; note?: string }[]
+    | undefined,
+  missingImage = false,
 } = {}) {
   const gates = passing()
     .filter((g) => phase !== "layout" || g.id.startsWith("browser."))
@@ -132,11 +138,32 @@ function fixture({
     ...(!oldBuild && iteration > 0 && iteration < 3 ? [history] : []),
   ];
   const writes: { table: unknown; values: Record<string, unknown> }[] = [];
+  let assetReads = 0;
   const db = {
+    execute: vi.fn(async () => ({
+      rows:
+        imageHistory ??
+        pkg.assets
+          .filter((a) => a.source === "generated")
+          .map((a) => ({ sha256: a.sha256, review: "passed" })),
+    })),
     select: () => {
-      const result = reads.shift();
+      let result: unknown;
       const query = {
-        from: () => query,
+        from: (table: unknown) => {
+          result =
+            table === themeStudioAssets && assetReads++ > 0
+              ? missingImage
+                ? []
+                : [
+                    {
+                      bytes: Buffer.from("saved-artwork"),
+                      mediaType: "image/webp",
+                    },
+                  ]
+              : reads.shift();
+          return query;
+        },
         where: () => query,
         for: () => query,
         orderBy: () => query,
@@ -170,6 +197,95 @@ beforeEach(() => {
 });
 
 describe("automatic acceptance and visual settlement", () => {
+  it("cannot approve generated artwork without assessing its exact current bytes", async () => {
+    const pkg = operatorImagePackage();
+    pkg.assets.forEach((a) => {
+      a.source = "generated";
+    });
+    const generated = qaImageIssues(pkg, []);
+    const writes = fixture({ pkg, imageHistory: [] });
+    expect(
+      (await runThemeStudioVisualQaWorker({ providers: ["fake"] })).passed,
+    ).toBe(0);
+    expect(generate).toHaveBeenCalledOnce();
+    expect(
+      generate.mock.calls[0][0].content.filter(
+        (b: { type: string }) => b.type === "image",
+      ),
+    ).toHaveLength(generated.length);
+    expect(
+      writes.some(
+        (w) =>
+          w.table === themeStudioProjects && w.values.status === "candidate",
+      ),
+    ).toBe(false);
+    expect(
+      writes.find(
+        (w) => w.table !== themeStudioProjects && w.values.status === "queued",
+      ),
+    ).toBeDefined();
+  });
+  it("requires and records an explicit assessment of flagged art before approval", async () => {
+    const pkg = operatorImagePackage();
+    pkg.assets.forEach((a) => {
+      a.source = "generated";
+    });
+    const art = qaImageIssues(pkg, [])[0];
+    const history = pkg.assets.map((a) => ({
+      sha256: a.sha256,
+      review: a.id === art.slotId ? "flagged" : "passed",
+      note: "Background needs inspection",
+    }));
+    generate.mockResolvedValue({
+      kind: "ok",
+      value: {
+        ...report,
+        imageAssessments: [
+          {
+            slotId: art.slotId,
+            approved: true,
+            reason: "The actual backdrop matches the explicit art direction.",
+          },
+        ],
+      },
+      usage: {},
+    });
+    const writes = fixture({ pkg, imageHistory: history });
+    expect(
+      (await runThemeStudioVisualQaWorker({ providers: ["fake"] })).passed,
+    ).toBe(1);
+    const content = generate.mock.calls[0][0].content;
+    expect(
+      content.some((b: { type: string; text?: string }) =>
+        b.text?.includes(art.sha256),
+      ),
+    ).toBe(true);
+    expect(
+      content.filter((b: { type: string }) => b.type === "image"),
+    ).toHaveLength(1);
+    expect(
+      writes.find((w) =>
+        Array.isArray(
+          (
+            w.values.visionReport as typeof report & {
+              imageAssessments?: unknown[];
+            }
+          )?.imageAssessments,
+        ),
+      ),
+    ).toBeDefined();
+  });
+  it("does not buy a visual verdict when unresolved artwork bytes are missing", async () => {
+    const pkg = operatorImagePackage();
+    pkg.assets.forEach((a) => {
+      a.source = "generated";
+    });
+    fixture({ pkg, imageHistory: [], missingImage: true });
+    expect(
+      (await runThemeStudioVisualQaWorker({ providers: ["fake"] })).passed,
+    ).toBe(0);
+    expect(generate).not.toHaveBeenCalled();
+  });
   it("delivers a candidate only after both checks and current evidence verification pass", async () => {
     const writes = fixture();
     expect(

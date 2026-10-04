@@ -6162,6 +6162,74 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261004_0154_theme_studio_readable_screenshots",
+      "description": "Preserve native-width tall QA screenshots with bounded PNG fallback while retaining storefront asset limits",
+      "file": "sql/20261004_0154_theme_studio_readable_screenshots.sql",
+      "transaction": true,
+      "requires": ["20261003_0153_theme_studio_variety"],
+      "verify": {
+        "constraints": [
+          "theme_studio_assets_media_type_check",
+          "theme_studio_assets_dimensions_check"
+        ],
+        "queries": [
+          {
+            "name": "QA screenshot media and dimension constraints are validated on assets",
+            "sql": "select count(*)::text from pg_constraint where conrelid='public.theme_studio_assets'::regclass and contype='c' and convalidated and conname in ('theme_studio_assets_media_type_check','theme_studio_assets_dimensions_check')",
+            "equals": "2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261004_0155_mink_product_photos_csv",
+      "description": "Human-approved existing product photo changes and private product CSV validation, corrections and failed-row import retries",
+      "file": "sql/20261004_0155_mink_product_photos_csv.sql",
+      "transaction": true,
+      "requires": ["20261004_0154_theme_studio_readable_screenshots"],
+      "verify": {
+        "tables": ["mink_csv_files"],
+        "rlsTables": ["mink_csv_files"],
+        "constraints": ["mink_drafts_product_images_target_check"],
+        "queries": [
+          {
+            "name": "Import retry lines column exists",
+            "sql": "select exists(select 1 from information_schema.columns where table_schema='public' and table_name='data_jobs' and column_name='failed_lines')::text",
+            "equals": "true"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "CSV exception in attachment formats",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%product CSV files use the chat import workflow%'",
+            "equals": "1"
+          },
+          {
+            "name": "Product chat help edit 1",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Product CSV files are supported%'",
+            "equals": "1"
+          },
+          {
+            "name": "Product chat help edit 2",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%To replace a product photo, attach your own image%'",
+            "equals": "1"
+          },
+          {
+            "name": "Product chat help edit 3",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Product-photo approval changes only the primary photo%'",
+            "equals": "1"
+          },
+          {
+            "name": "Product chat help edit 4",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%To import new products, attach a UTF-8 .csv file%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }
