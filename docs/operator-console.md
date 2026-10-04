@@ -135,12 +135,11 @@ Chirp 3 and Sarvam Saaras v4. It writes the service-only
 reads that row before transcription. There is no per-store override. A failed
 settings read fails the request rather than silently using a different model.
 
-The store detail screen owns one superadmin-only Mink control. **Enable Mink
-AI** atomically enables the store, private drafting and all implemented action
-capabilities; **Disable Mink AI** shuts those gates together. The actor is
-recorded in the access rows. Staff permissions, credits, plan limits and each
-exact human action approval still apply. This store switch is independent of
-`MINK_AI_ENABLED`, which remains the deployment-wide emergency shutdown.
+Mink AI is available in every store without operator enrollment. Store detail
+has no Enable/Disable Mink control. Migration 0157 backfills existing stores
+and automatically provisions the complete tool registry for future signups.
+Staff permissions, credits, plan limits and exact human approvals apply.
+`MINK_AI_ENABLED` remains the deployment-wide emergency shutdown.
 
 ### ★ Theme Studio is superadmin data, not a superadmin write
 

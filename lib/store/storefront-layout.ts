@@ -12,7 +12,7 @@ import {
 // (grocery cards/PDP/cart); CSS-only variants use the same resolved values via
 // the `sm-*` root classes emitted by the storefront layout.
 //
-// getCurrentStoreOrNull is unstable_cache-backed, so this dedupes with the
+// getCurrentStoreOrNull is request-memoized, so this dedupes with the
 // layout's own store resolution within a request. An absent theme resolves to
 // the classic appearance, so a store with no real theme is untouched.
 export async function getStorefrontLayout(): Promise<ResolvedStorefrontAppearance> {

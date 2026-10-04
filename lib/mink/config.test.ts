@@ -45,7 +45,7 @@ describe("getMinkConfig", () => {
 
     expect(getMinkConfig()).toMatchObject({
       enabled: true,
-      betaRequireInvite: true,
+      betaRequireInvite: false,
       projectId: "storemink-test",
       location: "global",
       model: "gemini-3.7-flash",
@@ -60,8 +60,8 @@ describe("getMinkConfig", () => {
     });
   });
 
-  it("requires a store invitation unless a controlled environment opts out", () => {
-    expect(getMinkConfig().betaRequireInvite).toBe(true);
+  it("is available to every store without an invitation", () => {
+    expect(getMinkConfig().betaRequireInvite).toBe(false);
   });
 
   it("allows an explicit false value to disable the default-on runtime", () => {

@@ -436,7 +436,22 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
     const set = <K extends keyof ProductFormData>(
       key: K,
       value: ProductFormData[K],
-    ) => setForm((f) => ({ ...f, [key]: value }));
+    ) =>
+      setForm((f) => {
+        const next = { ...f, [key]: value };
+        if (f.variants.length !== 1) return next;
+        if (key === "base_price" || key === "selling_price") {
+          next.variants = f.variants.map((v) => ({ ...v, [key]: value }));
+        } else if (key === "image_url") {
+          next.variants = f.variants.map((v) => ({
+            ...v,
+            images: value
+              ? [String(value), ...v.images.slice(1)]
+              : v.images.slice(1),
+          }));
+        }
+        return next;
+      });
 
     // Typing the name fills the slug live until the user overrides it.
     const handleNameChange = (value: string) =>
@@ -948,6 +963,20 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
               icon={Tag}
               tint="emerald"
             >
+              {form.variants.length > 0 && (
+                <p className="mb-4 text-sm text-dim">
+                  {form.variants.length === 1
+                    ? "Price changes here also update your single variant. A variant special price overrides its selling price."
+                    : "Each variant has its own price. These defaults apply to new variants; edit existing selling and special prices in Variants."}
+                  <button
+                    type="button"
+                    className="ml-2 font-medium text-[var(--dash-accent)] underline"
+                    onClick={() => setTab("variants")}
+                  >
+                    Edit variant prices
+                  </button>
+                </p>
+              )}
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
                   <label className={labelClass}>Base price ₹ (MRP)</label>

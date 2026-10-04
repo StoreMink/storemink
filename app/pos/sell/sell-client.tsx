@@ -1123,21 +1123,17 @@ export function SellClient({
                       onClick={() =>
                         grouped ? setVariantsFor(entry) : addItem(it)
                       }
-                      className="flex flex-col rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] p-2 text-left transition-colors hover:bg-[var(--pos-surface-2)] disabled:opacity-40"
+                      className="flex min-w-0 flex-col rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] p-2 text-left transition-colors hover:bg-[var(--pos-surface-2)] disabled:opacity-40"
                     >
-                      {/* Photos make the grid scannable by eye for items without a
-                      barcode (loose produce, bakery). A FIXED short height, not
-                      aspect-square: on a wide till screen a square tile grew to
-                      ~350px and pushed the price below the fold, so the cashier
-                      scrolled to find what should be one tap away. */}
-                      <div className="mb-2 h-24 w-full overflow-hidden rounded-lg bg-[var(--pos-surface)] sm:h-28">
+                      {/* Keep the complete photograph visible, including portrait products. */}
+                      <div className="mb-2 aspect-[4/5] max-h-64 w-full overflow-hidden rounded-lg bg-[var(--pos-surface-2)]">
                         {image ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={image}
                             alt=""
                             loading="lazy"
-                            className="h-full w-full object-cover"
+                            className="h-full w-full object-contain"
                           />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center text-[var(--pos-ink-3)]">
@@ -1241,7 +1237,7 @@ export function SellClient({
                         <img
                           src={l.image}
                           alt=""
-                          className="h-full w-full object-cover"
+                          className="h-full w-full object-contain"
                         />
                       ) : (
                         <div className="flex h-full w-full items-center justify-center text-[var(--pos-ink-3)]">
@@ -1486,7 +1482,7 @@ export function SellClient({
                   <img
                     src={variantsFor.image}
                     alt=""
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-contain"
                   />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center text-[var(--pos-ink-3)]">
@@ -1542,7 +1538,7 @@ export function SellClient({
                               src={v.image}
                               alt=""
                               loading="lazy"
-                              className="h-full w-full object-cover"
+                              className="h-full w-full object-contain"
                             />
                           ) : (
                             <div className="flex h-full w-full items-center justify-center text-[var(--pos-ink-3)]">

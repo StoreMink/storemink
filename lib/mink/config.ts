@@ -81,14 +81,9 @@ function boundedInt(
 /** Read at request time so Cloud Run revisions and tests can change config safely. */
 export function getMinkConfig(): MinkConfig {
   return {
-    // The runtime is enabled by default. Store access still fails closed behind
-    // the independent, default-on invitation requirement below.
+    // Available to every store; the global flag is an emergency runtime stop.
     enabled: enabled(process.env.MINK_AI_ENABLED),
-    // Phase 2 is an invited beta. An explicit false is required to retain the
-    // all-store internal-alpha behavior in a controlled environment.
-    // The operator's single store switch must not be bypassed by an old
-    // deployment's beta flag. Explicit read/delete-only actor options remain.
-    betaRequireInvite: true,
+    betaRequireInvite: false,
     projectId: process.env.GCP_PROJECT_ID?.trim() || null,
     location:
       process.env.MINK_VERTEX_LOCATION?.trim() ||

@@ -54,14 +54,14 @@ import { ListPagination } from "@/app/dashboard/components/list-pagination";
 import { ImportExportMenu } from "@/app/dashboard/components/import-export-menu";
 import { effectivePricing, formatPrice } from "@/lib/pricing";
 import type {
-  Product,
+  ProductListItem,
   CategoryOption,
   ProductFilter,
   ProductCounts,
 } from "./page";
 
 type Props = {
-  products: Product[];
+  products: ProductListItem[];
   categories: CategoryOption[];
   canManage?: boolean;
   counts: ProductCounts;
@@ -98,7 +98,9 @@ export function ProductsManagementView({
   const [isPending, startTransition] = useTransition();
   const [navigating, startNavigation] = useTransition();
   const [search, setSearch] = useState(query);
-  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProductListItem | null>(
+    null,
+  );
 
   const hrefFor = (next: {
     q?: string;
@@ -172,7 +174,7 @@ export function ProductsManagementView({
     });
   };
 
-  const handleTogglePublish = (product: Product) => {
+  const handleTogglePublish = (product: ProductListItem) => {
     startTransition(async () => {
       const publish = product.status !== "published";
       const result = await toggleProductPublish(product.id, publish);
@@ -188,7 +190,7 @@ export function ProductsManagementView({
   // Both create and edit are full-page, shareable routes so a teammate can be
   // sent a direct link (create = /dashboard/products/new, edit = /[id]).
   const openCreate = () => router.push("/dashboard/products/new");
-  const openEdit = (product: Product) =>
+  const openEdit = (product: ProductListItem) =>
     router.push(`/dashboard/products/${product.id}`);
 
   const tabs: { key: ProductFilter; label: string; count: number }[] = [

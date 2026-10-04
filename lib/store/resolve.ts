@@ -1,6 +1,6 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { unstable_cache } from "next/cache";
+import { cache } from "react";
 import { and, eq } from "drizzle-orm";
 import { withAnon } from "@/lib/db/client";
 import { stores } from "@/drizzle/schema";
@@ -68,18 +68,9 @@ const STORE_COLUMNS = {
   settings: stores.settings,
 };
 
-// Positive store lookups are cached by Host header. Missing store-host results
-// are deliberately NOT cached: a merchant can claim that slug moments later,
-// and Cloud Run instances do not share an in-memory Next data cache. Caching a
-// null made the first post-signup dashboard request on an instance that had
-// seen the unclaimed host resolve to the legacy WholeSip fallback for five
-// minutes. A DB error is likewise deliberately NOT swallowed here: this fn is
-// wrapped in unstable_cache and a returned null is cached for `revalidate`s, so
-// turning a transient DB outage into null would make a REAL store vanish
-// (storefront 404 / dashboard "no access") for the whole window even after the
-// DB recovers. A thrown/rejected promise is never cached, so we let the error
-// propagate and getCurrentStoreOrNull degrades it to an UNCACHED null → the next
-// request retries and self-heals.
+// Request-scoped memoization keeps brand, settings and host ownership current
+// across Cloud Run instances. Errors and missing hosts retry on the next
+// request; a newly created store never waits for a cached negative lookup.
 class StoreHostMiss extends Error {
   constructor() {
     super("STORE_HOST_MISS");
@@ -87,54 +78,50 @@ class StoreHostMiss extends Error {
   }
 }
 
-const lookupStoreByHost = unstable_cache(
-  async (host: string): Promise<Store | null> => {
-    const kind = parseHost(host);
-    if (kind.type === "platform") return null;
+const lookupStoreByHost = cache(async (host: string): Promise<Store | null> => {
+  const kind = parseHost(host);
+  if (kind.type === "platform") return null;
 
-    const rows = await withAnon((db) =>
-      db
-        .select(STORE_COLUMNS)
-        .from(stores)
-        .where(
-          and(
-            eq(stores.status, "active"),
-            kind.type === "store-subdomain"
-              ? eq(stores.slug, kind.slug)
-              : eq(stores.customDomain, kind.domain),
-          ),
-        )
-        .limit(1),
-    );
-    const store = (rows[0] as Store | undefined) ?? null;
-    if (!store) throw new StoreHostMiss();
+  const rows = await withAnon((db) =>
+    db
+      .select(STORE_COLUMNS)
+      .from(stores)
+      .where(
+        and(
+          eq(stores.status, "active"),
+          kind.type === "store-subdomain"
+            ? eq(stores.slug, kind.slug)
+            : eq(stores.customDomain, kind.domain),
+        ),
+      )
+      .limit(1),
+  );
+  const store = (rows[0] as Store | undefined) ?? null;
+  if (!store) throw new StoreHostMiss();
 
-    // A custom domain must clear BOTH gates before we serve on it. Store
-    // subdomains are inherently ours and need neither.
-    if (store && kind.type === "custom-domain") {
-      // (1) Proven owned. Otherwise a store could pre-claim a domain it does
-      // not control, and we would serve its content on someone else's address.
-      if (store.settings?.custom_domain_verified !== true)
-        throw new StoreHostMiss();
+  // A custom domain must clear BOTH gates before we serve on it. Store
+  // subdomains are inherently ours and need neither.
+  if (store && kind.type === "custom-domain") {
+    // (1) Proven owned. Otherwise a store could pre-claim a domain it does
+    // not control, and we would serve its content on someone else's address.
+    if (store.settings?.custom_domain_verified !== true)
+      throw new StoreHostMiss();
 
-      // (2) Still entitled. Custom domains are a Pro feature, and the plan can
-      // lapse long after the domain was verified — effectivePlan() is what
-      // makes an expired timed plan read as free here rather than as whatever
-      // `plan` still says. Serving is the enforcement point ON PURPOSE: gating
-      // only the dashboard would let a store connect on Pro, drop to free, and
-      // keep the benefit forever.
-      if (!PLAN_LIMITS[effectivePlan(store)].customDomain)
-        throw new StoreHostMiss();
-    }
-    return store;
-  },
-  ["store-by-host-positive-v2"],
-  { tags: [STORE_TAG], revalidate: 300 },
-);
+    // (2) Still entitled. Custom domains are a Pro feature, and the plan can
+    // lapse long after the domain was verified — effectivePlan() is what
+    // makes an expired timed plan read as free here rather than as whatever
+    // `plan` still says. Serving is the enforcement point ON PURPOSE: gating
+    // only the dashboard would let a store connect on Pro, drop to free, and
+    // keep the benefit forever.
+    if (!PLAN_LIMITS[effectivePlan(store)].customDomain)
+      throw new StoreHostMiss();
+  }
+  return store;
+});
 
-// Cached store lookup by id — used for the WholeSip fallback. (RLS mirrors the
+// Request-memoized store lookup by id — used for the WholeSip fallback. (RLS mirrors the
 // old anon client: only active stores are visible without an identity.)
-export const lookupStoreById = unstable_cache(
+export const lookupStoreById = cache(
   async (id: string): Promise<Store | null> => {
     // Same rule as lookupStoreByHost: never swallow a DB error into a cached
     // null. Let it throw (uncached); getCurrentStore catches it below.
@@ -143,13 +130,11 @@ export const lookupStoreById = unstable_cache(
     );
     return (rows[0] as Store | undefined) ?? null;
   },
-  ["store-by-id"],
-  { tags: [STORE_TAG], revalidate: 300 },
 );
 
 // A Theme Studio preview store (lib/theme-studio/preview-store.ts) resolves only
 // for a request carrying its preview grant; for anyone else its host is as
-// unknown as an unclaimed subdomain. The cached host lookup above is unchanged —
+// unknown as an unclaimed subdomain. The host lookup above is request-memoized —
 // the grant is per request, so it is checked AFTER the cache, never inside it.
 // Dynamically imported so the ordinary request path never loads the Studio's
 // server modules: the marker check is the only cost for every other store.
@@ -177,7 +162,7 @@ export async function getCurrentStoreOrNull(): Promise<Store | null> {
     return store ? await withStudioPreviewGate(store) : null;
   } catch (err) {
     // Expected unknown/ineligible host. The throw is internal cache control:
-    // rejected unstable_cache calls are not persisted, so a slug created a
+    // rejected lookups are not persisted, so a slug created a
     // moment later is visible on the next request, on every app instance.
     if (
       err instanceof StoreHostMiss ||
@@ -187,7 +172,7 @@ export async function getCurrentStoreOrNull(): Promise<Store | null> {
 
     // Transient DB error → degrade to "no store" for THIS request only. Crucially
     // this null is NOT cached (the throw inside lookupStoreByHost bypasses
-    // unstable_cache), so once the DB is back the very next request resolves the
+    // request memoization), so once the DB is back the very next request resolves the
     // real store instead of serving a poisoned null for the revalidate window.
     // warn, not error: this is a transient, self-healing condition (the next
     // request retries), so it shouldn't trip the dev error overlay or pollute

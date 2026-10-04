@@ -24,11 +24,10 @@ import "@/app/(storefront)/components/homepage/homepage.css";
 // Custom merchant pages built in /dashboard/builder. This dynamic segment sits
 // alongside the static (pages)/* routes; App Router serves the static siblings
 // (shop, blogs, our-story, …) first, so this only ever handles slugs that don't
-// match a built-in route. Unknown slugs fall through to a cached 404.
+// match a built-in route. Unknown slugs return 404.
 //
-// Storefront reads are cached per store (unstable_cache); the page stays
-// dynamic only because requireStorefrontStoreId reads headers().
-export const revalidate = 300;
+// The storefront layout renders dynamically. Published content is read fresh
+// on every request, with request-scoped deduplication.
 
 type Props = {
   params: Promise<{ pageSlug: string }>;
