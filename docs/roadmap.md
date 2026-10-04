@@ -25,6 +25,17 @@ is large enough to need its own decisions doc BEFORE any of it is built.
 
 ---
 
+## Dashboard mobile follow-through (2026-10-04)
+
+The operational dashboard uses phone records for inventory, orders, POS money
+and shift history, with visible search/facets, selection and touch-sized actions.
+Order details use a full-width sheet on phones; location and staff form headers
+wrap and paired location fields stack. This is presentation work on the shipped
+steps below; the register, stock, fulfilment and payment rules stay unchanged.
+Acceptance stories are PS-MD.1–MD.5 in `docs/pos-acceptance.md`. Implementation and
+isolated browser checks are local; authenticated merchant-device acceptance
+remains a release check.
+
 ## Status at a glance
 
 | #      | Step                                                              | Size | State                                |

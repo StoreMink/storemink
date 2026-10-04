@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 // The POS money log (roadmap Step 14).
 //
 // ── What this page is for ──────────────────────────────────────────────────
@@ -118,7 +120,7 @@ export function MoneyLogClient({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="dash-table">
+            <ResponsiveTable className="dash-table">
               <thead>
                 <tr>
                   <th>Event</th>
@@ -179,7 +181,7 @@ export function MoneyLogClient({
                   );
                 })}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
         )}
       </div>

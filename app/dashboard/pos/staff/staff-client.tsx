@@ -150,7 +150,7 @@ export function StaffClient({
 
   return (
     <div className="dash-page-enter">
-      <header className="dash-page-header flex items-start justify-between gap-4">
+      <header className="dash-page-header row">
         <div>
           <h1>POS Staff</h1>
           <p>

@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useEffect, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, CheckCircle2, Info, Loader2 } from "lucide-react";
@@ -178,7 +180,7 @@ export function JobIssuesView({
             </div>
           ) : (
             <div className="-mx-4 overflow-x-auto px-4">
-              <table className="dash-table w-full min-w-[720px]">
+              <ResponsiveTable className="dash-table w-full min-w-[720px]">
                 <thead>
                   <tr>
                     <th className="w-[72px]">Row</th>
@@ -228,7 +230,7 @@ export function JobIssuesView({
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </ResponsiveTable>
             </div>
           )}
         </div>

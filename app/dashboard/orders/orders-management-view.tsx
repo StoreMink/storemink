@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useEffect, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -21,6 +23,8 @@ import type {
   OrderStatusCounts,
 } from "@/app/actions/order-actions";
 import type { OrderRow } from "./page";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { OrderDetailDrawer } from "./order-detail-drawer";
 import { PickupBadge, isPickupOrder, pickupStageLabel } from "./pickup-badge";
 
@@ -269,6 +273,8 @@ export function OrdersManagementView({
     });
   };
 
+  const isMobile = useIsMobile();
+
   const selectClass =
     "rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface)] px-3 py-[7px] text-[13px] text-[var(--dash-text)] outline-none";
 
@@ -325,7 +331,7 @@ export function OrdersManagementView({
                 and stores that have POS switched off keep the original Orders
                 page, with no empty/teasing channel navigation. */}
             {supportsPos && (
-              <div className="grid grid-cols-3 border-b border-[var(--dash-border)] bg-[var(--dash-surface-2)]/55 p-1.5">
+              <div className="dash-order-channels grid grid-cols-3 border-b border-[var(--dash-border)] bg-[var(--dash-surface-2)]/55 p-1.5">
                 <button
                   type="button"
                   aria-pressed={channel === "all"}
@@ -337,7 +343,7 @@ export function OrdersManagementView({
                   }`}
                 >
                   <ShoppingBag className="h-4 w-4 shrink-0" />
-                  <span className="truncate">All orders</span>
+                  <span>All</span>
                   <span className="rounded-full bg-[var(--dash-surface-2)] px-2 py-0.5 text-[11px] tabular-nums text-[var(--dash-text-2)]">
                     {channelCounts.all}
                   </span>
@@ -353,7 +359,7 @@ export function OrdersManagementView({
                   }`}
                 >
                   <Globe2 className="h-4 w-4 shrink-0" />
-                  <span className="truncate">Website orders</span>
+                  <span>Website</span>
                   <span className="rounded-full bg-[var(--dash-surface-2)] px-2 py-0.5 text-[11px] tabular-nums text-[var(--dash-text-2)]">
                     {channelCounts.website}
                   </span>
@@ -369,7 +375,7 @@ export function OrdersManagementView({
                   }`}
                 >
                   <Store className="h-4 w-4 shrink-0" />
-                  <span className="truncate">POS orders</span>
+                  <span>POS</span>
                   <span className="rounded-full bg-[var(--dash-surface-2)] px-2 py-0.5 text-[11px] tabular-nums text-[var(--dash-text-2)]">
                     {channelCounts.pos}
                   </span>
@@ -514,7 +520,7 @@ export function OrdersManagementView({
                 </p>
               </div>
             ) : (
-              <table className="dash-table dash-table-wide">
+              <ResponsiveTable className="dash-table dash-table-wide">
                 <thead>
                   <tr>
                     <th>{channel === "pos" ? "Receipt" : "Order"}</th>
@@ -581,7 +587,17 @@ export function OrdersManagementView({
                           title={order.id}
                         >
                           <div className="flex flex-col items-start gap-1">
-                            {orderLabel}
+                            <button
+                              type="button"
+                              className="dash-order-open text-left"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelected(order);
+                              }}
+                              aria-label={`View order ${orderLabel}`}
+                            >
+                              {orderLabel}
+                            </button>
                             {channel === "all" ? (
                               <span className="font-sans text-[11px] font-normal text-[var(--dash-text-3)]">
                                 {allOrderMeta}
@@ -685,7 +701,7 @@ export function OrdersManagementView({
                     );
                   })}
                 </tbody>
-              </table>
+              </ResponsiveTable>
             )}
 
             <ListPagination
@@ -698,20 +714,48 @@ export function OrdersManagementView({
           </div>
         </div>
 
-        {selected && (
-          <aside
-            className="sticky top-2 w-[380px] shrink-0 self-start xl:w-[420px]"
-            data-mink-resource-type="order"
-            data-mink-resource-id={selected.id}
-          >
-            <OrderDetailDrawer
-              orderId={selected.id}
-              orderRef={selected.order_ref}
-              onClose={() => setSelected(null)}
-              onChanged={() => router.refresh()}
-            />
-          </aside>
-        )}
+        {selected &&
+          (isMobile ? (
+            <Sheet
+              open
+              onOpenChange={(open) => {
+                if (!open) setSelected(null);
+              }}
+            >
+              <SheetContent
+                className="dash-order-sheet overflow-y-auto"
+                showCloseButton={false}
+              >
+                <SheetTitle className="sr-only">
+                  Order {selected.order_ref}
+                </SheetTitle>
+                <div
+                  data-mink-resource-type="order"
+                  data-mink-resource-id={selected.id}
+                >
+                  <OrderDetailDrawer
+                    orderId={selected.id}
+                    orderRef={selected.order_ref}
+                    onClose={() => setSelected(null)}
+                    onChanged={() => router.refresh()}
+                  />
+                </div>
+              </SheetContent>
+            </Sheet>
+          ) : (
+            <aside
+              className="sticky top-2 w-[380px] shrink-0 self-start xl:w-[420px]"
+              data-mink-resource-type="order"
+              data-mink-resource-id={selected.id}
+            >
+              <OrderDetailDrawer
+                orderId={selected.id}
+                orderRef={selected.order_ref}
+                onClose={() => setSelected(null)}
+                onChanged={() => router.refresh()}
+              />
+            </aside>
+          ))}
       </div>
     </div>
   );

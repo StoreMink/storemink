@@ -31,7 +31,7 @@ export function BusinessTimeZoneForm({ timeZone }: { timeZone: string }) {
         <select
           name="timeZone"
           defaultValue={timeZone}
-          className="h-9 min-w-[260px] rounded-md border border-[#d7d7d7] bg-white px-3 text-[13px]"
+          className="h-9 w-full min-w-0 sm:min-w-[260px] rounded-md border border-[#d7d7d7] bg-white px-3 text-[13px]"
           aria-label="Business time zone"
         >
           {!COMMON_ANALYTICS_TIME_ZONES.some(

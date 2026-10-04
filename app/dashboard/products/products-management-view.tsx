@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -354,7 +356,7 @@ export function ProductsManagementView({
               )}
           </div>
         ) : (
-          <table className="dash-table dash-table-wide">
+          <ResponsiveTable className="dash-table dash-table-wide">
             <thead>
               <tr>
                 {canManage && (
@@ -549,7 +551,7 @@ export function ProductsManagementView({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         )}
 
         <ListPagination

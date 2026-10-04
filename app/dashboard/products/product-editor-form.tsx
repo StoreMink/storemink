@@ -286,7 +286,7 @@ function Section({
   const t = TINTS[tint];
   return (
     <section className={`rounded-xl border ${t.card} p-4 shadow-sm sm:p-5`}>
-      <div className="mb-4 flex items-start gap-3">
+      <div className="dash-product-section-head mb-4 flex items-start gap-3">
         <span
           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${t.badge}`}
           aria-hidden
@@ -301,7 +301,9 @@ function Section({
             </p>
           ) : null}
         </div>
-        {aside ? <div className="shrink-0">{aside}</div> : null}
+        {aside ? (
+          <div className="dash-product-section-actions shrink-0">{aside}</div>
+        ) : null}
       </div>
       {children}
     </section>
@@ -660,7 +662,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
     }, [isPending, onPendingChange]);
 
     return (
-      <>
+      <div className="dash-product-form">
         {/* The form's own action bar — shown only when the parent DOESN'T render
           its own controls (i.e. in the modal). The full-page editor sets
           hideActions and puts Save/Cancel in its sticky header instead. */}
@@ -689,7 +691,10 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
         {/* Tab bar — one focused group of settings at a time, so the editor
           never reads as one long wall of fields. A failed save flags the tab
           that owns the offending field with a red dot (errorTab). */}
-        <div className="mb-5 flex justify-center gap-1 overflow-x-auto border-b border-[#e5e7eb]">
+        <nav
+          aria-label="Product editor sections"
+          className="mb-5 flex justify-start gap-1 overflow-x-auto lg:justify-center border-b border-[#e5e7eb]"
+        >
           {TABS.map((t) => {
             const active = tab === t.id;
             const Icon = t.icon;
@@ -698,6 +703,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
+                aria-pressed={active}
                 className={`relative flex shrink-0 items-center gap-1.5 border-b-2 px-3.5 py-2.5 text-sm font-medium transition ${
                   active
                     ? "border-[#4f46e5] text-[#4f46e5]"
@@ -715,7 +721,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
               </button>
             );
           })}
-        </div>
+        </nav>
 
         {/* Each panel below is kept mounted and toggled with `hidden` (not
           unmounted) so in-progress uploads and the autosized description survive
@@ -1257,8 +1263,8 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                       </Link>
                     </div>
                   )}
-                  <div className="min-w-[500px] space-y-2 sm:min-w-0">
-                    <div className="grid grid-cols-[1fr_72px_72px_60px_110px_120px_72px] gap-2 px-1 text-[10px] uppercase tracking-wide text-[#9ca3af]">
+                  <div className="dash-variant-editor space-y-2">
+                    <div className="hidden grid-cols-[1fr_72px_72px_60px_110px_120px_72px] gap-2 px-1 text-[10px] uppercase tracking-wide text-[#9ca3af] lg:grid">
                       <span>Name</span>
                       <span>Base ₹</span>
                       <span>Sell ₹</span>
@@ -1272,7 +1278,10 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                         key={i}
                         className="space-y-2 rounded-lg border border-[#f3f4f6] bg-[#fafafa] p-2"
                       >
-                        <div className="grid grid-cols-[1fr_72px_72px_60px_110px_120px_72px] items-center gap-2">
+                        <div className="dash-variant-fields grid grid-cols-1 items-center gap-2 lg:grid-cols-[1fr_72px_72px_60px_110px_120px_72px]">
+                          <span className="dash-variant-label">
+                            Variant name
+                          </span>
                           {hasOptions ? (
                             <div
                               className={`${fieldClass} truncate bg-[#f3f4f6] font-medium`}
@@ -1283,6 +1292,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                           ) : (
                             <input
                               className={fieldClass}
+                              aria-label="Variant name"
                               value={v.name}
                               onChange={(e) =>
                                 updateVariant(i, "name", e.target.value)
@@ -1290,20 +1300,27 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                               placeholder="500ml"
                             />
                           )}
+                          <span className="dash-variant-label">Base price</span>
                           <NumberField
                             className={fieldClass}
+                            aria-label="Base price"
                             value={v.base_price}
                             onValueChange={(n) =>
                               updateVariant(i, "base_price", n)
                             }
                           />
+                          <span className="dash-variant-label">
+                            Selling price
+                          </span>
                           <NumberField
                             className={fieldClass}
+                            aria-label="Selling price"
                             value={v.selling_price}
                             onValueChange={(n) =>
                               updateVariant(i, "selling_price", n)
                             }
                           />
+                          <span className="dash-variant-label">Stock</span>
                           {v.id ? (
                             <div
                               className={`${fieldClass} cursor-not-allowed bg-[#f3f4f6] text-center font-mono text-[#6b7280]`}
@@ -1322,8 +1339,10 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                               aria-label={`Opening stock for ${v.name || `variant ${i + 1}`}`}
                             />
                           )}
+                          <span className="dash-variant-label">SKU</span>
                           <input
                             className={`${fieldClass} cursor-not-allowed bg-[#f3f4f6] font-mono text-[11px] text-[#6b7280]`}
+                            aria-label="SKU"
                             value={v.sku || "on save"}
                             readOnly
                             title="Auto-generated on save"
@@ -1331,8 +1350,12 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                           {/* Each variant carries its OWN supplier barcode —
                               500ml and 1L are different codes on the shelf.
                               Focus and scan to fill it. */}
+                          <span className="dash-variant-label">
+                            Supplier barcode
+                          </span>
                           <input
                             className={`${fieldClass} font-mono text-[11px]`}
+                            aria-label="Supplier barcode"
                             value={v.barcode ?? ""}
                             placeholder="Scan"
                             title="Supplier barcode — scan the item to fill"
@@ -1603,7 +1626,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
             </Section>
           </div>
         </div>
-      </>
+      </div>
     );
   },
 );

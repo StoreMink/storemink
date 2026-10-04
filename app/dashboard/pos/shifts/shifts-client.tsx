@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 // Shift history + the Z-report, for the dashboard (roadmap Step 17).
 //
 // ★ VARIANCE IS THE COLUMN PEOPLE COME FOR. A shift list sorted by date with
@@ -86,7 +88,7 @@ export function ShiftsClient({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="dash-table">
+            <ResponsiveTable className="dash-table">
               <thead>
                 <tr>
                   <th>Shop</th>
@@ -154,7 +156,7 @@ export function ShiftsClient({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
         )}
         {detailError && (

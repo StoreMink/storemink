@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -234,7 +236,7 @@ export function OffersView({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="dash-table dash-table-wide">
+            <ResponsiveTable className="dash-table dash-table-wide">
               <thead>
                 {/* ★★ SIX COLUMNS, DOWN FROM NINE. Offer · Gives · When ·
                     How · Where · Used · Given away · Status · Actions made the
@@ -408,7 +410,7 @@ export function OffersView({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
         )}
       </div>

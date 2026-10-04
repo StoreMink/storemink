@@ -2519,7 +2519,7 @@ a.enquiry-detail-field:hover {
 
   /* These scoped display:flex rules out-specify Tailwind's hidden/sm:flex, so
      hide them here to keep the cramped mobile topbar legible. */
-  .dashboard-shell .dash-search-bar {
+  .dashboard-shell .dash-topbar .dash-search-bar {
     display: none;
   }
 
@@ -5068,5 +5068,467 @@ a.customer-detail-field:hover {
   .dashboard-shell .mink-answer-row:hover .mink-feedback,
   .dashboard-shell .mink-answer-row:focus-within .mink-feedback {
     opacity: 1;
+  }
+}
+
+/* One set of records and controls, with labelled cells on phones. */
+.dashboard-shell .dash-mobile-cell-label {
+  display: none;
+}
+.dashboard-shell .dash-mobile-cell-label[data-label]::before {
+  content: attr(data-label);
+}
+.dashboard-shell .dash-mobile-cell-value,
+.dash-checkbox-target {
+  display: contents;
+}
+.dashboard-shell .dash-editor-header {
+  top: calc(-1 * var(--dash-pad-t));
+  margin-top: calc(-1 * var(--dash-pad-t));
+  margin-inline: calc(-1 * var(--dash-pad-x));
+  padding: 14px var(--dash-pad-x);
+}
+.dash-variant-label,
+.dash-blog-mobile-nav {
+  display: none;
+}
+@media (max-width: 1023px) {
+  .dash-variant-label {
+    display: block;
+    color: var(--dash-text-2);
+    font-size: 12px;
+    font-weight: 600;
+  }
+}
+/* Entry animation must preserve the fixed bulk bar's horizontal centering. */
+.dashboard-shell .dash-page-enter > .dash-bulk-bar {
+  animation: dash-bulk-rise 0.18s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-shell .dash-page-enter > .dash-bulk-bar {
+    animation: none;
+  }
+}
+@media (max-width: 767px) {
+  .dashboard-shell .dash-main,
+  .dashboard-shell .dash-content {
+    min-width: 0;
+    min-height: 0;
+  }
+  .dashboard-shell .dash-content {
+    padding-bottom: calc(32px + env(safe-area-inset-bottom));
+  }
+  .dashboard-shell .dash-page-header.row {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .dashboard-shell .dash-page-header.row > :first-child {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .dashboard-shell .dash-page-header.row > :last-child {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+  .dashboard-shell .dash-page-header p {
+    max-width: 100%;
+  }
+  .dashboard-shell .dash-toolbar {
+    padding-inline: 12px;
+    gap: 12px;
+  }
+  .dashboard-shell .dash-toolbar > div:not(.dash-filter-tabs) {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+  .dashboard-shell .dash-toolbar-actions {
+    width: 100%;
+  }
+  .dashboard-shell .dash-content .dash-search-bar {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+  .dashboard-shell .dash-filter-tab {
+    min-height: 44px;
+  }
+  .dashboard-shell .dash-search-bar input {
+    min-width: 0;
+    width: 100%;
+    font-size: 16px;
+  }
+  .dashboard-shell .dash-toolbar select {
+    flex: 1 1 130px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .dashboard-shell .dash-btn,
+  .dashboard-shell [data-slot="button"],
+  .dashboard-shell .dash-row-menu-btn {
+    min-height: 44px;
+  }
+  .dashboard-shell
+    :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]):not(
+      [type="hidden"]
+    ):not([type="range"]):not([type="color"]) {
+    font-size: 16px;
+    max-width: 100%;
+    min-height: 44px;
+  }
+  .dashboard-shell textarea {
+    min-height: 88px;
+  }
+  .dashboard-shell .dash-card {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .dashboard-shell .dash-table-responsive {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+    white-space: normal;
+  }
+  .dashboard-shell .dash-table-responsive :is(tbody, tfoot) {
+    display: block;
+  }
+  /* Keep column headers available to assistive technology. Select-all stays
+     visible, rather than disappearing with the desktop column headings. */
+  .dashboard-shell .dash-table-responsive thead {
+    display: block;
+  }
+  .dashboard-shell .dash-table-responsive thead tr {
+    display: block;
+  }
+  .dashboard-shell
+    .dash-table-responsive
+    thead
+    th:not([data-mobile-kind="selection"]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  .dashboard-shell
+    .dash-table-responsive
+    thead
+    th[data-mobile-kind="selection"] {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 4px 12px;
+    position: relative;
+    gap: 8px;
+    border-bottom: 1px solid var(--dash-border);
+  }
+  .dashboard-shell .dash-table-responsive :is(tbody, tfoot) tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 16px;
+    position: relative;
+    padding: 16px;
+    border-bottom: 1px solid var(--dash-border);
+  }
+  .dashboard-shell .dash-table-responsive :is(tbody, tfoot) tr:last-child {
+    border-bottom: 0;
+  }
+  .dashboard-shell .dash-table-responsive :is(tbody, tfoot) :is(td, th) {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    width: auto;
+    padding: 0;
+    border: 0;
+    position: static;
+    right: auto;
+    text-align: left;
+    white-space: normal;
+    box-shadow: none;
+  }
+  .dashboard-shell .dash-table-responsive .dash-mobile-cell-label {
+    display: block;
+    font-size: 11px;
+    line-height: 1.5;
+    font-weight: 600;
+    color: var(--dash-text-3);
+    margin-bottom: 3px;
+  }
+  .dashboard-shell .dash-table-responsive thead .dash-mobile-cell-label {
+    margin: 0;
+    font-size: 13px;
+    text-transform: none;
+  }
+  .dashboard-shell .dash-table-responsive .dash-mobile-cell-value {
+    display: block;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .dashboard-shell
+    .dash-table-responsive
+    .dash-mobile-cell-value
+    :is(.truncate, .whitespace-nowrap) {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+  .dashboard-shell .dash-table-responsive .dash-mobile-cell-value > * {
+    max-width: 100%;
+    min-width: 0;
+  }
+  .dashboard-shell
+    .dash-table-responsive
+    :is(td, th)[data-mobile-kind="primary"] {
+    grid-column: 1 / -1;
+    font-weight: 600;
+  }
+  .dashboard-shell
+    .dash-table-responsive
+    [data-mobile-kind="primary"]
+    > .dash-mobile-cell-label {
+    display: none;
+  }
+  .dashboard-shell
+    .dash-table-responsive
+    tr[data-mobile-selection]
+    [data-mobile-kind="primary"] {
+    padding-right: 44px;
+  }
+  .dashboard-shell
+    .dash-table-responsive
+    tr[data-mobile-image]
+    [data-mobile-kind="primary"] {
+    padding-left: 56px;
+    min-height: 44px;
+  }
+  .dashboard-shell .dash-table-responsive tbody [data-mobile-kind="selection"] {
+    position: absolute;
+    right: 10px;
+    top: 10px;
+  }
+  .dashboard-shell .dash-table-responsive tbody [data-mobile-kind="image"] {
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    width: 44px;
+  }
+  .dashboard-shell
+    .dash-table-responsive
+    :is(td, th):is([data-mobile-kind="actions"], [data-mobile-kind="full"]) {
+    grid-column: 1 / -1;
+  }
+  .dashboard-shell
+    .dash-table-responsive
+    [data-mobile-kind="actions"]
+    .dash-mobile-cell-value {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .dashboard-shell .dash-table-responsive tr.is-selected {
+    background: var(--dash-accent-soft);
+  }
+  .dash-checkbox-target {
+    display: inline-grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .dash-checkbox-target .dash-checkbox {
+    width: 22px;
+    height: 22px;
+  }
+  .dash-bulk-bar {
+    width: calc(100% - 24px);
+    max-width: 520px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    flex-wrap: wrap;
+    gap: 8px;
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .dash-bulk-count {
+    flex: 1;
+  }
+  .dash-bulk-divider {
+    display: none;
+  }
+  .dash-bulk-actions {
+    order: 3;
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    min-width: 0;
+  }
+  .dash-bulk-clear {
+    order: 2;
+  }
+  .dash-bulk-btn,
+  .dash-bulk-clear {
+    min-height: 44px;
+  }
+  .dashboard-frame:has(.dash-bulk-bar) .dash-content {
+    padding-bottom: calc(300px + env(safe-area-inset-bottom));
+  }
+  .dashboard-shell .dash-pagination {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+  }
+  .dashboard-shell .dash-pagination-info {
+    order: -1;
+    flex-basis: 100%;
+    text-align: center;
+  }
+  .dashboard-shell .dash-order-channels button {
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-inline: 4px;
+    min-height: 60px;
+    font-size: 12px;
+  }
+  .dashboard-shell.dash-order-sheet {
+    width: 100%;
+    max-width: 100%;
+    height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .dashboard-shell.dash-order-sheet > div {
+    flex: 1;
+    min-height: 0;
+  }
+  .dash-order-sheet .dash-order-detail {
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    border: 0;
+  }
+  .dashboard-shell .dash-editor-header {
+    flex-wrap: wrap;
+  }
+  .dashboard-shell .dash-editor-header > :last-child {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .dashboard-shell[data-slot="sheet-content"][data-side="right"],
+  .dashboard-shell[data-slot="sheet-content"][data-side="left"] {
+    width: 100%;
+    max-width: 100%;
+  }
+  .dashboard-shell[data-slot="dialog-content"] {
+    padding: 20px 16px;
+  }
+  .dashboard-shell .dash-topbar button,
+  .dashboard-shell .dash-table-responsive button,
+  .dashboard-shell.dash-order-sheet button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .billHead,
+  .billHeadActions {
+    flex-wrap: wrap;
+  }
+  .billHeadActions {
+    max-width: 100%;
+  }
+  .billSection {
+    padding: 16px;
+  }
+  .billSave,
+  .billGhost,
+  .brandingSave {
+    min-height: 44px;
+  }
+  .brandingBar {
+    flex-wrap: wrap;
+  }
+  .dashboard-shell.dash-blog-editor {
+    padding: 0;
+    gap: 0;
+  }
+  .dash-blog-header {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .dash-blog-header > div {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+  .dash-blog-mobile-nav {
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px;
+    background: white;
+    flex-shrink: 0;
+  }
+  .dash-blog-mobile-nav button {
+    flex: 1;
+    min-height: 44px;
+    border-radius: 8px;
+  }
+  .dash-blog-mobile-nav button[aria-pressed="true"] {
+    background: var(--dash-accent-soft);
+    color: var(--dash-accent);
+  }
+  .dash-blog-editor[data-mobile-panel="content"] .dash-blog-settings,
+  .dash-blog-editor[data-mobile-panel="settings"] .dash-blog-content {
+    display: none !important;
+  }
+  .dash-blog-body,
+  .dash-blog-content {
+    min-width: 0;
+  }
+  .dash-blog-settings {
+    width: 100% !important;
+  }
+  .dash-blog-toolbar {
+    margin: 8px !important;
+    padding: 8px !important;
+    border-radius: 12px !important;
+  }
+  .dash-blog-toolbar button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .dash-blog-paper {
+    padding: 12px !important;
+  }
+  .dash-blog-paper .blog-editor-content {
+    min-height: 60vh;
+    width: 100%;
+    padding: 20px;
+    font-size: 16px;
+    overflow-wrap: anywhere;
+  }
+  .dashboard-shell.dash-blog-editor :is(input, select, textarea) {
+    font-size: 16px !important;
+  }
+  .dash-product-section-head {
+    flex-wrap: wrap;
+  }
+  .dash-product-section-actions {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+  .dashboard-shell .dash-product-form button {
+    min-height: 44px;
+  }
+  .dashboard-shell .dash-variant-fields button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* Chat grows with the message; it is not a multi-line settings field. */
+  .dashboard-shell .mink-chat-surface textarea {
+    min-height: 24px;
   }
 }

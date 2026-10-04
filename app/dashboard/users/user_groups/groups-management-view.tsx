@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -162,7 +164,7 @@ export function GroupsManagementView({
             )}
           </div>
         ) : (
-          <table className="dash-table dash-table-wide">
+          <ResponsiveTable className="dash-table dash-table-wide">
             <thead>
               <tr>
                 <th>Group</th>
@@ -246,7 +248,7 @@ export function GroupsManagementView({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         )}
       </div>
 
