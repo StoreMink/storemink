@@ -1201,6 +1201,7 @@ export default function SignupPage() {
                     // reverse-geocode is often a suburb off and the merchant
                     // gets the final word.
                     if (next.addressLine1) setAddressLine1(next.addressLine1);
+                    if (next.addressLine2) setAddressLine2(next.addressLine2);
                     if (next.city) setCity(next.city);
                     if (next.state) setState(next.state);
                     if (next.postalCode) setPostalCode(next.postalCode);

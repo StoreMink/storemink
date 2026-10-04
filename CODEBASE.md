@@ -7634,12 +7634,21 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
       data, so WholeSip cannot leak into the admin browser tab.
       Runs on the PLATFORM's Razorpay account (env `RAZORPAY_KEY_ID` /
       `RAZORPAY_KEY_SECRET`). - **Location autofill is independent of the map.**
-      Browser geolocation is followed by the keyless BigDataCloud client-side
-      reverse-geocode endpoint, so country/city/state/postal code fill when the
-      provider has them even if the optional Google Maps key/script is missing;
-      Google additionally fills street/building components and remains the richer
-      draggable-map enhancement. Autofill never locks a field, and a map or
-      geocoder failure never blocks the complete plain address form.
+      Browser geolocation first attempts Google reverse geocoding independently
+      of map rendering. `app/platform/signup/location-address.ts` normalizes the
+      building/street, separate area/unit line, city, state, country and PIN;
+      postal/locality components can come from more detailed results beyond the
+      first returned address. The async Maps loader waits for its API callback
+      rather than script.onload and retries after script failure. Bounded lookup
+      timeouts preserve the manual form; only the latest pin request can fill it.
+      Keyless BigDataCloud is a current-device, same-browser fallback for locality
+      fields only, never street/building guesses or arbitrary dragged coordinates.
+      The picker names unresolved required fields and requests review even when
+      all suggestions are present. Signup fills Address line 2 where available.
+      Docker/Cloud Build explicitly pass the public Maps key at build time;
+      both Maps JavaScript and Geocoding APIs must be enabled for that key's
+      project. Help migration `20261005_0158_signup_location_autofill.sql` edits
+      the existing signup step guidance.
 
 20. **Analytics is a composable, range-aware dashboard
     (`/dashboard/analytics`).** Every card is a widget the merchant can remove,
@@ -15274,15 +15283,15 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   (it ships to the browser), so restrict it by HTTP referrer to the app's hosts
   and enable only Maps JavaScript + Geocoding. **Entirely optional at runtime**:
   `app/platform/signup/location-picker.tsx` renders the map only when the key is
-  set and falls back to the plain full-address form when it is missing, blocked,
-  or rejected — location is a REQUIRED signup step, so the map must never be
-  able to stop someone signing up. "Use my current location" is the browser's
-  own Geolocation API: free, keyless, and works with the map switched off. The
-  resulting current-device coordinates are reverse-geocoded client-side through
-  BigDataCloud's keyless `reverse-geocode-client` endpoint to fill the locality,
-  state and postal code it can resolve; this is deliberately a same-browser call
-  (the provider's fair-use contract), while Google remains the optional
-  street-address + draggable-map enhancement.
+  present and supports a complete plain form when it is absent or rejected.
+  Docker/Cloud Build pass `_NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` into the client
+  build; set this browser-restricted public key in each deployment trigger.
+  Enable Maps JavaScript and Geocoding APIs in its project. Current-device
+  geolocation first uses Google for street/area/PIN components, with bounded
+  timeouts and a callback-based loader; BigDataCloud remains a browser-only
+  locality fallback. Missing address fields are named explicitly for manual
+  completion. Never infer a building number or PIN from a city alone.
+
 - **Search-engine indexing** (`lib/seo/search-engines.ts`; full runbook in
   `docs/seo-indexing.md`): only the **production apex** is indexable —
   `SEARCH_INDEXABLE` in `lib/store/host.ts` (`ROOT_DOMAIN === "storemink.com" &&
