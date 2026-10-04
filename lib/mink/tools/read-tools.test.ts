@@ -415,6 +415,7 @@ describe("Mink read-tool declarations", () => {
       "start_product_launch_preparation",
       "list_orders",
       "search_help_centre",
+      "get_website_builder_context",
     ]);
     for (const declaration of declarations) {
       const properties = declaration.parametersJsonSchema.properties as
@@ -465,6 +466,7 @@ describe("Mink read-tool declarations", () => {
       "get_storefront_page_context",
       "get_storefront_section_context",
       "get_storefront_design_context",
+      "get_website_builder_context",
     ]);
     expect(declared({ dashboard: ["view"], products: ["view"] })).toEqual([
       "get_store_profile",
@@ -1078,6 +1080,27 @@ describe("Mink read-tool declarations", () => {
     expect(bulkPriceItems).not.toHaveProperty("variant_id");
     expect(bulkPriceItems).toHaveProperty("price_snapshot");
     expect(bulkPriceItems).toHaveProperty("special_price_mode");
+  });
+
+  it("exposes complete Builder proposals only to a drafting actor with Manage", () => {
+    const actor = {
+      ...ACTOR,
+      isSuperadmin: false,
+      draftingEnabled: true,
+      permissions: { builder: ["view", "manage"] },
+    } as MinkActorContext;
+    const names = (candidate: MinkActorContext) =>
+      minkReadToolRegistry.declarationsFor(candidate).map((tool) => tool.name);
+    expect(names(actor)).toContain("propose_website_builder_change");
+    expect(
+      names({ ...actor, permissions: { builder: ["view"] } }),
+    ).not.toContain("propose_website_builder_change");
+    expect(names({ ...actor, draftingEnabled: false })).not.toContain(
+      "propose_website_builder_change",
+    );
+    expect(
+      names({ ...actor, permissions: { dashboard: ["view"] } }),
+    ).not.toContain("get_website_builder_context");
   });
 
   it("exposes and executes Phase 7B code proposals only with drafting and Builder Manage", async () => {

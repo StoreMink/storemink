@@ -6330,6 +6330,68 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261005_0159_mink_website_builder_controls",
+      "description": "Human-approved Mink Website Builder navigation, pages, SEO, appearance, settings and publication",
+      "file": "sql/20261005_0159_mink_website_builder_controls.sql",
+      "transaction": true,
+      "requires": ["20261005_0158_signup_location_autofill"],
+      "verify": {
+        "queries": [
+          {
+            "name": "Website Builder action constraints",
+            "sql": "select count(*)::text from pg_constraint where conname in ('mink_drafts_builder_target_check','mink_action_approvals_builder_target_check','mink_action_audit_builder_target_check')",
+            "equals": "3"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Every store has Website Builder actions",
+            "sql": "select count(*)::text from stores s left join mink_action_tool_access a on a.store_id=s.id and a.tool_name='manage_website_builder' where a.store_id is null or not a.enabled",
+            "equals": "0"
+          },
+          {
+            "name": "Website Builder task guidance",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Use a Website Builder change for navigation links%'",
+            "equals": "1"
+          },
+          {
+            "name": "Website Builder supported actions boundary",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%publishes a product or touches StoreMink''s own code.%'",
+            "equals": "1"
+          },
+          {
+            "name": "Header and footer review guidance",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%For header or footer changes, ask for a Website Builder change and review the exact fields in its card.%'",
+            "equals": "1"
+          },
+          {
+            "name": "Separate Website Builder merchant guide",
+            "sql": "select count(*)::text from help_articles a join help_categories c on c.id=a.category_id where a.slug='manage-your-website-with-mink-ai' and a.status='published' and c.slug='storefront' and a.body like '%Publication creates a separate review card for the whole saved draft%' and length(a.body)<25000 and a.seo_title is not null and a.seo_description is not null",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261005_0160_shared_shop_filters_help",
+      "description": "Document shared storefront price and availability filters on every theme",
+      "file": "sql/20261005_0160_shared_shop_filters_help.sql",
+      "transaction": true,
+      "requires": ["20261005_0159_mink_website_builder_controls"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Shared shop filtering and product visibility guidance",
+            "sql": "select count(*)::text from public.help_articles where slug='publish-feature-and-improve-a-product-for-search' and status='published' and body like '%controls on every theme%' and body like '%Clear that filter and any price limits%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

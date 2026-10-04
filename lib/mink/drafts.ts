@@ -69,6 +69,7 @@ const DRAFT_PERMISSION: Record<
   storefront_custom_code: { section: "builder", action: "manage" },
   storefront_layout: { section: "builder", action: "manage" },
   storefront_design: { section: "builder", action: "manage" },
+  website_builder: { section: "builder", action: "manage" },
   // ★ MEDIA, NOT BUILDER. The artefact is a Media Library row; putting it on a
   // page is a separate 9B layout proposal with its own Builder gate.
   media_image: { section: "media", action: "manage" },
@@ -434,7 +435,11 @@ function assertEditableDraft(kind: MinkDraftKind): void {
   //    never be applied, with nothing saying why. Rollback could not recover
   //    it either, because rollback increments the version too. Refusing the
   //    edit up front is the only outcome that leaves the proposal usable.
-  if (kind === "storefront_layout" || kind === "storefront_design") {
+  if (
+    kind === "storefront_layout" ||
+    kind === "storefront_design" ||
+    kind === "website_builder"
+  ) {
     throw new MinkRequestError(
       "mink_storefront_proposal_immutable",
       "This storefront proposal is review-only. It cannot be edited, saved or restored — ask Mink for a new one instead.",

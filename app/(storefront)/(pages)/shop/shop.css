@@ -2162,7 +2162,7 @@
   }
 }
 
-/* ── Shop toolbar, filters and "Load more" (theme layout.shopFilters) ──────
+/* ── Shared shop toolbar, filters and "Load more" ────────────────────────
    The category chips are links now (each category has its own page), so they
    lose the underline an anchor would otherwise bring. */
 .shop-filters a.shop-chip {

@@ -16,6 +16,7 @@ import { MinkStorefrontDesignProposalCard } from "./mink-storefront-design-propo
 import { MinkMediaProposalCard } from "./mink-media-proposal-card";
 import { MinkStorefrontLayoutProposalCard } from "./mink-storefront-layout-proposal-card";
 import { MinkWorkflowCard } from "./mink-workflow-card";
+import { MinkBuilderProposalCard } from "./mink-builder-proposal-card";
 
 export function MinkArtifacts({
   artifacts,
@@ -30,6 +31,13 @@ export function MinkArtifacts({
   return (
     <div className="mt-2 space-y-2">
       {artifacts.map((artifact, index) => {
+        if (artifact.type === "builder_proposal")
+          return (
+            <MinkBuilderProposalCard
+              key={artifact.draftId}
+              proposal={artifact}
+            />
+          );
         if (artifact.type === "product_import")
           return (
             <MinkProductImportCard

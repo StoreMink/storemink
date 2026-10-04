@@ -292,6 +292,19 @@ export type MinkArtifact =
       creditSource: MinkDraftCreditSource;
     }
   | {
+      type: "builder_proposal";
+      draftId: string;
+      title: string;
+      operation: import("./builder-contract").BuilderOperation;
+      pageSlug: string;
+      explanation: string;
+      changes: import("./builder-contract").BuilderChange[];
+      live: boolean;
+      expectedCredits: number;
+      chargedCredits: number;
+      creditSource: MinkDraftCreditSource;
+    }
+  | {
       type: "storefront_design_proposal";
       draftId: string;
       title: string;
