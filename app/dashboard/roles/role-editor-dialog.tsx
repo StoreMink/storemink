@@ -131,7 +131,7 @@ export function RoleEditorDialog({ open, role, onClose, onSaved }: Props) {
         </DialogHeader>
 
         <div className="space-y-4 py-2">
-          <div className="grid grid-cols-[1fr_auto] gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_auto]">
             <div>
               <label className={labelClass}>Name *</label>
               <input
@@ -144,7 +144,7 @@ export function RoleEditorDialog({ open, role, onClose, onSaved }: Props) {
             </div>
             <div>
               <label className={labelClass}>Colour</label>
-              <div className="flex items-center gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 {ROLE_COLORS.map((c) => (
                   <button
                     key={c}

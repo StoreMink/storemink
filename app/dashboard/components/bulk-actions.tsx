@@ -20,14 +20,16 @@ export function SelectAllCheckbox({
     if (ref.current) ref.current.indeterminate = indeterminate;
   }, [indeterminate]);
   return (
-    <input
-      ref={ref}
-      type="checkbox"
-      className="dash-checkbox"
-      checked={checked}
-      onChange={onChange}
-      aria-label={label}
-    />
+    <label className="dash-checkbox-target">
+      <input
+        ref={ref}
+        type="checkbox"
+        className="dash-checkbox"
+        checked={checked}
+        onChange={onChange}
+        aria-label={label}
+      />
+    </label>
   );
 }
 
@@ -43,14 +45,19 @@ export function RowCheckbox({
   label?: string;
 }) {
   return (
-    <input
-      type="checkbox"
-      className="dash-checkbox"
-      checked={checked}
-      onChange={onToggle}
+    <label
+      className="dash-checkbox-target"
       onClick={(e) => e.stopPropagation()}
-      aria-label={label ?? "Select row"}
-    />
+    >
+      <input
+        type="checkbox"
+        className="dash-checkbox"
+        checked={checked}
+        onChange={onToggle}
+        onClick={(e) => e.stopPropagation()}
+        aria-label={label ?? "Select row"}
+      />
+    </label>
   );
 }
 

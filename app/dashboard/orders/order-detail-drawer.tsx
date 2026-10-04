@@ -232,7 +232,7 @@ export function OrderDetailDrawer({
     : "";
 
   return (
-    <div className="flex max-h-[calc(100dvh-80px)] flex-col overflow-hidden rounded-[12px] border border-border bg-card shadow-sm">
+    <div className="dash-order-detail flex max-h-[calc(100dvh-80px)] flex-col overflow-hidden rounded-[12px] border border-border bg-card shadow-sm">
       {/* Header */}
       <div className="flex items-start justify-between gap-2 border-b border-border bg-muted/30 p-4">
         <div className="min-w-0">

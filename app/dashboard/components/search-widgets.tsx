@@ -1,3 +1,4 @@
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import type {
@@ -231,7 +232,7 @@ function RankingTable({
   }
   return (
     <div className="dash-search-table-wrap">
-      <table className="dash-search-table">
+      <ResponsiveTable className="dash-search-table">
         <thead>
           <tr>
             <th>{kind === "query" ? "Search term" : "Landing page"}</th>
@@ -254,7 +255,7 @@ function RankingTable({
             </tr>
           ))}
         </tbody>
-      </table>
+      </ResponsiveTable>
     </div>
   );
 }

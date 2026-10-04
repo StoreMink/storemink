@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useEffect, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -343,7 +345,7 @@ export function CustomersManagementView({
           </div>
         ) : (
           <div className="customers-table-wrap">
-            <table className="dash-table dash-table-wide customers-table">
+            <ResponsiveTable className="dash-table dash-table-wide customers-table">
               <thead>
                 <tr>
                   <th>User</th>
@@ -462,7 +464,7 @@ export function CustomersManagementView({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
         )}
 

@@ -38,7 +38,10 @@ function LinkListEditor({
   return (
     <div className="flex flex-col gap-2">
       {links.map((link, i) => (
-        <div key={i} className="flex items-center gap-2">
+        <div
+          key={i}
+          className="grid grid-cols-[24px_minmax(0,1fr)_44px] items-center gap-2 sm:flex"
+        >
           <div className="flex flex-col">
             <button
               type="button"
@@ -51,14 +54,16 @@ function LinkListEditor({
             </button>
           </div>
           <input
-            className={inputClass}
+            className={`${inputClass} col-start-2 row-start-1`}
+            aria-label={`Link ${i + 1} label`}
             value={link.label}
             onChange={(e) => set(i, { label: e.target.value })}
             placeholder="Label (e.g. Our Story)"
             disabled={disabled}
           />
           <input
-            className={inputClass}
+            className={`${inputClass} col-start-2 row-start-2`}
+            aria-label={`Link ${i + 1} address`}
             value={link.href}
             onChange={(e) => set(i, { href: e.target.value })}
             placeholder="/our-story"
@@ -66,7 +71,7 @@ function LinkListEditor({
           />
           <button
             type="button"
-            className="text-muted-foreground hover:text-destructive shrink-0 disabled:opacity-30"
+            className="text-muted-foreground hover:text-destructive col-start-3 row-span-2 row-start-1 h-11 w-11 shrink-0 disabled:opacity-30"
             onClick={() => remove(i)}
             disabled={disabled}
             title="Remove"
@@ -125,7 +130,7 @@ export function NavigationEditor({
 
   return (
     <div className="mx-auto max-w-3xl pb-16">
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="dash-page-header row">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Navigation</h1>
           <p className="text-muted-foreground mt-1 text-sm">
@@ -153,7 +158,7 @@ export function NavigationEditor({
 
       {/* Footer columns */}
       <section className="dash-card mb-5 p-5">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold">Footer columns</h2>
             <p className="text-muted-foreground text-xs">

@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -198,7 +200,7 @@ export function UsersManagementView({
         <div className="dash-card-header">
           <div className="dash-card-title">Dashboard Admins</div>
         </div>
-        <table className="dash-table dash-table-wide">
+        <ResponsiveTable className="dash-table dash-table-wide">
           <thead>
             <tr>
               <th>User</th>
@@ -313,7 +315,7 @@ export function UsersManagementView({
               );
             })}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
 
       <Dialog

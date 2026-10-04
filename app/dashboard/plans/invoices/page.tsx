@@ -1,3 +1,4 @@
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
 import Link from "next/link";
 import { ChevronLeft, FileText } from "lucide-react";
 import { requireSectionAccess } from "../../lib/access";
@@ -67,7 +68,7 @@ export default async function InvoicesPage() {
         </div>
       ) : (
         <div className="dash-card overflow-hidden">
-          <table className="dash-table w-full">
+          <ResponsiveTable className="dash-table w-full">
             <thead>
               <tr>
                 <th>Invoice</th>
@@ -115,7 +116,7 @@ export default async function InvoicesPage() {
                 );
               })}
             </tbody>
-          </table>
+          </ResponsiveTable>
         </div>
       )}
     </div>

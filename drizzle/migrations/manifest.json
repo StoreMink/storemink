@@ -6230,6 +6230,35 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261004_0156_dashboard_mobile",
+      "description": "Phone dashboard records, order detail and website/blog editing help",
+      "file": "sql/20261004_0156_dashboard_mobile.sql",
+      "transaction": true,
+      "requires": ["20261004_0155_mink_product_photos_csv"],
+      "verify": {
+        "tables": ["help_articles"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Phone order help",
+            "sql": "select count(*)::text from public.help_articles where slug='manage-website-and-pos-orders' and status='published' and body like '%orders appear as labelled cards%'",
+            "equals": "1"
+          },
+          {
+            "name": "Phone builder help",
+            "sql": "select count(*)::text from public.help_articles where slug='use-the-storemink-website-builder' and status='published' and body like '%Switching these panels keeps your draft changes%'",
+            "equals": "1"
+          },
+          {
+            "name": "Phone blog help",
+            "sql": "select count(*)::text from public.help_articles where slug='create-publish-and-feature-blog-posts' and status='published' and body like '%Switching panels keeps your writing and settings%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

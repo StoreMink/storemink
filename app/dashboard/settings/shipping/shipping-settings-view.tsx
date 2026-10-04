@@ -288,7 +288,7 @@ export function ShippingSettingsView({
           <p className="mt-1 text-[13px] text-[#6a6a6a]">
             Shown beside the manual rate at checkout.
           </p>
-          <div className="mt-4 grid max-w-md grid-cols-2 gap-4">
+          <div className="mt-4 grid max-w-md grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <Label htmlFor="min-days">Minimum days</Label>
               <Input

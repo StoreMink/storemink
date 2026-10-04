@@ -1631,6 +1631,46 @@ the incomplete set. Migration `20260913_0110_mink_current_offers_help` edits
 the existing Mink capability/permission and Offers nudge paragraphs in place;
 it adds no new section.
 
+### Dashboard on phones (2026-10-04)
+
+`app/dashboard/dashboard.css` owns the mobile shell, wrapping page actions,
+visible list searches, wrapping facets, 44px action targets, 16px text inputs,
+viewport-bounded sheets/dialogs, safe-area spacing and mobile pagination. Only
+the **topbar** search bar is hidden on phones; list searches remain available.
+Product and billing sticky headers cancel `--dash-pad-t` / `--dash-pad-x`,
+rather than fixed desktop padding. Ordinary paired form fields stack on phones;
+variant fields carry individual labels and stack below the large editor width.
+
+`components/responsive-table.tsx` is a server-compatible, hook-free renderer
+shared by catalogue, inventory, orders, customers/enquiries, marketing, staff,
+roles, invoice lists, notifications, logs, POS money/shifts and analytics lists
+(including home widgets). It retains one semantic table and one set of links,
+menus and checkboxes. Below 768px, body rows become labelled two-column records;
+primary fields span the row, image/selection controls stay beside the heading,
+and actions/empty states span the record. Header labels remain available to
+assistive technology and select-all remains visible. Conditional columns and
+fragments are resolved before assigning labels, so view-only staff never see a
+mislabelled last column. Multi-level headers retain their ordinary table layout.
+Matrices in AI messages and printable invoice documents retain local scrolling.
+Desktop tables keep their existing container-width compaction and sticky actions.
+Bulk controls wrap inside the phone viewport; touch labels prevent selection
+from opening a row and extra content padding keeps the last record reachable.
+
+Orders uses `hooks/use-mobile.ts` to show one detail component in an accessible
+full-width Sheet on phones, retaining the docked aside on larger screens. The
+order reference is also a keyboard-accessible button. Channel labels are All,
+Website and POS, with counts retained. No order, payment, stock or permission
+rules change.
+
+Website Builder has **Pages & sections / Preview / Edit** navigation on phones.
+The outline stays mounted even when the desktop panel was previously collapsed;
+selecting a section or global area opens Edit. All panels share the existing
+draft/history/autosave state and mounted preview iframe. The section library
+covers the phone viewport. The blog editor similarly provides **Content / Post
+settings** panels, a wrapping toolbar and a phone-width writing surface without
+remounting the editor. Publish/save still use the existing flows and permissions.
+Help wording is updated in forward migration `20261004_0156_dashboard_mobile`.
+
 ### Simple Mink Website Builder application (2026-09-13)
 
 Mink's Website Builder layout, design and existing custom-code proposal cards
@@ -2399,7 +2439,7 @@ wholesip/
 │   │   │                      # Pro gross-margin cards use immutable order-line costs
 │   │   ├── components/        # Dashboard widgets (metric-card, revenue-chart,
 │   │   │                      # Search metric/trend/ranking cards,
-│   │   │                      # recent-orders-table, activity-feed, bulk-actions…) +
+│   │   │                      # recent-orders-table, activity-feed, bulk-actions, responsive-table…) +
 │   │   │                      # feature-toggles (shared settings-group card, convention #9)
 │   │   │                      # ★ A wide list table (`dash-table-wide`) sets an
 │   │   │                      # 800px floor, but opening the Mink AI panel leaves

@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -156,7 +158,7 @@ export function RolesManagementView({
             </p>
           </div>
         ) : (
-          <table className="dash-table dash-table-wide">
+          <ResponsiveTable className="dash-table dash-table-wide">
             <thead>
               <tr>
                 <th>Role</th>
@@ -246,7 +248,7 @@ export function RolesManagementView({
                 );
               })}
             </tbody>
-          </table>
+          </ResponsiveTable>
         )}
       </div>
 

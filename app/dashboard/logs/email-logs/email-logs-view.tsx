@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 // Email Logs — a plain, dense, filterable table of every message sent.
 //
 // A LOG, not a report: no charts, no summaries, one row per send, newest first.
@@ -200,7 +202,7 @@ export function EmailLogsView({
             // Horizontal scroll on the TABLE, never the page — a log has more
             // columns than a phone has width, and the page body must not shift.
             <div className="-mx-4 overflow-x-auto px-4">
-              <table className="dash-table w-full min-w-[880px]">
+              <ResponsiveTable className="dash-table w-full min-w-[880px]">
                 <thead>
                   <tr>
                     <th>To</th>
@@ -261,7 +263,7 @@ export function EmailLogsView({
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </ResponsiveTable>
             </div>
           )}
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+
 // Failures — one table for everything that didn't work.
 //
 // Deliberately NOT a dashboard: no counts, no trend, no chart. Someone opens
@@ -85,7 +87,7 @@ export function FailuresView({
         </p>
       ) : (
         <div className="dash-table-wrap overflow-x-auto">
-          <table className="dash-table w-full">
+          <ResponsiveTable className="dash-table w-full">
             <thead>
               <tr>
                 <th>What</th>
@@ -126,7 +128,7 @@ export function FailuresView({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         </div>
       )}
     </div>

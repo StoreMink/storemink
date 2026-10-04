@@ -148,7 +148,7 @@ export function CouponForm({ coupon, groups, allowsGroups = true }: Props) {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className={labelClass}>Discount type</label>
               <select
@@ -175,7 +175,7 @@ export function CouponForm({ coupon, groups, allowsGroups = true }: Props) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className={labelClass}>Min order (₹)</label>
               <NumberField
@@ -198,7 +198,7 @@ export function CouponForm({ coupon, groups, allowsGroups = true }: Props) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className={labelClass}>Valid from</label>
               <input

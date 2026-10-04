@@ -18,9 +18,9 @@
 .billHead {
   position: sticky;
   z-index: 30;
-  top: -28px;
-  margin: -28px -32px 24px;
-  padding: 14px 32px;
+  top: calc(-1 * var(--dash-pad-t));
+  margin: calc(-1 * var(--dash-pad-t)) calc(-1 * var(--dash-pad-x)) 24px;
+  padding: 14px var(--dash-pad-x);
   display: flex;
   align-items: center;
   gap: 14px;
@@ -66,7 +66,7 @@
 }
 .billGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 14px;
 }
 .billField {

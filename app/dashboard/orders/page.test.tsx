@@ -22,6 +22,7 @@ vi.mock("@/lib/store/resolve", () => ({
 vi.mock("@/lib/pos/locations", () => ({
   getPosState: vi.fn(),
 }));
+vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
 vi.mock("next/navigation", () => ({
   usePathname: () => "/dashboard/orders",
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),

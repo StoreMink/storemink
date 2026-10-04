@@ -396,7 +396,7 @@ export function NotificationDetailView({
                 key={audience.key}
                 type="button"
                 onClick={() => setActiveAudience(audience.key)}
-                className={`flex min-w-[250px] items-start gap-2.5 rounded-[var(--dash-radius)] border px-3.5 py-2.5 text-left transition-colors ${
+                className={`flex w-full min-w-0 sm:w-auto sm:min-w-[250px] items-start gap-2.5 rounded-[var(--dash-radius)] border px-3.5 py-2.5 text-left transition-colors ${
                   activeAudience === audience.key
                     ? "border-[var(--dash-accent)] bg-[var(--dash-surface)]"
                     : "border-[var(--dash-border)] bg-[var(--dash-surface-2)] hover:border-[var(--dash-border-hover)]"
