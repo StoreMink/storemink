@@ -18,11 +18,17 @@
 // ---------------------------------------------------------------------------
 
 import { after } from "next/server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { cookies } from "next/headers";
 import { SESSION_COOKIE } from "@/lib/auth/constants";
 import { logError } from "@/lib/observability/logger";
 import { getThemeStudioActor } from "@/lib/theme-studio/access";
+import {
+  deleteThemeStudioProject,
+  type DeleteThemeStudioProjectInput,
+} from "@/lib/theme-studio/deletion";
+import { THEME_REGISTRY_TAG } from "@/lib/themes/runtime-registry";
+import { STORE_TAG } from "@/lib/store/resolve";
 import { queueThemeStudioCapture } from "@/lib/theme-studio/capture";
 import {
   archiveThemeStudioProject,
@@ -263,6 +269,30 @@ export async function archiveThemeStudioProjectAction(input: {
   } catch (error) {
     return failure(error, "archive project");
   }
+}
+
+export async function deleteThemeStudioProjectAction(
+  input: DeleteThemeStudioProjectInput,
+): Promise<ThemeStudioActionResult> {
+  const actor = await getThemeStudioActor();
+  if (!actor) return NOT_AUTHORIZED;
+  try {
+    await deleteThemeStudioProject(actor, input);
+  } catch (error) {
+    return failure(error, "delete theme");
+  }
+  // Removal has committed. A cache failure must not claim nothing changed or
+  // invite the operator to believe the deleted theme is still recoverable.
+  try {
+    updateTag(THEME_REGISTRY_TAG);
+    updateTag(STORE_TAG);
+    revalidatePath(STUDIO_PATH);
+    revalidatePath("/dashboard/themes");
+    revalidatePath("/themes");
+  } catch (error) {
+    logError("theme studio: deleted theme cache invalidation failed", error);
+  }
+  return { ok: true };
 }
 
 const MALFORMED: ThemeStudioActionResult = {
