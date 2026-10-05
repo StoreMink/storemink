@@ -21,7 +21,10 @@ const FORBIDDEN =
 
 /** Only scalar creative settings. No structure, images, URLs, products, routes,
  * engine, capabilities or release metadata can be written by a QA repair. */
-export function repairTargets(pkg: ThemePackageV2): Target[] {
+export function repairTargets(
+  pkg: ThemePackageV2,
+  heroTextChoices = false,
+): Target[] {
   const targets: Target[] = [];
   const walk = (value: unknown, path: string, schema?: JsonSchema) => {
     if ((value && typeof value === "object") || schema?.properties) {
@@ -61,6 +64,10 @@ export function repairTargets(pkg: ThemePackageV2): Target[] {
     page.sections.forEach((section, s) => {
       const root = `/definition/preset/pages/${p}/sections/${s}`;
       walk(section.config, `${root}/config`);
+      if (heroTextChoices && section.type === "hero") {
+        const target = targets.find((t) => t.path === `${root}/config/theme`);
+        if (target) target.choices = ["dark", "light"];
+      }
       if (
         section.type === "hero" ||
         section.type === "hero_carousel" ||

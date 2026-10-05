@@ -3,6 +3,59 @@
 The fixes in this change are local until the web service and separate Chromium
 job are deployed. No production records were changed during diagnosis.
 
+## Fresh Bubble build: wrong-page contrast repair — 5 October 2026
+
+Read-only inspection of project `888f138b-958a-4bf9-bf08-f3621af55da6`
+confirmed that version 1 completed generation but failed the layout preflight.
+Its About hero used white text on the gold `creamDeep` field (`#f5d061`).
+Automatic version 2 changed only
+`/definition/preset/pages/0/sections/1/config/theme`, the **homepage** hero.
+The About hero remained `variant-split theme-light`, and the homepage became
+`variant-banner theme-light`. Both rendered white text on gold, with heading
+contrast 1.49:1 and subheading contrast about 1.40:1. `qa_no_progress` stopped
+the pipeline before its 17 artwork slots and three catalogue pictures were
+created. The displayed successful run meant model execution, not completed QA.
+
+The repair received generic scalar paths and viewport findings without resolved
+hero colour semantics. Package checks covered palette and scheme pairs but
+omitted hero text on its actual field; they consequently accepted the wrong-page
+edit as a valid new version. Increasing the iteration limit would allow more
+paid ineffective repairs without addressing that validation gap.
+
+Local correction: `lib/themes/hero-contrast.ts` resolves each enabled solid-field
+hero's real background and text, including the 85% subheading opacity and scheme
+card-reset specificity. `validateThemeDesign` applies this check during compiler
+content-floor validation, acceptance and targeted patch validation. A bad
+initial draft receives a bounded correction **within generation**, before the
+first saved version. A wrong-page patch is rejected within the settings call's
+existing correction budget. Findings name the affected page, section and exact
+path and suggest another text mode only when it passes both contrast thresholds.
+Prompt v23 provides these semantics and per-hero evidence; older paid requests
+keep their original prompt/context shape. No renderer CSS, revision ceiling or
+acceptance threshold changes are included.
+
+Coverage includes a replay of the initial draft defect and wrong-page repair,
+opaque explicit fields, derived schemes, banner resets and muted-copy contrast.
+The existing offline Chrome script adds the white-on-gold heading/subheading
+negative controls and corrected hero variants across 360/390/768/1024/1440px.
+Photographic/video heroes and non-hex or translucent fields remain browser checks;
+this is not proof that every generated design passes on its first model response.
+
+Verification: 345 focused tests passed across 19 files; the additional request
+compatibility/recovery run passed 98 tests across five overlapping files. The
+offline Chrome regression passed 40 cases with five failing negative controls,
+including Bubble's exact 1.49:1 and 1.40:1 pairs. TypeScript, changed-file ESLint,
+formatting, `git diff --check` and `npm run help:lint` passed. No paid production
+generation or deployment was performed for this fix.
+
+Bubble's requested interactive image hotspots remain a real native capability
+gap. A settings repair cannot implement them or promise a pixel-perfect Shopify
+theme: Studio produces StoreMink data for its shared renderer. Existing drafts
+need a normal revision after deploying the web and generation-worker changes,
+then the normal artwork, final browser and visual-QA stages. No production
+records were changed during this diagnosis. No merchant-visible change, no
+Help Centre update; POS/location/inventory/fulfilment behavior is unchanged.
+
 ## Confirmed production evidence
 
 Read through the existing Cloud SQL proxy in a read-only transaction using the
