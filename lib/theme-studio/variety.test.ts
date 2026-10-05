@@ -585,3 +585,82 @@ it("asks a v22 revision to keep slot ids, and leaves a v21 request unchanged", a
     "Keep the id of every assetBriefs entry",
   );
 });
+
+it("corrects a distinct draft that repeats the catalogue's dominant style answers, from v24 only", async () => {
+  const original = await generate(createFakeModelClient(fakeInput));
+  if (original.kind !== "version") throw new Error("Fixture failed");
+  const fp = themeFingerprint(original.package.definition);
+  // Six catalogue themes that differ on every major axis but all share this
+  // draft's page width and grid/hover choices — the 2026-10-04 pattern.
+  const catalogue = Array.from({ length: 6 }, (_, i) => ({
+    themeId: `other-${i}`,
+    direction: null,
+    fingerprint: {
+      ...fp,
+      composition: `composition-${i}`,
+      card: `card-${i}`,
+      hero: `hero-${i}`,
+      pageColour: `colour-${i}`,
+      buttons: `square/outline/text-${i}`,
+      bodyFont: `body-${i}`,
+      displayFont: `display-${i}`,
+      sections: [`s${i}`, `t${i}`, `u${i}`],
+    },
+  }));
+  const design = original.package.definition.preset.design as {
+    page?: { width?: string };
+  };
+  const width = design.page?.width ?? "standard";
+  const otherWidth = width === "narrow" ? "wide" : "narrow";
+  const run = async (promptVersion: string) => {
+    const fake = createFakeModelClient(fakeInput);
+    const systems: string[] = [];
+    const outcome = await generate(
+      {
+        provider: "fake",
+        async generate(request, signal) {
+          if (request.system?.includes("design-variety correction")) {
+            systems.push(request.system);
+            return {
+              kind: "ok",
+              usage: ZERO_USAGE,
+              value: {
+                edits: [
+                  {
+                    path: "/definition/preset/design/page/width",
+                    valueJson: JSON.stringify(otherWidth),
+                  },
+                ],
+                unrepairable: [],
+              },
+            };
+          }
+          return fake.generate(request, signal);
+        },
+      },
+      { ...input(), promptVersion, existingThemes: catalogue },
+    );
+    if (outcome.kind !== "version") throw new Error(JSON.stringify(outcome));
+    return { outcome, systems };
+  };
+
+  const current = await run("theme-studio-v24");
+  expect(current.systems).toHaveLength(1);
+  expect(current.systems[0]).toContain("overusedChoices");
+  const after = current.outcome.package.definition.preset.design as {
+    page?: { width?: string };
+  };
+  expect(after.page?.width).toBe(otherWidth);
+  expect(current.outcome.distinctness?.repairAttempted).toBe(true);
+  expect(
+    (current.outcome.distinctness?.overusedChoices ?? []).some((c) =>
+      c.startsWith("pageWidth="),
+    ),
+  ).toBe(false);
+  expect(current.outcome.distinctness?.status).toBe("distinct");
+
+  // A v23 run already distinct is left exactly as it was: no paid call.
+  const legacy = await run("theme-studio-v23");
+  expect(legacy.systems).toHaveLength(0);
+  expect(legacy.outcome.distinctness?.overusedChoices).toBeUndefined();
+});

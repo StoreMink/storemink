@@ -13,6 +13,8 @@ it("preserves old paid request shapes and carries capabilities into future promp
     variety: false,
     stableAssetIds: false,
     heroContrast: false,
+    changeScope: false,
+    convergence: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -22,6 +24,8 @@ it("preserves old paid request shapes and carries capabilities into future promp
     variety: false,
     stableAssetIds: false,
     heroContrast: false,
+    changeScope: false,
+    convergence: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -31,8 +35,10 @@ it("preserves old paid request shapes and carries capabilities into future promp
     variety: true,
     stableAssetIds: true,
     heroContrast: true,
+    changeScope: true,
+    convergence: true,
   });
-  expect(themePromptFeatures("theme-studio-v24")).toEqual(
+  expect(themePromptFeatures("theme-studio-v25")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
   );
   expect(themePromptFeatures("invalid").compactInitial).toBe(false);
@@ -51,4 +57,11 @@ it("asks revisions to keep slot ids only from v22, so v21 requests replay unchan
 it("adds rendered hero evidence only from v23", () => {
   expect(themePromptFeatures("theme-studio-v22").heroContrast).toBe(false);
   expect(themePromptFeatures("theme-studio-v23").heroContrast).toBe(true);
+});
+
+it("scopes operator revisions only from v24, so v23 revisions replay unchanged", () => {
+  expect(themePromptFeatures("theme-studio-v23").changeScope).toBe(false);
+  expect(themePromptFeatures("theme-studio-v24").changeScope).toBe(true);
+  expect(themePromptFeatures("theme-studio-v23").convergence).toBe(false);
+  expect(themePromptFeatures("theme-studio-v24").convergence).toBe(true);
 });

@@ -259,6 +259,71 @@ describe("Theme Studio conversation", () => {
     expect(actions.reviseThemeStudioVersionAction).not.toHaveBeenCalled();
   });
 
+  it("tells the operator how much of the theme each change touched", () => {
+    const run = (
+      id: string,
+      change: NonNullable<ThemeStudioRunView["change"]>,
+    ) =>
+      ({
+        id,
+        kind: "revise",
+        questions: [],
+        declineReason: null,
+        change,
+        status: "succeeded",
+        createdAt: "2026-09-29T10:02:00Z",
+        finishedAt: "2026-09-29T10:03:00Z",
+      }) as unknown as ThemeStudioRunView;
+    render(
+      <ThemeConversation
+        {...props}
+        project={{
+          ...project,
+          runs: [
+            run("edit", {
+              scope: "edit",
+              summary: "Changed the hero heading to Spring Sale.",
+              changed: 1,
+              redraws: 1,
+              fellBack: false,
+              redrawsDeferred: false,
+            }),
+            run("revise", {
+              scope: "revise",
+              summary: "Adding a lookbook page needs a revision.",
+              changed: 0,
+              redraws: 0,
+              fellBack: true,
+              redrawsDeferred: false,
+            }),
+            run("recreate", {
+              scope: "recreate",
+              summary: "Starting a new design.",
+              changed: 0,
+              redraws: 0,
+              fellBack: false,
+              redrawsDeferred: false,
+            }),
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("Small edit — only what you asked for changes"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Changed the hero heading to Spring Sale."),
+    ).toBeTruthy();
+    expect(screen.getByText(/1 setting changed; everything else/)).toBeTruthy();
+    expect(screen.getByText(/Redrawing 1 picture/)).toBeTruthy();
+    expect(screen.getByText("Larger change — revising the theme")).toBeTruthy();
+    expect(screen.getByText(/couldn’t be made as a simple edit/)).toBeTruthy();
+    expect(
+      screen.getByText("Starting over — building a new theme from scratch"),
+    ).toBeTruthy();
+    expect(screen.getByText(/earlier versions stay available/)).toBeTruthy();
+  });
+
   it("removes attachments from the next message without deleting screenshot history", async () => {
     render(<ThemeConversation {...props} />);
     fireEvent.click(screen.getByLabelText("Attach screenshot 1"));

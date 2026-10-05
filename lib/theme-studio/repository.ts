@@ -127,6 +127,19 @@ export interface ThemeStudioRunUsageView {
   repairs: number;
 }
 
+export interface ThemeStudioChangeView {
+  scope: "edit" | "revise" | "recreate";
+  summary: string;
+  /** Settings an edit changed. */
+  changed: number;
+  /** Pictures an edit asked to redraw. */
+  redraws: number;
+  /** An edit that could not be validated, so a revision ran instead. */
+  fellBack: boolean;
+  /** Redraws asked for while automatic QA was off; draw them from Images. */
+  redrawsDeferred: boolean;
+}
+
 export interface ThemeStudioRunView {
   usage: ThemeStudioRunUsageView | null;
   /** Image runs (Track 3.5): what was drawn, checked and kept, and the cost. */
@@ -137,6 +150,8 @@ export interface ThemeStudioRunView {
   questions: string[];
   declineReason: string | null;
   refusalCategory: string | null;
+  /** Operator revisions (v24+): how much of the theme the request touched. */
+  change: ThemeStudioChangeView | null;
   id: string;
   kind: "generate" | "revise" | "images";
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -360,6 +375,23 @@ function runExtras(usage: unknown, detail: unknown) {
     declineReason:
       d.kind === "declined" && typeof d.reason === "string" ? d.reason : null,
     refusalCategory: typeof d.category === "string" ? d.category : null,
+    change: changeView(d),
+  };
+}
+
+function changeView(d: Record<string, unknown>): ThemeStudioChangeView | null {
+  if (
+    d.kind !== "change" ||
+    !["edit", "revise", "recreate"].includes(String(d.scope))
+  )
+    return null;
+  return {
+    scope: d.scope as ThemeStudioChangeView["scope"],
+    summary: typeof d.summary === "string" ? d.summary.slice(0, 400) : "",
+    changed: Array.isArray(d.changed) ? d.changed.length : 0,
+    redraws: Array.isArray(d.redraws) ? d.redraws.length : 0,
+    fellBack: d.fellBackFrom === "edit",
+    redrawsDeferred: d.redrawsDeferred === true,
   };
 }
 

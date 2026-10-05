@@ -192,6 +192,7 @@ it.each(["revise", "images"] as const)(
               questions: [],
               declineReason: null,
               refusalCategory: null,
+              change: null,
             },
           ],
         }}

@@ -12,6 +12,7 @@ import {
   removeThemeStudioReferenceAction,
 } from "@/app/actions/theme-studio-actions";
 import type {
+  ThemeStudioChangeView,
   ThemeStudioProjectDetail,
   ThemeStudioVersionView,
 } from "@/lib/theme-studio/repository";
@@ -20,6 +21,49 @@ import { studioDate } from "../studio-ui";
 const ACCEPT = "image/jpeg,image/png,image/webp,image/avif";
 const referenceUrl = (id: string) =>
   `/api/platform/theme-studio/references/${id}`;
+
+const SCOPE_TITLE: Record<ThemeStudioChangeView["scope"], string> = {
+  edit: "Small edit — only what you asked for changes",
+  revise: "Larger change — revising the theme",
+  recreate: "Starting over — building a new theme from scratch",
+};
+
+function ChangeBubble({ change }: { change: ThemeStudioChangeView }) {
+  const details: string[] = [];
+  if (change.scope === "edit") {
+    if (change.changed)
+      details.push(
+        `${change.changed} setting${change.changed === 1 ? "" : "s"} changed; everything else, including the pictures, is kept.`,
+      );
+    if (change.redraws)
+      details.push(
+        change.redrawsDeferred
+          ? `Redraw ${change.redraws} picture${change.redraws === 1 ? "" : "s"} from Images to finish this change.`
+          : `Redrawing ${change.redraws} picture${change.redraws === 1 ? "" : "s"} to match the theme’s existing art direction.`,
+      );
+  }
+  if (change.fellBack)
+    details.push(
+      "The change couldn’t be made as a simple edit, so the theme was revised instead.",
+    );
+  if (change.scope === "recreate")
+    details.push("Your earlier versions stay available to preview or restore.");
+  return (
+    <div className="mr-auto max-w-[90%] break-words rounded-2xl rounded-bl-md border border-slate-200 bg-white p-4 text-sm text-slate-700">
+      <p className="mb-1 text-xs font-semibold text-indigo-700">
+        {SCOPE_TITLE[change.scope]}
+      </p>
+      {change.summary ? <p>{change.summary}</p> : null}
+      {details.length ? (
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-500">
+          {details.map((detail) => (
+            <li key={detail}>{detail}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
 
 export function ThemeConversation({
   project,
@@ -268,6 +312,13 @@ export function ThemeConversation({
         ),
       })),
     ...project.runs
+      .filter((run) => run.change && run.status === "succeeded")
+      .map((run) => ({
+        id: `change-${run.id}`,
+        createdAt: run.finishedAt ?? run.createdAt,
+        content: <ChangeBubble change={run.change!} />,
+      })),
+    ...project.runs
       .filter(
         (run) =>
           run.questions.length ||
@@ -416,7 +467,9 @@ export function ThemeConversation({
           placeholder={
             answering
               ? "Reply to the questions above. You can attach screenshots too."
-              : "Describe what to build or change. Paste or drop screenshots here…"
+              : creating
+                ? "Describe what to build. Paste or drop screenshots here…"
+                : "Describe a change — small requests change only that; say “start over” to rebuild from scratch. Paste or drop screenshots here…"
           }
           className="block min-h-28 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50"
         />
