@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { TenderPanel } from "./tender-panel";
@@ -30,16 +36,18 @@ const button = (name: RegExp) => screen.getByRole("button", { name });
 describe("checkout customer details", () => {
   it("does not resolve while typing and submits one exact 10-digit mobile", async () => {
     const onCustomer = vi.fn();
-    const onResolveCustomer = vi.fn(async () => ({
-      created: true,
-      customer: {
-        id: "pos_1",
-        name: "9876543210",
-        phone: "9876543210",
-        email: null,
-        storeCredit: 0,
-      },
-    }));
+    const resolvedCustomer: PosCustomer = {
+      id: "pos_1",
+      name: "9876543210",
+      phone: "9876543210",
+      email: null,
+      storeCredit: 0,
+    };
+    let finishLookup!: (result: { customer: PosCustomer }) => void;
+    const lookup = new Promise<{ customer: PosCustomer }>((resolve) => {
+      finishLookup = resolve;
+    });
+    const onResolveCustomer = vi.fn(() => lookup);
     setup({
       customer: null,
       onCustomer,
@@ -59,10 +67,16 @@ describe("checkout customer details", () => {
       expect(onResolveCustomer).toHaveBeenCalledWith("9876543210", "+91"),
     );
     expect(onResolveCustomer).toHaveBeenCalledTimes(1);
+    expect(onCustomer).not.toHaveBeenCalled();
+    expect(screen.queryByText("Choose a payment method")).toBeNull();
+    expect(button(/^ok$/i)).toBeDisabled();
+
+    await act(async () => finishLookup({ customer: resolvedCustomer }));
+    // A lookup call is not evidence React committed the payment screen.
+    expect(await screen.findByText("Choose a payment method")).toBeVisible();
     expect(onCustomer).toHaveBeenCalledWith(
       expect.objectContaining({ id: "pos_1" }),
     );
-    expect(screen.getByText("Choose a payment method")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: /continue to payment/i }),
     ).toBeNull();
