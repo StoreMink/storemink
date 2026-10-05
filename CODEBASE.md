@@ -6168,6 +6168,27 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     exercised against live Gemini. Operator-only: no merchant-visible change, no
     Help Centre update.
 
+    **Screenshot-led benchmark (2026-10-06):** runbook
+    `docs/theme-studio-reference-benchmark.md`. Eight cases, two per industry,
+    each pointing at a public Shopify theme demo store
+    (`evals/theme-studio/reference-benchmark.json`, typed by
+    `lib/theme-studio/reference-benchmark.ts`).
+    `scripts/theme-studio-benchmark-references.mjs` captures seven screenshots
+    per case with local Chrome into the git-ignored `.theme-studio-references/`
+    folder (third-party imagery, never committed). It removes popups by stacking
+    layer or signup form and takes viewport shots, because full-page clips
+    render 100vh heroes blank. The benchmark's `--create --references` mode
+    uploads each case's screenshots through the ordinary sanitiser and
+    `addThemeStudioReference`, cites them on the brief message and records
+    `caseByProject` in the report. `--score-fidelity --yes` sends the reference
+    screenshots and each finished theme's final QA screenshots, paired page by
+    page (`fidelityPairs`), to Gemini 3.8 Flash
+    (`lib/theme-studio/reference-fidelity.ts`). The model scores layout,
+    palette, typography, imagery and overall from 1 to 5 and flags a copied
+    brand. This is a benchmark measure only; nothing in generation, QA or
+    publication reads it. The upload path was dry-run against the local
+    database. No live run yet.
+
     **Theme Studio production benchmark (2026-10-04):** eight unpublished v22
     builds on web revision `storemink-web-prod-00122-frg` produced five candidates;
     median successful queue-to-candidate time 68.28 minutes, only two without an

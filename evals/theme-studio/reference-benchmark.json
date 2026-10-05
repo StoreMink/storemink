@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "description": "Eight screenshot-led Theme Studio benchmark cases: two public Shopify theme demo stores per industry. Screenshots are captured locally by scripts/theme-studio-benchmark-references.mjs into a git-ignored folder and are never committed. The briefs ask for an original store that follows the reference's design, never its brand, copy, logo or photography.",
+  "cases": [
+    {
+      "id": "apparel-impulse",
+      "industry": "clothing",
+      "shopifyTheme": "Impulse (Fashion)",
+      "url": "https://impulse-theme-fashion.myshopify.com/",
+      "brief": "Build an original fashion and apparel store with its own brand name and voice. Use the attached screenshots as the design reference: follow their layout, section order, visual hierarchy, colour palette, typography mood, spacing and photography style as closely as StoreMink sections allow. Do not copy the reference's brand name, logo, wording or product photos. Eight realistic products with size and colour options, collection discovery and a concise about page."
+    },
+    {
+      "id": "apparel-prestige",
+      "industry": "clothing",
+      "shopifyTheme": "Prestige (Allure)",
+      "url": "https://prestige-theme-allure.myshopify.com/",
+      "brief": "Build an original premium fashion store with its own brand name and voice. Use the attached screenshots as the design reference: follow their layout, section order, visual hierarchy, colour palette, typography mood, spacing and photography style as closely as StoreMink sections allow. Do not copy the reference's brand name, logo, wording or product photos. Eight realistic products with size options, collection discovery and a brand story page."
+    },
+    {
+      "id": "food-crave",
+      "industry": "food-and-drink",
+      "shopifyTheme": "Crave",
+      "url": "https://theme-crave-demo.myshopify.com/",
+      "brief": "Build an original snack and treats store with its own brand name and voice. Use the attached screenshots as the design reference: follow their layout, section order, visual hierarchy, colour palette, typography mood, spacing and photography style as closely as StoreMink sections allow. Do not copy the reference's brand name, logo, wording or product photos. Eight realistic packaged products, clear pricing, category navigation and an about page. No people."
+    },
+    {
+      "id": "food-taste",
+      "industry": "food-and-drink",
+      "shopifyTheme": "Taste",
+      "url": "https://theme-taste-demo.myshopify.com/",
+      "brief": "Build an original specialty food store with its own brand name and voice. Use the attached screenshots as the design reference: follow their layout, section order, visual hierarchy, colour palette, typography mood, spacing and photography style as closely as StoreMink sections allow. Do not copy the reference's brand name, logo, wording or product photos. Eight realistic products, provenance-focused copy, category navigation and an about page. No people."
+    },
+    {
+      "id": "beauty-sense",
+      "industry": "beauty",
+      "shopifyTheme": "Sense",
+      "url": "https://theme-sense-demo.myshopify.com/",
+      "brief": "Build an original skincare and beauty store with its own brand name and voice. Use the attached screenshots as the design reference: follow their layout, section order, visual hierarchy, colour palette, typography mood, spacing and photography style as closely as StoreMink sections allow. Do not copy the reference's brand name, logo, wording or product photos. Eight realistic products, product benefits, collection discovery and a brand story. No health claims and no people."
+    },
+    {
+      "id": "beauty-beyours",
+      "industry": "beauty",
+      "shopifyTheme": "Be Yours (Beauty)",
+      "url": "https://beyours-theme-beauty.myshopify.com/",
+      "brief": "Build an original cosmetics store with its own brand name and voice. Use the attached screenshots as the design reference: follow their layout, section order, visual hierarchy, colour palette, typography mood, spacing and photography style as closely as StoreMink sections allow. Do not copy the reference's brand name, logo, wording or product photos. Eight realistic products with shade options, collection discovery and a brand story. No health claims and no people."
+    },
+    {
+      "id": "home-craft",
+      "industry": "home",
+      "shopifyTheme": "Craft",
+      "url": "https://theme-craft-demo.myshopify.com/",
+      "brief": "Build an original handmade homeware store with its own brand name and voice. Use the attached screenshots as the design reference: follow their layout, section order, visual hierarchy, colour palette, typography mood, spacing and photography style as closely as StoreMink sections allow. Do not copy the reference's brand name, logo, wording or product photos. Eight realistic products, craft-focused copy, collection discovery and a concise about page. No people."
+    },
+    {
+      "id": "home-trade",
+      "industry": "home",
+      "shopifyTheme": "Trade",
+      "url": "https://theme-trade-demo.myshopify.com/",
+      "brief": "Build an original modern home, furniture and textiles store with its own brand name and voice. Use the attached screenshots as the design reference: follow their layout, section order, visual hierarchy, colour palette, typography mood, spacing and photography style as closely as StoreMink sections allow. Do not copy the reference's brand name, logo, wording or product photos. Eight realistic products, collection discovery and a concise about page. No people."
+    }
+  ]
+}

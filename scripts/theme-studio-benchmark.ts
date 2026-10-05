@@ -1,5 +1,13 @@
 /** Complete-theme benchmark against the actual deployed worker/capture/QA
  * pipeline. Default is READ ONLY: --projects=<ids> collects existing runs.
+ *
+ * Screenshot-led mode: --references=<dir> (from
+ * scripts/theme-studio-benchmark-references.mjs) with --create queues the
+ * eight cases in evals/theme-studio/reference-benchmark.json, each with its
+ * own screenshots attached exactly as an operator would upload them.
+ * --score-fidelity --yes then asks a vision model how closely each FINISHED
+ * theme follows its screenshots (lib/theme-studio/reference-fidelity.ts) and
+ * saves the scores in the report; a project already scored is not re-scored.
  * --create --actor-id=<superadmin UUID> --yes queues four isolated unpublished
  * themes. --repeats=2 --concurrency=2 queues eight with at most two unfinished.
  * --wait-minutes=120 bounds the entire batch and saves the report every 15s.
@@ -46,6 +54,33 @@ async function main() {
   if (ids.some((id) => !isUuid(id)))
     throw new Error("--projects requires UUIDs.");
   const created: string[] = [];
+  const { existsSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const referencesDir = option("references");
+  const previous = existsSync(out)
+    ? (JSON.parse(readFileSync(out, "utf8")) as {
+        caseByProject?: Record<string, string>;
+        fidelity?: Record<string, unknown>;
+      })
+    : null;
+  /** projectId → reference case id; carried across resumed reports. */
+  const caseByProject: Record<string, string> = {
+    ...(previous?.caseByProject ?? {}),
+  };
+  const fidelity: Record<string, unknown> = { ...(previous?.fidelity ?? {}) };
+  const {
+    REFERENCE_BENCHMARK_CASES,
+    fidelityPairs,
+    meanFidelity,
+    themeShotsFromQa,
+  } = await import("@/lib/theme-studio/reference-benchmark");
+  const manifest = referencesDir
+    ? (JSON.parse(
+        readFileSync(join(referencesDir, "manifest.json"), "utf8"),
+      ) as {
+        cases: Record<string, { shots: { file: string; page: string }[] }>;
+      })
+    : null;
   const persist = async (results: unknown[]) => {
     await mkdir(dirname(out), { recursive: true });
     await writeFile(
@@ -57,9 +92,24 @@ async function main() {
           reporterBuildId: currentAcceptanceBuildId(),
           projectIds: ids,
           createdProjectIds: created,
+          ...(Object.keys(caseByProject).length ? { caseByProject } : {}),
+          ...(Object.keys(fidelity).length
+            ? {
+                fidelity,
+                fidelityMean: meanFidelity(
+                  Object.values(fidelity).flatMap((f) => {
+                    const scores = (f as { scores?: Record<string, number> })
+                      ?.scores;
+                    return scores ? [scores] : [];
+                  }),
+                ),
+              }
+            : {}),
           ...(process.argv.includes("--create")
             ? {
-                plannedThemes: THEME_BENCHMARK_CASES.length * repeats,
+                plannedThemes: manifest
+                  ? REFERENCE_BENCHMARK_CASES.length
+                  : THEME_BENCHMARK_CASES.length * repeats,
                 concurrency,
               }
             : {}),
@@ -136,10 +186,31 @@ async function main() {
     );
     if (actor?.role !== "superadmin")
       throw new Error("Benchmark actor must be a current superadmin.");
-    const cases = Array.from(
-      { length: repeats },
-      () => THEME_BENCHMARK_CASES,
-    ).flat();
+    if (manifest && repeats !== 1)
+      throw new Error("Screenshot-led cases run once each; omit --repeats.");
+    const cases: {
+      name: string;
+      industry: string;
+      brief: string;
+      referenceCase?: string;
+    }[] = manifest
+      ? REFERENCE_BENCHMARK_CASES.map((c) => {
+          if (!manifest.cases[c.id]?.shots.length)
+            throw new Error(
+              `No screenshots for ${c.id}; run scripts/theme-studio-benchmark-references.mjs first.`,
+            );
+          return {
+            name: c.id,
+            industry: c.industry,
+            brief: c.brief,
+            referenceCase: c.id,
+          };
+        })
+      : Array.from({ length: repeats }, () => THEME_BENCHMARK_CASES).flat();
+    const { sanitizeReferenceImage } =
+      await import("@/lib/theme-studio/references");
+    const { addThemeStudioReference } =
+      await import("@/lib/theme-studio/repository");
     const modelKey = option("model") ?? "gemini-3.8-flash";
     const batch = await runThemeBenchmarkBatch({
       cases,
@@ -164,10 +235,39 @@ async function main() {
         );
         ids.push(project.id);
         created.push(project.id);
+        // Screenshots go in exactly as an operator's upload would: through the
+        // same sanitiser (re-encoded WebP, metadata stripped) and the same
+        // per-project reference limits, then cited by the brief message.
+        const referenceAssetIds: string[] = [];
+        if (entry.referenceCase && manifest && referencesDir) {
+          caseByProject[project.id] = entry.referenceCase;
+          for (const shot of manifest.cases[entry.referenceCase].shots) {
+            const clean = await sanitizeReferenceImage(
+              readFileSync(join(referencesDir, entry.referenceCase, shot.file)),
+            );
+            if (!clean.ok)
+              throw new Error(
+                `${entry.referenceCase}/${shot.file} was refused: ${clean.code}`,
+              );
+            const added = await addThemeStudioReference(
+              actor,
+              project.id,
+              clean.value,
+            );
+            referenceAssetIds.push(added.id);
+          }
+        }
         await persist([]);
+        const [{ revision }] = await withService((db) =>
+          db
+            .select({ revision: schema.themeStudioProjects.revision })
+            .from(schema.themeStudioProjects)
+            .where(eq(schema.themeStudioProjects.id, project.id)),
+        );
         await queueThemeStudioGeneration(actor, {
           projectId: project.id,
-          expectedRevision: 0,
+          expectedRevision: revision,
+          ...(referenceAssetIds.length ? { referenceAssetIds } : {}),
           idempotencyKey: `benchmark_${randomUUID()}`,
         });
         console.log(`Queued ${entry.name}: ${project.id}`);
@@ -206,6 +306,119 @@ async function main() {
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 15000));
+  }
+  if (process.argv.includes("--score-fidelity")) {
+    if (!process.argv.includes("--yes"))
+      throw new Error("--score-fidelity makes paid model calls; add --yes.");
+    if (!referencesDir || !manifest)
+      throw new Error("--score-fidelity needs --references=<dir>.");
+    const { getVertexConfig, createVertexModelClient } =
+      await import("@/lib/theme-studio/gemini-vertex");
+    const { sharedProviderCapacity } =
+      await import("@/lib/theme-studio/provider-capacity-store");
+    const { resolveThemeStudioModel } =
+      await import("@/lib/theme-studio/models");
+    const { scoreReferenceFidelity } =
+      await import("@/lib/theme-studio/reference-fidelity");
+    const vertex = getVertexConfig();
+    if (!vertex) throw new Error("Fidelity scoring needs a Vertex project.");
+    const client = createVertexModelClient(vertex, {
+      capacity: (model) =>
+        sharedProviderCapacity(vertex.projectId, vertex.region, model),
+    });
+    const judge = resolveThemeStudioModel("gemini-3.8-flash");
+    const finished = (await collect()).filter((r) => r.terminal);
+    for (const result of finished) {
+      const projectId = String(result.projectId);
+      const caseId = caseByProject[projectId];
+      if (!caseId || fidelity[projectId]) continue;
+      const data = await withService(async (db) => {
+        const [project] = await db
+          .select({ current: schema.themeStudioProjects.currentVersionId })
+          .from(schema.themeStudioProjects)
+          .where(eq(schema.themeStudioProjects.id, projectId));
+        const qa = (
+          await db
+            .select()
+            .from(schema.themeStudioVisualQaRuns)
+            .where(eq(schema.themeStudioVisualQaRuns.projectId, projectId))
+        )
+          .filter(
+            (r) =>
+              (r.browserReport as { phase?: string } | null)?.phase !==
+                "layout" && r.screenshotAssetIds.length > 0,
+          )
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        // The version the operator would publish; otherwise the newest.
+        const chosen =
+          qa.find((r) => r.versionId === project?.current) ?? qa[0];
+        if (!chosen) return null;
+        const shots = themeShotsFromQa(chosen);
+        const assets = await db
+          .select({
+            id: schema.themeStudioAssets.id,
+            bytes: schema.themeStudioAssets.bytes,
+          })
+          .from(schema.themeStudioAssets)
+          .where(
+            inArray(
+              schema.themeStudioAssets.id,
+              shots.map((s) => s.assetId),
+            ),
+          );
+        return {
+          versionId: chosen.versionId,
+          shots,
+          bytes: new Map(assets.map((a) => [a.id, a.bytes])),
+        };
+      });
+      if (!data) {
+        fidelity[projectId] = {
+          case: caseId,
+          error: "no_final_qa_screenshots",
+        };
+        continue;
+      }
+      const pairs = fidelityPairs(manifest.cases[caseId].shots, data.shots);
+      const scored = await scoreReferenceFidelity(
+        client,
+        {
+          modelKey: judge.key,
+          providerModel: judge.providerModel,
+          pairs: pairs.map((pair) => {
+            const kind = pair.page.includes("phone") ? "phone" : "desktop";
+            return {
+              page: pair.page,
+              reference: pair.reference.map((shot) => ({
+                label: shot.page,
+                kind,
+                bytes: readFileSync(join(referencesDir, caseId, shot.file)),
+              })),
+              theme: pair.theme.flatMap((shot) => {
+                const bytes = data.bytes.get(shot.assetId);
+                return bytes
+                  ? [{ label: `${shot.surface} ${shot.viewport}`, kind, bytes }]
+                  : [];
+              }),
+            };
+          }),
+        },
+        AbortSignal.timeout(300_000),
+      );
+      fidelity[projectId] = scored.ok
+        ? {
+            case: caseId,
+            versionId: data.versionId,
+            pages: pairs.map((p) => p.page),
+            ...scored.score,
+            estimatedCostMicroUsd: scored.costMicroUsd,
+          }
+        : { case: caseId, versionId: data.versionId, error: scored.reason };
+      console.log(
+        `${caseId}: ${scored.ok ? JSON.stringify(scored.score.scores) : scored.reason}`,
+      );
+      await persist(finished);
+    }
   }
   console.log(`Saved ${out}`);
   // DB pools are intentionally process-lifetime in the app; this CLI exits.
