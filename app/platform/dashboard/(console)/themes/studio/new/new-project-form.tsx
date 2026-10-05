@@ -165,7 +165,9 @@ export function NewProjectForm({
             }}
           />
           <span className="mt-1 block text-xs font-normal text-slate-500">
-            Permanent. Lowercase letters, numbers and hyphens.
+            Lowercase letters, numbers and hyphens. If this id was permanently
+            deleted, a new suffix is assigned automatically; your theme name
+            stays the same.
           </span>
         </label>
       </div>

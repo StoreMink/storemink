@@ -19,6 +19,7 @@ import {
 } from "@/drizzle/schema";
 import { withService, type Db } from "@/lib/db/client";
 import { isUniqueViolation } from "@/lib/db/errors";
+import { resolveRecreatedThemeId } from "./project-identity";
 import { isBundledThemeId } from "@/lib/themes";
 import type {
   ThemeCatalogSize,
@@ -1017,15 +1018,32 @@ export async function createThemeStudioProject(
           `You can start at most ${THEME_STUDIO_LIMITS.projectsPerOperatorPerDay} projects a day.`,
         );
       }
+      // Serialize allocations across operators and requested IDs, including a
+      // direct request for a suffix another operator is about to allocate.
+      await db.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended('theme-studio:project-ids', 0))`,
+      );
+      // Deletion uses the same identity lock. Read its receipt after deletion
+      // commits, rather than racing the tombstone trigger during creation.
+      await db.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${`theme-publication:${input.themeId}`}))`,
+      );
+      const themeId = await resolveRecreatedThemeId(db, input.themeId);
+      if (!themeId) {
+        throw new ThemeStudioError(
+          "theme_id_taken",
+          "Choose a different theme id. No available suffix could be allocated.",
+        );
+      }
       const [released] = await db
         .select({ id: themeReleases.id })
         .from(themeReleases)
-        .where(eq(themeReleases.themeId, input.themeId))
+        .where(eq(themeReleases.themeId, themeId))
         .limit(1);
       const [listed] = await db
         .select({ id: themeCatalogEntries.themeId })
         .from(themeCatalogEntries)
-        .where(eq(themeCatalogEntries.themeId, input.themeId))
+        .where(eq(themeCatalogEntries.themeId, themeId))
         .limit(1);
       if (released || listed) {
         throw new ThemeStudioError(
@@ -1036,7 +1054,7 @@ export async function createThemeStudioProject(
       const [project] = await db
         .insert(themeStudioProjects)
         .values({
-          themeId: input.themeId,
+          themeId,
           name: input.name,
           industries: input.industries,
           catalogSizes: input.catalogSizes,
@@ -1052,16 +1070,33 @@ export async function createThemeStudioProject(
         projectId: project.id,
         actor,
         eventType: "project_created",
-        detail: { themeId: input.themeId, modelKey: input.modelKey },
+        detail: {
+          themeId,
+          requestedThemeId: input.themeId,
+          modelKey: input.modelKey,
+        },
       });
       return { id: project.id };
     });
   } catch (error) {
     if (isUniqueViolation(error)) {
-      throw new ThemeStudioError(
-        "theme_id_taken",
-        "Another active project already uses that id.",
-      );
+      const pgError = error as {
+        constraint?: string;
+        cause?: { constraint?: string };
+      };
+      const constraint = pgError.cause?.constraint ?? pgError.constraint;
+      if (constraint === "theme_studio_deleted_theme_id") {
+        throw new ThemeStudioError(
+          "theme_id_taken",
+          "That id was permanently deleted. Try creating again to assign a fresh id and keep your theme name.",
+        );
+      }
+      if (constraint === "theme_studio_projects_active_theme_key") {
+        throw new ThemeStudioError(
+          "theme_id_taken",
+          "Another active project already uses that id.",
+        );
+      }
     }
     throw error;
   }

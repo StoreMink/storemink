@@ -1,6 +1,12 @@
 // Rollback-only local integration: real FKs, immutability and role boundaries.
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { Client } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
+import * as schema from "@/drizzle/schema";
+import * as relations from "@/drizzle/relations";
+vi.mock("@/lib/db/client", () => ({ withService: vi.fn() }));
+import { withService } from "@/lib/db/client";
+import { createThemeStudioProject, validateProjectInput } from "./repository";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
@@ -272,6 +278,68 @@ it.skipIf(process.env.THEME_STUDIO_DELETE_DB_TEST !== "1")(
         "insert into theme_studio_projects(theme_id,name,industries,catalog_sizes,model_key,draft_brief,created_by_email) values($1,'Reused','{home}','{small}','gemini-3.8-flash','Test','test@example.com')",
         [released.theme],
       );
+      // Exercise the production creation path against the actual deletion
+      // receipt and guards, within this same rollback-only local transaction.
+      vi.mocked(withService).mockImplementation(async (fn) =>
+        fn(drizzle(db, { schema: { ...schema, ...relations } })),
+      );
+      const input = validateProjectInput({
+        name: "Bubble",
+        themeId: released.theme,
+        brief: "A playful new theme.",
+        industries: ["home"],
+        catalogSizes: ["small"],
+        requiredFeatures: [],
+        baseThemeId: null,
+        modelKey: "gemini-3.8-flash",
+      });
+      await db.query("set local role app_service");
+      const first = await createThemeStudioProject(
+        { id: actor, email: `${actor}@example.com` },
+        input,
+      );
+      await db.query(
+        "insert into theme_releases(theme_id,version,release_status,package_json,manifest_digest) values($1,'1.0.0','published','{}',$2)",
+        [`${released.theme}-3`, digest],
+      );
+      const second = await createThemeStudioProject(
+        { id: actor, email: `${actor}@example.com` },
+        input,
+      );
+      const projects = await db.query(
+        "select theme_id,name from theme_studio_projects where id=any($1::uuid[]) order by theme_id",
+        [[first.id, second.id]],
+      );
+      expect(projects.rows).toEqual([
+        { theme_id: `${released.theme}-2`, name: "Bubble" },
+        { theme_id: `${released.theme}-4`, name: "Bubble" },
+      ]);
+      const event = await db.query(
+        "select detail from theme_studio_events where project_id=$1 and event_type='project_created'",
+        [first.id],
+      );
+      expect(event.rows[0].detail).toMatchObject({
+        themeId: `${released.theme}-2`,
+        requestedThemeId: released.theme,
+      });
+      await db.query("savepoint active_conflict");
+      await expect(
+        createThemeStudioProject(
+          { id: actor, email: `${actor}@example.com` },
+          { ...input, themeId: `${released.theme}-2` },
+        ),
+      ).rejects.toThrow("Another active project already uses that id.");
+      await db.query("rollback to active_conflict");
+      await db.query("reset role");
+      // Private previews can use the fresh ID while the deleted one stays blocked.
+      await db.query("update stores set settings=$2 where id=$1", [
+        store,
+        { template: `${released.theme}-2` },
+      ]);
+      await refused("update stores set settings=$2 where id=$1", [
+        store,
+        { template: released.theme },
+      ]);
       // The deletion exception must not grant ordinary updates to surviving history.
       await refused(
         "update theme_studio_versions set intent_json='{}' where id=$1",
