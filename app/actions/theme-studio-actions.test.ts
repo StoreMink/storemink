@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // ---------------------------------------------------------------------------
 
 const repo = vi.hoisted(() => ({
+  deleteThemeStudioProject: vi.fn(async () => ({ themeId: "clay-co" })),
   createThemeStudioProject: vi.fn(async () => ({ id: "p1" })),
   queueThemeStudioGeneration: vi.fn(async () => ({
     runId: "r1",
@@ -43,6 +44,9 @@ vi.mock("@/lib/theme-studio/repository", async (importOriginal) => {
     await importOriginal<typeof import("@/lib/theme-studio/repository")>();
   return { ...actual, ...repo };
 });
+vi.mock("@/lib/theme-studio/deletion", () => ({
+  deleteThemeStudioProject: repo.deleteThemeStudioProject,
+}));
 vi.mock("@/lib/theme-studio/publication", () => ({
   publishThemeStudioProject: repo.publishThemeStudioProject,
   changeThemeStudioCatalog: repo.changeThemeStudioCatalog,
@@ -54,6 +58,7 @@ vi.mock("@/lib/db/client", () => ({ withService: vi.fn() }));
 vi.mock("next/cache", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/cache")>()),
   revalidatePath: vi.fn(),
+  updateTag: vi.fn(),
 }));
 vi.mock("next/server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/server")>()),
@@ -61,6 +66,7 @@ vi.mock("next/server", async (importOriginal) => ({
 }));
 
 import * as actions from "./theme-studio-actions";
+import { updateTag } from "next/cache";
 
 const projectId = "22222222-2222-4222-8222-222222222222";
 const runId = "33333333-3333-4333-8333-333333333333";
@@ -126,6 +132,16 @@ const calls: [
     () =>
       actions.removeThemeStudioReferenceAction({ projectId, assetId: runId }),
     "removeThemeStudioReference",
+  ],
+  [
+    "delete",
+    () =>
+      actions.deleteThemeStudioProjectAction({
+        projectId,
+        expectedRevision: 0,
+        confirmation: "clay-co",
+      }),
+    "deleteThemeStudioProject",
   ],
   [
     "archive",
@@ -230,4 +246,20 @@ describe("Theme Studio actions", () => {
       problems: ["Demo: /shop answered 500."],
     });
   });
+});
+
+it("does not report a committed deletion as unchanged when cache invalidation fails", async () => {
+  actorState.actor = {
+    id: "11111111-1111-4111-8111-111111111111",
+    email: "owner@storemink.com",
+  };
+  vi.mocked(updateTag).mockImplementationOnce(() => {
+    throw new Error("cache unavailable");
+  });
+  const result = await actions.deleteThemeStudioProjectAction({
+    projectId,
+    expectedRevision: 0,
+    confirmation: "clay-co",
+  });
+  expect(result).toEqual({ ok: true });
 });

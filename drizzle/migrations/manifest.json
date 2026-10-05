@@ -39,7 +39,9 @@
       "description": "Shiprocket logistics, fulfilment orders, shipments, and immutable parcel snapshots",
       "file": "../../supabase/logistics_01_shiprocket.sql",
       "transaction": true,
-      "requires": ["baseline:cloudsql-2026-08-14"],
+      "requires": [
+        "baseline:cloudsql-2026-08-14"
+      ],
       "verify": {
         "tables": [
           "fulfilment_order_items",
@@ -85,9 +87,13 @@
       "description": "Repair the production credit-note formatter and canonicalize the legacy scheduled-plan constraint",
       "file": "sql/20260814_0002_schema_drift_repair.sql",
       "transaction": true,
-      "requires": ["20260814_0001_logistics_shiprocket"],
+      "requires": [
+        "20260814_0001_logistics_shiprocket"
+      ],
       "verify": {
-        "constraints": ["store_subscriptions_scheduled_plan_check"],
+        "constraints": [
+          "store_subscriptions_scheduled_plan_check"
+        ],
         "functions": [
           "sm_credit_note_ref(integer,integer)",
           "sm_pad(integer,integer)"
@@ -111,9 +117,13 @@
       "description": "Record actual pickup preparation separately from the checkout promise",
       "file": "sql/20260816_0003_pos_pickup_prepared_at.sql",
       "transaction": true,
-      "requires": ["20260814_0002_schema_drift_repair"],
+      "requires": [
+        "20260814_0002_schema_drift_repair"
+      ],
       "verify": {
-        "columns": ["orders.pickup_prepared_at"]
+        "columns": [
+          "orders.pickup_prepared_at"
+        ]
       }
     },
     {
@@ -121,7 +131,9 @@
       "description": "Mark paid one-time AI-credit invoices as paid instead of subscription debt",
       "file": "sql/20260816_0004_ai_credit_invoice_paid_repair.sql",
       "transaction": true,
-      "requires": ["20260816_0003_pos_pickup_prepared_at"],
+      "requires": [
+        "20260816_0003_pos_pickup_prepared_at"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -147,15 +159,21 @@
       "description": "Persist bounded personal Analytics dashboard layouts per store admin",
       "file": "../../supabase/analytics_01_dashboard_layouts.sql",
       "transaction": true,
-      "requires": ["20260816_0004_ai_credit_invoice_paid_repair"],
+      "requires": [
+        "20260816_0004_ai_credit_invoice_paid_repair"
+      ],
       "verify": {
-        "tables": ["analytics_dashboard_layouts"],
+        "tables": [
+          "analytics_dashboard_layouts"
+        ],
         "constraints": [
           "analytics_dashboard_layouts_layout_is_object",
           "analytics_dashboard_layouts_pkey",
           "analytics_dashboard_layouts_schema_version_check"
         ],
-        "rlsTables": ["analytics_dashboard_layouts"]
+        "rlsTables": [
+          "analytics_dashboard_layouts"
+        ]
       }
     },
     {
@@ -163,7 +181,9 @@
       "description": "Persist tenant-safe Search Console source epochs, metric buckets, leased work, and fleet rate limits",
       "file": "../../supabase/search_metrics_01_schema.sql",
       "transaction": true,
-      "requires": ["20260818_0005_analytics_dashboard_layouts"],
+      "requires": [
+        "20260818_0005_analytics_dashboard_layouts"
+      ],
       "verify": {
         "tables": [
           "store_search_metrics",
@@ -177,7 +197,9 @@
           "store_search_sources_id_store_key",
           "store_search_sync_jobs_pkey"
         ],
-        "functions": ["claim_store_search_rate_slot(text,integer)"],
+        "functions": [
+          "claim_store_search_rate_slot(text,integer)"
+        ],
         "rlsTables": [
           "store_search_metrics",
           "store_search_rate_limits",
@@ -191,14 +213,20 @@
       "description": "Add operator-controlled Analytics availability and seed the first Analytics help documents",
       "file": "sql/20260820_0007_platform_analytics_controls.sql",
       "transaction": true,
-      "requires": ["20260819_0006_search_metrics"],
+      "requires": [
+        "20260819_0006_search_metrics"
+      ],
       "verify": {
-        "tables": ["platform_analytics_settings"],
+        "tables": [
+          "platform_analytics_settings"
+        ],
         "constraints": [
           "platform_analytics_settings_id_check",
           "platform_analytics_settings_pkey"
         ],
-        "rlsTables": ["platform_analytics_settings"]
+        "rlsTables": [
+          "platform_analytics_settings"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -224,7 +252,9 @@
       "description": "Publish the complete Analytics Help Centre guide set and prepare detailed GA4 and Meta Pixel setup drafts",
       "file": "sql/20260820_0008_analytics_help_documents.sql",
       "transaction": true,
-      "requires": ["20260820_0007_platform_analytics_controls"],
+      "requires": [
+        "20260820_0007_platform_analytics_controls"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -260,9 +290,13 @@
       "description": "Require every published Help article to have the category needed by its canonical URL",
       "file": "sql/20260820_0009_help_article_indexability.sql",
       "transaction": true,
-      "requires": ["20260820_0008_analytics_help_documents"],
+      "requires": [
+        "20260820_0008_analytics_help_documents"
+      ],
       "verify": {
-        "constraints": ["help_articles_published_has_category"],
+        "constraints": [
+          "help_articles_published_has_category"
+        ],
         "queries": [
           {
             "name": "no published Help article is missing its canonical category",
@@ -277,7 +311,9 @@
       "description": "Enable Pro merchant GA4 and Meta Pixel modules and publish their consent-aware setup guides",
       "file": "sql/20260820_0010_merchant_pixels.sql",
       "transaction": true,
-      "requires": ["20260820_0009_help_article_indexability"],
+      "requires": [
+        "20260820_0009_help_article_indexability"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -308,7 +344,9 @@
       "description": "Add consented first-party storefront events, temporary order attribution, durable daily funnel aggregates, and its Help guide",
       "file": "sql/20260820_0011_storefront_conversion.sql",
       "transaction": true,
-      "requires": ["20260820_0010_merchant_pixels"],
+      "requires": [
+        "20260820_0010_merchant_pixels"
+      ],
       "verify": {
         "tables": [
           "storefront_daily",
@@ -351,7 +389,9 @@
       "description": "Add nullable product and variant costs, immutable order-line cost snapshots, enable Pro gross-margin analytics, and publish its Help guide",
       "file": "sql/20260820_0012_gross_margin.sql",
       "transaction": true,
-      "requires": ["20260820_0011_storefront_conversion"],
+      "requires": [
+        "20260820_0011_storefront_conversion"
+      ],
       "verify": {
         "columns": [
           "order_items.unit_cost",
@@ -388,10 +428,16 @@
       "description": "Attribute each POS tender to the drawer shift that captured it",
       "file": "sql/20260822_0013_payment_shift_attribution.sql",
       "transaction": true,
-      "requires": ["20260820_0012_gross_margin"],
+      "requires": [
+        "20260820_0012_gross_margin"
+      ],
       "verify": {
-        "columns": ["order_payments.shift_id"],
-        "constraints": ["order_payments_shift_id_fkey"],
+        "columns": [
+          "order_payments.shift_id"
+        ],
+        "constraints": [
+          "order_payments_shift_id_fkey"
+        ],
         "queries": [
           {
             "name": "payment shift attribution index is present",
@@ -424,14 +470,18 @@
       "description": "Cascade every direct store relationship so permanent tenant deletion leaves no detached rows",
       "file": "sql/20260823_0014_store_deletion_cascade.sql",
       "transaction": true,
-      "requires": ["20260822_0013_payment_shift_attribution"],
+      "requires": [
+        "20260822_0013_payment_shift_attribution"
+      ],
       "verify": {
         "constraints": [
           "billing_reconciliation_items_store_id_fkey",
           "legal_acceptances_store_id_fkey",
           "platform_announcement_recipients_store_id_fkey"
         ],
-        "functions": ["legal_acceptances_append_only()"],
+        "functions": [
+          "legal_acceptances_append_only()"
+        ],
         "queries": [
           {
             "name": "the three repaired store foreign keys are table-bound validated cascades",
@@ -461,7 +511,9 @@
       "description": "Publish a dedicated Point of Sale Help Centre category with complete plain-language operating guides",
       "file": "sql/20260825_0015_pos_help_documents.sql",
       "transaction": true,
-      "requires": ["20260823_0014_store_deletion_cascade"],
+      "requires": [
+        "20260823_0014_store_deletion_cascade"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -497,7 +549,9 @@
       "description": "Publish the plain-language guide for the grounded public Mink AI Help Assistant",
       "file": "sql/20260825_0016_help_assistant_guide.sql",
       "transaction": true,
-      "requires": ["20260825_0015_pos_help_documents"],
+      "requires": [
+        "20260825_0015_pos_help_documents"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -523,9 +577,13 @@
       "description": "Install pgvector, add published-parent-scoped Help article chunks for 768-dimensional semantic retrieval, and document Mink AI hybrid search",
       "file": "sql/20260825_0017_help_article_embeddings.sql",
       "transaction": true,
-      "requires": ["20260825_0016_help_assistant_guide"],
+      "requires": [
+        "20260825_0016_help_assistant_guide"
+      ],
       "verify": {
-        "tables": ["help_article_chunks"],
+        "tables": [
+          "help_article_chunks"
+        ],
         "columns": [
           "help_article_chunks.article_id",
           "help_article_chunks.chunk_index",
@@ -551,7 +609,9 @@
           "help_article_chunks_embedding_model_check",
           "help_article_chunks_embedding_freshness_check"
         ],
-        "rlsTables": ["help_article_chunks"],
+        "rlsTables": [
+          "help_article_chunks"
+        ],
         "queries": [
           {
             "name": "pgvector is installed in the public schema",
@@ -604,7 +664,9 @@
       "description": "Make Help embedding refreshes completeness- and parser-version-aware and restrict the Search Console rate-slot function to app_service",
       "file": "sql/20260826_0018_help_embedding_hardening.sql",
       "transaction": true,
-      "requires": ["20260825_0017_help_article_embeddings"],
+      "requires": [
+        "20260825_0017_help_article_embeddings"
+      ],
       "verify": {
         "columns": [
           "help_article_chunks.chunk_count",
@@ -643,7 +705,9 @@
       "description": "Publish complete Getting started and Account, staff and billing Help Centre foundations",
       "file": "sql/20260826_0019_getting_started_account_help.sql",
       "transaction": true,
-      "requires": ["20260826_0018_help_embedding_hardening"],
+      "requires": [
+        "20260826_0018_help_embedding_hardening"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -679,7 +743,9 @@
       "description": "Publish Website Builder, storefront setup, policy, media, newsletter and domain Help guides",
       "file": "sql/20260826_0020_storefront_domains_help.sql",
       "transaction": true,
-      "requires": ["20260826_0019_getting_started_account_help"],
+      "requires": [
+        "20260826_0019_getting_started_account_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -705,7 +771,9 @@
       "description": "Publish Products, inventory, Customers and enquiries Help Centre foundations",
       "file": "sql/20260826_0021_products_customers_help.sql",
       "transaction": true,
-      "requires": ["20260826_0020_storefront_domains_help"],
+      "requires": [
+        "20260826_0020_storefront_domains_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -741,7 +809,9 @@
       "description": "Publish Payments, Razorpay, COD, GST, invoice, refund and store-credit Help guides",
       "file": "sql/20260826_0022_payments_tax_help.sql",
       "transaction": true,
-      "requires": ["20260826_0021_products_customers_help"],
+      "requires": [
+        "20260826_0021_products_customers_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -767,7 +837,9 @@
       "description": "Publish Orders, locations, fulfilment, pickup and shipping Help guides and repair stale POS and Analytics copy",
       "file": "sql/20260826_0023_orders_shipping_help.sql",
       "transaction": true,
-      "requires": ["20260826_0022_payments_tax_help"],
+      "requires": [
+        "20260826_0022_payments_tax_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -823,7 +895,9 @@
       "description": "Publish Marketing, blogs and communication guides and establish the canonical Help category baseline",
       "file": "sql/20260826_0024_marketing_communications_help.sql",
       "transaction": true,
-      "requires": ["20260826_0023_orders_shipping_help"],
+      "requires": [
+        "20260826_0023_orders_shipping_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -869,7 +943,9 @@
       "description": "Document Mink AI answer-start positioning, full-screen controls, and non-clickable clarification guidance",
       "file": "sql/20260826_0025_mink_ai_fullscreen_help.sql",
       "transaction": true,
-      "requires": ["20260826_0024_marketing_communications_help"],
+      "requires": [
+        "20260826_0024_marketing_communications_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -895,7 +971,9 @@
       "description": "Publish the complete plan matrix and soft-downgrade no-data-loss contract across Help Centre guides",
       "file": "sql/20260826_0026_plan_entitlements_help.sql",
       "transaction": true,
-      "requires": ["20260826_0025_mink_ai_fullscreen_help"],
+      "requires": [
+        "20260826_0025_mink_ai_fullscreen_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -931,7 +1009,9 @@
       "description": "Clarify downgrade-safe cleanup, custom-code editing, and shopper-safe shipping fallback in Help Centre guides",
       "file": "sql/20260827_0027_plan_review_followups_help.sql",
       "transaction": true,
-      "requires": ["20260826_0026_plan_entitlements_help"],
+      "requires": [
+        "20260826_0026_plan_entitlements_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -967,7 +1047,9 @@
       "description": "Document the location-first inventory workspace, product stock handoff, and location-filtered history",
       "file": "sql/20260827_0028_inventory_location_workflow_help.sql",
       "transaction": true,
-      "requires": ["20260827_0027_plan_review_followups_help"],
+      "requires": [
+        "20260827_0027_plan_review_followups_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -993,7 +1075,9 @@
       "description": "Document the Locations child navigation and aligned fulfilment and pickup workspace",
       "file": "sql/20260827_0029_locations_fulfilment_navigation_help.sql",
       "transaction": true,
-      "requires": ["20260827_0028_inventory_location_workflow_help"],
+      "requires": [
+        "20260827_0028_inventory_location_workflow_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1019,7 +1103,9 @@
       "description": "Document full destination visibility in narrow and resized Locations panels",
       "file": "sql/20260827_0030_locations_sidebar_visibility_help.sql",
       "transaction": true,
-      "requires": ["20260827_0029_locations_fulfilment_navigation_help"],
+      "requires": [
+        "20260827_0029_locations_fulfilment_navigation_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1045,7 +1131,9 @@
       "description": "Document customer capture, simplified payment methods, and the linear split-payment flow at POS checkout",
       "file": "sql/20260827_0031_pos_checkout_clarity_help.sql",
       "transaction": true,
-      "requires": ["20260827_0030_locations_sidebar_visibility_help"],
+      "requires": [
+        "20260827_0030_locations_sidebar_visibility_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1071,7 +1159,9 @@
       "description": "Document submit-only mobile customer capture and mandatory pickup and return phone OTP verification",
       "file": "sql/20260828_0032_pos_phone_checkout_and_verification_help.sql",
       "transaction": true,
-      "requires": ["20260827_0031_pos_checkout_clarity_help"],
+      "requires": [
+        "20260827_0031_pos_checkout_clarity_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1097,7 +1187,9 @@
       "description": "Document mandatory POS customers, cart images, pickup Razorpay, unified Sales, and policy-driven counter returns and exchanges",
       "file": "sql/20260829_0033_pos_customer_sales_returns_help.sql",
       "transaction": true,
-      "requires": ["20260828_0032_pos_phone_checkout_and_verification_help"],
+      "requires": [
+        "20260828_0032_pos_phone_checkout_and_verification_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1123,7 +1215,9 @@
       "description": "Document the POS Sales refunded/partly-refunded labels and when Return items is offered",
       "file": "sql/20260829_0034_pos_sales_refund_state_help.sql",
       "transaction": true,
-      "requires": ["20260829_0033_pos_customer_sales_returns_help"],
+      "requires": [
+        "20260829_0033_pos_customer_sales_returns_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1149,7 +1243,9 @@
       "description": "Persist tenant-safe Mink dashboard alpha conversations, runs, tool telemetry, raw usage, and publish its Help Centre guide",
       "file": "sql/20260829_0035_mink_dashboard_alpha.sql",
       "transaction": true,
-      "requires": ["20260829_0034_pos_sales_refund_state_help"],
+      "requires": [
+        "20260829_0034_pos_sales_refund_state_help"
+      ],
       "verify": {
         "tables": [
           "mink_conversations",
@@ -1208,7 +1304,9 @@
       "description": "Cap Mink history at ten actor/store conversations and document history, resizing, header identity, and answer formatting",
       "file": "sql/20260829_0036_mink_conversation_ux.sql",
       "transaction": true,
-      "requires": ["20260829_0035_mink_dashboard_alpha"],
+      "requires": [
+        "20260829_0035_mink_dashboard_alpha"
+      ],
       "verify": {
         "queries": [
           {
@@ -1247,7 +1345,9 @@
       "description": "Document the unified Mink robot identity, conversation sidebar deletion, and growing multiline composer",
       "file": "sql/20260829_0037_mink_sidebar_composer.sql",
       "transaction": true,
-      "requires": ["20260829_0036_mink_conversation_ux"],
+      "requires": [
+        "20260829_0036_mink_conversation_ux"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1273,7 +1373,9 @@
       "description": "Add Mink reliability and shadow-cost telemetry, operator inspection support, and sales/low-stock Help Centre guidance",
       "file": "sql/20260829_0038_mink_phase_1b.sql",
       "transaction": true,
-      "requires": ["20260829_0037_mink_sidebar_composer"],
+      "requires": [
+        "20260829_0037_mink_sidebar_composer"
+      ],
       "verify": {
         "columns": [
           "mink_runs.retry_count",
@@ -1318,9 +1420,14 @@
       "description": "Add invited Mink beta access, trusted page context, conversation compaction, answer feedback, and shadow cost cohorts",
       "file": "sql/20260829_0039_mink_phase_2.sql",
       "transaction": true,
-      "requires": ["20260829_0038_mink_phase_1b"],
+      "requires": [
+        "20260829_0038_mink_phase_1b"
+      ],
       "verify": {
-        "tables": ["mink_store_access", "mink_feedback"],
+        "tables": [
+          "mink_store_access",
+          "mink_feedback"
+        ],
         "columns": [
           "mink_conversations.summary_json",
           "mink_conversations.summarized_message_count",
@@ -1338,7 +1445,10 @@
           "mink_feedback_run_admin_key",
           "mink_feedback_rating_check"
         ],
-        "rlsTables": ["mink_store_access", "mink_feedback"]
+        "rlsTables": [
+          "mink_store_access",
+          "mink_feedback"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -1364,7 +1474,9 @@
       "description": "Add operator-gated private Mink proposals, immutable draft versions, and atomic weighted-credit charging",
       "file": "sql/20260830_0040_mink_phase_3.sql",
       "transaction": true,
-      "requires": ["20260829_0039_mink_phase_2"],
+      "requires": [
+        "20260829_0039_mink_phase_2"
+      ],
       "verify": {
         "tables": [
           "mink_drafts",
@@ -1427,7 +1539,9 @@
       "description": "Document Mink location name/type aliases and fail-closed named-location scope",
       "file": "sql/20260830_0041_mink_location_alias_help.sql",
       "transaction": true,
-      "requires": ["20260830_0040_mink_phase_3"],
+      "requires": [
+        "20260830_0040_mink_phase_3"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1453,7 +1567,9 @@
       "description": "Add exact approvals, per-tool operator kill switches, transactional product text actions, and append-only action audit",
       "file": "sql/20260830_0042_mink_phase_4a_product_actions.sql",
       "transaction": true,
-      "requires": ["20260830_0041_mink_location_alias_help"],
+      "requires": [
+        "20260830_0041_mink_location_alias_help"
+      ],
       "verify": {
         "tables": [
           "mink_action_tool_access",
@@ -1506,7 +1622,9 @@
       "description": "Add exact approvals for unpublished product creation, disabled coupon create/update, and customer-group metadata create/update",
       "file": "sql/20260830_0043_mink_phase_4b_4d_actions.sql",
       "transaction": true,
-      "requires": ["20260830_0042_mink_phase_4a_product_actions"],
+      "requires": [
+        "20260830_0042_mink_phase_4a_product_actions"
+      ],
       "verify": {
         "columns": [
           "mink_action_approvals.resource_type",
@@ -1546,7 +1664,9 @@
       "description": "Document restored proposal cards, independent drafting rollout, and exact Mink action checkpoints",
       "file": "sql/20260830_0044_mink_action_reliability_help.sql",
       "transaction": true,
-      "requires": ["20260830_0043_mink_phase_4b_4d_actions"],
+      "requires": [
+        "20260830_0043_mink_phase_4b_4d_actions"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1572,7 +1692,9 @@
       "description": "Document the full-width Products and Cart register flow on phones and portrait tablets",
       "file": "sql/20260831_0045_pos_mobile_register_help.sql",
       "transaction": true,
-      "requires": ["20260830_0044_mink_action_reliability_help"],
+      "requires": [
+        "20260830_0044_mink_action_reliability_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1598,7 +1720,9 @@
       "description": "Add human-approved, exact single-SKU single-location Mink inventory adjustments and Help Centre guidance",
       "file": "sql/20260831_0046_mink_phase_5a_inventory_actions.sql",
       "transaction": true,
-      "requires": ["20260831_0045_pos_mobile_register_help"],
+      "requires": [
+        "20260831_0045_pos_mobile_register_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1634,7 +1758,9 @@
       "description": "Add separately gated, bounded and atomic Mink bulk inventory adjustments with line-level Help Centre guidance",
       "file": "sql/20260831_0047_mink_phase_5b_bulk_inventory.sql",
       "transaction": true,
-      "requires": ["20260831_0046_mink_phase_5a_inventory_actions"],
+      "requires": [
+        "20260831_0046_mink_phase_5a_inventory_actions"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1670,7 +1796,9 @@
       "description": "Document location-aware SKU catalogue health and safe structured Mink answer formatting",
       "file": "sql/20260831_0048_mink_catalog_health_ui.sql",
       "transaction": true,
-      "requires": ["20260831_0047_mink_phase_5b_bulk_inventory"],
+      "requires": [
+        "20260831_0047_mink_phase_5b_bulk_inventory"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1697,7 +1825,9 @@
       "file": "sql/20260831_0049_mink_inventory_scope_clarification.sql",
       "checksum": "1656d6a8a7fb08c380dcd6da1ccd8532853e3fa13ea5c49471c140f74451c4de",
       "transaction": true,
-      "requires": ["20260831_0048_mink_catalog_health_ui"],
+      "requires": [
+        "20260831_0048_mink_catalog_health_ui"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1724,7 +1854,9 @@
       "file": "sql/20260901_0050_mink_full_view_takeover.sql",
       "checksum": "2c2e713d4dace686e79a1f7c1984af93cdd24c72584a9ec01313e4eafd583304",
       "transaction": true,
-      "requires": ["20260831_0049_mink_inventory_scope_clarification"],
+      "requires": [
+        "20260831_0049_mink_inventory_scope_clarification"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1751,7 +1883,9 @@
       "file": "sql/20260901_0051_mink_phase_5c_order_status.sql",
       "checksum": "f4a3121a21c9ee71d828d2ebc71fb0c6c5c7a11a385e40ac92068f7342bdbb43",
       "transaction": true,
-      "requires": ["20260901_0050_mink_full_view_takeover"],
+      "requires": [
+        "20260901_0050_mink_full_view_takeover"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1788,10 +1922,14 @@
       "file": "sql/20260901_0052_mink_phase_5d_blog_publication.sql",
       "checksum": "38ad7b2aa4d822bebcf3b0a77638b062216941d1dc8b01c39b15c7d0248258e7",
       "transaction": true,
-      "requires": ["20260901_0051_mink_phase_5c_order_status"],
+      "requires": [
+        "20260901_0051_mink_phase_5c_order_status"
+      ],
       "verify": {},
       "applyVerify": {
-        "tables": ["mink_blog_publications"],
+        "tables": [
+          "mink_blog_publications"
+        ],
         "columns": [
           "mink_blog_publications.approval_id",
           "mink_blog_publications.blog_id",
@@ -1806,7 +1944,9 @@
           "mink_blog_publications_blog_store_fkey",
           "mink_blog_publications_timing_check"
         ],
-        "rlsTables": ["mink_blog_publications"],
+        "rlsTables": [
+          "mink_blog_publications"
+        ],
         "queries": [
           {
             "name": "the Mink guide documents exact guarded blog publication and scheduling",
@@ -1816,14 +1956,18 @@
         ]
       },
       "adoptVerify": {
-        "tables": ["mink_blog_publications"],
+        "tables": [
+          "mink_blog_publications"
+        ],
         "constraints": [
           "mink_action_approvals_blog_publish_target_check",
           "mink_action_audit_blog_publish_target_check",
           "mink_blog_publications_blog_store_fkey",
           "mink_blog_publications_timing_check"
         ],
-        "rlsTables": ["mink_blog_publications"],
+        "rlsTables": [
+          "mink_blog_publications"
+        ],
         "queries": [
           {
             "name": "the Mink guide already documents guarded blog publication and scheduling",
@@ -1839,7 +1983,9 @@
       "file": "sql/20260901_0053_mink_phase_5e_campaigns.sql",
       "checksum": "ebff0f32e127d5923886a1304d0ef0c8c25d74d447e2be0b0f2bf9b5afd6c816",
       "transaction": true,
-      "requires": ["20260901_0052_mink_phase_5d_blog_publication"],
+      "requires": [
+        "20260901_0052_mink_phase_5d_blog_publication"
+      ],
       "verify": {},
       "applyVerify": {
         "columns": [
@@ -1901,7 +2047,9 @@
       "file": "sql/20260901_0054_mink_phase_5f_bulk_prices.sql",
       "checksum": "bb144bcca08d4231aeb9d4434b9573db4111e803e3ed9c6347ce064670ce6651",
       "transaction": true,
-      "requires": ["20260901_0053_mink_phase_5e_campaigns"],
+      "requires": [
+        "20260901_0053_mink_phase_5e_campaigns"
+      ],
       "verify": {},
       "applyVerify": {
         "constraints": [
@@ -1948,7 +2096,9 @@
       "file": "sql/20260902_0055_pos_https_entry_help.sql",
       "checksum": "1a8e1f420eec7443d8d1859b27072a4567f180a191cd92c148129c7d96ebd74e",
       "transaction": true,
-      "requires": ["20260901_0054_mink_phase_5f_bulk_prices"],
+      "requires": [
+        "20260901_0054_mink_phase_5f_bulk_prices"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -1975,7 +2125,9 @@
       "file": "sql/20260902_0056_mink_mobile_workspace_help.sql",
       "checksum": "d5e7f13607209139fab576f51a65845ef89693275b1a8e9e7fa91109f7ba3386",
       "transaction": true,
-      "requires": ["20260902_0055_pos_https_entry_help"],
+      "requires": [
+        "20260902_0055_pos_https_entry_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -2002,7 +2154,9 @@
       "file": "sql/20260902_0057_mobile_pos_notification_help.sql",
       "checksum": "0bf40217358fc0dfadfb85a4e78ab38d50a0961196a49ae52aeb74abd924a117",
       "transaction": true,
-      "requires": ["20260902_0056_mink_mobile_workspace_help"],
+      "requires": [
+        "20260902_0056_mink_mobile_workspace_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -2029,7 +2183,9 @@
       "file": "sql/20260902_0058_mink_phase_6a_durable_workflows.sql",
       "checksum": "da8e3059c71ba96c6631018912c251a92b561d6d2ef2f92aa0e790d3e142e989",
       "transaction": true,
-      "requires": ["20260902_0057_mobile_pos_notification_help"],
+      "requires": [
+        "20260902_0057_mobile_pos_notification_help"
+      ],
       "verify": {},
       "applyVerify": {
         "tables": [
@@ -2106,7 +2262,9 @@
       "file": "sql/20260902_0059_offers_phase_a.sql",
       "checksum": "801a9fa2d5d8537d41969ddbe7ee735be472f27b45c29f31eaac448afeda9b10",
       "transaction": true,
-      "requires": ["20260902_0058_mink_phase_6a_durable_workflows"],
+      "requires": [
+        "20260902_0058_mink_phase_6a_durable_workflows"
+      ],
       "verify": {},
       "applyVerify": {
         "tables": [
@@ -2264,7 +2422,9 @@
       "file": "sql/20260902_0060_variant_sale_price_help.sql",
       "checksum": "d60f6e8c7cec281f9f9aa799ba3f45a12ef185ee88038668b1b6d29b95aaf8ef",
       "transaction": true,
-      "requires": ["20260902_0059_offers_phase_a"],
+      "requires": [
+        "20260902_0059_offers_phase_a"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -2291,14 +2451,18 @@
       "file": "sql/20260902_0061_offers_phase_b.sql",
       "checksum": "7c72d72443e0522a7cd5a13e8cdfd655342fa15911f25d23b7dcc8214b8d0715",
       "transaction": true,
-      "requires": ["20260902_0060_variant_sale_price_help"],
+      "requires": [
+        "20260902_0060_variant_sale_price_help"
+      ],
       "verify": {},
       "applyVerify": {
         "constraints": [
           "offers_reward_type_check",
           "offers_trigger_type_check"
         ],
-        "functions": ["offers_contents_trigger_needs_scope()"],
+        "functions": [
+          "offers_contents_trigger_needs_scope()"
+        ],
         "queries": [
           {
             "name": "the offers guide explains product scoping and the two shapes",
@@ -2327,7 +2491,9 @@
           "offers_reward_type_check",
           "offers_trigger_type_check"
         ],
-        "functions": ["offers_contents_trigger_needs_scope()"],
+        "functions": [
+          "offers_contents_trigger_needs_scope()"
+        ],
         "queries": [
           {
             "name": "the offers guide explains product scoping and the two shapes",
@@ -2358,11 +2524,18 @@
       "file": "sql/20260902_0062_offers_phase_c.sql",
       "checksum": "d603e7bade1f6d58a26b441e55b7d5280000b301fa789ad877e2d35d0de8945d",
       "transaction": true,
-      "requires": ["20260902_0061_offers_phase_b"],
+      "requires": [
+        "20260902_0061_offers_phase_b"
+      ],
       "verify": {},
       "applyVerify": {
-        "constraints": ["offers_reward_type_check", "offers_bxgy_shape_check"],
-        "functions": ["offers_contents_trigger_needs_scope()"],
+        "constraints": [
+          "offers_reward_type_check",
+          "offers_bxgy_shape_check"
+        ],
+        "functions": [
+          "offers_contents_trigger_needs_scope()"
+        ],
         "queries": [
           {
             "name": "buy X get Y is an allowed reward",
@@ -2387,8 +2560,13 @@
         ]
       },
       "adoptVerify": {
-        "constraints": ["offers_reward_type_check", "offers_bxgy_shape_check"],
-        "functions": ["offers_contents_trigger_needs_scope()"],
+        "constraints": [
+          "offers_reward_type_check",
+          "offers_bxgy_shape_check"
+        ],
+        "functions": [
+          "offers_contents_trigger_needs_scope()"
+        ],
         "queries": [
           {
             "name": "buy X get Y is an allowed reward",
@@ -2419,10 +2597,14 @@
       "file": "sql/20260903_0063_offers_phase_d.sql",
       "checksum": "afb0f7c07b1c2d4a8b4296e453ffbd56be49d7b5e39730aa47651ab54b8ba479",
       "transaction": true,
-      "requires": ["20260902_0062_offers_phase_c"],
+      "requires": [
+        "20260902_0062_offers_phase_c"
+      ],
       "verify": {},
       "applyVerify": {
-        "constraints": ["offers_reward_type_check"],
+        "constraints": [
+          "offers_reward_type_check"
+        ],
         "functions": [
           "offers_contents_trigger_needs_scope()",
           "offers_ladder_shape_valid()"
@@ -2456,7 +2638,9 @@
         ]
       },
       "adoptVerify": {
-        "constraints": ["offers_reward_type_check"],
+        "constraints": [
+          "offers_reward_type_check"
+        ],
         "functions": [
           "offers_contents_trigger_needs_scope()",
           "offers_ladder_shape_valid()"
@@ -2496,11 +2680,15 @@
       "file": "sql/20260903_0064_offers_ladder_null_guard.sql",
       "checksum": "cef214b936f71b16aec2c660a17bfdc9312ba49008e961f6fe0e2cd2553825f4",
       "transaction": true,
-      "requires": ["20260903_0063_offers_phase_d"],
+      "requires": [
+        "20260903_0063_offers_phase_d"
+      ],
       "verify": {},
       "applyVerify": {
         "constraints": [],
-        "functions": ["offers_ladder_shape_valid()"],
+        "functions": [
+          "offers_ladder_shape_valid()"
+        ],
         "queries": [
           {
             "name": "an absent discount on a level is refused, not read as NULL",
@@ -2516,7 +2704,9 @@
       },
       "adoptVerify": {
         "constraints": [],
-        "functions": ["offers_ladder_shape_valid()"],
+        "functions": [
+          "offers_ladder_shape_valid()"
+        ],
         "queries": [
           {
             "name": "an absent discount on a level is refused, not read as NULL",
@@ -2537,11 +2727,17 @@
       "file": "sql/20260903_0065_offers_phase_e.sql",
       "checksum": "c509accace955f5c5db6e2202c117116cc25fdd3f4c82580ed1de15b6276d652",
       "transaction": true,
-      "requires": ["20260903_0064_offers_ladder_null_guard"],
+      "requires": [
+        "20260903_0064_offers_ladder_null_guard"
+      ],
       "verify": {},
       "applyVerify": {
-        "constraints": ["offers_conditions_shape_check"],
-        "functions": ["offers_conditions_valid()"],
+        "constraints": [
+          "offers_conditions_shape_check"
+        ],
+        "functions": [
+          "offers_conditions_valid()"
+        ],
         "queries": [
           {
             "name": "offers carry a conditions list, defaulting to none",
@@ -2571,8 +2767,12 @@
         ]
       },
       "adoptVerify": {
-        "constraints": ["offers_conditions_shape_check"],
-        "functions": ["offers_conditions_valid()"],
+        "constraints": [
+          "offers_conditions_shape_check"
+        ],
+        "functions": [
+          "offers_conditions_valid()"
+        ],
         "queries": [
           {
             "name": "offers carry a conditions list, defaulting to none",
@@ -2608,11 +2808,17 @@
       "file": "sql/20260903_0066_offers_phase_f.sql",
       "checksum": "35ca0e2474ead2754ae83c26d28ee615fb38d72178101102287b9d56b4b33a43",
       "transaction": true,
-      "requires": ["20260903_0065_offers_phase_e"],
+      "requires": [
+        "20260903_0065_offers_phase_e"
+      ],
       "verify": {},
       "applyVerify": {
-        "constraints": ["offers_reward_type_check"],
-        "functions": ["offers_reward_channel_fit()"],
+        "constraints": [
+          "offers_reward_type_check"
+        ],
+        "functions": [
+          "offers_reward_channel_fit()"
+        ],
         "queries": [
           {
             "name": "free delivery is an allowed reward",
@@ -2637,8 +2843,12 @@
         ]
       },
       "adoptVerify": {
-        "constraints": ["offers_reward_type_check"],
-        "functions": ["offers_reward_channel_fit()"],
+        "constraints": [
+          "offers_reward_type_check"
+        ],
+        "functions": [
+          "offers_reward_channel_fit()"
+        ],
         "queries": [
           {
             "name": "free delivery is an allowed reward",
@@ -2669,7 +2879,9 @@
       "file": "sql/20260903_0067_offers_phase_g.sql",
       "checksum": "546f3b0fef3c4ab5647dcaac065e7db20b12a36e62220bb3b471e993a436107d",
       "transaction": true,
-      "requires": ["20260903_0066_offers_phase_f"],
+      "requires": [
+        "20260903_0066_offers_phase_f"
+      ],
       "verify": {},
       "applyVerify": {
         "constraints": [
@@ -2726,7 +2938,9 @@
       "file": "sql/20260903_0068_offers_phase_h.sql",
       "checksum": "0af78657775481d8d665628f25c621240afc7ab7d0207421791958f5d65d0616",
       "transaction": true,
-      "requires": ["20260903_0067_offers_phase_g"],
+      "requires": [
+        "20260903_0067_offers_phase_g"
+      ],
       "verify": {},
       "applyVerify": {
         "constraints": [
@@ -2797,11 +3011,15 @@
       "file": "sql/20260903_0069_offers_bundle_scope.sql",
       "checksum": "0b59d8937362887b4f60a63650d2e1e38b0ef7c5aadba3a5550320e650e25f99",
       "transaction": true,
-      "requires": ["20260903_0068_offers_phase_h"],
+      "requires": [
+        "20260903_0068_offers_phase_h"
+      ],
       "verify": {},
       "applyVerify": {
         "constraints": [],
-        "functions": ["offers_contents_trigger_needs_scope()"],
+        "functions": [
+          "offers_contents_trigger_needs_scope()"
+        ],
         "queries": [
           {
             "name": "a bundle offer must name the items it bundles",
@@ -2817,7 +3035,9 @@
       },
       "adoptVerify": {
         "constraints": [],
-        "functions": ["offers_contents_trigger_needs_scope()"],
+        "functions": [
+          "offers_contents_trigger_needs_scope()"
+        ],
         "queries": [
           {
             "name": "a bundle offer must name the items it bundles",
@@ -2838,7 +3058,9 @@
       "file": "sql/20260903_0070_offers_phase_i_mink.sql",
       "checksum": "27a1e713e3980b355fc66807a43b2b6cf1b399e3b6d2c4ed020dd6ee710a3949",
       "transaction": true,
-      "requires": ["20260903_0069_offers_bundle_scope"],
+      "requires": [
+        "20260903_0069_offers_bundle_scope"
+      ],
       "verify": {},
       "applyVerify": {
         "constraints": [
@@ -2913,10 +3135,14 @@
       "file": "sql/20260903_0071_mink_offer_approval_tool.sql",
       "checksum": "661006d80afb31551106acacd037f507135885b7e4d774a96dab9760d5bd4a16",
       "transaction": true,
-      "requires": ["20260903_0070_offers_phase_i_mink"],
+      "requires": [
+        "20260903_0070_offers_phase_i_mink"
+      ],
       "verify": {},
       "applyVerify": {
-        "constraints": ["mink_action_approvals_tool_check"],
+        "constraints": [
+          "mink_action_approvals_tool_check"
+        ],
         "functions": [],
         "queries": [
           {
@@ -2932,7 +3158,9 @@
         ]
       },
       "adoptVerify": {
-        "constraints": ["mink_action_approvals_tool_check"],
+        "constraints": [
+          "mink_action_approvals_tool_check"
+        ],
         "functions": [],
         "queries": [
           {
@@ -2954,10 +3182,14 @@
       "file": "sql/20260903_0072_mink_phase_6bc_workflows.sql",
       "checksum": "a7ab06ac1bfe14a651479036edc8206ac1dee3e565e970da5e1f83a5b45a3e35",
       "transaction": true,
-      "requires": ["20260903_0071_mink_offer_approval_tool"],
+      "requires": [
+        "20260903_0071_mink_offer_approval_tool"
+      ],
       "verify": {},
       "applyVerify": {
-        "constraints": ["mink_workflow_runs_template_check"],
+        "constraints": [
+          "mink_workflow_runs_template_check"
+        ],
         "queries": [
           {
             "name": "workflow template constraint includes Phase 6B and 6C",
@@ -2972,7 +3204,9 @@
         ]
       },
       "adoptVerify": {
-        "constraints": ["mink_workflow_runs_template_check"],
+        "constraints": [
+          "mink_workflow_runs_template_check"
+        ],
         "queries": [
           {
             "name": "Phase 6B and 6C templates already exist",
@@ -2993,10 +3227,14 @@
       "file": "sql/20260903_0073_mink_phase_6d_slow_inventory.sql",
       "checksum": "2af4a11c8bb1524881f75f74edfd55e8c14b2ecab4ef7fcfe0439526c5c28050",
       "transaction": true,
-      "requires": ["20260903_0072_mink_phase_6bc_workflows"],
+      "requires": [
+        "20260903_0072_mink_phase_6bc_workflows"
+      ],
       "verify": {},
       "applyVerify": {
-        "constraints": ["mink_workflow_runs_template_check"],
+        "constraints": [
+          "mink_workflow_runs_template_check"
+        ],
         "queries": [
           {
             "name": "workflow template constraint includes Phase 6D",
@@ -3011,7 +3249,9 @@
         ]
       },
       "adoptVerify": {
-        "constraints": ["mink_workflow_runs_template_check"],
+        "constraints": [
+          "mink_workflow_runs_template_check"
+        ],
         "queries": [
           {
             "name": "Phase 6D template already exists",
@@ -3032,10 +3272,14 @@
       "file": "sql/20260903_0074_mink_phase_6e_delayed_pickups.sql",
       "checksum": "0af1bfe006203da268d43aff39be2982016af0f97d17b4d8d9bf759b448c0d5b",
       "transaction": true,
-      "requires": ["20260903_0073_mink_phase_6d_slow_inventory"],
+      "requires": [
+        "20260903_0073_mink_phase_6d_slow_inventory"
+      ],
       "verify": {},
       "applyVerify": {
-        "constraints": ["mink_workflow_runs_template_check"],
+        "constraints": [
+          "mink_workflow_runs_template_check"
+        ],
         "queries": [
           {
             "name": "workflow template constraint includes Phase 6E",
@@ -3050,7 +3294,9 @@
         ]
       },
       "adoptVerify": {
-        "constraints": ["mink_workflow_runs_template_check"],
+        "constraints": [
+          "mink_workflow_runs_template_check"
+        ],
         "queries": [
           {
             "name": "Phase 6E template already exists",
@@ -3071,9 +3317,13 @@
       "file": "sql/20260904_0075_mink_offer_audit_resource_type.sql",
       "checksum": "a025877c64013e72c136059440fc0c5e2f952a3118eadc42e21611b0055c9435",
       "transaction": true,
-      "requires": ["20260903_0074_mink_phase_6e_delayed_pickups"],
+      "requires": [
+        "20260903_0074_mink_phase_6e_delayed_pickups"
+      ],
       "verify": {
-        "constraints": ["mink_action_audit_resource_type_check"],
+        "constraints": [
+          "mink_action_audit_resource_type_check"
+        ],
         "functions": [],
         "queries": [
           {
@@ -3084,7 +3334,9 @@
         ]
       },
       "applyVerify": {
-        "constraints": ["mink_action_audit_resource_type_check"],
+        "constraints": [
+          "mink_action_audit_resource_type_check"
+        ],
         "functions": [],
         "queries": [
           {
@@ -3100,7 +3352,9 @@
         ]
       },
       "adoptVerify": {
-        "constraints": ["mink_action_audit_resource_type_check"],
+        "constraints": [
+          "mink_action_audit_resource_type_check"
+        ],
         "functions": [],
         "queries": [
           {
@@ -3122,7 +3376,9 @@
       "file": "sql/20260906_0076_subscription_autopay_contact_help.sql",
       "checksum": "b6d18c90ab10b08e36725d47f55838a6693e63604a1a79b964cf341b0e03605c",
       "transaction": true,
-      "requires": ["20260904_0075_mink_offer_audit_resource_type"],
+      "requires": [
+        "20260904_0075_mink_offer_audit_resource_type"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -3149,7 +3405,9 @@
       "file": "sql/20260906_0077_comped_plan_overlay.sql",
       "checksum": "b3b4b1b94792a81e18dca84b8903818b16fa539b5ed25973b0fc07eefd15be5b",
       "transaction": true,
-      "requires": ["20260906_0076_subscription_autopay_contact_help"],
+      "requires": [
+        "20260906_0076_subscription_autopay_contact_help"
+      ],
       "verify": {
         "columns": [
           "stores.comp_plan",
@@ -3240,9 +3498,13 @@
       "file": "sql/20260906_0078_drop_subscription_comp_exemption.sql",
       "checksum": "1d067345ebbe37b871d7d813490dc4990ea43ccb17adb25b88de706bb90a2105",
       "transaction": true,
-      "requires": ["20260906_0077_comped_plan_overlay"],
+      "requires": [
+        "20260906_0077_comped_plan_overlay"
+      ],
       "verify": {
-        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
+        "functions": [
+          "billing_claim_downgrade(uuid,timestamp with time zone)"
+        ],
         "queries": [
           {
             "name": "the downgrade claim no longer exempts a comped subscription",
@@ -3257,7 +3519,9 @@
         ]
       },
       "applyVerify": {
-        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
+        "functions": [
+          "billing_claim_downgrade(uuid,timestamp with time zone)"
+        ],
         "queries": [
           {
             "name": "the downgrade claim no longer exempts a comped subscription",
@@ -3277,7 +3541,9 @@
         ]
       },
       "adoptVerify": {
-        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
+        "functions": [
+          "billing_claim_downgrade(uuid,timestamp with time zone)"
+        ],
         "queries": [
           {
             "name": "the downgrade claim no longer exempts a comped subscription",
@@ -3298,7 +3564,9 @@
       "file": "sql/20260906_0079_mandate_rail_choice_help.sql",
       "checksum": "536d37b7dfefc65ab9232e64e23d730cd35de47746baa6dc3c3c84bf040dcdf0",
       "transaction": true,
-      "requires": ["20260906_0078_drop_subscription_comp_exemption"],
+      "requires": [
+        "20260906_0078_drop_subscription_comp_exemption"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -3325,7 +3593,9 @@
       "file": "sql/20260906_0080_plan_change_before_payment_help.sql",
       "checksum": "1eed0738aaa78c13e6776f4f3ef6a3a48cc0fb21026afa026a4fcb24481ae8e5",
       "transaction": true,
-      "requires": ["20260906_0079_mandate_rail_choice_help"],
+      "requires": [
+        "20260906_0079_mandate_rail_choice_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -3352,7 +3622,9 @@
       "file": "sql/20260906_0081_offers_auto_apply_help.sql",
       "checksum": "f19624cae6e4ad573edec9f867205922817541ab40b1afcb6a2e1eeec9413bea",
       "transaction": true,
-      "requires": ["20260906_0080_plan_change_before_payment_help"],
+      "requires": [
+        "20260906_0080_plan_change_before_payment_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -3379,7 +3651,9 @@
       "file": "sql/20260906_0082_offers_visibility_help.sql",
       "checksum": "7fd1f7bc4eea4c00f8eef8cd4f51031869f04f73690c1d2c1b821f0ec6e38f83",
       "transaction": true,
-      "requires": ["20260906_0081_offers_auto_apply_help"],
+      "requires": [
+        "20260906_0081_offers_auto_apply_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -3406,7 +3680,9 @@
       "file": "sql/20260906_0083_offers_auto_apply_default_help.sql",
       "checksum": "a49c3d5d9b62357c8fabf4bf62a68256157351d1e9b75ac67ca79cc9e68e1c77",
       "transaction": true,
-      "requires": ["20260906_0082_offers_visibility_help"],
+      "requires": [
+        "20260906_0082_offers_visibility_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -3433,7 +3709,9 @@
       "file": "sql/20260906_0084_offers_set_limit_help.sql",
       "checksum": "18b1815f1bb868129428e7f4d618d8173f7b9f5ed8c6655ccf96632512964941",
       "transaction": true,
-      "requires": ["20260906_0083_offers_auto_apply_default_help"],
+      "requires": [
+        "20260906_0083_offers_auto_apply_default_help"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -3460,7 +3738,9 @@
       "file": "sql/20260907_0085_offers_storefront_visibility.sql",
       "checksum": "2d97d50c91c86a58de7210cbacac26a1eec2c0826004fed6efb9a69252a97b99",
       "transaction": true,
-      "requires": ["20260906_0084_offers_set_limit_help"],
+      "requires": [
+        "20260906_0084_offers_set_limit_help"
+      ],
       "verify": {
         "queries": [
           {
@@ -3495,7 +3775,9 @@
       "file": "sql/20260907_0086_offers_coupon_visibility_help.sql",
       "checksum": "0939131590fb8ef0361f8fc696af386bf5bffc9a7294825e8094f035392a539c",
       "transaction": true,
-      "requires": ["20260907_0085_offers_storefront_visibility"],
+      "requires": [
+        "20260907_0085_offers_storefront_visibility"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -3522,9 +3804,13 @@
       "file": "sql/20260904_0076_mink_phase_7a_builder_context_help.sql",
       "checksum": "69a3d44d13d3b95a0088e117acf00de40bbc0f254caca82e1eb36d4c1ceae413",
       "transaction": true,
-      "requires": ["20260904_0075_mink_offer_audit_resource_type"],
+      "requires": [
+        "20260904_0075_mink_offer_audit_resource_type"
+      ],
       "verify": {
-        "tables": ["help_articles"],
+        "tables": [
+          "help_articles"
+        ],
         "functions": [],
         "queries": [
           {
@@ -3535,7 +3821,9 @@
         ]
       },
       "applyVerify": {
-        "tables": ["help_articles"],
+        "tables": [
+          "help_articles"
+        ],
         "functions": [],
         "queries": [
           {
@@ -3546,7 +3834,9 @@
         ]
       },
       "adoptVerify": {
-        "tables": ["help_articles"],
+        "tables": [
+          "help_articles"
+        ],
         "functions": [],
         "queries": [
           {
@@ -3563,9 +3853,14 @@
       "file": "sql/20260904_0077_mink_phase_7b_storefront_code_preview.sql",
       "checksum": "21f35186a1022070c3ba6757283a19ddc5f4e943faac5fde09a90858d9fb9b76",
       "transaction": true,
-      "requires": ["20260904_0076_mink_phase_7a_builder_context_help"],
+      "requires": [
+        "20260904_0076_mink_phase_7a_builder_context_help"
+      ],
       "verify": {
-        "tables": ["mink_drafts", "help_articles"],
+        "tables": [
+          "mink_drafts",
+          "help_articles"
+        ],
         "constraints": [
           "mink_drafts_kind_check",
           "mink_drafts_storefront_code_target_check"
@@ -3585,7 +3880,10 @@
         ]
       },
       "applyVerify": {
-        "tables": ["mink_drafts", "help_articles"],
+        "tables": [
+          "mink_drafts",
+          "help_articles"
+        ],
         "constraints": [
           "mink_drafts_kind_check",
           "mink_drafts_storefront_code_target_check"
@@ -3605,7 +3903,10 @@
         ]
       },
       "adoptVerify": {
-        "tables": ["mink_drafts", "help_articles"],
+        "tables": [
+          "mink_drafts",
+          "help_articles"
+        ],
         "constraints": [
           "mink_drafts_kind_check",
           "mink_drafts_storefront_code_target_check"
@@ -3626,7 +3927,9 @@
       "file": "sql/20260904_0078_mink_phase_7c_builder_draft_save.sql",
       "checksum": "1b64de0fe91b7a5b488176d15766e518e0b7b6be83a234f9630613cb18df972c",
       "transaction": true,
-      "requires": ["20260904_0077_mink_phase_7b_storefront_code_preview"],
+      "requires": [
+        "20260904_0077_mink_phase_7b_storefront_code_preview"
+      ],
       "verify": {
         "tables": [
           "mink_action_tool_access",
@@ -3724,7 +4027,9 @@
       "file": "sql/20260904_0079_mink_phase_7d_storefront_publication.sql",
       "checksum": "55778c5573b3232c45658fc974712ac0b979a0c578751bc9a2236551ae64dd5e",
       "transaction": true,
-      "requires": ["20260904_0078_mink_phase_7c_builder_draft_save"],
+      "requires": [
+        "20260904_0078_mink_phase_7c_builder_draft_save"
+      ],
       "verify": {
         "tables": [
           "mink_action_tool_access",
@@ -3825,9 +4130,13 @@
       "description": "Document visible Builder chat, natural merchant prompts and unchanged approval boundaries",
       "file": "sql/20260905_0080_mink_builder_chat_help.sql",
       "transaction": true,
-      "requires": ["20260904_0079_mink_phase_7d_storefront_publication"],
+      "requires": [
+        "20260904_0079_mink_phase_7d_storefront_publication"
+      ],
       "verify": {
-        "tables": ["help_articles"],
+        "tables": [
+          "help_articles"
+        ],
         "queries": [
           {
             "name": "Mink Builder panel and natural-language Help guidance is published",
@@ -3837,7 +4146,9 @@
         ]
       },
       "adoptVerify": {
-        "tables": ["help_articles"],
+        "tables": [
+          "help_articles"
+        ],
         "queries": [
           {
             "name": "Mink Builder panel and natural-language Help guidance is published",
@@ -3852,9 +4163,15 @@
       "description": "Add private on-demand business briefs with scoped evidence and fixed attention rules",
       "file": "sql/20260905_0081_mink_phase_8a_business_briefs.sql",
       "transaction": true,
-      "requires": ["20260905_0080_mink_builder_chat_help"],
+      "requires": [
+        "20260905_0080_mink_builder_chat_help"
+      ],
       "verify": {
-        "tables": ["mink_workflow_runs", "help_articles", "order_returns"],
+        "tables": [
+          "mink_workflow_runs",
+          "help_articles",
+          "order_returns"
+        ],
         "queries": [
           {
             "name": "Business brief workflow template enabled",
@@ -3874,7 +4191,11 @@
         ]
       },
       "adoptVerify": {
-        "tables": ["mink_workflow_runs", "help_articles", "order_returns"],
+        "tables": [
+          "mink_workflow_runs",
+          "help_articles",
+          "order_returns"
+        ],
         "queries": [
           {
             "name": "Business brief workflow template enabled",
@@ -3899,9 +4220,15 @@
       "description": "Owner-confirmed scheduled Mink watches with quiet hours, deduplicated alerts and stop controls",
       "file": "sql/20260905_0082_mink_phase_8b_watches.sql",
       "transaction": true,
-      "requires": ["20260905_0081_mink_phase_8a_business_briefs"],
+      "requires": [
+        "20260905_0081_mink_phase_8a_business_briefs"
+      ],
       "verify": {
-        "tables": ["mink_watches", "mink_watch_events", "mink_workflow_runs"],
+        "tables": [
+          "mink_watches",
+          "mink_watch_events",
+          "mink_workflow_runs"
+        ],
         "queries": [
           {
             "name": "Watch tables are RLS-protected and not accessible to browser role",
@@ -3926,7 +4253,11 @@
         ]
       },
       "adoptVerify": {
-        "tables": ["mink_watches", "mink_watch_events", "mink_workflow_runs"],
+        "tables": [
+          "mink_watches",
+          "mink_watch_events",
+          "mink_workflow_runs"
+        ],
         "queries": [
           {
             "name": "Watch tables are RLS-protected and not accessible to browser role",
@@ -3956,7 +4287,9 @@
       "description": "Evidence-ranked private watch responses with one-time scoped investigation approvals",
       "file": "sql/20260906_0083_mink_phase_8c_responses.sql",
       "transaction": true,
-      "requires": ["20260905_0082_mink_phase_8b_watches"],
+      "requires": [
+        "20260905_0082_mink_phase_8b_watches"
+      ],
       "verify": {
         "tables": [
           "mink_watch_responses",
@@ -4031,9 +4364,15 @@
       "description": "Owner-approved expiring memories and reviewed text-document guidance",
       "file": "sql/20260907_0084_mink_phase_8d_memories.sql",
       "transaction": true,
-      "requires": ["20260906_0083_mink_phase_8c_responses"],
+      "requires": [
+        "20260906_0083_mink_phase_8c_responses"
+      ],
       "verify": {
-        "tables": ["mink_memories", "mink_memory_deletions", "help_articles"],
+        "tables": [
+          "mink_memories",
+          "mink_memory_deletions",
+          "help_articles"
+        ],
         "queries": [
           {
             "name": "Memory tables are service-only",
@@ -4058,7 +4397,11 @@
         ]
       },
       "adoptVerify": {
-        "tables": ["mink_memories", "mink_memory_deletions", "help_articles"],
+        "tables": [
+          "mink_memories",
+          "mink_memory_deletions",
+          "help_articles"
+        ],
         "queries": [
           {
             "name": "Memory tables are service-only",
@@ -4088,9 +4431,13 @@
       "description": "Explain refreshed StoreMink branding, merchant-logo separation and cached icons",
       "file": "sql/20260908_0087_storemink_logo_help.sql",
       "transaction": true,
-      "requires": ["20260826_0020_storefront_domains_help"],
+      "requires": [
+        "20260826_0020_storefront_domains_help"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4107,9 +4454,13 @@
       "description": "Document public Help access and retrying temporary guide-loading failures",
       "file": "sql/20260908_0088_help_first_visit_recovery.sql",
       "transaction": true,
-      "requires": ["20260826_0019_getting_started_account_help"],
+      "requires": [
+        "20260826_0019_getting_started_account_help"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4126,9 +4477,13 @@
       "description": "Document that a reloaded POS register restores the in-progress basket, and how that differs from holding a sale",
       "file": "sql/20260909_0089_pos_cart_refresh_help.sql",
       "transaction": true,
-      "requires": ["20260825_0015_pos_help_documents"],
+      "requires": [
+        "20260825_0015_pos_help_documents"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4145,9 +4500,13 @@
       "description": "Document consented image, PDF and voice extraction with separate human review",
       "file": "sql/20260909_0090_mink_phase_8e_inputs.sql",
       "transaction": true,
-      "requires": ["20260907_0084_mink_phase_8d_memories"],
+      "requires": [
+        "20260907_0084_mink_phase_8d_memories"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4164,7 +4523,9 @@
       "description": "Unify Mink capability access and document the plus/mic/drop composer",
       "file": "sql/20260909_0091_mink_unified_access_composer.sql",
       "transaction": true,
-      "requires": ["20260909_0090_mink_phase_8e_inputs"],
+      "requires": [
+        "20260909_0090_mink_phase_8e_inputs"
+      ],
       "verify": {
         "tables": [
           "mink_store_access",
@@ -4187,9 +4548,13 @@
       "description": "Correct Mink guidance for immediate browser live dictation and local credential recovery",
       "file": "sql/20260910_0092_mink_live_dictation_help.sql",
       "transaction": true,
-      "requires": ["20260909_0091_mink_unified_access_composer"],
+      "requires": [
+        "20260909_0091_mink_unified_access_composer"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4206,9 +4571,13 @@
       "description": "Remove operator-only, infrastructure and stale content from published Help guides",
       "file": "sql/20260910_0093_help_centre_operator_content_removal.sql",
       "transaction": true,
-      "requires": ["20260910_0092_mink_live_dictation_help"],
+      "requires": [
+        "20260910_0092_mink_live_dictation_help"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4240,9 +4609,13 @@
       "description": "Correct the in-store sale guide for customer recognition and the new detail fields",
       "file": "sql/20260911_0094_pos_customer_lookup_help.sql",
       "transaction": true,
-      "requires": ["20260910_0093_help_centre_operator_content_removal"],
+      "requires": [
+        "20260910_0093_help_centre_operator_content_removal"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4259,9 +4632,14 @@
       "description": "Store every customer phone as E.164 and document the register's country code",
       "file": "sql/20260911_0095_canonical_customer_phone.sql",
       "transaction": true,
-      "requires": ["20260911_0094_pos_customer_lookup_help"],
+      "requires": [
+        "20260911_0094_pos_customer_lookup_help"
+      ],
       "verify": {
-        "tables": ["users", "help_articles"]
+        "tables": [
+          "users",
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4283,9 +4661,13 @@
       "description": "Document the register's one-tile-per-product catalogue and variant picker",
       "file": "sql/20260911_0096_pos_variant_picker_help.sql",
       "transaction": true,
-      "requires": ["20260911_0095_canonical_customer_phone"],
+      "requires": [
+        "20260911_0095_canonical_customer_phone"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4302,9 +4684,13 @@
       "description": "Document correcting a mistyped customer mobile at the register",
       "file": "sql/20260911_0097_pos_wrong_number_help.sql",
       "transaction": true,
-      "requires": ["20260911_0096_pos_variant_picker_help"],
+      "requires": [
+        "20260911_0096_pos_variant_picker_help"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4321,9 +4707,13 @@
       "description": "Stop the Mink guide offering an audio attachment the composer refuses",
       "file": "sql/20260911_0098_mink_composer_no_wav_help.sql",
       "transaction": true,
-      "requires": ["20260910_0093_help_centre_operator_content_removal"],
+      "requires": [
+        "20260910_0093_help_centre_operator_content_removal"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4340,9 +4730,13 @@
       "description": "Record provider-cached prompt tokens so Mink cost can be priced and repriced",
       "file": "sql/20260911_0099_mink_cached_tokens.sql",
       "transaction": true,
-      "requires": ["20260911_0098_mink_composer_no_wav_help"],
+      "requires": [
+        "20260911_0098_mink_composer_no_wav_help"
+      ],
       "verify": {
-        "columns": ["mink_usage_ledger.cached_tokens"]
+        "columns": [
+          "mink_usage_ledger.cached_tokens"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4364,7 +4758,9 @@
       "description": "Install per-run Mink credit settlement (mechanism only; charging stays switched off)",
       "file": "sql/20260911_0100_mink_run_credits.sql",
       "transaction": true,
-      "requires": ["20260911_0099_mink_cached_tokens"],
+      "requires": [
+        "20260911_0099_mink_cached_tokens"
+      ],
       "verify": {
         "columns": [
           "mink_usage_ledger.credit_source",
@@ -4395,7 +4791,9 @@
       "description": "Admit Mink layout proposals: tool gate, draft kind and target shapes",
       "file": "sql/20260911_0101_mink_storefront_layout.sql",
       "transaction": true,
-      "requires": ["20260911_0100_mink_run_credits"],
+      "requires": [
+        "20260911_0100_mink_run_credits"
+      ],
       "verify": {
         "tables": [
           "mink_action_tool_access",
@@ -4444,9 +4842,13 @@
       "description": "Correct the three published sentences that said Mink cannot change a page's sections",
       "file": "sql/20260912_0102_mink_layout_help.sql",
       "transaction": true,
-      "requires": ["20260911_0101_mink_storefront_layout"],
+      "requires": [
+        "20260911_0101_mink_storefront_layout"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4468,7 +4870,9 @@
       "description": "Admit Mink storefront-design proposals: tool gate, chrome resource type, draft kind and target shapes",
       "file": "sql/20260912_0103_mink_storefront_design.sql",
       "transaction": true,
-      "requires": ["20260912_0102_mink_layout_help"],
+      "requires": [
+        "20260912_0102_mink_layout_help"
+      ],
       "verify": {
         "tables": [
           "mink_action_tool_access",
@@ -4528,9 +4932,13 @@
       "description": "Correct the two published paragraphs that understate what Mink can propose and what an approved save changes",
       "file": "sql/20260912_0104_mink_design_help.sql",
       "transaction": true,
-      "requires": ["20260912_0103_mink_storefront_design"],
+      "requires": [
+        "20260912_0103_mink_storefront_design"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4557,9 +4965,14 @@
       "description": "Correct the three published sentences that say Mink cannot use images and that an attachment is never kept",
       "file": "sql/20260912_0105_mink_media_help.sql",
       "transaction": true,
-      "requires": ["20260912_0104_mink_design_help"],
+      "requires": [
+        "20260912_0104_mink_design_help"
+      ],
       "verify": {
-        "tables": ["help_articles", "media_assets"]
+        "tables": [
+          "help_articles",
+          "media_assets"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4591,9 +5004,15 @@
       "description": "Admit Mink AI image generation: its own operator tool gate, the media_image draft kind and its target shape",
       "file": "sql/20260912_0106_mink_media_generation.sql",
       "transaction": true,
-      "requires": ["20260912_0105_mink_media_help"],
+      "requires": [
+        "20260912_0105_mink_media_help"
+      ],
       "verify": {
-        "tables": ["mink_action_tool_access", "mink_drafts", "media_assets"]
+        "tables": [
+          "mink_action_tool_access",
+          "mink_drafts",
+          "media_assets"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4640,9 +5059,14 @@
       "description": "Correct the two published sentences that promise Mink never creates a picture",
       "file": "sql/20260912_0107_mink_image_generation_help.sql",
       "transaction": true,
-      "requires": ["20260912_0106_mink_media_generation"],
+      "requires": [
+        "20260912_0106_mink_media_generation"
+      ],
       "verify": {
-        "tables": ["help_articles", "media_assets"]
+        "tables": [
+          "help_articles",
+          "media_assets"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4674,9 +5098,14 @@
       "description": "Explain automatic saving and same-request page placement for Mink-generated images",
       "file": "sql/20260912_0108_mink_image_intent_help.sql",
       "transaction": true,
-      "requires": ["20260912_0107_mink_image_generation_help"],
+      "requires": [
+        "20260912_0107_mink_image_generation_help"
+      ],
       "verify": {
-        "tables": ["help_articles", "media_assets"]
+        "tables": [
+          "help_articles",
+          "media_assets"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4708,9 +5137,14 @@
       "description": "Explain attached-image storefront placement and compact chat attachment cards",
       "file": "sql/20260913_0109_mink_attached_image_flow_help.sql",
       "transaction": true,
-      "requires": ["20260912_0108_mink_image_intent_help"],
+      "requires": [
+        "20260912_0108_mink_image_intent_help"
+      ],
       "verify": {
-        "tables": ["help_articles", "media_assets"]
+        "tables": [
+          "help_articles",
+          "media_assets"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4742,9 +5176,13 @@
       "description": "Document exact Mink offer scope and product-named checkout nudges in existing guides",
       "file": "sql/20260913_0110_mink_current_offers_help.sql",
       "transaction": true,
-      "requires": ["20260913_0109_mink_attached_image_flow_help"],
+      "requires": [
+        "20260913_0109_mink_attached_image_flow_help"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4786,9 +5224,14 @@
       "description": "Explain one-click private Builder draft application and follow-up product image handoff",
       "file": "sql/20260913_0111_mink_simple_builder_apply_help.sql",
       "transaction": true,
-      "requires": ["20260913_0110_mink_current_offers_help"],
+      "requires": [
+        "20260913_0110_mink_current_offers_help"
+      ],
       "verify": {
-        "tables": ["help_articles", "media_assets"]
+        "tables": [
+          "help_articles",
+          "media_assets"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4820,9 +5263,14 @@
       "description": "Add one global Mink voice provider and correct dictation guidance",
       "file": "sql/20260914_0112_mink_global_voice_provider.sql",
       "transaction": true,
-      "requires": ["20260913_0111_mink_simple_builder_apply_help"],
+      "requires": [
+        "20260913_0111_mink_simple_builder_apply_help"
+      ],
       "verify": {
-        "tables": ["mink_voice_settings", "help_articles"],
+        "tables": [
+          "mink_voice_settings",
+          "help_articles"
+        ],
         "columns": [
           "mink_voice_settings.id",
           "mink_voice_settings.provider",
@@ -4833,7 +5281,9 @@
           "mink_voice_settings_id_check",
           "mink_voice_settings_provider_check"
         ],
-        "rlsTables": ["mink_voice_settings"]
+        "rlsTables": [
+          "mink_voice_settings"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4865,9 +5315,15 @@
       "description": "Keep new Mink chats available, auto-finish dictation, and use catalogue product images",
       "file": "sql/20260915_0113_mink_conversation_voice_catalog_images.sql",
       "transaction": true,
-      "requires": ["20260914_0112_mink_global_voice_provider"],
+      "requires": [
+        "20260914_0112_mink_global_voice_provider"
+      ],
       "verify": {
-        "tables": ["help_articles", "mink_conversations", "mink_action_audit"]
+        "tables": [
+          "help_articles",
+          "mink_conversations",
+          "mink_action_audit"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4899,9 +5355,15 @@
       "description": "Name Mink credits, anchor monthly refreshes to plan start, and add operator top-up pricing",
       "file": "sql/20260916_0114_mink_credits_cycle_pricing.sql",
       "transaction": true,
-      "requires": ["20260915_0113_mink_conversation_voice_catalog_images"],
+      "requires": [
+        "20260915_0113_mink_conversation_voice_catalog_images"
+      ],
       "verify": {
-        "tables": ["mink_credit_pack_prices", "ai_usage", "help_articles"],
+        "tables": [
+          "mink_credit_pack_prices",
+          "ai_usage",
+          "help_articles"
+        ],
         "columns": [
           "mink_credit_pack_prices.pack_id",
           "mink_credit_pack_prices.price_inr",
@@ -4912,7 +5374,9 @@
           "mink_credit_pack_prices_pack_id_check",
           "mink_credit_pack_prices_price_check"
         ],
-        "rlsTables": ["mink_credit_pack_prices"]
+        "rlsTables": [
+          "mink_credit_pack_prices"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4939,9 +5403,13 @@
       "description": "Operator-editable included Mink credits per plan",
       "file": "sql/20260916_0115_mink_plan_allowances.sql",
       "transaction": true,
-      "requires": ["20260916_0114_mink_credits_cycle_pricing"],
+      "requires": [
+        "20260916_0114_mink_credits_cycle_pricing"
+      ],
       "verify": {
-        "tables": ["mink_plan_allowances"],
+        "tables": [
+          "mink_plan_allowances"
+        ],
         "columns": [
           "mink_plan_allowances.plan",
           "mink_plan_allowances.generations_per_month",
@@ -4954,7 +5422,9 @@
           "mink_plan_allowances_generations_check",
           "mink_plan_allowances_credits_check"
         ],
-        "rlsTables": ["mink_plan_allowances"]
+        "rlsTables": [
+          "mink_plan_allowances"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -4971,9 +5441,14 @@
       "description": "One allowance number per plan, and an operator-owned Mink credit-pack catalogue",
       "file": "sql/20260919_0116_mink_credit_catalog.sql",
       "transaction": true,
-      "requires": ["20260916_0115_mink_plan_allowances"],
+      "requires": [
+        "20260916_0115_mink_plan_allowances"
+      ],
       "verify": {
-        "tables": ["mink_credit_packs", "mink_plan_allowances"],
+        "tables": [
+          "mink_credit_packs",
+          "mink_plan_allowances"
+        ],
         "columns": [
           "mink_plan_allowances.included_credits",
           "mink_credit_packs.id",
@@ -4989,8 +5464,12 @@
           "mink_credit_packs_credits_check",
           "mink_credit_packs_price_check"
         ],
-        "indexes": ["mink_credit_packs_one_popular_idx"],
-        "rlsTables": ["mink_credit_packs"]
+        "indexes": [
+          "mink_credit_packs_one_popular_idx"
+        ],
+        "rlsTables": [
+          "mink_credit_packs"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5017,9 +5496,13 @@
       "description": "Accept the 30-day cycle period key in the Mink draft credit ledger",
       "file": "sql/20260919_0117_mink_draft_credit_cycle_period.sql",
       "transaction": true,
-      "requires": ["20260919_0116_mink_credit_catalog"],
+      "requires": [
+        "20260919_0116_mink_credit_catalog"
+      ],
       "verify": {
-        "constraints": ["mink_draft_credit_usage_period_check"]
+        "constraints": [
+          "mink_draft_credit_usage_period_check"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5046,9 +5529,13 @@
       "description": "Explain product, category and Media image grounding for Mink image creation",
       "file": "sql/20260920_0118_mink_reference_image_help.sql",
       "transaction": true,
-      "requires": ["20260919_0117_mink_draft_credit_cycle_period"],
+      "requires": [
+        "20260919_0117_mink_draft_credit_cycle_period"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5070,7 +5557,9 @@
       "description": "Retire the obsolete physical-row cap verification while preserving the ten-item visible Mink history",
       "file": "sql/20260920_0119_retire_mink_conversation_cap_verify.sql",
       "transaction": true,
-      "requires": ["20260920_0118_mink_reference_image_help"],
+      "requires": [
+        "20260920_0118_mink_reference_image_help"
+      ],
       "supersedesVerifyQueries": [
         {
           "migrationId": "20260829_0036_mink_conversation_ux",
@@ -5090,9 +5579,13 @@
       "description": "Replace attachment approval steps with automatic processing on Send and explain grounded product/storefront use",
       "file": "sql/20260920_0120_mink_automatic_attachments.sql",
       "transaction": true,
-      "requires": ["20260920_0119_retire_mink_conversation_cap_verify"],
+      "requires": [
+        "20260920_0119_retire_mink_conversation_cap_verify"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5114,9 +5607,13 @@
       "description": "Explain five 5 MiB attachments, immediate image upload, and crop-safe campaign artwork",
       "file": "sql/20260921_0121_mink_multi_attachments_campaign_art.sql",
       "transaction": true,
-      "requires": ["20260920_0120_mink_automatic_attachments"],
+      "requires": [
+        "20260920_0120_mink_automatic_attachments"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5149,9 +5646,13 @@
       "description": "Correct the guides that promised Mink requests do not spend credits",
       "file": "sql/20260921_0122_mink_credit_charging_help.sql",
       "transaction": true,
-      "requires": ["20260921_0121_mink_multi_attachments_campaign_art"],
+      "requires": [
+        "20260921_0121_mink_multi_attachments_campaign_art"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5188,9 +5689,13 @@
       "description": "Explain current-blog reads and one owned or generated blog cover",
       "file": "sql/20260921_0123_mink_blog_catalogue_covers.sql",
       "transaction": true,
-      "requires": ["20260921_0122_mink_credit_charging_help"],
+      "requires": [
+        "20260921_0122_mink_credit_charging_help"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5212,9 +5717,13 @@
       "description": "Explain automatic blog-cover hand-off and destination-shaped authentic images",
       "file": "sql/20260922_0124_mink_complete_blog_covers_prepared_images.sql",
       "transaction": true,
-      "requires": ["20260921_0123_mink_blog_catalogue_covers"],
+      "requires": [
+        "20260921_0123_mink_blog_catalogue_covers"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5241,9 +5750,13 @@
       "description": "Describe reading a reference shop's colours and page structure from a screenshot",
       "file": "sql/20260922_0125_mink_storefront_from_reference.sql",
       "transaction": true,
-      "requires": ["20260922_0124_mink_complete_blog_covers_prepared_images"],
+      "requires": [
+        "20260922_0124_mink_complete_blog_covers_prepared_images"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5270,10 +5783,16 @@
       "description": "Record the per-step prefix so a run is charged for its own work",
       "file": "sql/20260923_0126_mink_marginal_metering.sql",
       "transaction": true,
-      "requires": ["20260922_0125_mink_storefront_from_reference"],
+      "requires": [
+        "20260922_0125_mink_storefront_from_reference"
+      ],
       "verify": {
-        "columns": ["mink_usage_ledger.base_prompt_tokens"],
-        "constraints": ["mink_usage_ledger_base_prompt_tokens_check"]
+        "columns": [
+          "mink_usage_ledger.base_prompt_tokens"
+        ],
+        "constraints": [
+          "mink_usage_ledger_base_prompt_tokens_check"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5290,9 +5809,14 @@
       "description": "Add immutable runtime theme releases and mutable catalog pointers",
       "file": "sql/20260923_0127_theme_runtime_registry.sql",
       "transaction": true,
-      "requires": ["20260923_0126_mink_marginal_metering"],
+      "requires": [
+        "20260923_0126_mink_marginal_metering"
+      ],
       "verify": {
-        "tables": ["theme_releases", "theme_catalog_entries"],
+        "tables": [
+          "theme_releases",
+          "theme_catalog_entries"
+        ],
         "columns": [
           "theme_releases.package_json",
           "theme_releases.manifest_digest",
@@ -5310,7 +5834,10 @@
           "theme_releases_lookup_idx",
           "theme_catalog_entries_visibility_idx"
         ],
-        "rlsTables": ["theme_releases", "theme_catalog_entries"],
+        "rlsTables": [
+          "theme_releases",
+          "theme_catalog_entries"
+        ],
         "functions": [
           "prevent_theme_release_mutation()",
           "validate_theme_catalog_release()"
@@ -5325,7 +5852,9 @@
       "description": "Add operator-only Theme Studio projects, sanitized references, immutable messages/runs/versions and audit events",
       "file": "sql/20260923_0128_theme_studio_intake.sql",
       "transaction": true,
-      "requires": ["20260923_0127_theme_runtime_registry"],
+      "requires": [
+        "20260923_0127_theme_runtime_registry"
+      ],
       "verify": {
         "tables": [
           "theme_studio_projects",
@@ -5401,9 +5930,13 @@
       "description": "Theme Studio generation: run outcome detail, placeholder asset purpose and clarification events",
       "file": "sql/20260923_0129_theme_studio_generation.sql",
       "transaction": true,
-      "requires": ["20260923_0128_theme_studio_intake"],
+      "requires": [
+        "20260923_0128_theme_studio_intake"
+      ],
       "verify": {
-        "columns": ["theme_studio_runs.outcome_detail"],
+        "columns": [
+          "theme_studio_runs.outcome_detail"
+        ],
         "constraints": [
           "theme_studio_runs_outcome_detail_check",
           "theme_studio_assets_purpose_check",
@@ -5425,9 +5958,13 @@
       "description": "Theme Studio previews and revisions: base-version-bound revision runs, private preview stores and their audit events",
       "file": "sql/20260924_0130_theme_studio_preview_revision.sql",
       "transaction": true,
-      "requires": ["20260923_0129_theme_studio_generation"],
+      "requires": [
+        "20260923_0129_theme_studio_generation"
+      ],
       "verify": {
-        "tables": ["theme_studio_previews"],
+        "tables": [
+          "theme_studio_previews"
+        ],
         "columns": [
           "theme_studio_runs.base_version_id",
           "theme_studio_runs.base_package_digest",
@@ -5445,7 +5982,9 @@
           "theme_studio_previews_expiry_idx",
           "theme_studio_previews_project_idx"
         ],
-        "rlsTables": ["theme_studio_previews"]
+        "rlsTables": [
+          "theme_studio_previews"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5472,9 +6011,13 @@
       "description": "Theme Studio automated acceptance: digest-bound acceptance runs and a database-enforced candidate precondition",
       "file": "sql/20260924_0131_theme_studio_acceptance.sql",
       "transaction": true,
-      "requires": ["20260924_0130_theme_studio_preview_revision"],
+      "requires": [
+        "20260924_0130_theme_studio_preview_revision"
+      ],
       "verify": {
-        "tables": ["theme_studio_acceptance_runs"],
+        "tables": [
+          "theme_studio_acceptance_runs"
+        ],
         "columns": [
           "theme_studio_acceptance_runs.package_digest",
           "theme_studio_acceptance_runs.assets_digest",
@@ -5493,7 +6036,9 @@
           "theme_studio_acceptance_project_idx",
           "theme_studio_acceptance_version_idx"
         ],
-        "rlsTables": ["theme_studio_acceptance_runs"]
+        "rlsTables": [
+          "theme_studio_acceptance_runs"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5520,9 +6065,14 @@
       "description": "Theme Studio immutable rows admit the foreign key's created_by SET NULL, so a platform operator can be removed",
       "file": "sql/20260924_0132_theme_studio_operator_removal.sql",
       "transaction": true,
-      "requires": ["20260924_0131_theme_studio_acceptance"],
+      "requires": [
+        "20260924_0131_theme_studio_acceptance"
+      ],
       "verify": {
-        "tables": ["theme_studio_assets", "theme_studio_acceptance_runs"]
+        "tables": [
+          "theme_studio_assets",
+          "theme_studio_acceptance_runs"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5544,7 +6094,9 @@
       "description": "Theme Studio operator slot images: versions made by an image edit, the image asset purpose and their events",
       "file": "sql/20260924_0133_theme_studio_slot_images.sql",
       "transaction": true,
-      "requires": ["20260924_0132_theme_studio_operator_removal"],
+      "requires": [
+        "20260924_0132_theme_studio_operator_removal"
+      ],
       "verify": {
         "columns": [
           "theme_studio_versions.origin",
@@ -5581,7 +6133,9 @@
       "description": "Theme Studio approval and publication: bound two-reviewer scorecards, publication attempts, the catalog audit and database-enforced approval and publication preconditions",
       "file": "sql/20260925_0134_theme_studio_publication.sql",
       "transaction": true,
-      "requires": ["20260924_0133_theme_studio_slot_images"],
+      "requires": [
+        "20260924_0133_theme_studio_slot_images"
+      ],
       "verify": {
         "tables": [
           "theme_studio_reviews",
@@ -5644,9 +6198,13 @@
       "description": "Describe hero height, focal point, phone image, overlay and text position controls, and carousel swipe",
       "file": "sql/20260925_0135_hero_image_controls_help.sql",
       "transaction": true,
-      "requires": ["20260925_0134_theme_studio_publication"],
+      "requires": [
+        "20260925_0134_theme_studio_publication"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5668,9 +6226,14 @@
       "description": "Add product option axes and each variant's positional option values",
       "file": "sql/20260925_0136_product_options.sql",
       "transaction": true,
-      "requires": ["20260925_0135_hero_image_controls_help"],
+      "requires": [
+        "20260925_0135_hero_image_controls_help"
+      ],
       "verify": {
-        "columns": ["products.options", "product_variants.option_values"],
+        "columns": [
+          "products.options",
+          "product_variants.option_values"
+        ],
         "constraints": [
           "products_options_shape_check",
           "product_variants_option_values_check"
@@ -5696,9 +6259,13 @@
       "description": "Describe product options, colour swatches, per-option storefront choices and quick add in the product variants guide",
       "file": "sql/20260925_0137_product_options_help.sql",
       "transaction": true,
-      "requires": ["20260925_0136_product_options"],
+      "requires": [
+        "20260925_0136_product_options"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5720,9 +6287,13 @@
       "description": "Explain header sub-links, menu columns and the menu image in the header and navigation guide",
       "file": "sql/20260925_0138_nested_menu_help.sql",
       "transaction": true,
-      "requires": ["20260925_0137_product_options_help"],
+      "requires": [
+        "20260925_0137_product_options_help"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5739,9 +6310,13 @@
       "description": "Explain that a category's handle is the address of its own collection page",
       "file": "sql/20260925_0139_collection_pages_help.sql",
       "transaction": true,
-      "requires": ["20260925_0138_nested_menu_help"],
+      "requires": [
+        "20260925_0138_nested_menu_help"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5758,9 +6333,13 @@
       "description": "Explain the Website Builder section colour schemes in the section guide",
       "file": "sql/20260926_0140_section_color_schemes_help.sql",
       "transaction": true,
-      "requires": ["20260925_0139_collection_pages_help"],
+      "requires": [
+        "20260925_0139_collection_pages_help"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5777,7 +6356,9 @@
       "description": "Theme Studio image runs: the images run and message kinds, the anchor asset purpose and the images_requested event",
       "file": "sql/20260926_0141_theme_studio_image_runs.sql",
       "transaction": true,
-      "requires": ["20260926_0140_section_color_schemes_help"],
+      "requires": [
+        "20260926_0140_section_color_schemes_help"
+      ],
       "verify": {
         "constraints": [
           "theme_studio_runs_kind_check",
@@ -5822,10 +6403,16 @@
       "description": "Theme Studio image runs record the slots they were asked to redraw",
       "file": "sql/20260927_0142_theme_studio_image_slots.sql",
       "transaction": true,
-      "requires": ["20260926_0141_theme_studio_image_runs"],
+      "requires": [
+        "20260926_0141_theme_studio_image_runs"
+      ],
       "verify": {
-        "columns": ["theme_studio_runs.image_slot_ids"],
-        "constraints": ["theme_studio_runs_image_slots_check"]
+        "columns": [
+          "theme_studio_runs.image_slot_ids"
+        ],
+        "constraints": [
+          "theme_studio_runs_image_slots_check"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5842,16 +6429,22 @@
       "description": "Theme Studio captures: the queue and record of catalog pictures rendered from a version's preview store",
       "file": "sql/20260927_0143_theme_studio_captures.sql",
       "transaction": true,
-      "requires": ["20260927_0142_theme_studio_image_slots"],
+      "requires": [
+        "20260927_0142_theme_studio_image_slots"
+      ],
       "verify": {
-        "tables": ["theme_studio_captures"],
+        "tables": [
+          "theme_studio_captures"
+        ],
         "constraints": [
           "theme_studio_captures_status_check",
           "theme_studio_captures_shape_check",
           "theme_studio_captures_lifecycle_check",
           "theme_studio_events_type_check"
         ],
-        "indexes": ["theme_studio_captures_one_active"]
+        "indexes": [
+          "theme_studio_captures_one_active"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5873,9 +6466,13 @@
       "description": "Theme Studio hidden automatic imagery, responsive browser QA and bounded visual self-critique",
       "file": "sql/20260927_0144_theme_studio_auto_qa.sql",
       "transaction": true,
-      "requires": ["20260927_0143_theme_studio_captures"],
+      "requires": [
+        "20260927_0143_theme_studio_captures"
+      ],
       "verify": {
-        "tables": ["theme_studio_visual_qa_runs"],
+        "tables": [
+          "theme_studio_visual_qa_runs"
+        ],
         "columns": [
           "theme_studio_versions.visibility",
           "theme_studio_versions.qa_status",
@@ -5899,7 +6496,9 @@
           "theme_studio_assets_purpose_check",
           "theme_studio_events_type_check"
         ],
-        "rlsTables": ["theme_studio_visual_qa_runs"],
+        "rlsTables": [
+          "theme_studio_visual_qa_runs"
+        ],
         "functions": [
           "theme_studio_version_qa_guard()",
           "theme_studio_capture_guard()",
@@ -5936,7 +6535,9 @@
       "description": "Theme Studio automatic QA may run a fourth pass (qa_iteration 0-3)",
       "file": "sql/20260929_0145_theme_studio_qa_iterations.sql",
       "transaction": true,
-      "requires": ["20260927_0144_theme_studio_auto_qa"],
+      "requires": [
+        "20260927_0144_theme_studio_auto_qa"
+      ],
       "verify": {
         "constraints": [
           "theme_studio_versions_qa_check",
@@ -5960,9 +6561,13 @@
       "description": "Delay and resume rate-limited Theme Studio generation without replaying completed model calls",
       "file": "sql/20261002_0146_theme_studio_rate_limit_recovery.sql",
       "transaction": true,
-      "requires": ["20260929_0145_theme_studio_qa_iterations"],
+      "requires": [
+        "20260929_0145_theme_studio_qa_iterations"
+      ],
       "verify": {
-        "tables": ["theme_studio_generation_responses"],
+        "tables": [
+          "theme_studio_generation_responses"
+        ],
         "columns": [
           "theme_studio_runs.retry_not_before",
           "theme_studio_runs.rate_limit_deferrals"
@@ -5972,7 +6577,9 @@
           "theme_studio_generation_responses_pkey",
           "theme_studio_generation_responses_shape_check"
         ],
-        "rlsTables": ["theme_studio_generation_responses"]
+        "rlsTables": [
+          "theme_studio_generation_responses"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -5989,16 +6596,24 @@
       "description": "Checkpoint paid Theme Studio artwork immediately and resume independent image reviews",
       "file": "sql/20261002_0147_theme_studio_image_checkpoints.sql",
       "transaction": true,
-      "requires": ["20261002_0146_theme_studio_rate_limit_recovery"],
+      "requires": [
+        "20261002_0146_theme_studio_rate_limit_recovery"
+      ],
       "verify": {
-        "tables": ["theme_studio_image_checkpoints"],
-        "columns": ["theme_studio_runs.image_review_deferrals"],
+        "tables": [
+          "theme_studio_image_checkpoints"
+        ],
+        "columns": [
+          "theme_studio_runs.image_review_deferrals"
+        ],
         "constraints": [
           "theme_studio_runs_image_review_deferrals_check",
           "theme_studio_image_checkpoints_pkey",
           "theme_studio_image_checkpoints_shape_check"
         ],
-        "rlsTables": ["theme_studio_image_checkpoints"],
+        "rlsTables": [
+          "theme_studio_image_checkpoints"
+        ],
         "queries": [
           {
             "name": "image checkpoints remain service-only and immutable",
@@ -6013,10 +6628,16 @@
       "description": "Check native theme layouts before artwork and diagnose stalled automatic QA",
       "file": "sql/20261002_0148_theme_studio_layout_preflight.sql",
       "transaction": true,
-      "requires": ["20261002_0147_theme_studio_image_checkpoints"],
+      "requires": [
+        "20261002_0147_theme_studio_image_checkpoints"
+      ],
       "verify": {
-        "columns": ["theme_studio_captures.phase"],
-        "functions": ["theme_studio_capture_phase_guard()"],
+        "columns": [
+          "theme_studio_captures.phase"
+        ],
+        "functions": [
+          "theme_studio_capture_phase_guard()"
+        ],
         "queries": [
           {
             "name": "capture phase remains immutable",
@@ -6035,14 +6656,20 @@
       "description": "Coordinate Theme Studio provider admission and cooldowns across worker instances",
       "file": "sql/20261002_0149_theme_studio_provider_capacity.sql",
       "transaction": true,
-      "requires": ["20261002_0148_theme_studio_layout_preflight"],
+      "requires": [
+        "20261002_0148_theme_studio_layout_preflight"
+      ],
       "verify": {
         "tables": [
           "theme_studio_provider_capacity",
           "theme_studio_provider_leases"
         ],
-        "functions": ["theme_studio_capacity_lock(text)"],
-        "indexes": ["theme_studio_provider_leases_scope_expiry_idx"],
+        "functions": [
+          "theme_studio_capacity_lock(text)"
+        ],
+        "indexes": [
+          "theme_studio_provider_leases_scope_expiry_idx"
+        ],
         "rlsTables": [
           "theme_studio_provider_capacity",
           "theme_studio_provider_leases"
@@ -6061,7 +6688,9 @@
       "description": "Fence legacy image claims, bound checkpoint retention and verify every required service privilege",
       "file": "sql/20261002_0150_theme_studio_recovery_safety.sql",
       "transaction": true,
-      "requires": ["20261002_0149_theme_studio_provider_capacity"],
+      "requires": [
+        "20261002_0149_theme_studio_provider_capacity"
+      ],
       "supersedesVerifyQueries": [
         {
           "migrationId": "20261002_0147_theme_studio_image_checkpoints",
@@ -6077,7 +6706,9 @@
           "theme_studio_image_claim_guard()",
           "theme_studio_prune_image_checkpoints(timestamptz,integer)"
         ],
-        "indexes": ["theme_studio_image_checkpoints_retention_idx"],
+        "indexes": [
+          "theme_studio_image_checkpoints_retention_idx"
+        ],
         "queries": [
           {
             "name": "every image checkpoint privilege is correct",
@@ -6102,9 +6733,13 @@
       "description": "Publish a Theme Studio candidate in one superadmin step; approval needs passing acceptance evidence, not human scorecards",
       "file": "sql/20261003_0151_theme_studio_single_step_publish.sql",
       "transaction": true,
-      "requires": ["20261002_0150_theme_studio_recovery_safety"],
+      "requires": [
+        "20261002_0150_theme_studio_recovery_safety"
+      ],
       "verify": {
-        "functions": ["theme_studio_project_guard()"]
+        "functions": [
+          "theme_studio_project_guard()"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -6121,7 +6756,9 @@
       "description": "Theme demo stores show the theme's own name rather than '<Theme> Demo'",
       "file": "sql/20261003_0152_demo_store_theme_names.sql",
       "transaction": true,
-      "requires": ["20261003_0151_theme_studio_single_step_publish"],
+      "requires": [
+        "20261003_0151_theme_studio_single_step_publish"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -6138,7 +6775,9 @@
       "description": "Freeze operator-only catalogue fingerprints and retain per-version distinctness evidence",
       "file": "sql/20261003_0153_theme_studio_variety.sql",
       "transaction": true,
-      "requires": ["20261003_0152_demo_store_theme_names"],
+      "requires": [
+        "20261003_0152_demo_store_theme_names"
+      ],
       "verify": {
         "functions": [
           "theme_studio_variety_context_guard()",
@@ -6168,7 +6807,9 @@
       "description": "Preserve native-width tall QA screenshots with bounded PNG fallback while retaining storefront asset limits",
       "file": "sql/20261004_0154_theme_studio_readable_screenshots.sql",
       "transaction": true,
-      "requires": ["20261003_0153_theme_studio_variety"],
+      "requires": [
+        "20261003_0153_theme_studio_variety"
+      ],
       "verify": {
         "constraints": [
           "theme_studio_assets_media_type_check",
@@ -6188,11 +6829,19 @@
       "description": "Human-approved existing product photo changes and private product CSV validation, corrections and failed-row import retries",
       "file": "sql/20261004_0155_mink_product_photos_csv.sql",
       "transaction": true,
-      "requires": ["20261004_0154_theme_studio_readable_screenshots"],
+      "requires": [
+        "20261004_0154_theme_studio_readable_screenshots"
+      ],
       "verify": {
-        "tables": ["mink_csv_files"],
-        "rlsTables": ["mink_csv_files"],
-        "constraints": ["mink_drafts_product_images_target_check"],
+        "tables": [
+          "mink_csv_files"
+        ],
+        "rlsTables": [
+          "mink_csv_files"
+        ],
+        "constraints": [
+          "mink_drafts_product_images_target_check"
+        ],
         "queries": [
           {
             "name": "Import retry lines column exists",
@@ -6236,9 +6885,13 @@
       "description": "Phone dashboard records, order detail and website/blog editing help",
       "file": "sql/20261004_0156_dashboard_mobile.sql",
       "transaction": true,
-      "requires": ["20261004_0155_mink_product_photos_csv"],
+      "requires": [
+        "20261004_0155_mink_product_photos_csv"
+      ],
       "verify": {
-        "tables": ["help_articles"]
+        "tables": [
+          "help_articles"
+        ]
       },
       "applyVerify": {
         "queries": [
@@ -6265,7 +6918,9 @@
       "description": "Automatic Mink availability for existing and new stores, catalogue price freshness and complete POS photo guidance",
       "file": "sql/20261005_0157_catalog_freshness_mink_access.sql",
       "transaction": true,
-      "requires": ["20261004_0156_dashboard_mobile"],
+      "requires": [
+        "20261004_0156_dashboard_mobile"
+      ],
       "verify": {
         "functions": [
           "enable_store_mink_access(uuid)",
@@ -6319,7 +6974,9 @@
       "description": "Explain complete signup address suggestions and unresolved field review",
       "file": "sql/20261005_0158_signup_location_autofill.sql",
       "transaction": true,
-      "requires": ["20261005_0157_catalog_freshness_mink_access"],
+      "requires": [
+        "20261005_0157_catalog_freshness_mink_access"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -6336,7 +6993,9 @@
       "description": "Human-approved Mink Website Builder navigation, pages, SEO, appearance, settings and publication",
       "file": "sql/20261005_0159_mink_website_builder_controls.sql",
       "transaction": true,
-      "requires": ["20261005_0158_signup_location_autofill"],
+      "requires": [
+        "20261005_0158_signup_location_autofill"
+      ],
       "verify": {
         "queries": [
           {
@@ -6381,7 +7040,9 @@
       "description": "Document shared storefront price and availability filters on every theme",
       "file": "sql/20261005_0160_shared_shop_filters_help.sql",
       "transaction": true,
-      "requires": ["20261005_0159_mink_website_builder_controls"],
+      "requires": [
+        "20261005_0159_mink_website_builder_controls"
+      ],
       "verify": {},
       "applyVerify": {
         "queries": [
@@ -6389,6 +7050,37 @@
             "name": "Shared shop filtering and product visibility guidance",
             "sql": "select count(*)::text from public.help_articles where slug='publish-feature-and-improve-a-product-for-search' and status='published' and body like '%controls on every theme%' and body like '%Clear that filter and any price limits%'",
             "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261005_0161_theme_permanent_deletion",
+      "description": "Superadmin permanent Theme Studio deletion with installation and active-work guards",
+      "file": "sql/20261005_0161_theme_permanent_deletion.sql",
+      "transaction": true,
+      "requires": [
+        "20261005_0160_shared_shop_filters_help"
+      ],
+      "verify": {
+        "tables": [
+          "theme_studio_deletion_audit"
+        ],
+        "functions": [
+          "theme_studio_delete_project(uuid,integer,text,uuid)",
+          "theme_studio_deletion_allowed(jsonb)",
+          "theme_studio_deleted_install_guard()"
+        ],
+        "queries": [
+          {
+            "name": "Delete function service-only authority",
+            "sql": "select (has_function_privilege('app_service','public.theme_studio_delete_project(uuid,integer,text,uuid)','EXECUTE') and not has_function_privilege('app_user','public.theme_studio_delete_project(uuid,integer,text,uuid)','EXECUTE'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "Permanent deletion guards enabled",
+            "sql": "select count(*)::text from pg_trigger where tgname in ('theme_studio_deletion_audit_immutable','theme_studio_deleted_install_guard','theme_studio_deleted_project_guard') and tgenabled='O' and not tgisinternal",
+            "equals": "3"
           }
         ]
       }

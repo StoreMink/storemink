@@ -4985,6 +4985,28 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     independent of `MINK_AI_ENABLED`. Record:
     `docs/mink-ai-theme-studio-phase2.md`. Operator-only: no Help Centre
     migration.
+    **Theme Studio permanent deletion (2026-10-05):** the superadmin project
+    workspace offers **Delete permanently**, including archived projects, with
+    an exact theme-ID confirmation. `lib/theme-studio/deletion.ts` and the
+    session-gated `deleteThemeStudioProjectAction` call migration
+    `20261005_0161_theme_permanent_deletion`'s bounded service function. It
+    locks the project and store installations, rejects stale revisions, active
+    generation/capture/QA/acceptance/publication, shared release projects and
+    installed merchant themes, then removes project history, private reference
+    bytes, preview/demo stores and its release/catalog records atomically.
+    Internal Studio FKs are immediate by default and deferred during removal
+    to handle the run/version history cycles. Ordinary immutable history guards
+    remain enforced; only the function owner's exact transaction scope permits
+    deletion. A separate immutable actor/theme deletion receipt survives.
+    A store trigger rejects delayed installations from a deleted cached release;
+    deleted theme IDs remain reserved by the receipt to prevent version reuse.
+    Registry/store tags expire immediately after success. Shared public release
+    images remain available because merchant content may reuse them independently
+    of its installed theme. The confirmation dialog lives in
+    `themes/studio/[projectId]/delete-theme-button.tsx`; rollback-only local
+    PostgreSQL tests cover role boundaries, FKs and refusals. Operator-only:
+    no merchant-visible change, no Help Centre update.
+
     **Mink AI Theme Studio Phase 3 (2026-09-23; Gemini generation
     pipeline, NOT yet run against a live model):** `pipeline.ts` runs Stage A
     (brief + references → intent, or ≤5 clarifying questions, or a decline) and

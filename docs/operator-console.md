@@ -151,6 +151,18 @@ the session (`getThemeStudioActor`) before touching anything. Reference images
 are stored sanitized in Postgres and served only through a gated, no-store
 route. Full record: `docs/mink-ai-theme-studio-phase2.md`.
 
+Open a project's workspace and choose **Delete permanently** to remove the
+project, conversation, reference screenshots, generated versions, private
+previews and its published theme releases. This also works for archived projects.
+Type the exact theme ID shown in the confirmation dialog. Deletion cannot be
+undone. Finish or cancel active work first; a theme installed by a merchant store
+cannot be deleted until that store switches themes. If another project shares a
+published theme's ID, delete that other project first. Theme-owned demo stores
+are removed with released themes. A minimal deletion receipt remains for audit;
+shared published images remain because stores may reuse them in saved content.
+To recreate a deleted design, choose a new theme ID; deleted IDs stay reserved.
+Bundled themes are code-owned and cannot be deleted from Theme Studio.
+
 The project workspace refreshes throughout generation, image drawing, catalog
 capture and visual QA, including immediately when an unfinished tab is reopened.
 Use the conversation to describe a theme, answer questions and request changes.
