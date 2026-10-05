@@ -2196,7 +2196,7 @@ export const platformAdmins = pgTable(
 );
 
 // Theme Studio Phase 1: immutable, service-owned runtime packages. A release
-// row is never updated or deleted (the database trigger enforces that); stores
+// row is immutable except guarded permanent Studio removal; stores
 // pin theme_id + version, while the catalog pointer below can move between
 // published releases without changing any existing installation.
 export const themeReleases = pgTable(
@@ -2293,6 +2293,22 @@ export const themeCatalogEntries = pgTable(
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({
   dataType: () => "bytea",
 });
+
+// Independent immutable deletion receipt survives removal of theme history.
+export const themeStudioDeletionAudit = pgTable(
+  "theme_studio_deletion_audit",
+  {
+    projectId: uuid("project_id").primaryKey().notNull(),
+    themeId: text("theme_id").notNull(),
+    projectName: text("project_name").notNull(),
+    actorId: uuid("actor_id").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("theme_studio_deletion_audit_theme_idx").on(table.themeId)],
+);
 
 export const themeStudioProjects = pgTable("theme_studio_projects", {
   id: uuid().defaultRandom().primaryKey().notNull(),
