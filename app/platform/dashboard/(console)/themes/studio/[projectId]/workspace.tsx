@@ -32,6 +32,7 @@ import {
 } from "@/lib/theme-studio/fingerprint";
 import { StudioStatusBadge, currentQaFailed, studioDate } from "../studio-ui";
 import { ThemeConversation } from "./conversation";
+import { DeleteThemeButton } from "./delete-theme-button";
 
 // The project workspace. Everything shown was read server-side behind the
 // superadmin gate; every button calls an action that re-checks it. Reference
@@ -242,29 +243,38 @@ export function ProjectWorkspace({
             {studioDate(project.createdAt)}
           </p>
         </div>
-        {project.status !== "archived" && !activeRun ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              if (
-                !window.confirm("Archive this project? It can't be reopened.")
-              )
-                return;
-              run(
-                () =>
-                  archiveThemeStudioProjectAction({
-                    projectId: project.id,
-                    expectedRevision: project.revision,
-                  }),
-                "Project archived.",
-              );
-            }}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
-          >
-            <Archive className="h-4 w-4" /> Archive
-          </button>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <DeleteThemeButton
+            projectId={project.id}
+            themeId={project.themeId}
+            name={project.name}
+            revision={project.revision}
+            disabled={pending || !!activeRun}
+          />
+          {project.status !== "archived" && !activeRun ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                if (
+                  !window.confirm("Archive this project? It can't be reopened.")
+                )
+                  return;
+                run(
+                  () =>
+                    archiveThemeStudioProjectAction({
+                      projectId: project.id,
+                      expectedRevision: project.revision,
+                    }),
+                  "Project archived.",
+                );
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+            >
+              <Archive className="h-4 w-4" /> Archive
+            </button>
+          ) : null}
+        </div>
       </header>
 
       {testProvider ? (

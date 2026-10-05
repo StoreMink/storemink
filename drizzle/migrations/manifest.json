@@ -6392,6 +6392,33 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261005_0161_theme_permanent_deletion",
+      "description": "Superadmin permanent Theme Studio deletion with installation and active-work guards",
+      "file": "sql/20261005_0161_theme_permanent_deletion.sql",
+      "transaction": true,
+      "requires": ["20261005_0160_shared_shop_filters_help"],
+      "verify": {
+        "tables": ["theme_studio_deletion_audit"],
+        "functions": [
+          "theme_studio_delete_project(uuid,integer,text,uuid)",
+          "theme_studio_deletion_allowed(jsonb)",
+          "theme_studio_deleted_install_guard()"
+        ],
+        "queries": [
+          {
+            "name": "Delete function service-only authority",
+            "sql": "select (has_function_privilege('app_service','public.theme_studio_delete_project(uuid,integer,text,uuid)','EXECUTE') and not has_function_privilege('app_user','public.theme_studio_delete_project(uuid,integer,text,uuid)','EXECUTE'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "Permanent deletion guards enabled",
+            "sql": "select count(*)::text from pg_trigger where tgname in ('theme_studio_deletion_audit_immutable','theme_studio_deleted_install_guard','theme_studio_deleted_project_guard') and tgenabled='O' and not tgisinternal",
+            "equals": "3"
+          }
+        ]
+      }
     }
   ]
 }
