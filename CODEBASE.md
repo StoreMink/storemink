@@ -1,4 +1,4 @@
-# StoreMink — Full Codebase Map
+# StoreMink — Codebase Map
 
 > **Read this file first before making any change. Keep it up to date:** whenever you
 > add/remove/move routes, server actions, lib modules, SQL files, or change the
