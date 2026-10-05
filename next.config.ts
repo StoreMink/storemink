@@ -292,7 +292,14 @@ const nextConfig: NextConfig = {
 };
 
 export default function configForPhase(phase: string): NextConfig {
-  if (phase !== PHASE_DEVELOPMENT_SERVER) return nextConfig;
+  if (phase !== PHASE_DEVELOPMENT_SERVER) {
+    return {
+      ...nextConfig,
+      // Validate freshly generated production route types, not dev declarations
+      // that a running dev server may rewrite concurrently.
+      typescript: { tsconfigPath: "tsconfig.typecheck.json" },
+    };
+  }
 
   const lowMemory = totalmem() <= 12 * 1024 ** 3;
   const parallelism = Number(
@@ -306,9 +313,9 @@ export default function configForPhase(phase: string): NextConfig {
     ...nextConfig,
     // Explicit Turbopack remains available; the callback below is Webpack-only.
     turbopack: {},
-    ...(lowMemory
-      ? { onDemandEntries: { maxInactiveAge: 25_000, pagesBufferLength: 2 } }
-      : {}),
+    // Keep Next's 60-second/five-page retention. The former 25-second/two-page
+    // override could evict routes while dashboard polling/history requests ran,
+    // forcing additional compilation on revisits.
     webpack(config) {
       // Webpack defaults to 100 concurrent modules PER compiler. Next runs
       // client/server compilers: trade some cold-build throughput for headroom.

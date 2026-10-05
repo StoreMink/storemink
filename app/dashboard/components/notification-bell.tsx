@@ -21,7 +21,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   type NotificationRow,
-} from "@/app/actions/notification-actions";
+} from "@/app/actions/notification-inbox-actions";
 
 const POLL_MS = 45_000;
 

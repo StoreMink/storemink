@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": ".next/cache/typecheck.tsbuildinfo"
+  },
+  "exclude": ["node_modules", ".next/dev"]
+}
