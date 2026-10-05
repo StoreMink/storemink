@@ -160,7 +160,11 @@ cannot be deleted until that store switches themes. If another project shares a
 published theme's ID, delete that other project first. Theme-owned demo stores
 are removed with released themes. A minimal deletion receipt remains for audit;
 shared published images remain because stores may reuse them in saved content.
-To recreate a deleted design, choose a new theme ID; deleted IDs stay reserved.
+To recreate a deleted design, enter the same theme name and ID in **New project**.
+Studio keeps the name and automatically assigns an available ID such as
+`bubble-2`. The project workspace shows the assigned ID. Deleted IDs stay
+reserved so old release links cannot point to a different design. An ID used by
+an active project still needs to be changed manually.
 Bundled themes are code-owned and cannot be deleted from Theme Studio.
 
 The project workspace refreshes throughout generation, image drawing, catalog

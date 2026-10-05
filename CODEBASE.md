@@ -5000,6 +5000,13 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     deletion. A separate immutable actor/theme deletion receipt survives.
     A store trigger rejects delayed installations from a deleted cached release;
     deleted theme IDs remain reserved by the receipt to prevent version reuse.
+    Creating a project with a deleted ID preserves its display name and uses
+    `lib/theme-studio/project-identity.ts` to allocate the first available suffix
+    (for example, Bubble becomes `bubble-2`). Project creation serializes ID
+    allocation across operators, coordinates with deletion's identity lock and
+    skips deleted IDs, existing projects (including archived), bundled
+    themes and release/catalog identities. Existing active IDs still produce a
+    conflict. The creation event records the requested and allocated IDs.
     Registry/store tags expire immediately after success. Shared public release
     images remain available because merchant content may reuse them independently
     of its installed theme. The confirmation dialog lives in

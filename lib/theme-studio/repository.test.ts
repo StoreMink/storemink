@@ -4,6 +4,7 @@ vi.mock("@/lib/db/client", () => ({ withService: vi.fn() }));
 
 import { withService } from "@/lib/db/client";
 import {
+  createThemeStudioProject,
   queueThemeStudioImages,
   restoreThemeStudioVersion,
   reviseThemeStudioVersion,
@@ -79,6 +80,37 @@ describe("Theme Studio project input", () => {
   it("bounds the brief", () => {
     expect(refused({ brief: "   " })).toMatch(/design brief/);
     expect(refused({ brief: "x".repeat(12_001) })).toMatch(/design brief/);
+  });
+});
+
+describe("project creation conflict messages", () => {
+  const actor = {
+    id: "11111111-1111-4111-8111-111111111111",
+    email: "test@example.com",
+  };
+  it.each([false, true])(
+    "distinguishes deleted IDs from active conflicts (wrapped=%s)",
+    async (wrapped) => {
+      for (const [constraint, message] of [
+        ["theme_studio_deleted_theme_id", /permanently deleted/],
+        ["theme_studio_projects_active_theme_key", /Another active project/],
+      ] as const) {
+        const pg = { code: "23505", constraint };
+        vi.mocked(withService).mockRejectedValueOnce(
+          wrapped ? { cause: pg } : pg,
+        );
+        await expect(
+          createThemeStudioProject(actor, validateProjectInput(valid)),
+        ).rejects.toThrow(message);
+      }
+    },
+  );
+  it("does not mislabel unrelated uniqueness errors as active projects", async () => {
+    const error = { code: "23505", constraint: "some_other_key" };
+    vi.mocked(withService).mockRejectedValueOnce(error);
+    await expect(
+      createThemeStudioProject(actor, validateProjectInput(valid)),
+    ).rejects.toBe(error);
   });
 });
 
