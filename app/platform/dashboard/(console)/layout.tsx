@@ -16,9 +16,11 @@ const dashFont = Inter({
   variable: "--font-dash",
 });
 
+// Request the variable face once. The separate 400/500 request fails in
+// Next 16.3.8's Turbopack font loader; the family and CSS variable stay the same.
 const dashMono = JetBrains_Mono({
   subsets: ["latin"],
-  weight: ["400", "500"],
+  weight: "variable",
   variable: "--font-dash-mono",
 });
 

@@ -6,7 +6,7 @@ import {
   deleteMinkConversation,
   getMinkConversation,
   listMinkConversations,
-} from "@/lib/mink/persistence";
+} from "@/lib/mink/conversation-history";
 import { rejectForeignMinkOrigin } from "@/lib/mink/request-origin";
 import { logError, logWarn } from "@/lib/observability/logger";
 import { rateLimit } from "@/lib/rate-limit";

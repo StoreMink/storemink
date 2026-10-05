@@ -15,7 +15,7 @@ vi.mock("@/lib/mink/config", () => ({
 vi.mock("@/lib/mink/actor-context", () => ({
   getMinkActorContext: holder.actor,
 }));
-vi.mock("@/lib/mink/persistence", () => ({
+vi.mock("@/lib/mink/conversation-history", () => ({
   getMinkConversation: holder.get,
   deleteMinkConversation: holder.delete,
   listMinkConversations: holder.list,
