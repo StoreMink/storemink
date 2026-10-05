@@ -12,6 +12,7 @@ import { buttonIssues, buttonsDrawColourAsText } from "./buttons";
 import { motionIssues } from "./motion";
 import { pageIssues } from "./page";
 import { typographyIssues } from "./typography";
+import { heroContrastIssues } from "./hero-contrast";
 import { normalizeMenus } from "@/lib/menus";
 import { flattenNav } from "@/lib/chrome/nav";
 import { STORE_POLICY_SLUGS } from "@/lib/legal/store-policies";
@@ -603,6 +604,8 @@ export function validateThemeDesign(theme: ThemeDefinition): ThemeFinding[] {
 
   const issue = (code: string, message: string) =>
     out.push(finding("design", code, message));
+  for (const message of heroContrastIssues(theme))
+    issue("hero_contrast", message);
   const palette = design.palette as unknown as Record<string, unknown>;
   for (const key of REQUIRED_PALETTE_KEYS) {
     const value = palette[key];

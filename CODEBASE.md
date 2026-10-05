@@ -6149,6 +6149,26 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     order submission. Internal validation only: no merchant-visible change,
     no Help Centre update.
 
+    **Theme Studio solid-hero contrast and precise repairs (local, 2026-10-05):**
+    A fresh Bubble build stopped before artwork after an automatic repair changed
+    the passing homepage hero rather than the failing About hero. Both then used
+    white copy on the gold `creamDeep` field. `lib/themes/hero-contrast.ts` mirrors
+    the opaque hero fields and text tokens in `HeroSection`/`homepage.css`,
+    including 85% subheading opacity, scheme inheritance and banner card-reset
+    specificity. `validateThemeDesign` checks these pairs on every enabled page;
+    the existing compiler content floors and targeted-repair validator therefore
+    reject them before saving a version. Findings identify page, section, exact
+    setting path, ratios and a readable native text mode when one exists.
+    Prompt v23 explains text modes and sends per-hero evidence to automatic
+    repair; v22 and older request text/checkpoints retain their original shape.
+    Photographs, video, translucent/non-hex fields and final visual fidelity still
+    require browser and vision QA. No generation/QA thresholds, artwork gates or
+    capability-gap semantics are relaxed. The offline Chrome contrast check
+    reproduces Bubble's two defects and covers corrected heroes across five
+    widths. Existing production drafts require normal revision after deployment;
+    no production records changed during diagnosis. Internal/operator-only:
+    no merchant-visible change, no Help Centre update.
+
     **Worker isolation and readable QA (local, 2026-10-04):** `worker-lease.ts`
     and `worker-lease-store.ts` renew generation/visual-QA ownership every thirty
     seconds with 180-second clock-fenced leases. Renewal failure or an independent

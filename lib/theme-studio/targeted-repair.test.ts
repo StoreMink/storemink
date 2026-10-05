@@ -9,6 +9,18 @@ const edit = (path: string, value: unknown) => ({
 const cart = "/definition/preset/design/layout/cart";
 
 describe("bounded automatic theme repair", () => {
+  it("adds hero text choices only for the new request shape", () => {
+    const base = operatorImagePackage();
+    const path = repairTargets(base).find((t) =>
+      t.path.endsWith("/config/theme"),
+    )!.path;
+    expect(repairTargets(base).find((t) => t.path === path)).not.toHaveProperty(
+      "choices",
+    );
+    expect(
+      repairTargets(base, true).find((t) => t.path === path)?.choices,
+    ).toEqual(["dark", "light"]);
+  });
   it("changes a native layout while preserving every asset, route and catalogue item", () => {
     const base = operatorImagePackage();
     const before = structuredClone(base);
