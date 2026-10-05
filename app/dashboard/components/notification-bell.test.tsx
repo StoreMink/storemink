@@ -4,14 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getMyNotifications,
   getUnreadNotificationCount,
-} from "@/app/actions/notification-actions";
+} from "@/app/actions/notification-inbox-actions";
 import { NotificationBell } from "./notification-bell";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
 
-vi.mock("@/app/actions/notification-actions", () => ({
+vi.mock("@/app/actions/notification-inbox-actions", () => ({
   getMyNotifications: vi.fn(),
   getUnreadNotificationCount: vi.fn(),
   markAllNotificationsRead: vi.fn(),

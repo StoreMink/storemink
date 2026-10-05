@@ -160,17 +160,17 @@ runner adds behaviour rather than redefining the framework's.
 
 The development phase of `next.config.ts` now applies these settings:
 
-| Setting                     | Value                                           | Purpose / tradeoff                                                                                                                                             |
-| --------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `parallelism`               | 8 per compiler on ≤12 GB RAM, 32 above          | Fewer concurrent module builds; can increase cold compile duration while reducing concurrent work.                                                             |
-| `output.pathinfo`           | `false`                                         | Omit module-path comments and their garbage-collection overhead; source maps remain intact.                                                                    |
-| `onDemandEntries` on ≤12 GB | `maxInactiveAge: 25000`, `pagesBufferLength: 2` | Retain fewer inactive entries than Next's 60 s / five-page defaults; revisits may recompile. Active pages stay active. This does not unload every Node module. |
+| Setting           | Value                                                          | Purpose / tradeoff                                                                                                                                                                        |
+| ----------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parallelism`     | 8 per compiler on ≤12 GB RAM, 32 above                         | Fewer concurrent module builds; can increase cold compile duration while reducing concurrent work.                                                                                        |
+| `output.pathinfo` | `false`                                                        | Omit module-path comments and their garbage-collection overhead; source maps remain intact.                                                                                               |
+| `onDemandEntries` | Next defaults: `maxInactiveAge: 60000`, `pagesBufferLength: 5` | Keep recent routes longer to reduce repeated compilation while switching pages. The former 25 s / two-page override caused earlier eviction; retention does not unload every Node module. |
 
 `DEV_WEBPACK_PARALLELISM=16 npm run dev:all:webpack` overrides concurrency with
 a positive integer. This limits module work, not CPU threads or total RSS.
 The values are conservative starting points, not a proven optimum.
 
-Next 16.2.12 already supplies filesystem caching, a garbage-collected memory
+Next 16.3.8 supplies filesystem caching, a garbage-collected memory
 cache (`MemoryWithGcCachePlugin`), and `maxMemoryGenerations: 0` for its filesystem
 cache. Those defaults are preserved, along with cache names, compression,
 invalidation, loaders and chunking. No extra worker pool, polling watcher,
@@ -335,3 +335,89 @@ on disk unencrypted in `/opt/homebrew/var/postgresql@17`. Use
 
 These changes affect developer tooling only. No merchant or customer flow,
 Help Centre content, POS acceptance behaviour or roadmap phase changes apply.
+
+## October 5 investigation
+
+The supplied authenticated dev log separates a 66-second orders request into
+60 seconds of framework work and about five seconds of application work. A
+saved trace includes a 45-second client compilation. This supports investigating
+compilation before changing database queries. On this 8 GB Mac, swap was about
+16.7 GB of 18 GB even with no dev server running; a short `vm_stat -c 3 1`
+sample showed swap-ins, so pressure was active rather than merely historical.
+The dev runner still caps old space at 2 GB; increasing it on this machine is
+not a substitute for reducing memory pressure. Close unused heavy apps if
+Activity Monitor shows pressure, and preserve the warm compilation cache.
+
+Two shared entry points were split without changing queries or permissions:
+
+- Mink conversation history imports `lib/mink/conversation-history.ts` directly,
+  avoiding the run persistence module's draft/action execution dependencies.
+- The dashboard bell imports `app/actions/notification-inbox-actions.ts`, avoiding
+  email templates, sending, notification configuration and POS locations.
+  Inbox consumers import their action module directly, as required by Next's
+  server-action compiler.
+
+An esbuild dependency-graph probe (`bundle`, `platform: node`, `packages:
+external`, `metafile`, no file output) found 88 local modules reachable from
+the history endpoint before the split and 28 after; the bell action module
+went from 47 to 17. These are dependency counts, not a Next.js timing guarantee.
+The original warm cache served signed-out local history in 2.4 seconds of
+framework time on first request and 32 milliseconds on repeat. Signed-out
+requests do not exercise the authenticated dashboard UI or database reads,
+and a framework update invalidates caches, so these numbers must not be
+presented as a controlled before/after speedup.
+
+Next and its ESLint configuration are aligned at 16.3.8, Sharp is updated to
+at least 0.35.4, and the Tiptap family is updated together to at least 3.31.4
+for compatible security patches. Unused Nodemailer and its types were removed: mail delivery uses Resend.
+Other dependency refreshes stay within the
+declared ranges; do not use `npm audit fix --force` to satisfy the audit count:
+it proposes incompatible downgrades for some tools. npm 11.4.2 crashed in
+Arborist's peer resolver (`edgesOut`) during refresh; temporary npm 11.13.0
+resolved a fresh lockfile without bypassing peer checks. Existing npm can use
+`npm ci` with that lockfile. If the same resolution crash recurs, use
+`npx --yes --package npm@11.13.0 npm install` with a compatible Node version
+(Node 24.3.0 was used here), rather than `--legacy-peer-deps`.
+Dependency warnings are
+separate from compilation timing. This is internal tooling/dependency work;
+no merchant-visible change, no Help Centre update.
+
+The verified audit after `npm ci` reports **22 findings (13 high, nine moderate,
+zero critical)**, down from 75. Remaining branches include Firestore's pinned
+`@grpc/grpc-js ~1.9.0` (the other gRPC consumers use patched 1.14.5), braces
+3.0.3 through glob tooling, legacy esbuild through drizzle-kit, and uuid 9
+through Google Cloud Storage. The current braces release is still 3.0.3.
+The audit's suggested Firebase 9, Next ESLint 14 and drizzle-kit 0.18
+"fixes" are incompatible downgrades, not safe maintenance updates. The old
+esbuild-kit and uuid deprecation warnings therefore remain. These findings
+need upstream patches or separately validated dependency migrations.
+
+CLI typecheck and production builds use `tsconfig.typecheck.json`, extending
+all strict source checks from `tsconfig.json` while excluding mutable
+`.next/dev` declarations. `next typegen` supplies fresh production route types
+before CLI checks; Next build generates its own production types. The local
+dev server repeatedly left a duplicated trailing comment/interface in
+`.next/dev/types/routes.d.ts`, so deleting it once was not a durable repair.
+Checks now pass even with that malformed development file present. The editor
+still uses the normal dev config. If it flags a generated dev declaration,
+stop dev and remove only `.next/dev/types`; preserve the compilation cache.
+
+Production validation uses the default Turbopack build. Next 16.3.8 rejected
+JetBrains Mono's separate 400/500 face request with a malformed internal font
+query. Both dashboard layouts request the supported variable face instead;
+the font family and CSS variable remain the same. The default production
+build then passed, including TypeScript and prerendering. No production
+bundler switch or development cache reset is required.
+
+Validation: `npm ci`, full typecheck, 8,303 tests (79 skipped), targeted ESLint,
+formatting and Help lint passed. The five new history tests cover actor/store
+filters, successful-message/feedback scoping and guarded deletion; importing
+history with draft execution mocked to throw verifies the lighter boundary.
+No merchant-visible change, no Help Centre update.
+
+Development tooling retains Prettier 3.8.1 and React Hooks ESLint 7.0.1 while
+updating Next's ESLint package. Newer minor tool releases introduced unrelated
+Markdown rewrites and asynchronous-effect lint failures. Keeping compatible
+tool versions avoids folding a lint/format migration into security maintenance.
+Next dev also refreshes its existing generated AGENTS header; the codebase
+and Help Centre rules beneath it remain unchanged.

@@ -106,23 +106,26 @@ import {
   notificationSettings,
 } from "@/drizzle/schema";
 import {
-  archiveNotification,
   getActivityFeed,
   getDeliveryHealth,
   getMyNotificationPreferences,
-  getMyNotifications,
   getNotificationConsole,
   getNotificationDetail,
   getStoreNotificationAudience,
-  getUnreadNotificationCount,
-  markAllNotificationsRead,
-  markNotificationRead,
   previewNotificationEmail,
   retryFailedEmail,
   saveMyNotificationPreferences,
   saveNotificationConfig,
   sendTestNotificationEmail,
 } from "./notification-actions";
+
+import {
+  archiveNotification,
+  getMyNotifications,
+  getUnreadNotificationCount,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from "./notification-inbox-actions";
 
 const USER = { id: "admin-1", email: "Owner@Acme.test" } as any;
 const CONTEXT = {

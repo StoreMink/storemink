@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getMinkActorContext } from "@/lib/mink/actor-context";
 import { getMinkConfig } from "@/lib/mink/config";
 import { MinkRequestError } from "@/lib/mink/errors";
-import { listMinkConversations } from "@/lib/mink/persistence";
+import { listMinkConversations } from "@/lib/mink/conversation-history";
 import { logError, logWarn } from "@/lib/observability/logger";
 import { rateLimit } from "@/lib/rate-limit";
 
