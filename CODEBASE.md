@@ -6129,6 +6129,45 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `docs/theme-studio-variety-and-fidelity.md`. Operator-only change: no
     merchant-visible change, no Help Centre update.
 
+    **Scoped change requests and catalogue convergence (2026-10-06; prompt
+    `theme-studio-v24`):** an operator's revision no longer always re-runs the
+    full two-stage generation. `lib/theme-studio/change-scope.ts` decides its
+    scope, and for a small change writes the edit, in ONE high-effort request:
+    **edit** applies a validated patch to the base version through the same
+    `applyTargetedRepair` checks QA repairs use, widened by `operatorEditTargets`
+    to section visibility, page titles and sample category/product names,
+    descriptions and prices — never structure, links, ids, slugs or images. Every
+    asset and the intent are carried byte-for-byte; requested picture changes
+    (`imageChanges`, only `isRedrawableSlot` slots) are queued by the worker as
+    ONE automatic image run for exactly those slots, with the operator's
+    direction as the slot correction and the theme's existing anchor reused,
+    then final capture/acceptance/visual QA (no layout preflight, no other
+    redraw). Without automatic QA the redraw is reported as deferred. **revise**
+    is the previous Stage A/B revision. **recreate** is a fresh initial
+    generation (no base intent/theme, no carried images) from the project's
+    original brief, its answers and screenshots (`loadRecreateContext`), plus
+    the request; the replaced version's fingerprint joins the variety context so
+    the new design moves away from it too. Recreate requires an explicit
+    request: `isExplicitRecreateRequest` matches "start over", "from scratch",
+    "recreate the whole theme" etc. without a model call, and the model is told
+    a large but specific change is a revision. An edit that fails validation
+    twice becomes a revision, never a failure. The decided scope is stored in
+    `runs.outcome_detail` (`kind: "change"`) and on the existing
+    `version_created` event (the event vocabulary is CHECK-constrained), read
+    into `ThemeStudioRunView.change`, and shown as a conversation bubble.
+    Automatic QA repairs and v23-and-older runs are unchanged, so paid
+    checkpoints replay. Separately, `overusedChoices` (`fingerprint.ts`) flags
+    style settings a draft shares with ≥60% of ≥5 catalogue themes (page width,
+    hover image, columns, button shape…); two or more trigger the existing single
+    variety correction even when the weighted distance passes, closing the
+    2026-10-04 finding that all eight drafts shared width and hover choices. The
+    correction is kept only if fewer defaults repeat and no axis got closer.
+    Tests: `change-scope.test.ts`, `variety.test.ts`, and the opt-in rollback-only
+    `change-scope-postgres.test.ts` (`THEME_STUDIO_CHANGE_SCOPE_DB_TEST=1`),
+    which drives the real worker through a recreate and an image edit. Not yet
+    exercised against live Gemini. Operator-only: no merchant-visible change, no
+    Help Centre update.
+
     **Theme Studio production benchmark (2026-10-04):** eight unpublished v22
     builds on web revision `storemink-web-prod-00122-frg` produced five candidates;
     median successful queue-to-candidate time 68.28 minutes, only two without an

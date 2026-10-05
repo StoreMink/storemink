@@ -3,6 +3,7 @@ import type {
   ThemeFeature,
   ThemeIndustry,
 } from "@/lib/themes/meta";
+import { CHANGE_SCOPE_PROMPT_MARKER } from "./change-scope";
 import {
   THEME_INTENT_SCHEMA_VERSION,
   validateThemeIntent,
@@ -408,6 +409,55 @@ export function createFakeModelClient(
   input: FakeProviderInput,
 ): ThemeStudioModelClient {
   const hook = (name: string) => input.brief.includes(`[[fake:${name}]]`);
+  /**
+   * The change-scope request (change-scope.ts). Revise unless a hook says
+   * otherwise, so every existing offline revision behaves as it always did.
+   * `[[fake:edit]]` rewrites the first heading it is offered;
+   * `[[fake:edit-image]]` asks to redraw the first redrawable picture.
+   */
+  const fakeChangeDecision = (content: readonly { type: string }[]) => {
+    const block = content.find((b) => b.type === "text") as
+      | { text?: string }
+      | undefined;
+    const text = block?.text ?? "{}";
+    let context: {
+      settings?: { path: string }[];
+      redrawableImages?: { slotId: string }[];
+    } = {};
+    try {
+      context = JSON.parse(text);
+    } catch {
+      /* not a change-scope request */
+    }
+    const decision = {
+      scope: "revise",
+      summary: "Offline provider: treated as a revision.",
+      edits: [] as { path: string; valueJson: string }[],
+      imageChanges: [] as { slotId: string; direction: string }[],
+    };
+    if (hook("recreate")) {
+      decision.scope = "recreate";
+      decision.summary = "Offline provider: starting over.";
+    } else if (hook("edit") || hook("edit-image")) {
+      decision.scope = "edit";
+      decision.summary = "Offline provider: made a small edit.";
+      const heading = context.settings?.find((t) =>
+        t.path.endsWith("/config/heading"),
+      );
+      if (hook("edit") && heading)
+        decision.edits.push({
+          path: heading.path,
+          valueJson: JSON.stringify("Edited by the offline provider"),
+        });
+      const image = context.redrawableImages?.[0];
+      if (hook("edit-image") && image)
+        decision.imageChanges.push({
+          slotId: image.slotId,
+          direction: "A brighter morning version of the same scene.",
+        });
+    }
+    return decision;
+  };
   return {
     provider: "fake",
     async generate(request) {
@@ -433,6 +483,16 @@ export function createFakeModelClient(
             repairs: [],
             imageAssessments: [],
           },
+        };
+      }
+      if (
+        request.stage === "intent" &&
+        request.system?.startsWith(CHANGE_SCOPE_PROMPT_MARKER)
+      ) {
+        return {
+          kind: "ok",
+          usage: ZERO_USAGE,
+          value: fakeChangeDecision(request.content),
         };
       }
       const isRepair = request.content.some(

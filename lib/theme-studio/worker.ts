@@ -76,6 +76,7 @@ import { runThemeStudioVisualQaWorker } from "./visual-qa";
 import {
   automaticImageProvider,
   queueAutomaticCapture,
+  queueAutomaticImages,
 } from "./automatic-work";
 import { createImageCheckpointStore } from "./image-checkpoint-store";
 import { startWorkerLease, WORKER_LEASE_SECONDS } from "./worker-lease";
@@ -567,6 +568,67 @@ async function loadRunInput(
       ),
       versionNumber: (latest ?? 0) + 1,
       revision,
+    };
+  });
+}
+
+/**
+ * What a recreate starts from: the brief the project was first generated from
+ * (and any answers it needed before the first version existed), with that
+ * brief's own screenshots. Revision requests in between are deliberately left
+ * out — they described changes to a design the operator is discarding.
+ */
+async function loadRecreateContext(projectId: string): Promise<{
+  messages: { kind: "brief" | "revision"; body: string }[];
+  references: { base64: string; sha256: string }[];
+}> {
+  return withService(async (db) => {
+    const rows = await db.execute<{
+      kind: string;
+      body: string;
+      referenceAssetIds: string[];
+    }>(sql`
+      SELECT m.kind, m.body, m.reference_asset_ids AS "referenceAssetIds"
+      FROM theme_studio_messages m
+      WHERE m.project_id = ${projectId}::uuid
+        AND m.kind IN ('brief', 'revision')
+        AND m.created_at <= coalesce(
+          (SELECT min(v.created_at) FROM theme_studio_versions v
+            WHERE v.project_id = ${projectId}::uuid),
+          now())
+        AND NOT EXISTS (
+          SELECT 1 FROM theme_studio_runs r
+          WHERE r.message_id = m.id AND r.automatic)
+      ORDER BY m.created_at ASC
+      LIMIT 6`);
+    const messages = rows.rows;
+    const firstBrief = messages.findIndex((m) => m.kind === "brief");
+    const kept = firstBrief >= 0 ? messages.slice(firstBrief) : messages;
+    const referenceIds = kept[0]?.referenceAssetIds ?? [];
+    const references = referenceIds.length
+      ? await db
+          .select({
+            id: themeStudioAssets.id,
+            bytes: themeStudioAssets.bytes,
+            sha256: themeStudioAssets.sha256,
+          })
+          .from(themeStudioAssets)
+          .where(
+            and(
+              eq(themeStudioAssets.projectId, projectId),
+              eq(themeStudioAssets.purpose, "reference"),
+              inArray(themeStudioAssets.id, referenceIds),
+            ),
+          )
+      : [];
+    return {
+      messages: kept.map((m, index) => ({
+        kind: index === 0 ? ("brief" as const) : ("revision" as const),
+        body: m.body,
+      })),
+      references: references
+        .sort((a, b) => referenceIds.indexOf(a.id) - referenceIds.indexOf(b.id))
+        .map((r) => ({ base64: r.bytes.toString("base64"), sha256: r.sha256 })),
     };
   });
 }
@@ -1079,6 +1141,17 @@ async function execute(
           run.automatic &&
           run.kind === "revise" &&
           themePromptFeatures(run.promptVersion).targetedRepair,
+        // An operator's revision is scoped first (edit / revise / recreate).
+        // The original brief is read only if the decision is to recreate.
+        ...(!run.automatic &&
+        run.kind === "revise" &&
+        themePromptFeatures(run.promptVersion).changeScope
+          ? {
+              operatorChange: {
+                recreateContext: () => loadRecreateContext(run.projectId),
+              },
+            }
+          : {}),
       },
       signal,
     );
@@ -1341,7 +1414,11 @@ async function finish(
     if (run.automatic && !getThemeStudioConfig().autoQaEnabled) {
       return failRun("auto_qa_disabled");
     }
-    if (automaticSlots > 0 && !automaticImageProvider(run)) {
+    const editRedraws = Object.keys(result.imageRedraws ?? {});
+    if (
+      (automaticSlots > 0 || (automaticQa && editRedraws.length > 0)) &&
+      !automaticImageProvider(run)
+    ) {
       return failRun("image_provider_unavailable");
     }
     const [version] = await db
@@ -1372,7 +1449,23 @@ async function finish(
       });
     await db
       .update(themeStudioRuns)
-      .set({ ...terminal, status: "succeeded" })
+      .set({
+        ...terminal,
+        status: "succeeded",
+        ...(result.change
+          ? {
+              outcomeDetail: {
+                kind: "change",
+                ...result.change,
+                // Without automatic QA there is no image lane to hand the
+                // redraws to; the operator draws them from Images instead.
+                ...(!automaticQa && editRedraws.length
+                  ? { redrawsDeferred: true }
+                  : {}),
+              },
+            }
+          : {}),
+      })
       .where(eq(themeStudioRuns.id, run.id));
     await db
       .update(themeStudioProjects)
@@ -1392,15 +1485,58 @@ async function finish(
       parentVersionId: run.baseVersionId ?? project.currentVersionId,
       automaticQa,
       qaIteration: run.qaIteration,
+      // The event vocabulary is constrained in the database, so an operator
+      // revision's scope rides on the version it produced.
+      ...(result.change
+        ? {
+            changeScope: result.change.scope,
+            changedSettings: result.change.changed.length,
+            redraws: result.change.redraws.length,
+            ...(result.change.fellBackFrom
+              ? { fellBackFrom: result.change.fellBackFrom }
+              : {}),
+          }
+        : {}),
     });
     if (automaticQa) {
       await event("auto_qa_started", {
         versionId: version.id,
         qaIteration: run.qaIteration,
       });
-      // Measure the native layout with its planned image ratios before paying
-      // for artwork. Passing this stage cannot create acceptance evidence.
-      await queueAutomaticCapture(db, run, version, packageDigest, "layout");
+      const redraws = editRedraws;
+      if (redraws.length) {
+        // An edit that asked for new pictures draws exactly those slots,
+        // matched to the theme's existing art direction, then goes straight to
+        // final capture and the full acceptance and visual checks. Nothing
+        // else about the version is redrawn.
+        const imageRunId = await queueAutomaticImages(
+          db,
+          run,
+          version,
+          packageDigest,
+          redraws.length,
+          redraws,
+          Object.fromEntries(
+            Object.entries(result.imageRedraws!).map(([slot, direction]) => [
+              slot,
+              `The operator asked for a different picture here. This direction replaces the subject and art direction above wherever they conflict: ${direction}`,
+            ]),
+          ),
+        );
+        if (!imageRunId)
+          await queueAutomaticCapture(
+            db,
+            run,
+            version,
+            packageDigest,
+            "layout",
+          );
+      } else {
+        // Measure the native layout with its planned image ratios before
+        // paying for artwork. Passing this stage cannot create acceptance
+        // evidence.
+        await queueAutomaticCapture(db, run, version, packageDigest, "layout");
+      }
     }
     return "succeeded";
   });
