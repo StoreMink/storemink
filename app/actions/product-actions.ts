@@ -12,6 +12,7 @@ import {
   type UserIdentity,
 } from "@/lib/db/client";
 import {
+  isForeignKeyViolation,
   isUniqueViolation,
   pgErrorCode,
   dbErrorMessage,
@@ -847,7 +848,31 @@ export async function updateProduct(
 
 // ---------------------------------------------------------------------------
 // Delete (variants cascade via FK)
+//
+// ★ A PRODUCT THAT HAS BEEN ORDERED CANNOT BE DELETED, by design.
+// `order_items_product_id_fkey` is ON DELETE RESTRICT: invoices, refunds,
+// returns, credit notes and gross-margin reporting all read the line's
+// product, so removing it would rewrite sales history. The database already
+// refuses; these actions turn that refusal into an answer the merchant can act
+// on (unpublish instead) rather than the raw constraint text.
 // ---------------------------------------------------------------------------
+
+const PRODUCT_HAS_ORDERS_ERROR =
+  "This product has orders, so it can't be deleted — your order history still needs it. Unpublish it instead to hide it from your store.";
+
+/** Which of `ids` are referenced by at least one order line. */
+async function productIdsWithOrders(
+  admin: UserIdentity,
+  ids: string[],
+): Promise<Set<string>> {
+  const rows = await withUser(admin, (db) =>
+    db
+      .select({ productId: orderItems.productId })
+      .from(orderItems)
+      .where(inArray(orderItems.productId, ids)),
+  );
+  return new Set(rows.map((r) => r.productId).filter(Boolean) as string[]);
+}
 
 export async function deleteProduct(id: string): Promise<ActionResult> {
   const admin = await getAdminIdentity();
@@ -868,6 +893,7 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
     );
     deletedName = removed[0]?.name ?? null;
   } catch (err) {
+    if (isForeignKeyViolation(err)) return { error: PRODUCT_HAS_ORDERS_ERROR };
     console.error("deleteProduct error:", err);
     return { error: dbErrorMessage(err, "Failed to delete product.") };
   }
@@ -990,30 +1016,65 @@ export async function bulkSetProductFeatured(
   return { success: true };
 }
 
-/** Permanently delete many products, cleaning up their storage assets. */
+/**
+ * Permanently delete many products, cleaning up their storage assets.
+ *
+ * Products that have orders are SKIPPED, not allowed to fail the batch: one
+ * ordered product in a selection of twenty used to refuse all twenty with a
+ * raw constraint error. The rest are deleted and the skipped count is
+ * reported (`data.skipped`) so the screen can say what stayed and why.
+ */
 export async function bulkDeleteProducts(ids: string[]): Promise<ActionResult> {
   const admin = await getAdminIdentity();
   if (!admin) return { error: "Not authenticated" };
   if (ids.length === 0) return { error: "Nothing selected." };
 
-  // Gather images for every product first (variants cascade in the DB; files
-  // do not).
+  let ordered: Set<string>;
+  try {
+    ordered = await productIdsWithOrders(admin, ids);
+  } catch (err) {
+    console.error("bulkDeleteProducts order check error:", err);
+    return { error: dbErrorMessage(err, "Failed to delete products.") };
+  }
+  const deletable = ids.filter((id) => !ordered.has(id));
+  const skipped = ids.length - deletable.length;
+  if (deletable.length === 0) {
+    return {
+      error:
+        ids.length === 1
+          ? PRODUCT_HAS_ORDERS_ERROR
+          : "None of these products can be deleted because they all have orders — your order history still needs them. Unpublish them instead to hide them from your store.",
+    };
+  }
+
+  // Gather images ONLY for the products actually being deleted (variants
+  // cascade in the DB; files do not). A skipped product keeps its images.
   const urls: string[] = [];
-  for (const id of ids) {
+  for (const id of deletable) {
     urls.push(...(await fetchProductImageUrls(admin, id)));
   }
 
   try {
     await withUser(admin, (db) =>
-      db.delete(products).where(inArray(products.id, ids)),
+      db.delete(products).where(inArray(products.id, deletable)),
     );
   } catch (err) {
+    // An order placed between the check and the delete.
+    if (isForeignKeyViolation(err)) {
+      return {
+        error:
+          "One of these products was just ordered, so nothing was deleted. Please try again.",
+      };
+    }
     console.error("bulkDeleteProducts error:", err);
     return { error: dbErrorMessage(err, "Failed to delete products.") };
   }
   await deleteStorageUrls(urls, { ownedByStoreId: await getActingStoreId() });
   revalidateProduct();
-  return { success: true };
+  return {
+    success: true,
+    data: { deleted: deletable.length, skipped },
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,9 @@
 // the pg error as `cause`), so always check both places.
 
 export const UNIQUE_VIOLATION = "23505";
+/** `foreign_key_violation` — e.g. deleting a row an ON DELETE RESTRICT
+ *  reference still points at. */
+export const FOREIGN_KEY_VIOLATION = "23503";
 /** `undefined_table` — the relation does not exist. Raised when code that
  *  depends on a migration runs before that migration has been applied. */
 export const UNDEFINED_TABLE = "42P01";
@@ -20,6 +23,10 @@ export function pgErrorCode(err: unknown): string | undefined {
 
 export function isUniqueViolation(err: unknown): boolean {
   return pgErrorCode(err) === UNIQUE_VIOLATION;
+}
+
+export function isForeignKeyViolation(err: unknown): boolean {
+  return pgErrorCode(err) === FOREIGN_KEY_VIOLATION;
 }
 
 /**
