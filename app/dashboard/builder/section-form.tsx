@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronUp, ChevronDown, X, Plus } from "lucide-react";
+import { specForRatio } from "@/lib/media/image-specs";
 import { ImageUpload } from "@/components/ui/image-upload";
 import { VideoUpload } from "@/components/ui/video-upload";
 import { NumberField } from "@/components/ui/number-field";
@@ -481,6 +482,7 @@ function HeroFields({
           <label className={labelClass}>Image</label>
           <ImageUpload
             folder="homepage"
+            spec={config.variant === "minimal" ? "hero_wide" : "hero_side"}
             defaultImage={config.image_url || undefined}
             onUploadSuccess={(url) => set("image_url", url)}
           />
@@ -645,6 +647,7 @@ export function HeroImageFields({
         <label className={labelClass}>Phone image (optional)</label>
         <ImageUpload
           folder="homepage"
+          spec="hero_phone"
           defaultImage={value.mobile_image_url || undefined}
           onUploadSuccess={(url) =>
             onChange({ mobile_image_url: url || undefined })
@@ -889,6 +892,7 @@ function CarouselFields({
             </div>
             <ImageUpload
               folder="homepage"
+              spec="hero_wide"
               defaultImage={slide.image_url || undefined}
               onUploadSuccess={(url) => setSlide(i, { image_url: url })}
             />
@@ -1339,6 +1343,7 @@ function TileGridFields({
             />
             <ImageUpload
               folder="homepage"
+              spec="landscape"
               defaultImage={tile.image_url || undefined}
               onUploadSuccess={(url) => setTile(i, { image_url: url })}
             />
@@ -1561,6 +1566,7 @@ function MediaTextFields({
       <FieldGroup title="Image">
         <ImageUpload
           folder="homepage"
+          spec={specForRatio(config.media_ratio)}
           defaultImage={config.image_url || undefined}
           onUploadSuccess={(url) => set("image_url", url)}
         />
@@ -1809,6 +1815,7 @@ function GalleryFields({
             </div>
             <ImageUpload
               folder="homepage"
+              spec={specForRatio(config.image_ratio)}
               defaultImage={item.image_url || undefined}
               onUploadSuccess={(url) => setItem(index, { image_url: url })}
             />
@@ -2021,6 +2028,7 @@ function TestimonialsFields({
               <label className={labelClass}>Logo (optional)</label>
               <ImageUpload
                 folder="homepage"
+                spec="logo"
                 defaultImage={item.logo_url || undefined}
                 onUploadSuccess={(url) => setItem(index, { logo_url: url })}
               />
@@ -2102,6 +2110,13 @@ function VideoFields({
           <label className={labelClass}>Poster image</label>
           <ImageUpload
             folder="homepage"
+            spec={
+              config.aspect_ratio === "square"
+                ? "square"
+                : config.aspect_ratio === "portrait"
+                  ? "portrait"
+                  : "video_poster"
+            }
             defaultImage={config.poster_url || undefined}
             onUploadSuccess={(url) => set("poster_url", url)}
           />
@@ -2505,6 +2520,7 @@ function BannerFields({
         <label className={labelClass}>Banner image</label>
         <ImageUpload
           folder="homepage"
+          spec="hero_wide"
           defaultImage={config.image_url || undefined}
           onUploadSuccess={(url) => set("image_url", url)}
         />

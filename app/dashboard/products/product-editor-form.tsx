@@ -67,6 +67,8 @@ type Props = {
   // product (its own value wins).
   defaultTrackInventory?: boolean;
   canUseGrossMargin?: boolean;
+  /** The product-photo slot for the store's card photo shape. */
+  photoSpec?: "product" | "product_square";
   // When the parent renders the Save/Cancel controls itself (the full-page
   // editor puts them in a sticky header), it hides the form's own action bar
   // and drives saving through the imperative ref below.
@@ -398,6 +400,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
       onSaved,
       defaultTrackInventory = false,
       canUseGrossMargin = false,
+      photoSpec = "product",
       hideActions = false,
       onPendingChange,
     }: Props,
@@ -475,6 +478,15 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
     };
     const removeGalleryImage = (url: string) =>
       setForm((f) => ({ ...f, images: f.images.filter((u) => u !== url) }));
+    // A refined photo takes the place of the one it was made from, at the same
+    // position, rather than being appended as a second copy.
+    const replaceGalleryImage = (previous: string, next: string) =>
+      setForm((f) => ({
+        ...f,
+        images: f.images.includes(previous)
+          ? f.images.map((u) => (u === previous ? next : u))
+          : [...f.images, next],
+      }));
 
     // ── Variant helpers ────────────────────────────────────────
     const addVariant = () =>
@@ -915,6 +927,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                   <label className={labelClass}>Primary image</label>
                   <ImageUpload
                     folder="product-images"
+                    spec={photoSpec}
                     defaultImage={form.image_url || undefined}
                     onUploadSuccess={(url) => set("image_url", url)}
                   />
@@ -948,7 +961,9 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                   )}
                   <ImageUpload
                     folder="product-images"
+                    spec={photoSpec}
                     onUploadSuccess={addGalleryImage}
+                    onReplace={replaceGalleryImage}
                   />
                 </div>
               </div>

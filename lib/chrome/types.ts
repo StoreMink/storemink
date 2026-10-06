@@ -61,6 +61,9 @@ export type CardVariant =
 export type ProductDetailVariant = "classic" | "grocery" | "editorial";
 export type CartVariant = "classic" | "grocery" | "compact";
 export type FooterVariant = "rich" | "minimal" | "editorial";
+/** The classic card's photo frame. Portrait (3:4) is the default; a store
+ *  whose product photos are square picks square (1:1) so nothing is cropped. */
+export type CardPhoto = "portrait" | "square";
 
 /** `theme` means inherit the pinned preset; every explicit value is a
  * merchant-owned, published override edited in the visual builder. */
@@ -70,12 +73,15 @@ export interface StorefrontAppearance {
   productDetail: "theme" | ProductDetailVariant;
   cart: "theme" | CartVariant;
   footer: "theme" | FooterVariant;
+  /** Merchant-only (no theme value): which frame the classic card uses. */
+  cardPhoto: CardPhoto;
 }
 
 export interface ResolvedStorefrontAppearance {
   header: HeaderVariant;
   card: Exclude<CardVariant, "quick_add">;
   cardQuickAdd: boolean;
+  cardPhoto: CardPhoto;
   /** Theme-driven only: hover-swap is orthogonal to the merchant's card
    *  choice, so a `card` override neither enables nor cancels it. */
   cardHoverImage: boolean;
@@ -148,6 +154,7 @@ export const DEFAULT_CHROME: StoreChrome = {
     productDetail: "theme",
     cart: "theme",
     footer: "theme",
+    cardPhoto: "portrait",
   },
   header: {
     links: [
@@ -313,6 +320,8 @@ function cleanAppearance(raw: unknown): StorefrontAppearance {
     productDetail: appearanceValue(r.productDetail, PRODUCT_VARIANTS),
     cart: appearanceValue(r.cart, CART_VARIANTS),
     footer: appearanceValue(r.footer, FOOTER_VARIANTS),
+    // Absent on every row saved before this setting existed: portrait.
+    cardPhoto: r.cardPhoto === "square" ? "square" : "portrait",
   };
 }
 
@@ -393,6 +402,7 @@ export function resolveStorefrontAppearance(
         : overrides.header,
     card,
     cardQuickAdd,
+    cardPhoto: overrides.cardPhoto === "square" ? "square" : "portrait",
     cardHoverImage: theme?.cardHoverImage === true,
     stickyAddToCart: theme?.stickyAddToCart === true,
     gridColumnsMobile: theme?.gridColumnsMobile === 2 ? 2 : 1,

@@ -437,6 +437,7 @@ export function BillingClient({
                 defaultImage={settings.logoUrl}
                 onUploadSuccess={(url) => set("logoUrl", url)}
                 folder="dashboard-uploads"
+                spec="logo"
               />
             </div>
           </div>

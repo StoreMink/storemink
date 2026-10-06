@@ -74,6 +74,7 @@ export function BrandingForm({
               defaultImage={logoUrl}
               onUploadSuccess={setLogoUrl}
               folder="dashboard-uploads"
+              spec="logo"
             />
           </div>
           <div className="brandingField">
