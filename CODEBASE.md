@@ -437,8 +437,21 @@ when the save and shopper request hit different Cloud Run instances. The new
 return. Open background tabs receive changes when returned to, not by a pushed
 live message. Immutable installed theme releases retain their own cache.
 Next image optimization allows HTTPS `images.unsplash.com` in addition to GCS.
-POS sell/layout cards use bounded portrait frames and contain the whole image;
-cart/picker thumbnails also retain the complete photo.
+POS sell/layout cards contain the whole image in compact frames. The product
+area is a CSS size container: photo height budgets for two full rows, reserves
+space for two name lines, an option line, price and stock, and stays between
+64 and 160 px at the default text size. Short windows retain scrolling and
+readable text. The layout editor uses the same frame sizing; cart/picker
+thumbnails also retain the complete photo. The shared `mapCatalogRow` reader
+uses `products.imageUrl` for every SKU, so Sell, search/scan, grouped products,
+layout editing, option pickers and cart lines show the main product photo,
+with a placeholder when it is missing. Variant names, codes, prices and
+location stock stay independent. Catalogue cache keys advance to v5 to avoid
+rehydrating v4's variant photos after deployment; resumed carts rebuild from
+current catalogue choices. Acceptance stories PS-MD.7–MD.8 cover
+two-row visibility and resizing. Migration
+`20261006_0163_pos_compact_product_cards_help` updates the existing register
+guide's photo-card description.
 
 Mink no longer checks a store invitation or drafting enrollment. Legacy access
 helper signatures remain for callers, but return read/drafting availability
@@ -15007,7 +15020,8 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       format for money (`money()`, not `String(Number(x))`) because `sameValues`
       compares them as strings: "5000" against "5000.00" would report a change
       nobody made, and would make every activation read as a terms edit.
-    - `PosCatalogItem` carries `categoryId` (cache SCHEMA_VERSION v4) so the
+    - `PosCatalogItem` carries `categoryId` (introduced in cache v4; v5 also
+      refreshes the main-product photo contract) so the
       till prices a scoped offer identically.
 
 39. **The operator console — one screen per job.** `app/platform/dashboard/(console)`

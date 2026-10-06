@@ -4324,3 +4324,26 @@ product selling price in dashboard Pricing: the saved variant, storefront and
 next POS sync agree. A multiple-variant product keeps independent option prices,
 and a special variant price still overrides the regular selling price. Validate
 on an authenticated merchant device before release sign-off.
+
+**PS-MD.7 — Two complete rows of compact product cards.** Open Sell with at
+least twelve products at 1470×767 (the reported screen), 1280×720, 1024×768 and
+768×1024. Without scrolling, two complete rows are visible, including the
+second row's names, option labels, prices and stock. Check long two-line names,
+long option labels, missing images, portrait/landscape photos, grouped options
+and sold-out cards. Photos remain fully contained and row heights stay aligned.
+Resize to a shorter window, add an item on a phone and show an error: image
+frames adjust to the remaining product area; touch targets and text remain
+readable and the grid scrolls to all products. At 320×640 and 390×844, the
+Products/Cart controls and totals still fit without horizontal overflow. Open
+Edit layout, add/reorder/remove cards, and scroll its grid to the last card.
+Changing the display does not change the saved product order or sale totals.
+
+**PS-MD.8 — POS shows the main product photo.** Give a product a main photo and
+two variants different photos. Open Sell, search for an option, scan its exact
+barcode, edit the register layout and open the option picker. Each POS card
+and cart line shows the main product photo. The selected option still has its
+own name, SKU/barcode, price and location stock; adding it selects that exact
+variant. Resume a held sale or reload a saved cart and check the same result.
+If the main photo is absent, show a placeholder rather than a variant photo.
+Start with an older device cache: reopening POS must refresh the catalogue
+image choice without requiring a product edit or losing the sale's choices.

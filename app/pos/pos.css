@@ -82,6 +82,19 @@
   overscroll-behavior-y: contain;
 }
 
+/* Keep two complete rows in the available catalogue area. Reserve room for
+   two name lines, one option line, price, stock, padding and half the row gap.
+   A minimum image height keeps short windows usable; the grid still scrolls.
+   The fallback handles browsers without container query length support. */
+.pos-root .pos-product-viewport {
+  container-type: size;
+}
+
+.pos-root .pos-product-image {
+  height: clamp(4rem, 16dvh, 10rem);
+  height: clamp(4rem, calc(50cqh - 8.25rem), 10rem);
+}
+
 /* The dark palette this shipped with, kept whole so the decision is reversible
    and so a future per-merchant preference has somewhere to point. */
 .pos-root[data-pos-theme="dark"] {
