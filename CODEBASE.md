@@ -476,7 +476,7 @@ retouch CAN alter small details, which the widget and the Help guide both say.
 prominent people stay blocked and the prompt forbids adding anyone. ★ Gates are
 image generation's: Mink enabled, Media manage, the store's
 `generate_media_image` switch, and `reserveMinkImageGeneration`'s spend ceiling
-(keyed on the refinement id). ★ It costs `IMAGE_REFINE_CREDITS` (3). A store
+(keyed on the refinement id). ★ It costs `IMAGE_REFINE_CREDITS` (2; was 3 at launch, owner repriced it the same day, Help corrected by 0166). A store
 that cannot pay is refused BEFORE the paid provider call. Credits are taken
 only after an image exists and is stored, by `consume_mink_refine_credits`:
 plan allowance, then top-ups, all-or-nothing, idempotent per refinement id. A
@@ -3023,7 +3023,7 @@ wholesip/
 │       ├── og/                # Dynamic branded OG card (ImageResponse; ?d=JSON
 │       │                      # {title,subtitle,color}) — default share image for
 │       │                      # homepage/custom pages/platform (lib/seo/og-card.ts)
-│       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 3 credits
+│       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 2 credits
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
 │           │                  # store-host files live under stores/{storeId}/uploads/
