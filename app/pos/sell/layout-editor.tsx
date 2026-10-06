@@ -278,7 +278,7 @@ function GridDropArea({
   return (
     <div
       ref={setNodeRef}
-      className={`min-h-0 flex-1 overflow-y-auto rounded-xl border-2 border-dashed p-2 transition-colors ${
+      className={`pos-product-viewport min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border-2 border-dashed p-2 transition-colors ${
         isOver
           ? "border-[var(--pos-ok-border)] bg-[var(--pos-ok-soft)]"
           : "border-[var(--pos-border)]"
@@ -292,7 +292,7 @@ function GridDropArea({
           </p>
         </div>
       ) : (
-        <div className="grid auto-rows-max grid-cols-2 gap-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="pos-scroll-area grid h-full auto-rows-max grid-cols-2 gap-2 overflow-y-auto lg:grid-cols-3 xl:grid-cols-4">
           {children}
         </div>
       )}
@@ -407,17 +407,25 @@ function SortableTile({
       }}
       {...attributes}
       {...listeners}
-      className={`relative flex cursor-grab flex-col rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] p-2 active:cursor-grabbing ${
+      className={`relative flex min-w-0 cursor-grab flex-col rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] p-2 active:cursor-grabbing ${
         isDragging ? "z-10 opacity-50" : ""
       }`}
     >
       <Thumb
         item={item}
-        className="mb-2 aspect-[4/5] max-h-64 w-full rounded-lg"
+        className="pos-product-image mb-2 w-full shrink-0 rounded-lg"
       />
-      <span className="line-clamp-2 text-sm font-medium">{item.name}</span>
+      <span
+        className="min-h-10 line-clamp-2 text-sm font-medium leading-5"
+        title={item.name}
+      >
+        {item.name}
+      </span>
       {item.variantName && (
-        <span className="text-xs text-[var(--pos-ink-2)]">
+        <span
+          className="truncate text-xs leading-4 text-[var(--pos-ink-2)]"
+          title={item.variantName}
+        >
           {item.variantName}
         </span>
       )}

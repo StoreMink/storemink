@@ -241,6 +241,7 @@ export async function readMinkBuilderContext(
       chrome: target.chrome,
       publishedChrome: target.publishedChrome,
       liveChrome: target.liveChrome,
+      draftMatchesLive: draftMatchesLive(target),
       page: target.page
         ? {
             ...target.page,
@@ -530,6 +531,7 @@ export async function readMinkBuilderReview(
       .select({
         id: minkActionApprovals.id,
         outcome: minkActionApprovals.status,
+        resultId: minkActionApprovals.resultId,
       })
       .from(minkActionApprovals)
       .where(
@@ -547,6 +549,7 @@ export async function readMinkBuilderReview(
         executed: true as const,
         approvalId: done.id,
         operation: patch.operation,
+        publication: await publicationStatus(db, actor, patch, done.resultId),
       };
     const s = await state(db, actor, patch.operation, patch.pageSlug);
     let plan: BuilderPlan;
@@ -571,6 +574,109 @@ export async function readMinkBuilderReview(
       codeChecks: plan.codeChecks,
     };
   });
+}
+
+function draftMatchesLive(target: BuilderTarget): boolean | null {
+  if (target.chrome)
+    return (
+      !!target.liveChrome &&
+      builderDigest(normalizeChrome(target.chrome)) ===
+        builderDigest(target.liveChrome)
+    );
+  if (target.page)
+    return (
+      target.page.status === "published" &&
+      builderDigest(target.page.sections) ===
+        builderDigest(target.page.publishedSections)
+    );
+  return null;
+}
+
+/** Read-only handoff after a save. Publication still needs a fresh exact proposal. */
+async function publicationStatus(
+  db: Db,
+  actor: MinkActorContext,
+  saved: BuilderPatch,
+  resultId: string | null,
+) {
+  const operation = ["chrome_update", "chrome_revert"].includes(saved.operation)
+    ? "chrome_publish"
+    : ["page_create", "page_update", "page_revert"].includes(saved.operation)
+      ? "page_publish"
+      : null;
+  if (!operation) return null;
+  let pageSlug =
+    typeof saved.changes.slug === "string"
+      ? saved.changes.slug || "home"
+      : saved.pageSlug;
+  // Follow the approved page's identity across later renames. Never mistake
+  // a replacement page using the old slug for the page this card saved.
+  if (operation === "page_publish") {
+    const [page] = resultId
+      ? await db
+          .select({ slug: storePages.slug })
+          .from(storePages)
+          .where(
+            and(
+              eq(storePages.id, resultId),
+              eq(storePages.storeId, actor.storeId),
+            ),
+          )
+          .limit(1)
+      : [];
+    if (!page)
+      return {
+        operation,
+        pageSlug,
+        status: "blocked" as const,
+        blockers: [
+          "This page no longer exists. Choose the page you want to publish in Website Builder.",
+        ],
+      };
+    pageSlug = page.slug || "home";
+  }
+  const s = await state(db, actor, operation, pageSlug);
+  const target = s.target;
+  const result = {
+    operation,
+    pageSlug: target.pageSlug,
+    blockers: [] as string[],
+  };
+  if (draftMatchesLive(target)) return { ...result, status: "live" as const };
+  if (target.chrome) {
+    const known = await destinations(db, actor.storeId);
+    const issues = navigationIssues(
+      target.chrome,
+      known.categories,
+      known.pages,
+    );
+    if (issues.length)
+      return {
+        ...result,
+        status: "blocked" as const,
+        blockers: issues.map(
+          (issue) =>
+            `${issue.path.startsWith("header.") ? "Header" : "Footer"} link “${issue.label}” (${issue.href}): ${issue.message}${issue.suggestedHref ? ` Suggested destination: ${issue.suggestedHref}.` : ""}`,
+        ),
+      };
+  }
+  try {
+    await validatePlan(
+      db,
+      actor,
+      {
+        operation,
+        pageSlug: target.pageSlug,
+        expectedDigest: builderDigest(target),
+        changes: {},
+      },
+      s,
+    );
+    return { ...result, status: "ready" as const };
+  } catch (error) {
+    if (!(error instanceof MinkToolInputError)) throw error;
+    return { ...result, status: "blocked" as const, blockers: [error.message] };
+  }
 }
 
 /** Human-only approval: exact stored proposal, resource lock, fresh permissions, atomic audit/write. */

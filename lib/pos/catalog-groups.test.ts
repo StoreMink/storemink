@@ -32,6 +32,7 @@ const shirt = [
     variantName: "Black / S",
     price: 499,
     stock: 2,
+    image: "/shirt-main.webp",
   }),
   sku({
     productId: "p1",
@@ -39,7 +40,7 @@ const shirt = [
     variantName: "Black / M",
     price: 599,
     stock: 4,
-    image: "/m.webp",
+    image: "/shirt-main.webp",
   }),
   sku({
     productId: "p1",
@@ -47,6 +48,7 @@ const shirt = [
     variantName: "Black / L",
     price: 699,
     stock: 6,
+    image: "/shirt-main.webp",
   }),
 ];
 const milk = sku({ productId: "p2", name: "Toned Milk", price: 32, stock: 44 });
@@ -86,11 +88,13 @@ describe("groupForGrid", () => {
     expect(entry.maxPrice).toBe(699);
   });
 
-  it("borrows the first image any variant has", () => {
-    // The first variant has none; a tile with no picture is harder to spot.
+  it("shows the shared main product photo regardless of option order", () => {
     const [entry] = groupForGrid(shirt);
     if (entry.kind !== "group") throw new Error("expected a group");
-    expect(entry.image).toBe("/m.webp");
+    expect(entry.image).toBe("/shirt-main.webp");
+    const [reordered] = groupForGrid([...shirt].reverse());
+    if (reordered.kind !== "group") throw new Error("expected a group");
+    expect(reordered.image).toBe(entry.image);
   });
 
   describe("stock is a floor, never a false zero", () => {

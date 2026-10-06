@@ -620,9 +620,17 @@ gateway flow after OTP. POS Sales now includes completed website pickups at the
 current shop and its receipt view shows customer, source, completion, line,
 total and tender detail.
 
-**Register catalogue presentation, 2026-10-05.** Sell and the layout editor
-use bounded portrait cards that contain the full product photograph at phone,
-tablet and desktop widths. Prices, stock labels and the Products/Cart phone
+**Register catalogue presentation, 2026-10-06.** Sell and the layout editor
+use compact cards that contain the full main product photograph at phone,
+tablet and desktop widths. Photo height adapts to the product area's available
+height, leaving space for two complete rows on standard till and tablet screens.
+Names retain two lines, option text one line, and price/stock remain readable;
+very short windows still scroll. PS-MD.7 covers row density and resizing.
+All POS catalogue views use the main product photo; a missing main photo shows
+a placeholder. Existing device caches refresh for this image choice, while
+option names, SKU/barcodes, prices and stock keep their variant identity.
+PS-MD.8 covers this photo choice across browse, scan, options and resumed carts.
+Prices, stock labels and the Products/Cart phone
 panes remain visible. Single-variant product Pricing edits update the sellable
 variant; multiple variants retain their own prices. PS-MD.6 covers this display
 and price consistency follow-through.

@@ -6419,6 +6419,40 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261006_0162_mink_publication_handoff_help",
+      "description": "Clarify saved drafts, in-chat publication review and publishing issue corrections",
+      "file": "sql/20261006_0162_mink_publication_handoff_help.sql",
+      "transaction": true,
+      "requires": ["20261005_0161_theme_permanent_deletion"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Mink draft to publication guidance",
+            "sql": "select count(*)::text from public.help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%Review publication%' and body like '%Ask Mink to fix publishing issues%' and body like '%Check publication status%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261006_0163_pos_compact_product_cards_help",
+      "description": "Document compact register product cards, main product photos and two-row visibility",
+      "file": "sql/20261006_0163_pos_compact_product_cards_help.sql",
+      "transaction": true,
+      "requires": ["20261006_0162_mink_publication_handoff_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Compact POS product card guidance",
+            "sql": "select count(*)::text from public.help_articles where slug='customize-register-and-scan-products' and status='published' and body like '%two full rows%' and body like '%option labels stay on one line%' and body like '%POS uses the main product photo%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

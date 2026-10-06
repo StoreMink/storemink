@@ -437,8 +437,21 @@ when the save and shopper request hit different Cloud Run instances. The new
 return. Open background tabs receive changes when returned to, not by a pushed
 live message. Immutable installed theme releases retain their own cache.
 Next image optimization allows HTTPS `images.unsplash.com` in addition to GCS.
-POS sell/layout cards use bounded portrait frames and contain the whole image;
-cart/picker thumbnails also retain the complete photo.
+POS sell/layout cards contain the whole image in compact frames. The product
+area is a CSS size container: photo height budgets for two full rows, reserves
+space for two name lines, an option line, price and stock, and stays between
+64 and 160 px at the default text size. Short windows retain scrolling and
+readable text. The layout editor uses the same frame sizing; cart/picker
+thumbnails also retain the complete photo. The shared `mapCatalogRow` reader
+uses `products.imageUrl` for every SKU, so Sell, search/scan, grouped products,
+layout editing, option pickers and cart lines show the main product photo,
+with a placeholder when it is missing. Variant names, codes, prices and
+location stock stay independent. Catalogue cache keys advance to v5 to avoid
+rehydrating v4's variant photos after deployment; resumed carts rebuild from
+current catalogue choices. Acceptance stories PS-MD.7–MD.8 cover
+two-row visibility and resizing. Migration
+`20261006_0163_pos_compact_product_cards_help` updates the existing register
+guide's photo-card description.
 
 Mink no longer checks a store invitation or drafting enrollment. Legacy access
 helper signatures remain for callers, but return read/drafting availability
@@ -8048,6 +8061,23 @@ return the executed result without reapplying it.
 its draft or live effect with a named approval button. Publishing is a separate
 operation using a fresh whole-draft snapshot. Published metadata edits,
 unpublication/deletion, logo/accent and Website settings explicitly identify live changes.
+Completed draft cards explicitly say the action did not publish. The owner-only
+review rereads current saved content after approval and on reopening, returning
+read-only publication readiness and current header/footer destination blockers
+(with unambiguous active collection suggestions). It reports when the current
+draft matches the live store; the Builder context exposes `draftMatchesLive` so
+Mink does not infer publication from stale chat or page status alone. Page
+status follows the approved page ID across later renames and refuses to treat
+a different page reusing its old address as the saved page. **Review
+publication** sends a fresh whole-draft publication request in the same chat;
+**Ask Mink to fix publishing issues** requests reviewed draft corrections and
+does not remove links or publish legal pages to bypass checks. Neither status
+reads nor these chat requests approve or publish anything. Publication proposals
+retain their two-credit preparation cost and their separate human approval and
+runtime checks. Cards name header/footer actions and navigation destinations in
+plain language and can refresh publication status without reapplying a save.
+Migration `20261006_0162_mink_publication_handoff_help` replaces the existing
+publication paragraph in the merchant task guide to explain these next actions.
 Brand writes merge only the two public appearance fields, preserve contacts and
 identity, and require an owned image URL for a new logo.
 Publication rechecks native completeness, destination validity, chrome contrast
@@ -8062,8 +8092,8 @@ constraints, provisions the tool for existing and future stores, and replaces
 inaccurate Help Centre paragraphs in place. It publishes the task guide
 `manage-your-website-with-mink-ai` under Setting up your store and links to it
 from the general Mink guide without adding another section there. Run prompt/registry versions advance
-to `draft-action-beta-v45`/`read-beta-v24` and
-`draft-beta-v35`/`read-beta-v20`. Local action integration tests opt in with
+to `draft-action-beta-v46`/`read-beta-v25` and
+`draft-beta-v36`/`read-beta-v21`. Local action integration tests opt in with
 `MINK_BUILDER_LOCAL_TEST=1`, use only `127.0.0.1:5544/storemink_local`, apply
 pending contracts inside a rollback-only transaction, and verify real approval,
 publication, permissions, tenancy, replay and atomic audit failure behavior.
@@ -14990,7 +15020,8 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       format for money (`money()`, not `String(Number(x))`) because `sameValues`
       compares them as strings: "5000" against "5000.00" would report a change
       nobody made, and would make every activation read as a terms edit.
-    - `PosCatalogItem` carries `categoryId` (cache SCHEMA_VERSION v4) so the
+    - `PosCatalogItem` carries `categoryId` (introduced in cache v4; v5 also
+      refreshes the main-product photo contract) so the
       till prices a scoped offer identically.
 
 39. **The operator console — one screen per job.** `app/platform/dashboard/(console)`

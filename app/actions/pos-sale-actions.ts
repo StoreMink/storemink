@@ -453,6 +453,7 @@ export interface PosCatalogItem {
   sku: string | null;
   barcode: string | null;
   price: number;
+  /** Main product photo shared by all of this product's sellable SKUs. */
   image: string | null;
   /** Live stock at THIS register's location (null = untracked). */
   stock: number | null;
@@ -492,7 +493,6 @@ const CATALOG_COLS = {
   v_price: productVariants.sellingPrice,
   v_special: productVariants.specialPrice,
   p_image: products.imageUrl,
-  v_image: productVariants.imageUrl,
   p_track: products.trackInventory,
   v_track: productVariants.trackInventory,
   p_backorder: products.allowBackorder,
@@ -523,7 +523,6 @@ interface CatalogRow {
   v_price: number | null;
   v_special: number | null;
   p_image: string | null;
-  v_image: string | null;
   p_track: boolean | null;
   v_track: boolean | null;
   p_backorder: boolean | null;
@@ -548,8 +547,9 @@ function mapCatalogRow(r: CatalogRow): PosCatalogItem {
     sku: (isVariant ? r.v_sku : r.p_sku) ?? null,
     barcode: (isVariant ? r.v_barcode : r.p_barcode) ?? null,
     price: special && special > 0 ? special : base,
-    // A variant with no image of its own falls back to the product's.
-    image: (isVariant ? r.v_image : r.p_image) ?? r.p_image ?? null,
+    // POS identifies the product by its main photo; options still carry their
+    // own name, code, price and location stock. No main photo means a placeholder.
+    image: r.p_image || null,
     stock: r.loc_stock ?? (isVariant ? (r.v_stock ?? 0) : (r.p_stock ?? 0)),
     trackInventory: isVariant ? !!r.v_track : !!r.p_track,
     allowBackorder: isVariant ? !!r.v_backorder : !!r.p_backorder,
