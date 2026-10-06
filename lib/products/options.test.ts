@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_VALUE_IMAGES,
   MAX_VARIANTS,
+  optionImageUrls,
+  photoAxis,
+  photosForVariant,
+  valueImages,
   allCombinations,
   composeVariantName,
   findVariant,
@@ -247,5 +252,66 @@ describe("storefront selection", () => {
   it("names the swatch axis", () => {
     expect(swatchAxis([SIZE, COLOUR])).toBe(1);
     expect(swatchAxis([SIZE])).toBe(-1);
+  });
+});
+
+describe("photos per colour", () => {
+  const raw = [
+    { name: "Size", values: ["S", "M"] },
+    {
+      name: "Colour",
+      values: ["Black", "Tan"],
+      images: {
+        black: ["https://cdn.example/b1.jpg", "/b2.jpg", "/b2.jpg"],
+        Tan: ["javascript:alert(1)", "//evil.example/x.jpg", "http://x.jpg"],
+        Ghost: ["/ghost.jpg"],
+      },
+    },
+  ];
+
+  it("keeps safe photos for real values, once each, and drops the rest", () => {
+    const result = normalizeOptions(raw);
+    expect("options" in result && result.options[1].images).toEqual({
+      Black: ["https://cdn.example/b1.jpg", "/b2.jpg"],
+    });
+  });
+
+  it("finds the colour axis and a variant's photos", () => {
+    const result = normalizeOptions(raw);
+    if (!("options" in result)) throw new Error("expected options");
+    expect(photoAxis(result.options)).toBe(1);
+    expect(valueImages(result.options, ["M", "Black"])).toHaveLength(2);
+    // A variant's own photos win over its colour's.
+    expect(
+      photosForVariant(result.options, {
+        images: ["/own.jpg"],
+        option_values: ["M", "Black"],
+      }),
+    ).toEqual(["/own.jpg"]);
+    expect(
+      photosForVariant(result.options, {
+        images: [""],
+        option_values: ["S", "Tan"],
+      }),
+    ).toEqual([]);
+    expect(optionImageUrls(result.options)).toEqual([
+      "https://cdn.example/b1.jpg",
+      "/b2.jpg",
+    ]);
+  });
+
+  it("treats an option named like a colour as the photo axis", () => {
+    expect(photoAxis([{ name: "Shade", values: ["Ivory", "Sand"] }])).toBe(0);
+    expect(photoAxis([{ name: "Size", values: ["S"] }])).toBe(-1);
+  });
+
+  it("caps photos per colour", () => {
+    const many = Array.from({ length: 14 }, (_, i) => `/p${i}.jpg`);
+    const result = normalizeOptions([
+      { name: "Colour", values: ["Black"], images: { Black: many } },
+    ]);
+    expect("options" in result && result.options[0].images?.Black).toHaveLength(
+      MAX_VALUE_IMAGES,
+    );
   });
 });

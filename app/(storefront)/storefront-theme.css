@@ -1127,6 +1127,31 @@
   color: var(--sm-ink);
   border: 1px solid var(--sm-border);
 }
+/* The colour row under a card's price: H&M's "■ ■ ■ +8". Display only —
+   the whole card is one link — and on every card style. */
+.shop-card-colours {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+}
+.shop-card-colour {
+  width: 11px;
+  height: 11px;
+  border: 1px solid color-mix(in srgb, var(--sm-ink) 28%, transparent);
+  border-radius: 2px;
+}
+.shop-card-colour.is-current {
+  outline: 1px solid var(--sm-ink);
+  outline-offset: 1.5px;
+}
+.shop-card-colour-more {
+  margin-left: 2px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--sm-ink-soft);
+}
+
 /* Non-classic cards already state the markdown in their "% off" price pill,
    so the photo flag would say it twice. */
 .storefront-root:not(.sm-card-classic) .shop-card-flag--save {
@@ -1498,6 +1523,39 @@
   height: 1.5px;
   background: var(--sm-ink-soft);
   transform: rotate(-45deg);
+}
+
+/* A colour with its own photos: a small portrait tile of that colourway. */
+.sm-opt-value.is-photo {
+  width: 60px;
+  min-width: 60px;
+  height: 76px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--sm-surface);
+}
+.sm-opt-value.is-photo.is-active {
+  background: var(--sm-surface);
+  box-shadow: inset 0 0 0 1px var(--sm-ink);
+}
+.sm-opt-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sm-opt-value.is-photo.is-unavailable {
+  opacity: 0.5;
+}
+.sm-opt-value.is-photo.is-unavailable::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -6px;
+  right: -6px;
+  height: 1.5px;
+  background: var(--sm-ink-soft);
+  transform: rotate(-52deg);
 }
 
 /* Quick-add chooser (components/quick-add-dialog.tsx). A bottom sheet on a

@@ -7176,6 +7176,37 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         The merchant sets options in the product editor, as the Help guide
         (0167) says. Merchant-configurable filters, vendor/type/tags and
         server-side filtering are Phases 2–3, not built.
+        **★★ Colourways: photos per colour, one card per colour (2026-10-06).**
+        The H&M model stays ONE product with a Colour × Size matrix (one place
+        to edit, one inventory). Four parts:
+        (1) `ProductOption.images` holds photos per colour value, uploaded once
+        in the options editor under "Photos for each colour" instead of once
+        per variant row. `photoAxis` picks the option that carries them: the
+        first with photos, else the swatch option, else one named like a
+        colour. `photosForVariant` gives a variant's photos: its own (an
+        exception set on that variant), else its colour's.
+        ★★ They are ordinary product images to the save path:
+        `productFormImageUrls` and `fetchProductImageUrls` include
+        `optionImageUrls`, so ownership is checked and the clean-up sweep
+        counts them as still in use. Without that, a save would delete the
+        product's own colour photos from storage (pinned by a mutation-checked
+        test).
+        (2) The product page and quick add show the selected colour's photos,
+        and the picker draws a colour with photos as a photo tile
+        (`.sm-opt-value.is-photo`).
+        (3) Every card shows a colour row (up to 4 squares and "+N"). It is
+        display-only, because the card is one link.
+        (4) `StorefrontAppearance.productCards` (`product` | `colour`, Website
+        Builder → Brand → Storefront layout) makes `ShopClient` expand each
+        product through `lib/storefront/colour-cards.ts`. Each colour becomes
+        a card restricted to that colour's variants, so its price, sold-out
+        flag, filters and counts follow those variants alone. Its link is
+        `?variant=<the colour's first in-stock variant>`.
+        ★ A product splits only when at least one colour has its own photo,
+        or every card would show the same picture.
+        ⚠ Homepage carousels and related products stay one card per product.
+        The setting reaches the Builder preview only after the page reloads.
+        `getPublishedProducts` now also selects variant `id` and `images`.
         `storefront: "grocery"` is the deepest variant: it swaps the shared
         product cards, the product-detail page and the cart for a distinct
         premium grocery layout, so a store on such a theme looks NOTHING like the

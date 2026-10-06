@@ -4,6 +4,12 @@ import { ImageIcon } from "lucide-react";
 import { effectivePricing, formatPrice, type PricedLike } from "@/lib/pricing";
 import { productIsSoldOut, productLowStockLeft } from "@/lib/inventory/status";
 import { hoverImageUrl } from "@/lib/products/gallery";
+import {
+  guessSwatch,
+  normalizeOptions,
+  photoAxis,
+  swatchAxis,
+} from "@/lib/products/options";
 import { QuickAddButton } from "./quick-add-button";
 
 // Card background falls back to this when a product has no card_color set.
@@ -26,6 +32,8 @@ export type ShopCardProduct = Omit<PricedLike, "variants"> & {
   stock: number;
   low_stock_threshold: number | null;
   allow_backorder: boolean;
+  /** Option axes (jsonb) — the colour row under the price. */
+  options?: unknown;
   variants?: {
     base_price: number;
     selling_price: number;
@@ -38,6 +46,28 @@ export type ShopCardProduct = Omit<PricedLike, "variants"> & {
   }[];
 };
 
+/** Colours shown before "+N". */
+const CARD_SWATCHES = 4;
+
+/** The colour row for a card: up to CARD_SWATCHES colours and a "+N". */
+function colourRow(options: unknown) {
+  const parsed = normalizeOptions(options);
+  const list = "options" in parsed ? parsed.options : [];
+  const photo = photoAxis(list);
+  const axis = photo >= 0 ? photo : swatchAxis(list);
+  if (axis < 0 || list[axis].values.length < 2) return null;
+  const { values, swatches } = list[axis];
+  return {
+    name: list[axis].name,
+    shown: values.slice(0, CARD_SWATCHES).map((value) => ({
+      value,
+      hex: swatches?.[value] ?? guessSwatch(value),
+    })),
+    more: Math.max(0, values.length - CARD_SWATCHES),
+    total: values.length,
+  };
+}
+
 // Single source of truth for the storefront product card — used by the shop
 // grid and the homepage "featured products" section so styling stays in sync.
 // `storeLowStockThreshold` is the store-wide default (inventory.lowStockThreshold)
@@ -47,6 +77,8 @@ export function ShopCard({
   storeLowStockThreshold = 0,
   headingLevel = 3,
   offerBadge,
+  href,
+  colour,
 }: {
   product: ShopCardProduct;
   storeLowStockThreshold?: number;
@@ -63,6 +95,10 @@ export function ShopCard({
    * sit below a section h2. Keep the shared card's heading hierarchy valid in
    * both contexts. */
   headingLevel?: 2 | 3;
+  /** A per-colour card's link (`?variant=…`); the product page otherwise. */
+  href?: string | null;
+  /** The colour a per-colour card shows. */
+  colour?: string | null;
 }) {
   const pr = effectivePricing(p);
   const NameHeading = headingLevel === 2 ? "h2" : "h3";
@@ -81,10 +117,11 @@ export function ShopCard({
     ? null
     : productLowStockLeft(variants, p, storeLowStockThreshold);
   const isLowStock = lowStockAmount !== null;
+  const colours = colourRow(p.options);
 
   return (
     <Link
-      href={`/shop/${p.slug}`}
+      href={href ?? `/shop/${p.slug}`}
       className="shop-card"
       style={
         { "--card-bg": p.card_color || DEFAULT_CARD_BG } as React.CSSProperties
@@ -95,7 +132,7 @@ export function ShopCard({
           <>
             <Image
               src={p.image_url}
-              alt={p.name}
+              alt={colour ? `${p.name}, ${colour}` : p.name}
               fill
               sizes="(max-width: 768px) 50vw, 280px"
               className="shop-card-img-el"
@@ -145,7 +182,10 @@ export function ShopCard({
       <div className="shop-card-body">
         <div className="shop-card-head">
           {p.category && <span className="shop-card-cat">{p.category}</span>}
-          <NameHeading className="shop-card-name">{p.name}</NameHeading>
+          <NameHeading className="shop-card-name">
+            {p.name}
+            {colour && <span className="sr-only">, {colour}</span>}
+          </NameHeading>
         </div>
         <div className="shop-card-price">
           {/* "from", then the MRP struck through, then what they pay — the
@@ -181,6 +221,29 @@ export function ShopCard({
           {/* Hidden unless the theme opts into quick-add (.sm-card-quickadd). */}
           <QuickAddButton product={p} />
         </div>
+        {colours && (
+          <div className="shop-card-colours">
+            <span className="sr-only">
+              Available in {colours.total} {colours.name.toLowerCase()}s
+            </span>
+            {colours.shown.map((c) => (
+              <span
+                key={c.value}
+                className={`shop-card-colour${
+                  colour === c.value ? " is-current" : ""
+                }`}
+                style={{ background: c.hex }}
+                title={c.value}
+                aria-hidden
+              />
+            ))}
+            {colours.more > 0 && (
+              <span className="shop-card-colour-more" aria-hidden>
+                +{colours.more}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </Link>
   );

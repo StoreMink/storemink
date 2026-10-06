@@ -133,6 +133,7 @@ describe("resolveStorefrontAppearance", () => {
       card: "classic",
       cardQuickAdd: true,
       cardPhoto: "portrait",
+      productCards: "product",
       cardHoverImage: false,
       stickyAddToCart: false,
       gridColumnsMobile: 1,
@@ -239,6 +240,7 @@ describe("resolveStorefrontAppearance", () => {
       card: "overlay",
       cardQuickAdd: false,
       cardPhoto: "portrait",
+      productCards: "product",
       cardHoverImage: false,
       stickyAddToCart: false,
       gridColumnsMobile: 1,
@@ -316,5 +318,19 @@ describe("card photo shape", () => {
         { ...DEFAULT_CHROME.appearance, cardPhoto: "square" },
       ).cardPhoto,
     ).toBe("square");
+  });
+});
+
+describe("product cards per colour", () => {
+  it("defaults to one card per product and keeps an explicit choice", () => {
+    expect(resolveStorefrontAppearance({}).productCards).toBe("product");
+    expect(
+      sanitizeChromeForSave({ appearance: { productCards: "colour" } })
+        .appearance.productCards,
+    ).toBe("colour");
+    expect(
+      sanitizeChromeForSave({ appearance: { productCards: "size" } }).appearance
+        .productCards,
+    ).toBe("product");
   });
 });

@@ -63,6 +63,8 @@ export interface ProductCardRow {
   /** Resolved category name (flattened from the joined categories row). */
   category: string | null;
   variants: {
+    /** For a per-colour card's link (`/shop/<slug>?variant=<id>`). */
+    id: string;
     base_price: number;
     selling_price: number;
     special_price: number | null;
@@ -73,6 +75,8 @@ export interface ProductCardRow {
     allow_backorder: boolean;
     /** Positional values for `options`, e.g. ["M", "Black"]. */
     option_values: string[];
+    /** The variant's own photos (an older per-variant upload). */
+    images: string[];
   }[];
 }
 
@@ -151,6 +155,7 @@ export const getPublishedProducts = cache(
         // grouped in JS (replaces the PostgREST embedded `variants:(...)`).
         const variantRows = await db
           .select({
+            id: productVariants.id,
             product_id: productVariants.productId,
             base_price: productVariants.basePrice,
             selling_price: productVariants.sellingPrice,
@@ -161,6 +166,7 @@ export const getPublishedProducts = cache(
             low_stock_threshold: productVariants.lowStockThreshold,
             allow_backorder: productVariants.allowBackorder,
             option_values: productVariants.optionValues,
+            images: productVariants.images,
           })
           .from(productVariants)
           .where(

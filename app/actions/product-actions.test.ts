@@ -619,6 +619,12 @@ describe("product image ownership", () => {
   const legacy = "https://storage.googleapis.com/bkt/product-images/old.webp";
 
   beforeEach(() => {
+    // Its own database mock: these tests must not borrow one from whichever
+    // group happened to run before them (the shuffled run caught exactly
+    // that).
+    dbHolder.current = makeDbMock({
+      returning: [{ id: "p1", slug: "almonds" }],
+    });
     vi.mocked(getManagerIdentity).mockResolvedValue({
       uid: "user-1",
       email: "admin@example.com",
@@ -695,6 +701,49 @@ describe("product image ownership", () => {
       image_url: legacy,
     });
     expect(result.error).toBeUndefined();
+  });
+
+  // Colour photos live on the options, and are swept like every other
+  // product image — so they get the same ownership rule.
+  it("createProduct refuses a foreign photo on a colour", async () => {
+    const result = await createProduct({
+      ...validForm,
+      image_url: own,
+      options: [
+        { name: "Colour", values: ["Black"], images: { Black: [foreign] } },
+      ],
+    });
+    expect(result.error).toMatch(/not one of this store's own images/i);
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+  });
+
+  // ★ The sweep deletes what a product NO LONGER references. If colour photos
+  // were not counted, deleting a product would leave them behind — and, worse,
+  // a save would treat them as unreferenced and delete them.
+  it("counts colour photos as the product's images when deleting", async () => {
+    const colourPhoto = `https://storage.googleapis.com/bkt/stores/${STORE_ID}/uploads/black.webp`;
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          {
+            image_url: own,
+            images: [],
+            options: [
+              {
+                name: "Colour",
+                values: ["Black", "Tan"],
+                images: { Black: [colourPhoto] },
+              },
+            ],
+          },
+        ],
+        [],
+      ],
+    });
+    await deleteProduct("p1");
+    expect(vi.mocked(deleteStorageUrls).mock.calls[0][0]).toContain(
+      colourPhoto,
+    );
   });
 
   it("scopes the delete sweep to this store", async () => {

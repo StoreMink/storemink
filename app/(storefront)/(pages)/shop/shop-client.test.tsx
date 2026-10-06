@@ -416,3 +416,63 @@ describe("ShopClient option and category filters", () => {
     expect(within(sidebar).queryByText("Category")).toBeNull();
   });
 });
+
+describe("ShopClient one card per colour", () => {
+  const variant = (id: string, colour: string, stock = 3) => ({
+    id,
+    base_price: 999,
+    selling_price: 999,
+    special_price: null,
+    track_inventory: true,
+    stock,
+    low_stock_threshold: null,
+    allow_backorder: false,
+    option_values: [colour],
+  });
+  const sweatshirt = product("sw", "Loose Fit Sweatshirt", 999, {
+    image_url: "/blue.jpg",
+    options: [
+      {
+        name: "Colour",
+        values: ["Light blue", "Brown"],
+        images: { "Light blue": ["/blue.jpg"], Brown: ["/brown.jpg"] },
+      },
+    ],
+    variants: [variant("v1", "Light blue"), variant("v2", "Brown")],
+  });
+
+  it("shows each colour as its own card when the store asks", () => {
+    render(
+      <ShopClient
+        products={[sweatshirt]}
+        categories={categories}
+        initialShop={DEFAULT_SHOP_QUERY}
+        productCards="colour"
+      />,
+    );
+    expect(names()).toEqual(["Loose Fit Sweatshirt", "Loose Fit Sweatshirt"]);
+  });
+
+  it("filters colour cards by colour", () => {
+    render(
+      <ShopClient
+        products={[sweatshirt]}
+        categories={categories}
+        initialShop={{ ...DEFAULT_SHOP_QUERY, options: { color: ["brown"] } }}
+        productCards="colour"
+      />,
+    );
+    expect(names()).toEqual(["Loose Fit Sweatshirt"]);
+  });
+
+  it("keeps one card per product by default", () => {
+    render(
+      <ShopClient
+        products={[sweatshirt]}
+        categories={categories}
+        initialShop={DEFAULT_SHOP_QUERY}
+      />,
+    );
+    expect(names()).toEqual(["Loose Fit Sweatshirt"]);
+  });
+});
