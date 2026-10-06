@@ -9,12 +9,7 @@ import {
   ProductEditorForm,
   type ProductEditorFormHandle,
 } from "./product-editor-form";
-import type {
-  Product,
-  CategoryOption,
-  CardColorOption,
-  TaxClassOption,
-} from "./page";
+import type { Product, CategoryOption, TaxClassOption } from "./page";
 
 // Full-page product editor (Shopify-style): a STICKY header holding the back
 // arrow + title + status on the left and the Save/Cancel actions on the right,
@@ -25,7 +20,6 @@ import type {
 export function ProductEditorPanel({
   product,
   categories,
-  colors,
   taxClasses,
   defaultTrackInventory = false,
   canUseGrossMargin = false,
@@ -33,7 +27,6 @@ export function ProductEditorPanel({
 }: {
   product: Product | null;
   categories: CategoryOption[];
-  colors: CardColorOption[];
   taxClasses: TaxClassOption[];
   defaultTrackInventory?: boolean;
   canUseGrossMargin?: boolean;
@@ -131,7 +124,6 @@ export function ProductEditorPanel({
           onPendingChange={setIsPending}
           product={product}
           categories={categories}
-          colors={colors}
           taxClasses={taxClasses}
           defaultTrackInventory={defaultTrackInventory}
           canUseGrossMargin={canUseGrossMargin}

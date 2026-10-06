@@ -121,12 +121,14 @@ export const SECTIONS: DashboardSection[] = [
     parent: "products",
   },
   {
-    // Card colours — a styling field on a product. It was a top-level
-    // destination sitting between Categories and Users.
+    // Card colours — RETIRED as a destination (/dashboard/colors redirects to
+    // Products): every card style paints its own background, so the shade
+    // had no visible effect. The key stays so saved roles keep their grants.
     key: "colors",
     label: "Colours",
     href: "/dashboard/colors",
     icon: "colors",
+    hiddenInNav: true,
     group: "Workspace",
     actions: ["view", "manage"],
     parent: "products",

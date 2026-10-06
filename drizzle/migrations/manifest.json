@@ -6541,6 +6541,28 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261006_0169_retire_card_colours_help",
+      "description": "Remove card-colour steps from the product Help guides",
+      "file": "sql/20261006_0169_retire_card_colours_help.sql",
+      "transaction": true,
+      "requires": ["20261006_0168_colour_photos_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "No card-colour steps remain",
+            "sql": "select count(*)::text from public.help_articles where status='published' and (body like '%Products → Colours%' or body like '%card colour%' or body like '%product-card colour%')",
+            "equals": "0"
+          },
+          {
+            "name": "Categories guide retitled",
+            "sql": "select count(*)::text from public.help_articles where slug='organize-products-with-categories-and-card-colours' and status='published' and title='Organise products with categories'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }
