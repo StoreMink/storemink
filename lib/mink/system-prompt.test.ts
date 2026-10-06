@@ -152,6 +152,12 @@ describe("Mink system prompt document", () => {
     expect(template).toContain("card’s named approval button");
     expect(template).toContain("propose_website_builder_change");
     expect(template).toContain(
+      "use draftMatchesLive rather than an old chat answer",
+    );
+    expect(template).toContain(
+      "Do not repeat fixed links from liveNavigationIssues",
+    );
+    expect(template).toContain(
       "Never claim that you clicked a button, saved the Builder draft, ran browser checks, published or rolled back the storefront",
     );
   });

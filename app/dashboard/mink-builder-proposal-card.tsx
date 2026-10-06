@@ -37,7 +37,56 @@ const labels: Record<Proposal["operation"], string> = {
   settings_update: "Apply Website settings",
   brand_update: "Apply logo and accent colour",
 };
-export function MinkBuilderProposalCard({ proposal }: { proposal: Proposal }) {
+const titles: Record<Proposal["operation"], string> = {
+  chrome_update: "Header and footer changes",
+  chrome_publish: "Publish header and footer",
+  chrome_revert: "Restore header and footer draft",
+  page_create: "Create a draft page",
+  page_update: "Page changes",
+  page_delete: "Delete page",
+  page_publish: "Publish page",
+  page_unpublish: "Unpublish page",
+  page_revert: "Restore page draft",
+  settings_update: "Website settings",
+  brand_update: "Logo and accent colour",
+};
+const completed: Record<Proposal["operation"], string> = {
+  chrome_update:
+    "Header and footer saved to draft. This action did not publish them.",
+  chrome_publish: "Header and footer published to your live store.",
+  chrome_revert:
+    "Header and footer draft restored. This action did not publish it.",
+  page_create: "Draft page created. This action did not publish it.",
+  page_update:
+    "Page changes saved. Page sections need publication; details on an already published page take effect immediately.",
+  page_delete: "Page deleted.",
+  page_publish: "Page published to your live store.",
+  page_unpublish: "Page unpublished and removed from your live store.",
+  page_revert: "Page draft restored. This action did not publish it.",
+  settings_update: "Website settings applied to your store.",
+  brand_update: "Logo and accent colour applied to your live store.",
+};
+function fieldLabel(field: string) {
+  return field
+    .replace(/links\.(\d+)/g, (_, index) => `Link ${Number(index) + 1}`)
+    .replace(/groups\.(\d+)/g, (_, index) => `Group ${Number(index) + 1}`)
+    .replace(/\.href$/, ".Destination")
+    .split(".")
+    .map((part) =>
+      part.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " "),
+    )
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" · ");
+}
+export function MinkBuilderProposalCard({
+  proposal,
+  onPrompt,
+  promptDisabled = false,
+}: {
+  proposal: Proposal;
+  onPrompt?: (prompt: string) => void;
+  promptDisabled?: boolean;
+}) {
   const [review, setReview] = useState<Review | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -47,6 +96,19 @@ export function MinkBuilderProposalCard({ proposal }: { proposal: Proposal }) {
     Record<string, MinkStorefrontBrowserValidation>
   >({});
   const idempotency = useRef<string | null>(null);
+  async function refreshReview() {
+    setBusy(true);
+    setError(null);
+    try {
+      const value = await requestReview(proposal.draftId);
+      setReview(value);
+      setDone(value.executed);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   useEffect(() => {
     const controller = new AbortController();
     void requestReview(proposal.draftId, controller.signal)
@@ -80,14 +142,36 @@ export function MinkBuilderProposalCard({ proposal }: { proposal: Proposal }) {
       if (!response.ok || !data.result)
         throw Error(data.error ?? "Could not apply this Builder change.");
       setDone(true);
+      // Re-read the saved draft: pre-save diagnostics and digests are stale.
+      try {
+        setReview(await requestReview(proposal.draftId));
+      } catch {
+        setError(
+          "Your change was saved, but publication status could not be checked. Check it again below.",
+        );
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
-  const active = review && !review.executed ? review : null;
+  const active = review && !review.executed && !done ? review : null;
   const operation = review?.operation ?? proposal.operation;
+  const publication = review?.executed ? review.publication : null;
+  const draftOperation = [
+    "chrome_update",
+    "chrome_revert",
+    "page_create",
+    "page_update",
+    "page_revert",
+  ].includes(operation);
+  const targetLabel =
+    publication?.operation === "chrome_publish"
+      ? "header and footer"
+      : (publication?.pageSlug ?? proposal.pageSlug) === "home"
+        ? "homepage"
+        : `page “${publication?.pageSlug ?? proposal.pageSlug}”`;
   const ready =
     active &&
     active.codeChecks.every(
@@ -100,7 +184,7 @@ export function MinkBuilderProposalCard({ proposal }: { proposal: Proposal }) {
   return (
     <section className="min-w-0 overflow-hidden rounded-2xl border border-violet-200 bg-white p-4 text-sm shadow-sm">
       <h3 className="font-semibold text-gray-900">
-        Website Builder · {operation.replaceAll("_", " ")}
+        Website Builder · {titles[operation]}
       </h3>
       <p className="mt-1 text-gray-600">
         {active?.explanation ?? proposal.explanation}
@@ -109,11 +193,17 @@ export function MinkBuilderProposalCard({ proposal }: { proposal: Proposal }) {
         {proposal.expectedCredits} AI credits · {proposal.chargedCredits}{" "}
         charged for preparing this proposal
       </p>
-      <p className="mt-2 font-medium text-gray-700">
-        {(active?.live ?? proposal.live)
-          ? "Approval changes the live storefront. Review every change below."
-          : "Approval saves a private draft. Publish is a separate step."}
-      </p>
+      {!done && (
+        <p className="mt-2 font-medium text-gray-700">
+          {(active?.live ?? proposal.live)
+            ? operation === "page_update"
+              ? "Approval changes live page details. Page sections stay in draft until published."
+              : "Approval changes the live storefront. Review every change below."
+            : "Step 1: save a private draft. Step 2: review publication to make it live."}
+          {(operation === "chrome_publish" || operation === "page_publish") &&
+            " This publishes the whole current draft, including other unpublished edits."}
+        </p>
+      )}
       {operation === "page_delete" && (
         <p className="mt-2 text-red-700">
           This removes the page. Existing links to it may stop working.
@@ -127,7 +217,9 @@ export function MinkBuilderProposalCard({ proposal }: { proposal: Proposal }) {
         <div className="mt-2 max-h-80 space-y-2 overflow-y-auto">
           {changes.map((change, index) => (
             <div key={index} className="rounded-lg bg-gray-50 p-2">
-              <p className="break-all font-medium">{change.field}</p>
+              <p className="break-all font-medium">
+                {fieldLabel(change.field)}
+              </p>
               <pre className="mt-1 whitespace-pre-wrap break-all text-xs text-gray-500">
                 Before: {change.before}
               </pre>
@@ -170,7 +262,7 @@ export function MinkBuilderProposalCard({ proposal }: { proposal: Proposal }) {
       )}
       {done ? (
         <p role="status" className="mt-3 font-medium text-green-700">
-          Approved change completed.
+          {completed[operation]}
         </p>
       ) : (
         <button
@@ -180,6 +272,75 @@ export function MinkBuilderProposalCard({ proposal }: { proposal: Proposal }) {
           onClick={approve}
         >
           {busy ? "Applying…" : labels[operation]}
+        </button>
+      )}
+      {done && draftOperation && publication && (
+        <div className="mt-3 rounded-lg bg-gray-50 p-3">
+          {publication.status === "live" ? (
+            <p className="font-medium text-green-700">
+              The current {targetLabel} draft matches your live store.
+            </p>
+          ) : (
+            <>
+              <p className="font-medium text-gray-900">
+                Next: publish your {targetLabel}. The current draft is not live.
+              </p>
+              {publication.status === "blocked" ? (
+                <>
+                  <p className="mt-2 text-amber-800">
+                    Resolve these issues before publishing:
+                  </p>
+                  <ul className="mt-1 list-disc space-y-1 pl-5 text-gray-700">
+                    {publication.blockers.map((blocker, index) => (
+                      <li key={index}>{blocker}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <p className="mt-1 text-gray-600">
+                  Review the whole saved draft, including other unpublished
+                  edits, then approve its publication in chat. Preparing a
+                  publication proposal costs 2 AI credits.
+                </p>
+              )}
+              {onPrompt ? (
+                <button
+                  type="button"
+                  className="mt-3 rounded-lg bg-violet-600 px-4 py-2 font-semibold text-white disabled:opacity-50"
+                  disabled={busy || promptDisabled}
+                  onClick={() =>
+                    onPrompt(
+                      publication.status === "blocked"
+                        ? `Help me resolve publishing issues in my ${targetLabel} draft. Read the current Website Builder context. Prepare exact corrections for unambiguous destinations and ask me to choose when a destination is missing or unclear. Do not remove links or publish pages just to bypass checks. Keep corrections in draft for review.`
+                        : `Prepare a publication review for my saved ${targetLabel} draft. Read the current publication context and review the whole draft, including other unpublished edits. If publication is blocked, explain the current issues and the next action. I will approve publication in the review card.`,
+                    )
+                  }
+                >
+                  {publication.status === "blocked"
+                    ? "Ask Mink to fix publishing issues"
+                    : "Review publication"}
+                </button>
+              ) : (
+                <p className="mt-2 text-gray-600">
+                  Ask Mink to{" "}
+                  {publication.status === "blocked"
+                    ? "help resolve these publishing issues"
+                    : `prepare publication of your ${targetLabel}`}{" "}
+                  in this conversation.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {done && draftOperation && (
+        <button
+          type="button"
+          className="mt-2 underline"
+          disabled={busy}
+          onClick={refreshReview}
+        >
+          {busy ? "Checking publication status…" : "Check publication status"}
         </button>
       )}
       {!review && error && (

@@ -79,7 +79,20 @@ describe.skipIf(!enabled)("Website Builder local transactional actions", () => {
     const manifest = JSON.parse(
       readFileSync("drizzle/migrations/manifest.json", "utf8"),
     );
-    for (const migration of manifest.migrations.slice(-6)) {
+    const applied = new Set(
+      (await client.query("select id from public.schema_migrations")).rows.map(
+        (row) => row.id,
+      ),
+    );
+    // Do not replay forward-only CREATEs already present in a refreshed local DB.
+    // Use a stable prerequisite boundary, not a moving last-N manifest window.
+    const prerequisite = manifest.migrations.findIndex(
+      (migration: { id: string }) =>
+        migration.id === "20261005_0157_catalog_freshness_mink_access",
+    );
+    expect(prerequisite).toBeGreaterThanOrEqual(0);
+    for (const migration of manifest.migrations.slice(prerequisite)) {
+      if (applied.has(migration.id)) continue;
       await client.query(
         readFileSync(`drizzle/migrations/${migration.file}`, "utf8"),
       );
@@ -324,6 +337,14 @@ describe.skipIf(!enabled)("Website Builder local transactional actions", () => {
     const review = await readMinkBuilderReview(actor, id);
     expect(review).toMatchObject({ executed: false, live: false });
     await approve(id);
+    expect(await readMinkBuilderReview(actor, id)).toMatchObject({
+      executed: true,
+      publication: {
+        operation: "chrome_publish",
+        status: "ready",
+        blockers: [],
+      },
+    });
     expect((await chrome()).draft.header.links[0].href).toBe(
       "/collections/men",
     );
@@ -341,7 +362,40 @@ describe.skipIf(!enabled)("Website Builder local transactional actions", () => {
     expect(await auditCount()).toBe(2);
     expect(await readMinkBuilderReview(actor, id)).toMatchObject({
       executed: true,
+      publication: { status: "live" },
     });
+  });
+  it("reads current draft publication blockers after a save without writing or confusing fixed live links with draft issues", async () => {
+    await client.query(
+      'update store_chrome set draft=jsonb_set(draft,\'{footer,legal}\', \'[{"label":"Privacy Policy","href":"/privacy-policy"}]\') where store_id=$1',
+      [actor.storeId],
+    );
+    const id = await proposal("chrome_update", {
+      fields: [{ path: "header.links.0.href", value: "/collections/men" }],
+    });
+    await approve(id);
+    const saved = await chrome();
+    const review = await readMinkBuilderReview(actor, id);
+    expect(review).toMatchObject({
+      executed: true,
+      publication: { status: "blocked" },
+    });
+    if (!review.executed) throw Error("Expected completed draft save");
+    expect(review.publication?.blockers).toEqual([
+      expect.stringContaining(
+        "Footer link “Privacy Policy” (/privacy-policy): The linked page is missing or unpublished.",
+      ),
+    ]);
+    const current = await readMinkBuilderContext(actor, "chrome_publish");
+    expect(current.draftMatchesLive).toBe(false);
+    expect(current.navigationIssues).toHaveLength(1);
+    expect(
+      current.liveNavigationIssues.some((issue) =>
+        issue.href.includes("mens-shoes"),
+      ),
+    ).toBe(true);
+    expect(await chrome()).toEqual(saved);
+    expect(await auditCount()).toBe(1);
   });
   it("refuses stale state, another tenant/owner and lost Manage permission", async () => {
     const id = await proposal("chrome_update", {
@@ -473,6 +527,76 @@ describe.skipIf(!enabled)("Website Builder local transactional actions", () => {
     expect((await page()).sections).toEqual((await page()).publishedSections);
     await approve(await proposal("page_delete", {}, slug));
     expect(await page()).toBeUndefined();
+  });
+  it("checks the renamed page's current content without treating live metadata edits as section publication", async () => {
+    const created = await proposal(
+      "page_create",
+      {
+        title: "Sizing",
+        sections: [
+          {
+            id: "size-copy",
+            type: "rich_text",
+            enabled: true,
+            config: { html: "<p>Size guidance</p>" },
+          },
+        ],
+      },
+      "sizing",
+    );
+    await approve(created);
+    expect(await readMinkBuilderReview(actor, created)).toMatchObject({
+      publication: {
+        status: "ready",
+        pageSlug: "sizing",
+        operation: "page_publish",
+      },
+    });
+    await approve(await proposal("page_publish", {}, "sizing"));
+    const changed = await proposal(
+      "page_update",
+      {
+        slug: "size-guide",
+        sections: [
+          {
+            id: "size-copy",
+            type: "rich_text",
+            enabled: true,
+            config: { html: "<p>Updated guidance</p>" },
+          },
+        ],
+      },
+      "sizing",
+    );
+    await approve(changed);
+    expect(await readMinkBuilderReview(actor, changed)).toMatchObject({
+      publication: { status: "ready", pageSlug: "size-guide" },
+    });
+    expect(
+      (await readMinkBuilderContext(actor, "page_publish", "size-guide"))
+        .draftMatchesLive,
+    ).toBe(false);
+    await approve(await proposal("page_publish", {}, "size-guide"));
+    expect(await readMinkBuilderReview(actor, changed)).toMatchObject({
+      publication: { status: "live", pageSlug: "size-guide" },
+    });
+    expect(await readMinkBuilderReview(actor, created)).toMatchObject({
+      publication: { status: "live", pageSlug: "size-guide" },
+    });
+    expect(
+      (await readMinkBuilderContext(actor, "page_publish", "size-guide"))
+        .draftMatchesLive,
+    ).toBe(true);
+    await approve(await proposal("page_delete", {}, "size-guide"));
+    await approve(
+      await proposal("page_create", { title: "Different page" }, "sizing"),
+    );
+    expect(await readMinkBuilderReview(actor, created)).toMatchObject({
+      publication: {
+        status: "blocked",
+        blockers: [expect.stringContaining("no longer exists")],
+      },
+    });
   });
   it("rolls back the business write and approval if the audit append fails", async () => {
     const id = await proposal("chrome_update", {
