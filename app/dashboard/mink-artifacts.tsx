@@ -36,6 +36,8 @@ export function MinkArtifacts({
             <MinkBuilderProposalCard
               key={artifact.draftId}
               proposal={artifact}
+              onPrompt={onPrompt}
+              promptDisabled={promptDisabled}
             />
           );
         if (artifact.type === "product_import")

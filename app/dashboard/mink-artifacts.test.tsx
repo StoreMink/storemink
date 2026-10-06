@@ -9,6 +9,58 @@ afterEach(() => {
 });
 
 describe("Mink storefront artifacts", () => {
+  it("connects a saved Builder card's publication action to the same chat", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          review: {
+            executed: true,
+            operation: "chrome_update",
+            publication: {
+              operation: "chrome_publish",
+              pageSlug: "home",
+              status: "ready",
+              blockers: [],
+            },
+          },
+        }),
+      })),
+    );
+    const artifact: MinkArtifact = {
+      type: "builder_proposal",
+      draftId: "11111111-1111-4111-8111-111111111111",
+      title: "Correct navigation",
+      operation: "chrome_update",
+      pageSlug: "home",
+      explanation: "Link Men to the active collection.",
+      changes: [
+        {
+          field: "header.links.0.href",
+          before: '"/shop?category=mens-shoes"',
+          after: '"/collections/men"',
+        },
+      ],
+      live: false,
+      expectedCredits: 2,
+      chargedCredits: 2,
+      creditSource: "plan",
+    };
+    const onPrompt = vi.fn();
+    render(<MinkArtifacts artifacts={[artifact]} onPrompt={onPrompt} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Review publication" }),
+    );
+    expect(onPrompt).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Prepare a publication review for my saved header and footer draft",
+      ),
+    );
+    expect(
+      screen.getByText("Header · Link 1 · Destination"),
+    ).toBeInTheDocument();
+  });
   it("renders bounded builder context without inventory-specific truncation copy", () => {
     const artifact: MinkArtifact = {
       type: "records",
