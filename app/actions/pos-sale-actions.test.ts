@@ -120,6 +120,7 @@ import {
 import { sendPosReceipt } from "@/lib/email/pos-receipt";
 import {
   getCatalogSnapshot,
+  lookupProducts,
   placePosSale as placePosSaleAction,
   searchPosCustomers,
   createPosCustomer,
@@ -908,7 +909,7 @@ describe("getCatalogSnapshot", () => {
     expect(r.watermark).toBeTruthy();
   });
 
-  it("prefers a variant's special price and falls back to the product image", () => {
+  it("prefers a variant's special price while displaying the main product image", () => {
     dbHolder.current = makeDbMock({
       selectQueue: page(
         ["p1"],
@@ -918,7 +919,7 @@ describe("getCatalogSnapshot", () => {
             variant_name: "Large",
             v_price: 150,
             v_special: 120,
-            v_image: null,
+            v_image: "https://img/variant.webp",
             v_track: true,
             loc_stock: 2,
           }),
@@ -933,6 +934,94 @@ describe("getCatalogSnapshot", () => {
         stock: 2,
       });
     });
+  });
+
+  it.each(["snapshot", "lookup"])(
+    "uses the main photo in %s, retaining exact variant identity and stock",
+    async (source) => {
+      const rows = [
+        row({
+          variant_id: "v1",
+          variant_name: "Black / M",
+          v_sku: "SHIRT-M",
+          v_barcode: "BARCODE-M",
+          v_price: 150,
+          v_special: 120,
+          v_track: true,
+          loc_stock: 2,
+          p_image: "https://img/main.webp",
+          v_image: "https://img/variant.webp",
+        }),
+      ];
+      dbHolder.current = makeDbMock({
+        selectQueue: source === "snapshot" ? page(["p1"], rows) : [rows],
+      });
+      const result =
+        source === "snapshot"
+          ? await getCatalogSnapshot()
+          : await lookupProducts("SHIRT-M");
+      expect(result.items[0]).toMatchObject({
+        image: "https://img/main.webp",
+        productId: "p1",
+        variantId: "v1",
+        variantName: "Black / M",
+        sku: "SHIRT-M",
+        barcode: "BARCODE-M",
+        price: 120,
+        stock: 2,
+      });
+    },
+  );
+
+  it.each([null, ""])(
+    "does not substitute a variant photo when the main photo is %s",
+    async (main) => {
+      dbHolder.current = makeDbMock({
+        selectQueue: page(
+          ["p1"],
+          [
+            row({
+              variant_id: "v1",
+              v_price: 150,
+              p_image: main,
+              v_image: "https://img/variant.webp",
+            }),
+          ],
+        ),
+      });
+      expect((await getCatalogSnapshot()).items[0].image).toBeNull();
+    },
+  );
+  it("gives every option the same main product photo while keeping option prices", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: page(
+        ["p1"],
+        [
+          row({
+            variant_id: "red",
+            v_price: 150,
+            p_image: "https://img/main.webp",
+            v_image: "https://img/red.webp",
+          }),
+          row({
+            variant_id: "blue",
+            v_price: 180,
+            p_image: "https://img/main.webp",
+            v_image: "https://img/blue.webp",
+          }),
+        ],
+      ),
+    });
+    expect(
+      (await getCatalogSnapshot()).items.map(({ variantId, price, image }) => ({
+        variantId,
+        price,
+        image,
+      })),
+    ).toEqual([
+      { variantId: "red", price: 150, image: "https://img/main.webp" },
+      { variantId: "blue", price: 180, image: "https://img/main.webp" },
+    ]);
   });
 
   it("ends paging with a null cursor on a short page", async () => {

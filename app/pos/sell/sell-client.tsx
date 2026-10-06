@@ -1099,80 +1099,87 @@ export function SellClient({
                 </div>
               )}
 
-              <div className="pos-scroll-area grid min-h-0 flex-1 auto-rows-max grid-cols-2 gap-2 overflow-y-auto overscroll-contain sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-                {entries.map((entry) => {
-                  const grouped = entry.kind === "group";
-                  const it = grouped ? entry.variants[0] : entry.item;
-                  const out = grouped ? entry.soldOut : isOutOfStock(it);
-                  const name = grouped ? entry.name : it.name;
-                  const image = grouped ? entry.image : it.image;
-                  const stock = grouped ? entry.stock : it.stock;
-                  const tracked = grouped
-                    ? entry.stock !== null
-                    : it.trackInventory;
-                  const price = grouped
-                    ? groupPriceLabel(entry, money)
-                    : money(it.price);
-                  return (
-                    <button
-                      key={entry.key}
-                      type="button"
-                      disabled={out}
-                      // One tap for a product that has nothing to choose;
-                      // a picker only where there is a choice to make.
-                      onClick={() =>
-                        grouped ? setVariantsFor(entry) : addItem(it)
-                      }
-                      className="flex min-w-0 flex-col rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] p-2 text-left transition-colors hover:bg-[var(--pos-surface-2)] disabled:opacity-40"
-                    >
-                      {/* Keep the complete photograph visible, including portrait products. */}
-                      <div className="mb-2 aspect-[4/5] max-h-64 w-full overflow-hidden rounded-lg bg-[var(--pos-surface-2)]">
-                        {image ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={image}
-                            alt=""
-                            loading="lazy"
-                            className="h-full w-full object-contain"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-[var(--pos-ink-3)]">
-                            <Package className="h-8 w-8" strokeWidth={1.5} />
-                          </div>
-                        )}
-                      </div>
-                      <span className="line-clamp-2 text-sm font-medium">
-                        {name}
-                      </span>
-                      {grouped ? (
-                        <span className="text-xs text-[var(--pos-ink-2)]">
-                          {entry.variants.length} options
+              <div className="pos-product-viewport min-h-0 flex-1 overflow-hidden">
+                <div className="pos-scroll-area grid h-full auto-rows-max grid-cols-2 gap-2 overflow-y-auto overscroll-contain sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                  {entries.map((entry) => {
+                    const grouped = entry.kind === "group";
+                    const it = grouped ? entry.variants[0] : entry.item;
+                    const out = grouped ? entry.soldOut : isOutOfStock(it);
+                    const name = grouped ? entry.name : it.name;
+                    const image = grouped ? entry.image : it.image;
+                    const stock = grouped ? entry.stock : it.stock;
+                    const tracked = grouped
+                      ? entry.stock !== null
+                      : it.trackInventory;
+                    const price = grouped
+                      ? groupPriceLabel(entry, money)
+                      : money(it.price);
+                    return (
+                      <button
+                        key={entry.key}
+                        type="button"
+                        title={
+                          grouped
+                            ? name
+                            : [name, it.variantName].filter(Boolean).join(" · ")
+                        }
+                        disabled={out}
+                        // One tap for a product that has nothing to choose;
+                        // a picker only where there is a choice to make.
+                        onClick={() =>
+                          grouped ? setVariantsFor(entry) : addItem(it)
+                        }
+                        className="flex min-w-0 flex-col rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] p-2 text-left transition-colors hover:bg-[var(--pos-surface-2)] disabled:opacity-40"
+                      >
+                        {/* Keep the complete photograph visible, including portrait products. */}
+                        <div className="pos-product-image mb-2 w-full shrink-0 overflow-hidden rounded-lg bg-[var(--pos-surface-2)]">
+                          {image ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={image}
+                              alt=""
+                              loading="lazy"
+                              className="h-full w-full object-contain"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-[var(--pos-ink-3)]">
+                              <Package className="h-8 w-8" strokeWidth={1.5} />
+                            </div>
+                          )}
+                        </div>
+                        <span className="min-h-10 line-clamp-2 text-sm font-medium leading-5">
+                          {name}
                         </span>
-                      ) : (
-                        it.variantName && (
-                          <span className="text-xs text-[var(--pos-ink-2)]">
-                            {it.variantName}
+                        {grouped ? (
+                          <span className="truncate text-xs leading-4 text-[var(--pos-ink-2)]">
+                            {entry.variants.length} options
                           </span>
-                        )
-                      )}
-                      <span className="mt-auto pt-2 font-semibold">
-                        {price}
-                      </span>
-                      <span className="text-[11px] text-[var(--pos-ink-3)]">
-                        {out
-                          ? "Out of stock"
-                          : tracked
-                            ? `${stock} in stock`
-                            : ""}
-                      </span>
-                    </button>
-                  );
-                })}
-                {entries.length === 0 && !searching && (
-                  <p className="col-span-full py-10 text-center text-sm text-[var(--pos-ink-3)]">
-                    No products match.
-                  </p>
-                )}
+                        ) : (
+                          it.variantName && (
+                            <span className="truncate text-xs leading-4 text-[var(--pos-ink-2)]">
+                              {it.variantName}
+                            </span>
+                          )
+                        )}
+                        <span className="mt-auto pt-1 font-semibold leading-6">
+                          {price}
+                        </span>
+                        <span className="text-[11px] leading-4 text-[var(--pos-ink-3)]">
+                          {out
+                            ? "Out of stock"
+                            : tracked
+                              ? `${stock} in stock`
+                              : ""}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {entries.length === 0 && !searching && (
+                    <p className="col-span-full py-10 text-center text-sm text-[var(--pos-ink-3)]">
+                      No products match.
+                    </p>
+                  )}
+                </div>
               </div>
 
               {cartQuantity > 0 && (

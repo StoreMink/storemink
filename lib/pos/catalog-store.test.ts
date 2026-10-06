@@ -39,4 +39,7 @@ describe("catalogKey", () => {
   it("carries a schema version so an older cached shape is never served", () => {
     expect(catalogKey("s1", "l1")).toMatch(/^v\d+:/);
   });
+  it("does not reuse catalogue records that carry variant photos", () => {
+    expect(catalogKey("s1", "l1")).not.toBe("v4:s1:l1");
+  });
 });

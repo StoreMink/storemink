@@ -15,10 +15,12 @@ const DB_VERSION = 1;
 const STORE = "catalog";
 
 /**
- * Bump whenever CatalogItem gains a field the register RELIES on. Cached
- * entries are keyed by it, so an older shape simply isn't found and the
- * register re-syncs instead of serving items missing the new field.
+ * Bump whenever CatalogItem gains a field or changes a display contract the
+ * register RELIES on. Cached entries are keyed by it, so older records aren't
+ * found and the register re-syncs with the current data contract.
  *
+ * v5 switches `image` to the main product photo. Older records contain variant
+ * photos, so they cannot be reused after this change, even without product edits.
  * v4 added `categoryId`, which offer scoping needs: without it the sell screen
  * would quote a different total from the one `placePosSale` charges as soon as
  * a category-scoped offer exists (docs/offers-plan.md).
@@ -31,7 +33,7 @@ const STORE = "catalog";
 // and a v2 entry has none. Serving one would make the first sync a delta with
 // no `since`, which the server reads as a FULL pull — correct, but only by
 // accident. A version bump re-syncs once and removes the accident.
-const SCHEMA_VERSION = "v4";
+const SCHEMA_VERSION = "v5";
 
 /** One cached catalog per register: a location's stock is its own truth, and
  *  an operator can legitimately move between stores on a shared browser. */
