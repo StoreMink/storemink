@@ -1,7 +1,7 @@
 /** Offline browser regression for shared product cards. Uses production CSS
  * in both load orders, local Chrome and synthetic products; no network or DB.
  * Run: node scripts/product-card-layout-check.mjs
- * --css-ref=<git revision> checks older CSS for diagnosis; --screenshots=<dir>
+ * --css-ref=<git revision> checks older CSS against the current markup; --screenshots=<dir>
  * saves representative phone fixtures. These are not live theme screenshots.
  */
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
@@ -48,31 +48,31 @@ const products = [
     true,
   ],
 ];
-// Matches ShopCard's public structure, including atomic price groups and a
-// stock-badge column only when present. Baseline markup reproduces the report.
+// Matches ShopCard's public structure: one flag on the photo, MRP before the
+// selling price, the "% off" pill (hidden on the classic card) and quick add.
 function cards(fixture) {
   return (fixture === "regular" ? products.slice(0, 3) : products.slice(3))
     .map(([category, name, sell, base, off, from]) => {
-      const current = `${from ? '<span class="shop-card-from">from </span>' : ""}<span class="shop-card-sell">₹${sell}</span>`;
-      const deal = `<span class="shop-card-base">₹${base}</span><span class="shop-card-off">${off}% off</span>`;
+      const current = `<span class="shop-card-current"><span class="shop-card-sell shop-card-sell--sale">₹${sell}</span></span>`;
+      const deal = `<span class="shop-card-deal">${from ? '<span class="shop-card-from">from </span>' : ""}<span class="shop-card-base">₹${base}</span></span>`;
       return `<a class="shop-card" href="/shop/product" style="--card-bg:#f4f2ee">
-      <div class="shop-card-img"><img class="shop-card-img-el" src="${beverage}" alt="Fruit beverage" style="position:absolute;inset:0;width:100%;height:100%"></div>
-      <div class="shop-card-body"><div class="shop-card-head flex items-start justify-between"><div class="min-w-0"><span class="shop-card-cat">${category}</span><h3 class="shop-card-name">${name}</h3></div>${ref ? '<div class="shrink-0 ml-2 flex flex-col items-end gap-1"></div>' : ""}</div>
-      <div class="shop-card-price">${ref ? current + deal : `<span class="shop-card-current">${current}</span><span class="shop-card-deal">${deal}</span>`}<div role="button" tabindex="0" class="shop-card-add flex items-center justify-center">+ Add</div></div></div></a>`;
+      <div class="shop-card-img"><img class="shop-card-img-el" src="${beverage}" alt="Fruit beverage" style="position:absolute;inset:0;width:100%;height:100%"><span class="shop-card-flag shop-card-flag--save">Save ${off}%</span></div>
+      <div class="shop-card-body"><div class="shop-card-head"><span class="shop-card-cat">${category}</span><h3 class="shop-card-name">${name}</h3></div>
+      <div class="shop-card-price">${deal}${current}<span class="shop-card-off">${off}% off</span><div role="button" tabindex="0" class="shop-card-add flex items-center justify-center">+ Add</div></div></div></a>`;
     })
     .join("");
 }
 const variants = {
-  classic: "",
-  quickadd: "sm-card-quickadd",
-  grocery: "sm-storefront-grocery sm-card-quickadd",
+  classic: "sm-card-classic",
+  quickadd: "sm-card-classic sm-card-quickadd",
+  grocery: "sm-storefront-grocery sm-card-grocery sm-card-quickadd",
   framed: "sm-card-framed",
   overlay: "sm-card-overlay",
 };
 function html(skin, surface, order, fixture) {
   return `<!doctype html><html><head><style>
     *{box-sizing:border-box}body{margin:0;font:16px/1.5 Arial}
-    :root{--sm-ink:#171717;--sm-ink-soft:#555;--sm-ink-faint:#666;--sm-cream:#fff;--sm-cream-deep:#f4f2ee;--sm-border:#ccc;--sm-surface:#fff;--sm-on-ink:#fff;--sm-accent:#880035;--sm-on-accent:#fff;--sm-butter:#f4f2ee;--sm-shadow-rgb:25,25,25;--sm-radius-card:20px;--sm-radius-control:12px;--sm-radius-sm:8px;--sm-radius-pill:999px}
+    :root{--sm-error:#b42318;--sm-sand:#f0ebe3;--sm-ink:#171717;--sm-ink-soft:#555;--sm-ink-faint:#666;--sm-cream:#fff;--sm-cream-deep:#f4f2ee;--sm-border:#ccc;--sm-surface:#fff;--sm-on-ink:#fff;--sm-accent:#880035;--sm-on-accent:#fff;--sm-butter:#f4f2ee;--sm-shadow-rgb:25,25,25;--sm-radius-card:20px;--sm-radius-control:12px;--sm-radius-sm:8px;--sm-radius-pill:999px}
     .flex{display:flex}.flex-col{flex-direction:column}.items-start{align-items:flex-start}.items-end{align-items:flex-end}.items-center{align-items:center}.justify-between{justify-content:space-between}.justify-center{justify-content:center}.min-w-0{min-width:0}.shrink-0{flex-shrink:0}.ml-2{margin-left:8px}.gap-1{gap:4px}
     ${order === "forward" ? sheets.join("\n") : [...sheets].reverse().join("\n")}
     </style></head><body><main class="storefront-root sm-grid-m2 sm-grid-d5 ${variants[skin]}">
@@ -113,7 +113,7 @@ try {
                       button = box(add);
                     const escaped = [
                       ...card.querySelectorAll(
-                        ".shop-card-cat,.shop-card-current,.shop-card-deal,.shop-card-add",
+                        ".shop-card-cat,.shop-card-current,.shop-card-deal,.shop-card-add,.shop-card-flag",
                       ),
                     ]
                       .filter((el) => {
@@ -137,7 +137,8 @@ try {
                       labelLineRatio:
                         parseFloat(style.lineHeight) /
                         parseFloat(style.fontSize),
-                      labelGap: name.top - catBox.bottom,
+                      // The classic card hides the category label.
+                      labelGap: catBox.height ? name.top - catBox.bottom : 6,
                       buttonHeight:
                         getComputedStyle(add).display === "none"
                           ? null
@@ -152,7 +153,7 @@ try {
             measurements.push({ label, ...result });
             const problems = result.cards.flatMap((c) => [
               ...(c.escaped.length ? [`overflow: ${c.escaped.join(",")}`] : []),
-              ...(c.labelLineRatio > 1.3
+              ...(c.categoryHeight && c.labelLineRatio > 1.3
                 ? ["loose category line spacing"]
                 : []),
               ...(c.labelGap < 4 || c.labelGap > 10

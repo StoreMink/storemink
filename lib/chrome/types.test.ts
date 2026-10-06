@@ -132,6 +132,7 @@ describe("resolveStorefrontAppearance", () => {
       header: "centered",
       card: "classic",
       cardQuickAdd: true,
+      cardPhoto: "portrait",
       cardHoverImage: false,
       stickyAddToCart: false,
       gridColumnsMobile: 1,
@@ -237,6 +238,7 @@ describe("resolveStorefrontAppearance", () => {
       header: "minimal",
       card: "overlay",
       cardQuickAdd: false,
+      cardPhoto: "portrait",
       cardHoverImage: false,
       stickyAddToCart: false,
       gridColumnsMobile: 1,
@@ -288,5 +290,31 @@ describe("sanitizeChromeForSave", () => {
   it("round-trips its own output unchanged", () => {
     const once = sanitizeChromeForSave(DEFAULT_CHROME);
     expect(sanitizeChromeForSave(once)).toEqual(once);
+  });
+});
+
+describe("card photo shape", () => {
+  it("defaults to portrait, including rows saved before the setting", () => {
+    expect(
+      normalizeChrome({ appearance: { card: "classic" } }).appearance,
+    ).toMatchObject({ cardPhoto: "portrait" });
+    expect(resolveStorefrontAppearance({}).cardPhoto).toBe("portrait");
+  });
+
+  it("keeps an explicit square choice and refuses anything else", () => {
+    expect(
+      sanitizeChromeForSave({ appearance: { cardPhoto: "square" } }).appearance
+        .cardPhoto,
+    ).toBe("square");
+    expect(
+      sanitizeChromeForSave({ appearance: { cardPhoto: "circle" } }).appearance
+        .cardPhoto,
+    ).toBe("portrait");
+    expect(
+      resolveStorefrontAppearance(
+        { card: "classic" },
+        { ...DEFAULT_CHROME.appearance, cardPhoto: "square" },
+      ).cardPhoto,
+    ).toBe("square");
   });
 });

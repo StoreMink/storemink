@@ -1,3 +1,4 @@
+import { storePhotoSpec } from "../photo-spec";
 import { notFound } from "next/navigation";
 import { requireSectionAccess } from "../../lib/access";
 import { getProductEditData } from "../data";
@@ -23,6 +24,7 @@ export default async function ProductEditPage({
         colors={data.colors}
         taxClasses={data.taxClasses}
         canUseGrossMargin={data.canUseGrossMargin}
+        photoSpec={await storePhotoSpec()}
       />
     </div>
   );

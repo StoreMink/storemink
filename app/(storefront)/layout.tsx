@@ -203,6 +203,7 @@ export default async function StorefrontLayout({
     `sm-header-${appearance.header}`,
     `sm-card-${appearance.card}`,
     appearance.cardQuickAdd ? "sm-card-quickadd" : "",
+    appearance.cardPhoto === "square" ? "sm-cardphoto-square" : "",
     appearance.cardHoverImage ? "sm-card-hoverimg" : "",
     appearance.stickyAddToCart ? "sm-atc-sticky" : "",
     appearance.gridColumnsMobile === 2 ? "sm-grid-m2" : "",

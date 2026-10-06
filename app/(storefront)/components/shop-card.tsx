@@ -118,43 +118,65 @@ export function ShopCard({
             <ImageIcon size={28} strokeWidth={1.5} aria-hidden />
           </div>
         )}
+        {/* ★ ONE FLAG ON THE PHOTO. Stock outranks the offer, always:
+            "20% off" beside "Sold out" invites a shopper to try to buy
+            something they cannot. The plain markdown flag ("Save 8%") is the
+            classic card's; other card styles keep their "% off" price pill
+            and hide it (storefront-theme.css). */}
+        {isOutOfStock ? (
+          <span className="shop-card-flag shop-card-flag--soldout">
+            Sold out
+          </span>
+        ) : isLowStock ? (
+          <span className="shop-card-flag shop-card-flag--lowstock">
+            Only {lowStockAmount} left
+          </span>
+        ) : offerBadge ? (
+          <span className="shop-card-flag shop-card-flag--offer">
+            {offerBadge.label}
+          </span>
+        ) : pr.discount > 0 ? (
+          <span className="shop-card-flag shop-card-flag--save">
+            Save {pr.discount}%
+          </span>
+        ) : null}
       </div>
 
       <div className="shop-card-body">
-        <div className="shop-card-head flex items-start justify-between">
-          <div className="min-w-0">
-            {p.category && <span className="shop-card-cat">{p.category}</span>}
-            <NameHeading className="shop-card-name">{p.name}</NameHeading>
-          </div>
-          {(isOutOfStock || isLowStock || offerBadge) && (
-            <div className="shrink-0 ml-2 flex flex-col items-end gap-1">
-              {/* ★ STOCK OUTRANKS THE OFFER, always. "20% off" beside "Sold
-                Out" invites a shopper to try to buy something they cannot, and
-                the offer is the less urgent of the two facts. */}
-              {isOutOfStock ? (
-                <span className="text-[10px] font-bold uppercase tracking-wider bg-zinc-200 text-zinc-600 px-1.5 py-0.5 rounded-sm">
-                  Sold Out
-                </span>
-              ) : isLowStock ? (
-                <span className="text-[10px] font-bold uppercase tracking-wider bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-sm">
-                  Only {lowStockAmount} left!
-                </span>
-              ) : offerBadge ? (
-                <span className="sm-offer-badge">{offerBadge.label}</span>
-              ) : null}
-            </div>
-          )}
+        <div className="shop-card-head">
+          {p.category && <span className="shop-card-cat">{p.category}</span>}
+          <NameHeading className="shop-card-name">{p.name}</NameHeading>
         </div>
         <div className="shop-card-price">
-          <span className="shop-card-current">
-            {pr.hasVariants && <span className="shop-card-from">from </span>}
-            <span className="shop-card-sell">{formatPrice(pr.selling)}</span>
-          </span>
+          {/* "from", then the MRP struck through, then what they pay — the
+              order a shopper reads a markdown in. "from" leads whichever group
+              comes first so it never lands between the two prices. */}
           {pr.discount > 0 && (
             <span className="shop-card-deal">
-              <span className="shop-card-base">{formatPrice(pr.base)}</span>
-              <span className="shop-card-off">{pr.discount}% off</span>
+              {pr.hasVariants && <span className="shop-card-from">from </span>}
+              <span className="shop-card-base">
+                <span className="sr-only">Was </span>
+                {formatPrice(pr.base)}
+              </span>
             </span>
+          )}
+          <span className="shop-card-current">
+            {pr.hasVariants && pr.discount <= 0 && (
+              <span className="shop-card-from">from </span>
+            )}
+            <span
+              className={
+                pr.discount > 0
+                  ? "shop-card-sell shop-card-sell--sale"
+                  : "shop-card-sell"
+              }
+            >
+              {pr.discount > 0 && <span className="sr-only">Now </span>}
+              {formatPrice(pr.selling)}
+            </span>
+          </span>
+          {pr.discount > 0 && (
+            <span className="shop-card-off">{pr.discount}% off</span>
           )}
           {/* Hidden unless the theme opts into quick-add (.sm-card-quickadd). */}
           <QuickAddButton product={p} />

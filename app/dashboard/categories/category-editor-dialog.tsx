@@ -159,6 +159,7 @@ export function CategoryEditorDialog({
             <label className={labelClass}>Image</label>
             <ImageUpload
               folder="category-images"
+              spec="category"
               defaultImage={form.image_url || undefined}
               onUploadSuccess={(url) => set("image_url", url)}
             />

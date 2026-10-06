@@ -6453,6 +6453,43 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261006_0164_mink_image_refinements",
+      "description": "Refine with Mink AI: refinement ledger and atomic multi-credit charge",
+      "file": "sql/20261006_0164_mink_image_refinements.sql",
+      "transaction": true,
+      "requires": ["20261006_0163_pos_compact_product_cards_help"],
+      "verify": {
+        "tables": ["mink_image_refinements"],
+        "constraints": [
+          "mink_image_refinements_pkey",
+          "mink_image_refinements_credits_check",
+          "mink_image_refinements_source_check"
+        ],
+        "functions": [
+          "consume_mink_refine_credits(uuid,uuid,text,text,integer,integer,text,text,integer,integer)"
+        ],
+        "rlsTables": ["mink_image_refinements"]
+      },
+      "applyVerify": { "queries": [] }
+    },
+    {
+      "id": "20261006_0165_image_sizes_refine_help",
+      "description": "Document product image size guidance and Refine with Mink AI",
+      "file": "sql/20261006_0165_image_sizes_refine_help.sql",
+      "transaction": true,
+      "requires": ["20261006_0164_mink_image_refinements"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Product image size and refine guidance",
+            "sql": "select count(*)::text from public.help_articles where slug='add-product-images-and-variants' and status='published' and body like '%1200 × 1600 px</strong> fits exactly%' and body like '%Refine with Mink AI</strong> under an uploaded photo%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }
