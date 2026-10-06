@@ -2649,7 +2649,15 @@ wholesip/
 │   │   ├── categories/ colors/ blogs/ media/   # content management (media/ = the
 │   │   │                      # per-store Media Library: confirm-first upload + grid +
 │   │   │                      # view + copy-URL + delete (media_assets row + GCS object),
-│   │   │                      # via app/actions/media-actions.ts)
+│   │   │                      # via app/actions/media-actions.ts).
+│   │   │                      # ★ colors/ is RETIRED (2026-10-06): it only redirects to
+│   │   │                      # Products. Card colours had no visible effect once every
+│   │   │                      # card style painted its own background, so the editor
+│   │   │                      # field, the Colours page and color-actions.ts are gone.
+│   │   │                      # The `colors` permission key stays (hiddenInNav) so saved
+│   │   │                      # roles keep their grants; products.card_color, the
+│   │   │                      # card_colors table and the CSV "Card Color" column are
+│   │   │                      # left untouched (no data migration). Help: 0169.
 │   │   │   └── blogs/settings/  # blog feature toggles + per-store categories/tags manager
 │   │   │   (homepage editor RETIRED in Phase 4a — the homepage is now edited in builder/)
 │   │   ├── navigation/        # ★ Menu builder (§11): edit header + footer nav (store_menus)
@@ -2754,7 +2762,7 @@ wholesip/
 │   │                          # newest-first one-row carousel at every viewport
 │   │
 │   ├── actions/               # ★ ALL SERVER ACTIONS ("use server") — one file per domain:
-│   │   │                      # product/category/color/coupon/coupon-email/blog/blog-social/
+│   │   │                      # product/category/coupon/coupon-email/blog/blog-social/
 │   │   │                      # review/enquiry/customer/customer-profile/
 │   │   │                      # account-settings/set-password/invite-user/user-management/
 │   │   │                      # user-group/role actions  (homepage-actions RETIRED — §11)
