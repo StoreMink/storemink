@@ -6129,6 +6129,66 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `docs/theme-studio-variety-and-fidelity.md`. Operator-only change: no
     merchant-visible change, no Help Centre update.
 
+    **Scoped change requests and catalogue convergence (2026-10-06; prompt
+    `theme-studio-v24`):** an operator's revision no longer always re-runs the
+    full two-stage generation. `lib/theme-studio/change-scope.ts` decides its
+    scope, and for a small change writes the edit, in ONE high-effort request:
+    **edit** applies a validated patch to the base version through the same
+    `applyTargetedRepair` checks QA repairs use, widened by `operatorEditTargets`
+    to section visibility, page titles and sample category/product names,
+    descriptions and prices — never structure, links, ids, slugs or images. Every
+    asset and the intent are carried byte-for-byte; requested picture changes
+    (`imageChanges`, only `isRedrawableSlot` slots) are queued by the worker as
+    ONE automatic image run for exactly those slots, with the operator's
+    direction as the slot correction and the theme's existing anchor reused,
+    then final capture/acceptance/visual QA (no layout preflight, no other
+    redraw). Without automatic QA the redraw is reported as deferred. **revise**
+    is the previous Stage A/B revision. **recreate** is a fresh initial
+    generation (no base intent/theme, no carried images) from the project's
+    original brief, its answers and screenshots (`loadRecreateContext`), plus
+    the request; the replaced version's fingerprint joins the variety context so
+    the new design moves away from it too. Recreate requires an explicit
+    request: `isExplicitRecreateRequest` matches "start over", "from scratch",
+    "recreate the whole theme" etc. without a model call, and the model is told
+    a large but specific change is a revision. An edit that fails validation
+    twice becomes a revision, never a failure. The decided scope is stored in
+    `runs.outcome_detail` (`kind: "change"`) and on the existing
+    `version_created` event (the event vocabulary is CHECK-constrained), read
+    into `ThemeStudioRunView.change`, and shown as a conversation bubble.
+    Automatic QA repairs and v23-and-older runs are unchanged, so paid
+    checkpoints replay. Separately, `overusedChoices` (`fingerprint.ts`) flags
+    style settings a draft shares with ≥60% of ≥5 catalogue themes (page width,
+    hover image, columns, button shape…); two or more trigger the existing single
+    variety correction even when the weighted distance passes, closing the
+    2026-10-04 finding that all eight drafts shared width and hover choices. The
+    correction is kept only if fewer defaults repeat and no axis got closer.
+    Tests: `change-scope.test.ts`, `variety.test.ts`, and the opt-in rollback-only
+    `change-scope-postgres.test.ts` (`THEME_STUDIO_CHANGE_SCOPE_DB_TEST=1`),
+    which drives the real worker through a recreate and an image edit. Not yet
+    exercised against live Gemini. Operator-only: no merchant-visible change, no
+    Help Centre update.
+
+    **Screenshot-led benchmark (2026-10-06):** runbook
+    `docs/theme-studio-reference-benchmark.md`. Eight cases, two per industry,
+    each pointing at a public Shopify theme demo store
+    (`evals/theme-studio/reference-benchmark.json`, typed by
+    `lib/theme-studio/reference-benchmark.ts`).
+    `scripts/theme-studio-benchmark-references.mjs` captures seven screenshots
+    per case with local Chrome into the git-ignored `.theme-studio-references/`
+    folder (third-party imagery, never committed). It removes popups by stacking
+    layer or signup form and takes viewport shots, because full-page clips
+    render 100vh heroes blank. The benchmark's `--create --references` mode
+    uploads each case's screenshots through the ordinary sanitiser and
+    `addThemeStudioReference`, cites them on the brief message and records
+    `caseByProject` in the report. `--score-fidelity --yes` sends the reference
+    screenshots and each finished theme's final QA screenshots, paired page by
+    page (`fidelityPairs`), to Gemini 3.8 Flash
+    (`lib/theme-studio/reference-fidelity.ts`). The model scores layout,
+    palette, typography, imagery and overall from 1 to 5 and flags a copied
+    brand. This is a benchmark measure only; nothing in generation, QA or
+    publication reads it. The upload path was dry-run against the local
+    database. No live run yet.
+
     **Theme Studio production benchmark (2026-10-04):** eight unpublished v22
     builds on web revision `storemink-web-prod-00122-frg` produced five candidates;
     median successful queue-to-candidate time 68.28 minutes, only two without an
@@ -6148,6 +6208,26 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     the eighth case; no continuous stress-test claim, no theme publication or
     order submission. Internal validation only: no merchant-visible change,
     no Help Centre update.
+
+    **Theme Studio solid-hero contrast and precise repairs (local, 2026-10-05):**
+    A fresh Bubble build stopped before artwork after an automatic repair changed
+    the passing homepage hero rather than the failing About hero. Both then used
+    white copy on the gold `creamDeep` field. `lib/themes/hero-contrast.ts` mirrors
+    the opaque hero fields and text tokens in `HeroSection`/`homepage.css`,
+    including 85% subheading opacity, scheme inheritance and banner card-reset
+    specificity. `validateThemeDesign` checks these pairs on every enabled page;
+    the existing compiler content floors and targeted-repair validator therefore
+    reject them before saving a version. Findings identify page, section, exact
+    setting path, ratios and a readable native text mode when one exists.
+    Prompt v23 explains text modes and sends per-hero evidence to automatic
+    repair; v22 and older request text/checkpoints retain their original shape.
+    Photographs, video, translucent/non-hex fields and final visual fidelity still
+    require browser and vision QA. No generation/QA thresholds, artwork gates or
+    capability-gap semantics are relaxed. The offline Chrome contrast check
+    reproduces Bubble's two defects and covers corrected heroes across five
+    widths. Existing production drafts require normal revision after deployment;
+    no production records changed during diagnosis. Internal/operator-only:
+    no merchant-visible change, no Help Centre update.
 
     **Worker isolation and readable QA (local, 2026-10-04):** `worker-lease.ts`
     and `worker-lease-store.ts` renew generation/visual-QA ownership every thirty

@@ -15,13 +15,20 @@ type JsonSchema = {
   enum?: unknown[];
   anyOf?: JsonSchema[];
 };
-type Target = { path: string; current: unknown; choices?: readonly unknown[] };
+export type Target = {
+  path: string;
+  current: unknown;
+  choices?: readonly unknown[];
+};
 const FORBIDDEN =
   /(^|_)(url|href|id|ids|source)$|^(__proto__|constructor|prototype|html)$/i;
 
 /** Only scalar creative settings. No structure, images, URLs, products, routes,
  * engine, capabilities or release metadata can be written by a QA repair. */
-export function repairTargets(pkg: ThemePackageV2): Target[] {
+export function repairTargets(
+  pkg: ThemePackageV2,
+  heroTextChoices = false,
+): Target[] {
   const targets: Target[] = [];
   const walk = (value: unknown, path: string, schema?: JsonSchema) => {
     if ((value && typeof value === "object") || schema?.properties) {
@@ -61,6 +68,10 @@ export function repairTargets(pkg: ThemePackageV2): Target[] {
     page.sections.forEach((section, s) => {
       const root = `/definition/preset/pages/${p}/sections/${s}`;
       walk(section.config, `${root}/config`);
+      if (heroTextChoices && section.type === "hero") {
+        const target = targets.find((t) => t.path === `${root}/config/theme`);
+        if (target) target.choices = ["dark", "light"];
+      }
       if (
         section.type === "hero" ||
         section.type === "hero_carousel" ||
@@ -115,6 +126,10 @@ export const TARGETED_REPAIR_SCHEMA = {
 export function applyTargetedRepair(
   base: ThemePackageV2,
   raw: unknown,
+  /** The settings this patch may write. QA repairs use repairTargets; an
+   * operator edit (change-scope.ts) may also reach visibility and catalogue
+   * text. Every other check below is identical for both. */
+  targets: readonly Target[] = repairTargets(base),
 ):
   | { ok: true; package: ThemePackageV2; changed: string[] }
   | { ok: false; issues: string[]; unrepairable?: string[] } {
@@ -135,7 +150,7 @@ export function applyTargetedRepair(
       issues: ["Return at most 24 scalar edits and 8 unrepairable findings."],
     };
   }
-  const allowed = new Map(repairTargets(base).map((t) => [t.path, t]));
+  const allowed = new Map(targets.map((t) => [t.path, t]));
   const candidate = structuredClone(base);
   const changed: string[] = [];
   const issues: string[] = [];

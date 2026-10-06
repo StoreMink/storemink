@@ -5,6 +5,8 @@ import {
   validateThemePackageV2,
 } from "./contracts";
 import { productSlotId } from "./compiler";
+import { solidHeroContrast } from "@/lib/themes/hero-contrast";
+import type { HeroConfig } from "@/lib/homepage/section-types";
 import { createFakeModelClient } from "./fake-provider";
 import {
   resumableGenerationClient,
@@ -63,6 +65,133 @@ const run = (brief?: string, client?: ThemeStudioModelClient) =>
   );
 
 describe("theme generation pipeline", () => {
+  it("corrects an About hero's contrast within generation before saving the first version", async () => {
+    const fake = createFakeModelClient(base);
+    const requests: StructuredRequest[] = [];
+    let drafts = 0;
+    const outcome = await runThemeGeneration(
+      {
+        provider: "fake",
+        async generate(request, signal) {
+          requests.push(request);
+          const response = await fake.generate(request, signal);
+          if (
+            request.stage === "draft" &&
+            response.kind === "ok" &&
+            drafts++ === 0
+          ) {
+            const draft = response.value as {
+              pages: { sections: { type: string; configJson: string }[] }[];
+            };
+            const hero = draft.pages[0].sections.find(
+              (s) => s.type === "hero",
+            )!;
+            const config = JSON.parse(hero.configJson);
+            draft.pages[1].sections[0] = {
+              ...draft.pages[1].sections[0],
+              type: "hero",
+              configJson: JSON.stringify({
+                ...config,
+                variant: "split",
+                background: "#f5d061",
+                theme: "light",
+              }),
+            };
+          }
+          return response;
+        },
+      },
+      input(),
+      new AbortController().signal,
+    );
+    expect(outcome.kind).toBe("version");
+    expect(requests.map((r) => r.stage)).toEqual(["intent", "draft", "draft"]);
+    expect(requests[2].content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining(
+        "/definition/preset/pages/1/sections/0/config/theme",
+      ),
+    });
+    if (outcome.kind !== "version") return;
+    expect(outcome.telemetry.repairs.draft).toBe(1);
+    expect(
+      solidHeroContrast(outcome.package.definition).every((e) => e.passes),
+    ).toBe(true);
+  });
+  it("rejects Bubble's wrong-page repair, then gives exact evidence to correct the About hero", async () => {
+    const original = await run();
+    if (original.kind !== "version") throw new Error("fixture failed");
+    const pkg = original.package;
+    const home = pkg.definition.preset.pages[0].sections.find(
+      (s) => s.type === "hero",
+    )!;
+    const about = structuredClone(home);
+    about.id = "about-hero";
+    delete about.style;
+    const config = about.config as HeroConfig;
+    config.variant = "split";
+    config.background = "#f5d061";
+    config.theme = "light";
+    pkg.definition.preset.pages[1].sections[0] = about;
+    const evidence = solidHeroContrast(pkg.definition);
+    const homePath = evidence.find((e) => e.page === "/")!.path;
+    const aboutPath = evidence.find((e) => e.sectionId === "about-hero")!.path;
+    const requests: StructuredRequest[] = [];
+    const outcome = await runThemeGeneration(
+      {
+        provider: "fake",
+        async generate(request) {
+          requests.push(request);
+          return {
+            kind: "ok",
+            usage: ZERO_USAGE,
+            value: {
+              edits: [
+                {
+                  path: requests.length === 1 ? homePath : aboutPath,
+                  valueJson: requests.length === 1 ? '"light"' : '"dark"',
+                },
+              ],
+              unrepairable: [],
+            },
+          };
+        },
+      },
+      {
+        ...input(),
+        promptVersion: "theme-studio-v23",
+        automaticRepair: true,
+        revision: { baseIntent: original.intent, basePackage: pkg },
+      },
+      new AbortController().signal,
+    );
+    expect(outcome.kind).toBe("version");
+    expect(requests).toHaveLength(2);
+    expect(requests[0].system).toContain("Check EVERY page's hero");
+    const context = JSON.parse(
+      (requests[0].content[0] as { text: string }).text.split(
+        "\nValidation issues:",
+      )[0],
+    );
+    expect(context.solidHeroContrast).toContainEqual(
+      expect.objectContaining({
+        sectionId: "about-hero",
+        path: aboutPath,
+        passes: false,
+      }),
+    );
+    expect(requests[1].content[0]).toMatchObject({
+      text: expect.stringContaining(aboutPath),
+    });
+    if (outcome.kind !== "version") return;
+    expect(outcome.package.definition.preset.pages[0]).toEqual(
+      pkg.definition.preset.pages[0],
+    );
+    expect(outcome.package.assets).toEqual(pkg.assets);
+    expect(
+      solidHeroContrast(outcome.package.definition).every((e) => e.passes),
+    ).toBe(true);
+  });
   it.each(["classic", "editorial", "grocery"])(
     "compiles the compact %s composition with native defaults, working menus and complete variants",
     async (composition) => {
@@ -184,6 +313,10 @@ describe("theme generation pipeline", () => {
     expect(outcome.kind).toBe("version");
     expect(requests.map((r) => r.stage)).toEqual(["draft"]);
     expect(requests[0].content.every((b) => b.type === "text")).toBe(true);
+    expect(requests[0].system).not.toContain("Check EVERY page's hero");
+    expect((requests[0].content[0] as { text: string }).text).not.toContain(
+      '"solidHeroContrast"',
+    );
     expect(outcome.telemetry.repairs).toEqual({ intent: 0, draft: 0 });
     if (outcome.kind !== "version") return;
     expect(outcome.placeholders.size).toBe(0);

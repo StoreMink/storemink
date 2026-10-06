@@ -236,6 +236,8 @@ export interface DistinctnessReport {
   status: "distinct" | "similar" | "reference-led" | "not-compared";
   repairAttempted: boolean;
   beforeScore?: number | null;
+  /** v24+: style settings that repeat the catalogue's dominant answer. */
+  overusedChoices?: string[];
 }
 export function measureDistinctness(
   theme: ThemeDefinition,
@@ -287,6 +289,59 @@ export function measureDistinctness(
   };
 }
 
+/** Individual style settings a variety correction can change. Measured
+ * separately from the weighted distance because the 2026-10-04 live batch
+ * passed that bar while all eight drafts chose the same page width and the
+ * same hover-image setting: small weights, one shared answer everywhere. */
+export const CONVERGENCE_CHOICES = [
+  "pageWidth",
+  "cardHoverImage",
+  "gridColumnsDesktop",
+  "gridColumnsMobile",
+  "gridGap",
+  "buttonShape",
+  "primaryButton",
+  "categoryDisplay",
+  "card",
+  "hero",
+  "motion",
+] as const;
+/** A value this share of the catalogue already uses is "the default answer". */
+export const CONVERGENCE_SHARE = 0.6;
+/** Below this many comparable themes a majority says nothing. */
+export const CONVERGENCE_MIN_THEMES = 5;
+/** How many repeated defaults trigger one bounded correction. */
+export const CONVERGENCE_TRIGGER = 2;
+
+/**
+ * The draft's style settings that repeat the catalogue's dominant answer,
+ * most-used first, e.g. `pageWidth=wide (7/8)`.
+ */
+export function overusedChoices(
+  theme: ThemeDefinition,
+  existing: readonly ExistingThemeFingerprint[],
+): string[] {
+  if (existing.length < CONVERGENCE_MIN_THEMES) return [];
+  const current = fingerprintChoiceValues(themeFingerprint(theme));
+  const out: { label: string; share: number }[] = [];
+  for (const key of CONVERGENCE_CHOICES) {
+    const value = current[key];
+    if (value === undefined) continue;
+    const same = existing.filter(
+      (t) => fingerprintChoiceValues(t.fingerprint)[key] === value,
+    ).length;
+    const share = same / existing.length;
+    if (share >= CONVERGENCE_SHARE)
+      out.push({
+        label: `${key}=${value} (${same}/${existing.length})`,
+        share,
+      });
+  }
+  return out
+    .sort((a, b) => b.share - a.share || a.label.localeCompare(b.label))
+    .map((o) => o.label);
+}
+
 export function readDistinctnessReport(
   value: unknown,
 ): DistinctnessReport | null {
@@ -326,6 +381,11 @@ export function readDistinctnessReport(
         repairAttempted: r.repairAttempted,
         sharedAttributes: [...r.sharedAttributes],
         ...(r.beforeScore !== undefined ? { beforeScore: r.beforeScore } : {}),
+        ...(Array.isArray(r.overusedChoices) &&
+        r.overusedChoices.length <= CONVERGENCE_CHOICES.length &&
+        r.overusedChoices.every((c) => typeof c === "string" && c.length <= 120)
+          ? { overusedChoices: [...r.overusedChoices] }
+          : {}),
       }
     : null;
 }

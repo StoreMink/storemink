@@ -37,6 +37,10 @@ import {
 
 export { THEME_STUDIO_PROMPT_VERSION } from "./prompt-features";
 
+/** v23 addition; older paid/checkpointed requests keep their original text. */
+export const HERO_CONTRAST_PROMPT = `
+Hero text modes describe text colour, not the background: theme "dark" uses ink, theme "light" uses onInk. A banner or split hero's image is BESIDE its copy, so copy sits on config.background, or creamDeep when background is empty. A banner inside a scheme resets to page tokens and uses page ink in both text modes. Split and text-only minimal heroes inherit scheme tokens when a scheme is set (ink = scheme text, onInk = scheme background, creamDeep = 6% scheme text mixed into scheme background). Check EVERY page's hero, not just the homepage. Headings need 3:1 and subheadings at 85% text opacity need 4.5:1 against that actual field. A gold/pastel field generally needs dark text. Only minimal heroes with media put copy over a photo; those still need browser checks. For repairs use supplied solidHeroContrast evidence and exact paths, preserving already-passing heroes. A setting change is not proof of a fix.`;
+
 const SECTION_LINES = THEME_STUDIO_SECTION_TYPES.map(
   (type) => `- ${type}: ${SECTION_TYPE_META[type].description}`,
 ).join("\n");
