@@ -10,21 +10,26 @@ import { collectionPath } from "@/lib/storefront/collection-links";
 import {
   activeFilterCount,
   applyShopQuery,
+  clearedShopQuery,
   DEFAULT_SHOP_QUERY,
-  priceSpan,
   SHOP_PAGE_SIZE,
   SHOP_SORT_LABELS,
   SHOP_SORTS,
+  shopQueryKey,
+  toggleCategory,
+  toggleOptionValue,
   withShopQuery,
   type ShopFacts,
   type ShopQuery,
   type ShopSort,
 } from "@/lib/storefront/shop-filters";
-import { effectivePricing, formatPrice } from "@/lib/pricing";
-import { productIsSoldOut } from "@/lib/inventory/status";
+import { buildShopFacets, facetValueLabel } from "@/lib/storefront/shop-facets";
+import { shopFactsFor } from "@/lib/storefront/shop-product-facts";
+import { formatPrice } from "@/lib/pricing";
 import { ShopCard } from "@/app/(storefront)/components/shop-card";
 import { useBrand } from "@/app/(storefront)/components/brand-provider";
 import { ShopFilterPanel } from "./shop-filter-panel";
+import { ShopFilterControls } from "./shop-filter-controls";
 
 export interface ShopProduct {
   id: string;
@@ -45,6 +50,8 @@ export interface ShopProduct {
   stock: number;
   low_stock_threshold: number | null;
   allow_backorder: boolean;
+  /** Option axes (jsonb), for the Size / Colour filters. */
+  options?: unknown;
   variants: {
     base_price: number;
     selling_price: number;
@@ -54,6 +61,7 @@ export interface ShopProduct {
     stock: number;
     low_stock_threshold: number | null;
     allow_backorder: boolean;
+    option_values?: string[] | null;
   }[];
 }
 
@@ -100,16 +108,6 @@ type Props = {
   offerBadges?: Record<string, { label: string }>;
 };
 
-/** What sorting and filtering read — the card's own price and stock rule. */
-function factsOf(p: ShopProduct): ShopFacts {
-  return {
-    price: effectivePricing(p).selling,
-    soldOut: productIsSoldOut(p.variants, p),
-    name: p.name,
-    createdAt: p.created_at ?? null,
-  };
-}
-
 const plural = (n: number) => `${n} ${n === 1 ? "product" : "products"}`;
 
 export default function ShopClient({
@@ -136,19 +134,29 @@ export default function ShopClient({
 
   const basePath = collection ? collectionPath(collection.slug) : "/shop";
 
+  // What sorting and filtering read — the card's own price and stock rules,
+  // per variant (lib/storefront/shop-product-facts.ts). Built once per load.
+  const factsByProduct = useMemo(() => {
+    const slugById = new Map(categories.map((c) => [c.id, c.slug]));
+    return new Map(products.map((p) => [p, shopFactsFor(p, slugById)]));
+  }, [products, categories]);
+  const factsOf = (p: ShopProduct): ShopFacts => factsByProduct.get(p)!;
+  // A collection (or "Other") is already one category, so it has no category
+  // filter; /shop and search results do.
+  const categoryChoices = useMemo(
+    () =>
+      collection || uncategorized
+        ? null
+        : categories.map((c) => ({ slug: c.slug, name: c.name })),
+    [collection, uncategorized, categories],
+  );
+
   // The header search and browser history can replace this SAME route without
   // remounting the client component. Adopt the complete server-parsed URL
   // state during render (React's "adjusting state when a prop changes"
   // pattern), so a filter absent from the new URL cannot survive invisibly.
   const incomingShop = shopFilters ? initialShop : DEFAULT_SHOP_QUERY;
-  const incomingKey = [
-    initialQuery ?? "",
-    incomingShop.sort,
-    incomingShop.inStock ? "1" : "0",
-    incomingShop.min ?? "",
-    incomingShop.max ?? "",
-    incomingShop.pages,
-  ].join("\u0000");
+  const incomingKey = `${initialQuery ?? ""}\u0000${shopQueryKey(incomingShop)}`;
   const [lastIncomingKey, setLastIncomingKey] = useState(incomingKey);
   if (lastIncomingKey !== incomingKey) {
     setLastIncomingKey(incomingKey);
@@ -188,16 +196,28 @@ export default function ShopClient({
   }, [products, collection, uncategorized, query]);
 
   const filtered = useMemo(
-    () => (shopFilters ? applyShopQuery(scoped, shop, factsOf) : scoped),
-    [scoped, shop, shopFilters],
+    () =>
+      shopFilters
+        ? applyShopQuery(scoped, shop, (p) => factsByProduct.get(p)!)
+        : scoped,
+    [scoped, shop, shopFilters, factsByProduct],
   );
   const shown = shopFilters
     ? filtered.slice(0, shop.pages * SHOP_PAGE_SIZE)
     : filtered;
-  const span = useMemo(
-    () => priceSpan(scoped.map((p) => factsOf(p).price)),
-    [scoped],
+  const facetsFor = (q: ShopQuery) =>
+    buildShopFacets(scoped, q, factsOf, categoryChoices);
+  const facetView = useMemo(
+    () =>
+      buildShopFacets(
+        scoped,
+        shop,
+        (p) => factsByProduct.get(p)!,
+        categoryChoices,
+      ),
+    [scoped, shop, factsByProduct, categoryChoices],
   );
+  const sidebar = shopFilters && scoped.length > 0;
   const filterCount = activeFilterCount(shop);
 
   const clearQuery = () => {
@@ -205,8 +225,7 @@ export default function ShopClient({
     const qs = withShopQuery(new URLSearchParams(), shop).toString();
     router.replace(`${basePath}${qs ? `?${qs}` : ""}`);
   };
-  const clearFilters = () =>
-    updateShop({ ...shop, inStock: false, min: null, max: null, pages: 1 });
+  const clearFilters = () => updateShop(clearedShopQuery(shop));
 
   const hasUncategorized = products.some((p) => !p.category_id);
   const trimmed = query.trim();
@@ -334,7 +353,7 @@ export default function ShopClient({
                     <button
                       ref={filterButtonRef}
                       type="button"
-                      className="shop-filter-btn"
+                      className={`shop-filter-btn${sidebar ? " has-sidebar" : ""}`}
                       aria-haspopup="dialog"
                       aria-expanded={filtersOpen}
                       onClick={() => setFiltersOpen(true)}
@@ -348,6 +367,34 @@ export default function ShopClient({
                         </span>
                       )}
                     </button>
+                    {shop.categories.map((slug) => (
+                      <button
+                        key={`category:${slug}`}
+                        type="button"
+                        className="shop-active-filter"
+                        onClick={() => updateShop(toggleCategory(shop, slug))}
+                      >
+                        {facetValueLabel(facetView, "category", slug)}
+                        <X size={14} aria-hidden />
+                        <span className="shop-sr-only"> — remove filter</span>
+                      </button>
+                    ))}
+                    {Object.entries(shop.options).flatMap(([key, values]) =>
+                      values.map((value) => (
+                        <button
+                          key={`${key}:${value}`}
+                          type="button"
+                          className="shop-active-filter"
+                          onClick={() =>
+                            updateShop(toggleOptionValue(shop, key, value))
+                          }
+                        >
+                          {facetValueLabel(facetView, key, value)}
+                          <X size={14} aria-hidden />
+                          <span className="shop-sr-only"> — remove filter</span>
+                        </button>
+                      )),
+                    )}
                     {shop.inStock && (
                       <button
                         type="button"
@@ -421,73 +468,90 @@ export default function ShopClient({
                 </div>
               )}
 
-              {/* Product grid */}
-              {filtered.length === 0 ? (
-                <div className="shop-empty">
-                  <p>
-                    {scoped.length > 0 && filterCount > 0
-                      ? "No products match these filters."
-                      : trimmed
-                        ? "No products match your search."
-                        : "No products in this category yet."}
-                  </p>
-                  {scoped.length > 0 && filterCount > 0 && (
-                    <button
-                      type="button"
-                      className="shop-chip"
-                      onClick={clearFilters}
-                    >
-                      Clear filters
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <>
-                  {!shopFilters && (
-                    <p className="shop-count">
-                      Showing {filtered.length} of {plural(products.length)}
-                    </p>
-                  )}
-                  <div className="shop-grid">
-                    {shown.map((p) => (
-                      <ShopCard
-                        key={p.id}
-                        product={p}
-                        storeLowStockThreshold={storeLowStockThreshold}
-                        headingLevel={2}
-                        offerBadge={offerBadges?.[p.id]}
-                      />
-                    ))}
-                  </div>
-                  {shopFilters && (
-                    <div className="shop-more">
-                      <p className="shop-more-count" aria-live="polite">
-                        Showing {shown.length} of {plural(filtered.length)}
+              {/* ★ On a computer the filters are a sidebar that applies at
+                  once; below 1024px the same controls open in the drawer.
+                  CSS hides whichever does not apply. */}
+              <div className={`shop-layout${sidebar ? " has-sidebar" : ""}`}>
+                {sidebar && (
+                  <aside className="shop-sidebar" aria-label="Filters">
+                    <ShopFilterControls
+                      query={shop}
+                      view={facetView}
+                      live
+                      onChange={(next) => updateShop({ ...next, pages: 1 })}
+                    />
+                  </aside>
+                )}
+                <div className="shop-results">
+                  {/* Product grid */}
+                  {filtered.length === 0 ? (
+                    <div className="shop-empty">
+                      <p>
+                        {scoped.length > 0 && filterCount > 0
+                          ? "No products match these filters."
+                          : trimmed
+                            ? "No products match your search."
+                            : "No products in this category yet."}
                       </p>
-                      {shown.length < filtered.length && (
-                        <>
-                          <div className="shop-more-bar" aria-hidden>
-                            <span
-                              style={{
-                                width: `${(shown.length / filtered.length) * 100}%`,
-                              }}
-                            />
-                          </div>
-                          <button
-                            type="button"
-                            className="shop-more-btn sm-btn-secondary"
-                            onClick={() =>
-                              updateShop({ ...shop, pages: shop.pages + 1 })
-                            }
-                          >
-                            Load more
-                          </button>
-                        </>
+                      {scoped.length > 0 && filterCount > 0 && (
+                        <button
+                          type="button"
+                          className="shop-chip"
+                          onClick={clearFilters}
+                        >
+                          Clear filters
+                        </button>
                       )}
                     </div>
+                  ) : (
+                    <>
+                      {!shopFilters && (
+                        <p className="shop-count">
+                          Showing {filtered.length} of {plural(products.length)}
+                        </p>
+                      )}
+                      <div className="shop-grid">
+                        {shown.map((p) => (
+                          <ShopCard
+                            key={p.id}
+                            product={p}
+                            storeLowStockThreshold={storeLowStockThreshold}
+                            headingLevel={2}
+                            offerBadge={offerBadges?.[p.id]}
+                          />
+                        ))}
+                      </div>
+                      {shopFilters && (
+                        <div className="shop-more">
+                          <p className="shop-more-count" aria-live="polite">
+                            Showing {shown.length} of {plural(filtered.length)}
+                          </p>
+                          {shown.length < filtered.length && (
+                            <>
+                              <div className="shop-more-bar" aria-hidden>
+                                <span
+                                  style={{
+                                    width: `${(shown.length / filtered.length) * 100}%`,
+                                  }}
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                className="shop-more-btn sm-btn-secondary"
+                                onClick={() =>
+                                  updateShop({ ...shop, pages: shop.pages + 1 })
+                                }
+                              >
+                                Load more
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </>
                   )}
-                </>
-              )}
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -496,9 +560,7 @@ export default function ShopClient({
       {shopFilters && filtersOpen && (
         <ShopFilterPanel
           value={shop}
-          span={span}
-          inStockCount={scoped.filter((p) => !factsOf(p).soldOut).length}
-          countFor={(draft) => applyShopQuery(scoped, draft, factsOf).length}
+          facetsFor={facetsFor}
           onApply={(next) => updateShop({ ...next, pages: 1 })}
           onClose={() => {
             setFiltersOpen(false);

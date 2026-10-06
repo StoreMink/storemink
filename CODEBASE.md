@@ -2445,6 +2445,7 @@ wholesip/
 │   │   ├── storefront-theme.css
 │   │   ├── (pages)/           # Customer-facing pages:
 │   │   │   ├── shop/          #   product listing + [slug] product detail (reviews, related);
+│   │   │   │                  #   shop-filter-controls.tsx = the filter groups (sidebar + drawer)
 │   │   │   │                  #   shop-view.ts (shared loader) + shop-filter-panel.tsx
 │   │   │   ├── collections/[slug]/ # ★ a category's own page (1.8); /shop?category= 308s here
 │   │   │   ├── cart/          #   cart page (CartProvider-driven)
@@ -7141,6 +7142,40 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         handle sentence in place. `20261005_0160_shared_shop_filters_help`
         corrects the product-visibility guide's troubleshooting paragraph to
         explain clearing price/availability filters, sorting and mobile access.
+        **★★ Shopify-style filters, Phase 1 (2026-10-06).** Category (on
+        /shop and search only — a collection is one category), Availability,
+        product OPTIONS (Size, Colour, any axis) and Price, with a count on
+        every value. `lib/storefront/shop-filters.ts` owns the query and the
+        one predicate `matchesShopQuery`; `shop-facets.ts` builds the lists;
+        `shop-product-facts.ts` turns a product row into facts with the card's
+        own price (`variantEffectiveSelling`) and stock (`isSoldOut`) rules.
+        `getPublishedProducts` now also selects `products.options` and
+        `product_variants.option_values`.
+        ★ AND between filters, OR within one (Shopify's rule).
+        ★★ VARIANT-AWARE: one VARIANT must satisfy every option filter, In stock
+        only and the price range together. Otherwise "M + in stock" matches a
+        product whose M is sold out and whose L is in stock.
+        ★ Each value's count ignores its own filter (disjunctive), so with M
+        ticked the list still says how many L would add. Values come from
+        the products in scope BEFORE the shopper's filters, so a value stays
+        listed (greyed, 0) instead of vanishing. A filter with one value is
+        hidden unless ticked. "Colour"/"Color" are one filter (`facetKey`).
+        Values compare case-insensitively (`valueKey`). Sizes sort by wear
+        order (XS…6XL), then by the first number inside ("UK 6" before
+        "UK 10"), then first-seen.
+        ★ URLs: `filter.v.option.<key>=<value>` and `filter.p.category=<slug>`,
+        repeated for several values; `stock=in`/`min`/`max` keep working and
+        Shopify's `filter.v.availability=1`/`filter.v.price.gte|lte` are read.
+        `withShopQuery` drops every `filter.*` key it rewrites.
+        ★ ≥1024px: a sticky sidebar (`.shop-sidebar`) that applies at once, and
+        the Filter button is hidden. Smaller screens: the drawer, a draft until
+        "Show N". One `ShopFilterControls` renders both. Price commits on
+        Enter/blur in the sidebar, and a backwards range is swapped only when
+        applied, never mid-typing.
+        ⚠ Legacy name-only variants (no option axes) match no option filter.
+        The merchant sets options in the product editor, as the Help guide
+        (0167) says. Merchant-configurable filters, vendor/type/tags and
+        server-side filtering are Phases 2–3, not built.
         `storefront: "grocery"` is the deepest variant: it swaps the shared
         product cards, the product-detail page and the cart for a distinct
         premium grocery layout, so a store on such a theme looks NOTHING like the

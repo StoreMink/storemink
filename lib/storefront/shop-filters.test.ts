@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   activeFilterCount,
   applyShopQuery,
+  clearedShopQuery,
+  facetKey,
+  matchesShopQuery,
+  toggleCategory,
+  toggleOptionValue,
+  valueKey,
   DEFAULT_SHOP_QUERY,
   parseShopQuery,
   priceSpan,
@@ -51,6 +57,8 @@ describe("parseShopQuery", () => {
   it("reads every key, from a record or URLSearchParams", () => {
     const expected = {
       sort: "price-desc",
+      options: {},
+      categories: [],
       inStock: true,
       min: 50,
       max: 500,
@@ -101,6 +109,8 @@ describe("shopQueryEntries / withShopQuery", () => {
   it("round-trips a view through the query string", () => {
     const view = {
       sort: "newest" as const,
+      options: { color: ["black", "navy blue"], size: ["m"] },
+      categories: ["men"],
       inStock: true,
       min: 10,
       max: 90,
@@ -170,5 +180,123 @@ describe("priceSpan", () => {
   it("spans whole rupees and ignores invalid prices", () => {
     expect(priceSpan([120.5, 99.2, NaN, -1])).toEqual({ min: 99, max: 121 });
     expect(priceSpan([])).toBeNull();
+  });
+});
+
+describe("option and category filters", () => {
+  const tee: ShopFacts = {
+    name: "Tee",
+    price: 699,
+    soldOut: false,
+    createdAt: null,
+    categoryKey: "men",
+    variants: [
+      { values: { size: "m", color: "black" }, price: 699, available: false },
+      { values: { size: "l", color: "black" }, price: 699, available: true },
+      { values: { size: "m", color: "white" }, price: 1299, available: true },
+    ],
+  };
+  const simple: ShopFacts = {
+    name: "Cap",
+    price: 399,
+    soldOut: false,
+    createdAt: null,
+    categoryKey: "accessories",
+  };
+  const q = (patch: Partial<typeof DEFAULT_SHOP_QUERY>) => ({
+    ...DEFAULT_SHOP_QUERY,
+    ...patch,
+  });
+
+  it("reads Shopify-style params, repeated values and aliases", () => {
+    const query = parseShopQuery(
+      new URLSearchParams(
+        "filter.v.option.Size=M&filter.v.option.size=L&filter.v.option.Colour=Navy%20Blue" +
+          "&filter.p.category=Men&filter.v.availability=1&filter.v.price.gte=100",
+      ),
+    );
+    expect(query.options).toEqual({ size: ["m", "l"], color: ["navy blue"] });
+    expect(query.categories).toEqual(["men"]);
+    expect(query.inStock).toBe(true);
+    expect(query.min).toBe(100);
+    expect(activeFilterCount(query)).toBe(6);
+  });
+
+  it("ORs values within a filter and ANDs across filters", () => {
+    expect(matchesShopQuery(tee, q({ options: { size: ["m", "xl"] } }))).toBe(
+      true,
+    );
+    expect(matchesShopQuery(tee, q({ options: { size: ["xl"] } }))).toBe(false);
+    expect(
+      matchesShopQuery(
+        tee,
+        q({ options: { size: ["l"] }, categories: ["women"] }),
+      ),
+    ).toBe(false);
+  });
+
+  it("checks one VARIANT against every filter, not the product", () => {
+    // M exists (black, sold out) and something is in stock (L) — but no
+    // in-stock M black exists.
+    expect(
+      matchesShopQuery(
+        tee,
+        q({ options: { size: ["m"], color: ["black"] }, inStock: true }),
+      ),
+    ).toBe(false);
+    // M white is in stock but costs 1299, over the ceiling.
+    expect(
+      matchesShopQuery(
+        tee,
+        q({ options: { size: ["m"] }, inStock: true, max: 1000 }),
+      ),
+    ).toBe(false);
+    expect(
+      matchesShopQuery(tee, q({ options: { size: ["m"] }, inStock: true })),
+    ).toBe(true);
+  });
+
+  it("a product without the option never matches it", () => {
+    expect(matchesShopQuery(simple, q({ options: { size: ["m"] } }))).toBe(
+      false,
+    );
+    expect(matchesShopQuery(simple, q({ max: 500 }))).toBe(true);
+  });
+
+  it("skip leaves exactly one filter out", () => {
+    const query = q({ options: { size: ["xl"] }, categories: ["men"] });
+    expect(matchesShopQuery(tee, query)).toBe(false);
+    expect(matchesShopQuery(tee, query, "option:size")).toBe(true);
+  });
+
+  it("toggles values and clears everything but the sort", () => {
+    let query = toggleOptionValue(q({ sort: "name" }), "size", "m");
+    query = toggleCategory(query, "men");
+    expect(query.options).toEqual({ size: ["m"] });
+    query = toggleOptionValue(query, "size", "m");
+    expect(query.options).toEqual({});
+    const cleared = clearedShopQuery({ ...query, inStock: true, min: 5 });
+    expect(cleared).toMatchObject({
+      sort: "name",
+      categories: [],
+      inStock: false,
+      min: null,
+    });
+  });
+
+  it("drops filter keys it does not own when rewriting the URL", () => {
+    const next = withShopQuery(
+      new URLSearchParams("q=tee&filter.v.option.size=s&filter.p.vendor=x"),
+      q({ options: { size: ["m", "l"] } }),
+    );
+    expect(next.getAll("filter.v.option.size")).toEqual(["m", "l"]);
+    expect(next.get("filter.p.vendor")).toBeNull();
+    expect(next.get("q")).toBe("tee");
+  });
+
+  it("treats Colour and Color as one filter", () => {
+    expect(facetKey("Colour")).toBe("color");
+    expect(facetKey(" Fit Type ")).toBe("fit-type");
+    expect(valueKey("  Navy   Blue ")).toBe("navy blue");
   });
 });

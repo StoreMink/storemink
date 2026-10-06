@@ -2409,19 +2409,171 @@
 }
 .shop-filter-group {
   margin: 0;
-  padding: 18px 0;
-  border: 0;
+  padding: 0;
   border-bottom: 1px solid var(--sm-border);
 }
 .shop-filter-group:last-child {
   border-bottom: 0;
 }
-.shop-filter-group legend {
-  padding: 0;
-  margin-bottom: 12px;
+.shop-filter-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 14px 0;
   font-size: 15px;
   font-weight: 700;
+  list-style: none;
+  cursor: pointer;
 }
+.shop-filter-group > summary::-webkit-details-marker {
+  display: none;
+}
+/* The chevron, drawn so it inherits the text colour on every theme. */
+.shop-filter-group > summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s ease;
+}
+.shop-filter-group[open] > summary::after {
+  transform: translateY(2px) rotate(-135deg);
+}
+.shop-filter-group > summary:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 2px;
+}
+.shop-filter-selected {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--sm-ink);
+  color: var(--sm-on-ink);
+  font-size: 12px;
+  line-height: 1;
+}
+.shop-filter-group-body {
+  padding: 0 0 18px;
+}
+.shop-filter-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shop-filter-check:has(input:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+.shop-filter-swatch {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--sm-ink) 22%, transparent);
+  color: #fff;
+  mix-blend-mode: normal;
+}
+.shop-filter-swatch svg {
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.7));
+}
+.shop-filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.shop-filter-pill {
+  min-width: 48px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius-control);
+  background: var(--sm-surface);
+  color: var(--sm-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.shop-filter-pill:hover:not(:disabled) {
+  border-color: var(--sm-ink);
+}
+.shop-filter-pill[aria-pressed="true"] {
+  border-color: var(--sm-ink);
+  background: var(--sm-ink);
+  color: var(--sm-on-ink);
+}
+.shop-filter-pill:disabled {
+  color: var(--sm-ink-soft);
+  text-decoration: line-through;
+  opacity: 0.55;
+  cursor: default;
+}
+.shop-filter-pill:focus-visible,
+.shop-filter-more:focus-visible,
+.shop-sidebar input:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 2px;
+}
+.shop-filter-more {
+  margin-top: 8px;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--sm-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* ── Desktop: filters as a sidebar beside the grid ───────────────────────
+   Below 1024px the sidebar is not rendered visible and the Filter button
+   opens the same controls in the drawer. */
+.shop-layout {
+  min-width: 0;
+}
+.shop-sidebar {
+  display: none;
+}
+.shop-results {
+  min-width: 0;
+}
+@media (min-width: 1024px) {
+  .shop-layout.has-sidebar {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 40px;
+    align-items: start;
+  }
+  .shop-sidebar {
+    display: block;
+    position: sticky;
+    top: calc(var(--sm-header-h, 80px) + 16px);
+    max-height: calc(100dvh - var(--sm-header-h, 80px) - 32px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+  }
+  .shop-sidebar .shop-filter-group:first-child > summary {
+    padding-top: 0;
+    min-height: 0;
+  }
+  .shop-filter-btn.has-sidebar {
+    display: none;
+  }
+}
+
 .shop-filter-check {
   display: flex;
   align-items: center;
