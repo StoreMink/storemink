@@ -418,6 +418,81 @@ correct for every row whenever it was written.
 ⚠ The heavy band remains modelled rather than measured: every recorded run is
 `low` thinking, with no HIGH-thinking storefront-code proposal among them.
 
+### Premium product card, image sizes and Refine with Mink AI (2026-10-06)
+
+**The classic product card was redesigned** (owner's call: replace the default,
+not add a variant), so every store on the classic or quick-add card changes on
+deploy; framed, overlay and grocery cards keep their look. The photograph IS the
+card: an edge-to-edge `object-fit: cover` 3:4 frame with no tile, padding or
+shadow, the name in capitals, and the price as the MRP struck through
+(`--sm-ink-soft`, never `ink-faint`, for contrast) followed by the sale price in
+`--sm-sale`. `--sm-sale` is declared on `.storefront-root`, not `:root`, so it
+resolves against the theme's inline `--sm-error`. The rules live in
+`storefront-theme.css` under a doubled `.sm-card-classic.storefront-root` root
+class so they beat the per-grid `.shop-listing` / homepage carousel tile rules
+whatever the load order. `ShopCard` renders ONE flag on the photo for every card
+style, in the old badge's priority: sold out → low stock ("Only N left") → offer
+→ markdown ("Save N%"). Non-classic cards hide the markdown flag because their
+"% off" price pill already says it; the classic card hides the pill and the
+category label. "from" leads whichever price group comes first, so it never
+sits between the two prices. There is no wishlist heart, because StoreMink has
+no wishlist (a heart that saves nothing would read as a broken button).
+★★ **Card photo shape** (`StorefrontAppearance.cardPhoto`, `portrait` | `square`,
+Website Builder → Brand → Storefront layout). `cover` in a 3:4 frame trims 25%
+from the sides of a square photo, which on echoss (Vitrine's square shoe shots)
+cut the toes off. The owner chose a per-store setting over one global shape.
+Portrait is the default, and rows saved before the setting read as portrait.
+Square adds root class `sm-cardphoto-square`, which the builder preview toggles
+live. The product editor's recommended size and Refine target follow the
+PUBLISHED choice (`app/dashboard/products/photo-spec.ts` → `product` or
+`product_square`). Mink's Builder contract can set it, like any existing
+appearance path.
+`scripts/product-card-layout-check.mjs` now renders the real markup with the
+`sm-card-classic` root class (200 cases pass).
+
+**Every dashboard image slot states its size.** `lib/media/image-specs.ts`
+(client-safe) is the one catalogue: product 1200×1600 (3:4, matching the card),
+category 1200×1200, blog cover 1600×900, full-width banner/carousel 2520×1080
+(21:9), hero beside copy 1200×1500, phone hero 1080×1350, section ratios
+(portrait/square/landscape follow the section's own ratio setting), video
+poster, mega-menu image and logo. Every ratio is one the image model accepts.
+`ImageUpload` takes `spec`, prints "Best size: W × H px", and warns (from the
+loaded image's natural size) when the `cover` frame will crop more than 6% or
+the photo is under 60% of the target width. Logos state a size and never offer
+refine: an AI "retouch" of a brand mark is a different logo.
+
+**Refine with Mink AI** (`lib/mink/image-refine.ts`,
+`POST /api/mink/image-refine`) is a FULL AI retouch (owner's choice over
+background-extension only): Gemini image (`MINK_IMAGE_MODEL`) re-renders the
+merchant's own photo with better lighting and background at the slot's aspect,
+then sharp fits it to the exact pixels and stores a NEW WebP under
+`stores/{id}/refined/` plus a Media Library row; the original is untouched.
+★ The merchant compares original and result and must choose **Use refined
+photo**; `onReplace` swaps a gallery image in place (a gallery's
+`onUploadSuccess` appends). ★ The prompt forbids changing the goods, but a
+retouch CAN alter small details, which the widget and the Help guide both say.
+★ Unlike generated images (`ALLOW_NONE`), this call allows adults
+(`ALLOW_ADULT`), because a merchant's product photo often shows a model;
+prominent people stay blocked and the prompt forbids adding anyone. ★ Gates are
+image generation's: Mink enabled, Media manage, the store's
+`generate_media_image` switch, and `reserveMinkImageGeneration`'s spend ceiling
+(keyed on the refinement id). ★ It costs `IMAGE_REFINE_CREDITS` (3). A store
+that cannot pay is refused BEFORE the paid provider call. Credits are taken
+only after an image exists and is stored, by `consume_mink_refine_credits`:
+plan allowance, then top-ups, all-or-nothing, idempotent per refinement id. A
+lost race deletes the stored copy. This does not reuse `consumeAiQuota`, which
+takes one credit and fails OPEN, which is wrong for a paid image call.
+The button appears only inside `ImageRefineProvider` (the dashboard layout sets
+it from Mink enabled + Media manage), so the storefront and platform console
+never show one. Migration `20261006_0164_mink_image_refinements` adds the
+service-only ledger and function; `0165` edits the product-images Help steps in
+place. A route, not a server action, so a ~20-second image call never queues
+the editor's Save behind it.
+⚠ Not yet run against live Vertex: the request shape mirrors Mink's verified
+image call (an inline image part instead of a `gs://` file part), and the model
+may refuse some photos under its people/safety policy. In that case nothing is
+charged and the reason is shown.
+
 ### Catalogue freshness, POS photos and universal Mink access (2026-10-05)
 
 The product list selects variant price, special price and sort order as well as
@@ -2557,6 +2632,13 @@ wholesip/
 │   │   │                      # returning a false "not authorized". Tested in
 │   │   │                      # access.test.ts.
 │   │   ├── products/          # CRUD; edit = full page [id]/ (Shopify-style, no modal)
+│   │   │                      # ★ An ORDERED product cannot be deleted
+│   │   │                      # (order_items_product_id_fkey is ON DELETE RESTRICT;
+│   │   │                      # invoices/refunds/returns read it). deleteProduct
+│   │   │                      # maps the 23503 to "unpublish instead" rather than
+│   │   │                      # leaking the constraint; bulkDeleteProducts skips
+│   │   │                      # ordered ids, deletes the rest, purges images ONLY
+│   │   │                      # for deleted ones and reports data.skipped.
 │   │   ├── orders/            # ★ Channel-aware Orders workspace: horizontal All / Website /
 │   │   │                      # POS books (never extra app-rail destinations), server-paginated
 │   │   │                      # with channel-specific filters/columns and a shared detail drawer
@@ -2941,6 +3023,7 @@ wholesip/
 │       ├── og/                # Dynamic branded OG card (ImageResponse; ?d=JSON
 │       │                      # {title,subtitle,color}) — default share image for
 │       │                      # homepage/custom pages/platform (lib/seo/og-card.ts)
+│       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 3 credits
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
 │           │                  # store-host files live under stores/{storeId}/uploads/
@@ -3337,6 +3420,8 @@ wholesip/
 │   │                          # quota gate; an empty table = the code defaults.
 │   ├── db/pg-types.ts         # Keeps timestamp/timestamptz text at PostgreSQL's full
 │   │                          # microsecond precision for exact optimistic checkpoints.
+│   ├── media/image-specs.ts   # ★ the exact size every dashboard image slot renders at;
+│   │                          # read by ImageUpload and by Refine with Mink AI
 │   ├── mink/                  # ★ Dashboard agent foundation (docs/mink-ai-dashboard-plan.md):
 │   │                          # default-on global + fail-closed invited-store access;
 │   │                          # system-prompt.ts and image-prompt.ts validate/render the

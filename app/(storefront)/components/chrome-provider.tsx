@@ -79,7 +79,11 @@ export function ChromeProvider({
         if (cls.startsWith(prefix)) root.classList.remove(cls);
       }
     }
-    root.classList.remove("sm-card-quickadd", "sm-storefront-grocery");
+    root.classList.remove(
+      "sm-card-quickadd",
+      "sm-storefront-grocery",
+      "sm-cardphoto-square",
+    );
     root.classList.add(
       `sm-header-${appearance.header}`,
       `sm-card-${appearance.card}`,
@@ -88,6 +92,8 @@ export function ChromeProvider({
       `sm-footer-${appearance.footer}`,
     );
     if (appearance.cardQuickAdd) root.classList.add("sm-card-quickadd");
+    if (appearance.cardPhoto === "square")
+      root.classList.add("sm-cardphoto-square");
     if (
       appearance.card === "grocery" ||
       appearance.productDetail === "grocery" ||

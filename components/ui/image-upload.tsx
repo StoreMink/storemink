@@ -3,21 +3,52 @@
 
 import { useState, useRef } from "react";
 import { uploadImage } from "@/lib/storage/uploads";
-import { UploadCloud, Loader2, X, Check } from "lucide-react";
+import {
+  UploadCloud,
+  Loader2,
+  X,
+  Check,
+  Sparkles,
+  Ruler,
+  AlertTriangle,
+} from "lucide-react";
 import { Button } from "./button";
+import { useImageRefineAvailable } from "./image-refine-context";
+import {
+  IMAGE_REFINE_CREDITS,
+  IMAGE_SPECS,
+  imageFitWarning,
+  type ImageSpecKey,
+} from "@/lib/media/image-specs";
 
 interface ImageUploadProps {
   onUploadSuccess: (url: string) => void;
   folder?: string;
   defaultImage?: string;
   className?: string;
+  /**
+   * The slot this image fills (`lib/media/image-specs.ts`). States the exact
+   * size the storefront renders, warns when a photo will be cropped, and —
+   * where the slot allows it — offers Refine with Mink AI.
+   */
+  spec?: ImageSpecKey;
+  /**
+   * Called instead of `onUploadSuccess` when a refined photo REPLACES the one
+   * just uploaded. Needed by list-style fields (a product gallery) whose
+   * `onUploadSuccess` APPENDS, or accepting a refine would add a second copy.
+   */
+  onReplace?: (previousUrl: string, nextUrl: string) => void;
 }
+
+type RefineResult = { url: string; chargedCredits: number };
 
 export function ImageUpload({
   onUploadSuccess,
   folder = "",
   defaultImage,
   className = "",
+  spec,
+  onReplace,
 }: ImageUploadProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(
@@ -26,7 +57,13 @@ export function ImageUpload({
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const [refining, setRefining] = useState(false);
+  const [refined, setRefined] = useState<RefineResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const refineAvailable = useImageRefineAvailable();
+  const slot = spec ? IMAGE_SPECS[spec] : null;
+  const canRefine = Boolean(slot?.refine && refineAvailable);
 
   const validateAndStage = (file: File) => {
     if (!file.type.startsWith("image/")) {
@@ -38,6 +75,7 @@ export function ImageUpload({
       return;
     }
     setError(null);
+    setNatural(null);
     setPendingFile(file);
     setPendingPreview(URL.createObjectURL(file));
   };
@@ -53,6 +91,7 @@ export function ImageUpload({
     try {
       const uploadedUrl = await uploadImage(pendingFile, { folder });
       setPreviewUrl(uploadedUrl);
+      setRefined(null);
       onUploadSuccess(uploadedUrl);
       setPendingFile(null);
       setPendingPreview(null);
@@ -79,11 +118,71 @@ export function ImageUpload({
   const handleRemoveUploaded = (e: React.MouseEvent) => {
     e.stopPropagation();
     setPreviewUrl(null);
+    setRefined(null);
+    setNatural(null);
     onUploadSuccess("");
   };
 
   const triggerFileInput = () => {
     if (!pendingPreview) fileInputRef.current?.click();
+  };
+
+  const handleRefine = async () => {
+    if (!previewUrl || !spec || refining) return;
+    setRefining(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/mink/image-refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: previewUrl, spec }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        url?: string;
+        chargedCredits?: number;
+        error?: string;
+      };
+      if (!res.ok || !body.url) {
+        setError(body.error ?? "Refining failed. Nothing was charged.");
+        return;
+      }
+      setRefined({ url: body.url, chargedCredits: body.chargedCredits ?? 0 });
+    } catch {
+      setError("Refining failed. Check your connection and try again.");
+    } finally {
+      setRefining(false);
+    }
+  };
+
+  const acceptRefined = () => {
+    if (!refined || !previewUrl) return;
+    if (onReplace) onReplace(previewUrl, refined.url);
+    else onUploadSuccess(refined.url);
+    setPreviewUrl(refined.url);
+    setNatural(null);
+    setRefined(null);
+  };
+
+  const sizeLine = slot && (
+    <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+      <Ruler className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span>
+        Best size:{" "}
+        <strong className="font-semibold text-foreground">
+          {slot.width} × {slot.height} px
+        </strong>{" "}
+        ({slot.aspect}). {slot.hint}
+      </span>
+    </p>
+  );
+
+  const fitWarning =
+    slot && natural ? imageFitWarning(natural.w, natural.h, slot) : null;
+
+  const onImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    if (img.naturalWidth && img.naturalHeight)
+      setNatural({ w: img.naturalWidth, h: img.naturalHeight });
   };
 
   // — Preview modal (pending confirmation) —
@@ -94,6 +193,7 @@ export function ImageUpload({
           <img
             src={pendingPreview}
             alt="Preview"
+            onLoad={onImgLoad}
             className="absolute inset-0 w-full h-full object-contain"
           />
           <div className="absolute bottom-0 inset-x-0 bg-background/90 border-t border-border px-3 py-2 flex items-center justify-between gap-2">
@@ -129,7 +229,69 @@ export function ImageUpload({
             </div>
           </div>
         </div>
+        {sizeLine}
+        {fitWarning && <FitWarning text={fitWarning} />}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+      </div>
+    );
+  }
+
+  // — Refined result: compare, then choose —
+  if (previewUrl && refined) {
+    return (
+      <div className={`w-full ${className}`}>
+        <div className="grid grid-cols-2 gap-2">
+          <figure className="min-w-0">
+            <div className="relative h-48 overflow-hidden rounded-lg border border-border/50 bg-muted/30">
+              <img
+                src={previewUrl}
+                alt="Original"
+                className="absolute inset-0 h-full w-full object-contain"
+              />
+            </div>
+            <figcaption className="mt-1 text-xs text-muted-foreground">
+              Original
+            </figcaption>
+          </figure>
+          <figure className="min-w-0">
+            <div className="relative h-48 overflow-hidden rounded-lg border-2 border-primary/60 bg-muted/30">
+              <img
+                src={refined.url}
+                alt="Refined with Mink AI"
+                className="absolute inset-0 h-full w-full object-contain"
+              />
+            </div>
+            <figcaption className="mt-1 text-xs text-muted-foreground">
+              Refined · {slot?.width} × {slot?.height} px
+            </figcaption>
+          </figure>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Check that the product looks exactly like the real item before you use
+          it.
+          {refined.chargedCredits > 0 &&
+            ` ${refined.chargedCredits} Mink credits were used.`}{" "}
+          The refined copy is also saved in your Media Library.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            onClick={acceptRefined}
+            className="gap-1.5"
+          >
+            <Check className="h-3.5 w-3.5" />
+            Use refined photo
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setRefined(null)}
+          >
+            Keep original
+          </Button>
+        </div>
       </div>
     );
   }
@@ -142,16 +304,51 @@ export function ImageUpload({
           <img
             src={previewUrl}
             alt="Uploaded"
+            onLoad={onImgLoad}
             className="absolute inset-0 w-full h-full object-contain"
           />
           <button
             onClick={handleRemoveUploaded}
             type="button"
+            aria-label="Remove image"
+            disabled={refining}
             className="absolute top-2 right-2 p-1.5 bg-background/80 backdrop-blur-md rounded-md hover:bg-destructive hover:text-destructive-foreground transition-colors shadow-sm"
           >
             <X className="h-4 w-4" />
           </button>
+          {refining && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/75 text-sm text-foreground backdrop-blur-sm">
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+              <span role="status">Refining… this takes about 20 seconds</span>
+            </div>
+          )}
         </div>
+        {sizeLine}
+        {fitWarning && <FitWarning text={fitWarning} />}
+        {canRefine && (
+          <div className="mt-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={handleRefine}
+              disabled={refining}
+              className="gap-1.5"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Refine with Mink AI
+              <span className="text-muted-foreground">
+                · {IMAGE_REFINE_CREDITS} credits
+              </span>
+            </Button>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Retouches lighting and background and resizes to exactly{" "}
+              {slot?.width} × {slot?.height} px. You&rsquo;ll compare before
+              using it.
+            </p>
+          </div>
+        )}
+        {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       </div>
     );
   }
@@ -180,7 +377,17 @@ export function ImageUpload({
           <p className="text-xs">PNG, JPG, WEBP, SVG (MAX. 5MB)</p>
         </div>
       </div>
+      {sizeLine}
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
     </div>
+  );
+}
+
+function FitWarning({ text }: { text: string }) {
+  return (
+    <p className="mt-1 flex items-start gap-1.5 text-xs text-amber-700">
+      <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span>{text}</span>
+    </p>
   );
 }

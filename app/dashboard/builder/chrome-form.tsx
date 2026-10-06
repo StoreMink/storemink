@@ -305,6 +305,7 @@ export function NavTreeList({
                 <ImageUpload
                   key={link.image_url ?? "none"}
                   folder="navigation"
+                  spec="menu"
                   defaultImage={link.image_url || undefined}
                   onUploadSuccess={(url) => set(i, { image_url: url })}
                 />
@@ -890,6 +891,25 @@ export function BrandForm({
             <option value="framed">Framed</option>
             <option value="grocery">Grocery</option>
           </select>
+        </label>
+        <label className="sm-b-field">
+          <span>Card photo shape</span>
+          <select
+            className="sm-b-input"
+            value={appearance.cardPhoto}
+            onChange={(e) =>
+              patchAppearance({
+                cardPhoto: e.target.value === "square" ? "square" : "portrait",
+              })
+            }
+          >
+            <option value="portrait">Portrait 3:4 (1200 × 1600 photos)</option>
+            <option value="square">Square 1:1 (1200 × 1200 photos)</option>
+          </select>
+          <span className="sm-b-hint">
+            Classic cards fill this frame edge to edge. Match it to your product
+            photos so nothing is cropped.
+          </span>
         </label>
         <label className="sm-b-field">
           <span>Product page</span>

@@ -513,10 +513,6 @@
     align-items: flex-start;
     gap: 4px;
   }
-  .sm-grid-m2 .shop-listing .shop-card-head > .shrink-0 {
-    margin-left: 0;
-    align-items: flex-start;
-  }
   .sm-grid-m2 .shop-listing .shop-card-name {
     font-size: 0.95rem;
   }

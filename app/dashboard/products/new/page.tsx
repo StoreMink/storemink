@@ -1,3 +1,4 @@
+import { storePhotoSpec } from "../photo-spec";
 import { requireSectionAccess } from "../../lib/access";
 import { getProductCreateData } from "../data";
 import { ProductEditorPanel } from "../product-edit-panel";
@@ -43,6 +44,7 @@ export default async function ProductCreatePage() {
         taxClasses={data.taxClasses}
         defaultTrackInventory={data.defaultTrackInventory}
         canUseGrossMargin={data.canUseGrossMargin}
+        photoSpec={await storePhotoSpec()}
       />
     </div>
   );

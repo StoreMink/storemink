@@ -61,6 +61,7 @@ export function MediaPickerDialog({
         <div className="py-4">
           <ImageUpload
             folder="blog-covers"
+            spec="blog_cover"
             onUploadSuccess={(url) => {
               if (url) {
                 onSelect(url);

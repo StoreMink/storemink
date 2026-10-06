@@ -1048,13 +1048,6 @@
     align-items: flex-start;
     gap: 4px;
   }
-  .storefront-root:not(.sm-card-overlay)
-    .shop-card
-    .shop-card-head
-    > .shrink-0 {
-    margin-left: 0;
-    align-items: flex-start;
-  }
   .storefront-root:not(.sm-card-overlay) .shop-card .shop-card-cat {
     padding: 3px 8px;
     margin-bottom: 6px;
@@ -1083,6 +1076,156 @@
     padding: 6px 10px;
     font-size: 0.8rem;
   }
+}
+
+/* The sale colour. Declared HERE rather than on :root because a custom
+   property resolves where it is declared: on :root, var(--sm-error) would
+   read the global default, not the theme's palette written inline on this
+   element. */
+.storefront-root {
+  --sm-sale: var(--sm-error);
+}
+
+/* ---- Card flag (every card style) --------------------------------------
+   One flag sits on the photo's top-left corner — sold out, low stock, an
+   offer, or the markdown, in that order — instead of badges competing beside
+   the name. */
+.shop-card-img {
+  position: relative;
+}
+.shop-card-flag {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  max-width: calc(100% - 20px);
+  padding: 5px 10px;
+  border-radius: var(--sm-radius-sm, 6px);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.shop-card-flag--save {
+  background: var(--sm-sale);
+  color: #fff;
+}
+.shop-card-flag--offer {
+  background: var(--sm-ink);
+  color: var(--sm-on-ink);
+}
+.shop-card-flag--lowstock {
+  background: var(--sm-surface);
+  color: var(--sm-sale);
+  border: 1px solid currentColor;
+}
+.shop-card-flag--soldout {
+  background: var(--sm-surface);
+  color: var(--sm-ink);
+  border: 1px solid var(--sm-border);
+}
+/* Non-classic cards already state the markdown in their "% off" price pill,
+   so the photo flag would say it twice. */
+.storefront-root:not(.sm-card-classic) .shop-card-flag--save {
+  display: none;
+}
+
+/* ---- Classic product card: the photograph IS the card ------------------
+   ★ The default card. It used to be a tinted tile with the photo contained
+   and padded inside it, a category pill and a "% off" chip — a layout that
+   reads as a catalogue rather than a shop. It is now an edge-to-edge 3:4
+   photograph with no card chrome, the markdown as one flag on the photo, the
+   name in capitals and the price as MRP struck through beside the sale price.
+   ★ `cover`, not `contain`: a photo shot at 3:4 (1200×1600, the size the
+   product editor recommends) fills the frame exactly; any other shape is
+   cropped from the centre — which is why the editor states the size and
+   offers Refine with Mink AI.
+   Doubled root class beats the per-grid `.shop-listing` / homepage carousel
+   tile rules whichever stylesheet loads last. */
+.sm-card-classic.storefront-root .shop-card {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+.sm-card-classic.storefront-root .shop-card:hover {
+  transform: none;
+  box-shadow: none;
+}
+.sm-card-classic.storefront-root .shop-card-img {
+  aspect-ratio: 3 / 4;
+  height: auto;
+  overflow: hidden;
+  border-radius: var(--sm-radius-card);
+  background: var(--sm-sand, #f2f2f0);
+}
+/* A store whose product photos are square (Website Builder → Brand →
+   Storefront layout → Card photo shape) gets a square frame instead, so
+   nothing is cropped. Same specificity + 1, so it wins over the 3:4 rule. */
+.sm-card-classic.sm-cardphoto-square.storefront-root .shop-card-img {
+  aspect-ratio: 1 / 1;
+}
+.sm-card-classic.storefront-root .shop-card-img-el {
+  padding: 0;
+  object-fit: cover;
+  transition: transform 0.5s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .sm-card-classic.storefront-root:not(.sm-card-hoverimg)
+    .shop-card:hover
+    .shop-card-img-el {
+    transform: scale(1.03);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sm-card-classic.storefront-root .shop-card-img-el {
+    transition: none;
+  }
+}
+.sm-card-classic.storefront-root .shop-card .shop-card-body {
+  padding: 14px 0 4px;
+  gap: 6px;
+}
+.sm-card-classic.storefront-root .shop-card .shop-card-cat,
+.sm-card-classic.storefront-root .shop-card .shop-card-off {
+  display: none;
+}
+.sm-card-classic.storefront-root .shop-card .shop-card-name {
+  font-size: 0.95rem;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--sm-ink);
+}
+.sm-card-classic.storefront-root .shop-card .shop-card-price {
+  padding-top: 2px;
+  gap: 4px 10px;
+  color: var(--sm-ink);
+}
+.sm-card-classic.storefront-root .shop-card .shop-card-sell {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--sm-ink);
+}
+.sm-card-classic.storefront-root .shop-card .shop-card-sell--sale {
+  color: var(--sm-sale);
+}
+.sm-card-classic.storefront-root .shop-card .shop-card-base {
+  font-size: 1rem;
+  font-weight: 400;
+  /* ink-soft, not ink-faint: struck text is still text, and faint fails
+     WCAG AA on several theme pages (the Crave contrast finding). */
+  color: var(--sm-ink-soft);
+}
+.sm-card-classic.storefront-root .shop-card .shop-card-from {
+  font-size: 0.85rem;
+  font-weight: 400;
 }
 
 /* ---------------------------------------------------------------------------

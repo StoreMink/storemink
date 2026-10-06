@@ -144,7 +144,11 @@ export function ProductsManagementView({
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const runBulk = (
-    action: () => Promise<{ error?: string; success?: boolean }>,
+    action: () => Promise<{
+      error?: string;
+      success?: boolean;
+      data?: Record<string, unknown>;
+    }>,
     successMsg: string,
   ) => {
     startTransition(async () => {
@@ -152,7 +156,15 @@ export function ProductsManagementView({
       if (result.error) {
         toast.error(result.error);
       } else {
-        toast.success(successMsg);
+        const deleted = Number(result.data?.deleted ?? 0);
+        const skipped = Number(result.data?.skipped ?? 0);
+        if (skipped > 0) {
+          toast.warning(
+            `Deleted ${deleted} product${deleted === 1 ? "" : "s"}. ${skipped} ${skipped === 1 ? "has" : "have"} orders and ${skipped === 1 ? "was" : "were"} kept — unpublish ${skipped === 1 ? "it" : "them"} instead.`,
+          );
+        } else {
+          toast.success(successMsg);
+        }
         selection.clear();
         setBulkDeleteOpen(false);
         router.refresh();
@@ -654,7 +666,8 @@ export function ProductsManagementView({
             <DialogDescription>
               This permanently deletes the selected product
               {selection.count === 1 ? "" : "s"}, their variants and images.
-              This action cannot be undone.
+              This action cannot be undone. Products that have orders are kept —
+              unpublish those instead.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -691,7 +704,9 @@ export function ProductsManagementView({
             <DialogTitle>Delete product</DialogTitle>
             <DialogDescription>
               Are you sure you want to delete &ldquo;{deleteTarget?.name}
-              &rdquo;? This also removes its variants and cannot be undone.
+              &rdquo;? This also removes its variants and cannot be undone. A
+              product that has orders can&rsquo;t be deleted — unpublish it
+              instead.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
