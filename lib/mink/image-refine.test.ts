@@ -179,7 +179,7 @@ describe("refineStoreImage", () => {
       sourceUrl: ownUrl,
       specKey: "product",
     });
-    expect(result.chargedCredits).toBe(3);
+    expect(result.chargedCredits).toBe(2);
     expect(result.url).toContain(`stores/${STORE}/refined/`);
     const meta = await sharp(state.uploads[0].bytes).metadata();
     expect([meta.width, meta.height]).toEqual([1200, 1600]);
@@ -212,7 +212,7 @@ describe("refineStoreImage", () => {
   });
 
   it("refuses an unaffordable refine WITHOUT calling the paid provider", async () => {
-    state.remaining = 2;
+    state.remaining = 1;
     await expect(
       refineStoreImage({ actor, sourceUrl: ownUrl, specKey: "product" }),
     ).rejects.toMatchObject({ status: 402 });

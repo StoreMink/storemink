@@ -6490,6 +6490,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261006_0166_refine_two_credits_help",
+      "description": "Refine with Mink AI costs 2 Mink credits",
+      "file": "sql/20261006_0166_refine_two_credits_help.sql",
+      "transaction": true,
+      "requires": ["20261006_0165_image_sizes_refine_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Refine credit cost in the product images guide",
+            "sql": "select count(*)::text from public.help_articles where slug='add-product-images-and-variants' and status='published' and body like '%It uses 2 Mink credits, taken only%' and body not like '%It uses 3 Mink credits%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

@@ -210,5 +210,5 @@ function aspectWord(aspect: ImageAspect): string {
   }
 }
 
-/** What one refine costs, in Mink credits (the same as a generated image). */
-export const IMAGE_REFINE_CREDITS = 3;
+/** What one refine costs, in Mink credits (owner's price, 2026-10-06). */
+export const IMAGE_REFINE_CREDITS = 2;
