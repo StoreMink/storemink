@@ -58,6 +58,8 @@ export interface ProductCardRow {
   content_updated_at: string;
   /** When the product was created — the shop's "Newest" sort. */
   created_at: string;
+  /** Option axes (Size, Colour…) with swatches — the shop's option filters. */
+  options: unknown;
   /** Resolved category name (flattened from the joined categories row). */
   category: string | null;
   variants: {
@@ -69,6 +71,8 @@ export interface ProductCardRow {
     stock: number;
     low_stock_threshold: number | null;
     allow_backorder: boolean;
+    /** Positional values for `options`, e.g. ["M", "Black"]. */
+    option_values: string[];
   }[];
 }
 
@@ -128,6 +132,7 @@ export const getPublishedProducts = cache(
             // it rides the existing product read.
             content_updated_at: products.contentUpdatedAt,
             created_at: products.createdAt,
+            options: products.options,
             category: categories.name,
           })
           .from(products)
@@ -155,6 +160,7 @@ export const getPublishedProducts = cache(
             stock: productVariants.onlineStock,
             low_stock_threshold: productVariants.lowStockThreshold,
             allow_backorder: productVariants.allowBackorder,
+            option_values: productVariants.optionValues,
           })
           .from(productVariants)
           .where(

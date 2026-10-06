@@ -3,12 +3,17 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { formatPrice } from "@/lib/pricing";
-import type { ShopQuery } from "@/lib/storefront/shop-filters";
+import {
+  clearedShopQuery,
+  type ShopQuery,
+} from "@/lib/storefront/shop-filters";
+import type { ShopFacetView } from "@/lib/storefront/shop-facets";
+import { ShopFilterControls } from "./shop-filter-controls";
 
 // ---------------------------------------------------------------------------
-// The shop's filter panel — a side drawer on a computer, a bottom sheet on a
-// phone (CSS decides; the markup is one dialog).
+// The shop's filter panel — a side drawer on a tablet, a bottom sheet on a
+// phone (CSS decides; the markup is one dialog). A computer shows the same
+// controls in a sidebar instead (shop-client.tsx).
 //
 // ★ CHANGES ARE A DRAFT UNTIL "SHOW N PRODUCTS". Applying each keystroke would
 // re-sort the grid behind the panel while somebody is still typing "1500" —
@@ -21,44 +26,28 @@ import type { ShopQuery } from "@/lib/storefront/shop-filters";
 // would render the panel in the fallback look.
 // ---------------------------------------------------------------------------
 
-function toBound(raw: string): number | null {
-  if (raw.trim() === "") return null;
-  const value = Number(raw);
-  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
-}
-
 export function ShopFilterPanel({
   value,
-  span,
-  inStockCount,
-  countFor,
+  facetsFor,
   onApply,
   onClose,
 }: {
   value: ShopQuery;
-  /** Cheapest and dearest price in scope, for the placeholders. */
-  span: { min: number; max: number } | null;
-  inStockCount: number;
-  /** How many products a draft would show. */
-  countFor: (draft: ShopQuery) => number;
+  /** Filter lists and counts for a draft. */
+  facetsFor: (draft: ShopQuery) => ShopFacetView;
   onApply: (next: ShopQuery) => void;
   onClose: () => void;
 }) {
   const titleId = useId();
-  const [inStock, setInStock] = useState(value.inStock);
-  const [min, setMin] = useState(value.min === null ? "" : String(value.min));
-  const [max, setMax] = useState(value.max === null ? "" : String(value.max));
+  const [draft, setDraft] = useState<ShopQuery>(value);
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  let lo = toBound(min);
-  let hi = toBound(max);
-  if (lo !== null && hi !== null && lo > hi) [lo, hi] = [hi, lo];
-  const draft: ShopQuery = { ...value, inStock, min: lo, max: hi };
-  const count = countFor(draft);
+  const view = facetsFor(draft);
+  const count = view.total;
 
   // Escape closes, Tab stays inside, the page behind does not scroll, and
   // focus starts on the panel (the caller returns it to "Filter").
@@ -122,71 +111,19 @@ export function ShopFilterPanel({
         </div>
 
         <div className="shop-filter-body">
-          <fieldset className="shop-filter-group">
-            <legend>Availability</legend>
-            <label className="shop-filter-check">
-              <input
-                type="checkbox"
-                checked={inStock}
-                onChange={(e) => setInStock(e.target.checked)}
-              />
-              <span>In stock only</span>
-              <span className="shop-filter-muted">({inStockCount})</span>
-            </label>
-          </fieldset>
-
-          <fieldset className="shop-filter-group">
-            <legend>Price</legend>
-            {span && (
-              <p className="shop-filter-muted shop-filter-hint">
-                Prices here run from {formatPrice(span.min)} to{" "}
-                {formatPrice(span.max)}.
-              </p>
-            )}
-            <div className="shop-filter-range">
-              <label>
-                <span>From</span>
-                <span className="shop-filter-money">
-                  <span aria-hidden>₹</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    aria-label="Minimum price in rupees"
-                    value={min}
-                    placeholder={span ? String(span.min) : "0"}
-                    onChange={(e) => setMin(e.target.value)}
-                  />
-                </span>
-              </label>
-              <label>
-                <span>To</span>
-                <span className="shop-filter-money">
-                  <span aria-hidden>₹</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    aria-label="Maximum price in rupees"
-                    value={max}
-                    placeholder={span ? String(span.max) : ""}
-                    onChange={(e) => setMax(e.target.value)}
-                  />
-                </span>
-              </label>
-            </div>
-          </fieldset>
+          <ShopFilterControls
+            query={draft}
+            view={view}
+            live={false}
+            onChange={setDraft}
+          />
         </div>
 
         <div className="shop-filter-foot">
           <button
             type="button"
             className="shop-filter-reset"
-            onClick={() => {
-              setInStock(false);
-              setMin("");
-              setMax("");
-            }}
+            onClick={() => setDraft(clearedShopQuery(draft))}
           >
             Clear
           </button>
@@ -194,7 +131,14 @@ export function ShopFilterPanel({
             type="button"
             className="shop-filter-apply"
             onClick={() => {
-              onApply(draft);
+              // A backwards range means what it obviously means.
+              const swapped =
+                draft.min !== null &&
+                draft.max !== null &&
+                draft.min > draft.max
+                  ? { ...draft, min: draft.max, max: draft.min }
+                  : draft;
+              onApply(swapped);
               onClose();
             }}
           >
