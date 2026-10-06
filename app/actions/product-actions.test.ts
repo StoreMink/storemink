@@ -176,6 +176,28 @@ describe("product-actions", () => {
       expect(deleteStorageUrls).toHaveBeenCalled();
     });
 
+    // ★ order_items_product_id_fkey is ON DELETE RESTRICT: an ordered
+    // product must be skipped, not allowed to fail the whole selection.
+    it("bulkDeleteProducts skips products that have orders", async () => {
+      dbHolder.current = makeDbMock({
+        selectByTable: { order_items: [[{ productId: "p1" }]] },
+      });
+      const r = await bulkDeleteProducts(["p1", "p2"]);
+      expect(r.success).toBe(true);
+      expect(r.data).toEqual({ deleted: 1, skipped: 1 });
+      expect(dbHolder.current.calls.delete).toHaveLength(1);
+    });
+
+    it("bulkDeleteProducts refuses when every product has orders", async () => {
+      dbHolder.current = makeDbMock({
+        selectByTable: { order_items: [[{ productId: "p1" }]] },
+      });
+      const r = await bulkDeleteProducts(["p1"]);
+      expect(r.error).toMatch(/has orders/i);
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+      expect(deleteStorageUrls).not.toHaveBeenCalled();
+    });
+
     it("bulkDeleteProducts surfaces a DB error", async () => {
       dbHolder.current.db.delete = vi.fn(() => {
         throw new Error("boom");
@@ -488,6 +510,24 @@ describe("product-actions", () => {
       expect(deleteStorageUrls).toHaveBeenCalled();
       const arg = (deleteStorageUrls as any).mock.calls[0][0];
       expect(arg).toContain(url);
+    });
+  });
+
+  describe("deleteProduct with orders", () => {
+    it("explains the restriction instead of leaking the constraint", async () => {
+      dbHolder.current.db.delete = vi.fn(() => {
+        throw Object.assign(new Error("Failed query"), {
+          cause: {
+            code: "23503",
+            message:
+              'update or delete on table "products" violates foreign key constraint "order_items_product_id_fkey"',
+          },
+        });
+      });
+      const result = await deleteProduct("p1");
+      expect(result.error).toMatch(/has orders/i);
+      expect(result.error).not.toMatch(/foreign key/i);
+      expect(deleteStorageUrls).not.toHaveBeenCalled();
     });
   });
 

@@ -2557,6 +2557,13 @@ wholesip/
 │   │   │                      # returning a false "not authorized". Tested in
 │   │   │                      # access.test.ts.
 │   │   ├── products/          # CRUD; edit = full page [id]/ (Shopify-style, no modal)
+│   │   │                      # ★ An ORDERED product cannot be deleted
+│   │   │                      # (order_items_product_id_fkey is ON DELETE RESTRICT;
+│   │   │                      # invoices/refunds/returns read it). deleteProduct
+│   │   │                      # maps the 23503 to "unpublish instead" rather than
+│   │   │                      # leaking the constraint; bulkDeleteProducts skips
+│   │   │                      # ordered ids, deletes the rest, purges images ONLY
+│   │   │                      # for deleted ones and reports data.skipped.
 │   │   ├── orders/            # ★ Channel-aware Orders workspace: horizontal All / Website /
 │   │   │                      # POS books (never extra app-rail destinations), server-paginated
 │   │   │                      # with channel-specific filters/columns and a shared detail drawer
