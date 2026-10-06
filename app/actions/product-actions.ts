@@ -28,7 +28,12 @@ import {
   getActingStoreId,
 } from "@/app/dashboard/lib/access";
 import { emitEvent } from "@/lib/notifications/record";
-import { resolveOptionRows, type ProductOption } from "@/lib/products/options";
+import {
+  normalizeOptions,
+  optionImageUrls,
+  resolveOptionRows,
+  type ProductOption,
+} from "@/lib/products/options";
 import { deleteStorageUrls } from "@/lib/storage/cleanup";
 import {
   FOREIGN_IMAGE_ERROR,
@@ -477,6 +482,12 @@ function productFormImageUrls(formData: ProductFormData): string[] {
   for (const variant of formData.variants ?? []) {
     urls.push(...(variant.images ?? []));
   }
+  // ★ Colour photos live on the options (`options[].images`). They must be
+  // checked for ownership like every other product image, and counted as
+  // still in use by the clean-up below — or saving a product would delete
+  // its own colour photos from storage.
+  const parsed = normalizeOptions(formData.options ?? []);
+  if ("options" in parsed) urls.push(...optionImageUrls(parsed.options));
   return urls.filter(Boolean);
 }
 
@@ -488,13 +499,19 @@ async function fetchProductImageUrls(
   try {
     const [p] = await withUser(admin, (db) =>
       db
-        .select({ image_url: products.imageUrl, images: products.images })
+        .select({
+          image_url: products.imageUrl,
+          images: products.images,
+          options: products.options,
+        })
         .from(products)
         .where(eq(products.id, productId))
         .limit(1),
     );
     if (p?.image_url) urls.push(p.image_url);
     if (Array.isArray(p?.images)) urls.push(...p.images);
+    const parsed = normalizeOptions(p?.options ?? []);
+    if ("options" in parsed) urls.push(...optionImageUrls(parsed.options));
 
     const vs = await withUser(admin, (db) =>
       db

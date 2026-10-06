@@ -81,3 +81,51 @@ describe("ShopCard", () => {
     ).toBe("20% off");
   });
 });
+
+describe("ShopCard colour row", () => {
+  const options = [
+    { name: "Size", values: ["S", "M"] },
+    {
+      name: "Colour",
+      values: ["Black", "Tan", "Navy", "Olive", "Rust", "Sand"],
+      swatches: { Black: "#111111" },
+    },
+  ];
+
+  it("shows four colours and the rest as +N", () => {
+    const { container } = render(<ShopCard product={product({ options })} />);
+    expect(container.querySelectorAll(".shop-card-colour")).toHaveLength(4);
+    expect(container.querySelector(".shop-card-colour-more")?.textContent).toBe(
+      "+2",
+    );
+    expect(container.textContent).toContain("Available in 6 colours");
+  });
+
+  it("has no colour row for a product with one colour or none", () => {
+    const { container } = render(
+      <ShopCard
+        product={product({ options: [{ name: "Colour", values: ["Black"] }] })}
+      />,
+    );
+    expect(container.querySelector(".shop-card-colours")).toBeNull();
+  });
+
+  it("a per-colour card links to its colour and says which it is", () => {
+    const { container } = render(
+      <ShopCard
+        product={product({ options })}
+        href="/shop/circuit-state?variant=v9"
+        colour="Black"
+      />,
+    );
+    expect(container.querySelector("a")?.getAttribute("href")).toBe(
+      "/shop/circuit-state?variant=v9",
+    );
+    expect(container.querySelector("img")?.getAttribute("alt")).toContain(
+      "Black",
+    );
+    expect(
+      container.querySelector(".shop-card-colour.is-current"),
+    ).not.toBeNull();
+  });
+});

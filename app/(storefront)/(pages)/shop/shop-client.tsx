@@ -25,6 +25,7 @@ import {
 } from "@/lib/storefront/shop-filters";
 import { buildShopFacets, facetValueLabel } from "@/lib/storefront/shop-facets";
 import { shopFactsFor } from "@/lib/storefront/shop-product-facts";
+import { colourCards, type ColourCard } from "@/lib/storefront/colour-cards";
 import { formatPrice } from "@/lib/pricing";
 import { ShopCard } from "@/app/(storefront)/components/shop-card";
 import { useBrand } from "@/app/(storefront)/components/brand-provider";
@@ -53,6 +54,8 @@ export interface ShopProduct {
   /** Option axes (jsonb), for the Size / Colour filters. */
   options?: unknown;
   variants: {
+    id?: string;
+    images?: string[] | null;
     base_price: number;
     selling_price: number;
     special_price?: number | null;
@@ -64,6 +67,8 @@ export interface ShopProduct {
     option_values?: string[] | null;
   }[];
 }
+
+type Card = ColourCard<ShopProduct>;
 
 export interface ShopCategory {
   id: string;
@@ -106,6 +111,8 @@ type Props = {
    * enters. The page resolves each product once and sends the label.
    */
   offerBadges?: Record<string, { label: string }>;
+  /** Website Builder: one card per product, or one per colour. */
+  productCards?: "product" | "colour";
 };
 
 const plural = (n: number) => `${n} ${n === 1 ? "product" : "products"}`;
@@ -122,6 +129,7 @@ export default function ShopClient({
   collectionBanner = false,
   storeLowStockThreshold = 0,
   offerBadges,
+  productCards = "product",
 }: Props) {
   const [query, setQuery] = useState<string>(initialQuery ?? "");
   const [shop, setShop] = useState<ShopQuery>(
@@ -134,13 +142,29 @@ export default function ShopClient({
 
   const basePath = collection ? collectionPath(collection.slug) : "/shop";
 
+  // The grid's cards: one per product, or one per colour when the store asks
+  // for it (lib/storefront/colour-cards.ts). Everything below — scope,
+  // filters, counts, "Load more" — works on these cards.
+  const cards = useMemo<Card[]>(
+    () =>
+      productCards === "colour"
+        ? products.flatMap((p) => colourCards(p))
+        : products.map((p) => ({
+            key: p.id,
+            product: p,
+            href: null,
+            colour: null,
+          })),
+    [products, productCards],
+  );
+
   // What sorting and filtering read — the card's own price and stock rules,
   // per variant (lib/storefront/shop-product-facts.ts). Built once per load.
-  const factsByProduct = useMemo(() => {
+  const factsByCard = useMemo(() => {
     const slugById = new Map(categories.map((c) => [c.id, c.slug]));
-    return new Map(products.map((p) => [p, shopFactsFor(p, slugById)]));
-  }, [products, categories]);
-  const factsOf = (p: ShopProduct): ShopFacts => factsByProduct.get(p)!;
+    return new Map(cards.map((c) => [c, shopFactsFor(c.product, slugById)]));
+  }, [cards, categories]);
+  const factsOf = (c: Card): ShopFacts => factsByCard.get(c)!;
   // A collection (or "Other") is already one category, so it has no category
   // filter; /shop and search results do.
   const categoryChoices = useMemo(
@@ -186,21 +210,23 @@ export default function ShopClient({
 
   // Scope first (collection, "Other", search), then the shopper's filters.
   const scoped = useMemo(() => {
-    let list = products;
-    if (collection) list = list.filter((p) => p.category_id === collection.id);
-    else if (uncategorized) list = list.filter((p) => !p.category_id);
+    let list = cards;
+    if (collection)
+      list = list.filter((c) => c.product.category_id === collection.id);
+    else if (uncategorized) list = list.filter((c) => !c.product.category_id);
     // The header's predictive search matches with the same function, so a
     // suggestion is always a product this grid shows for the same query.
-    if (query.trim()) list = list.filter((p) => matchesProductQuery(p, query));
+    if (query.trim())
+      list = list.filter((c) => matchesProductQuery(c.product, query));
     return list;
-  }, [products, collection, uncategorized, query]);
+  }, [cards, collection, uncategorized, query]);
 
   const filtered = useMemo(
     () =>
       shopFilters
-        ? applyShopQuery(scoped, shop, (p) => factsByProduct.get(p)!)
+        ? applyShopQuery(scoped, shop, (c) => factsByCard.get(c)!)
         : scoped,
-    [scoped, shop, shopFilters, factsByProduct],
+    [scoped, shop, shopFilters, factsByCard],
   );
   const shown = shopFilters
     ? filtered.slice(0, shop.pages * SHOP_PAGE_SIZE)
@@ -212,10 +238,10 @@ export default function ShopClient({
       buildShopFacets(
         scoped,
         shop,
-        (p) => factsByProduct.get(p)!,
+        (c) => factsByCard.get(c)!,
         categoryChoices,
       ),
-    [scoped, shop, factsByProduct, categoryChoices],
+    [scoped, shop, factsByCard, categoryChoices],
   );
   const sidebar = shopFilters && scoped.length > 0;
   const filterCount = activeFilterCount(shop);
@@ -511,13 +537,15 @@ export default function ShopClient({
                         </p>
                       )}
                       <div className="shop-grid">
-                        {shown.map((p) => (
+                        {shown.map((card) => (
                           <ShopCard
-                            key={p.id}
-                            product={p}
+                            key={card.key}
+                            product={card.product}
+                            href={card.href}
+                            colour={card.colour}
                             storeLowStockThreshold={storeLowStockThreshold}
                             headingLevel={2}
-                            offerBadge={offerBadges?.[p.id]}
+                            offerBadge={offerBadges?.[card.product.id]}
                           />
                         ))}
                       </div>
