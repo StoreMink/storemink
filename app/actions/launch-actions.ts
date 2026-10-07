@@ -8,6 +8,8 @@ import {
 import { emitEvent } from "@/lib/notifications/record";
 import { notifyStoreContentPublished } from "@/lib/seo/store-indexing";
 import { getStoreUrl } from "@/lib/site";
+import { getRequestOrigin } from "@/lib/request-url";
+import { isLocalDevHostname } from "@/lib/store/host";
 import { isStoreLaunched, markStoreLaunched } from "@/lib/store/launch";
 import { STOREFRONT_PASSWORD_PATH } from "@/lib/store/launch-copy";
 import { buildLaunchChecklist } from "@/lib/store/launch-checklist";
@@ -57,10 +59,19 @@ export async function getLaunchState(): Promise<LaunchState | null> {
   if (!ctx?.profile) return null;
   const store = await getCurrentStore();
   const launched = isStoreLaunched(store);
-  const [checklist, storeUrl] = await Promise.all([
+  const [checklist, canonicalUrl, requestOrigin] = await Promise.all([
     buildLaunchChecklist(store),
     getStoreUrl(),
+    getRequestOrigin(),
   ]);
+  // storeOrigin() is the CANONICAL https address with no port — right for
+  // production, unreachable in local dev, where the shop is plain http on
+  // `{slug}.localhost:3000`. The dashboard is served from the store's own
+  // host, so on a local root the request origin IS the storefront's origin.
+  const storeUrl =
+    requestOrigin && isLocalDevHostname(new URL(requestOrigin).hostname)
+      ? requestOrigin
+      : canonicalUrl;
   let password: string | null = null;
   if (!launched) {
     try {
