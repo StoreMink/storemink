@@ -451,12 +451,55 @@ function announcementSamples(): EmailSample[] {
   ];
 }
 
+/**
+ * The same shopper email under three logo shapes, so the header's logo fitting
+ * (lib/email/shell.ts merchantLogo) can be checked by eye. The files are
+ * written next to the gallery by scripts/email-gallery.ts (SAMPLE_LOGOS).
+ */
+export const SAMPLE_LOGOS = {
+  wide: "sample-logo-wide.svg",
+  square: "sample-logo-square.svg",
+  tall: "sample-logo-tall.svg",
+} as const;
+
+function logoSamples(): EmailSample[] {
+  return (Object.keys(SAMPLE_LOGOS) as (keyof typeof SAMPLE_LOGOS)[]).map(
+    (shape) => {
+      const brand: StoreBrand = {
+        ...SAMPLE_STORE_BRAND,
+        logoUrl: SAMPLE_LOGOS[shape],
+      };
+      const values = sampleValues("order.placed");
+      const template = defaultEmailTemplate("order.placed", "customer", values);
+      return {
+        id: `logo-${shape}`,
+        group: "Store logo sizing",
+        label: `${shape[0].toUpperCase()}${shape.slice(1)} logo`,
+        ...renderNotificationEmail({
+          item: {
+            eventKey: "order.placed",
+            title: renderTemplate(template.subject, values, "text"),
+            body: renderTemplate(template.body, values, "html"),
+            url: "/orders/sample",
+            severity: "info",
+            summary: SAMPLE_SUMMARY,
+          },
+          brand,
+          baseUrl: STORE_URL,
+          isTeam: false,
+        }),
+      };
+    },
+  );
+}
+
 /** Every mailer, rendered with sample data. */
 export function renderEmailSamples(): EmailSample[] {
   return [
     ...accessSamples(),
     ...billingSamples(),
     ...storeSamples(),
+    ...logoSamples(),
     ...announcementSamples(),
     ...notificationSamples(),
   ];
