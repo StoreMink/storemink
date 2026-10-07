@@ -3,7 +3,13 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-const DEFAULT_POLL_MS = 20_000;
+// ★ THREE TIMES SLOWER IN DEVELOPMENT. Every tick re-runs the page's server
+// components, and in `next dev` that is a compile-check plus a render on a
+// laptop that is also running the editor and the browser — on an 8 GB Mac it
+// was the "Rendering" badge that never went away. Production keeps the
+// 20-second freshness a merchant notices; a developer notices the fan.
+const DEV_SLOWDOWN = process.env.NODE_ENV === "development" ? 3 : 1;
+const DEFAULT_POLL_MS = 20_000 * DEV_SLOWDOWN;
 
 /**
  * Keeps a dashboard list fresh without a manual reload, so storefront-driven
