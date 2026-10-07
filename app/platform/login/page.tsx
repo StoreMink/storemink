@@ -5,13 +5,17 @@ import { useState } from "react";
 import Link from "next/link";
 
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "storemink.com";
+const LOCAL_DEV_ROOT = process.env.NEXT_PUBLIC_LOCAL_DEV_ROOT ?? "localtest.me";
 
 // Turn whatever the user types ("mystore", "mystore.storemink.com",
 // "https://mystore.storemink.com/") into a bare store slug.
 function extractSlug(input: string): string {
   let v = input.trim().toLowerCase();
   v = v.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-  v = v.replace(`.${ROOT_DOMAIN}`, "").replace(".localhost", "");
+  v = v
+    .replace(`.${ROOT_DOMAIN}`, "")
+    .replace(".localhost", "")
+    .replace(`.${LOCAL_DEV_ROOT}`, "");
   v = v.replace(/[^a-z0-9-]/g, "");
   return v;
 }
@@ -28,9 +32,14 @@ export default function StoreLoginPage() {
       return;
     }
     const { hostname, protocol, port } = window.location;
-    const isLocal = hostname.endsWith("localhost");
-    const base = isLocal
-      ? `${protocol}//${slug}.localhost${port ? ":" + port : ""}`
+    const localRoot =
+      hostname === "localhost" || hostname.endsWith(".localhost")
+        ? "localhost"
+        : hostname === LOCAL_DEV_ROOT || hostname.endsWith(`.${LOCAL_DEV_ROOT}`)
+          ? LOCAL_DEV_ROOT
+          : null;
+    const base = localRoot
+      ? `${protocol}//${slug}.${localRoot}${port ? ":" + port : ""}`
       : `https://${slug}.${ROOT_DOMAIN}`;
     window.location.href = `${base}/auth/login`;
   }

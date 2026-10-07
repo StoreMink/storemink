@@ -59,6 +59,20 @@ import {
 } from "@/app/actions/signup-email-otp";
 
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "storemink.com";
+const LOCAL_DEV_ROOT = process.env.NEXT_PUBLIC_LOCAL_DEV_ROOT ?? "localtest.me";
+
+/** The local root this page is being served from, if any — `localhost` or
+ *  the loopback dev root (lib/store/host.ts → LOCAL_DEV_ROOT). Store hosts
+ *  are `{slug}.<root>:<port>` in both cases. */
+function localDevRoot(hostname: string): string | null {
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    return "localhost";
+  }
+  if (hostname === LOCAL_DEV_ROOT || hostname.endsWith(`.${LOCAL_DEV_ROOT}`)) {
+    return LOCAL_DEV_ROOT;
+  }
+  return null;
+}
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Steps in flow order. "password" and "email-code" are ONE screen (the code
@@ -99,15 +113,17 @@ type CheckState =
 
 function demoUrl(demoSlug: string): string {
   const { hostname, protocol, port } = window.location;
-  return hostname.endsWith("localhost")
-    ? `${protocol}//${demoSlug}.localhost${port ? ":" + port : ""}`
+  const root = localDevRoot(hostname);
+  return root
+    ? `${protocol}//${demoSlug}.${root}${port ? ":" + port : ""}`
     : `https://${demoSlug}.${ROOT_DOMAIN}`;
 }
 
 function dashboardUrl(slug: string): string {
   const { hostname, protocol, port } = window.location;
-  return hostname.endsWith("localhost")
-    ? `${protocol}//${slug}.localhost${port ? ":" + port : ""}/dashboard`
+  const root = localDevRoot(hostname);
+  return root
+    ? `${protocol}//${slug}.${root}${port ? ":" + port : ""}/dashboard`
     : `https://${slug}.${ROOT_DOMAIN}/dashboard`;
 }
 
@@ -150,6 +166,19 @@ export default function SignupPage() {
   }, []);
 
   const [step, setStepRaw] = useState<Step>("email");
+  // Firebase's Auth service stopped accepting verifyPhoneNumber from the
+  // hostname `localhost` for REAL numbers in July 2024 (firebase-js-sdk#8387).
+  // The error it returns, auth/invalid-app-credential, says nothing about
+  // that, so the phone step says it instead — only on localhost, where it is
+  // true — and names the loopback dev root that Firebase does accept
+  // (lib/store/host.ts → LOCAL_DEV_ROOT).
+  const [onLocalhost, setOnLocalhost] = useState(false);
+  const [devPort, setDevPort] = useState("");
+  useEffect(() => {
+    const h = window.location.hostname;
+    setOnLocalhost(h === "localhost" || h.endsWith(".localhost"));
+    setDevPort(window.location.port);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [recoveryRequired, setRecoveryRequired] = useState(false);
@@ -478,6 +507,10 @@ export default function SignupPage() {
       );
       setPhoneSent(true);
     } catch (err) {
+      // The merchant-facing sentence deliberately hides the provider's code;
+      // the console keeps it, because "the security check didn't complete"
+      // covers three different Firebase failures with three different fixes.
+      console.error("signup: phone verification failed", err);
       setError(phoneLinkErrorMessage(err));
     }
     setBusy(false);
@@ -931,6 +964,22 @@ export default function SignupPage() {
               <p className="text-gray-500 mb-8">
                 We&apos;ll text a one-time code to confirm it&apos;s you.
               </p>
+
+              {onLocalhost && (
+                <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  You&apos;re on <code>localhost</code>, where Firebase refuses
+                  real numbers for phone verification. Open this page on{" "}
+                  <a
+                    className="font-semibold underline"
+                    href={`http://${LOCAL_DEV_ROOT}${devPort ? ":" + devPort : ""}/signup`}
+                  >
+                    {LOCAL_DEV_ROOT}
+                    {devPort ? ":" + devPort : ""}
+                  </a>{" "}
+                  instead (same server, it resolves to this machine), or use a
+                  fictional test number from the Identity Platform console.
+                </div>
+              )}
 
               <div className="flex flex-col gap-3">
                 <label className="text-sm font-semibold text-gray-700">

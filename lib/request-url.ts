@@ -1,6 +1,7 @@
 import "server-only";
 
 import { headers } from "next/headers";
+import { isLocalDevHostname } from "@/lib/store/host";
 
 // The origin of the CURRENT request (scheme + host), e.g.
 //   http://echos.localhost:3000        (local dev)
@@ -30,9 +31,10 @@ export async function getRequestOrigin(): Promise<string | null> {
   if (!host) return null;
   // Behind a proxy the scheme comes from the header; locally there is none, and
   // localhost is served over http.
+  const hostname = host.split(":")[0];
   const proto =
     h.get("x-forwarded-proto") ??
-    (/(^|\.)localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/.test(host)
+    (isLocalDevHostname(hostname) || hostname === "127.0.0.1"
       ? "http"
       : "https");
   return `${proto}://${host}`;
