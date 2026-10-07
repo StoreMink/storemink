@@ -11,7 +11,10 @@ import {
   DAILY_DIGEST_HOUR_UTC,
 } from "@/lib/notifications/digest";
 import type { StoreBrand } from "@/lib/store/brand";
-import { emailAccentColor } from "./shell";
+import { EMAIL_THEME } from "./shell";
+
+/** The owner's rule: no em dash or en dash anywhere in an email. */
+const LONG_DASH = /[\u2013\u2014]/;
 
 const brand: StoreBrand = {
   name: "Acme Juice",
@@ -155,19 +158,94 @@ describe("renderNotificationEmail", () => {
     expect(html).not.toContain("settings/notifications");
   });
 
-  it("uses a contrast-safe version of a light store accent", () => {
-    const brightBrand = { ...brand, primaryColor: "#ffea00" };
-    const accent = emailAccentColor(brightBrand);
-    expect(accent).not.toBe("#ffea00");
+  it("wears the standard frame: canvas, serif headline, footer, preheader", () => {
+    const { html } = renderNotificationEmail({
+      item: item({ body: "<p>A new order is ready for review.</p>" }),
+      brand,
+      baseUrl: BASE,
+    });
+    expect(html.startsWith("<!DOCTYPE html>")).toBe(true);
+    expect(html).toContain('class="sm-email-canvas"');
+    // The title is the headline, set in the serif.
+    expect(html).toMatch(
+      /<h1 class="sm-email-h1 sm-serif"[^>]*>New order ORD10010004<\/h1>/,
+    );
+    // A store with no logo is named in the serif wordmark at the top.
+    expect(html).toMatch(/<span class="sm-serif"[^>]*>Acme Juice<\/span>/);
+    // The inbox preview line is the first line of the body, as plain text.
+    expect(html).toContain("A new order is ready for review.&#847;");
+    // Footer: why this arrived, and the copyright line.
+    expect(html).toContain(
+      "You're receiving this because you have notifications turned on for Acme Juice",
+    );
+    expect(html).toContain(`&copy; ${new Date().getFullYear()} Acme Juice`);
+  });
 
+  // Identity is the logo or the name. A merchant colour pushed into a button
+  // has to survive dark mode and stay legible at any shade, and when it fails
+  // the customer receives something that looks broken.
+  it("uses the one near-black button and never the store's colour", () => {
+    const brightBrand = { ...brand, primaryColor: "#ffea00" };
     const { html } = renderNotificationEmail({
       item: item({ eventKey: "order.placed", url: "/orders/o1" }),
       brand: brightBrand,
       baseUrl: BASE,
       isTeam: false,
     });
-    expect(html).toContain(`border-top:4px solid ${accent}`);
-    expect(html).toContain(`bgcolor="${accent}"`);
+    expect(html).not.toContain("#ffea00");
+    expect(html).toContain(`bgcolor="${EMAIL_THEME.button}"`);
+    expect(html).toMatch(
+      /<a href="https:\/\/acme\.storemink\.com\/orders\/o1" style="[^"]*color:#ffffff[^"]*">View your order<\/a>/,
+    );
+    // One call to action, not one in the copy and another in the chrome.
+    expect(html.match(/>View your order</g)).toHaveLength(1);
+  });
+
+  it("tells a customer why the mail arrived without a preferences link", () => {
+    const { html } = renderNotificationEmail({
+      item: item({ eventKey: "order.placed", url: "/orders/o1" }),
+      brand,
+      baseUrl: BASE,
+      isTeam: false,
+    });
+    expect(html).toContain(
+      "You're receiving this because of your order with Acme Juice.",
+    );
+    expect(html).not.toContain("Change what you get emailed about");
+  });
+
+  it("puts the order summary between the copy and the button", () => {
+    const { html } = renderNotificationEmail({
+      item: item({
+        eventKey: "order.placed",
+        body: "<p>Thank you for your order.</p>",
+        url: "/orders/o1",
+        summary: {
+          currency: "INR",
+          items: [{ name: "Almond Shake", quantity: 1, total: 220 }],
+          total: 220,
+        },
+      }),
+      brand,
+      baseUrl: BASE,
+      isTeam: false,
+    });
+    const copy = html.indexOf("Thank you for your order.</p>");
+    const summary = html.indexOf("Order summary");
+    const button = html.indexOf(">View your order</a>");
+    expect(copy).toBeGreaterThan(-1);
+    expect(summary).toBeGreaterThan(copy);
+    expect(button).toBeGreaterThan(summary);
+  });
+
+  it("never carries a long dash of its own", () => {
+    const { subject, html } = renderNotificationEmail({
+      item: item(),
+      brand,
+      baseUrl: BASE,
+    });
+    expect(subject).not.toMatch(LONG_DASH);
+    expect(html).not.toMatch(LONG_DASH);
   });
 });
 
@@ -207,6 +285,35 @@ describe("renderNotificationDigest", () => {
     expect(html).toContain("New order ORD10010004");
     expect(html).toContain("Low stock · Cold Brew");
     expect(html).toContain("https://acme.storemink.com/dashboard/logs");
+    // Each title links to its own destination, with the arrow the checklist
+    // and the digest share.
+    expect(html).toMatch(
+      /<a href="https:\/\/acme\.storemink\.com\/dashboard\/orders\?q=ORD10010004"[^>]*>New order ORD10010004&nbsp;&rarr;<\/a>/,
+    );
+  });
+
+  it("is one standard email: headline, list card, one button", () => {
+    const { html } = renderNotificationDigest({
+      items,
+      brand,
+      baseUrl: BASE,
+      digest: "daily",
+    });
+    expect(html).toContain('class="sm-email-canvas"');
+    expect(html).toMatch(/<h1 [^>]*>2 updates since yesterday<\/h1>/);
+    // The list sits on a white inset card on the cream canvas.
+    expect(html).toContain(`bgcolor="${EMAIL_THEME.card}"`);
+    // One line of context under each title, not the whole body.
+    expect(html).toContain("₹1,240 · from Priya S.");
+    expect(html.match(/>Open dashboard<\/a>/g)).toHaveLength(1);
+    expect(html).toContain(`bgcolor="${EMAIL_THEME.button}"`);
+    expect(html).not.toContain(brand.primaryColor);
+    // Inbox preview line.
+    expect(html).toContain("2 updates since yesterday&#847;");
+    expect(html).toContain(
+      "https://acme.storemink.com/dashboard/settings/notifications",
+    );
+    expect(html).not.toMatch(LONG_DASH);
   });
 
   it("names the window it covers", () => {
@@ -297,5 +404,118 @@ describe("digestSendAfter", () => {
     const a = digestSendAfter("hourly", at("2026-07-25T14:01:00.000Z"));
     const b = digestSendAfter("hourly", at("2026-07-25T14:59:00.000Z"));
     expect(a.toISOString()).toBe(b.toISOString());
+  });
+});
+
+describe("who is speaking (PLATFORM_VOICE_EVENTS)", () => {
+  // StoreMink writing to a merchant about their account must not arrive under
+  // the merchant's own name: "Welcome to StoreMink" from "Acme Juice" reads as
+  // the store mailing itself.
+  it("frames a StoreMink account event with StoreMink's lockup", () => {
+    const out = renderNotificationEmail({
+      item: item({ eventKey: "store.created", title: "Acme Juice is ready" }),
+      brand,
+      baseUrl: BASE,
+      isTeam: true,
+    });
+    expect(out.voice).toBe("platform");
+    expect(out.html).toContain(">Store<span");
+    expect(out.html).toContain("Mink</span>");
+    expect(out.html).toContain("you run Acme Juice on StoreMink");
+  });
+
+  it("keeps a shop event in the store's own voice", () => {
+    const out = renderNotificationEmail({
+      item: item({ eventKey: "order.placed" }),
+      brand,
+      baseUrl: BASE,
+      isTeam: true,
+    });
+    expect(out.voice).toBe("store");
+    expect(out.html).not.toContain(">Store<span");
+    expect(out.html).toContain("Acme Juice");
+  });
+
+  it("never platform-voices shopper mail", () => {
+    const out = renderNotificationEmail({
+      item: item({ eventKey: "store.created" }),
+      brand,
+      baseUrl: BASE,
+      isTeam: false,
+    });
+    expect(out.voice).toBe("store");
+  });
+
+  it("offers the preferences link only for events that can be switched off", () => {
+    const locked = renderNotificationEmail({
+      item: item({ eventKey: "store.domain_reverted" }),
+      brand,
+      baseUrl: BASE,
+      isTeam: true,
+    });
+    expect(locked.html).not.toContain("Change what you get emailed about");
+
+    const switchable = renderNotificationEmail({
+      item: item({ eventKey: "inventory.low_stock" }),
+      brand,
+      baseUrl: BASE,
+      isTeam: true,
+    });
+    expect(switchable.html).toContain("Change what you get emailed about");
+  });
+
+  it("platform-voices a digest only when every item is StoreMink speaking", () => {
+    const allPlatform = renderNotificationDigest({
+      items: [
+        item({ eventKey: "plan.expiring" }),
+        item({ eventKey: "ai.credits_low" }),
+      ],
+      brand,
+      baseUrl: BASE,
+      digest: "daily",
+    });
+    expect(allPlatform.voice).toBe("platform");
+    expect(allPlatform.subject).toBe("2 updates from StoreMink");
+
+    const mixed = renderNotificationDigest({
+      items: [
+        item({ eventKey: "plan.expiring" }),
+        item({ eventKey: "order.placed" }),
+      ],
+      brand,
+      baseUrl: BASE,
+      digest: "daily",
+    });
+    expect(mixed.voice).toBe("store");
+    expect(mixed.subject).toBe("2 updates from Acme Juice");
+  });
+});
+
+describe("long digests and plain bodies", () => {
+  it("caps a digest and points at the activity log for the rest", () => {
+    const items = Array.from({ length: 45 }, (_, i) =>
+      item({ title: `Update number ${i + 1}` }),
+    );
+    const out = renderNotificationDigest({
+      items,
+      brand,
+      baseUrl: BASE,
+      digest: "daily",
+    });
+    expect(out.html).toContain("Update number 30");
+    expect(out.html).not.toContain("Update number 31");
+    expect(out.html).toContain("And 15 more updates");
+    // The subject still counts everything that happened.
+    expect(out.subject).toBe("45 updates from Acme Juice");
+  });
+
+  it("sets a plain-text body as a styled, escaped paragraph", () => {
+    const out = renderNotificationEmail({
+      item: item({ body: "Store <b>Acme</b> was created\nby Priya" }),
+      brand,
+      baseUrl: BASE,
+    });
+    expect(out.html).toMatch(/<p style="[^"]*font-size:16px[^"]*">/);
+    expect(out.html).toContain("Store Acme was created<br />by Priya");
   });
 });

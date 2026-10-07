@@ -28,7 +28,9 @@ describe("refundCopy", () => {
   it("falls back to copy that is true of every method", () => {
     for (const bad of [undefined, null, "", "  ", 42, {}, "cheque"]) {
       const c = refundCopy(bad);
-      expect(c.destination, String(bad)).toBe("on its way back to you");
+      expect(c.destination, String(bad)).toBe(
+        "issued and is on its way back to you",
+      );
       expect(c.bankDelay, String(bad)).toBe(false);
     }
   });
@@ -38,5 +40,25 @@ describe("refundCopy", () => {
       refundCopy("razorpay").destination,
     );
     expect(refundCopy("STORE_CREDIT").bankDelay).toBe(false);
+  });
+
+  // Both renderers build "Your refund has been <destination>." and
+  // "<amount> has been <destination>.", so every fragment has to start with a
+  // past participle. "has been on its way back to you" shipped once.
+  it("completes 'has been' with every method, known or not", () => {
+    for (const m of [
+      "razorpay",
+      "card",
+      "upi",
+      "cash",
+      "store_credit",
+      "manual",
+      "original split",
+      undefined,
+    ]) {
+      expect(refundCopy(m).destination, String(m)).toMatch(
+        /^(?:[a-z]+ed|sent)\b/,
+      );
+    }
   });
 });

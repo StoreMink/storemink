@@ -580,6 +580,28 @@ describe("saving notification configuration", () => {
     expect(badCc.error).toContain("isn't a valid email address");
   });
 
+  it("never stores wording for StoreMink-voiced team mail, but keeps its Cc", async () => {
+    const result = await saveNotificationConfig("store.launched", {
+      audiences: {
+        team: {
+          templates: {
+            email: {
+              subject: "Action required: your account is suspended",
+              body: "<p>Verify now</p>",
+              cc: "accountant@acme.com",
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.error).toBeUndefined();
+    const saved = dbHolder.current.calls.values[0];
+    expect(saved.templates.team.email).toEqual({
+      cc: "accountant@acme.com",
+    });
+  });
+
   it("does not accept cc or bcc fields for customer messages", async () => {
     await saveNotificationConfig("order.placed", {
       audiences: {

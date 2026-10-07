@@ -24,10 +24,18 @@ vi.mock("@/lib/ai/quota", () => ({
 vi.mock("@/lib/plans/entitlements", () => ({
   storeAllowsPlanFeature: vi.fn(async () => true),
 }));
-vi.mock("@/lib/email/coupon-campaign", () => ({
-  mergeTokens: vi.fn((t: string) => t),
-  renderCouponEmail: vi.fn(() => "<html>"),
-}));
+vi.mock("@/lib/email/coupon-campaign", async () => {
+  // The dash normaliser is pure, so the real one runs: the AI draft test below
+  // asserts what the merchant actually receives.
+  const actual = await vi.importActual<
+    typeof import("@/lib/email/coupon-campaign")
+  >("@/lib/email/coupon-campaign");
+  return {
+    mergeTokens: vi.fn((t: string) => t),
+    renderCouponEmail: vi.fn(() => "<html>"),
+    withoutLongDashes: actual.withoutLongDashes,
+  };
+});
 vi.mock("next/server", () => ({ after: vi.fn() }));
 vi.mock("@/lib/email/trigger-worker", () => ({
   triggerEmailWorker: vi.fn(),
@@ -251,6 +259,36 @@ describe("generateCouponEmail", () => {
     expect(result.subject).toBe("Sub");
     expect(result.body).toBe("Bod");
     expect(result.error).toBeUndefined();
+  });
+
+  // The draft is StoreMink-written email copy, so a long dash the model slips
+  // in despite the prompt is rewritten before the merchant ever sees it.
+  it("rewrites long dashes in the AI draft", async () => {
+    vi.mocked(callGemini).mockResolvedValue({
+      text: JSON.stringify({
+        subject: "A treat for you \u2014 {{first_name}}",
+        body: "Hi {{first_name}} \u2014\n\nShakes for 2\u20134 people \u2014 on us.",
+      }),
+    });
+    const result = await generateCouponEmail(genInput);
+    expect(result.subject).toBe("A treat for you, {{first_name}}");
+    expect(result.body).toBe(
+      "Hi {{first_name}},\n\nShakes for 2 to 4 people, on us.",
+    );
+    expect(`${result.subject}${result.body}`).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  // The prompt itself must not promise the old sign-off or model long dashes.
+  it("asks for dash-free copy and names the current sign-off", async () => {
+    vi.mocked(callGemini).mockResolvedValue({
+      text: JSON.stringify({ subject: "S", body: "B" }),
+    });
+    await generateCouponEmail(genInput);
+    const prompt = vi.mocked(callGemini).mock.calls[0][1] as string;
+    expect(prompt).toContain('"The {store name} team"');
+    expect(prompt).not.toContain("Team {store name}");
+    expect(prompt).toMatch(/never use an em dash or an en dash/i);
+    expect(prompt).not.toMatch(/[\u2013\u2014]/);
   });
 });
 

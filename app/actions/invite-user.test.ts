@@ -18,9 +18,6 @@ vi.mock("@/lib/plans/entitlements", () => ({
   PlanEntitlementError: class PlanEntitlementError extends Error {},
 }));
 vi.mock("./location-actions", () => ({ setAdminLocations: vi.fn() }));
-vi.mock("@/lib/email/layout", () => ({
-  wrapBrandedEmail: vi.fn((s: string) => s),
-}));
 vi.mock("@/lib/store/brand", () => ({
   getStoreBrandById: vi.fn(async () => ({
     name: "WholeSip",
@@ -208,6 +205,33 @@ describe("inviteUser", () => {
     const sentHtml = resendSend.mock.calls[0][0].html as string;
     expect(sentHtml).not.toContain("<img/onerror");
     expect(sentHtml).toContain("&lt;img");
+  });
+
+  // The invitation is the standard composed email: one document, the store's
+  // name in a sentence-case subject, the temporary password and sign-in email
+  // in the body, and a button to the store's own dashboard.
+  it("sends the composed invitation with the credentials and sign-in link", async () => {
+    await inviteUser(makeFormData(validForm));
+    const sent = resendSend.mock.calls[0][0];
+    expect(sent.subject).toBe("You're invited to the WholeSip dashboard");
+    expect(sent.html.match(/<!DOCTYPE html>/g)).toHaveLength(1);
+    expect(sent.html).toContain("Temporary password");
+    expect(sent.html).toContain("ada@example.com");
+    expect(sent.html).toMatch(/href="https?:\/\/[^"]*\/dashboard"/);
+    expect(sent.html).not.toContain("🎉");
+    expect(`${sent.subject}${sent.html}`).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  // Never print a working password to the logs when it was actually emailed.
+  it("does not log the temporary password when the email was sent", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await inviteUser(makeFormData(validForm));
+      const logged = log.mock.calls.flat().join("\n");
+      expect(logged).not.toMatch(/Temporary Password/i);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   // ---------------------------------------------------------------------------

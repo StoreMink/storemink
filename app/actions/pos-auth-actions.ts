@@ -59,12 +59,8 @@ import { rateLimit, clientIp } from "@/lib/rate-limit";
 import { hashPin, verifyPin, isValidPinFormat } from "@/lib/pos/pin";
 import { isPosRole } from "@/lib/pos/permissions";
 import { updateAuthUser } from "@/lib/auth/firebase-users";
-import {
-  emailButton,
-  escapeHtml,
-  posAbsoluteUrl,
-  sendPosStaffEmail,
-} from "@/lib/pos/staff-email";
+import { posAbsoluteUrl, sendPosStaffEmail } from "@/lib/pos/staff-email";
+import { buildPosCredentialResetEmail } from "@/lib/email/account-emails";
 import {
   POS_DEVICE_COOKIE,
   POS_DEVICE_MAX_AGE_S,
@@ -1010,18 +1006,8 @@ export async function requestPosCredentialReset(
     to: email,
     mailer: "pos_credential_reset",
     devFallback: `🔑 POS CREDENTIAL RESET (email not configured — dev fallback)\nEmail: ${email}\nReset: ${link}`,
-    build: (brand) => ({
-      subject: `Reset your ${brand.name} POS access`,
-      html: `
-        <h2 style="margin-top:0;">Reset your register access</h2>
-        <p>Hello ${escapeHtml(staff!.name)},</p>
-        <p>We received a request to reset the PIN or password you use at the
-           <strong>${escapeHtml(brand.name)}</strong> register.</p>
-        ${emailButton(link, "Reset PIN or password")}
-        <p style="color:#666;font-size:13px;">This link expires in 1 hour and can be used once. If you didn't request it, you can safely ignore this email — nothing has changed.</p>
-        <p>Regards,<br/><strong>Team ${escapeHtml(brand.name)}</strong></p>
-      `,
-    }),
+    build: (brand) =>
+      buildPosCredentialResetEmail({ brand, name: staff!.name, link }),
   });
   return ok;
 }

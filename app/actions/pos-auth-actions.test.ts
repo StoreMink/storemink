@@ -65,8 +65,6 @@ vi.mock("@/lib/pos/audit", () => ({ posAudit: vi.fn(async () => {}) }));
 vi.mock("@/lib/pos/staff-email", () => ({
   sendPosStaffEmail: vi.fn(async () => {}),
   posAbsoluteUrl: vi.fn(async (p: string) => `http://echos.localhost:3000${p}`),
-  emailButton: () => "",
-  escapeHtml: (v: string) => v,
 }));
 vi.mock("@/lib/auth/firebase-users", () => ({
   updateAuthUser: vi.fn(async () => {}),
@@ -579,8 +577,22 @@ describe("requestPosCredentialReset", () => {
     expect(set.resetToken).toBeTruthy();
     expect(new Date(set.resetExpiresAt).getTime()).toBeGreaterThan(Date.now());
     expect(sendPosStaffEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "p@x.com" }), // normalised
+      expect.objectContaining({
+        to: "p@x.com", // normalised
+        mailer: "pos_credential_reset",
+      }),
     );
+
+    // The message is the shared composed builder's, carrying the exact link
+    // the stored token unlocks, with the staff name escaped.
+    const { build } = vi.mocked(sendPosStaffEmail).mock.calls[0][0];
+    const built = build({ name: "Echos", domain: "echos.com" } as any);
+    expect(built.subject).toBe("Reset your Echos POS access");
+    expect(built.html).toContain(
+      `http://echos.localhost:3000/pos/reset?token=${set.resetToken}`,
+    );
+    expect(built.html).toContain("Hello Priya,");
+    expect(`${built.subject}${built.html}`).not.toMatch(/[\u2013\u2014]/);
   });
 
   it("stays silent (still success) when throttled", async () => {

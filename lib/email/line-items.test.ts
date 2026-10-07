@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { renderOrderSummary } from "./line-items";
+import { EMAIL_THEME } from "./shell";
 
 const items = [
   { name: "Amul Taaza Toned Milk", variant: "1 L", quantity: 1, total: 68 },
@@ -96,6 +97,29 @@ describe("renderOrderSummary", () => {
     expect(html).toContain("Item 19");
     expect(html).not.toContain("Item 20");
     expect(html).toContain("+5 more items");
+  });
+
+  // The standard design: a serif section heading, then a white inset card on
+  // the cream canvas, like every other block of facts.
+  it("sits on a white card under a serif 'Order summary' heading", () => {
+    const html = renderOrderSummary({
+      items,
+      currency: "INR",
+      subtotal: 118,
+      discount: 20,
+      total: 98,
+    });
+    expect(html).toMatch(
+      /^<h2 class="sm-serif" style="[^"]*Georgia[^"]*">Order summary<\/h2>/,
+    );
+    expect(html).toContain(`bgcolor="${EMAIL_THEME.card}"`);
+    expect(html).toContain(`border:1px solid ${EMAIL_THEME.border}`);
+    // No colour but ink and greys.
+    expect(html).not.toMatch(
+      /#(?!141413|3d3c38|6f6d66|ffffff|e6e3da|efede6)[0-9a-f]{6}/i,
+    );
+    // The discount's minus is a minus sign, never a dash.
+    expect(html).not.toMatch(/[\u2013\u2014]/);
   });
 
   it("defaults to INR when the currency is missing", () => {

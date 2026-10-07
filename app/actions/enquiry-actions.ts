@@ -119,6 +119,9 @@ export async function submitEnquiry(
     subject: emailSubject,
     message,
     brand,
+    // The store sent this to its own shopper, so it belongs in the store's
+    // Email logs, not the platform's (a NULL store id is platform mail).
+    storeId,
   });
 
   emitEvent({

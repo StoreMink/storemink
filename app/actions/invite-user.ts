@@ -12,7 +12,7 @@ import { setUserClaims } from "@/lib/auth/firebase-claims";
 import { setAdminLocations } from "./location-actions";
 import { withService, withUser } from "@/lib/db/client";
 import { admins } from "@/drizzle/schema";
-import { wrapBrandedEmail } from "@/lib/email/layout";
+import { buildStaffInviteEmail } from "@/lib/email/account-emails";
 import { getStoreBrandById } from "@/lib/store/brand";
 import { fromAddress } from "@/lib/email/sender";
 import { sendEmail } from "@/lib/email/send";
@@ -33,16 +33,6 @@ function generateTempPassword(): string {
     password += chars.charAt(randomInt(chars.length));
   }
   return password;
-}
-
-/** Escape user-supplied values before interpolating into email HTML. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 export async function inviteUser(formData: FormData) {
@@ -223,84 +213,27 @@ export async function inviteUser(formData: FormData) {
     // The `staff_invite` mailer is marked sensitive, so the email log records
     // that this went out — to whom, when, whether it sent — WITHOUT storing the
     // body, which carries a working temporary password in plaintext.
+    //
+    // The builder (lib/email/account-emails.ts) escapes every name, role and address it is given, and the
+    // temporary password goes into the code inset escaped too.
+    const { subject, html } = buildStaffInviteEmail({
+      brand,
+      firstName,
+      lastName,
+      email,
+      role,
+      tempPassword,
+      signInUrl: `${appUrl}/dashboard`,
+    });
     await sendEmail({
       storeId,
-      // From/Subject are mail headers, NOT HTML — build the From with the
+      // From/Subject are mail headers, NOT HTML: build the From with the
       // RFC-5322-safe helper and leave the brand name unescaped in both.
       from: fromAddress(brand, { suffix: "Dashboard" }),
       to: email,
-      subject: `Welcome to ${brand.name} Dashboard`,
+      subject,
       mailer: "staff_invite",
-      html: wrapBrandedEmail(
-        `
-        <h2 style="margin-top: 0;">You've Been Invited 🎉</h2>
-
-        <p>Hello ${escapeHtml(firstName)}${lastName ? " " + escapeHtml(lastName) : ""},</p>
-
-        <p>
-          You have been invited to join the <strong>${escapeHtml(brand.name)} Admin Dashboard</strong>
-          as a <strong>${escapeHtml(role)}</strong>.
-        </p>
-
-        <div
-          style="
-            background: #f8f8f8;
-            border: 1px solid #e5e5e5;
-            border-radius: 8px;
-            padding: 20px;
-            margin: 24px 0;
-          "
-        >
-          <h3 style="margin-top: 0;">Temporary Login Credentials</h3>
-
-          <p style="margin: 8px 0;">
-            <strong>Email:</strong> ${escapeHtml(email)}
-          </p>
-
-          <p style="margin: 8px 0;">
-            <strong>Password:</strong>
-            <span
-              style="
-                font-family: monospace;
-                background: #fff;
-                padding: 4px 8px;
-                border-radius: 4px;
-                border: 1px solid #ddd;
-              "
-            >
-              ${tempPassword}
-            </span>
-          </p>
-        </div>
-
-        <div style="text-align: center; margin: 32px 0;">
-          <a
-            href="${appUrl}/dashboard"
-            style="
-              display: inline-block;
-              background: #000;
-              color: #fff;
-              text-decoration: none;
-              padding: 14px 28px;
-              border-radius: 6px;
-              font-weight: 600;
-            "
-          >
-            Sign In to Dashboard
-          </a>
-        </div>
-
-        <p>
-          You'll be prompted to set a new password when you sign in for the first time.
-        </p>
-
-        <p>
-          Regards,<br />
-          <strong>Team ${escapeHtml(brand.name)}</strong>
-        </p>
-      `,
-        brand,
-      ),
+      html,
     });
   }
 

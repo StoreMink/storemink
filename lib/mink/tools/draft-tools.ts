@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, count, eq, sql } from "drizzle-orm";
+import { withoutLongDashes } from "@/lib/email/coupon-campaign";
 import {
   coupons,
   inventoryLevels,
@@ -441,6 +442,12 @@ export const proposeBlogDraftTool: MinkTool = {
   },
 };
 
+/** Long dashes out of model-written email copy; non-strings pass through so
+ *  readString reports them as it always has. */
+function dashFree(value: unknown): unknown {
+  return typeof value === "string" ? withoutLongDashes(value) : value;
+}
+
 export const proposeCouponEmailTool: MinkTool = {
   declaration: {
     name: "propose_coupon_email",
@@ -497,9 +504,13 @@ export const proposeCouponEmailTool: MinkTool = {
         destinationLabel: `Coupon ${coupon.code}`,
         destinationPath: `/dashboard/marketing/coupons/${coupon.id}/edit`,
         before: { subject: "", body: "" },
+        // Generated copy obeys the email rule every StoreMink template does:
+        // no long dash. The merchant still reviews and may edit the draft.
         content: {
-          subject: readString(args.subject, "subject", 200),
-          body: readString(args.body, "body", 5_000),
+          // Cleaned BEFORE the length/emptiness check, so the rewrite (which
+          // can lengthen "10–20" to "10 to 20") is what gets validated.
+          subject: readString(dashFree(args.subject), "subject", 200),
+          body: readString(dashFree(args.body), "body", 5_000),
         },
       }),
     );

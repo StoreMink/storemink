@@ -291,7 +291,13 @@ export async function processNotificationEmails(
       rowIds: ordered.map((r) => r.id),
       storeId: ordered[0].store_id,
       message: {
-        from: fromAddress(ctx.brand, { suffix: "Notifications" }),
+        // StoreMink's own account mail comes FROM StoreMink, matching the
+        // lockup it wears (PLATFORM_VOICE_EVENTS); everything else is the
+        // store's.
+        from:
+          rendered.voice === "platform"
+            ? fromAddress(platformBrand(), { local: "notifications" })
+            : fromAddress(ctx.brand, { suffix: "Notifications" }),
         to: ordered[0].email,
         ...(cc.length ? { cc } : {}),
         ...(bcc.length ? { bcc } : {}),

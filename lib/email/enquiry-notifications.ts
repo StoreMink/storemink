@@ -1,28 +1,68 @@
-import { wrapBrandedEmail } from "./layout";
-import { EMAIL_THEME } from "./shell";
+import {
+  EMAIL_FONT,
+  EMAIL_THEME,
+  composeEmail,
+  emailPanel,
+  emailParagraph,
+  emailSignoff,
+  escapeHtml,
+} from "./shell";
 import { sendEmail } from "./send";
 import type { StoreBrand } from "@/lib/store/brand";
 
-/** Escape user-supplied values before interpolating into email HTML. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+/**
+ * The acknowledgement a shopper receives after submitting an enquiry: a short
+ * thank-you, when to expect a reply, and a copy of what they sent.
+ *
+ * Pure: no DB, no network. The send function below calls it, and the email
+ * gallery and the long-dash guard render it on its own.
+ */
+export function buildEnquiryAcknowledgementEmail(opts: {
+  name: string;
+  subject: string | null;
+  message: string;
+  brand: StoreBrand;
+}): { subject: string; html: string } {
+  const trimmedSubject = opts.subject?.trim() || "";
+  const subjectLine = trimmedSubject
+    ? `We received your enquiry: "${trimmedSubject}"`
+    : "We received your enquiry";
 
-/** Wraps body content in the shared branded layout + sign-off. */
-function emailShell(bodyHtml: string, brand: StoreBrand): string {
-  return wrapBrandedEmail(
-    `${bodyHtml}
-    <p style="margin-top:32px;">
-      Warm regards,<br />
-      <strong>Team ${escapeHtml(brand.name)}</strong>
-    </p>`,
-    brand,
-  );
+  const name = opts.name.trim();
+  const greeting = name ? `Hi ${escapeHtml(name)},` : "Hi there,";
+  const storeName = escapeHtml(opts.brand.name);
+
+  // The copy of their message, quoted in a panel. The subject reads as the
+  // title of the quoted message. The message keeps white-space:pre-wrap, which
+  // no component offers, so the line breaks the shopper typed survive into the
+  // email; both lines are built from the shell's tokens.
+  const quoted = `${
+    trimmedSubject
+      ? `<p style="margin:0 0 10px; font-family:${EMAIL_FONT}; font-size:15px; line-height:1.5; font-weight:600; color:${EMAIL_THEME.ink};">${escapeHtml(trimmedSubject)}</p>`
+      : ""
+  }<p style="margin:0; font-family:${EMAIL_FONT}; font-size:15px; line-height:1.65; color:${EMAIL_THEME.inkSoft}; white-space:pre-wrap;">${escapeHtml(opts.message)}</p>`;
+
+  return {
+    subject: subjectLine,
+    html: composeEmail({
+      brand: opts.brand,
+      heading: "Thanks for reaching out",
+      preheader:
+        "We've received your enquiry. We usually reply within 1 to 2 business days.",
+      blocks: [
+        emailParagraph(greeting),
+        emailParagraph(
+          `We've received your enquiry, and someone from the ${storeName} team will get back to you as soon as possible, usually within 1 to 2 business days.`,
+        ),
+        emailParagraph("Here's a copy of what you sent us."),
+        emailPanel(quoted),
+        // "Warm regards" rather than the default "Thanks": the headline has
+        // already said thank you.
+        emailSignoff(opts.brand.name, "Warm regards,"),
+      ],
+      footerReasonHtml: `You're receiving this because you sent an enquiry to ${storeName}.`,
+    }),
+  };
 }
 
 /**
@@ -38,43 +78,20 @@ export async function sendEnquiryAcknowledgementEmail(opts: {
   brand: StoreBrand;
   storeId?: string | null;
 }): Promise<void> {
-  const trimmedSubject = opts.subject?.trim() || "";
-  const subjectLine = trimmedSubject
-    ? `We received your enquiry: "${trimmedSubject}"`
-    : "We received your enquiry";
+  const { subject, html } = buildEnquiryAcknowledgementEmail({
+    name: opts.name,
+    subject: opts.subject,
+    message: opts.message,
+    brand: opts.brand,
+  });
 
   const fromAddress = `${opts.brand.name} <admin@${opts.brand.domain}>`;
   await sendEmail({
     storeId: opts.storeId ?? null,
     to: opts.to,
     from: fromAddress,
-    subject: subjectLine,
+    subject,
     mailer: "enquiry_notification",
-    html: emailShell(
-      `
-        <h2 style="margin-top: 0;">Thanks for reaching out!</h2>
-        <p>Hi ${escapeHtml(opts.name)},</p>
-        <p>
-          We've received your enquiry and a member of the ${escapeHtml(opts.brand.name)} team will get
-          back to you as soon as possible, usually within 1–2 business days.
-        </p>
-        <p style="margin: 24px 0 6px;">
-          <strong>Here's a copy of what you sent us:</strong>
-        </p>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${EMAIL_THEME.panel}; border:1px solid ${EMAIL_THEME.border}; border-radius:8px; margin:8px 0 4px;">
-          <tr>
-            <td style="padding:16px 18px; font-size:14px; color:${EMAIL_THEME.inkSoft}; line-height:1.6;">
-              ${
-                trimmedSubject
-                  ? `<p style="margin:0 0 10px;"><strong>Subject:</strong> ${escapeHtml(trimmedSubject)}</p>`
-                  : ""
-              }
-              <p style="margin:0; white-space:pre-wrap;">${escapeHtml(opts.message)}</p>
-            </td>
-          </tr>
-        </table>
-      `,
-      opts.brand,
-    ),
+    html,
   });
 }

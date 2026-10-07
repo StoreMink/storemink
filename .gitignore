@@ -51,3 +51,6 @@ db-data.sql
 
 # Third-party reference screenshots for the Theme Studio benchmark (never commit).
 /.theme-studio-references/
+
+# Rendered email previews from `npm run email:gallery` (regenerate any time).
+/.email-gallery/
