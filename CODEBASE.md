@@ -4156,7 +4156,18 @@ wholesip/
 │                              # launched:false store that already took an order;
 │                              # 0171 edits the signup and setup Help guides in place
 │                              # for the shorter wizard, the go-live checklist and the
-│                              # password page. Next free number: 0172.
+│                              # password page. 0172 makes the five RESTRICT foreign
+│                              # keys inside the store cascade (order_items → products/
+│                              # variants, Mink publication/campaign → approval/draft)
+│                              # NO ACTION DEFERRABLE INITIALLY IMMEDIATE: a store that
+│                              # had ever taken an order could not be purged, because
+│                              # PostgreSQL queues the products cascade before the
+│                              # orders cascade and the check fired against rows the
+│                              # same statement was about to remove. deleteStore runs
+│                              # `set constraints all deferred` in its transaction;
+│                              # everywhere else the checks stay immediate, so deleting
+│                              # ONE ordered product is still refused (verified both
+│                              # ways against a copy of production). Next free: 0173.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
