@@ -7,6 +7,7 @@ import { withService, withUser, type Db } from "@/lib/db/client";
 import { blogComments, blogLikes, users } from "@/drizzle/schema";
 import { getCurrentStoreId } from "@/lib/store/resolve";
 import { demoStoreRefusal } from "@/lib/store/demo-guard";
+import { storefrontClosedRefusal } from "@/lib/store/storefront-access";
 import { revalidatePath } from "next/cache";
 import {
   BLOG_REACTIONS,
@@ -60,6 +61,8 @@ export async function toggleBlogReaction(
   }
   const demoRefusal = await demoStoreRefusal();
   if (demoRefusal) return { counts: emptyCounts(), error: demoRefusal };
+  const closedRefusal = await storefrontClosedRefusal();
+  if (closedRefusal) return { counts: emptyCounts(), error: closedRefusal };
 
   const storeId = active ? await getCurrentStoreId() : "";
   try {
@@ -120,6 +123,8 @@ export async function submitBlogComment(form: {
 }): Promise<ActionResult> {
   const demoRefusal = await demoStoreRefusal();
   if (demoRefusal) return { error: demoRefusal };
+  const closedRefusal = await storefrontClosedRefusal();
+  if (closedRefusal) return { error: closedRefusal };
   const body = form.body.trim();
   if (!body) return { error: "Write something first." };
   if (body.length > 2000) {

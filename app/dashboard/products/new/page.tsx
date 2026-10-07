@@ -40,7 +40,6 @@ export default async function ProductCreatePage() {
       <ProductEditorPanel
         product={null}
         categories={data.categories}
-        colors={data.colors}
         taxClasses={data.taxClasses}
         defaultTrackInventory={data.defaultTrackInventory}
         canUseGrossMargin={data.canUseGrossMargin}

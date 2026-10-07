@@ -912,6 +912,27 @@ export function BrandForm({
           </span>
         </label>
         <label className="sm-b-field">
+          <span>Colours in the shop grid</span>
+          <select
+            className="sm-b-input"
+            value={appearance.productCards}
+            onChange={(e) =>
+              patchAppearance({
+                productCards:
+                  e.target.value === "colour" ? "colour" : "product",
+              })
+            }
+          >
+            <option value="product">One card per product</option>
+            <option value="colour">One card per colour</option>
+          </select>
+          <span className="sm-b-hint">
+            One card per colour shows each colour of a product as its own card,
+            with that colour&rsquo;s photos. It applies to products with photos
+            for each colour.
+          </span>
+        </label>
+        <label className="sm-b-field">
           <span>Product page</span>
           <select
             className="sm-b-input"

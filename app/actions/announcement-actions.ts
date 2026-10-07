@@ -22,10 +22,10 @@ import { logError } from "@/lib/observability/logger";
 import { sanitizeBlogContent } from "@/lib/sanitize";
 import { sendEmail } from "@/lib/email/send";
 import { renderAnnouncementEmail } from "@/lib/email/announcement-email";
+import { platformEmailBrand } from "@/lib/email/platform-brand";
 import { PLATFORM_EMAIL_DOMAIN } from "@/lib/email/sender";
 import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 import { PLATFORM_URL } from "@/lib/site";
-import type { StoreBrand } from "@/lib/store/brand";
 import {
   normalizeAudience,
   type AnnouncementCategory,
@@ -43,22 +43,6 @@ export interface ActionResult {
   error?: string;
   id?: string;
 }
-
-const PLATFORM_BRAND: StoreBrand = {
-  name: "StoreMink",
-  logoUrl: null,
-  primaryColor: "#202223",
-  tagline: null,
-  blurb: null,
-  legalName: "StoreMink",
-  creditLine: null,
-  email: null,
-  phone: null,
-  hours: null,
-  social: { instagram: null, youtube: null, whatsapp: null },
-  badges: [],
-  domain: PLATFORM_EMAIL_DOMAIN,
-};
 
 export interface AnnouncementRow {
   id: string;
@@ -315,7 +299,7 @@ export async function sendAnnouncementTest(id: string): Promise<ActionResult> {
   if (!announcement) return { error: "Announcement not found." };
 
   const { subject, html } = renderAnnouncementEmail({
-    brand: PLATFORM_BRAND,
+    brand: platformEmailBrand(),
     subject: announcement.subject || announcement.title,
     bodyHtml: announcement.body,
     ctaLabel: announcement.ctaLabel,

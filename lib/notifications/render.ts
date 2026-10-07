@@ -184,7 +184,7 @@ export function renderNotification(
         ? {
             title: "Refund on its way",
             body: `${amount ?? "Your refund"} has been ${copy.destination}.${
-              copy.bankDelay ? " Banks usually take 5–7 working days." : ""
+              copy.bankDelay ? " Banks usually take 5 to 7 working days." : ""
             }`,
             url: customerOrderUrl(event),
           }
@@ -404,9 +404,20 @@ export function renderNotification(
     // moment — different audience, different words, different destination.
     case "store.created":
       return {
-        title: `Welcome to StoreMink, ${subject ?? "your store"} is live`,
+        title: `Welcome to StoreMink, ${subject ?? "your store"} is ready`,
+        // Not "live": a new store stays behind a password until its owner
+        // completes the go-live checklist and presses Go live.
         body: str(p.store_url) || null,
         url: "/dashboard",
+      };
+
+    // The moment the password page comes down. The address, not /dashboard:
+    // the one thing anyone wants on being told this is to see the shop.
+    case "store.launched":
+      return {
+        title: `${subject ?? "Your store"} is open to customers`,
+        body: str(p.store_url) || null,
+        url: str(p.store_url) || "/",
       };
 
     // The merchant milestone. platform.domain_verified below is the operators'

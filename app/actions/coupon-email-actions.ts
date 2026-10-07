@@ -27,6 +27,7 @@ import { emailConfigured } from "@/lib/email/send";
 import {
   mergeTokens,
   renderCouponEmail,
+  withoutLongDashes,
   type CouponEmailContent,
 } from "@/lib/email/coupon-campaign";
 import { getStoreBrand } from "@/lib/store/brand";
@@ -226,13 +227,14 @@ export async function generateCouponEmail(
   const userText = `Write a short, warm promotional email announcing a discount coupon to existing customers, in the brand's voice.
 
 RULES:
-- Address the reader using the literal token {{first_name}} once near the start (e.g. "Hi {{first_name},"). It will be replaced per recipient — do NOT invent a name.
-- Do NOT print the coupon code or the discount/validity yourself — those are shown in a styled box added automatically below your copy. Just build desire and tell them a code is waiting inside.
-- Keep it to 2–4 short paragraphs. Plain text only — no markdown, no HTML, no links, no images, no sign-off (a "Team {store name}" sign-off is added automatically).
+- Address the reader using the literal token {{first_name}} once near the start (e.g. "Hi {{first_name},"). It will be replaced per recipient, so do NOT invent a name.
+- Do NOT print the coupon code or the discount/validity yourself. Those are shown in a styled coupon card added automatically below your copy. Just build desire and tell them a code is waiting inside.
+- Keep it to 2 to 4 short paragraphs. Plain text only: no markdown, no HTML, no links, no images, and no sign-off (a "The {store name} team" sign-off is added automatically).
+- Never use an em dash or an en dash. Use a comma, a colon or a full stop instead, and write number ranges as "2 to 4".
 - Separate paragraphs with a blank line.
 - Return JSON: { "subject": "...", "body": "..." }. The subject is a single compelling line (you may use {{first_name}} in it too).
 
-COUPON DETAILS — the only facts you may rely on:
+COUPON DETAILS (the only facts you may rely on):
 ${facts}`;
 
   const { text, error } = await callGemini(brandSystemText(brand), userText, {
@@ -250,7 +252,13 @@ ${facts}`;
     };
     if (!parsed.subject || !parsed.body)
       return { error: "The AI response was incomplete. Try again." };
-    return { subject: parsed.subject.trim(), body: parsed.body.trim() };
+    // The prompt forbids long dashes, but a model can ignore an instruction,
+    // and this text becomes StoreMink-drafted email copy. Normalise it here so
+    // the merchant reviews (and can still edit) dash-free copy.
+    return {
+      subject: withoutLongDashes(parsed.subject).trim(),
+      body: withoutLongDashes(parsed.body).trim(),
+    };
   } catch {
     return { error: "Could not parse the AI response. Try again." };
   }

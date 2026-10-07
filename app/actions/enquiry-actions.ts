@@ -9,6 +9,7 @@ import { enquiries } from "@/drizzle/schema";
 import { getManagerUserId, getActingStoreId } from "@/app/dashboard/lib/access";
 import { getCurrentStoreId } from "@/lib/store/resolve";
 import { demoStoreRefusal } from "@/lib/store/demo-guard";
+import { storefrontClosedRefusal } from "@/lib/store/storefront-access";
 import { getStoreBrand } from "@/lib/store/brand";
 import { sendEnquiryAcknowledgementEmail } from "@/lib/email/enquiry-notifications";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
@@ -48,6 +49,8 @@ export async function submitEnquiry(
 ): Promise<ActionResult> {
   const demoRefusal = await demoStoreRefusal();
   if (demoRefusal) return { error: demoRefusal };
+  const closedRefusal = await storefrontClosedRefusal();
+  if (closedRefusal) return { error: closedRefusal };
   const name = input.name?.trim();
   const email = input.email?.trim();
   const phone = input.phone?.trim();
@@ -116,6 +119,9 @@ export async function submitEnquiry(
     subject: emailSubject,
     message,
     brand,
+    // The store sent this to its own shopper, so it belongs in the store's
+    // Email logs, not the platform's (a NULL store id is platform mail).
+    storeId,
   });
 
   emitEvent({

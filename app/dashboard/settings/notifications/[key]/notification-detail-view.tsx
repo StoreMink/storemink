@@ -31,7 +31,11 @@ import {
 import { CHANNELS, type ChannelKey } from "@/lib/notifications/channels";
 import { SmsTemplateEditor } from "./sms-template-editor";
 import type { SmsTemplate } from "@/app/actions/sms-template-actions";
-import { DIGESTS, type Digest } from "@/lib/notifications/events";
+import {
+  DIGESTS,
+  isPlatformVoiceEvent,
+  type Digest,
+} from "@/lib/notifications/events";
 import { renderTemplate } from "@/lib/notifications/template";
 import { sampleValuesFor } from "@/lib/notifications/variables";
 import type { RoutingRule } from "@/lib/notifications/routing";
@@ -157,9 +161,14 @@ export function NotificationDetailView({
       const templates: Record<string, Template> = {
         ...(audience.templates as Record<string, Template>),
       };
+      // StoreMink-voiced team mail always shows StoreMink's own wording, even
+      // if an older save stored a store override (it is ignored at send).
+      const fixed =
+        audience.key === "team" && isPlatformVoiceEvent(notification.key);
       templates.email = {
-        subject: templates.email?.subject || defaults?.subject || "",
-        body: templates.email?.body || defaults?.body || "",
+        subject:
+          (fixed ? "" : templates.email?.subject) || defaults?.subject || "",
+        body: (fixed ? "" : templates.email?.body) || defaults?.body || "",
         cc: templates.email?.cc ?? "",
         bcc: templates.email?.bcc ?? "",
       };
@@ -212,6 +221,12 @@ export function NotificationDetailView({
     getSection(notification.section)?.label ?? notification.section;
   const channelDef = CHANNELS.find((c) => c.key === activeChannel);
   const template = currentDraft?.templates[activeChannel] ?? {};
+  // StoreMink's own account mail is sent as StoreMink, so only its wording may
+  // go out under that name (the save refuses an edit, record.ts ignores one).
+  const wordingLocked =
+    activeChannel === "email" &&
+    current?.key === "team" &&
+    isPlatformVoiceEvent(notification.key);
   const defaults = current ? detail.defaults[current.key] : undefined;
 
   const patchAudience = (key: string, patch: Partial<AudienceDraft>) =>
@@ -566,11 +581,15 @@ export function NotificationDetailView({
 
                 <Field
                   label={activeChannel === "email" ? "Subject" : "Title"}
-                  hint="Clear it to fall back to the built-in wording."
+                  hint={
+                    wordingLocked
+                      ? "StoreMink writes this email, so its wording is fixed. You can still choose who receives it."
+                      : "Clear it to fall back to the built-in wording."
+                  }
                 >
                   <input
                     value={template.subject ?? ""}
-                    readOnly={readOnly}
+                    readOnly={readOnly || wordingLocked}
                     placeholder={defaults?.subject}
                     onChange={(e) =>
                       setTemplate(activeChannel, { subject: e.target.value })
@@ -588,7 +607,7 @@ export function NotificationDetailView({
                         )}
                       </span>
                     </p>
-                    {!readOnly && (
+                    {!readOnly && !wordingLocked && (
                       <button
                         type="button"
                         onClick={() => revert("subject")}
@@ -612,7 +631,7 @@ export function NotificationDetailView({
                 >
                   <textarea
                     value={template.body ?? ""}
-                    readOnly={readOnly}
+                    readOnly={readOnly || wordingLocked}
                     placeholder={defaults?.body}
                     rows={activeChannel === "email" ? 12 : 3}
                     onChange={(e) =>
@@ -622,7 +641,7 @@ export function NotificationDetailView({
                   />
 
                   <div className="mt-1.5 flex flex-wrap items-center gap-3">
-                    {!readOnly && (
+                    {!readOnly && !wordingLocked && (
                       <button
                         type="button"
                         onClick={() => revert("body")}

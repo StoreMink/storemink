@@ -29,6 +29,12 @@ export interface StoreBrand {
   social: StoreSocial;
   badges: StoreBadge[];
   domain: string; // Resend-verified domain to send this store's email FROM
+  /**
+   * A square brand mark shown beside the serif wordmark in email headers when
+   * there is no full logo. Set only on StoreMink's own platform brand
+   * (lib/email/platform-brand.ts); a merchant's identity is their logo or name.
+   */
+  mark?: string | null;
 }
 
 // Default storefront accent (the existing near-black) — a store keeps the clean

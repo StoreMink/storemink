@@ -156,6 +156,7 @@ export const EVENT_KEYS = [
   "security.password_changed",
   "settings.changed",
   "store.created",
+  "store.launched",
   "store.domain_live",
   "store.domain_reverted",
   // ── Plan & billing ──────────────────────────────────────────────────────
@@ -245,7 +246,7 @@ export const EVENTS: readonly EventDef[] = [
     key: "order.pickup_expired",
     label: "Collection expired",
     description:
-      "Nobody collected a pickup order in time — it was cancelled and its stock returned.",
+      "Nobody collected a pickup order in time, so it was cancelled and its stock returned.",
     group: "Orders",
     section: "orders",
     severity: "warning",
@@ -600,6 +601,20 @@ export const EVENTS: readonly EventDef[] = [
     configurable: false,
   },
   {
+    key: "store.launched",
+    label: "Store opened to customers",
+    description:
+      "The owner completed the go-live checklist and the storefront is now public.",
+    group: "Team & security",
+    section: "settings",
+    severity: "success",
+    // BOTH, like store.created: the password page every colleague has been
+    // typing into has just come down, and the address they have been told to
+    // wait on is now the real shop. The whole team needs to know that once.
+    audiences: { "store-admins": BOTH },
+    configurable: false,
+  },
+  {
     key: "store.domain_live",
     label: "Custom domain live",
     description: "This store is now being served on its own domain.",
@@ -860,6 +875,34 @@ export function eventFromSlug(slug: string): EventDef | undefined {
   if (!slug) return undefined;
   const wanted = slug.toLowerCase();
   return EVENTS.find((e) => eventKeySlug(e.key) === wanted);
+}
+
+/**
+ * Events StoreMink sends AS ITSELF to a merchant: their account, plan, billing
+ * and store lifecycle on the platform, as opposed to news about their shop's
+ * own trade (orders, stock, customers, content).
+ *
+ * The email for these wears StoreMink's lockup and comes from StoreMink, not
+ * from the store: "Welcome to StoreMink" under the merchant's own logo, sent as
+ * "Acme Juice Notifications", reads as the store mailing itself. Shopper mail
+ * is never platform-voiced, whatever the event.
+ */
+export const PLATFORM_VOICE_EVENTS: ReadonlySet<EventKey> = new Set<EventKey>([
+  "store.created",
+  "store.launched",
+  "store.domain_live",
+  "store.domain_reverted",
+  "store.comp_ended",
+  "plan.changed",
+  "plan.expiring",
+  "subscription.invoice_due",
+  "subscription.payment_failed",
+  "ai.credits_low",
+  "ai.credits_purchased",
+]);
+
+export function isPlatformVoiceEvent(key: string | null | undefined): boolean {
+  return !!key && PLATFORM_VOICE_EVENTS.has(key as EventKey);
 }
 
 export function getEventDef(key: string): EventDef | undefined {

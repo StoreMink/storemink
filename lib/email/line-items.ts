@@ -14,7 +14,7 @@
 // Pure: no DB, no server imports, so the preview and the send are the same code.
 // ---------------------------------------------------------------------------
 
-import { EMAIL_FONT, EMAIL_THEME, escapeHtml } from "./shell";
+import { EMAIL_FONT, EMAIL_THEME, emailSection, escapeHtml } from "./shell";
 import { formatMoney } from "@/lib/notifications/format";
 
 export interface EmailLineItem {
@@ -38,8 +38,8 @@ export interface EmailOrderSummary {
 /** A summary of forty lines is a wall; the order page has the rest. */
 const MAX_ROWS = 20;
 
-const cell = `font-family:${EMAIL_FONT}; font-size:14px; line-height:1.5; color:${EMAIL_THEME.ink};`;
-const muted = `font-family:${EMAIL_FONT}; font-size:13px; line-height:1.5; color:${EMAIL_THEME.muted};`;
+const cell = `font-family:${EMAIL_FONT}; font-size:15px; line-height:1.5; color:${EMAIL_THEME.ink};`;
+const muted = `font-family:${EMAIL_FONT}; font-size:13.5px; line-height:1.5; color:${EMAIL_THEME.muted};`;
 
 function money(value: number | null | undefined, currency: string): string {
   return value === null || value === undefined || !Number.isFinite(value)
@@ -53,18 +53,18 @@ function itemRow(item: EmailLineItem, currency: string): string {
   const qty = Number(item.quantity) || 0;
 
   return `<tr>
-  <td style="${cell} padding:12px 0; border-bottom:1px solid ${EMAIL_THEME.hairline};">
+  <td style="${cell} padding:14px 0; border-bottom:1px solid ${EMAIL_THEME.hairline};">
     <span style="font-weight:600;">${name}</span>
     ${variant ? `<br /><span style="${muted}">${variant}</span>` : ""}
     ${qty > 1 ? `<br /><span style="${muted}">Qty ${qty}</span>` : ""}
   </td>
-  <td align="right" valign="top" style="${cell} padding:12px 0 12px 12px; border-bottom:1px solid ${EMAIL_THEME.hairline}; white-space:nowrap;">
+  <td align="right" valign="top" style="${cell} padding:14px 0 14px 16px; border-bottom:1px solid ${EMAIL_THEME.hairline}; white-space:nowrap;">
     ${money(item.total, currency)}
   </td>
 </tr>`;
 }
 
-/** A totals line. `strong` is the final amount — bigger, darker, with a rule. */
+/** A totals line. `strong` is the final amount: bigger, darker, with a rule. */
 function totalRow(
   label: string,
   value: string,
@@ -72,14 +72,15 @@ function totalRow(
 ): string {
   if (!value) return "";
   const weight = opts.strong ? "600" : "400";
-  const size = opts.strong ? "16px" : "14px";
+  const size = opts.strong ? "17px" : "14.5px";
   const colour = opts.strong ? EMAIL_THEME.ink : EMAIL_THEME.inkSoft;
   const border = opts.strong
     ? `border-top:1px solid ${EMAIL_THEME.border};`
     : "";
+  const pad = opts.strong ? "14px" : "8px";
   return `<tr>
-  <td style="${cell} ${border} padding:${opts.strong ? "12px 0 0" : "5px 0 0"}; font-size:${size}; color:${colour};">${escapeHtml(label)}</td>
-  <td align="right" style="${cell} ${border} padding:${opts.strong ? "12px 0 0 12px" : "5px 0 0 12px"}; font-size:${size}; font-weight:${weight}; color:${colour}; white-space:nowrap;">${value}</td>
+  <td style="${cell} ${border} padding:${pad} 0 0; font-size:${size}; font-weight:${weight}; color:${colour};">${escapeHtml(label)}</td>
+  <td align="right" style="${cell} ${border} padding:${pad} 0 0 16px; font-size:${size}; font-weight:${weight}; color:${colour}; white-space:nowrap;">${value}</td>
 </tr>`;
 }
 
@@ -109,10 +110,10 @@ export function renderOrderSummary(summary: EmailOrderSummary | null): string {
   const rows = shown.map((i) => itemRow(i, currency)).join("\n");
   const more =
     hidden > 0
-      ? `<tr><td colspan="2" style="${muted} padding:10px 0;">+${hidden} more item${hidden === 1 ? "" : "s"}</td></tr>`
+      ? `<tr><td colspan="2" style="${muted} padding:12px 0 0;">+${hidden} more item${hidden === 1 ? "" : "s"}</td></tr>`
       : "";
 
-  // A discount is money coming OFF — shown negative, or it reads as a charge.
+  // A discount is money coming OFF: shown negative, or it reads as a charge.
   const discount = Number(summary.discount);
   const totals = [
     totalRow("Subtotal", money(summary.subtotal, currency)),
@@ -126,12 +127,17 @@ export function renderOrderSummary(summary: EmailOrderSummary | null): string {
     .filter(Boolean)
     .join("\n");
 
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:22px 0 0; border-collapse:collapse;">
+  // A white inset card on the canvas, like every other block of facts.
+  return `${emailSection("Order summary")}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:0 0 8px;">
   <tr>
-    <td colspan="2" style="${muted} padding:0 0 4px; text-transform:uppercase; letter-spacing:0.6px; font-size:11px; font-weight:600;">Order summary</td>
+    <td bgcolor="${EMAIL_THEME.card}" style="background-color:${EMAIL_THEME.card}; border:1px solid ${EMAIL_THEME.border}; border-radius:12px; padding:6px 22px 20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse;">
+        ${rows}
+        ${more}
+        ${totals}
+      </table>
+    </td>
   </tr>
-  ${rows}
-  ${more}
-  ${totals}
 </table>`;
 }

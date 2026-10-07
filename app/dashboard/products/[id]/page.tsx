@@ -21,7 +21,6 @@ export default async function ProductEditPage({
       <ProductEditorPanel
         product={data.product}
         categories={data.categories}
-        colors={data.colors}
         taxClasses={data.taxClasses}
         canUseGrossMargin={data.canUseGrossMargin}
         photoSpec={await storePhotoSpec()}

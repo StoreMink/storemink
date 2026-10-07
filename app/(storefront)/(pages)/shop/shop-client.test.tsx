@@ -194,7 +194,9 @@ describe("ShopClient filtering, sorting and pagination", () => {
     renderShop();
     fireEvent.click(screen.getByRole("button", { name: /^filter/i }));
     const dialog = screen.getByRole("dialog", { name: "Filter" });
-    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.click(
+      within(dialog).getByRole("checkbox", { name: /in stock only/i }),
+    );
     // The grid behind the panel has not changed yet.
     expect(names()).toEqual(["Mango", "Apple", "Chips"]);
     fireEvent.click(
@@ -329,5 +331,148 @@ describe("ShopClient on a collection page", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
     expect(replace).toHaveBeenCalledWith("/collections/juices");
+  });
+});
+
+describe("ShopClient option and category filters", () => {
+  const sized = (
+    id: string,
+    name: string,
+    sizes: [string, boolean][],
+    category = "c1",
+  ) =>
+    product(id, name, 500, {
+      category_id: category,
+      options: [{ name: "Size", values: sizes.map(([s]) => s) }],
+      variants: sizes.map(([s, inStock]) => ({
+        base_price: 500,
+        selling_price: 500,
+        special_price: null,
+        track_inventory: true,
+        stock: inStock ? 3 : 0,
+        low_stock_threshold: null,
+        allow_backorder: false,
+        option_values: [s],
+      })),
+    });
+  const range = [
+    sized("tee", "Tee", [
+      ["S", true],
+      ["M", false],
+    ]),
+    sized("shirt", "Shirt", [["M", true]], "c2"),
+  ];
+
+  it("filters by a size from the sidebar and writes a Shopify-style URL", () => {
+    render(
+      <ShopClient
+        products={range}
+        categories={categories}
+        initialShop={DEFAULT_SHOP_QUERY}
+      />,
+    );
+    const sidebar = screen.getByRole("complementary", { name: "Filters" });
+    fireEvent.click(within(sidebar).getByRole("button", { name: /^M/ }));
+    expect(names()).toEqual(["Tee", "Shirt"]);
+    expect(lastUrl()).toBe("/shop?filter.v.option.size=m");
+    // Only the shirt's M is in stock — the tee has an M, but not to sell.
+    fireEvent.click(
+      within(sidebar).getByRole("checkbox", { name: /in stock only/i }),
+    );
+    expect(names()).toEqual(["Shirt"]);
+    // A chip per value, which removes just that value.
+    fireEvent.click(
+      screen.getByRole("button", { name: /^M\s*—\s*remove filter$/ }),
+    );
+    expect(names()).toEqual(["Tee", "Shirt"]);
+  });
+
+  it("filters by category on /shop and counts each choice", () => {
+    render(
+      <ShopClient
+        products={range}
+        categories={categories}
+        initialShop={DEFAULT_SHOP_QUERY}
+      />,
+    );
+    const sidebar = screen.getByRole("complementary", { name: "Filters" });
+    const snacks = within(sidebar).getByRole("checkbox", { name: /snacks/i });
+    expect(snacks.closest("label")!.textContent).toContain("(1)");
+    fireEvent.click(snacks);
+    expect(names()).toEqual(["Shirt"]);
+    expect(lastUrl()).toBe("/shop?filter.p.category=snacks");
+  });
+
+  it("has no category filter on a collection page", () => {
+    render(
+      <ShopClient
+        products={range}
+        categories={categories}
+        collection={categories[0]}
+        initialShop={DEFAULT_SHOP_QUERY}
+      />,
+    );
+    const sidebar = screen.getByRole("complementary", { name: "Filters" });
+    expect(within(sidebar).queryByText("Category")).toBeNull();
+  });
+});
+
+describe("ShopClient one card per colour", () => {
+  const variant = (id: string, colour: string, stock = 3) => ({
+    id,
+    base_price: 999,
+    selling_price: 999,
+    special_price: null,
+    track_inventory: true,
+    stock,
+    low_stock_threshold: null,
+    allow_backorder: false,
+    option_values: [colour],
+  });
+  const sweatshirt = product("sw", "Loose Fit Sweatshirt", 999, {
+    image_url: "/blue.jpg",
+    options: [
+      {
+        name: "Colour",
+        values: ["Light blue", "Brown"],
+        images: { "Light blue": ["/blue.jpg"], Brown: ["/brown.jpg"] },
+      },
+    ],
+    variants: [variant("v1", "Light blue"), variant("v2", "Brown")],
+  });
+
+  it("shows each colour as its own card when the store asks", () => {
+    render(
+      <ShopClient
+        products={[sweatshirt]}
+        categories={categories}
+        initialShop={DEFAULT_SHOP_QUERY}
+        productCards="colour"
+      />,
+    );
+    expect(names()).toEqual(["Loose Fit Sweatshirt", "Loose Fit Sweatshirt"]);
+  });
+
+  it("filters colour cards by colour", () => {
+    render(
+      <ShopClient
+        products={[sweatshirt]}
+        categories={categories}
+        initialShop={{ ...DEFAULT_SHOP_QUERY, options: { color: ["brown"] } }}
+        productCards="colour"
+      />,
+    );
+    expect(names()).toEqual(["Loose Fit Sweatshirt"]);
+  });
+
+  it("keeps one card per product by default", () => {
+    render(
+      <ShopClient
+        products={[sweatshirt]}
+        categories={categories}
+        initialShop={DEFAULT_SHOP_QUERY}
+      />,
+    );
+    expect(names()).toEqual(["Loose Fit Sweatshirt"]);
   });
 });

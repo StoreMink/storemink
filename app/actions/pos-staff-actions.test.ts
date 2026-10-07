@@ -35,9 +35,10 @@ vi.mock("@/lib/store/brand", () => ({
     domain: "echos.com",
   })),
 }));
-vi.mock("@/lib/email/layout", () => ({
-  wrapBrandedEmail: (html: string) => html,
-}));
+// The real transport (lib/pos/staff-email.ts) and the real builder run; only
+// the final send is captured, so a test can read exactly what would go out.
+const emailMocks = vi.hoisted(() => ({ sendEmail: vi.fn(async () => {}) }));
+vi.mock("@/lib/email/send", () => ({ sendEmail: emailMocks.sendEmail }));
 vi.mock("@/lib/email/sender", () => ({ fromAddress: () => "a@b.c" }));
 vi.mock("@/lib/site", () => ({
   getStoreUrl: async () => "https://echos.storemink.com",
@@ -184,6 +185,42 @@ describe("pos-staff-actions", () => {
       const locVals = dbHolder.current.calls.values[1];
       expect(locVals).toHaveLength(2);
       expect(locVals[0].isPrimary).toBe(true);
+    });
+
+    // The invitation is the standard composed email, sent as built: no second
+    // wrapper, the registration link on the request host, the name escaped,
+    // and the sensitive mailer key that keeps the token out of the email log.
+    it("emails the composed invitation with a working registration link", async () => {
+      const previous = process.env.RESEND_API_KEY;
+      process.env.RESEND_API_KEY = "re_test_key";
+      try {
+        const r = await inviteStaff({
+          name: "<b>Priya</b>",
+          email: "priya@example.com",
+          role: "cashier",
+          locationIds: ["loc-1"],
+        });
+        expect(r.error).toBeUndefined();
+        expect(emailMocks.sendEmail).toHaveBeenCalledTimes(1);
+        const sent = (emailMocks.sendEmail.mock.calls[0] as any[])[0];
+        expect(sent).toMatchObject({
+          to: "priya@example.com",
+          mailer: "pos_staff_invite",
+          ignoreSuppression: true,
+          subject: "You've been added to Echos POS",
+        });
+        const token = dbHolder.current.calls.values[0].inviteToken;
+        expect(sent.html).toContain(
+          `http://echos.localhost:3000/pos/register?token=${token}`,
+        );
+        expect(sent.html.match(/<!DOCTYPE html>/g)).toHaveLength(1);
+        expect(sent.html).not.toContain("<b>Priya</b>");
+        expect(sent.html).toContain("&lt;b&gt;Priya&lt;/b&gt;");
+        expect(`${sent.subject}${sent.html}`).not.toMatch(/[\u2013\u2014]/);
+      } finally {
+        if (previous === undefined) delete process.env.RESEND_API_KEY;
+        else process.env.RESEND_API_KEY = previous;
+      }
     });
   });
 

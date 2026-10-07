@@ -13,7 +13,7 @@ import {
 import { setUserClaims } from "@/lib/auth/firebase-claims";
 import { withService, withUser } from "@/lib/db/client";
 import { admins, roles } from "@/drizzle/schema";
-import { wrapBrandedEmail } from "@/lib/email/layout";
+import { buildPasswordResetEmail } from "@/lib/email/account-emails";
 import { fromAddress } from "@/lib/email/sender";
 import { getStoreBrand } from "@/lib/store/brand";
 
@@ -217,27 +217,15 @@ export async function triggerPasswordReset(email: string): Promise<Result> {
     // not the body, because the reset link in it IS the credential.
     // ignoreSuppression — someone is waiting on this to get back into their
     // account, and a historic bounce shouldn't lock them out.
+    const { subject, html } = buildPasswordResetEmail({ brand, link });
     await sendEmail({
       storeId: await getActingStoreId().catch(() => null),
       from: fromAddress(brand, { suffix: "Accounts" }),
       to: email,
-      subject: `Reset your ${brand.name} password`,
+      subject,
       mailer: "password_reset",
       ignoreSuppression: true,
-      html: wrapBrandedEmail(
-        `
-        <h2 style="margin-top: 0;">Reset your password</h2>
-        <p>We received a request to reset your password. Click the button below
-          to choose a new one. If you didn't ask for this, you can ignore this email.</p>
-        <div style="text-align: center; margin: 32px 0;">
-          <a href="${link}" style="display:inline-block;background:#000;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:600;">
-            Reset Password
-          </a>
-        </div>
-        <p style="font-size:13px;color:#666;">Or open this link: <br />${link}</p>
-      `,
-        brand,
-      ),
+      html,
     });
   } else {
     // Dev fallback: no email provider configured.

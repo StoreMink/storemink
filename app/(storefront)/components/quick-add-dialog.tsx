@@ -8,7 +8,11 @@ import { X } from "lucide-react";
 import { toast } from "sonner";
 import { formatPrice, variantEffectiveSelling } from "@/lib/pricing";
 import { isSoldOut } from "@/lib/inventory/status";
-import { initialVariant, usesOptionPickers } from "@/lib/products/options";
+import {
+  initialVariant,
+  photosForVariant,
+  usesOptionPickers,
+} from "@/lib/products/options";
 import {
   getQuickAddProduct,
   type QuickAddProduct,
@@ -109,7 +113,9 @@ export function QuickAddDialog({
   const pickers =
     product !== null && usesOptionPickers(product.options, pickable);
   const image =
-    (selected?.images ?? []).filter(Boolean)[0] ?? product?.image_url ?? null;
+    photosForVariant(product?.options ?? [], selected)[0] ??
+    product?.image_url ??
+    null;
   const soldOut = !selected || !selected.available;
 
   const add = () => {

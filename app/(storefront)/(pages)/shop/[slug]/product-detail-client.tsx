@@ -26,6 +26,7 @@ import { StickyAddToCart } from "./sticky-add-to-cart";
 import { OptionPicker } from "@/app/(storefront)/components/option-picker";
 import {
   initialVariant,
+  photosForVariant,
   usesOptionPickers,
   type ProductOption,
 } from "@/lib/products/options";
@@ -170,9 +171,9 @@ export default function ProductDetailClient({
     [product.image_url, product.images],
   );
 
-  // The gallery shown: the selected variant's OWN photos when it has any,
-  // otherwise the shared product gallery.
-  const variantImages = (selectedVariant?.images ?? []).filter(Boolean);
+  // The gallery shown: the selected variant's own photos, else its colour's
+  // photos (uploaded once per colour), else the shared product gallery.
+  const variantImages = photosForVariant(options, selectedVariant);
   const gallery =
     variantImages.length > 0
       ? Array.from(new Set(variantImages))
@@ -180,7 +181,7 @@ export default function ProductDetailClient({
 
   // Default image: the opening variant's first photo if it has one, else the
   // product gallery lead.
-  const firstVariantImages = (openingVariant?.images ?? []).filter(Boolean);
+  const firstVariantImages = photosForVariant(options, openingVariant);
   const [activeImg, setActiveImg] = useState<string | null>(
     firstVariantImages[0] ?? productImages[0] ?? null,
   );
@@ -189,7 +190,7 @@ export default function ProductDetailClient({
   // back to the product gallery when the variant has none of its own).
   const selectVariant = (v: DetailVariant) => {
     setVariantId(v.id);
-    const imgs = (v.images ?? []).filter(Boolean);
+    const imgs = photosForVariant(options, v);
     setActiveImg(imgs[0] ?? productImages[0] ?? null);
     // The URL names the variant on screen, so a shared or refreshed link
     // opens on it. replaceState, not the router: nothing on the server

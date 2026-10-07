@@ -51,6 +51,40 @@ export const PLATFORM_URL = ((): string => {
 // someone hiding production from Google for an afternoon.
 export const IS_PRODUCTION_PLATFORM = ROOT_DOMAIN === "storemink.com";
 
+/**
+ * A SECOND local root beside `localhost`, for the one thing localhost cannot
+ * do: Firebase's Auth service refuses `verifyPhoneNumber` from the hostname
+ * `localhost` for real numbers (firebase-js-sdk#8387, July 2024). The block
+ * is on that hostname alone, so a dev host that merely RESOLVES to 127.0.0.1
+ * is accepted — and `localtest.me` is public DNS that does exactly that, with
+ * every subdomain included, so `{slug}.localtest.me:3000` works like
+ * `{slug}.localhost:3000` with no /etc/hosts entry.
+ *
+ * ★ IT ALSO FIXES THE SIGNUP HANDOFF LOCALLY. A browser will not set a
+ * cookie for `.localhost`, so on localhost the session minted on the platform
+ * host never reaches the new store's subdomain (the "flaky on localhost" note
+ * in CODEBASE.md §7). `.localtest.me` is an ordinary registrable domain, so
+ * `cookieDomainForHost` shares the session across its subdomains exactly as
+ * `.storemink.com` does in production.
+ *
+ * The staging Identity Platform project lists it as an authorized domain
+ * (one entry covers every subdomain). Production never sees this host.
+ */
+export const LOCAL_DEV_ROOT = (
+  process.env.NEXT_PUBLIC_LOCAL_DEV_ROOT || "localtest.me"
+).toLowerCase();
+
+/** `localhost` or the loopback dev root — the hosts that mean "this machine". */
+export function isLocalDevHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return (
+    h === "localhost" ||
+    h.endsWith(".localhost") ||
+    h === LOCAL_DEV_ROOT ||
+    h.endsWith(`.${LOCAL_DEV_ROOT}`)
+  );
+}
+
 // Search indexing is enabled ONLY on the real production platform apex
 // (storemink.com) — and never when NEXT_PUBLIC_NOINDEX=1 forces it off. Staging,
 // previews and local dev are therefore never indexed AND never ping search
@@ -82,6 +116,15 @@ export function parseHost(host: string | null | undefined): HostKind {
   if (hostname === "pos.localhost") return { type: "platform" };
   if (hostname.endsWith(".localhost")) {
     const slug = hostname.slice(0, -".localhost".length);
+    return slug ? { type: "store-subdomain", slug } : { type: "platform" };
+  }
+  // The loopback dev root (see LOCAL_DEV_ROOT): the same shape as localhost,
+  // with the same reserved product hosts in front of the store escape hatch.
+  if (hostname === LOCAL_DEV_ROOT || hostname === `pos.${LOCAL_DEV_ROOT}`) {
+    return { type: "platform" };
+  }
+  if (hostname.endsWith(`.${LOCAL_DEV_ROOT}`)) {
+    const slug = hostname.slice(0, -(LOCAL_DEV_ROOT.length + 1));
     return slug ? { type: "store-subdomain", slug } : { type: "platform" };
   }
   if (hostname.endsWith(".vercel.app")) return { type: "platform" };
@@ -125,6 +168,12 @@ export function cookieDomainForHost(
   if (hostname === ROOT_DOMAIN || hostname.endsWith(`.${ROOT_DOMAIN}`)) {
     return `.${ROOT_DOMAIN}`;
   }
+  // The loopback dev root is a real registrable domain, so its cookies CAN be
+  // shared across subdomains — which is what makes the signup → dashboard
+  // handoff work locally the way it does in production. `.localhost` cannot.
+  if (hostname === LOCAL_DEV_ROOT || hostname.endsWith(`.${LOCAL_DEV_ROOT}`)) {
+    return `.${LOCAL_DEV_ROOT}`;
+  }
   return undefined;
 }
 
@@ -132,7 +181,11 @@ export function cookieDomainForHost(
 export function isHelpHost(host: string | null | undefined): boolean {
   if (!host) return false;
   const hostname = host.split(":")[0].trim().toLowerCase();
-  return hostname === `help.${ROOT_DOMAIN}` || hostname === "help.localhost";
+  return (
+    hostname === `help.${ROOT_DOMAIN}` ||
+    hostname === "help.localhost" ||
+    hostname === `help.${LOCAL_DEV_ROOT}`
+  );
 }
 
 // The public theme catalog. It is a platform surface, never a merchant store,
@@ -141,7 +194,9 @@ export function isThemesHost(host: string | null | undefined): boolean {
   if (!host) return false;
   const hostname = host.split(":")[0].trim().toLowerCase();
   return (
-    hostname === `themes.${ROOT_DOMAIN}` || hostname === "themes.localhost"
+    hostname === `themes.${ROOT_DOMAIN}` ||
+    hostname === "themes.localhost" ||
+    hostname === `themes.${LOCAL_DEV_ROOT}`
   );
 }
 
@@ -150,5 +205,9 @@ export function isThemesHost(host: string | null | undefined): boolean {
 export function isPosHost(host: string | null | undefined): boolean {
   if (!host) return false;
   const hostname = host.split(":")[0].trim().toLowerCase();
-  return hostname === `pos.${ROOT_DOMAIN}` || hostname === "pos.localhost";
+  return (
+    hostname === `pos.${ROOT_DOMAIN}` ||
+    hostname === "pos.localhost" ||
+    hostname === `pos.${LOCAL_DEV_ROOT}`
+  );
 }

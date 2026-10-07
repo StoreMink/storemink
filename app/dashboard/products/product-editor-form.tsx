@@ -48,17 +48,11 @@ import {
   type ProductFormData,
   type VariantFormData,
 } from "@/app/actions/product-actions";
-import type {
-  Product,
-  CategoryOption,
-  CardColorOption,
-  TaxClassOption,
-} from "./page";
+import type { Product, CategoryOption, TaxClassOption } from "./page";
 
 type Props = {
   product: Product | null;
   categories: CategoryOption[];
-  colors: CardColorOption[];
   taxClasses: TaxClassOption[];
   onClose: () => void;
   onSaved: () => void;
@@ -394,7 +388,6 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
     {
       product,
       categories,
-      colors,
       taxClasses,
       onClose,
       onSaved,
@@ -1553,44 +1546,6 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                   />
                   Feature this product on the homepage
                 </label>
-
-                <div>
-                  <label className={labelClass}>Card colour (storefront)</label>
-                  <div className="flex items-center gap-2">
-                    <span
-                      aria-hidden
-                      className="h-9 w-9 shrink-0 rounded-md border border-[#e5e7eb]"
-                      style={{ background: form.card_color || "transparent" }}
-                    />
-                    <select
-                      className={`${fieldClass} flex-1`}
-                      value={form.card_color}
-                      onChange={(e) => set("card_color", e.target.value)}
-                    >
-                      <option value="">Default (no colour)</option>
-                      {colors.map((c) => (
-                        <option key={c.id} value={c.hex}>
-                          {c.name} — {c.hex}
-                        </option>
-                      ))}
-                      {/* Preserve a custom/legacy hex not in the palette */}
-                      {form.card_color &&
-                        !colors.some((c) => c.hex === form.card_color) && (
-                          <option value={form.card_color}>
-                            Custom — {form.card_color}
-                          </option>
-                        )}
-                    </select>
-                  </div>
-                  <p className={hintClass}>
-                    Shades come from{" "}
-                    <Link href="/dashboard/colors" className="underline">
-                      Colours
-                    </Link>
-                    . Name &amp; price stay near-black for contrast; blank uses
-                    the storefront default.
-                  </p>
-                </div>
               </div>
             </Section>
           </div>

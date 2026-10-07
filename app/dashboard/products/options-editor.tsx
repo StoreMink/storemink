@@ -1,14 +1,19 @@
 "use client";
 
-import { useState } from "react";
-import { Plus, X } from "lucide-react";
+/* eslint-disable @next/next/no-img-element */
+import { useRef, useState } from "react";
+import { ImagePlus, Loader2, Plus, X } from "lucide-react";
+import { toast } from "sonner";
 import {
   MAX_OPTIONS,
   MAX_OPTION_VALUES,
+  MAX_VALUE_IMAGES,
   guessSwatch,
   normalizeOptions,
+  photoAxis,
   type ProductOption,
 } from "@/lib/products/options";
+import { uploadImage } from "@/lib/storage/uploads";
 
 // ---------------------------------------------------------------------------
 // The option axes of a product — "Size: S, M, L", "Colour: Black, Tan" — as a
@@ -21,6 +26,8 @@ import {
 //   box: a half-typed "Blac" must not briefly become a variant.
 // ★ A colour axis can show swatches. The picker only stores a hex for a value
 //   the option actually has, the same rule the save enforces.
+// ★ The colour axis also takes PHOTOS PER COLOUR — uploaded once for "Black"
+//   and used by every size of black — instead of once per variant row.
 // ---------------------------------------------------------------------------
 
 const fieldClass =
@@ -38,6 +45,7 @@ export function OptionsEditor({
 }) {
   const check = normalizeOptions(options);
   const error = "error" in check ? check.error : null;
+  const photos = photoAxis(options);
 
   const update = (i: number, patch: Partial<ProductOption>) =>
     onChange(options.map((o, j) => (j === i ? { ...o, ...patch } : o)));
@@ -61,6 +69,7 @@ export function OptionsEditor({
           key={i}
           option={option}
           index={i}
+          photos={i === photos}
           onChange={(patch) => update(i, patch)}
           onRemove={() => onChange(options.filter((_, j) => j !== i))}
         />
@@ -91,11 +100,14 @@ export function OptionsEditor({
 function OptionRow({
   option,
   index,
+  photos,
   onChange,
   onRemove,
 }: {
   option: ProductOption;
   index: number;
+  /** This is the colour axis: offer photos per value. */
+  photos: boolean;
   onChange: (patch: Partial<ProductOption>) => void;
   onRemove: () => void;
 }) {
@@ -134,10 +146,20 @@ function OptionRow({
   const removeValue = (value: string) => {
     const swatches = option.swatches ? { ...option.swatches } : undefined;
     if (swatches) delete swatches[value];
+    const images = option.images ? { ...option.images } : undefined;
+    if (images) delete images[value];
     onChange({
       values: option.values.filter((v) => v !== value),
       ...(swatches ? { swatches } : {}),
+      ...(images ? { images } : {}),
     });
+  };
+
+  const setImages = (value: string, list: string[]) => {
+    const images = { ...(option.images ?? {}) };
+    if (list.length) images[value] = list;
+    else delete images[value];
+    onChange({ images });
   };
 
   const setSwatch = (value: string, hex: string) =>
@@ -255,6 +277,122 @@ function OptionRow({
         />
         Show as colour swatches on the storefront
       </label>
+
+      {photos && option.values.length > 0 && (
+        <div className="space-y-2 border-t border-[#f3f4f6] pt-2">
+          <p className="text-[12px] font-medium text-[#374151]">
+            Photos for each {option.name.trim().toLowerCase() || "colour"}
+          </p>
+          <p className="text-[11px] text-[#6b7280]">
+            Shown when a shopper picks that{" "}
+            {option.name.trim().toLowerCase() || "colour"}, for every size of
+            it. The first photo is the one on product cards. Use the same size
+            as your product photos.
+          </p>
+          {option.values.map((value) => (
+            <ValuePhotos
+              key={value}
+              value={value}
+              swatch={option.swatches?.[value]}
+              images={option.images?.[value] ?? []}
+              onChange={(list) => setImages(value, list)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ValuePhotos({
+  value,
+  swatch,
+  images,
+  onChange,
+}: {
+  value: string;
+  swatch?: string;
+  images: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const room = MAX_VALUE_IMAGES - images.length;
+
+  const upload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    try {
+      const added: string[] = [];
+      for (const file of Array.from(files).slice(0, room)) {
+        added.push(await uploadImage(file, { folder: "product-images" }));
+      }
+      onChange([...images, ...added]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="flex w-24 shrink-0 items-center gap-1.5 truncate text-xs text-[#1f2937]">
+        {swatch && (
+          <span
+            className="h-3 w-3 shrink-0 rounded-full border border-black/10"
+            style={{ background: swatch }}
+            aria-hidden
+          />
+        )}
+        {value}
+      </span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {images.map((url, i) => (
+          <span
+            key={url}
+            className="relative h-12 w-10 overflow-hidden rounded border border-[#e5e7eb]"
+          >
+            <img
+              src={url}
+              alt={`${value} photo ${i + 1}`}
+              className="h-full w-full object-cover"
+            />
+            <button
+              type="button"
+              onClick={() => onChange(images.filter((u) => u !== url))}
+              className="absolute right-0 top-0 rounded-bl bg-black/70 p-0.5 text-white hover:bg-red-500"
+              aria-label={`Remove ${value} photo ${i + 1}`}
+            >
+              <X className="h-2.5 w-2.5" aria-hidden />
+            </button>
+          </span>
+        ))}
+        {room > 0 && (
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            className="flex h-12 w-10 items-center justify-center rounded border border-dashed border-[#d1d5db] text-[#6b7280] hover:border-[#4f46e5] hover:text-[#4f46e5]"
+            aria-label={`Add photos for ${value}`}
+          >
+            {uploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : (
+              <ImagePlus className="h-4 w-4" aria-hidden />
+            )}
+          </button>
+        )}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png, image/jpeg, image/webp"
+          multiple
+          className="hidden"
+          onChange={(e) => upload(e.target.files)}
+        />
+      </div>
     </div>
   );
 }

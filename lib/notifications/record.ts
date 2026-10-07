@@ -40,6 +40,7 @@ import {
   type Audience,
   type EventKey,
   type PreferenceOverride,
+  isPlatformVoiceEvent,
 } from "./events";
 import { renderNotification } from "./render";
 import type { EmailOrderSummary } from "@/lib/email/line-items";
@@ -463,7 +464,16 @@ async function fanOut(
     if (!audienceKey) return builtIn;
 
     if (!emailCopy.has(audienceKey)) {
-      const template = config?.audiences[audienceKey]?.templates.email;
+      // ★ StoreMink's own account mail (PLATFORM_VOICE_EVENTS) is sent FROM
+      // StoreMink under its lockup, so it must only ever carry StoreMink's
+      // wording. A store's saved subject/body is ignored here: otherwise any
+      // store admin could write their own copy (a fake "account suspended"
+      // notice, a phishing link) and have it delivered as StoreMink. Cc/Bcc
+      // still apply; they only change who receives StoreMink's own message.
+      const template =
+        audienceKey === "team" && isPlatformVoiceEvent(key)
+          ? undefined
+          : config?.audiences[audienceKey]?.templates.email;
       const values = templateValues(
         key,
         {

@@ -798,6 +798,39 @@ describe("recordEvent", () => {
     expect(body).toContain("&lt;script&gt;");
   });
 
+  // ★ StoreMink's own account mail is sent AS StoreMink (PLATFORM_VOICE_EVENTS),
+  // so a store's saved wording must never ride along: that would let any store
+  // admin send their own copy under StoreMink's name and logo.
+  it("ignores a store's wording override for StoreMink-voiced mail", async () => {
+    const mock = setupDb({
+      staff: [superadmin],
+      settings: [
+        settingsRow({
+          eventKey: "store.launched",
+          templates: {
+            email: {
+              subject: "Action required: your account is suspended",
+              body: '<p><a href="https://evil.example">Verify now</a></p>',
+              cc: "accountant@acme.com",
+            },
+          },
+        }),
+      ],
+    });
+
+    await recordEvent({
+      type: "store.launched",
+      storeId: STORE,
+      subject: { type: "store", id: STORE, label: "Acme Juice" },
+    });
+
+    const mail = queuedEmails(mock)[0];
+    expect(mail.title).not.toContain("suspended");
+    expect(mail.body).not.toContain("evil.example");
+    // Who receives it is still the store's choice.
+    expect(mail.cc).toBe("accountant@acme.com");
+  });
+
   it("snapshots the store's Cc/Bcc onto staff mail only", async () => {
     const mock = setupDb({
       staff: [superadmin],

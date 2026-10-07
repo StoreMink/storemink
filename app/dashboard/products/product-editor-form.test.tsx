@@ -105,7 +105,6 @@ describe("ProductEditorForm inventory flow", () => {
             status: "active",
           },
         ]}
-        colors={[]}
         taxClasses={[]}
         onClose={vi.fn()}
         onSaved={vi.fn()}
@@ -139,7 +138,6 @@ it("saves a Pricing edit to the single sellable variant", async () => {
       categories={[
         { id: "category-1", name: "Coffee", slug: "coffee", status: "active" },
       ]}
-      colors={[]}
       taxClasses={[]}
       onClose={vi.fn()}
       onSaved={vi.fn()}
@@ -177,7 +175,6 @@ it("keeps multiple variants independently priced when changing product defaults"
       categories={[
         { id: "category-1", name: "Coffee", slug: "coffee", status: "active" },
       ]}
-      colors={[]}
       taxClasses={[]}
       onClose={vi.fn()}
       onSaved={vi.fn()}
@@ -219,7 +216,6 @@ it("updates a single variant primary photo and retains its extra photos", async 
       categories={[
         { id: "category-1", name: "Coffee", slug: "coffee", status: "active" },
       ]}
-      colors={[]}
       taxClasses={[]}
       onClose={vi.fn()}
       onSaved={vi.fn()}

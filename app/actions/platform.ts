@@ -753,10 +753,28 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   }
 
   // Delete the store — FK ON DELETE CASCADE wipes every store-scoped row.
+  //
+  // ★★ WITH THE CHECKS DEFERRED TO COMMIT. order_items → products and the
+  // Mink publication/campaign → approval/draft foreign keys refuse to let a
+  // referenced row go while a reference exists, and PostgreSQL runs a
+  // statement's cascades in queue order — products before orders — so the
+  // check fired against order_items rows the same statement was about to
+  // remove, and no store that had ever taken an order could be purged
+  // (migration 20261007_0172). Deferring moves those checks to COMMIT, after
+  // every cascade has run; everywhere else the constraints keep their
+  // immediate behaviour, because only this transaction asks.
   try {
-    await withService((db) => db.delete(stores).where(eq(stores.id, storeId)));
+    await withService(async (db) => {
+      await db.execute(sql`set constraints all deferred`);
+      await db.delete(stores).where(eq(stores.id, storeId));
+    });
   } catch (err) {
-    console.error("deleteStore:", err instanceof Error ? err.message : err);
+    // A Drizzle error's `message` is only "Failed query: …"; the reason is on
+    // `cause` (the §15b lesson).
+    console.error(
+      "deleteStore:",
+      err instanceof Error ? (err.cause ?? err.message) : err,
+    );
     return { error: "Could not delete the store. Please try again." };
   }
 

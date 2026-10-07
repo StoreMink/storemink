@@ -5,8 +5,19 @@
 //
 // ★ THE URL IS THE STATE. A sorted, filtered view is a link a shopper can
 // share or come back to, so every choice lives in the query string:
-// `sort`, `stock=in`, `min`, `max` and `page`. Defaults are OMITTED, so an
-// untouched page has a clean address and `/shop` stays `/shop`.
+// `sort`, `stock=in`, `min`, `max`, `page`, and Shopify-style
+// `filter.v.option.<name>=<value>` / `filter.p.category=<slug>` (repeated for
+// several values). Defaults are OMITTED, so an untouched page has a clean
+// address and `/shop` stays `/shop`. Shopify's own `filter.v.availability=1`
+// and `filter.v.price.gte|lte` are read too, so a link copied from a Shopify
+// store's habits still works.
+//
+// ★ AND BETWEEN FILTERS, OR WITHIN ONE — Shopify's rule. "Size M or L" and
+// "Black" means M-or-L items that are also black.
+//
+// ★★ VARIANT-AWARE. "Size M + In stock + under ₹1,000" asks for a VARIANT that
+// is M, in stock and under ₹1,000 — not a product that has an M somewhere, any
+// in-stock variant and a cheap variant, which can be three different ones.
 //
 // ★ A BAD PARAMETER IS IGNORED, NEVER AN ERROR. These arrive from links typed
 // by hand, pasted into chats and cached by crawlers; a shopper who follows
@@ -43,8 +54,23 @@ const MAX_PAGES = 200;
 /** Rupees; an absurd bound is dropped rather than honoured. */
 const MAX_PRICE = 10_000_000;
 
+/** Caps on what a URL can ask for, so a crafted link stays cheap. */
+const MAX_OPTION_FILTERS = 10;
+const MAX_VALUES_PER_FILTER = 40;
+const MAX_VALUE_LENGTH = 80;
+
+export const OPTION_PARAM_PREFIX = "filter.v.option.";
+export const CATEGORY_PARAM = "filter.p.category";
+
 export interface ShopQuery {
   sort: ShopSort;
+  /**
+   * Variant option filters: facet key (`size`, `color`) → selected value keys
+   * (lowercased). See `facetKey` / `valueKey`.
+   */
+  options: Record<string, string[]>;
+  /** Category slugs (only on /shop and search; a collection is one category). */
+  categories: string[];
   /** Hide products that cannot be bought right now. */
   inStock: boolean;
   /** Whole rupees, inclusive. Null = no bound. */
@@ -56,6 +82,8 @@ export interface ShopQuery {
 
 export const DEFAULT_SHOP_QUERY: ShopQuery = {
   sort: "featured",
+  options: {},
+  categories: [],
   inStock: false,
   min: null,
   max: null,
@@ -72,6 +100,44 @@ function read(source: ParamSource, key: string): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/** Every [key, value] pair, repeated keys included. */
+function entries(source: ParamSource): [string, string][] {
+  if (source instanceof URLSearchParams) return [...source.entries()];
+  const out: [string, string][] = [];
+  for (const [key, value] of Object.entries(source)) {
+    if (Array.isArray(value)) for (const v of value) out.push([key, v]);
+    else if (typeof value === "string") out.push([key, value]);
+  }
+  return out;
+}
+
+/**
+ * The filter key for an option name: lowercase, spaces to hyphens, and
+ * "Colour" and "Color" are the same filter — two stores' spellings, one idea.
+ */
+export function facetKey(name: string): string {
+  const key = name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .slice(0, 40);
+  return key === "colour" ? "color" : key;
+}
+
+/** Values compare case- and space-insensitively ("Navy Blue" = "navy  blue"). */
+export function valueKey(value: string): string {
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .slice(0, MAX_VALUE_LENGTH);
+}
+
+function pushUnique(list: string[], value: string, cap: number) {
+  if (value && !list.includes(value) && list.length < cap) list.push(value);
+}
+
 function readPrice(raw: string | undefined): number | null {
   if (raw === undefined || raw.trim() === "") return null;
   const value = Number(raw);
@@ -85,8 +151,12 @@ export function parseShopQuery(source: ParamSource): ShopQuery {
     ? (sortRaw as ShopSort)
     : "featured";
 
-  let min = readPrice(read(source, "min"));
-  let max = readPrice(read(source, "max"));
+  let min = readPrice(
+    read(source, "min") ?? read(source, "filter.v.price.gte"),
+  );
+  let max = readPrice(
+    read(source, "max") ?? read(source, "filter.v.price.lte"),
+  );
   // A range typed backwards means what it obviously means.
   if (min !== null && max !== null && min > max) [min, max] = [max, min];
 
@@ -96,19 +166,55 @@ export function parseShopQuery(source: ParamSource): ShopQuery {
       ? Math.min(pageRaw, MAX_PAGES)
       : 1;
 
+  const options: Record<string, string[]> = {};
+  const categories: string[] = [];
+  for (const [key, raw] of entries(source)) {
+    if (key.startsWith(OPTION_PARAM_PREFIX)) {
+      const name = facetKey(key.slice(OPTION_PARAM_PREFIX.length));
+      if (!name) continue;
+      if (!options[name] && Object.keys(options).length >= MAX_OPTION_FILTERS)
+        continue;
+      const list = (options[name] ??= []);
+      pushUnique(list, valueKey(raw), MAX_VALUES_PER_FILTER);
+      if (list.length === 0) delete options[name];
+    } else if (key === CATEGORY_PARAM) {
+      pushUnique(
+        categories,
+        raw.trim().toLowerCase().slice(0, 120),
+        MAX_VALUES_PER_FILTER,
+      );
+    }
+  }
+
   return {
     sort,
-    inStock: read(source, "stock") === "in",
+    options,
+    categories,
+    inStock:
+      read(source, "stock") === "in" ||
+      read(source, "filter.v.availability") === "1",
     min,
     max,
     pages,
   };
 }
 
+/** A stable string for a view's filters, for change detection. */
+export function shopQueryKey(query: ShopQuery): string {
+  return shopQueryEntries(query)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("&");
+}
+
 /** The query-string entries for a view, defaults omitted. */
 export function shopQueryEntries(query: ShopQuery): [string, string][] {
   const out: [string, string][] = [];
   if (query.sort !== "featured") out.push(["sort", query.sort]);
+  for (const slug of query.categories) out.push([CATEGORY_PARAM, slug]);
+  for (const name of Object.keys(query.options).sort()) {
+    for (const value of query.options[name])
+      out.push([`${OPTION_PARAM_PREFIX}${name}`, value]);
+  }
   if (query.inStock) out.push(["stock", "in"]);
   if (query.min !== null) out.push(["min", String(query.min)]);
   if (query.max !== null) out.push(["max", String(query.max)]);
@@ -125,16 +231,78 @@ export function withShopQuery(
   query: ShopQuery,
 ): URLSearchParams {
   const next = new URLSearchParams(base);
-  for (const key of ["sort", "stock", "min", "max", "page"]) next.delete(key);
-  for (const [key, value] of shopQueryEntries(query)) next.set(key, value);
+  for (const key of [...next.keys()]) {
+    if (
+      ["sort", "stock", "min", "max", "page"].includes(key) ||
+      key.startsWith("filter.")
+    )
+      next.delete(key);
+  }
+  // append, not set: a filter with two values is two entries.
+  for (const [key, value] of shopQueryEntries(query)) next.append(key, value);
   return next;
 }
 
 /** Filters in force, for the button badge and "Clear all". Sort is not one. */
 export function activeFilterCount(query: ShopQuery): number {
   return (
-    (query.inStock ? 1 : 0) + (query.min !== null || query.max !== null ? 1 : 0)
+    (query.inStock ? 1 : 0) +
+    (query.min !== null || query.max !== null ? 1 : 0) +
+    query.categories.length +
+    Object.values(query.options).reduce((n, values) => n + values.length, 0)
   );
+}
+
+/** The same view with every filter removed (sort kept). */
+export function clearedShopQuery(query: ShopQuery): ShopQuery {
+  return {
+    ...query,
+    options: {},
+    categories: [],
+    inStock: false,
+    min: null,
+    max: null,
+    pages: 1,
+  };
+}
+
+/** Toggle one value of one option filter. */
+export function toggleOptionValue(
+  query: ShopQuery,
+  key: string,
+  value: string,
+): ShopQuery {
+  const current = query.options[key] ?? [];
+  const next = current.includes(value)
+    ? current.filter((v) => v !== value)
+    : [...current, value];
+  const options = { ...query.options };
+  if (next.length) options[key] = next;
+  else delete options[key];
+  return { ...query, options, pages: 1 };
+}
+
+/** Toggle one category slug. */
+export function toggleCategory(query: ShopQuery, slug: string): ShopQuery {
+  const categories = query.categories.includes(slug)
+    ? query.categories.filter((c) => c !== slug)
+    : [...query.categories, slug];
+  return { ...query, categories, pages: 1 };
+}
+
+/** One buyable variant, as the filters see it. */
+export interface FacetVariant {
+  /** facet key → value key, e.g. { size: "m", color: "black" }. */
+  values: Record<string, string>;
+  price: number;
+  available: boolean;
+}
+
+/** One option axis of a product, for building the filter lists. */
+export interface FacetOption {
+  key: string;
+  label: string;
+  values: { key: string; label: string; swatch?: string }[];
 }
 
 /** What the sort and filters need to know about one product. */
@@ -144,6 +312,59 @@ export interface ShopFacts {
   soldOut: boolean;
   name: string;
   createdAt: string | null;
+  /** Category slug, for the category filter. */
+  categoryKey?: string | null;
+  /**
+   * Buyable variants. Absent or empty = a simple product, treated as one
+   * variant at `price` / `!soldOut` with no option values.
+   */
+  variants?: FacetVariant[];
+  /** Option axes, for listing filter values. */
+  options?: FacetOption[];
+}
+
+/** Which filter to leave out when matching (for a facet's own counts). */
+export type FacetSkip = "category" | "stock" | "price" | `option:${string}`;
+
+/**
+ * Does a product pass the filters? `skip` leaves one filter out — the facet
+ * counts use it, so each list counts against the OTHER active filters.
+ */
+export function matchesShopQuery(
+  f: ShopFacts,
+  query: ShopQuery,
+  skip?: FacetSkip,
+): boolean {
+  if (
+    query.categories.length > 0 &&
+    skip !== "category" &&
+    !query.categories.includes((f.categoryKey ?? "").toLowerCase())
+  )
+    return false;
+
+  const optionKeys = Object.keys(query.options).filter(
+    (k) => query.options[k].length > 0 && skip !== `option:${k}`,
+  );
+  const stock = query.inStock && skip !== "stock";
+  const priced = skip !== "price" && (query.min !== null || query.max !== null);
+  if (optionKeys.length === 0 && !stock && !priced) return true;
+
+  const variants: FacetVariant[] = f.variants?.length
+    ? f.variants
+    : [{ values: {}, price: f.price, available: !f.soldOut }];
+  return variants.some((v) => {
+    for (const key of optionKeys) {
+      const value = v.values[key];
+      if (value === undefined || !query.options[key].includes(value))
+        return false;
+    }
+    if (stock && !v.available) return false;
+    if (priced) {
+      if (query.min !== null && v.price < query.min) return false;
+      if (query.max !== null && v.price > query.max) return false;
+    }
+    return true;
+  });
 }
 
 /**
@@ -158,12 +379,7 @@ export function applyShopQuery<T>(
 ): T[] {
   const rows = items
     .map((item, index) => ({ item, index, facts: facts(item) }))
-    .filter(({ facts: f }) => {
-      if (query.inStock && f.soldOut) return false;
-      if (query.min !== null && f.price < query.min) return false;
-      if (query.max !== null && f.price > query.max) return false;
-      return true;
-    });
+    .filter(({ facts: f }) => matchesShopQuery(f, query));
 
   const byIndex = (a: { index: number }, b: { index: number }) =>
     a.index - b.index;

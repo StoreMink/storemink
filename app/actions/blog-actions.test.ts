@@ -118,6 +118,10 @@ const DEMO =
 vi.mock("@/lib/store/demo-guard", () => ({
   demoStoreRefusal: vi.fn(async () => null),
 }));
+vi.mock("@/lib/store/storefront-access", () => ({
+  storefrontClosedRefusal: vi.fn(async () => null),
+  storefrontAccess: vi.fn(async () => "open"),
+}));
 
 /** True when an emitEvent call for `type` was made. Approval/rejection mail is
  *  delivered by the notification system now, not a bespoke sender. */

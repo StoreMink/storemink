@@ -24,12 +24,8 @@ import { isPosRole, type PosRole } from "@/lib/pos/permissions";
 import { setUserClaims } from "@/lib/auth/firebase-claims";
 import { logError } from "@/lib/observability/logger";
 import { deleteAuthUser } from "@/lib/auth/firebase-users";
-import {
-  emailButton,
-  escapeHtml,
-  posAbsoluteUrl,
-  sendPosStaffEmail,
-} from "@/lib/pos/staff-email";
+import { posAbsoluteUrl, sendPosStaffEmail } from "@/lib/pos/staff-email";
+import { buildPosStaffInviteEmail } from "@/lib/email/account-emails";
 
 export interface ActionResult {
   success?: boolean;
@@ -154,19 +150,7 @@ async function sendInviteEmail(
     to,
     mailer: "pos_staff_invite",
     devFallback: `🧾 POS STAFF INVITED (email not configured — dev fallback)\nEmail: ${to}\nRole: ${role}\nRegister: ${link}`,
-    build: (brand) => ({
-      subject: `You've been added to ${brand.name} POS`,
-      html: `
-        <h2 style="margin-top:0;">Set up your register access</h2>
-        <p>Hello ${escapeHtml(name)},</p>
-        <p>You've been added to <strong>${escapeHtml(brand.name)}</strong> as a
-           <strong>${escapeHtml(role)}</strong>. Finish setting up your account —
-           verify your phone, then choose a password and an 8-digit PIN.</p>
-        ${emailButton(link, "Complete registration")}
-        <p style="color:#666;font-size:13px;">This link expires in 7 days. If you didn't expect this, you can ignore it.</p>
-        <p>Regards,<br/><strong>Team ${escapeHtml(brand.name)}</strong></p>
-      `,
-    }),
+    build: (brand) => buildPosStaffInviteEmail({ brand, name, role, link }),
   });
 }
 

@@ -421,3 +421,47 @@ Markdown rewrites and asynchronous-effect lint failures. Keeping compatible
 tool versions avoids folding a lint/format migration into security maintenance.
 Next dev also refreshes its existing generated AGENTS header; the codebase
 and Help Centre rules beneath it remain unchanged.
+
+## October 8 investigation — the machine, not the framework
+
+Measured on the 8 GB M2 Air with the user's dev server running and the laptop
+reported as "slow and hanging":
+
+| Measurement                             | Value                                      |
+| --------------------------------------- | ------------------------------------------ |
+| Swap                                    | 15.2 GB used of 16 GB                      |
+| Free memory                             | 0.1 GB; 3.1 GB compressed                  |
+| `next-server` worker (MEM / compressed) | 2.26 GB / 2.17 GB — almost all paged out   |
+| Google Chrome                           | 83 renderer processes, 0.4–1.1 GB each     |
+| VS Code plugin host (Copilot etc.)      | 1.07 GB                                    |
+| Claude desktop renderer                 | 0.75 GB                                    |
+| Dev log, 15 minutes                     | 5 route compilations — normal lazy compile |
+
+**Conclusion.** The dev server is the single largest process but Chrome alone
+holds several times its footprint, and swap is at the ceiling before `next dev`
+starts. The hangs are swap thrashing; `next dev` is the straw, not the load.
+Next 16.3.8 is a stable release and nothing in the log suggests instability.
+
+**The badge that never goes away** ("Rendering", bottom-left) is the dashboard's
+own polling: `RealtimeRefresher` on Products, Inventory, Blogs and Logs calls
+`router.refresh()` every 20 s, and the bell polls every 45 s. Each tick re-runs
+the page's server components — cheap in production, a visible compile-check
+and render on a laptop that is also running the editor and 83 browser tabs.
+
+**Changed:**
+
+- `experimental.webpackMemoryOptimizations: true` in development on ≤12 GB
+  machines (Next's documented low-memory mode, "low-risk", slightly slower
+  compiles). Dev-only; Cloud Build keeps the default.
+- Dashboard polling runs three times slower under `NODE_ENV=development`
+  (60 s lists, 135 s bell). Production is unchanged.
+- The dev runner's swap warning now lists the four biggest memory holders by
+  application, resident plus compressed, so the culprit is named rather than
+  implied.
+
+**What only the operator can do, in order of effect:** close Chrome tabs (or
+use a second profile with only the dev tabs), disable Copilot and other heavy
+VS Code extensions while developing, quit apps not in use (Slack, WhatsApp,
+Claude desktop, Messages), and restart the dev server when `next-server` passes
+~2 GB. Raising the heap cap does not help: the limit was never hit, the pages
+were simply swapped.

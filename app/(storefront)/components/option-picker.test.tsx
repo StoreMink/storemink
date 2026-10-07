@@ -97,3 +97,27 @@ describe("OptionPicker", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
+
+describe("OptionPicker photo tiles", () => {
+  it("shows a colour with photos as its photo, and one without as a swatch", () => {
+    render(
+      <OptionPicker
+        options={[
+          options[0],
+          { ...options[1], images: { Black: ["/black-front.jpg"] } },
+        ]}
+        variants={variants}
+        selectedId="sb"
+        onSelect={vi.fn()}
+      />,
+    );
+    const black = screen.getByRole("button", { name: "Colour Black" });
+    expect(black).toHaveClass("is-photo");
+    expect(black.querySelector("img")?.getAttribute("src")).toBe(
+      "/black-front.jpg",
+    );
+    expect(screen.getByRole("button", { name: /Colour Tan/ })).toHaveClass(
+      "is-swatch",
+    );
+  });
+});

@@ -176,7 +176,7 @@ const CUSTOMER_BLUEPRINTS: Partial<Record<EventKey, TemplateBlueprint>> = {
     ],
     closing: (p) =>
       refundCopy(p.paymentMethod).bankDelay
-        ? "Most banks show refunds within 5–7 working days. Your bank may take a little longer."
+        ? "Most banks show a refund within 5 to 7 working days. Yours may take a little longer."
         : "",
   },
   "order.ready_for_pickup": {
@@ -353,28 +353,57 @@ const TEAM_BLUEPRINTS: Partial<Record<EventKey, TemplateBlueprint>> = {
 /**
  * Events whose copy is HAND-WRITTEN rather than generated from their variables.
  *
- * The generated shape — an intro, then a Reference/Who/When fact list — is
- * right for a report ("stock is low", "a payment failed") and wrong for
- * anything a person is meant to feel something about. A welcome rendered as a
- * fact list reads like a receipt for having existed.
+ * The generated shape (an intro, then a Reference/Who/When fact list) is right
+ * for a report ("stock is low", "a payment failed") and wrong for anything a
+ * person is meant to feel something about. A welcome rendered as a fact list
+ * reads like a receipt for having existed.
  *
  * Keep this map small. If an event only needs a better opening line, put it in
  * INTRO; this is for the handful that need a different SHAPE.
+ *
+ * Bodies are written in the same small vocabulary as the generated copy: a
+ * `email-lead` opening paragraph, plain paragraphs, an `email-note` to close,
+ * and (for the welcome) an `email-checklist`, which lib/email/shell.ts expands
+ * into the circled-tick rows. Each body is written as a list of lines, one
+ * block per line, so it reads like the email it renders.
  */
-const BESPOKE: Record<string, { subject: string; body: string }> = {
+const BESPOKE: Record<string, { subject: string; body: string[] }> = {
+  // The first email a merchant ever gets from us. It answers the two things
+  // they want to know (where is my store, and what do I do next) and nothing
+  // else. The checklist is the REQUIRED half of the go-live checklist
+  // (lib/store/launch-checklist-rules.ts), one row per destination: the four
+  // policies share one editor, so they share one row. The last row is the Go
+  // live button itself, on dashboard Home. template.test.ts pins these links
+  // to the rules, so a route that moves there fails here.
+  //
+  // Every link is built on {{store_url}}: a new store's dashboard lives on the
+  // same host as its storefront ({slug}.storemink.com), and a link in an email
+  // has to be absolute or a mail client resolves it against itself.
   "store.created": {
-    subject: "{{subject_label}} is live on StoreMink",
+    subject: "Finish setting up {{subject_label}}",
     body: [
-      "<p>Your store is ready — here it is:</p>",
-      '<p><a href="{{store_url}}">{{store_url}}</a></p>',
-      "<p>Three things worth doing next:</p>",
-      "<ol>",
-      "  <li><strong>Add your first product</strong> so there's something to sell.</li>",
-      "  <li><strong>Make it yours</strong> — logo, colours and pages live in the website builder.</li>",
-      "  <li><strong>Take a test order</strong> to see the whole flow end to end.</li>",
-      "</ol>",
-      "<p>Everything is editable later, including the store name and address.</p>",
-    ].join("\n"),
+      '<p class="email-lead">Welcome to StoreMink. Your store already has its own address, <a href="{{store_url}}">{{store_url}}</a>, and it stays private behind a password page until you press <strong>Go live</strong>. The password is on your dashboard Home, so you can look around your shop before anyone else does.</p>',
+      "<p>Before you open, four things need to be in place. Each one takes a few minutes, and your dashboard Home keeps track of what is left.</p>",
+      "<h2>Your setup checklist</h2>",
+      '<ul class="email-checklist">',
+      `  <li><a href="{{store_url}}/dashboard/products">Add your first product</a><br />Publish at least one product of your own. The theme's sample products are drafts your customers never see.</li>`,
+      '  <li><a href="{{store_url}}/dashboard/billing">Complete your business details</a><br />Your trading name, address, email and mobile number appear on every invoice you send.</li>',
+      '  <li><a href="{{store_url}}/dashboard/settings/policies">Publish your store policies</a><br />Terms, refunds, shipping and privacy. Shoppers can read all four before they pay.</li>',
+      '  <li><a href="{{store_url}}/dashboard/settings/shipping">Set your delivery charges</a><br />Choose what customers pay for delivery and how long it takes to arrive.</li>',
+      '  <li><a href="{{store_url}}/dashboard">Press Go live</a><br />Once the four steps above are done, the Go live button on your dashboard Home opens your shop to customers.</li>',
+      "</ul>",
+      '<p class="email-note">Everything is editable later, including the store name.</p>',
+    ],
+  },
+  // The password page is down. Lead with the address, because that is the
+  // whole message; the rest is what changed for people who were told to wait.
+  "store.launched": {
+    subject: "{{subject_label}} is open to customers",
+    body: [
+      '<p class="email-lead">Your store is now public at <a href="{{store_url}}">{{store_url}}</a>.</p>',
+      "<p>The password page is gone, search engines have been told about your store, and anyone with the address can shop.</p>",
+      '<p class="email-note">Links you have already shared now open the real shop.</p>',
+    ],
   },
   // A milestone the merchant has usually been waiting days for, and the reason
   // they can walk away from the settings page at all. As a generated fact list
@@ -383,35 +412,42 @@ const BESPOKE: Record<string, { subject: string; body: string }> = {
   "store.domain_live": {
     subject: "{{domain}} is live",
     body: [
-      "<p>Your store is now open on your own domain:</p>",
-      '<p><a href="{{store_url}}">{{store_url}}</a></p>',
-      "<p>HTTPS is set up and renews on its own — there's nothing for you to maintain.</p>",
-      "<p>Your original StoreMink address keeps working too, so any links you've already shared stay valid.</p>",
-    ].join("\n"),
+      '<p class="email-lead">Your store is now open on your own domain: <a href="{{store_url}}">{{store_url}}</a>.</p>',
+      "<p>HTTPS is set up and renews on its own, so there is nothing for you to maintain.</p>",
+      '<p class="email-note">Your original StoreMink address keeps working too, so any links you have already shared stay valid.</p>',
+    ],
   },
-  // Bad news, and it has to lead with what is still WORKING. A generated fact
-  // list would open with "Domain: acme.com" and leave the merchant to work out
-  // whether their shop is down — which is the only question they have.
   // ★ Bespoke, because the generated fact list would open with
   // "Comp plan: Pro" and leave the merchant to work out whether they have just
-  // lost something they were paying for — which is their only question.
+  // lost something they were paying for, which is their only question.
   "store.comp_ended": {
     subject: "Your free {{comp_plan}} upgrade has ended",
     body: [
-      "<p><strong>Nothing is switched off that you pay for.</strong> Your free {{comp_plan}} upgrade has run its course, and your store is back on <strong>{{plan}}</strong> — the plan you were on all along.</p>",
-      "<p>Your billing is unchanged: the free upgrade never replaced your own plan, so there is nothing to restart and nothing extra to pay.</p>",
-      "<p>If you'd like to keep {{comp_plan}}, you can upgrade any time from Plans &amp; Billing.</p>",
-    ].join("\n"),
+      '<p class="email-lead"><strong>Nothing you pay for has been switched off.</strong> Your free {{comp_plan}} upgrade has run its course, and your store is back on <strong>{{plan}}</strong>, the plan you were on all along.</p>',
+      "<p>Your billing is unchanged. The free upgrade never replaced your own plan, so there is nothing to restart and nothing extra to pay.</p>",
+      '<p class="email-note">If you would like to keep {{comp_plan}}, you can upgrade at any time from Plans &amp; Billing.</p>',
+    ],
   },
+  // Bad news, and it has to lead with what is still WORKING. A generated fact
+  // list would open with "Domain: acme.com" and leave the merchant to work out
+  // whether their shop is down, which is the only question they have.
+  //
+  // ★ The payload's `reason` is deliberately NOT printed here. The cron fills
+  // it from the reconcile result's `error`, which is the Domain SETTINGS page's
+  // message for a domain still being set up: when the certificate is what
+  // failed it reads "Google is still issuing the certificate ... you can close
+  // this page", which is wrong in an email saying a live domain broke (and it
+  // carried a long dash into the email). The Domain page shows the current
+  // diagnosis, freshly checked, so the email sends them there instead. To bring
+  // a specific cause back, the emitter has to pass a reason written for a
+  // revert; the bell still shows the raw one beside its link to that page.
   "store.domain_reverted": {
     subject: "Action needed: {{domain}} has stopped working",
     body: [
-      "<p><strong>Your store is still open.</strong> It's being served on your StoreMink address again:</p>",
-      '<p><a href="{{store_url}}">{{store_url}}</a></p>',
-      "<p>We checked <strong>{{domain}}</strong> several times over a few hours and couldn't reach it, so we moved your store back rather than leave it unreachable.</p>",
-      "<p>{{reason}}</p>",
-      "<p>This is almost always a DNS change at your domain provider. Open Settings → Domain in your dashboard to see the exact records to restore — your store will move back automatically once they're in place.</p>",
-    ].join("\n"),
+      '<p class="email-lead"><strong>Your store is still open.</strong> It is being served on your StoreMink address again: <a href="{{store_url}}">{{store_url}}</a>.</p>',
+      "<p>We checked <strong>{{domain}}</strong> several times over a few hours and could not reach it, so we moved your store back rather than leave it unreachable.</p>",
+      "<p>This is almost always a DNS change at your domain provider. The Domain page under Settings in your dashboard shows what we found and the exact records to restore. Your store moves back automatically once they are in place.</p>",
+    ],
   },
 };
 
@@ -536,7 +572,12 @@ export function defaultEmailTemplate(
 
   // Hand-written copy wins over the generated fact list (see BESPOKE).
   const bespoke = !isCustomer ? BESPOKE[eventKey] : undefined;
-  if (bespoke) return bespoke;
+  if (bespoke) {
+    return {
+      subject: bespoke.subject,
+      body: bespoke.body.join("\n"),
+    };
+  }
 
   const intro = isCustomer
     ? "There's an update from the store."

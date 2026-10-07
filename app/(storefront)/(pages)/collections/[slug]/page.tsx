@@ -117,6 +117,7 @@ export default async function CollectionPage({
         initialShop={parseShopQuery(query)}
         grocery={view.layout.card === "grocery"}
         shopFilters={view.layout.shopFilters}
+        productCards={view.layout.productCards}
         collectionBanner={view.layout.collectionBanner}
         storeLowStockThreshold={view.lowStockThreshold}
         offerBadges={view.offerBadges}

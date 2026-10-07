@@ -14,7 +14,11 @@ import {
 } from "@/drizzle/schema";
 import type { OrderInsert } from "@/drizzle/schema";
 import { getCurrentStore, getCurrentStoreId } from "@/lib/store/resolve";
-import { isDemoStore } from "@/lib/store/launch";
+import { isDemoStore, isStorefrontGated } from "@/lib/store/launch";
+import {
+  storefrontAccess,
+  storefrontClosedRefusal,
+} from "@/lib/store/storefront-access";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
 import { validateCoupon } from "./coupon-actions";
 import { loadCustomerGroupIds } from "@/lib/offers/resolve";
@@ -665,6 +669,9 @@ export interface CheckoutConfig {
    *  screen reads this to explain instead of rendering a button that always
    *  fails; placeOrder enforces it, so this is a courtesy, not the boundary. */
   demo: boolean;
+  /** True while the store has not opened and this visitor holds no password
+   *  grant; placeOrder refuses in that state. Courtesy only, like `demo`. */
+  closed: boolean;
 }
 
 /** What payment methods this store's checkout offers. Server-computed; the
@@ -684,6 +691,8 @@ export async function getCheckoutConfig(): Promise<CheckoutConfig> {
     storeName: store.name,
     storeCredit,
     demo: isDemoStore(store),
+    closed:
+      isStorefrontGated(store) && (await storefrontAccess(store)) === "locked",
   };
 }
 
@@ -866,6 +875,10 @@ export async function placeOrder(
         "This is a demo store, so orders can't be placed here. Create your own store to start selling.",
     };
   }
+  // Nor a store that has not opened yet, unless the caller holds the store
+  // password (the owner testing their own checkout — exactly what it is for).
+  const closedRefusal = await storefrontClosedRefusal();
+  if (closedRefusal) return { error: closedRefusal };
 
   // Throttle order placement per customer (abuse / accidental double-submit /
   // scripted spam). Backed by Postgres so it holds across serverless instances;

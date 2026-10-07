@@ -55,6 +55,10 @@ const DEMO =
 vi.mock("@/lib/store/demo-guard", () => ({
   demoStoreRefusal: vi.fn(async () => null),
 }));
+vi.mock("@/lib/store/storefront-access", () => ({
+  storefrontClosedRefusal: vi.fn(async () => null),
+  storefrontAccess: vi.fn(async () => "open"),
+}));
 
 const validInput = {
   name: "  Ada Lovelace  ",
@@ -144,6 +148,8 @@ describe("enquiry-actions", () => {
           to: "ada@example.com",
           name: "Ada Lovelace",
           subject: "Wholesale",
+          // Logged under the store, not as platform mail.
+          storeId: "a0000000-0000-4000-8000-000000000001",
         }),
       );
       expect(revalidatePath).toHaveBeenCalledWith("/dashboard/enquiries");

@@ -43,11 +43,13 @@ import {
   type ThemeIndustry,
 } from "@/lib/themes/meta";
 import { COUNTRIES, DEFAULT_COUNTRY } from "@/lib/countries";
-import PhoneInput, { isValidPhoneNumber } from "react-phone-number-input";
+import PhoneInput, {
+  isValidPhoneNumber,
+  parsePhoneNumber,
+} from "react-phone-number-input";
 import "react-phone-number-input/style.css";
 import { customPhoneLabels } from "@/lib/phone-labels";
 import { CountrySelect } from "@/components/ui/phone-country-select";
-import { LocationPicker, type PickedLocation } from "./location-picker";
 import { useSignupThemeCatalog } from "./theme-catalog-context";
 import { acceptPlatformPolicies } from "@/app/actions/legal-actions";
 import { signupRequiredDocs } from "@/lib/legal/documents";
@@ -57,29 +59,38 @@ import {
 } from "@/app/actions/signup-email-otp";
 
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "storemink.com";
+const LOCAL_DEV_ROOT = process.env.NEXT_PUBLIC_LOCAL_DEV_ROOT ?? "localtest.me";
+
+/** The local root this page is being served from, if any — `localhost` or
+ *  the loopback dev root (lib/store/host.ts → LOCAL_DEV_ROOT). Store hosts
+ *  are `{slug}.<root>:<port>` in both cases. */
+function localDevRoot(hostname: string): string | null {
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    return "localhost";
+  }
+  if (hostname === LOCAL_DEV_ROOT || hostname.endsWith(`.${LOCAL_DEV_ROOT}`)) {
+    return LOCAL_DEV_ROOT;
+  }
+  return null;
+}
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Steps in flow order. "password" is the second screen of the Account stage.
+// Steps in flow order. "password" and "email-code" are ONE screen (the code
+// field appears under the password once the account exists); "store" asks for
+// the owner's name and the store name together. Six screens, down from nine:
+// the business address moved to the dashboard's go-live checklist, where it is
+// first needed (it prints on invoices, and a new store has none yet).
 type Step =
   | "email"
   | "password"
   | "email-code"
   | "phone"
-  | "name"
   | "store"
-  | "location"
   | "theme"
   | "creating";
 
-// Progress stages shown in the stepper (Account folds email+password).
-const STAGES = [
-  "Account",
-  "Phone",
-  "You",
-  "Store",
-  "Location",
-  "Theme",
-] as const;
+// Progress stages shown in the stepper (Account folds email+password+code).
+const STAGES = ["Account", "Phone", "Store", "Theme"] as const;
 function stageOf(step: Step): number {
   switch (step) {
     case "email":
@@ -88,14 +99,10 @@ function stageOf(step: Step): number {
       return 0;
     case "phone":
       return 1;
-    case "name":
-      return 2;
     case "store":
-      return 3;
-    case "location":
-      return 4;
+      return 2;
     default:
-      return 5; // theme / creating
+      return 3; // theme / creating
   }
 }
 
@@ -106,15 +113,17 @@ type CheckState =
 
 function demoUrl(demoSlug: string): string {
   const { hostname, protocol, port } = window.location;
-  return hostname.endsWith("localhost")
-    ? `${protocol}//${demoSlug}.localhost${port ? ":" + port : ""}`
+  const root = localDevRoot(hostname);
+  return root
+    ? `${protocol}//${demoSlug}.${root}${port ? ":" + port : ""}`
     : `https://${demoSlug}.${ROOT_DOMAIN}`;
 }
 
 function dashboardUrl(slug: string): string {
   const { hostname, protocol, port } = window.location;
-  return hostname.endsWith("localhost")
-    ? `${protocol}//${slug}.localhost${port ? ":" + port : ""}/dashboard`
+  const root = localDevRoot(hostname);
+  return root
+    ? `${protocol}//${slug}.${root}${port ? ":" + port : ""}/dashboard`
     : `https://${slug}.${ROOT_DOMAIN}/dashboard`;
 }
 
@@ -157,6 +166,19 @@ export default function SignupPage() {
   }, []);
 
   const [step, setStepRaw] = useState<Step>("email");
+  // Firebase's Auth service stopped accepting verifyPhoneNumber from the
+  // hostname `localhost` for REAL numbers in July 2024 (firebase-js-sdk#8387).
+  // The error it returns, auth/invalid-app-credential, says nothing about
+  // that, so the phone step says it instead — only on localhost, where it is
+  // true — and names the loopback dev root that Firebase does accept
+  // (lib/store/host.ts → LOCAL_DEV_ROOT).
+  const [onLocalhost, setOnLocalhost] = useState(false);
+  const [devPort, setDevPort] = useState("");
+  useEffect(() => {
+    const h = window.location.hostname;
+    setOnLocalhost(h === "localhost" || h.endsWith(".localhost"));
+    setDevPort(window.location.port);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [recoveryRequired, setRecoveryRequired] = useState(false);
@@ -198,31 +220,16 @@ export default function SignupPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
 
-  // Store + location
+  // Store. The country defaults from the verified phone's dial code (see
+  // handleVerifyPhoneOtp) and stays editable; the full address is collected
+  // later on the dashboard, where the go-live checklist requires it.
   const [name, setName] = useState("");
   const [country, setCountry] = useState(DEFAULT_COUNTRY);
-  const [addressLine1, setAddressLine1] = useState("");
-  const [addressLine2, setAddressLine2] = useState("");
-  const [city, setCity] = useState("");
-  const [state, setState] = useState("");
-  const [postalCode, setPostalCode] = useState("");
   // Consent. `agreed` gates BOTH signup paths (email and Google) because both
   // start from the same screen; `marketing` is the optional box beneath it and
   // gates nothing.
   const [agreed, setAgreed] = useState(false);
   const [marketing, setMarketing] = useState(false);
-  // The map pin, when the merchant captured one. Optional by design: geolocation
-  // can be declined and the map can fail to load, and neither may block signup.
-  const [place, setPlace] = useState<PickedLocation>({
-    lat: null,
-    lng: null,
-    address: "",
-    addressLine1: "",
-    city: "",
-    state: "",
-    postalCode: "",
-    countryCode: "",
-  });
   const [check, setCheck] = useState<CheckState>({ status: "idle" });
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const seq = useRef(0);
@@ -258,7 +265,7 @@ export default function SignupPage() {
       !info.emailConfirmed
         ? "email-code"
         : info.phoneConfirmed
-          ? "name"
+          ? "store"
           : "phone",
     );
     return true;
@@ -500,6 +507,10 @@ export default function SignupPage() {
       );
       setPhoneSent(true);
     } catch (err) {
+      // The merchant-facing sentence deliberately hides the provider's code;
+      // the console keeps it, because "the security check didn't complete"
+      // covers three different Firebase failures with three different fixes.
+      console.error("signup: phone verification failed", err);
       setError(phoneLinkErrorMessage(err));
     }
     setBusy(false);
@@ -520,8 +531,12 @@ export default function SignupPage() {
       // Re-mint the session cookie so it carries the verified phone —
       // createStore enforces phone_confirmed server-side.
       await establishSession(true);
+      // The country they sell from is almost always the country of the phone
+      // they just verified. A default, not a lock: the store step shows it.
+      const dial = parsePhoneNumber(phone)?.country;
+      if (dial && COUNTRIES.some((c) => c.code === dial)) setCountry(dial);
       setBusy(false);
-      setStep("name");
+      setStep("store");
     } catch (err) {
       setBusy(false);
       setError(phoneLinkErrorMessage(err));
@@ -543,13 +558,6 @@ export default function SignupPage() {
       firstName,
       lastName,
       country,
-      addressLine1,
-      addressLine2,
-      city,
-      state,
-      postalCode,
-      lat: place.lat ?? undefined,
-      lng: place.lng ?? undefined,
     });
     if (res.error || !res.storeId || !res.slug) {
       setError(res.error ?? "Could not create your store.");
@@ -566,17 +574,10 @@ export default function SignupPage() {
   // Which steps show a Back control (and where it goes).
   const BACK: Partial<Record<Step, Step>> = {
     password: "email",
-    store: "name",
-    location: "store",
-    theme: "location",
+    theme: "store",
   };
 
-  const width =
-    step === "theme"
-      ? "max-w-5xl"
-      : step === "location"
-        ? "max-w-2xl"
-        : "max-w-md";
+  const width = step === "theme" ? "max-w-5xl" : "max-w-md";
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -601,7 +602,10 @@ export default function SignupPage() {
             </button>
           )}
           <p className="text-gray-500">
-            Already selling?{" "}
+            {/* The question is decoration on a phone: with Start over beside
+                it the header runs out of width at 375px. The link is the
+                part that matters. */}
+            <span className="hidden sm:inline">Already selling? </span>
             <Link
               href="/platform/login"
               className="text-primary hover:underline"
@@ -792,154 +796,162 @@ export default function SignupPage() {
             </div>
           )}
 
-          {/* ── Password ──────────────────────────────────────────── */}
-          {step === "password" && (
+          {/* ── Password + email code — ONE screen ─────────────────
+              Continue creates the account and emails the code; the code field
+              then appears under the (now fixed) password rather than on a new
+              screen. Two steps internally, because the account exists only
+              after the first, but one screen to the merchant. */}
+          {(step === "password" || step === "email-code") && (
             <div className="animate-in fade-in slide-in-from-right-2 duration-300">
               <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                Create a password
+                {step === "password" ? "Create a password" : "Check your email"}
               </h1>
               <p className="text-gray-500 mb-8">
-                Securing the account for{" "}
-                <span className="font-medium text-gray-700">{email}</span>.
-                We&apos;ll verify this email next.
+                {step === "password" ? (
+                  <>
+                    Securing the account for{" "}
+                    <span className="font-medium text-gray-700">{email}</span>.
+                    We&apos;ll email you a six-digit code next.
+                  </>
+                ) : (
+                  <>
+                    We sent a six-digit code to{" "}
+                    <span className="font-medium text-gray-700">{email}</span>.
+                    Enter it below to confirm the address.
+                  </>
+                )}
               </p>
 
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleCreateAccount();
-                }}
-              >
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-semibold text-gray-700">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      className="stq-input h-12 pr-11"
-                      placeholder="At least 8 characters"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      autoFocus
-                      autoComplete="new-password"
-                    />
+              {step === "password" && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleCreateAccount();
+                  }}
+                >
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-semibold text-gray-700">
+                      Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        className="stq-input h-12 pr-11"
+                        placeholder="At least 8 characters"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        autoFocus
+                        autoComplete="new-password"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((s) => !s)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                        tabIndex={-1}
+                        aria-label={
+                          showPassword ? "Hide password" : "Show password"
+                        }
+                      >
+                        {showPassword ? (
+                          <EyeOff className="w-5 h-5" />
+                        ) : (
+                          <Eye className="w-5 h-5" />
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Use 8 or more characters.
+                    </p>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={busy || password.length < 8}
+                    className="stq-btn stq-btn-primary w-full h-12 mt-6 flex items-center justify-center gap-2"
+                  >
+                    {busy ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        Continue <ChevronRight className="w-5 h-5" />
+                      </>
+                    )}
+                  </button>
+                </form>
+              )}
+
+              {step === "email-code" && (
+                <>
+                  {operatorLogOnly && (
+                    <div className="mb-5 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-800">
+                      This is a reserved test address, so no email was sent. The
+                      code is available in Operator dashboard → Email logs.
+                    </div>
+                  )}
+
+                  {devConsoleOnly && (
+                    <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                      Email isn&apos;t configured in this environment, so
+                      nothing was sent. The code is printed in your dev server
+                      terminal.
+                    </div>
+                  )}
+
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void handleVerifyEmailOtp();
+                    }}
+                    className="flex flex-col gap-4"
+                  >
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-sm font-semibold text-gray-700">
+                        Verification code
+                      </label>
+                      <input
+                        type="text"
+                        className="stq-input h-12 text-center font-mono text-xl tracking-[0.35em]"
+                        placeholder="000000"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        autoFocus
+                        value={emailCode}
+                        onChange={(event) =>
+                          setEmailCode(event.target.value.replace(/\D/g, ""))
+                        }
+                      />
+                    </div>
+
                     <button
-                      type="button"
-                      onClick={() => setShowPassword((s) => !s)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                      tabIndex={-1}
-                      aria-label={
-                        showPassword ? "Hide password" : "Show password"
-                      }
+                      type="submit"
+                      disabled={busy || emailCode.length !== 6}
+                      className="stq-btn stq-btn-primary flex h-12 w-full items-center justify-center gap-2"
                     >
-                      {showPassword ? (
-                        <EyeOff className="w-5 h-5" />
+                      {busy ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
                       ) : (
-                        <Eye className="w-5 h-5" />
+                        <>
+                          Verify email <ChevronRight className="h-5 w-5" />
+                        </>
                       )}
                     </button>
-                  </div>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Use 8 or more characters.
+                  </form>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleSendEmailOtp()}
+                    disabled={busy}
+                    className="mt-4 text-sm font-medium text-gray-500 hover:text-primary disabled:opacity-50"
+                  >
+                    {emailCodeSent ? "Resend code" : "Send verification code"}
+                  </button>
+                  <p className="mt-2 text-xs text-gray-400">
+                    Codes expire after 10 minutes and can only be used in this
+                    browser.
                   </p>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={busy || password.length < 8}
-                  className="stq-btn stq-btn-primary w-full h-12 mt-6 flex items-center justify-center gap-2"
-                >
-                  {busy ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <>
-                      Continue <ChevronRight className="w-5 h-5" />
-                    </>
-                  )}
-                </button>
-              </form>
-            </div>
-          )}
-
-          {/* ── Email verification ─────────────────────────────── */}
-          {step === "email-code" && (
-            <div className="animate-in fade-in slide-in-from-right-2 duration-300">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                Verify your email
-              </h1>
-              <p className="text-gray-500 mb-8">
-                Enter the six-digit code for{" "}
-                <span className="font-medium text-gray-700">{email}</span>.
-              </p>
-
-              {operatorLogOnly && (
-                <div className="mb-5 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-800">
-                  This is a reserved test address, so no email was sent. The
-                  code is available in Operator dashboard → Email logs.
-                </div>
+                </>
               )}
-
-              {devConsoleOnly && (
-                <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                  Email isn&apos;t configured in this environment, so nothing
-                  was sent. The code is printed in your dev server terminal.
-                </div>
-              )}
-
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void handleVerifyEmailOtp();
-                }}
-                className="flex flex-col gap-4"
-              >
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-semibold text-gray-700">
-                    Verification code
-                  </label>
-                  <input
-                    type="text"
-                    className="stq-input h-12 text-center font-mono text-xl tracking-[0.35em]"
-                    placeholder="000000"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    autoFocus
-                    value={emailCode}
-                    onChange={(event) =>
-                      setEmailCode(event.target.value.replace(/\D/g, ""))
-                    }
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={busy || emailCode.length !== 6}
-                  className="stq-btn stq-btn-primary flex h-12 w-full items-center justify-center gap-2"
-                >
-                  {busy ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    <>
-                      Verify email <ChevronRight className="h-5 w-5" />
-                    </>
-                  )}
-                </button>
-              </form>
-
-              <button
-                type="button"
-                onClick={() => void handleSendEmailOtp()}
-                disabled={busy}
-                className="mt-4 text-sm font-medium text-gray-500 hover:text-primary disabled:opacity-50"
-              >
-                {emailCodeSent ? "Resend code" : "Send verification code"}
-              </button>
-              <p className="mt-2 text-xs text-gray-400">
-                Codes expire after 10 minutes and can only be used in this
-                browser.
-              </p>
             </div>
           )}
 
@@ -952,6 +964,22 @@ export default function SignupPage() {
               <p className="text-gray-500 mb-8">
                 We&apos;ll text a one-time code to confirm it&apos;s you.
               </p>
+
+              {onLocalhost && (
+                <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  You&apos;re on <code>localhost</code>, where Firebase refuses
+                  real numbers for phone verification. Open this page on{" "}
+                  <a
+                    className="font-semibold underline"
+                    href={`http://${LOCAL_DEV_ROOT}${devPort ? ":" + devPort : ""}/signup`}
+                  >
+                    {LOCAL_DEV_ROOT}
+                    {devPort ? ":" + devPort : ""}
+                  </a>{" "}
+                  instead (same server, it resolves to this machine), or use a
+                  fictional test number from the Identity Platform console.
+                </div>
+              )}
 
               <div className="flex flex-col gap-3">
                 <label className="text-sm font-semibold text-gray-700">
@@ -1023,14 +1051,21 @@ export default function SignupPage() {
             </div>
           )}
 
-          {/* ── Name ──────────────────────────────────────────────── */}
-          {step === "name" && (
+          {/* ── You + your store — ONE screen ──────────────────────
+              Name and store name were two screens; Google users arrive with
+              their name prefilled, so for them this is one field plus the
+              address chip. The country is pre-filled from the verified phone.
+              The business ADDRESS is deliberately not here: it prints on
+              invoices and a new store has none, so the go-live checklist
+              collects it where it is first needed. */}
+          {step === "store" && (
             <div className="animate-in fade-in slide-in-from-right-2 duration-300">
               <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                What&apos;s your name?
+                About you and your store
               </h1>
               <p className="text-gray-500 mb-8">
-                This is how we&apos;ll address you in your dashboard.
+                You can change the store name later — the address is yours to
+                keep.
               </p>
 
               <form
@@ -1040,10 +1075,14 @@ export default function SignupPage() {
                     setError("Enter your first name.");
                     return;
                   }
+                  if (!isNameAvailable) {
+                    setError("Choose an available store name.");
+                    return;
+                  }
                   setError("");
-                  setStep("store");
+                  setStep("theme");
                 }}
-                className="flex flex-col gap-4"
+                className="flex flex-col gap-5"
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
@@ -1055,7 +1094,7 @@ export default function SignupPage() {
                       placeholder="First name"
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
-                      autoFocus
+                      autoFocus={!firstName}
                       autoComplete="given-name"
                     />
                   </div>
@@ -1075,35 +1114,7 @@ export default function SignupPage() {
                     />
                   </div>
                 </div>
-                <button
-                  type="submit"
-                  className="stq-btn stq-btn-primary w-full h-12 mt-2 flex items-center justify-center gap-2"
-                >
-                  Continue <ChevronRight className="w-5 h-5" />
-                </button>
-              </form>
-            </div>
-          )}
 
-          {/* ── Store + location ──────────────────────────────────── */}
-          {step === "store" && (
-            <div className="animate-in fade-in slide-in-from-right-2 duration-300">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                Name your store
-              </h1>
-              <p className="text-gray-500 mb-8">
-                You can change this later — the address is yours to keep.
-              </p>
-
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!isNameAvailable) return;
-                  setError("");
-                  setStep("location");
-                }}
-                className="flex flex-col gap-5"
-              >
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-semibold text-gray-700">
                     Store name
@@ -1113,7 +1124,7 @@ export default function SignupPage() {
                     placeholder="E.g., My Awesome Store"
                     value={name}
                     onChange={(e) => onNameChange(e.target.value)}
-                    autoFocus
+                    autoFocus={!!firstName}
                     maxLength={50}
                   />
                   <div className={`stq-hint !mt-1 ${h.cls}`}>{h.text}</div>
@@ -1125,7 +1136,33 @@ export default function SignupPage() {
                   https://{currentSlug}.{ROOT_DOMAIN}
                 </div>
 
-                <div className="mt-2 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50/80 p-3 shadow-sm">
+                <div className="flex flex-col gap-1.5">
+                  <label
+                    htmlFor="business-country"
+                    className="text-sm font-semibold text-gray-700"
+                  >
+                    Country you sell from
+                  </label>
+                  <select
+                    id="business-country"
+                    className="stq-input h-12 bg-white"
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                    autoComplete="country"
+                  >
+                    {COUNTRIES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400">
+                    Your full business address is added from the dashboard
+                    before your store opens.
+                  </p>
+                </div>
+
+                <div className="mt-1 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50/80 p-3 shadow-sm">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-indigo-100 bg-white text-xl shadow-sm">
                     🎉
                   </div>
@@ -1141,207 +1178,8 @@ export default function SignupPage() {
 
                 <button
                   type="submit"
-                  disabled={!isNameAvailable}
+                  disabled={!isNameAvailable || !firstName.trim()}
                   className="stq-btn stq-btn-primary w-full h-12 flex items-center justify-center gap-2"
-                >
-                  Continue <ChevronRight className="w-5 h-5" />
-                </button>
-              </form>
-            </div>
-          )}
-
-          {/* ── Location ──────────────────────────────────────────────
-              Its own step, and REQUIRED: this address prints on every invoice
-              the store issues, and it decides tax treatment. Bolted onto the
-              "name your store" screen with an optional city, it was the field
-              everyone skipped. */}
-          {step === "location" && (
-            <div className="animate-in fade-in slide-in-from-right-2 duration-300">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                Where do you sell from?
-              </h1>
-              <p className="text-gray-500 mb-8">
-                Your business address appears on invoices. You can change it
-                later in Settings.
-              </p>
-
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!country) {
-                    setError("Please choose the country you sell from.");
-                    return;
-                  }
-                  if (!addressLine1.trim()) {
-                    setError("Please enter your street and building address.");
-                    return;
-                  }
-                  if (!city.trim()) {
-                    setError("Please enter the city you sell from.");
-                    return;
-                  }
-                  if (!state.trim()) {
-                    setError("Please enter your state or province.");
-                    return;
-                  }
-                  if (!postalCode.trim()) {
-                    setError("Please enter your postal or PIN code.");
-                    return;
-                  }
-                  setError("");
-                  setStep("theme");
-                }}
-                className="flex flex-col gap-5"
-              >
-                <LocationPicker
-                  value={place}
-                  onChange={(next) => {
-                    setPlace(next);
-                    // The pin fills the fields, it doesn't lock them — a
-                    // reverse-geocode is often a suburb off and the merchant
-                    // gets the final word.
-                    if (next.addressLine1) setAddressLine1(next.addressLine1);
-                    if (next.addressLine2) setAddressLine2(next.addressLine2);
-                    if (next.city) setCity(next.city);
-                    if (next.state) setState(next.state);
-                    if (next.postalCode) setPostalCode(next.postalCode);
-                    if (
-                      next.countryCode &&
-                      COUNTRIES.some((c) => c.code === next.countryCode)
-                    ) {
-                      setCountry(next.countryCode);
-                    }
-                  }}
-                />
-
-                <div className="flex flex-col gap-1.5">
-                  <label
-                    htmlFor="business-address-1"
-                    className="text-sm font-semibold text-gray-700"
-                  >
-                    Address line 1
-                  </label>
-                  <input
-                    id="business-address-1"
-                    className="stq-input h-12"
-                    placeholder="Building number and street"
-                    value={addressLine1}
-                    onChange={(e) => setAddressLine1(e.target.value)}
-                    maxLength={160}
-                    autoComplete="address-line1"
-                    autoFocus
-                    required
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label
-                    htmlFor="business-address-2"
-                    className="text-sm font-semibold text-gray-700"
-                  >
-                    Address line 2{" "}
-                    <span className="font-normal text-gray-400">
-                      (optional)
-                    </span>
-                  </label>
-                  <input
-                    id="business-address-2"
-                    className="stq-input h-12"
-                    placeholder="Floor, suite, area or landmark"
-                    value={addressLine2}
-                    onChange={(e) => setAddressLine2(e.target.value)}
-                    maxLength={160}
-                    autoComplete="address-line2"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="flex flex-col gap-1.5">
-                    <label
-                      htmlFor="business-city"
-                      className="text-sm font-semibold text-gray-700"
-                    >
-                      City
-                    </label>
-                    <input
-                      id="business-city"
-                      className="stq-input h-12"
-                      placeholder="E.g., Mumbai"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                      maxLength={80}
-                      autoComplete="address-level2"
-                      required
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label
-                      htmlFor="business-state"
-                      className="text-sm font-semibold text-gray-700"
-                    >
-                      State / province
-                    </label>
-                    <input
-                      id="business-state"
-                      className="stq-input h-12"
-                      placeholder="E.g., Maharashtra"
-                      value={state}
-                      onChange={(e) => setState(e.target.value)}
-                      maxLength={80}
-                      autoComplete="address-level1"
-                      required
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label
-                      htmlFor="business-postal-code"
-                      className="text-sm font-semibold text-gray-700"
-                    >
-                      Postal / PIN code
-                    </label>
-                    <input
-                      id="business-postal-code"
-                      className="stq-input h-12"
-                      placeholder="E.g., 400001"
-                      value={postalCode}
-                      onChange={(e) => setPostalCode(e.target.value)}
-                      maxLength={20}
-                      autoComplete="postal-code"
-                      required
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label
-                      htmlFor="business-country"
-                      className="text-sm font-semibold text-gray-700"
-                    >
-                      Country
-                    </label>
-                    <select
-                      id="business-country"
-                      className="stq-input h-12 bg-white"
-                      value={country}
-                      onChange={(e) => setCountry(e.target.value)}
-                      autoComplete="country"
-                      required
-                    >
-                      {COUNTRIES.map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <p className="text-xs leading-relaxed text-gray-500">
-                  Required fields are used for invoices and tax calculations.
-                  The map is only an autofill aid—you can correct every field.
-                </p>
-
-                <button
-                  type="submit"
-                  className="stq-btn stq-btn-primary flex h-12 w-full items-center justify-center gap-2"
                 >
                   Continue <ChevronRight className="w-5 h-5" />
                 </button>
@@ -1353,11 +1191,12 @@ export default function SignupPage() {
           {step === "theme" && (
             <div className="animate-in fade-in slide-in-from-right-2 duration-300">
               <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                Choose a store theme
+                Pick a starting look
               </h1>
               <p className="text-gray-500 mb-6">
-                Pick a starting look for {name.trim() ? name : "your store"} —
-                you can customise everything later.
+                We&apos;ve selected a theme for{" "}
+                {name.trim() ? name : "your store"} — keep it, or pick another.
+                Every colour, page and photo is editable later.
               </p>
 
               <div className="mb-6 flex flex-wrap gap-2">

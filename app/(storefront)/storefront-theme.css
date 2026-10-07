@@ -1127,6 +1127,31 @@
   color: var(--sm-ink);
   border: 1px solid var(--sm-border);
 }
+/* The colour row under a card's price: H&M's "■ ■ ■ +8". Display only —
+   the whole card is one link — and on every card style. */
+.shop-card-colours {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+}
+.shop-card-colour {
+  width: 11px;
+  height: 11px;
+  border: 1px solid color-mix(in srgb, var(--sm-ink) 28%, transparent);
+  border-radius: 2px;
+}
+.shop-card-colour.is-current {
+  outline: 1px solid var(--sm-ink);
+  outline-offset: 1.5px;
+}
+.shop-card-colour-more {
+  margin-left: 2px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--sm-ink-soft);
+}
+
 /* Non-classic cards already state the markdown in their "% off" price pill,
    so the photo flag would say it twice. */
 .storefront-root:not(.sm-card-classic) .shop-card-flag--save {
@@ -1500,6 +1525,39 @@
   transform: rotate(-45deg);
 }
 
+/* A colour with its own photos: a small portrait tile of that colourway. */
+.sm-opt-value.is-photo {
+  width: 60px;
+  min-width: 60px;
+  height: 76px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--sm-surface);
+}
+.sm-opt-value.is-photo.is-active {
+  background: var(--sm-surface);
+  box-shadow: inset 0 0 0 1px var(--sm-ink);
+}
+.sm-opt-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sm-opt-value.is-photo.is-unavailable {
+  opacity: 0.5;
+}
+.sm-opt-value.is-photo.is-unavailable::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -6px;
+  right: -6px;
+  height: 1.5px;
+  background: var(--sm-ink-soft);
+  transform: rotate(-52deg);
+}
+
 /* Quick-add chooser (components/quick-add-dialog.tsx). A bottom sheet on a
    phone — the thumb is already there — and a centred panel from 640px. */
 .sm-quickadd {
@@ -1618,6 +1676,115 @@
   margin-top: 12px;
   text-align: center;
   font-size: 14px;
+  color: var(--sm-ink-soft);
+  text-decoration: underline;
+}
+
+/* ── Password page (a store that has not opened yet) ─────────────────────
+   Rendered WITHOUT the shop's header, footer or cart — the layout drops them
+   for a locked visitor, since every link in them would lead back here. Uses
+   the store's own tokens so the page already looks like the brand. */
+.storefront-root .sm-password-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--sm-cream);
+  color: var(--sm-ink);
+}
+.storefront-root .sm-password-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--sm-surface);
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius-card, 16px);
+  padding: 32px 28px;
+  box-shadow: 0 12px 40px rgba(var(--sm-shadow-rgb), 0.08);
+  text-align: center;
+}
+.storefront-root .sm-password-logo {
+  display: block;
+  margin: 0 auto 20px;
+  max-height: 56px;
+  max-width: 180px;
+  object-fit: contain;
+}
+.storefront-root .sm-password-name {
+  font-family: var(--font-stick-no-bills);
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+.storefront-root .sm-password-title {
+  font-family: var(--font-stick-no-bills);
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+.storefront-root .sm-password-copy {
+  color: var(--sm-ink-soft);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  margin: 0 0 20px;
+}
+.storefront-root .sm-password-form {
+  text-align: left;
+}
+.storefront-root .sm-password-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--sm-ink-soft);
+}
+.storefront-root .sm-password-row {
+  display: flex;
+  gap: 8px;
+}
+.storefront-root .sm-password-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  font-size: 16px;
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius-control, 10px);
+  background: var(--sm-cream);
+  color: var(--sm-ink);
+}
+.storefront-root .sm-password-input:focus {
+  outline: 2px solid var(--sm-accent);
+  outline-offset: 1px;
+}
+.storefront-root .sm-password-submit {
+  --sm-btn-bg: var(--sm-accent);
+  --sm-btn-fg: var(--sm-on-accent);
+  height: 44px;
+  padding: 0 18px;
+  font-weight: 600;
+  border: 0;
+  border-radius: var(--sm-radius-control, 10px);
+  background: var(--sm-btn-bg);
+  color: var(--sm-btn-fg);
+  cursor: pointer;
+}
+.storefront-root .sm-password-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.storefront-root .sm-password-error {
+  margin: 10px 0 0;
+  font-size: 0.875rem;
+  color: var(--sm-error);
+}
+.storefront-root .sm-password-owner {
+  margin: 24px 0 0;
+  font-size: 0.8rem;
+  color: var(--sm-ink-faint);
+}
+.storefront-root .sm-password-owner a {
   color: var(--sm-ink-soft);
   text-decoration: underline;
 }

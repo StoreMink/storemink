@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import {
   selectValue,
@@ -44,6 +45,10 @@ export function OptionPicker<V extends PickableVariant>({
       {options.map((option, axis) => {
         const states = valueStates(options, variants, selected, axis);
         const swatches = option.swatches;
+        // ★ A colour with its own photos is shown AS a photo tile (H&M's
+        //   colourway thumbnails): a swatch says "brown", a photo shows
+        //   which brown, on which garment.
+        const photos = option.images;
         const chosen = selected[axis] ?? "";
         return (
           <fieldset key={option.name} className="sm-opt">
@@ -59,7 +64,8 @@ export function OptionPicker<V extends PickableVariant>({
               {states.map((state) => {
                 const active = state.value === chosen;
                 const unavailable = !state.available;
-                const swatch = swatches?.[state.value];
+                const photo = photos?.[state.value]?.[0];
+                const swatch = photo ? undefined : swatches?.[state.value];
                 const label = `${option.name} ${state.value}${
                   !state.exists
                     ? ", not available with this selection"
@@ -73,8 +79,10 @@ export function OptionPicker<V extends PickableVariant>({
                     type="button"
                     aria-pressed={active}
                     aria-label={label}
-                    title={swatch ? state.value : undefined}
+                    title={swatch || photo ? state.value : undefined}
                     className={`sm-opt-value${swatch ? " is-swatch" : ""}${
+                      photo ? " is-photo" : ""
+                    }${
                       active ? " is-active" : ""
                     }${unavailable ? " is-unavailable" : ""}`}
                     onClick={() => {
@@ -87,7 +95,15 @@ export function OptionPicker<V extends PickableVariant>({
                       if (next && next.id !== current?.id) onSelect(next);
                     }}
                   >
-                    {swatch ? (
+                    {photo ? (
+                      <img
+                        className="sm-opt-photo"
+                        src={photo}
+                        alt=""
+                        loading="lazy"
+                        aria-hidden
+                      />
+                    ) : swatch ? (
                       <span
                         className="sm-opt-swatch"
                         style={{ backgroundColor: swatch }}

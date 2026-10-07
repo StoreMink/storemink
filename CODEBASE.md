@@ -65,7 +65,7 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 | AI        | Gemini (`lib/ai/gemini.ts`); per-store brand voice (`lib/ai/brand-voice.ts` + `store_brand_profiles`) with plan-capped usage metering (`lib/ai/quota.ts`); task prompts in `brand/tasks/`. The dashboard Mink drawer has a default-on Vertex/Gemini 3.7 agent available to every store in `lib/mink/` + `app/api/mink/`: its marked runtime system prompt is `docs/mink-ai-system-prompt.md`, validated and rendered by `lib/mink/system-prompt.ts`; its storefront image-provider prompt is `docs/mink-ai-image-prompt.md`, validated and rendered by `lib/mink/image-prompt.ts`. Phase 2 streams permission/location-aware store, catalogue, sales, order, inventory and Help reads; vague multi-location catalogue-stock questions now produce permission-safe multiple-choice clarification instead of silently using a combined total, while explicit comparison returns shelf-level counts. Phase 3 adds private proposals. Phase 4A adds independently gated product description/SEO actions; 4B adds unpublished, untracked draft-product creation; 4C adds disabled/hidden coupon create/update; and 4D adds customer-group metadata create/update. Phase 5A adds an independently gated, human-approved adjustment for one exact tracked SKU at one exact active accessible location; Phase 5B adds a separate 5-credit, maximum-20-line bulk inventory proposal and atomic approval; Phase 5C adds a separate one-credit, one-order, one-forward-step online-delivery status proposal/approval for pending → processing → shipped → delivered; Phase 5D adds a separate immediate/scheduled publication approval for one exact saved blog proposal plus a bounded conflict-safe worker; Phase 5E adds independently gated coupon-email audience selection, exact non-PII preview, final confirmation and immediate/scheduled queueing; Phase 5F adds an independently gated 1–20 exact-SKU bulk price proposal, one-unit basket impact review and atomic conflict-safe execution. Phase 6A adds a durable leased workflow runtime and an idempotent, read-only weekly trading report with persisted steps/events, safe cancellation, token-free waiting and background completion notification. Phase 6B adds a bounded, read-only 7/30/90-day revenue-decline investigation across exact channels, locations and leading products; Phase 6C adds a private exact-SKU product-launch readiness package covering catalogue, media, SEO, valid pricing, scoped inventory and shipping without live changes; Phase 6D adds a bounded location-aware slow-inventory workflow and a private, margin-guarded promotion recommendation that cannot create or activate an offer; Phase 6E adds a bounded PII-minimized delayed-pickup review, staff-confirmed preparation-delay copy and duplicate-safe handoff to the existing one-time reminder sweep. Phase 7A adds permission-gated current-store Website Builder page/section/design readers and strict code validation; Phase 7B adds one immutable 5-credit exact-section proposal with an isolated desktop/mobile preview; Phase 7C adds a separate default-off, human-only five-minute exact-diff approval that transactionally saves only that reviewed replacement to the private Builder draft with idempotency, conflict checks and audit. Every live action uses exact short-lived human approval, tenant/permission/tool/version rechecks, idempotent transactional execution and append-only outcomes; Phase 4 supports checkpointed safe rollback, while inventory, order-status, blog-publication, campaign, price and Builder corrections use fresh/manual domain workflows. Gemini receives checkpoint/proposal tools but no live execute tool; its durable workflow tools queue deterministic internal read work only. Transfers, cancellation/refunds/payment/shipment changes, pickup/POS lifecycle mutations, model-side product/bulk publication (human-approved CSV imports use the ordinary importer), arbitrary customer contact/group membership, unbounded catalogue repricing and arbitrary repository coding remain unavailable; Phase 7D adds separately gated human publication checks, approval and exact rollback after a completed Phase 7C save. The complete Website Builder tools add exact navigation/header/footer, appearance, page lifecycle/SEO, section creation/removal and checked publication proposals; authenticated humans approve each change. Mink cannot access shell/repository or deploy. Operators control every gate and inspect redacted metrics at `/dashboard/mink`; the live harness is `npm run mink:eval`, and the phase-wise manual catalogue is `docs/mink-ai-test-prompts.md`. An explicit global disable or missing invite retains the canned coming-soon response. Architecture and phased rollout are tracked in `docs/mink-ai-dashboard-plan.md`. |
 | Testing   | Vitest + Testing Library + jsdom, coverage via v8 (`coverage/` is generated output — never edit)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Browsers  | **`browserslist` in package.json is the stated floor: Chrome/Edge 111, Firefox 128, Safari/iOS 16.4.** Not a preference — Tailwind v4 depends on `@property` and `color-mix()` and does not work below it, so this records a constraint a dependency already imposed rather than inventing one. Two authored CSS features sit BELOW that floor and so are always available: `:has()` (Chrome 105+/Safari 15.4+/Firefox 121+) and container queries (Chrome 105+/Safari 16+/Firefox 110+), both used by the dashboard table compaction, which is nonetheless wrapped in `@supports selector(:has(+ *)) and (container-type: inline-size)` so the dependency is stated where it is used and stays graceful if the floor is ever lowered. **⚠ There is NO cross-browser test infrastructure** — vitest runs in jsdom, which renders nothing. Chrome is the only browser this has been exercised in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| Deploy    | **Google Cloud Run** via branch-specific Cloud Build triggers (`dev` → `storemink-web-dev`, `main` → `storemink-web-prod`; Dockerfile + `cloudbuild.yaml`). ⚠ The STAGING DEPLOYMENT was removed 2026-09-08 — no `staging` branch, no `storemink-web` service, no `staging.storemink.com`; **dev is the only pre-production environment**. The `storemink_staging` DATABASE remains and is dev's, so `db:migrate:staging` and `db:drift:staging` still target a live database despite the name. The Cloud Build deploy owns the complete runtime environment; Mink's model and limit settings are declared as substitutions. The global runtime defaults enabled, and the operator's per-store Mink AI switch is the fail-closed merchant boundary. ⚠ `_MINK_BETA_REQUIRE_INVITE` is RETIRED but still declared (empty) and read by a shim at the top of `build-push`: this file sets no `substitution_option: ALLOW_LOOSE`, so a trigger that still supplies the key would fail every build against a template that no longer mentions it — i.e. production would stop deploying until somebody remembered a manual step. The shim keeps the merge safe and warns in the build log; delete it and the default once all three triggers have had `--remove-substitutions` applied (**docs/gcp-ci-cd.md**). CI on GitHub Actions (`.github/workflows/ci.yml`) runs the same eight checks as **FOUR PARALLEL JOBS** — `checks` (lint, typecheck, **db:lint**, **help:lint**, prettier), `test`, `shuffle` and `build`. ⚠ They are deliberately independent: nothing here needs another's output, so a `needs:` between them would only restore the 26.7-minute sequential run this split removed (measured on run 34834617499, where the two test invocations alone were 669s + 591s of 1603s). A `concurrency` group cancels a superseded run, because two pushes 22 seconds apart used to produce two complete runs and only the newer one's answer is ever read; it is safe because this workflow DEPLOYS NOTHING — Cloud Build owns that. `npm run typecheck` runs `next typegen` before `tsc --noEmit` because the Next-managed `next-env.d.ts` is deliberately gitignored and a clean checkout otherwise has no static-image or route declarations. The TypeScript process runs with an explicit 4 GiB V8 heap limit, avoiding the approximately 2 GiB default that exhausts memory on the full project on an 8 GiB Mac; type checking remains strict and includes tests. **★★ DATABASE DDL IS NO LONGER A MANUAL GATE (2026-09-09): `cloudbuild.yaml` applies it, in the pipeline, before the deploy** — `build-push` → `tip-check` → `migrate` → `deploy`, with a failed migration stopping the deploy. No developer needs the production superuser credential, and the schema can no longer be behind the code. `npm run db:migrate:prod apply` still works and is now the emergency path only. Full contract, authoring rules and troubleshooting: **`docs/migrations.md`** (read it before writing a migration); the recovery tools stay in `drizzle/manual/README.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Deploy    | **Google Cloud Run** via branch-specific Cloud Build triggers (`dev` → `storemink-web-dev`, `main` → `storemink-web-prod`; Dockerfile + `cloudbuild.yaml`). ⚠ The STAGING DEPLOYMENT was removed 2026-09-08 — no `staging` branch, no `storemink-web` service, no `staging.storemink.com`; **dev is the only pre-production environment**. The `storemink_staging` DATABASE remains and is dev's, so `db:migrate:staging` and `db:drift:staging` still target a live database despite the name. The Cloud Build deploy owns the complete runtime environment; Mink's model and limit settings are declared as substitutions. The global runtime defaults enabled, and the operator's per-store Mink AI switch is the fail-closed merchant boundary. ⚠ `_MINK_BETA_REQUIRE_INVITE` is RETIRED but still declared (empty) and read by a shim at the top of `build-push`: this file sets no `substitution_option: ALLOW_LOOSE`, so a trigger that still supplies the key would fail every build against a template that no longer mentions it — i.e. production would stop deploying until somebody remembered a manual step. The shim keeps the merge safe and warns in the build log; delete it and the default once all three triggers have had `--remove-substitutions` applied (**docs/gcp-ci-cd.md**). CI on GitHub Actions (`.github/workflows/ci.yml`) runs the same eight checks as **FOUR PARALLEL JOBS** — `checks` (lint, typecheck, **db:lint**, **help:lint**, prettier), `test`, `shuffle` and `build`. ⚠ They are deliberately independent: nothing here needs another's output, so a `needs:` between them would only restore the 26.7-minute sequential run this split removed (measured on run 34834617499, where the two test invocations alone were 669s + 591s of 1603s). A `concurrency` group cancels a superseded run, because two pushes 22 seconds apart used to produce two complete runs and only the newer one's answer is ever read; it is safe because this workflow DEPLOYS NOTHING — Cloud Build owns that. `npm run typecheck` runs `next typegen` before `tsc --noEmit` because the Next-managed `next-env.d.ts` is deliberately gitignored and a clean checkout otherwise has no static-image or route declarations. The TypeScript process runs with an explicit 4 GiB V8 heap limit, avoiding the approximately 2 GiB default that exhausts memory on the full project on an 8 GiB Mac; type checking remains strict and includes tests. **`npm run build` gets the same explicit 4 GiB heap, through `NODE_OPTIONS`**: Next 16.3 type-checks by spawning `tsc` as a separate process (`experimental.useTypeScriptCli` defaults on) that inherits the parent's ENVIRONMENT but not its command-line flags, so `node --max-old-space-size=4096 next build` does not reach it (measured: the child still died at ~2 GiB). From 2026-10-07 the default limit ran out of memory in CI's Build job ("Failed to type check") while the separate typecheck job, already on 4 GiB, passed. The script, not the workflow, carries it so the Docker build Cloud Build runs for deploys gets it too, and it appends any `NODE_OPTIONS` already set rather than replacing it. **★★ DATABASE DDL IS NO LONGER A MANUAL GATE (2026-09-09): `cloudbuild.yaml` applies it, in the pipeline, before the deploy** — `build-push` → `tip-check` → `migrate` → `deploy`, with a failed migration stopping the deploy. No developer needs the production superuser credential, and the schema can no longer be behind the code. `npm run db:migrate:prod apply` still works and is now the emergency path only. Full contract, authoring rules and troubleshooting: **`docs/migrations.md`** (read it before writing a migration); the recovery tools stay in `drizzle/manual/README.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 > **Mink Phase 7D map update (2026-09-05):** With drafting plus Builder
 > Manage, Mink may create one 5-credit immutable private generated-code
@@ -476,7 +476,7 @@ retouch CAN alter small details, which the widget and the Help guide both say.
 prominent people stay blocked and the prompt forbids adding anyone. ★ Gates are
 image generation's: Mink enabled, Media manage, the store's
 `generate_media_image` switch, and `reserveMinkImageGeneration`'s spend ceiling
-(keyed on the refinement id). ★ It costs `IMAGE_REFINE_CREDITS` (3). A store
+(keyed on the refinement id). ★ It costs `IMAGE_REFINE_CREDITS` (2; was 3 at launch, owner repriced it the same day, Help corrected by 0166). A store
 that cannot pay is refused BEFORE the paid provider call. Credits are taken
 only after an image exists and is stored, by `consume_mink_refine_credits`:
 plan allowance, then top-ups, all-or-nothing, idempotent per refinement id. A
@@ -2445,6 +2445,7 @@ wholesip/
 │   │   ├── storefront-theme.css
 │   │   ├── (pages)/           # Customer-facing pages:
 │   │   │   ├── shop/          #   product listing + [slug] product detail (reviews, related);
+│   │   │   │                  #   shop-filter-controls.tsx = the filter groups (sidebar + drawer)
 │   │   │   │                  #   shop-view.ts (shared loader) + shop-filter-panel.tsx
 │   │   │   ├── collections/[slug]/ # ★ a category's own page (1.8); /shop?category= 308s here
 │   │   │   ├── cart/          #   cart page (CartProvider-driven)
@@ -2461,6 +2462,10 @@ wholesip/
 │   │   │   │                  #   split stays hidden for delivery-only stores.
 │   │   │   │                  #   Double-locked: withUser (RLS
 │   │   │   │                  #   customer_id = auth.uid()) AND host store id
+│   │   │   ├── password/      #   ★ the page a store shows before it opens (§7).
+│   │   │   │                  #   The ONE storefront page that does not call
+│   │   │   │                  #   requireStorefrontStore() — that is what sends a
+│   │   │   │                  #   locked visitor here. Rendered in a minimal shell.
 │   │   │   ├── notifications/ #   ★ the SHOPPER's notification centre (§22) —
 │   │   │   │                  #   the customer rows the fan-out has always
 │   │   │   │                  #   written, finally rendered
@@ -2567,7 +2572,11 @@ wholesip/
 │   │   │                      # browser-check, publish and exact-rollback human workflow.
 │   │   ├── mink-feedback.tsx  # Per-answer thumbs + bounded, privacy-redacted issue report.
 │   │   ├── mink-mark.tsx      # Shared solid-purple robot mark matching Help Centre Mink.
-│   │   ├── page.tsx           # Overview: metrics, revenue chart, activity, inventory…
+│   │   ├── page.tsx           # Home: greeting + PlanTag (plan-tag.tsx), then while the
+│   │   │                      # store is closed ONLY LaunchChecklistCard
+│   │   │                      # (launch-checklist.tsx → setup-guide.tsx: password +
+│   │   │                      # Go live head, required-task accordion, folded
+│   │   │                      # Recommended, §7); Mink prompt and setup tiles once open
 │   │   ├── analytics/         # ★ Performance dashboard (§20): URL date/comparison
 │   │   │                      # filters, streamed commerce + tenant-scoped Google
 │   │   │                      # Search aggregates, widget registry, and persisted
@@ -2648,7 +2657,15 @@ wholesip/
 │   │   ├── categories/ colors/ blogs/ media/   # content management (media/ = the
 │   │   │                      # per-store Media Library: confirm-first upload + grid +
 │   │   │                      # view + copy-URL + delete (media_assets row + GCS object),
-│   │   │                      # via app/actions/media-actions.ts)
+│   │   │                      # via app/actions/media-actions.ts).
+│   │   │                      # ★ colors/ is RETIRED (2026-10-06): it only redirects to
+│   │   │                      # Products. Card colours had no visible effect once every
+│   │   │                      # card style painted its own background, so the editor
+│   │   │                      # field, the Colours page and color-actions.ts are gone.
+│   │   │                      # The `colors` permission key stays (hiddenInNav) so saved
+│   │   │                      # roles keep their grants; products.card_color, the
+│   │   │                      # card_colors table and the CSV "Card Color" column are
+│   │   │                      # left untouched (no data migration). Help: 0169.
 │   │   │   └── blogs/settings/  # blog feature toggles + per-store categories/tags manager
 │   │   │   (homepage editor RETIRED in Phase 4a — the homepage is now edited in builder/)
 │   │   ├── navigation/        # ★ Menu builder (§11): edit header + footer nav (store_menus)
@@ -2753,17 +2770,24 @@ wholesip/
 │   │                          # newest-first one-row carousel at every viewport
 │   │
 │   ├── actions/               # ★ ALL SERVER ACTIONS ("use server") — one file per domain:
-│   │   │                      # product/category/color/coupon/coupon-email/blog/blog-social/
+│   │   │                      # product/category/coupon/coupon-email/blog/blog-social/
 │   │   │                      # review/enquiry/customer/customer-profile/
 │   │   │                      # account-settings/set-password/invite-user/user-management/
 │   │   │                      # user-group/role actions  (homepage-actions RETIRED — §11)
 │   │   ├── store-signup.ts    # Store onboarding (§19): checkStoreSlugAvailability,
 │   │   │                      # createStore({name,template,firstName,lastName,
-│   │   │                      # country,city}) — writes admins name + settings.
-│   │   │                      # business location, returns {slug,storeId} —,
-│   │   │                      # getSignupResumeInfo (resume wizard after Google
-│   │   │                      # redirect / refreshed tab). Tested across slug,
-│   │   │                      # identity, location, rollback and consent gates.
+│   │   │                      # country, optional address}) — ONE transaction for
+│   │   │                      # the store, its owner and its invoice profile; the
+│   │   │                      # store starts launched:false — getSignupResumeInfo
+│   │   │                      # (resume wizard after Google redirect / refreshed
+│   │   │                      # tab). Tested across slug, identity, transaction
+│   │   │                      # failure and consent gates.
+│   │   ├── launch-actions.ts  # ★ Go live (§7): getLaunchState (checklist + password
+│   │   │                      # + preview URL), launchStore (superadmin; re-runs the
+│   │   │                      # checklist, sets launched, emits store.launched, then
+│   │   │                      # indexes), regenerateStorefrontPassword
+│   │   ├── storefront-access-actions.ts # ★ unlockStorefront: the /password page's
+│   │   │                      # host-derived, rate-limited action that mints the grant
 │   │   ├── signup-email-otp.ts # Authenticated, rate-limited 6-digit email proof;
 │   │   │                      # signed httpOnly hash cookie, capped attempts,
 │   │   │                      # marks Firebase emailVerified only on success
@@ -3023,7 +3047,7 @@ wholesip/
 │       ├── og/                # Dynamic branded OG card (ImageResponse; ?d=JSON
 │       │                      # {title,subtitle,color}) — default share image for
 │       │                      # homepage/custom pages/platform (lib/seo/og-card.ts)
-│       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 3 credits
+│       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 2 credits
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
 │           │                  # store-host files live under stores/{storeId}/uploads/
@@ -3174,7 +3198,18 @@ wholesip/
 │   │                          # settings stored under stores.settings.marketing;
 │   │                          # store-entitlement.ts combines operator availability
 │   │                          # with the store's effective plan for server reads/writes
-│   ├── store/                 # ★ Tenancy (see §3): host.ts, resolve.ts, brand.ts
+│   ├── store/                 # ★ Tenancy (see §3): host.ts, resolve.ts, brand.ts.
+│   │                          # ★ launch-state.ts (pure predicates: isStoreLaunched /
+│   │                          # isDemoStore / isStorefrontGated — import-free so the
+│   │                          # resolver can read them), launch.ts (markStoreLaunched,
+│   │                          # ONE caller: launchStore), launch-copy.ts (client-safe
+│   │                          # closed-store message + /password path),
+│   │                          # storefront-grant.ts (HMAC password grant, pure),
+│   │                          # storefront-access.ts (open|unlocked|locked gate, the
+│   │                          # store_access password row, storefrontClosedRefusal),
+│   │                          # launch-checklist-rules.ts (pure go-live rules) +
+│   │                          # launch-checklist.ts (the fact reads). §7 "closed until
+│   │                          # Go live".
 │   ├── credit/                # ★ §29: store credit — apply.ts (PURE: how much
 │   │                          # credit goes on an order, incl. the unpayable-
 │   │                          # remainder gap below the gateway minimum) +
@@ -3381,11 +3416,15 @@ wholesip/
 │   │                          # one and submitted in the other (/track-order was).
 │   │                          # `exact` emits a `$` anchor so `/cart` doesn't also
 │   │                          # block a merchant page slugged `cartography`. Tested.
-│   ├── email/                 # sender, layout, campaign-worker, coupon-campaign,
+│   ├── email/                 # sender, campaign-worker, coupon-campaign,
 │   │                          # trigger-worker, blog/enquiry notifications.
 │   │                          # ★ notification-emails.ts (§22: single + digest
 │   │                          # templates, event-specific CTAs, pure/escaped) +
-│   │                          # shell.ts (mobile table shell, contrast-safe accent)
+│   │                          # shell.ts (THE email design system: composeEmail +
+│   │                          # components, §24) + platform-brand.ts (StoreMink's
+│   │                          # own email identity) + email-samples.ts (every
+│   │                          # mailer rendered, for the gallery and CI guard)
+│   │                          # + account-emails.ts (staff/POS invites, resets)
 │   │                          # + notification-worker.ts
 │   │                          # (claims notification_email_queue, GROUPS by
 │   │                          # recipient into one digest, retries with backoff).
@@ -3414,6 +3453,8 @@ wholesip/
 │   ├── ai/credit-pricing.ts   # ★ reads the operator-owned mink_credit_packs catalogue.
 │   │                          # No code fallback: an unreadable catalogue means no
 │   │                          # top-ups, never a guessed price.
+│   ├── plans/upgrade-summary.ts # ★ pure: what a plan includes and what the next one
+│   │                          # unlocks, derived from PLAN_LIMITS (dashboard PlanCard)
 │   ├── plans/allowances.ts    # ★ live operator overrides for the INCLUDED Mink credits
 │   │                          # a plan grants (mink_plan_allowances). Same shape as
 │   │                          # plans/pricing.ts: cached for display, live for the
@@ -4114,6 +4155,24 @@ wholesip/
 │                              # physical-row cap query: the visible history remains ten,
 │                              # while protected publication/action evidence may keep
 │                              # older conversation rows outside that list.
+│                              # 0170 adds service-only store_access (the storefront
+│                              # password of a store that has not opened) and opens any
+│                              # launched:false store that already took an order;
+│                              # 0171 edits the signup and setup Help guides in place
+│                              # for the shorter wizard, the go-live checklist and the
+│                              # password page; 0173 corrects that guide for the owner-
+│                              # gated password. 0172 makes the five RESTRICT foreign
+│                              # keys inside the store cascade (order_items → products/
+│                              # variants, Mink publication/campaign → approval/draft)
+│                              # NO ACTION DEFERRABLE INITIALLY IMMEDIATE: a store that
+│                              # had ever taken an order could not be purged, because
+│                              # PostgreSQL queues the products cascade before the
+│                              # orders cascade and the check fired against rows the
+│                              # same statement was about to remove. deleteStore runs
+│                              # `set constraints all deferred` in its transaction;
+│                              # everywhere else the checks stay immediate, so deleting
+│                              # ONE ordered product is still refused (verified both
+│                              # ways against a copy of production). Next free: 0174.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -7141,6 +7200,71 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         handle sentence in place. `20261005_0160_shared_shop_filters_help`
         corrects the product-visibility guide's troubleshooting paragraph to
         explain clearing price/availability filters, sorting and mobile access.
+        **★★ Shopify-style filters, Phase 1 (2026-10-06).** Category (on
+        /shop and search only — a collection is one category), Availability,
+        product OPTIONS (Size, Colour, any axis) and Price, with a count on
+        every value. `lib/storefront/shop-filters.ts` owns the query and the
+        one predicate `matchesShopQuery`; `shop-facets.ts` builds the lists;
+        `shop-product-facts.ts` turns a product row into facts with the card's
+        own price (`variantEffectiveSelling`) and stock (`isSoldOut`) rules.
+        `getPublishedProducts` now also selects `products.options` and
+        `product_variants.option_values`.
+        ★ AND between filters, OR within one (Shopify's rule).
+        ★★ VARIANT-AWARE: one VARIANT must satisfy every option filter, In stock
+        only and the price range together. Otherwise "M + in stock" matches a
+        product whose M is sold out and whose L is in stock.
+        ★ Each value's count ignores its own filter (disjunctive), so with M
+        ticked the list still says how many L would add. Values come from
+        the products in scope BEFORE the shopper's filters, so a value stays
+        listed (greyed, 0) instead of vanishing. A filter with one value is
+        hidden unless ticked. "Colour"/"Color" are one filter (`facetKey`).
+        Values compare case-insensitively (`valueKey`). Sizes sort by wear
+        order (XS…6XL), then by the first number inside ("UK 6" before
+        "UK 10"), then first-seen.
+        ★ URLs: `filter.v.option.<key>=<value>` and `filter.p.category=<slug>`,
+        repeated for several values; `stock=in`/`min`/`max` keep working and
+        Shopify's `filter.v.availability=1`/`filter.v.price.gte|lte` are read.
+        `withShopQuery` drops every `filter.*` key it rewrites.
+        ★ ≥1024px: a sticky sidebar (`.shop-sidebar`) that applies at once, and
+        the Filter button is hidden. Smaller screens: the drawer, a draft until
+        "Show N". One `ShopFilterControls` renders both. Price commits on
+        Enter/blur in the sidebar, and a backwards range is swapped only when
+        applied, never mid-typing.
+        ⚠ Legacy name-only variants (no option axes) match no option filter.
+        The merchant sets options in the product editor, as the Help guide
+        (0167) says. Merchant-configurable filters, vendor/type/tags and
+        server-side filtering are Phases 2–3, not built.
+        **★★ Colourways: photos per colour, one card per colour (2026-10-06).**
+        The H&M model stays ONE product with a Colour × Size matrix (one place
+        to edit, one inventory). Four parts:
+        (1) `ProductOption.images` holds photos per colour value, uploaded once
+        in the options editor under "Photos for each colour" instead of once
+        per variant row. `photoAxis` picks the option that carries them: the
+        first with photos, else the swatch option, else one named like a
+        colour. `photosForVariant` gives a variant's photos: its own (an
+        exception set on that variant), else its colour's.
+        ★★ They are ordinary product images to the save path:
+        `productFormImageUrls` and `fetchProductImageUrls` include
+        `optionImageUrls`, so ownership is checked and the clean-up sweep
+        counts them as still in use. Without that, a save would delete the
+        product's own colour photos from storage (pinned by a mutation-checked
+        test).
+        (2) The product page and quick add show the selected colour's photos,
+        and the picker draws a colour with photos as a photo tile
+        (`.sm-opt-value.is-photo`).
+        (3) Every card shows a colour row (up to 4 squares and "+N"). It is
+        display-only, because the card is one link.
+        (4) `StorefrontAppearance.productCards` (`product` | `colour`, Website
+        Builder → Brand → Storefront layout) makes `ShopClient` expand each
+        product through `lib/storefront/colour-cards.ts`. Each colour becomes
+        a card restricted to that colour's variants, so its price, sold-out
+        flag, filters and counts follow those variants alone. Its link is
+        `?variant=<the colour's first in-stock variant>`.
+        ★ A product splits only when at least one colour has its own photo,
+        or every card would show the same picture.
+        ⚠ Homepage carousels and related products stay one card per product.
+        The setting reaches the Builder preview only after the page reloads.
+        `getPublishedProducts` now also selects variant `id` and `images`.
         `storefront: "grocery"` is the deepest variant: it swaps the shared
         product cards, the product-detail page and the cart for a distinct
         premium grocery layout, so a store on such a theme looks NOTHING like the
@@ -7779,22 +7903,68 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     in.
 
 19. **Signup wizard (Shopify-style, `app/platform/signup/page.tsx`).** One
-    client wizard, one focused screen per step, with a progress stepper. Step
-    order: **email → password (+ Continue with Google) → email OTP → phone OTP
-    → name → store → location → theme → dashboard**. There is no plan or payment
-    step: every store is created on Free and paid upgrades happen later from the
-    store-host `/dashboard/plans` surface. This keeps store creation independent
-    of gateway availability and removes the paid-but-not-onboarded failure mode.
-    Data model: names go to
-    `admins.first_name`/`last_name`; the selling **business address** is a
-    structured country + street/building + optional second line + city +
-    state/province + postal/PIN code. The server requires every core field,
-    normalizes it into `stores.settings.business` (anon-readable jsonb —
-    non-secret), and seeds the same display-ready value into
-    `store_billing_settings.business_address`; that second write is what the
-    invoice renderer actually reads. If it fails, signup deletes the partial
-    store and owner so a retry is clean. Country list in `lib/countries.ts`
-    (pure, client-safe, India-first). - **Auth (Identity Platform, Phase 6)**: email/password via
+    client wizard, one focused screen per step, with a progress stepper.
+    **Six screens since 2026-10-07 (was nine): email → password + email OTP
+    (one screen; the code field appears under the password once the account
+    exists) → phone OTP → you + your store (name, store name, the country you
+    sell from) → theme (pre-selected; confirm or change) → dashboard.** There
+    is no plan or payment step: every store is created on Free and paid
+    upgrades happen later from the store-host `/dashboard/plans` surface. This
+    keeps store creation independent of gateway availability and removes the
+    paid-but-not-onboarded failure mode.
+    **★ THE BUSINESS ADDRESS IS NO LONGER COLLECTED AT SIGNUP.** It prints on
+    invoices and decides GST place of supply, and a new store has no invoice —
+    so it was the one screen with six required fields and the one everybody
+    stalled on. It is now a REQUIRED item on the dashboard's go-live checklist
+    (lib/store/launch-checklist-rules.ts, § "A new store opens by Go live"),
+    edited under Taxes & invoices, where it is first needed. Only the country
+    is captured at signup (`settings.business.country`), pre-filled from the
+    verified phone's dial code and editable; an unknown code falls back to
+    `DEFAULT_COUNTRY`. `createStore` still accepts the full address for any
+    caller that has one and stores it exactly as before.
+    Data model: names go to `admins.first_name`/`last_name`;
+    `store_billing_settings` is seeded with the store name, verified email and
+    phone, and a NULL address until the merchant adds one — the honest value
+    the checklist reads. Country list in `lib/countries.ts` (pure,
+    client-safe, India-first). `location-picker.tsx` (the Google-Maps-assisted
+    address form) remains in the directory, unused by the wizard, for the day
+    the address editor wants it.
+    **⚠ PHONE VERIFICATION DOES NOT WORK FOR REAL NUMBERS ON `localhost`,
+    AND THAT IS GOOGLE'S DOING.** Firebase's Auth service stopped accepting
+    `verifyPhoneNumber` from `localhost` in July 2024 (firebase-js-sdk#8387;
+    the maintainer's guidance is fictional test numbers). The backend answers
+    `INVALID_APP_CREDENTIAL` with no further detail, which the wizard renders
+    as "The security check didn't complete" — so a developer reads it as a
+    reCAPTCHA fault and checks authorized domains, keys and billing, all of
+    which are fine (verified 2026-10-07: `localhost` IS authorized, India IS
+    the allowed SMS region, billing IS on, and a configured test number goes
+    straight through). **The fix is a second local root: `localtest.me`**
+    (`LOCAL_DEV_ROOT` in `lib/store/host.ts`, overridable with
+    `NEXT_PUBLIC_LOCAL_DEV_ROOT`) — public DNS that resolves to 127.0.0.1 with
+    every subdomain included, so `http://localtest.me:3000/signup` is the same
+    server on a hostname Firebase accepts, and `{slug}.localtest.me:3000` is a
+    store. It is classified exactly like `localhost` (platform at the apex,
+    `pos.`/`help.`/`themes.` reserved, stores on subdomains) and it is an
+    AUTHORIZED DOMAIN on the staging Identity Platform project (added
+    2026-10-08; one entry covers every subdomain). ★ Unlike `localhost`, it is
+    a real registrable domain, so `cookieDomainForHost` returns
+    `.localtest.me` and the signup → dashboard session handoff works locally
+    the way it does on `.storemink.com` — the "flaky on localhost" handoff
+    was browsers refusing to set a `Domain=.localhost` cookie. The phone step
+    shows a localhost-only note linking to the same page on that host, the
+    dev runner prints it at startup, and the catch logs the raw Firebase
+    error. The staging project's fictional test numbers (Identity Platform →
+    Authentication → Sign-in method → Phone, e.g. +91 99999 99999 / 999999)
+    still work on either host. Deployed hosts are unaffected. ⚠ Verified by
+    DNS and server routing; the real-number SMS on `localtest.me` was not
+    exercised in a browser because the desktop app's preview pane blocks
+    assets from any origin but the preview's own.
+    **★★ STORE, OWNER AND INVOICE PROFILE ARE ONE TRANSACTION.** They were
+    three `withService` calls with a hand-written rollback (delete the store if
+    a later insert failed), and a rollback that is itself a network call can
+    fail — leaving a store nobody owns and a slug burned for every retry. One
+    transaction cannot leave that behind; a unique-violation on the slug still
+    maps to "that name was just taken". Pinned by `store-signup.test.ts`. - **Auth (Identity Platform, Phase 6)**: email/password via
     `createUserWithEmailAndPassword` (falls back to `signInWithEmailAndPassword`
     on `auth/email-already-in-use`). Password users then pass a six-digit email
     OTP (`app/actions/signup-email-otp.ts`): the server derives identity from the
@@ -11528,16 +11698,76 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       ₹343.00 is what makes an email look auto-generated. The fact list keeps
       what the table doesn't: reference, payment method, when. The tokens stay
       declared, so a merchant who wants them can still use them.
-    - **ONE GLOBAL EMAIL DESIGN** (`lib/email/shell.ts`): a neutral, table-safe
-      shell, the store logo/name and one restrained brand accent. Notification
-      CTAs use `emailAccentColor`, which preserves a valid merchant hue but
-      darkens it until white text reaches WCAG AA contrast; malformed values
-      fall back to ink. The same safe colour edges the notification card and
-      links, while the content stays near-black on white. Mobile media rules
-      tighten the card at 620 px, and the rendered order/pickup/refund/team-alert
-      samples have no horizontal overflow at 390 px. Semantic template classes
-      (`email-lead/details/detail/label/code/note`) are inlined for clients that
-      strip styles and remain readable as ordinary HTML without them.
+    - **★★ ONE STANDARD EMAIL DESIGN, PREMIUM AND NEUTRAL**
+      (`lib/email/shell.ts`, rebuilt 2026-10-08; the owner pointed at Claude's
+      onboarding email as the quality bar, never its branding). A warm cream
+      canvas (`#faf9f5`) on a white page, the sender's identity at the top, a
+      large Georgia headline, calm system sans body copy, ONE near-black
+      button, and facts, codes, receipts and quoted messages as white inset
+      cards. **`composeEmail` is the standard layout every mailer uses**
+      (eyebrow, headline, body blocks, footer under the canvas), built from
+      components (`emailParagraph`, `emailDetails`, `emailCode`, `emailPanel`,
+      `emailChecklist`, `emailButton`, `emailLinkFallback`, `emailSignoff`), so
+      a new mailer cannot drift from the others without writing raw markup on
+      purpose.
+      ★ **WHOSE NAME IS ON TOP depends on who is speaking.** Mail StoreMink
+      sends as itself uses `platformEmailBrand()` (`lib/email/platform-brand.ts`,
+      the ONE copy; five hand-written ones were deleted) and wears the official
+      lockup exactly as storemink.com draws it: the purple bag mark, "Store" in
+      ink and "Mink" in `#573cf0`, heavy sans, as text so it reads with images
+      blocked. That covers billing, sign-in codes, announcements, operator
+      notifications AND the account events in `PLATFORM_VOICE_EVENTS`
+      (`lib/notifications/events.ts`: store created/launched, domain live or
+      reverted, comp ended, plan changes, invoices, Mink credits), which also
+      come FROM StoreMink (`RenderedEmail.voice`). ★★ AND THEY CARRY ONLY
+      STOREMINK'S WORDING: a store's saved subject/body for those events is
+      never stored (`saveNotificationConfig` drops it), is ignored at send
+      (`record.ts`), and shows locked in the console. Otherwise any store
+      admin could write their own copy (a fake "account suspended" notice)
+      and have it delivered as StoreMink to arbitrary Cc addresses, which the
+      final review reproduced. Cc/Bcc still apply: they only change who
+      receives StoreMink's own message. Mail a store sends to its
+      own shoppers and staff shows only the merchant's logo, or the store name
+      in serif. ★ The logo is FITTED into a 200 x 48 px box with its
+      proportions kept (`merchantLogo`), not set to a fixed width: its shape is
+      never recorded, and a fixed 128 px width made a square mark several times
+      taller than a wordmark. Word-engine Outlook ignores the box, so it gets a
+      copy fixed to the 48 px height. The gallery's "Store logo sizing" group
+      shows wide, square and tall logos. **No "Powered by StoreMink" line on merchant mail** (owner's
+      decision): the store is the sender, so StoreMink's name does not appear.
+      ★ **NO MERCHANT COLOUR, deliberately.** The old shell darkened a store's
+      primary colour into the button and card edge (`emailAccentColor`); a
+      light brand hue darkened until white text passes contrast turns muddy,
+      which reads as cheap rather than branded. Identity is the logo or the
+      name, and `emailAccentColor`, the accent arguments and the coloured card
+      edge are gone.
+      ★ **NO LONG DASH IN EMAIL COPY** (owner's rule): rendered subjects,
+      preheaders and bodies never contain U+2014 or U+2013; ranges read "5 to
+      7 working days". `lib/email/no-long-dash.test.ts` renders every mailer
+      in `lib/email/email-samples.ts` (including every registry event's
+      default template, both audiences), and fails on either character or on a
+      mailer that skips the standard frame. AI-drafted coupon copy is cleaned
+      by `withoutLongDashes` before the merchant sees it.
+      ★ Template copy keeps its class vocabulary (`email-lead`,
+      `email-details`, `email-detail`, `email-label`, `email-code`,
+      `email-note`), because merchants' saved templates contain those names:
+      restyle them, never rename one. One class was added, `email-checklist`: a
+      list whose items are a linked title, a line break and a sentence, which
+      `inlineEmailStyles` EXPANDS into the circled-tick rows (a tick cannot be
+      drawn with inline styles on a list item). The store welcome
+      (`store.created`) uses it for the required go-live checklist.
+      ★ The preferences link in a team footer appears only when the event can
+      actually be switched off (`configurable !== false`).
+      ★ Outlook: the head carries an `mso` override (Arial body, Georgia for
+      `.sm-serif`) because Word-engine Outlook uses only the first family in a
+      stack. The circled tick is a bordered cell, so it survives blocked
+      images; Outlook draws it square. Mobile rules at 620 px drop the outer
+      gutter and shrink the headline. `wrapBrandedEmail`
+      (`lib/email/layout.ts`) is deleted. Every mailer has a PURE builder
+      returning `{subject, html}`; **`npm run email:gallery`** renders them all
+      into `.email-gallery/` (gitignored; open `index.html`) so a design change
+      can be seen across every message at once. No merchant action changes, so
+      no Help Centre update.
     - **Email is a QUEUE, never an inline send** (`notification_email_queue`):
       the fan-out enqueues, `lib/email/notification-worker.ts` drains it from
       `/api/cron/send-emails`. A Resend round-trip must never sit on a
@@ -15306,6 +15536,13 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
 > and measured results; this is a memory/throughput tradeoff, not a RAM ceiling.
 > This is internal development tooling; customer flows and Help Centre content
 > are unchanged.
+> ★ 2026-10-08: measured again on the 8 GB M2 Air — swap 15.2 GB of 16 GB used
+> before the dev server started, Chrome 83 renderers, the editor's plugin host
+> 1 GB, `next-server` 2.2 GB almost entirely paged out. The hangs are swap
+> thrashing and the "Rendering" badge is the dashboard's own 20-second list
+> polling. Dev now sets `webpackMemoryOptimizations` on ≤12 GB machines, polls
+> three times slower, and the runner's swap warning names the memory holders.
+> Full table: `docs/local-dev-performance.md` § October 8.
 > ★ When Turbopack IS the bundler on a small machine, its dev filesystem cache
 > (a default since Next 16.1) is switched off: its periodic write and compaction
 > of a multi-GB `.next/dev/cache` competes with the swap file for one SSD, and was
@@ -15385,6 +15622,7 @@ npm run test        # vitest run --coverage
 npm run test:shuffle # ★ the SAME suite in a different (fixed-seed) order — the only
                     #   thing that catches order-dependent tests. CI runs it.
 npm run test:watch  # vitest watch
+npm run email:gallery # render every email into .email-gallery/ (open index.html)
 npm run format      # prettier --write
 npm run theme-studio:model-check -- --dry-run # resolve the two task-scoped
                     #   Gemini model ids without network; without --dry-run it calls the
@@ -15678,30 +15916,97 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   by `_recompute_stock_aggregate` on every sale and would claim a content change
   per purchase. Pages use `published_at`, not `updated_at`, because draft
   autosave advances `updated_at` while public HTML remains unchanged.
-- **A NEW STORE IS NOT INDEXABLE UNTIL ITS OWNER PUBLISHES SOMETHING**
-  (`lib/store/launch.ts`). `isStoreSearchIndexable()` is the one shared gate for
-  storefront metadata, robots, sitemaps and search-engine notifications. At
-  creation a store is pure theme seed — the same
-  homepage, ~17 content pages and sample catalogue as every other store on that
-  template — and `createStore` used to submit exactly that to Google + IndexNow
-  the moment it existed. Mass-submitting near-duplicate placeholder stores spends
-  the whole `*.storemink.com` domain's reputation. `stores.settings.launched`
-  gates metadata + `sitemap.ts`; `notifyStoreContentPublished()` launches from all
-  page/product/blog publication paths (including bulk products, bulk blogs,
-  customer direct-publish and approval), not just the single-row editors, then
-  performs IndexNow + Google coverage out of band. Unlaunched/demo storefront
-  pages emit `noindex, nofollow` and stay out of their empty sitemap, while
-  `robots.ts` permits crawling of public pages so Google can observe `noindex`
-  and remove stale seed URLs; unknown hosts still use `Disallow: /`.
-  **Absence of the flag means
-  LAUNCHED** —
-  pre-existing stores have no key and treating them as unlaunched would deindex
-  live shops; `createStore` writes `launched: false` explicitly. Demo stores
-  (`settings.demo`) stay permanently out. Theme SAMPLE products now seed as
-  **drafts** (`applyTheme`'s `publishSampleProducts`, true only for demo stores):
-  published, every store on a theme served the same product pages whose own copy
-  says "replace it with your own".
-  Full audit, fixes and the re-index cadence: `docs/seo-action-plan.md`.
+- **★★ A NEW STORE IS CLOSED UNTIL ITS OWNER PRESSES GO LIVE (2026-10-07).**
+  `stores.settings.launched` is ONE flag behind two things: search
+  indexability (as before) and, now, the **storefront password page**.
+  `isStoreLaunched` / `isDemoStore` / `isStoreSearchIndexable` /
+  `isStorefrontGated` are pure predicates in `lib/store/launch-state.ts` (no
+  imports, so the host resolver can read them without a cycle; `launch.ts`
+  re-exports them). At creation a store is pure theme seed — the same
+  homepage, ~17 content pages and sample catalogue as every other store on
+  that template — and until this change the flag flipped on the FIRST PUBLISH
+  of anything (page, product, blog, CSV import, Mink publication), so a shop
+  with no refund policy and the theme's placeholder homepage went public, and
+  into Google, the moment its first product was saved.
+  ★ **`markStoreLaunched()` has exactly one caller now: `launchStore` in
+  `app/actions/launch-actions.ts`**, which re-runs the go-live checklist
+  server-side (superadmin only — opening a shop is the owner's call, the §22
+  owner-only rule), sets the flag, refreshes `STORE_TAG`, emits
+  `store.launched` (both channels, not configurable) and only THEN calls
+  `notifyStoreContentPublished()`. That hook no longer launches; on an
+  unlaunched store it returns without submitting anything, because the pages
+  behind the password redirect and robots/sitemap already say `noindex`.
+  ★ **The checklist is predicates over real rows, never tick boxes**
+  (`lib/store/launch-checklist-rules.ts` pure + `launch-checklist.ts` reads).
+  REQUIRED: one published non-sample product (samples are named "… (Sample)"
+  and seed as drafts); business name, address, email and phone in
+  `store_billing_settings`; Terms, Refund & Cancellation, Shipping and Privacy
+  policies published (the Settings → Policies registry, pinned equal by test);
+  Shipping & delivery saved once. RECOMMENDED, never blocking: homepage edited
+  since seeding (updated_at more than a minute after created_at), logo, sample
+  products removed, payments connected (COD works out of the box, and Free has
+  no online payments, so requiring it would mean no Free store ever opens),
+  GSTIN, custom domain. Items on a plan that lacks the feature link to Plans.
+  ★ **The gate lives in `requireStorefrontStore()`**, not the proxy (no DB
+  there) and not the layout (a layout redirect does not abort a concurrently
+  rendering child page — the §3 rule). For a gated store it dynamically
+  imports `lib/store/storefront-access.ts`, whose request-memoized
+  `storefrontAccess()` answers `open | unlocked | locked`: unlocked for a
+  visitor carrying a valid `sm_store_pass` grant, or for the Website
+  Builder's preview iframe (`x-sm-preview` header AND an admin session);
+  locked otherwise → `redirect("/password")`. ★★ THE OWNER IS GATED TOO
+  (owner's decision, 2026-10-08): a first version let any signed-in admin
+  through, which hid the password page from the one person who needs to
+  understand it. Shopify's rule applies — everyone, owner included, types
+  the password, which sits on Dashboard Home beside Go live. The builder
+  preview is the one exception, or the builder is blind until launch. The layout renders a locked visitor a minimal
+  shell (brand tokens, no header/footer/cart, since every link in them would
+  lead back to the password page). `/password` (`(storefront)/(pages)/password`,
+  reserved in `RESERVED_PAGE_SLUGS` and `STOREFRONT_CODE_ROUTES`) is the one
+  storefront page that does NOT call `requireStorefrontStore()`.
+  ★ **The password is a secret, and `stores.settings` is anon-readable**
+  (§5.9), so it lives in service-only `store_access`
+  (`20261007_0170_store_access`; `password`, `password_version`), created on
+  first read with INSERT … ON CONFLICT DO NOTHING + read-the-winner. The grant
+  (`lib/store/storefront-grant.ts`) is an HMAC token bound to store id +
+  password version, keyed by `STOREFRONT_PASSWORD_SECRET` or derived from
+  `CRON_SECRET` with a purpose label (the Theme Studio preview-token
+  construction), 7-day host-only httpOnly cookie; regenerating the password
+  bumps the version and every old grant dies on the next request.
+  `unlockStorefront` (`app/actions/storefront-access-actions.ts`) is
+  host-derived, rate-limited per visitor and per store, compares in constant
+  time, and only follows a same-origin `next`.
+  ★ **Every public WRITE refuses while locked**: `storefrontClosedRefusal()`
+  sits beside `demoStoreRefusal()` in placeOrder, enquiries, newsletter,
+  reviews, blog reactions/comments, customer blog submissions and account
+  creation; `/api/storefront/search` answers empty; `getCheckoutConfig` carries
+  `closed`. A visitor who entered the password is NOT refused — that is the
+  owner testing their own checkout, which is what the password is for.
+  ★ **Absence of the flag means LAUNCHED** — pre-existing stores have no key,
+  and treating them as unlaunched would now put a password page in front of
+  live shops; `createStore` writes `launched: false` explicitly. Migration 0170
+  also opens any `launched: false` store that has ever taken an order, so no
+  trading shop wakes up behind a password. Demo stores (`settings.demo`) are
+  never gated and never indexed. Theme SAMPLE products seed as **drafts**
+  (`applyTheme`'s `publishSampleProducts`, true only for demo stores).
+  **Dashboard Home is ONE card while the store is closed** (`setup-guide.tsx`,
+  the Shopify setup-guide shape, redesigned 2026-10-08 after the first version
+  ran to three cards and six tiles): a slim `PlanTag` beside the greeting
+  ("Free plan · Upgrade", with the next plan's unlocks in its title, derived
+  from `PLAN_LIMITS` via `lib/plans/upgrade-summary.ts`); then the card whose
+  HEAD is the store password (Copy / New / Preview) and the Go live button,
+  and whose body is the required tasks as an accordion — exactly one open, the
+  first unfinished, showing its description and a button that goes there
+  (`LaunchChecklistItem.action`). **Recommended renders only once every
+  required task is done, and folds** (collapsed by default with a count).
+  Mink's prompt, the six setup tiles and "All caught up" return once the store
+  is open. `setup-guide.test.tsx` pins the open-first-unfinished, hidden-then-
+  folded and owner-only rules. The `store.created` welcome says the store is
+  READY, not live, and points at the checklist. Help:
+  `20261007_0171_launch_checklist_help` edits the signup and setup guides in
+  place; `20261008_0173_owner_password_help` corrects the setup guide to say
+  the owner enters the password too. Full audit of the SEO half:
+  `docs/seo-action-plan.md`.
 - **StoreMink's own brand identity for schema lives in
   `lib/seo/brand-identity.ts`** — one Organization node (`sameAs` for the
   LinkedIn/YouTube/Instagram profiles, `contactPoint`, `address`) emitted from

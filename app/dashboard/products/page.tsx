@@ -133,12 +133,6 @@ export interface TaxClassOption {
   rate: number;
 }
 
-export interface CardColorOption {
-  id: string;
-  name: string;
-  hex: string;
-}
-
 export default async function ProductsPage({
   searchParams,
 }: {

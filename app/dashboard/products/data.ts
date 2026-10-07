@@ -2,35 +2,23 @@ import "server-only";
 
 import { and, asc, count, eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import {
-  cardColors,
-  categories,
-  products,
-  stores,
-  taxClasses,
-} from "@/drizzle/schema";
+import { categories, products, stores, taxClasses } from "@/drizzle/schema";
 import { getActingStoreId } from "@/app/dashboard/lib/access";
 import { resolveStoreSettings } from "@/lib/settings/registry";
 import { PRODUCT_COLUMNS, VARIANT_COLUMNS } from "./columns";
 import { productVariants } from "@/drizzle/schema";
-import type {
-  Product,
-  CategoryOption,
-  CardColorOption,
-  TaxClassOption,
-} from "./page";
+import type { Product, CategoryOption, TaxClassOption } from "./page";
 import { storeHasAnalyticsFeature } from "@/lib/analytics/store-entitlement";
 import { effectivePlan, PLAN_LIMITS, type Plan } from "@/lib/plans";
 
 /**
- * The option lists (categories, card colours, tax classes) + the store default
+ * The option lists (categories, tax classes) + the store default
  * for the "track inventory" checkbox — everything the editor needs to CREATE a
  * new product (no product row yet). Used by the full-page New-product route,
  * mirroring the list page's own option loading.
  */
 export async function getProductCreateData(): Promise<{
   categories: CategoryOption[];
-  colors: CardColorOption[];
   taxClasses: TaxClassOption[];
   defaultTrackInventory: boolean;
   canUseGrossMargin: boolean;
@@ -56,11 +44,6 @@ export async function getProductCreateData(): Promise<{
       .from(categories)
       .where(eq(categories.storeId, storeId))
       .orderBy(asc(categories.sortOrder), asc(categories.name));
-    const colorRows = await db
-      .select({ id: cardColors.id, name: cardColors.name, hex: cardColors.hex })
-      .from(cardColors)
-      .where(eq(cardColors.storeId, storeId))
-      .orderBy(asc(cardColors.sortOrder), asc(cardColors.name));
     const taxClassRows = await db
       .select({
         id: taxClasses.id,
@@ -102,7 +85,6 @@ export async function getProductCreateData(): Promise<{
 
     return {
       categories: categoryRows as CategoryOption[],
-      colors: colorRows as CardColorOption[],
       taxClasses: taxClassRows as TaxClassOption[],
       defaultTrackInventory: Boolean(settings["inventory.simpleTrackDefault"]),
       canUseGrossMargin,
@@ -116,15 +98,13 @@ export async function getProductCreateData(): Promise<{
 
 /**
  * Everything the product editor needs for one product: the product (with its
- * category + variants) plus the category, card-colour and tax-class option
- * lists. Returns null if the product doesn't exist for this store. Service
+ * category + variants) plus the category and tax-class option lists. Returns null if the product doesn't exist for this store. Service
  * scope + explicit store filter (the editor needs drafts too), mirroring the
  * list page.
  */
 export async function getProductEditData(id: string): Promise<{
   product: Product;
   categories: CategoryOption[];
-  colors: CardColorOption[];
   taxClasses: TaxClassOption[];
   canUseGrossMargin: boolean;
 } | null> {
@@ -162,15 +142,6 @@ export async function getProductEditData(id: string): Promise<{
         .from(categories)
         .where(eq(categories.storeId, storeId))
         .orderBy(asc(categories.sortOrder), asc(categories.name));
-      const colorRows = await db
-        .select({
-          id: cardColors.id,
-          name: cardColors.name,
-          hex: cardColors.hex,
-        })
-        .from(cardColors)
-        .where(eq(cardColors.storeId, storeId))
-        .orderBy(asc(cardColors.sortOrder), asc(cardColors.name));
       const taxClassRows = await db
         .select({
           id: taxClasses.id,
@@ -204,7 +175,6 @@ export async function getProductEditData(id: string): Promise<{
       return {
         product,
         categories: categoryRows as CategoryOption[],
-        colors: colorRows as CardColorOption[],
         taxClasses: taxClassRows as TaxClassOption[],
         canUseGrossMargin,
       };

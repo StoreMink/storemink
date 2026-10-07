@@ -31,6 +31,25 @@ export interface ProductOption {
   values: string[];
   /** Hex colour per value, for a colour axis. Absent = shown as chips. */
   swatches?: Record<string, string>;
+  /**
+   * Photos per value, for the colour axis: "Black" → its photos, shared by
+   * every size of black. Uploaded once per colour instead of once per
+   * variant. Absent = the product's (or each variant's) photos are used.
+   */
+  images?: Record<string, string[]>;
+}
+
+/** Photos one colour value may carry. */
+export const MAX_VALUE_IMAGES = 10;
+
+/** A stored image reference: an absolute https URL or a site path. */
+function safeImageRef(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  if (!v || v.length > 2000 || /\s/.test(v)) return null;
+  if (v.startsWith("https://") || (v.startsWith("/") && !v.startsWith("//")))
+    return v;
+  return null;
 }
 
 const HEX_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
@@ -96,7 +115,28 @@ export function normalizeOptions(
         }
       }
     }
-    options.push(swatches ? { name, values, swatches } : { name, values });
+    // Photos per value: kept only for a value the option actually has, at
+    // most MAX_VALUE_IMAGES each, and only safe references. Ownership (the
+    // URL is this store's) is checked by the save, like every product image.
+    let images: Record<string, string[]> | undefined;
+    if (rec.images && typeof rec.images === "object") {
+      for (const [value, list] of Object.entries(
+        rec.images as Record<string, unknown>,
+      )) {
+        const match = values.find((v) => key(v) === key(value));
+        if (!match || !Array.isArray(list)) continue;
+        const refs = [
+          ...new Set(list.map(safeImageRef).filter((u): u is string => !!u)),
+        ].slice(0, MAX_VALUE_IMAGES);
+        if (refs.length) (images ??= {})[match] = refs;
+      }
+    }
+    options.push({
+      name,
+      values,
+      ...(swatches ? { swatches } : {}),
+      ...(images ? { images } : {}),
+    });
   }
   if (options.length > MAX_OPTIONS)
     return { error: `A product can have at most ${MAX_OPTIONS} options.` };
@@ -358,6 +398,55 @@ export function initialVariant<V extends { id: string; available: boolean }>(
     if (requested) return requested;
   }
   return variants.find((v) => v.available) ?? variants[0];
+}
+
+/**
+ * The option whose values carry photos — the colour axis: the first option
+ * that already has photos, else the swatch option, else one NAMED like a
+ * colour. -1 when the product has none (a size-only product).
+ */
+export function photoAxis(options: readonly ProductOption[]): number {
+  const withImages = options.findIndex(
+    (o) => !!o.images && Object.keys(o.images).length > 0,
+  );
+  if (withImages >= 0) return withImages;
+  const swatched = swatchAxis(options);
+  if (swatched >= 0) return swatched;
+  return options.findIndex((o) => /colou?r|shade/i.test(o.name));
+}
+
+/** The photos for a variant's colour, or [] when it has none of its own. */
+export function valueImages(
+  options: readonly ProductOption[],
+  optionValues: readonly string[] | null | undefined,
+): string[] {
+  const axis = photoAxis(options);
+  if (axis < 0) return [];
+  const value = optionValues?.[axis];
+  return (value && options[axis].images?.[value]) || [];
+}
+
+/**
+ * The photos a variant shows: its OWN photos when it has any (an exception
+ * the merchant set on that one variant), else its colour's photos, else none
+ * (the caller falls back to the product gallery).
+ */
+export function photosForVariant(
+  options: readonly ProductOption[],
+  variant:
+    | { images?: string[] | null; option_values?: string[] | null }
+    | null
+    | undefined,
+): string[] {
+  if (!variant) return [];
+  const own = (variant.images ?? []).filter(Boolean);
+  if (own.length) return own;
+  return valueImages(options, variant.option_values);
+}
+
+/** Every photo the options reference, for ownership checks and clean-up. */
+export function optionImageUrls(options: readonly ProductOption[]): string[] {
+  return options.flatMap((o) => Object.values(o.images ?? {}).flat());
 }
 
 /** The option that is shown as colour swatches, if any. */
