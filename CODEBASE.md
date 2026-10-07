@@ -7924,6 +7924,36 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     client-safe, India-first). `location-picker.tsx` (the Google-Maps-assisted
     address form) remains in the directory, unused by the wizard, for the day
     the address editor wants it.
+    **⚠ PHONE VERIFICATION DOES NOT WORK FOR REAL NUMBERS ON `localhost`,
+    AND THAT IS GOOGLE'S DOING.** Firebase's Auth service stopped accepting
+    `verifyPhoneNumber` from `localhost` in July 2024 (firebase-js-sdk#8387;
+    the maintainer's guidance is fictional test numbers). The backend answers
+    `INVALID_APP_CREDENTIAL` with no further detail, which the wizard renders
+    as "The security check didn't complete" — so a developer reads it as a
+    reCAPTCHA fault and checks authorized domains, keys and billing, all of
+    which are fine (verified 2026-10-07: `localhost` IS authorized, India IS
+    the allowed SMS region, billing IS on, and a configured test number goes
+    straight through). **The fix is a second local root: `localtest.me`**
+    (`LOCAL_DEV_ROOT` in `lib/store/host.ts`, overridable with
+    `NEXT_PUBLIC_LOCAL_DEV_ROOT`) — public DNS that resolves to 127.0.0.1 with
+    every subdomain included, so `http://localtest.me:3000/signup` is the same
+    server on a hostname Firebase accepts, and `{slug}.localtest.me:3000` is a
+    store. It is classified exactly like `localhost` (platform at the apex,
+    `pos.`/`help.`/`themes.` reserved, stores on subdomains) and it is an
+    AUTHORIZED DOMAIN on the staging Identity Platform project (added
+    2026-10-08; one entry covers every subdomain). ★ Unlike `localhost`, it is
+    a real registrable domain, so `cookieDomainForHost` returns
+    `.localtest.me` and the signup → dashboard session handoff works locally
+    the way it does on `.storemink.com` — the "flaky on localhost" handoff
+    was browsers refusing to set a `Domain=.localhost` cookie. The phone step
+    shows a localhost-only note linking to the same page on that host, the
+    dev runner prints it at startup, and the catch logs the raw Firebase
+    error. The staging project's fictional test numbers (Identity Platform →
+    Authentication → Sign-in method → Phone, e.g. +91 99999 99999 / 999999)
+    still work on either host. Deployed hosts are unaffected. ⚠ Verified by
+    DNS and server routing; the real-number SMS on `localtest.me` was not
+    exercised in a browser because the desktop app's preview pane blocks
+    assets from any origin but the preview's own.
     **★★ STORE, OWNER AND INVOICE PROFILE ARE ONE TRANSACTION.** They were
     three `withService` calls with a hand-written rollback (delete the store if
     a later insert failed), and a rollback that is itself a network call can

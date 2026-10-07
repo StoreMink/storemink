@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { PLAN_LIMITS, effectivePlan } from "@/lib/plans";
 import { parseHost } from "./resolve";
-import { isPosHost, isThemesHost } from "./host";
+import {
+  cookieDomainForHost,
+  isHelpHost,
+  isPosHost,
+  isThemesHost,
+} from "./host";
 
 // parseHost() is the pure core of tenant resolution: it maps a raw Host header
 // to "which store (or the platform) does this request belong to". Default
@@ -147,5 +152,31 @@ describe("custom domain entitlement", () => {
         comp_expires_at: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("loopback dev root (localtest.me)", () => {
+  // Firebase refuses phone verification from the hostname `localhost`
+  // (firebase-js-sdk#8387); this public loopback root is the way to exercise
+  // real-number signup locally, so it must classify exactly like localhost.
+  it("is the platform at the apex and a store on a subdomain", () => {
+    expect(parseHost("localtest.me:3000").type).toBe("platform");
+    expect(parseHost("acme.localtest.me:3000")).toEqual({
+      type: "store-subdomain",
+      slug: "acme",
+    });
+  });
+
+  it("keeps the reserved product hosts out of the store escape hatch", () => {
+    expect(parseHost("pos.localtest.me:3000").type).toBe("platform");
+    expect(isPosHost("pos.localtest.me:3000")).toBe(true);
+    expect(isHelpHost("help.localtest.me:3000")).toBe(true);
+    expect(isThemesHost("themes.localtest.me:3000")).toBe(true);
+  });
+
+  it("shares cookies across its subdomains, unlike localhost", () => {
+    expect(cookieDomainForHost("acme.localtest.me:3000")).toBe(".localtest.me");
+    expect(cookieDomainForHost("localtest.me:3000")).toBe(".localtest.me");
+    expect(cookieDomainForHost("acme.localhost:3000")).toBeUndefined();
   });
 });

@@ -246,6 +246,12 @@ if (heapMb > 0) {
 console.log(
   `[dev] Bundler: ${usingTurbopack ? "Turbopack" : "Webpack"}; preserving compilation caches.`,
 );
+// Firebase refuses phone verification from the hostname `localhost` for real
+// numbers (lib/store/host.ts → LOCAL_DEV_ROOT). The loopback root below is
+// public DNS for 127.0.0.1 and is an authorized domain on the staging project.
+console.log(
+  `[dev] Phone sign-up with a REAL number: use http://${process.env.NEXT_PUBLIC_LOCAL_DEV_ROOT || "localtest.me"}:<port> (stores at {slug}.that host). localhost only accepts Firebase test numbers.`,
+);
 if (usingTurbopack) {
   if (fsCache.enabled) {
     console.log(
