@@ -47,7 +47,7 @@ export async function LaunchChecklistCard() {
   return (
     <section className="dash-card flex flex-col gap-4 p-5">
       <header className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between gap-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <h2 className="text-[16px] font-bold tracking-tight text-[var(--dash-text)]">
             Open your store
           </h2>

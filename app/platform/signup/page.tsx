@@ -569,7 +569,10 @@ export default function SignupPage() {
             </button>
           )}
           <p className="text-gray-500">
-            Already selling?{" "}
+            {/* The question is decoration on a phone: with Start over beside
+                it the header runs out of width at 375px. The link is the
+                part that matters. */}
+            <span className="hidden sm:inline">Already selling? </span>
             <Link
               href="/platform/login"
               className="text-primary hover:underline"
