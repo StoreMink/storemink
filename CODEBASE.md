@@ -15472,6 +15472,13 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
 > and measured results; this is a memory/throughput tradeoff, not a RAM ceiling.
 > This is internal development tooling; customer flows and Help Centre content
 > are unchanged.
+> ★ 2026-10-08: measured again on the 8 GB M2 Air — swap 15.2 GB of 16 GB used
+> before the dev server started, Chrome 83 renderers, the editor's plugin host
+> 1 GB, `next-server` 2.2 GB almost entirely paged out. The hangs are swap
+> thrashing and the "Rendering" badge is the dashboard's own 20-second list
+> polling. Dev now sets `webpackMemoryOptimizations` on ≤12 GB machines, polls
+> three times slower, and the runner's swap warning names the memory holders.
+> Full table: `docs/local-dev-performance.md` § October 8.
 > ★ When Turbopack IS the bundler on a small machine, its dev filesystem cache
 > (a default since Next 16.1) is switched off: its periodic write and compaction
 > of a multi-GB `.next/dev/cache` competes with the swap file for one SSD, and was

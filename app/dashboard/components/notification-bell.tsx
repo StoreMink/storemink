@@ -23,7 +23,8 @@ import {
   type NotificationRow,
 } from "@/app/actions/notification-inbox-actions";
 
-const POLL_MS = 45_000;
+// Three times slower in development, for realtime-refresher.tsx's reason.
+const POLL_MS = 45_000 * (process.env.NODE_ENV === "development" ? 3 : 1);
 
 const SEVERITY_DOT: Record<string, string> = {
   info: "bg-sky-500",

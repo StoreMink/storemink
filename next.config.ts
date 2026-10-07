@@ -311,6 +311,17 @@ export default function configForPhase(phase: string): NextConfig {
 
   return {
     ...nextConfig,
+    experimental: {
+      ...nextConfig.experimental,
+      // Next's documented low-memory mode for Webpack (memory-usage.md:
+      // "reduces max memory usage but may increase compilation times by a
+      // slight amount"; "considered to be low-risk"). On an 8 GB machine the
+      // dev server's worker was measured at 2.2 GB, nearly all of it swapped
+      // out, so the trade is the right one there and only there — a machine
+      // with headroom keeps the faster default. Dev-only: production builds
+      // run on Cloud Build with the default bundler.
+      webpackMemoryOptimizations: lowMemory,
+    },
     // Explicit Turbopack remains available; the callback below is Webpack-only.
     turbopack: {},
     // Keep Next's 60-second/five-page retention. The former 25-second/two-page

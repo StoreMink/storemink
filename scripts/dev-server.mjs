@@ -222,7 +222,55 @@ function memoryPreflight() {
   console.log(
     "[dev]    Close unused heavy apps and restart the dev server if pressure is high. Keep the warm cache.",
   );
+  for (const line of memoryHogs()) console.log(`[dev]    ${line}`);
   console.log("");
+}
+
+// The apps holding the most memory, grouped by application. `ps` RSS alone is
+// misleading on a swapped machine — a 2 GB process whose pages are all
+// compressed reports a few MB — so this reads `top`'s MEM column (which counts
+// compressed pages) and sums it per application. `top` truncates command names
+// ("Google Chrome He…"), so names are grouped by their leading word(s).
+// Measured on an 8 GB Mac: 42 Chrome processes and the editor's plugin host
+// were the bulk of 15 GB of swap before the dev server had started. A warning
+// that names the culprit is one somebody can act on; "swap is 93% full" is one
+// they read past.
+function memoryHogs() {
+  try {
+    const raw = execFileSync(
+      "top",
+      ["-l", "1", "-o", "mem", "-n", "80", "-stats", "command,mem"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 },
+    );
+    const app = (command) => {
+      if (/^Google Chrome/.test(command)) return "Google Chrome";
+      if (/^(Code|Electron)\b/.test(command)) return "Visual Studio Code";
+      if (/^Claude/.test(command)) return "Claude";
+      if (/^(node|next-server)/.test(command))
+        return "node (dev server, tools)";
+      return command.replace(/ Helper.*$/, "").trim();
+    };
+    const totals = new Map();
+    const counts = new Map();
+    for (const line of raw.split("\n")) {
+      const m = /^(.*?)\s+(\d+(?:\.\d+)?)([KMG])\+?\s*$/.exec(line.trim());
+      if (!m) continue;
+      const mb =
+        Number(m[2]) * (m[3] === "G" ? 1024 : m[3] === "K" ? 1 / 1024 : 1);
+      const name = app(m[1]);
+      totals.set(name, (totals.get(name) ?? 0) + mb);
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return [...totals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(
+        ([name, mb]) =>
+          `${(mb / 1024).toFixed(1)} GB  ${name}${counts.get(name) > 1 ? ` (${counts.get(name)} processes)` : ""}`,
+      );
+  } catch {
+    return [];
+  }
 }
 
 memoryPreflight();
