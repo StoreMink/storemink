@@ -14,7 +14,7 @@ import { recordSignupConsent } from "@/lib/legal/store";
 import { applyTheme } from "@/lib/themes/apply";
 import { DEFAULT_THEME_ID, isThemeSelectable } from "@/lib/themes/meta";
 import { getThemeCatalog } from "@/lib/themes/runtime-registry";
-import { COUNTRIES } from "@/lib/countries";
+import { COUNTRIES, DEFAULT_COUNTRY } from "@/lib/countries";
 
 // Subdomains we can never hand out (platform-reserved or operational).
 const RESERVED = new Set([
@@ -197,17 +197,21 @@ export interface CreateStoreInput {
   firstName?: string;
   /** Owner's last name (admins.last_name; optional). */
   lastName?: string;
-  /** ISO country code the merchant sells from (settings.business.country). */
+  /** ISO country code the merchant sells from (settings.business.country).
+   *  Defaults to the platform's home country when absent — the wizard
+   *  pre-fills it from the verified phone's dial code. */
   country?: string;
-  /** Street/building line for the invoice address. Required. */
+  /**
+   * The business address. ★ OPTIONAL AT SIGNUP since 2026-10-07: it prints on
+   * invoices and decides GST place of supply, and a store has no invoice
+   * until its first order. The go-live checklist (lib/store/launch-checklist-
+   * rules.ts) requires it before the store can open, which is where it is
+   * actually needed. Whatever IS supplied is stored exactly as before.
+   */
   addressLine1?: string;
-  /** Suite, floor, landmark, etc. Optional because many addresses have none. */
   addressLine2?: string;
-  /** City the merchant sells from (settings.business.city). Required. */
   city?: string;
-  /** State, province or region. Required. */
   state?: string;
-  /** Postal or PIN code. Required. */
   postalCode?: string;
   /** Pin coordinates, when captured. Stored as numbers, not strings, so the
    *  eventual "stores near you" query doesn't have to parse them back. */
@@ -224,9 +228,18 @@ export interface CreateStoreResult {
 /**
  * Provision a new store. Called AFTER the owner has phone-OTP-verified (so
  * there's an authenticated session — see the signup wizard). Creates the store,
- * makes the caller its superadmin (recording their name + selling location),
- * and returns the slug + id. Runs the writes via the service role because a
- * brand-new owner isn't yet a superadmin of any store (so RLS would block them).
+ * makes the caller its superadmin (recording their name + selling country),
+ * seeds the invoice profile, and returns the slug + id. Runs the writes via the
+ * service role because a brand-new owner isn't yet a superadmin of any store
+ * (so RLS would block them).
+ *
+ * ★★ THE THREE ROWS ARE ONE TRANSACTION. They used to be three `withService`
+ * calls with a hand-written rollback (delete the store if the admin or billing
+ * insert failed). A rollback that is itself a network call can fail, and when
+ * it did the slug was burned: a half-made store nobody owned, blocking every
+ * retry with "that name is not available". One transaction cannot leave that
+ * behind — a failed insert rolls back the store row with it, and the slug is
+ * free again on the next attempt.
  */
 export async function createStore(
   input: CreateStoreInput,
@@ -278,47 +291,46 @@ export async function createStore(
     return { error: "This account already has a store." };
   }
 
-  // Where the merchant sells from — captured at signup, non-secret (it prints on
-  // invoices later), so it lives in the anon-readable stores.settings jsonb
-  // under `business` (never a secret — convention #9).
-  const country = (input.country || "").trim().slice(0, 2).toUpperCase();
+  // Where the merchant sells from — non-secret (it prints on invoices later),
+  // so it lives in the anon-readable stores.settings jsonb under `business`
+  // (never a secret — convention #9). Only the country is certain at signup;
+  // the address arrives later from Taxes & invoices and the go-live checklist
+  // refuses to open the store without it.
+  const countryInput = (input.country || "").trim().slice(0, 2).toUpperCase();
+  const country = COUNTRIES.some((c) => c.code === countryInput)
+    ? countryInput
+    : DEFAULT_COUNTRY;
   const addressLine1 = (input.addressLine1 || "").trim().slice(0, 160);
   const addressLine2 = (input.addressLine2 || "").trim().slice(0, 160);
   const city = (input.city || "").trim().slice(0, 80);
   const state = (input.state || "").trim().slice(0, 80);
   const postalCode = (input.postalCode || "").trim().slice(0, 20);
 
-  // Required server-side, not just in the wizard: a client can post whatever it
-  // likes, and every invoice this store ever prints carries this address.
-  if (!country) return { error: "Please choose the country you sell from." };
-  if (!addressLine1)
-    return { error: "Please enter your street and building address." };
-  if (!city) return { error: "Please enter the city you sell from." };
-  if (!state) return { error: "Please enter your state or province." };
-  if (!postalCode) return { error: "Please enter your postal or PIN code." };
-
   const countryName =
     COUNTRIES.find((candidate) => candidate.code === country)?.name ?? country;
-  const formattedAddress = [
-    addressLine1,
-    addressLine2,
-    `${city}, ${state} ${postalCode}`,
-    countryName,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const hasAddress = Boolean(addressLine1 || city || state || postalCode);
+  const formattedAddress = hasAddress
+    ? [
+        addressLine1,
+        addressLine2,
+        [city, [state, postalCode].filter(Boolean).join(" ")]
+          .filter(Boolean)
+          .join(", "),
+        countryName,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : null;
 
-  const business: Record<string, string | number> = {
-    country,
-    addressLine1,
-    city,
-    state,
-    postalCode,
-    // Keep one display-ready form for existing readers while the structured
-    // fields remain the canonical, editable source.
-    address: formattedAddress,
-  };
+  const business: Record<string, string | number> = { country };
+  if (addressLine1) business.addressLine1 = addressLine1;
   if (addressLine2) business.addressLine2 = addressLine2;
+  if (city) business.city = city;
+  if (state) business.state = state;
+  if (postalCode) business.postalCode = postalCode;
+  // Keep one display-ready form for existing readers while the structured
+  // fields remain the canonical, editable source.
+  if (formattedAddress) business.address = formattedAddress;
 
   // Coordinates are optional — they come from the map pin or the browser's
   // geolocation, and a merchant who declines the permission prompt must still
@@ -336,11 +348,18 @@ export async function createStore(
     business.lng = lng;
   }
 
-  // Create the store.
+  // Make the owner the store's superadmin, recording their name (falls back to
+  // the email local-part so admins.first_name is never blank).
+  const firstName =
+    (input.firstName || "").trim() ||
+    (user.email ? user.email.split("@")[0] : "Owner");
+  const lastName = (input.lastName || "").trim() || null;
+
+  // Create the store, its owner and its invoice profile — one transaction.
   let store: { id: string; slug: string };
   try {
-    const [created] = await withService((db) =>
-      db
+    store = await withService(async (db) => {
+      const [created] = await db
         .insert(stores)
         .values({
           slug,
@@ -350,42 +369,24 @@ export async function createStore(
           settings: {
             template,
             brand: { name: rawName.trim() },
-            // Not indexable until the merchant publishes something of their
-            // own. Written EXPLICITLY false because absence means "launched" —
-            // stores created before this flag existed are already in Google,
-            // and treating a missing value as unlaunched would deindex live
-            // shops. See lib/store/launch.ts.
+            // CLOSED until the owner completes the go-live checklist and
+            // presses Go live: visitors see a password page, nothing is
+            // indexed, and every public write is refused. Written EXPLICITLY
+            // false because absence means "launched" — stores created before
+            // this flag existed are already trading and in Google, and treating
+            // a missing value as unlaunched would put a password page in front
+            // of live shops. See lib/store/launch-state.ts.
             launched: false,
-            ...(Object.keys(business).length ? { business } : {}),
+            business,
           },
         })
-        .returning({ id: stores.id, slug: stores.slug }),
-    );
-    store = created;
-  } catch (err) {
-    if (isUniqueViolation(err)) {
-      return { error: "That name was just taken — try another." };
-    }
-    console.error(
-      "createStore (store insert):",
-      err instanceof Error ? err.message : err,
-    );
-    return { error: "Could not create your store. Please try again." };
-  }
+        .returning({ id: stores.id, slug: stores.slug });
 
-  // Make the owner the store's superadmin, recording their name (falls back to
-  // the email local-part so admins.first_name is never blank).
-  const firstName =
-    (input.firstName || "").trim() ||
-    (user.email ? user.email.split("@")[0] : "Owner");
-  const lastName = (input.lastName || "").trim() || null;
-  try {
-    await withService((db) =>
-      db.insert(admins).values({
+      await db.insert(admins).values({
         id: user.id,
         email: user.email ?? "",
         role: "superadmin",
-        storeId: store.id,
+        storeId: created.id,
         firstName: firstName.slice(0, 80),
         lastName: lastName ? lastName.slice(0, 80) : null,
         // ★★ THE VERIFIED NUMBER MUST LAND HERE, NOT ONLY ON THE INVOICE
@@ -403,45 +404,33 @@ export async function createStore(
         // a temporary password), so override it here or the owner is bounced to
         // /auth/set-password on their first login.
         forcePasswordReset: false,
-      }),
-    );
-  } catch (err) {
-    // Roll back the store so a retry isn't blocked by the now-taken slug.
-    await withService((db) =>
-      db.delete(stores).where(eq(stores.id, store.id)),
-    ).catch(() => {});
-    console.error(
-      "createStore (admin insert):",
-      err instanceof Error ? err.message : err,
-    );
-    return { error: "Could not set up your store account. Please try again." };
-  }
+      });
 
-  // The invoice renderer reads store_billing_settings, not stores.settings.
-  // Seed both from the one validated signup address so the first invoice does
-  // not silently omit the identity the wizard promised would appear on it.
-  try {
-    await withService((db) =>
-      db.insert(storeBillingSettings).values({
-        storeId: store.id,
+      // The invoice renderer reads store_billing_settings, not stores.settings.
+      // Seed it with everything signup knows — name, verified email and phone,
+      // and the address when one was given — so Taxes & invoices opens
+      // pre-filled and the checklist's "business details" item is honest
+      // about what is still missing.
+      await db.insert(storeBillingSettings).values({
+        storeId: created.id,
         businessName: rawName.trim(),
         businessAddress: formattedAddress,
         contactEmail: user.email ?? null,
         contactPhone: user.phone ?? null,
         updatedBy: user.id,
-      }),
-    );
+      });
+
+      return created;
+    });
   } catch (err) {
-    // This is required signup data, not an optional enhancement. The store FK
-    // cascades the owner + partial billing row, leaving a clean retry.
-    await withService((db) =>
-      db.delete(stores).where(eq(stores.id, store.id)),
-    ).catch(() => {});
+    if (isUniqueViolation(err)) {
+      return { error: "That name was just taken — try another." };
+    }
     console.error(
-      "createStore (billing profile insert):",
+      "createStore (store transaction):",
       err instanceof Error ? err.message : err,
     );
-    return { error: "Could not save your business address. Please try again." };
+    return { error: "Could not create your store. Please try again." };
   }
 
   // Seed the chosen theme: homepage + content pages (published), menus, brand
@@ -475,9 +464,9 @@ export async function createStore(
   // domain — including the stores that did the work. `robots.txt` cannot undo
   // it either: Disallow stops future crawling, it does not deindex.
   //
-  // The store is submitted the first time its owner publishes something of
-  // their own, which is where markStoreLaunched() is called from
-  // (page-actions.publishPage, product-actions). See lib/store/launch.ts.
+  // The store is submitted when its owner completes the go-live checklist and
+  // presses Go live (app/actions/launch-actions.ts), which is the one place
+  // markStoreLaunched() is called from. See lib/store/launch-state.ts.
   //
   // Still needed below: the welcome email tells the merchant their address.
   const storeUrl = `https://${store.slug}.${ROOT_DOMAIN}`;

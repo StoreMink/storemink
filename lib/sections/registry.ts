@@ -136,6 +136,8 @@ export const RESERVED_PAGE_SLUGS: ReadonlySet<string> = new Set([
   "enquiries",
   "notifications",
   "orders",
+  // The password page a store shows before it opens (lib/store/launch-copy.ts).
+  "password",
   "profile",
   "shop",
   // top-level app routes (never storefront pages, but never claimable either)

@@ -6,6 +6,7 @@ import { emitEvent } from "@/lib/notifications/record";
 import { getServerUser } from "@/lib/auth/server-user";
 import { getCurrentStoreId } from "@/lib/store/resolve";
 import { demoStoreRefusal } from "@/lib/store/demo-guard";
+import { storefrontClosedRefusal } from "@/lib/store/storefront-access";
 import { withUser } from "@/lib/db/client";
 import { productReviews, users } from "@/drizzle/schema";
 
@@ -29,6 +30,8 @@ export async function submitReview(
 ): Promise<ActionResult> {
   const demoRefusal = await demoStoreRefusal();
   if (demoRefusal) return { error: demoRefusal };
+  const closedRefusal = await storefrontClosedRefusal();
+  if (closedRefusal) return { error: closedRefusal };
   const user = await getServerUser();
   if (!user) {
     return { error: "Please sign in to write a review." };

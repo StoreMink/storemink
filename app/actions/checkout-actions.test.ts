@@ -11,6 +11,10 @@ vi.mock("@/lib/store/resolve", () => ({
   getCurrentStoreId: vi.fn(async () => STORE),
   getCurrentStore: vi.fn(async () => ({ id: STORE, name: "Test Store" })),
 }));
+vi.mock("@/lib/store/storefront-access", () => ({
+  storefrontClosedRefusal: vi.fn(async () => null),
+  storefrontAccess: vi.fn(async () => "open"),
+}));
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: vi.fn(),
   // Only getCartTaxRates reads these two; placeOrder never calls either,
@@ -272,6 +276,21 @@ describe("placeOrder", () => {
     const result = await placeOrder(validForm, [oneItem()]);
     expect("error" in result && result.error).toMatch(/demo store/i);
     // Nothing was priced, reserved or written.
+    expect(vi.mocked(rateLimit)).not.toHaveBeenCalled();
+  });
+
+  it("★ refuses to take an order on a store that has not opened yet, before any work", async () => {
+    // Until the owner presses Go live the storefront sits behind a password.
+    // A deep link or a direct action call must not place an order on a shop
+    // nobody is watching; the owner testing with the password is "unlocked"
+    // and gets through (the guard returns null for them).
+    const { storefrontClosedRefusal } =
+      await import("@/lib/store/storefront-access");
+    vi.mocked(storefrontClosedRefusal).mockResolvedValueOnce(
+      "This store hasn't opened yet, so orders, accounts and forms are turned off.",
+    );
+    const result = await placeOrder(validForm, [oneItem()]);
+    expect("error" in result && result.error).toMatch(/hasn't opened yet/i);
     expect(vi.mocked(rateLimit)).not.toHaveBeenCalled();
   });
 

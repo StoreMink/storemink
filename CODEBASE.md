@@ -2462,6 +2462,10 @@ wholesip/
 │   │   │   │                  #   split stays hidden for delivery-only stores.
 │   │   │   │                  #   Double-locked: withUser (RLS
 │   │   │   │                  #   customer_id = auth.uid()) AND host store id
+│   │   │   ├── password/      #   ★ the page a store shows before it opens (§7).
+│   │   │   │                  #   The ONE storefront page that does not call
+│   │   │   │                  #   requireStorefrontStore() — that is what sends a
+│   │   │   │                  #   locked visitor here. Rendered in a minimal shell.
 │   │   │   ├── notifications/ #   ★ the SHOPPER's notification centre (§22) —
 │   │   │   │                  #   the customer rows the fan-out has always
 │   │   │   │                  #   written, finally rendered
@@ -2568,7 +2572,11 @@ wholesip/
 │   │   │                      # browser-check, publish and exact-rollback human workflow.
 │   │   ├── mink-feedback.tsx  # Per-answer thumbs + bounded, privacy-redacted issue report.
 │   │   ├── mink-mark.tsx      # Shared solid-purple robot mark matching Help Centre Mink.
-│   │   ├── page.tsx           # Overview: metrics, revenue chart, activity, inventory…
+│   │   ├── page.tsx           # Home: greeting, Mink prompt, then LaunchChecklistCard
+│   │   │                      # (launch-checklist.tsx + go-live-controls.tsx — the
+│   │   │                      # go-live checklist, password and Go live, §7) and
+│   │   │                      # PlanCard (plan-card.tsx — "you're on Free", what the
+│   │   │                      # next plan unlocks), then the setup cards
 │   │   ├── analytics/         # ★ Performance dashboard (§20): URL date/comparison
 │   │   │                      # filters, streamed commerce + tenant-scoped Google
 │   │   │                      # Search aggregates, widget registry, and persisted
@@ -2768,11 +2776,18 @@ wholesip/
 │   │   │                      # user-group/role actions  (homepage-actions RETIRED — §11)
 │   │   ├── store-signup.ts    # Store onboarding (§19): checkStoreSlugAvailability,
 │   │   │                      # createStore({name,template,firstName,lastName,
-│   │   │                      # country,city}) — writes admins name + settings.
-│   │   │                      # business location, returns {slug,storeId} —,
-│   │   │                      # getSignupResumeInfo (resume wizard after Google
-│   │   │                      # redirect / refreshed tab). Tested across slug,
-│   │   │                      # identity, location, rollback and consent gates.
+│   │   │                      # country, optional address}) — ONE transaction for
+│   │   │                      # the store, its owner and its invoice profile; the
+│   │   │                      # store starts launched:false — getSignupResumeInfo
+│   │   │                      # (resume wizard after Google redirect / refreshed
+│   │   │                      # tab). Tested across slug, identity, transaction
+│   │   │                      # failure and consent gates.
+│   │   ├── launch-actions.ts  # ★ Go live (§7): getLaunchState (checklist + password
+│   │   │                      # + preview URL), launchStore (superadmin; re-runs the
+│   │   │                      # checklist, sets launched, emits store.launched, then
+│   │   │                      # indexes), regenerateStorefrontPassword
+│   │   ├── storefront-access-actions.ts # ★ unlockStorefront: the /password page's
+│   │   │                      # host-derived, rate-limited action that mints the grant
 │   │   ├── signup-email-otp.ts # Authenticated, rate-limited 6-digit email proof;
 │   │   │                      # signed httpOnly hash cookie, capped attempts,
 │   │   │                      # marks Firebase emailVerified only on success
@@ -3183,7 +3198,18 @@ wholesip/
 │   │                          # settings stored under stores.settings.marketing;
 │   │                          # store-entitlement.ts combines operator availability
 │   │                          # with the store's effective plan for server reads/writes
-│   ├── store/                 # ★ Tenancy (see §3): host.ts, resolve.ts, brand.ts
+│   ├── store/                 # ★ Tenancy (see §3): host.ts, resolve.ts, brand.ts.
+│   │                          # ★ launch-state.ts (pure predicates: isStoreLaunched /
+│   │                          # isDemoStore / isStorefrontGated — import-free so the
+│   │                          # resolver can read them), launch.ts (markStoreLaunched,
+│   │                          # ONE caller: launchStore), launch-copy.ts (client-safe
+│   │                          # closed-store message + /password path),
+│   │                          # storefront-grant.ts (HMAC password grant, pure),
+│   │                          # storefront-access.ts (open|unlocked|locked gate, the
+│   │                          # store_access password row, storefrontClosedRefusal),
+│   │                          # launch-checklist-rules.ts (pure go-live rules) +
+│   │                          # launch-checklist.ts (the fact reads). §7 "closed until
+│   │                          # Go live".
 │   ├── credit/                # ★ §29: store credit — apply.ts (PURE: how much
 │   │                          # credit goes on an order, incl. the unpayable-
 │   │                          # remainder gap below the gateway minimum) +
@@ -3423,6 +3449,8 @@ wholesip/
 │   ├── ai/credit-pricing.ts   # ★ reads the operator-owned mink_credit_packs catalogue.
 │   │                          # No code fallback: an unreadable catalogue means no
 │   │                          # top-ups, never a guessed price.
+│   ├── plans/upgrade-summary.ts # ★ pure: what a plan includes and what the next one
+│   │                          # unlocks, derived from PLAN_LIMITS (dashboard PlanCard)
 │   ├── plans/allowances.ts    # ★ live operator overrides for the INCLUDED Mink credits
 │   │                          # a plan grants (mink_plan_allowances). Same shape as
 │   │                          # plans/pricing.ts: cached for display, live for the
@@ -4123,6 +4151,12 @@ wholesip/
 │                              # physical-row cap query: the visible history remains ten,
 │                              # while protected publication/action evidence may keep
 │                              # older conversation rows outside that list.
+│                              # 0170 adds service-only store_access (the storefront
+│                              # password of a store that has not opened) and opens any
+│                              # launched:false store that already took an order;
+│                              # 0171 edits the signup and setup Help guides in place
+│                              # for the shorter wizard, the go-live checklist and the
+│                              # password page. Next free number: 0172.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -7853,22 +7887,38 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     in.
 
 19. **Signup wizard (Shopify-style, `app/platform/signup/page.tsx`).** One
-    client wizard, one focused screen per step, with a progress stepper. Step
-    order: **email → password (+ Continue with Google) → email OTP → phone OTP
-    → name → store → location → theme → dashboard**. There is no plan or payment
-    step: every store is created on Free and paid upgrades happen later from the
-    store-host `/dashboard/plans` surface. This keeps store creation independent
-    of gateway availability and removes the paid-but-not-onboarded failure mode.
-    Data model: names go to
-    `admins.first_name`/`last_name`; the selling **business address** is a
-    structured country + street/building + optional second line + city +
-    state/province + postal/PIN code. The server requires every core field,
-    normalizes it into `stores.settings.business` (anon-readable jsonb —
-    non-secret), and seeds the same display-ready value into
-    `store_billing_settings.business_address`; that second write is what the
-    invoice renderer actually reads. If it fails, signup deletes the partial
-    store and owner so a retry is clean. Country list in `lib/countries.ts`
-    (pure, client-safe, India-first). - **Auth (Identity Platform, Phase 6)**: email/password via
+    client wizard, one focused screen per step, with a progress stepper.
+    **Six screens since 2026-10-07 (was nine): email → password + email OTP
+    (one screen; the code field appears under the password once the account
+    exists) → phone OTP → you + your store (name, store name, the country you
+    sell from) → theme (pre-selected; confirm or change) → dashboard.** There
+    is no plan or payment step: every store is created on Free and paid
+    upgrades happen later from the store-host `/dashboard/plans` surface. This
+    keeps store creation independent of gateway availability and removes the
+    paid-but-not-onboarded failure mode.
+    **★ THE BUSINESS ADDRESS IS NO LONGER COLLECTED AT SIGNUP.** It prints on
+    invoices and decides GST place of supply, and a new store has no invoice —
+    so it was the one screen with six required fields and the one everybody
+    stalled on. It is now a REQUIRED item on the dashboard's go-live checklist
+    (lib/store/launch-checklist-rules.ts, § "A new store opens by Go live"),
+    edited under Taxes & invoices, where it is first needed. Only the country
+    is captured at signup (`settings.business.country`), pre-filled from the
+    verified phone's dial code and editable; an unknown code falls back to
+    `DEFAULT_COUNTRY`. `createStore` still accepts the full address for any
+    caller that has one and stores it exactly as before.
+    Data model: names go to `admins.first_name`/`last_name`;
+    `store_billing_settings` is seeded with the store name, verified email and
+    phone, and a NULL address until the merchant adds one — the honest value
+    the checklist reads. Country list in `lib/countries.ts` (pure,
+    client-safe, India-first). `location-picker.tsx` (the Google-Maps-assisted
+    address form) remains in the directory, unused by the wizard, for the day
+    the address editor wants it.
+    **★★ STORE, OWNER AND INVOICE PROFILE ARE ONE TRANSACTION.** They were
+    three `withService` calls with a hand-written rollback (delete the store if
+    a later insert failed), and a rollback that is itself a network call can
+    fail — leaving a store nobody owns and a slug burned for every retry. One
+    transaction cannot leave that behind; a unique-violation on the slug still
+    maps to "that name was just taken". Pinned by `store-signup.test.ts`. - **Auth (Identity Platform, Phase 6)**: email/password via
     `createUserWithEmailAndPassword` (falls back to `signInWithEmailAndPassword`
     on `auth/email-already-in-use`). Password users then pass a six-digit email
     OTP (`app/actions/signup-email-otp.ts`): the server derives identity from the
@@ -15752,30 +15802,83 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   by `_recompute_stock_aggregate` on every sale and would claim a content change
   per purchase. Pages use `published_at`, not `updated_at`, because draft
   autosave advances `updated_at` while public HTML remains unchanged.
-- **A NEW STORE IS NOT INDEXABLE UNTIL ITS OWNER PUBLISHES SOMETHING**
-  (`lib/store/launch.ts`). `isStoreSearchIndexable()` is the one shared gate for
-  storefront metadata, robots, sitemaps and search-engine notifications. At
-  creation a store is pure theme seed — the same
-  homepage, ~17 content pages and sample catalogue as every other store on that
-  template — and `createStore` used to submit exactly that to Google + IndexNow
-  the moment it existed. Mass-submitting near-duplicate placeholder stores spends
-  the whole `*.storemink.com` domain's reputation. `stores.settings.launched`
-  gates metadata + `sitemap.ts`; `notifyStoreContentPublished()` launches from all
-  page/product/blog publication paths (including bulk products, bulk blogs,
-  customer direct-publish and approval), not just the single-row editors, then
-  performs IndexNow + Google coverage out of band. Unlaunched/demo storefront
-  pages emit `noindex, nofollow` and stay out of their empty sitemap, while
-  `robots.ts` permits crawling of public pages so Google can observe `noindex`
-  and remove stale seed URLs; unknown hosts still use `Disallow: /`.
-  **Absence of the flag means
-  LAUNCHED** —
-  pre-existing stores have no key and treating them as unlaunched would deindex
-  live shops; `createStore` writes `launched: false` explicitly. Demo stores
-  (`settings.demo`) stay permanently out. Theme SAMPLE products now seed as
-  **drafts** (`applyTheme`'s `publishSampleProducts`, true only for demo stores):
-  published, every store on a theme served the same product pages whose own copy
-  says "replace it with your own".
-  Full audit, fixes and the re-index cadence: `docs/seo-action-plan.md`.
+- **★★ A NEW STORE IS CLOSED UNTIL ITS OWNER PRESSES GO LIVE (2026-10-07).**
+  `stores.settings.launched` is ONE flag behind two things: search
+  indexability (as before) and, now, the **storefront password page**.
+  `isStoreLaunched` / `isDemoStore` / `isStoreSearchIndexable` /
+  `isStorefrontGated` are pure predicates in `lib/store/launch-state.ts` (no
+  imports, so the host resolver can read them without a cycle; `launch.ts`
+  re-exports them). At creation a store is pure theme seed — the same
+  homepage, ~17 content pages and sample catalogue as every other store on
+  that template — and until this change the flag flipped on the FIRST PUBLISH
+  of anything (page, product, blog, CSV import, Mink publication), so a shop
+  with no refund policy and the theme's placeholder homepage went public, and
+  into Google, the moment its first product was saved.
+  ★ **`markStoreLaunched()` has exactly one caller now: `launchStore` in
+  `app/actions/launch-actions.ts`**, which re-runs the go-live checklist
+  server-side (superadmin only — opening a shop is the owner's call, the §22
+  owner-only rule), sets the flag, refreshes `STORE_TAG`, emits
+  `store.launched` (both channels, not configurable) and only THEN calls
+  `notifyStoreContentPublished()`. That hook no longer launches; on an
+  unlaunched store it returns without submitting anything, because the pages
+  behind the password redirect and robots/sitemap already say `noindex`.
+  ★ **The checklist is predicates over real rows, never tick boxes**
+  (`lib/store/launch-checklist-rules.ts` pure + `launch-checklist.ts` reads).
+  REQUIRED: one published non-sample product (samples are named "… (Sample)"
+  and seed as drafts); business name, address, email and phone in
+  `store_billing_settings`; Terms, Refund & Cancellation, Shipping and Privacy
+  policies published (the Settings → Policies registry, pinned equal by test);
+  Shipping & delivery saved once. RECOMMENDED, never blocking: homepage edited
+  since seeding (updated_at more than a minute after created_at), logo, sample
+  products removed, payments connected (COD works out of the box, and Free has
+  no online payments, so requiring it would mean no Free store ever opens),
+  GSTIN, custom domain. Items on a plan that lacks the feature link to Plans.
+  ★ **The gate lives in `requireStorefrontStore()`**, not the proxy (no DB
+  there) and not the layout (a layout redirect does not abort a concurrently
+  rendering child page — the §3 rule). For a gated store it dynamically
+  imports `lib/store/storefront-access.ts`, whose request-memoized
+  `storefrontAccess()` answers `open | unlocked | locked`: unlocked for a
+  signed-in admin of this store or a platform operator (so the owner, staff
+  and the builder's `?preview=1` never see the password page), or for a
+  visitor carrying a valid `sm_store_pass` grant; locked otherwise →
+  `redirect("/password")`. The layout renders a locked visitor a minimal
+  shell (brand tokens, no header/footer/cart, since every link in them would
+  lead back to the password page). `/password` (`(storefront)/(pages)/password`,
+  reserved in `RESERVED_PAGE_SLUGS` and `STOREFRONT_CODE_ROUTES`) is the one
+  storefront page that does NOT call `requireStorefrontStore()`.
+  ★ **The password is a secret, and `stores.settings` is anon-readable**
+  (§5.9), so it lives in service-only `store_access`
+  (`20261007_0170_store_access`; `password`, `password_version`), created on
+  first read with INSERT … ON CONFLICT DO NOTHING + read-the-winner. The grant
+  (`lib/store/storefront-grant.ts`) is an HMAC token bound to store id +
+  password version, keyed by `STOREFRONT_PASSWORD_SECRET` or derived from
+  `CRON_SECRET` with a purpose label (the Theme Studio preview-token
+  construction), 7-day host-only httpOnly cookie; regenerating the password
+  bumps the version and every old grant dies on the next request.
+  `unlockStorefront` (`app/actions/storefront-access-actions.ts`) is
+  host-derived, rate-limited per visitor and per store, compares in constant
+  time, and only follows a same-origin `next`.
+  ★ **Every public WRITE refuses while locked**: `storefrontClosedRefusal()`
+  sits beside `demoStoreRefusal()` in placeOrder, enquiries, newsletter,
+  reviews, blog reactions/comments, customer blog submissions and account
+  creation; `/api/storefront/search` answers empty; `getCheckoutConfig` carries
+  `closed`. A visitor who entered the password is NOT refused — that is the
+  owner testing their own checkout, which is what the password is for.
+  ★ **Absence of the flag means LAUNCHED** — pre-existing stores have no key,
+  and treating them as unlaunched would now put a password page in front of
+  live shops; `createStore` writes `launched: false` explicitly. Migration 0170
+  also opens any `launched: false` store that has ever taken an order, so no
+  trading shop wakes up behind a password. Demo stores (`settings.demo`) are
+  never gated and never indexed. Theme SAMPLE products seed as **drafts**
+  (`applyTheme`'s `publishSampleProducts`, true only for demo stores).
+  Dashboard Home renders `LaunchChecklistCard` (progress, each item linking to
+  its page, the password with Copy / New password / Preview store, and Go live
+  for the superadmin) above a `PlanCard` whose "included" and "upgrade to
+  unlock" lines derive from `PLAN_LIMITS` via `lib/plans/upgrade-summary.ts`,
+  so the card cannot advertise what enforcement withholds. The `store.created`
+  welcome says the store is READY, not live, and points at the checklist.
+  Help: `20261007_0171_launch_checklist_help` edits the signup and setup
+  guides in place. Full audit of the SEO half: `docs/seo-action-plan.md`.
 - **StoreMink's own brand identity for schema lives in
   `lib/seo/brand-identity.ts`** — one Organization node (`sameAs` for the
   LinkedIn/YouTube/Instagram profiles, `contactPoint`, `address`) emitted from

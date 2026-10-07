@@ -2,6 +2,8 @@ import { effectivePricing } from "@/lib/pricing";
 import { collectionPath } from "@/lib/storefront/collection-links";
 import { productGallery } from "@/lib/products/gallery";
 import { getCurrentStoreOrNull } from "@/lib/store/resolve";
+import { isStorefrontGated } from "@/lib/store/launch-state";
+import { storefrontAccess } from "@/lib/store/storefront-access";
 import {
   getActiveCategories,
   getPublishedProducts,
@@ -59,6 +61,14 @@ export async function GET(request: Request): Promise<Response> {
 
   const store = await getCurrentStoreOrNull();
   if (!store) return json(EMPTY(query), 60);
+  // A store that has not opened yet answers nothing to a visitor without the
+  // password — the catalogue is exactly what the password page hides.
+  if (
+    isStorefrontGated(store) &&
+    (await storefrontAccess(store)) === "locked"
+  ) {
+    return json(EMPTY(query), 0);
+  }
 
   const [products, categories] = await Promise.all([
     getPublishedProducts(store.id),

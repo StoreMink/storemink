@@ -1679,3 +1679,112 @@
   color: var(--sm-ink-soft);
   text-decoration: underline;
 }
+
+/* ── Password page (a store that has not opened yet) ─────────────────────
+   Rendered WITHOUT the shop's header, footer or cart — the layout drops them
+   for a locked visitor, since every link in them would lead back here. Uses
+   the store's own tokens so the page already looks like the brand. */
+.storefront-root .sm-password-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--sm-cream);
+  color: var(--sm-ink);
+}
+.storefront-root .sm-password-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--sm-surface);
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius-card, 16px);
+  padding: 32px 28px;
+  box-shadow: 0 12px 40px rgba(var(--sm-shadow-rgb), 0.08);
+  text-align: center;
+}
+.storefront-root .sm-password-logo {
+  display: block;
+  margin: 0 auto 20px;
+  max-height: 56px;
+  max-width: 180px;
+  object-fit: contain;
+}
+.storefront-root .sm-password-name {
+  font-family: var(--font-stick-no-bills);
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+.storefront-root .sm-password-title {
+  font-family: var(--font-stick-no-bills);
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+.storefront-root .sm-password-copy {
+  color: var(--sm-ink-soft);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  margin: 0 0 20px;
+}
+.storefront-root .sm-password-form {
+  text-align: left;
+}
+.storefront-root .sm-password-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--sm-ink-soft);
+}
+.storefront-root .sm-password-row {
+  display: flex;
+  gap: 8px;
+}
+.storefront-root .sm-password-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  font-size: 16px;
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius-control, 10px);
+  background: var(--sm-cream);
+  color: var(--sm-ink);
+}
+.storefront-root .sm-password-input:focus {
+  outline: 2px solid var(--sm-accent);
+  outline-offset: 1px;
+}
+.storefront-root .sm-password-submit {
+  --sm-btn-bg: var(--sm-accent);
+  --sm-btn-fg: var(--sm-on-accent);
+  height: 44px;
+  padding: 0 18px;
+  font-weight: 600;
+  border: 0;
+  border-radius: var(--sm-radius-control, 10px);
+  background: var(--sm-btn-bg);
+  color: var(--sm-btn-fg);
+  cursor: pointer;
+}
+.storefront-root .sm-password-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.storefront-root .sm-password-error {
+  margin: 10px 0 0;
+  font-size: 0.875rem;
+  color: var(--sm-error);
+}
+.storefront-root .sm-password-owner {
+  margin: 24px 0 0;
+  font-size: 0.8rem;
+  color: var(--sm-ink-faint);
+}
+.storefront-root .sm-password-owner a {
+  color: var(--sm-ink-soft);
+  text-decoration: underline;
+}

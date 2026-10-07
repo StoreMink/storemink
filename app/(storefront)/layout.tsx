@@ -15,7 +15,12 @@ import { getStoreBrand } from "@/lib/store/brand";
 import { getStoreChrome, getDraftChromeForPreview } from "@/lib/chrome/queries";
 import { resolveStorefrontAppearance } from "@/lib/chrome/types";
 import { getCurrentStoreOrNull } from "@/lib/store/resolve";
-import { isDemoStore, isStoreSearchIndexable } from "@/lib/store/launch";
+import {
+  isDemoStore,
+  isStoreSearchIndexable,
+  isStorefrontGated,
+} from "@/lib/store/launch";
+import { storefrontAccess } from "@/lib/store/storefront-access";
 import { getStoreUrl } from "@/lib/site";
 import { resolveInstalledThemeDefinition } from "@/lib/themes/runtime-registry";
 import { readThemeSelection } from "@/lib/themes/meta";
@@ -106,6 +111,15 @@ export default async function StorefrontLayout({
   // one guard covers every storefront page (they all render inside this layout).
   const store = await getCurrentStoreOrNull();
   if (!store) notFound();
+
+  // A store that has not opened yet: every page redirects itself to /password
+  // (requireStorefrontStore), so when the visitor is locked out the only child
+  // this layout renders is the password page — and it should not sit inside
+  // the shop's header, menus and cart, which would all lead straight back to
+  // the password page. Admins and password holders are "unlocked" and see the
+  // ordinary layout.
+  const locked =
+    isStorefrontGated(store) && (await storefrontAccess(store)) === "locked";
 
   // Anonymous storefronts do not need Firebase's browser SDK on their initial
   // route. A server cookie means identity must be restored immediately; with
@@ -241,6 +255,16 @@ export default async function StorefrontLayout({
   ]
     .filter(Boolean)
     .join(" ");
+
+  if (locked) {
+    return (
+      <BrandProvider brand={brand}>
+        <div className={rootClass} style={themeVars as CSSProperties}>
+          {children}
+        </div>
+      </BrandProvider>
+    );
+  }
 
   return (
     <AuthProvider initialHasSession={hasCustomerSession}>

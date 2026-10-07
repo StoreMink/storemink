@@ -7,6 +7,7 @@ import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { getCurrentStoreOrNull } from "@/lib/store/resolve";
 import { isDemoStore } from "@/lib/store/launch";
 import { DEMO_STORE_MESSAGE } from "@/lib/store/demo-guard";
+import { storefrontClosedRefusal } from "@/lib/store/storefront-access";
 
 export interface NewsletterActionState {
   status: "idle" | "success" | "error";
@@ -53,6 +54,9 @@ export async function subscribeNewsletter(
   if (isDemoStore(store)) {
     return { status: "error", message: DEMO_STORE_MESSAGE };
   }
+  // Nor has a store that has not opened yet: nobody is reading its list.
+  const closedRefusal = await storefrontClosedRefusal();
+  if (closedRefusal) return { status: "error", message: closedRefusal };
   const storeId = store.id;
   const ip = clientIp(await headers());
   const { allowed } = await rateLimit(`newsletter:${storeId}:${ip}`, {

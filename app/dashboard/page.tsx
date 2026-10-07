@@ -11,6 +11,10 @@ import {
 } from "lucide-react";
 import { getViewerAccess, getViewerContext } from "./lib/access";
 import { AskAnything } from "./ask-anything";
+import { LaunchChecklistCard } from "./launch-checklist";
+import { PlanCard } from "./plan-card";
+import { getCurrentStore } from "@/lib/store/resolve";
+import { effectivePlan } from "@/lib/plans";
 
 type SetupCard = {
   icon: LucideIcon;
@@ -21,7 +25,12 @@ type SetupCard = {
 };
 
 export default async function DashboardHomePage() {
-  const [ctx, access] = [await getViewerContext(), await getViewerAccess()];
+  const [ctx, access, store] = await Promise.all([
+    getViewerContext(),
+    getViewerAccess(),
+    getCurrentStore(),
+  ]);
+  const plan = effectivePlan(store);
   const first = ctx?.profile?.first_name?.trim();
   const nameSuffix = first ? `, ${first}` : "";
 
@@ -91,6 +100,12 @@ export default async function DashboardHomePage() {
       </h1>
 
       <AskAnything />
+
+      {/* What stands between this store and its first customer, then what
+          the plan includes. Both derive from live rows — nothing here is a
+          stored flag a merchant can tick. */}
+      <LaunchChecklistCard />
+      <PlanCard plan={plan} />
 
       {cards.length > 0 && (
         <section className="flex flex-col gap-3">

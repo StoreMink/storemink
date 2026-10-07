@@ -8694,3 +8694,30 @@ export const minkCsvFiles = pgTable(
     ),
   ],
 );
+
+/**
+ * The storefront password of a store that has not opened yet
+ * (migration 20261007_0170_store_access; lib/store/storefront-access.ts).
+ *
+ * ★ ITS OWN SERVICE-ONLY TABLE, NOT A KEY IN `stores.settings`: that column is
+ * anon-readable by the "Read stores" policy (CODEBASE.md §5.9), so a password
+ * stored there would be readable by the very visitors it keeps out.
+ *
+ * `password_version` is what a grant cookie is bound to — regenerating the
+ * password bumps it, and every grant minted against the old value stops
+ * working on the next request without a cookie ever being touched.
+ */
+export const storeAccess = pgTable("store_access", {
+  storeId: uuid("store_id")
+    .primaryKey()
+    .notNull()
+    .references(() => stores.id, { onDelete: "cascade" }),
+  password: text().notNull(),
+  passwordVersion: integer("password_version").default(1).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
