@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Sparkles } from "lucide-react";
 import { PLAN_META, type Plan } from "@/lib/plans";
 import {
   nextPlan,
@@ -16,9 +16,10 @@ export function PlanTag({ plan }: { plan: Plan }) {
   const next = nextPlan(plan);
   const unlocks = next ? upgradeUnlocks(plan, next).slice(0, 4) : [];
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
-      <span className="dash-badge dash-badge-grey">
-        {PLAN_META[plan].name} plan
+    <div className="inline-flex items-center gap-2 rounded-full border border-[var(--dash-accent)]/25 bg-[var(--dash-accent-soft)] py-1 pl-3 pr-1 text-[13px]">
+      <Sparkles className="h-3.5 w-3.5 text-[var(--dash-accent)]" />
+      <span className="font-semibold text-[var(--dash-accent)]">
+        You&apos;re on the {PLAN_META[plan].name} plan
       </span>
       {next && (
         <Link
@@ -28,7 +29,7 @@ export function PlanTag({ plan }: { plan: Plan }) {
               ? `${PLAN_META[next].name} · ${planPriceLine(next)}: ${unlocks.join(", ")}`
               : undefined
           }
-          className="inline-flex items-center gap-0.5 font-semibold text-[var(--dash-accent)] hover:underline"
+          className="dash-btn dash-btn-primary dash-btn-sm !rounded-full"
         >
           Upgrade
           <ArrowUpRight className="h-3.5 w-3.5" />
