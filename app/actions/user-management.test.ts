@@ -15,6 +15,16 @@ vi.mock("@/lib/auth/server-user", () => ({ getServerUser: vi.fn() }));
 vi.mock("@/app/dashboard/lib/access", () => ({
   getActingStoreId: vi.fn(async () => "store-1"),
 }));
+// The password reset is sent through the real builder; only the send itself
+// and the store brand are stubbed.
+const emailMocks = vi.hoisted(() => ({ sendEmail: vi.fn(async () => {}) }));
+vi.mock("@/lib/email/send", () => ({ sendEmail: emailMocks.sendEmail }));
+vi.mock("@/lib/store/brand", () => ({
+  getStoreBrand: vi.fn(async () => ({
+    name: "WholeSip",
+    domain: "wholesip.com",
+  })),
+}));
 
 // The ported data layer: with* runners invoke the callback with the mock db.
 // The caller-role gate reads via withUser, target reads/updates via withService
@@ -32,8 +42,12 @@ import {
   changeUserRole,
   deleteUser,
   toggleUserSuspension,
+  triggerPasswordReset,
 } from "./user-management";
-import { deleteAuthUser } from "@/lib/auth/firebase-users";
+import {
+  deleteAuthUser,
+  generatePasswordResetLink,
+} from "@/lib/auth/firebase-users";
 import { setUserClaims } from "@/lib/auth/firebase-claims";
 import { getServerUser } from "@/lib/auth/server-user";
 
@@ -122,5 +136,58 @@ describe("User Management Actions", () => {
       expect((result as any).success).toBe(true);
       expect(dbHolder.current.calls.set[0]).toEqual({ isSuspended: true });
     });
+  });
+
+  describe("triggerPasswordReset", () => {
+    const LINK =
+      "https://auth.example.com/reset?oobCode=abc&mode=resetPassword";
+
+    function withResend(run: () => Promise<void>) {
+      return async () => {
+        const previous = process.env.RESEND_API_KEY;
+        process.env.RESEND_API_KEY = "re_test_key";
+        try {
+          await run();
+        } finally {
+          if (previous === undefined) delete process.env.RESEND_API_KEY;
+          else process.env.RESEND_API_KEY = previous;
+        }
+      };
+    }
+
+    // Enumeration-safe: an unknown address reports the same success and sends
+    // nothing.
+    it(
+      "reports success without sending when no link could be made",
+      withResend(async () => {
+        vi.mocked(generatePasswordResetLink).mockResolvedValue(null as any);
+        const result = await triggerPasswordReset("ghost@example.com");
+        expect(result.success).toBe(true);
+        expect(emailMocks.sendEmail).not.toHaveBeenCalled();
+      }),
+    );
+
+    it(
+      "sends the composed reset email as a sensitive, unsuppressed mailer",
+      withResend(async () => {
+        vi.mocked(generatePasswordResetLink).mockResolvedValue(LINK as any);
+        const result = await triggerPasswordReset("ada@example.com");
+        expect(result.success).toBe(true);
+        expect(emailMocks.sendEmail).toHaveBeenCalledTimes(1);
+        const sent = (emailMocks.sendEmail.mock.calls[0] as any[])[0];
+        expect(sent).toMatchObject({
+          storeId: "store-1",
+          to: "ada@example.com",
+          subject: "Reset your WholeSip password",
+          mailer: "password_reset",
+          ignoreSuppression: true,
+        });
+        expect(sent.from).toContain("wholesip.com");
+        // The link is the button target and the plain fallback, HTML-escaped.
+        const escaped = LINK.replace(/&/g, "&amp;");
+        expect(sent.html.split(`href="${escaped}"`).length - 1).toBe(2);
+        expect(`${sent.subject}${sent.html}`).not.toMatch(/[\u2013\u2014]/);
+      }),
+    );
   });
 });

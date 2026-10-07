@@ -5,8 +5,8 @@ import { withService } from "@/lib/db/client";
 import { logError, logInfo } from "@/lib/observability/logger";
 import { sendEmail } from "@/lib/email/send";
 import { renderAnnouncementEmail } from "@/lib/email/announcement-email";
+import { platformEmailBrand } from "@/lib/email/platform-brand";
 import { PLATFORM_EMAIL_DOMAIN } from "@/lib/email/sender";
-import type { StoreBrand } from "@/lib/store/brand";
 import { PLATFORM_URL } from "@/lib/site";
 
 // ---------------------------------------------------------------------------
@@ -37,22 +37,6 @@ const BATCH = 50;
 const MAX_PER_RUN = 500;
 
 const ANNOUNCEMENT_FROM = `StoreMink <hello@${PLATFORM_EMAIL_DOMAIN}>`;
-
-const PLATFORM_BRAND: StoreBrand = {
-  name: "StoreMink",
-  logoUrl: null,
-  primaryColor: "#202223",
-  tagline: null,
-  blurb: null,
-  legalName: "StoreMink",
-  creditLine: null,
-  email: null,
-  phone: null,
-  hours: null,
-  social: { instagram: null, youtube: null, whatsapp: null },
-  badges: [],
-  domain: PLATFORM_EMAIL_DOMAIN,
-};
 
 export interface AnnouncementWorkerResult {
   processed: number;
@@ -140,7 +124,7 @@ export async function processAnnouncements(
       }
 
       const { subject, html } = renderAnnouncementEmail({
-        brand: PLATFORM_BRAND,
+        brand: platformEmailBrand(),
         subject: copy.subject,
         bodyHtml: copy.body,
         ctaLabel: copy.cta_label,

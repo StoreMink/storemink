@@ -441,10 +441,53 @@ const EVENT_VARIABLES: Partial<Record<EventKey, TemplateVariable[]>> = {
   ],
 };
 
+/**
+ * What `{{subject_label}}` holds for events whose subject is not an order.
+ *
+ * The base sample is an order reference, which is right for most events and
+ * reads as nonsense in a preview of anything else: "Finish setting up
+ * ORD10010004" or "Low stock: ORD10010004". Each value here mirrors what that
+ * event's emitter puts in `subject.label`, so the console preview and the
+ * email gallery show what a real send would say.
+ */
+const SUBJECT_LABEL_SAMPLES: Partial<Record<EventKey, string>> = {
+  "inventory.low_stock": "Almond Shake",
+  "inventory.out_of_stock": "Almond Shake",
+  "product.created": "Almond Shake",
+  "product.updated": "Almond Shake",
+  "product.deleted": "Almond Shake",
+  // The review emitter labels the product by its slug.
+  "customer.review_submitted": "almond-shake",
+  "customer.signed_up": "Priya Sharma",
+  "enquiry.received": "Bulk order question",
+  "blog.submitted": "How we cold-press our juice",
+  "blog.published": "How we cold-press our juice",
+  "blog.approved": "How we cold-press our juice",
+  "blog.rejected": "How we cold-press our juice",
+  "blog.comment_posted": "how-we-cold-press-our-juice",
+  "page.published": "about-us",
+  "campaign.sent": "A little something for you",
+  "admin.invited": "priya@acmejuice.in",
+  "security.password_changed": "priya@acmejuice.in",
+  "store.created": "Acme Juice",
+  "store.launched": "Acme Juice",
+  "store.domain_live": "acme.com",
+  "store.domain_reverted": "acme.com",
+  "plan.changed": "Pro",
+  "platform.store_created": "Acme Juice",
+  "platform.domain_verified": "acme.com",
+};
+
 /** Every variable a given event's templates may use. */
 export function variablesFor(key: string): TemplateVariable[] {
   const extra = EVENT_VARIABLES[key as EventKey] ?? [];
-  return [...BASE_VARIABLES, ...extra];
+  const subjectSample = SUBJECT_LABEL_SAMPLES[key as EventKey];
+  const base = subjectSample
+    ? BASE_VARIABLES.map((v) =>
+        v.name === "subject_label" ? { ...v, sample: subjectSample } : v,
+      )
+    : BASE_VARIABLES;
+  return [...base, ...extra];
 }
 
 /** Fast membership check for the template validator. */

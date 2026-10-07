@@ -9,17 +9,56 @@ vi.mock("./send", () => ({
   emailConfigured: () => emailConfigured(),
 }));
 
-import { sendSignupOtpEmail } from "./signup-otp";
+import { buildSignupOtpEmail, sendSignupOtpEmail } from "./signup-otp";
+import { PLATFORM_EMAIL_MARK_URL, STOREMINK_PURPLE } from "./platform-brand";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Restored explicitly, not left to clearAllMocks — it clears CALLS, not
+  // Restored explicitly, not left to clearAllMocks: it clears CALLS, not
   // IMPLEMENTATIONS, so a value set inside one test leaks into every test
   // after it (see the test:shuffle note in CODEBASE.md §5.8).
   sendEmail.mockResolvedValue({ sent: true });
   logEmail.mockResolvedValue(undefined);
   emailConfigured.mockReturnValue(true);
   vi.spyOn(console, "log").mockImplementation(() => {});
+});
+
+const LONG_DASHES = /[\u2014\u2013]/;
+
+describe("buildSignupOtpEmail", () => {
+  it("leads the subject with the code, so the inbox list shows it", () => {
+    const { subject } = buildSignupOtpEmail("482913");
+    expect(subject).toBe("482913 is your StoreMink verification code");
+  });
+
+  it("renders the standard design with the code, expiry and StoreMink identity", () => {
+    const { html } = buildSignupOtpEmail("482913");
+
+    expect(html).toContain("Verify your email");
+    expect(html).toContain("482913");
+    expect(html).toContain("expires in 10 minutes");
+    expect(html).toContain("you can safely ignore this email");
+    // StoreMink's own identity (platformEmailBrand), not a merchant's.
+    expect(html).toContain(PLATFORM_EMAIL_MARK_URL);
+    // The official lockup: "Store" in ink, "Mink" in the brand purple.
+    expect(html).toContain(
+      `Store<span style="color:${STOREMINK_PURPLE};">Mink</span>`,
+    );
+    // One neutral design: no merchant colour, no legacy layout wrapper.
+    expect(html).toContain("#faf9f5");
+  });
+
+  it("escapes the code rather than trusting it as markup", () => {
+    const { html } = buildSignupOtpEmail('<img src=x onerror="alert(1)">');
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;img src=x");
+  });
+
+  it("never contains a long dash in the subject or body", () => {
+    const { subject, html } = buildSignupOtpEmail("482913");
+    expect(subject).not.toMatch(LONG_DASHES);
+    expect(html).not.toMatch(LONG_DASHES);
+  });
 });
 
 describe("sendSignupOtpEmail", () => {
@@ -38,6 +77,8 @@ describe("sendSignupOtpEmail", () => {
         mailer: "signup_test_otp",
         status: "skipped",
         subject: expect.stringContaining("123456"),
+        html: buildSignupOtpEmail("123456").html,
+        error: "Reserved test address: retrieve the code from the operator log",
       }),
     );
   });
@@ -54,6 +95,9 @@ describe("sendSignupOtpEmail", () => {
     expect(sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "owner@shop.com",
+        from: expect.stringMatching(/^StoreMink <security@/),
+        subject: "654321 is your StoreMink verification code",
+        html: buildSignupOtpEmail("654321").html,
         mailer: "signup_otp",
         ignoreSuppression: true,
       }),
@@ -66,7 +110,7 @@ describe("sendSignupOtpEmail", () => {
 
     const result = await sendSignupOtpEmail("owner@shop.com", "246810");
 
-    // devConsoleOnly is what lets the caller still issue the code cookie —
+    // devConsoleOnly is what lets the caller still issue the code cookie:
     // without it the signup dead ends on a step nobody can pass.
     expect(result).toEqual({
       sent: false,
@@ -80,6 +124,7 @@ describe("sendSignupOtpEmail", () => {
         to: "owner@shop.com",
         mailer: "signup_otp",
         status: "skipped",
+        error: "RESEND_API_KEY not configured: code printed to the dev console",
       }),
     );
   });

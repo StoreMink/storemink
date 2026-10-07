@@ -58,6 +58,7 @@ import {
   EVENTS,
   getEventDef,
   isEventKey,
+  isPlatformVoiceEvent,
   storeAdminEvents,
   merchantEvents,
   eventKeySlug,
@@ -680,6 +681,18 @@ export async function saveNotificationConfig(
           if (channelKey === "email" && trimmed === builtIn[field].trim()) {
             continue;
           }
+          // StoreMink's own account mail goes out AS StoreMink, so its wording
+          // is StoreMink's: an override is never stored (and record.ts ignores
+          // any older one). Dropped rather than refused, so a store holding a
+          // pre-existing override can still save its recipients; the console
+          // shows these fields locked.
+          if (
+            channelKey === "email" &&
+            audienceKey === "team" &&
+            isPlatformVoiceEvent(def.key)
+          ) {
+            continue;
+          }
           const check = validateTemplate(trimmed, def.key, kind);
           if (!check.valid) {
             return {
@@ -783,6 +796,9 @@ export async function previewNotificationEmail(
   const { storeId } = await currentScope();
   const fallback = defaultEmailTemplate(def.key, audienceKey);
   const values = sampleValuesFor(def.key);
+  // StoreMink-voiced mail always carries StoreMink's wording (see record.ts),
+  // so the preview and the test show exactly that, never a request's draft.
+  if (audienceKey === "team" && isPlatformVoiceEvent(def.key)) template = {};
 
   try {
     const brand = storeId ? await getStoreBrandById(storeId) : platformBrand();
@@ -853,6 +869,9 @@ export async function sendTestNotificationEmail(
   const { storeId } = await currentScope();
   const fallback = defaultEmailTemplate(def.key, audienceKey);
   const values = sampleValuesFor(def.key);
+  // StoreMink-voiced mail always carries StoreMink's wording (see record.ts),
+  // so the preview and the test show exactly that, never a request's draft.
+  if (audienceKey === "team" && isPlatformVoiceEvent(def.key)) template = {};
 
   try {
     const brand = storeId ? await getStoreBrandById(storeId) : platformBrand();
@@ -879,7 +898,10 @@ export async function sendTestNotificationEmail(
 
     const result = await sendEmail({
       storeId,
-      from: fromAddress(brand, { suffix: "Notifications" }),
+      from:
+        rendered.voice === "platform"
+          ? fromAddress(platformBrand(), { local: "notifications" })
+          : fromAddress(brand, { suffix: "Notifications" }),
       to: access.email,
       // Flagged in the subject so a test can never be mistaken for the real
       // thing sitting in an inbox next to it.

@@ -184,7 +184,7 @@ export function renderNotification(
         ? {
             title: "Refund on its way",
             body: `${amount ?? "Your refund"} has been ${copy.destination}.${
-              copy.bankDelay ? " Banks usually take 5–7 working days." : ""
+              copy.bankDelay ? " Banks usually take 5 to 7 working days." : ""
             }`,
             url: customerOrderUrl(event),
           }

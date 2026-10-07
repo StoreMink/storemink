@@ -3416,11 +3416,15 @@ wholesip/
 │   │                          # one and submitted in the other (/track-order was).
 │   │                          # `exact` emits a `$` anchor so `/cart` doesn't also
 │   │                          # block a merchant page slugged `cartography`. Tested.
-│   ├── email/                 # sender, layout, campaign-worker, coupon-campaign,
+│   ├── email/                 # sender, campaign-worker, coupon-campaign,
 │   │                          # trigger-worker, blog/enquiry notifications.
 │   │                          # ★ notification-emails.ts (§22: single + digest
 │   │                          # templates, event-specific CTAs, pure/escaped) +
-│   │                          # shell.ts (mobile table shell, contrast-safe accent)
+│   │                          # shell.ts (THE email design system: composeEmail +
+│   │                          # components, §24) + platform-brand.ts (StoreMink's
+│   │                          # own email identity) + email-samples.ts (every
+│   │                          # mailer rendered, for the gallery and CI guard)
+│   │                          # + account-emails.ts (staff/POS invites, resets)
 │   │                          # + notification-worker.ts
 │   │                          # (claims notification_email_queue, GROUPS by
 │   │                          # recipient into one digest, retries with backoff).
@@ -11694,16 +11698,71 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       ₹343.00 is what makes an email look auto-generated. The fact list keeps
       what the table doesn't: reference, payment method, when. The tokens stay
       declared, so a merchant who wants them can still use them.
-    - **ONE GLOBAL EMAIL DESIGN** (`lib/email/shell.ts`): a neutral, table-safe
-      shell, the store logo/name and one restrained brand accent. Notification
-      CTAs use `emailAccentColor`, which preserves a valid merchant hue but
-      darkens it until white text reaches WCAG AA contrast; malformed values
-      fall back to ink. The same safe colour edges the notification card and
-      links, while the content stays near-black on white. Mobile media rules
-      tighten the card at 620 px, and the rendered order/pickup/refund/team-alert
-      samples have no horizontal overflow at 390 px. Semantic template classes
-      (`email-lead/details/detail/label/code/note`) are inlined for clients that
-      strip styles and remain readable as ordinary HTML without them.
+    - **★★ ONE STANDARD EMAIL DESIGN, PREMIUM AND NEUTRAL**
+      (`lib/email/shell.ts`, rebuilt 2026-10-08; the owner pointed at Claude's
+      onboarding email as the quality bar, never its branding). A warm cream
+      canvas (`#faf9f5`) on a white page, the sender's identity at the top, a
+      large Georgia headline, calm system sans body copy, ONE near-black
+      button, and facts, codes, receipts and quoted messages as white inset
+      cards. **`composeEmail` is the standard layout every mailer uses**
+      (eyebrow, headline, body blocks, footer under the canvas), built from
+      components (`emailParagraph`, `emailDetails`, `emailCode`, `emailPanel`,
+      `emailChecklist`, `emailButton`, `emailLinkFallback`, `emailSignoff`), so
+      a new mailer cannot drift from the others without writing raw markup on
+      purpose.
+      ★ **WHOSE NAME IS ON TOP depends on who is speaking.** Mail StoreMink
+      sends as itself uses `platformEmailBrand()` (`lib/email/platform-brand.ts`,
+      the ONE copy; five hand-written ones were deleted) and wears the official
+      lockup exactly as storemink.com draws it: the purple bag mark, "Store" in
+      ink and "Mink" in `#573cf0`, heavy sans, as text so it reads with images
+      blocked. That covers billing, sign-in codes, announcements, operator
+      notifications AND the account events in `PLATFORM_VOICE_EVENTS`
+      (`lib/notifications/events.ts`: store created/launched, domain live or
+      reverted, comp ended, plan changes, invoices, Mink credits), which also
+      come FROM StoreMink (`RenderedEmail.voice`). ★★ AND THEY CARRY ONLY
+      STOREMINK'S WORDING: a store's saved subject/body for those events is
+      never stored (`saveNotificationConfig` drops it), is ignored at send
+      (`record.ts`), and shows locked in the console. Otherwise any store
+      admin could write their own copy (a fake "account suspended" notice)
+      and have it delivered as StoreMink to arbitrary Cc addresses, which the
+      final review reproduced. Cc/Bcc still apply: they only change who
+      receives StoreMink's own message. Mail a store sends to its
+      own shoppers and staff shows only the merchant's logo, or the store name
+      in serif. **No "Powered by StoreMink" line on merchant mail** (owner's
+      decision): the store is the sender, so StoreMink's name does not appear.
+      ★ **NO MERCHANT COLOUR, deliberately.** The old shell darkened a store's
+      primary colour into the button and card edge (`emailAccentColor`); a
+      light brand hue darkened until white text passes contrast turns muddy,
+      which reads as cheap rather than branded. Identity is the logo or the
+      name, and `emailAccentColor`, the accent arguments and the coloured card
+      edge are gone.
+      ★ **NO LONG DASH IN EMAIL COPY** (owner's rule): rendered subjects,
+      preheaders and bodies never contain U+2014 or U+2013; ranges read "5 to
+      7 working days". `lib/email/no-long-dash.test.ts` renders every mailer
+      in `lib/email/email-samples.ts` (including every registry event's
+      default template, both audiences), and fails on either character or on a
+      mailer that skips the standard frame. AI-drafted coupon copy is cleaned
+      by `withoutLongDashes` before the merchant sees it.
+      ★ Template copy keeps its class vocabulary (`email-lead`,
+      `email-details`, `email-detail`, `email-label`, `email-code`,
+      `email-note`), because merchants' saved templates contain those names:
+      restyle them, never rename one. One class was added, `email-checklist`: a
+      list whose items are a linked title, a line break and a sentence, which
+      `inlineEmailStyles` EXPANDS into the circled-tick rows (a tick cannot be
+      drawn with inline styles on a list item). The store welcome
+      (`store.created`) uses it for the required go-live checklist.
+      ★ The preferences link in a team footer appears only when the event can
+      actually be switched off (`configurable !== false`).
+      ★ Outlook: the head carries an `mso` override (Arial body, Georgia for
+      `.sm-serif`) because Word-engine Outlook uses only the first family in a
+      stack. The circled tick is a bordered cell, so it survives blocked
+      images; Outlook draws it square. Mobile rules at 620 px drop the outer
+      gutter and shrink the headline. `wrapBrandedEmail`
+      (`lib/email/layout.ts`) is deleted. Every mailer has a PURE builder
+      returning `{subject, html}`; **`npm run email:gallery`** renders them all
+      into `.email-gallery/` (gitignored; open `index.html`) so a design change
+      can be seen across every message at once. No merchant action changes, so
+      no Help Centre update.
     - **Email is a QUEUE, never an inline send** (`notification_email_queue`):
       the fan-out enqueues, `lib/email/notification-worker.ts` drains it from
       `/api/cron/send-emails`. A Resend round-trip must never sit on a
@@ -15558,6 +15617,7 @@ npm run test        # vitest run --coverage
 npm run test:shuffle # ★ the SAME suite in a different (fixed-seed) order — the only
                     #   thing that catches order-dependent tests. CI runs it.
 npm run test:watch  # vitest watch
+npm run email:gallery # render every email into .email-gallery/ (open index.html)
 npm run format      # prettier --write
 npm run theme-studio:model-check -- --dry-run # resolve the two task-scoped
                     #   Gemini model ids without network; without --dry-run it calls the

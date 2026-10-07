@@ -1,16 +1,13 @@
 // ---------------------------------------------------------------------------
-// Notification email templates — the second delivery channel for the event
+// Notification email templates: the second delivery channel for the event
 // spine (CODEBASE.md §24).
 //
-// ══ ONE GLOBAL DESIGN, SAFELY BRANDED ══════════════════════════════════════
-// Every store's notification email uses the same neutral foundation: white
-// card, near-black text, restrained borders. Identity comes from the logo/name
-// and ONE safe version of the store accent on the card edge, links and CTA.
-// `emailAccentColor` darkens light accents until white button text reaches WCAG
-// AA contrast; malformed colours fall back to neutral ink.
-//
-// Other email types use the `wrapBrandedEmail` adapter in lib/email/layout.ts.
-// They share the shell but do not opt into notification-specific accent chrome.
+// ══ ONE STANDARD DESIGN ═══════════════════════════════════════════════════
+// Every notification composes through `composeEmail` (lib/email/shell.ts), the
+// same frame every other StoreMink email uses: the store's logo or serif
+// wordmark, a serif headline, the copy, an order summary when there is one, and
+// one near-black button. Identity comes from the logo and the name, never from
+// a recoloured button.
 //
 // Bodies are HTML written by the merchant (or our default), with {{tokens}}
 // substituted and every value escaped: they are DB-derived names going into
@@ -19,23 +16,25 @@
 // ---------------------------------------------------------------------------
 
 import type { StoreBrand } from "@/lib/store/brand";
-import { brandFromSettings } from "@/lib/store/brand";
-import { PLATFORM_EMAIL_DOMAIN } from "@/lib/email/sender";
+import { platformEmailBrand } from "@/lib/email/platform-brand";
 import {
   EMAIL_FONT,
   EMAIL_THEME,
-  emailAccentColor,
+  composeEmail,
   emailButton,
-  emailFooter,
-  emailHeading,
-  emailShell,
+  emailParagraph,
   escapeHtml,
   inlineEmailStyles,
+  plainTextPreview,
 } from "@/lib/email/shell";
 
 // Re-exported: lib/notifications/template.test.ts and callers reach for it here.
 export { inlineEmailStyles } from "@/lib/email/shell";
-import type { Digest } from "@/lib/notifications/events";
+import {
+  getEventDef,
+  isPlatformVoiceEvent,
+  type Digest,
+} from "@/lib/notifications/events";
 import {
   renderOrderSummary,
   type EmailOrderSummary,
@@ -59,13 +58,18 @@ export interface NotificationEmailItem {
 export interface RenderedEmail {
   subject: string;
   html: string;
+  /**
+   * Who is speaking. "platform" = StoreMink writing to a merchant about their
+   * account (PLATFORM_VOICE_EVENTS): the header wears StoreMink's lockup and
+   * the caller must send it FROM StoreMink too. "store" = the store's own mail.
+   */
+  voice: "store" | "platform";
 }
 
 /** Brand for PLATFORM-level mail (operator notifications), which belongs to no
- *  store. Built through brandFromSettings so it can never drift from the
- *  StoreBrand shape as fields are added. */
+ *  store: StoreMink's mark and wordmark (lib/email/platform-brand.ts). */
 export function platformBrand(): StoreBrand {
-  return brandFromSettings(undefined, "StoreMink", PLATFORM_EMAIL_DOMAIN);
+  return platformEmailBrand();
 }
 
 /** Make an app-relative notification link absolute. Anything already absolute
@@ -83,17 +87,35 @@ export function absoluteUrl(
   return `${baseUrl.replace(/\/+$/, "")}${trimmed}`;
 }
 
-/** The "why am I getting this" footer. Team mail gets the preferences link;
- *  customer mail doesn't (it's transactional — there's nothing to switch off). */
-function footer(brand: StoreBrand, baseUrl: string, isTeam: boolean): string {
+/**
+ * The "why am I getting this" line.
+ *
+ * Shopper mail is transactional: there is nothing to switch off, so no link.
+ * Team mail links to the preferences page ONLY when at least one event in the
+ * message can actually be switched off there; offering "change what you get
+ * emailed about" on an event marked `configurable: false` (a welcome, a domain
+ * that stopped working) is a link that does nothing.
+ */
+function footerReason(
+  storeName: string,
+  baseUrl: string,
+  opts: { isTeam: boolean; platformVoice: boolean; switchable: boolean },
+): string {
+  if (!opts.isTeam) {
+    return `You're receiving this because of your order with ${escapeHtml(storeName)}.`;
+  }
   const href = `${baseUrl.replace(/\/+$/, "")}/dashboard/settings/notifications`;
-  const reason = isTeam
-    ? `You're receiving this because you have notifications turned on for ${escapeHtml(brand.name)}. <a href="${escapeHtml(href)}" style="color:${EMAIL_THEME.muted};">Change what you get emailed about</a>.`
-    : `You're receiving this because of your order with ${escapeHtml(brand.name)}.`;
+  const link = opts.switchable
+    ? ` <a href="${escapeHtml(href)}">Change what you get emailed about</a>.`
+    : "";
+  return opts.platformVoice
+    ? `You're receiving this because you run ${escapeHtml(storeName)} on StoreMink.${link}`
+    : `You're receiving this because you have notifications turned on for ${escapeHtml(storeName)}.${link}`;
+}
 
-  return `<p style="margin:0; font-family:${EMAIL_FONT}; font-size:12px; line-height:1.6; color:${EMAIL_THEME.muted};">
-  ${reason}
-</p>`;
+/** Can the merchant switch this event's email off? Unknown keys: yes. */
+function isSwitchable(eventKey: string | null | undefined): boolean {
+  return getEventDef(eventKey ?? "")?.configurable !== false;
 }
 
 const CUSTOMER_ACTIONS: Record<string, string> = {
@@ -127,7 +149,7 @@ function actionLabel(item: NotificationEmailItem, isTeam: boolean): string {
 }
 
 /**
- * One event, one email — the "instant" digest setting.
+ * One event, one email: the "instant" digest setting.
  *
  * `item.body` is HTML (our default template or the merchant's). Values were
  * already escaped during substitution; the template itself is sanitised at save.
@@ -141,33 +163,55 @@ export function renderNotificationEmail(opts: {
 }): RenderedEmail {
   const { item, brand, baseUrl, isTeam = true } = opts;
   const href = absoluteUrl(item.url, baseUrl);
-  const accent = emailAccentColor(brand);
+  const platformVoice = isTeam && isPlatformVoiceEvent(item.eventKey);
 
-  // Order: what happened → what was bought → what to do about it. The summary
-  // sits above the button because the button is the exit, not the content.
-  const bodyHtml = `
-${emailHeading(item.title)}
-${inlineEmailStyles(item.body ?? "", accent)}
-${renderOrderSummary(item.summary ?? null)}
-${href ? emailButton(href, actionLabel(item, isTeam), accent) : ""}`;
-
+  // Order: what happened, then what was bought, then what to do about it. The
+  // summary sits above the button because the button is the exit, not the
+  // content.
   return {
     subject: item.title,
-    html: emailShell({
-      brand,
-      bodyHtml,
-      footerHtml: emailFooter(brand, footer(brand, baseUrl, isTeam)),
-      accentColor: accent,
-      // First line of the body, stripped — what an inbox shows next to the
+    voice: platformVoice ? "platform" : "store",
+    html: composeEmail({
+      brand: platformVoice ? platformEmailBrand() : brand,
+      heading: item.title,
+      blocks: [
+        bodyBlock(item.body),
+        renderOrderSummary(item.summary ?? null),
+        href ? emailButton(href, actionLabel(item, isTeam)) : "",
+      ],
+      footerReasonHtml: footerReason(brand.name, baseUrl, {
+        isTeam,
+        platformVoice,
+        switchable: isSwitchable(item.eventKey),
+      }),
+      // First line of the body, stripped: what an inbox shows next to the
       // subject. Without it clients grab whatever markup comes first.
-      preheader: (item.body ?? "")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 120),
+      preheader: plainTextPreview(item.body ?? ""),
     }),
   };
 }
+
+/**
+ * The message body as styled HTML. Template copy is HTML and is inlined; a
+ * plain-text body (an operator's in-app line, a legacy row) has no block
+ * markup, so it is set as a standard paragraph instead of bare text.
+ */
+function bodyBlock(body: string | null | undefined): string {
+  const text = body?.trim() ?? "";
+  if (!text) return "";
+  return /<(p|ul|ol|h[1-4]|table|div|blockquote)[\s>]/i.test(text)
+    ? inlineEmailStyles(text)
+    : emailParagraph(
+        escapeHtml(text.replace(/<[^>]+>/g, "")).replace(/\n/g, "<br />"),
+      );
+}
+
+/**
+ * A digest lists at most this many updates. Gmail clips a message past about
+ * 102 KB and hides the rest, the button and the footer behind "[Message
+ * clipped]"; the full list is one click away in the activity log.
+ */
+const DIGEST_MAX_ROWS = 30;
 
 /** "3 updates" / "1 update" — used in the digest subject and heading. */
 function countLabel(n: number): string {
@@ -186,28 +230,29 @@ export function renderNotificationDigest(opts: {
   isTeam?: boolean;
 }): RenderedEmail {
   const { items, brand, baseUrl, digest, isTeam = true } = opts;
-  const accent = emailAccentColor(brand);
 
-  const rows = items
-    .map((item) => {
+  const shown = items.slice(0, DIGEST_MAX_ROWS);
+  const hidden = items.length - shown.length;
+  const rows = shown
+    .map((item, index) => {
       const href = absoluteUrl(item.url, baseUrl);
       const title = escapeHtml(item.title);
-      // One line of context per item — a digest is a list, not a stack of
+      // One line of context per item: a digest is a list, not a stack of
       // full emails.
-      const summary = (item.body ?? "")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 110);
+      const summary = plainTextPreview(item.body ?? "", 110);
+      const rule =
+        index === shown.length - 1 && hidden === 0
+          ? ""
+          : `border-bottom:1px solid ${EMAIL_THEME.hairline};`;
 
       return `<tr>
-  <td style="padding:15px 0; border-bottom:1px solid ${EMAIL_THEME.hairline};">
-    <div style="font-family:${EMAIL_FONT}; font-size:15px; font-weight:600; color:${EMAIL_THEME.ink};">
-      ${href ? `<a href="${escapeHtml(href)}" style="color:${accent}; text-decoration:none;">${title}</a>` : title}
+  <td style="padding:16px 22px; ${rule}">
+    <div style="font-family:${EMAIL_FONT}; font-size:16px; line-height:1.45; font-weight:600; color:${EMAIL_THEME.ink};">
+      ${href ? `<a href="${escapeHtml(href)}" style="color:${EMAIL_THEME.ink}; text-decoration:none;">${title}&nbsp;&rarr;</a>` : title}
     </div>
     ${
       summary
-        ? `<div style="margin-top:3px; font-family:${EMAIL_FONT}; font-size:13.5px; line-height:1.55; color:${EMAIL_THEME.muted};">${escapeHtml(summary)}</div>`
+        ? `<div style="margin-top:4px; font-family:${EMAIL_FONT}; font-size:14px; line-height:1.55; color:${EMAIL_THEME.muted};">${escapeHtml(summary)}</div>`
         : ""
     }
   </td>
@@ -217,26 +262,52 @@ export function renderNotificationDigest(opts: {
 
   const window = digest === "hourly" ? "in the last hour" : "since yesterday";
   const dashboardUrl = `${baseUrl.replace(/\/+$/, "")}/dashboard/logs`;
+  const more =
+    hidden > 0
+      ? `<tr><td style="padding:14px 22px; font-family:${EMAIL_FONT}; font-size:14px; line-height:1.5; color:${EMAIL_THEME.muted};">And ${hidden} more update${hidden === 1 ? "" : "s"} in your <a href="${escapeHtml(dashboardUrl)}" style="color:${EMAIL_THEME.muted}; text-decoration:underline;">activity log</a>.</td></tr>`
+      : "";
 
-  const bodyHtml = `
-<h1 style="margin:0 0 4px; font-family:${EMAIL_FONT}; font-size:22px; line-height:1.3; font-weight:700; letter-spacing:-0.3px; color:${EMAIL_THEME.ink};">
-  ${countLabel(items.length)} ${escapeHtml(window)}
-</h1>
-<p style="margin:0 0 6px; font-family:${EMAIL_FONT}; font-size:14.5px; color:${EMAIL_THEME.muted};">
-  Here's what happened in your store.
-</p>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+  const list = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:4px 0 0;">
+  <tr>
+    <td bgcolor="${EMAIL_THEME.card}" style="background-color:${EMAIL_THEME.card}; border:1px solid ${EMAIL_THEME.border}; border-radius:12px; padding:4px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
 ${rows}
-</table>
-${emailButton(dashboardUrl, "Open dashboard", accent)}`;
+${more}
+      </table>
+    </td>
+  </tr>
+</table>`;
+
+  // StoreMink's voice only when EVERY item is StoreMink speaking; one order
+  // alert in the batch makes it the store's own round-up.
+  const platformVoice =
+    isTeam &&
+    items.length > 0 &&
+    items.every((item) => isPlatformVoiceEvent(item.eventKey));
 
   return {
-    subject: `${countLabel(items.length)} from ${brand.name}`,
-    html: emailShell({
-      brand,
-      bodyHtml,
-      footerHtml: emailFooter(brand, footer(brand, baseUrl, isTeam)),
-      accentColor: accent,
+    subject: platformVoice
+      ? `${countLabel(items.length)} from StoreMink`
+      : `${countLabel(items.length)} from ${brand.name}`,
+    voice: platformVoice ? "platform" : "store",
+    html: composeEmail({
+      brand: platformVoice ? platformEmailBrand() : brand,
+      heading: `${countLabel(items.length)} ${window}`,
+      blocks: [
+        emailParagraph(
+          platformVoice
+            ? `Here's what's new with ${escapeHtml(brand.name)} on StoreMink.`
+            : `Here's what happened in ${escapeHtml(brand.name)}.`,
+          { lead: true },
+        ),
+        list,
+        emailButton(dashboardUrl, "Open dashboard"),
+      ],
+      footerReasonHtml: footerReason(brand.name, baseUrl, {
+        isTeam,
+        platformVoice,
+        switchable: items.some((item) => isSwitchable(item.eventKey)),
+      }),
       preheader: `${countLabel(items.length)} ${window}`,
     }),
   };

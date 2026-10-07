@@ -16,10 +16,11 @@
 // ---------------------------------------------------------------------------
 
 export interface RefundCopy {
-  /** Sentence fragment completing "Your refund has been …". */
+  /** Sentence fragment completing "Your refund has been ...". Every value
+   *  must start with a past participle so that sentence stays grammatical. */
   destination: string;
   /**
-   * Whether the "banks take 5–7 working days" line is honest here. Only true
+   * Whether the "banks take 5 to 7 working days" line is honest here. Only true
    * where a BANK is actually in the loop: cash over the counter clears
    * instantly and store credit never leaves.
    */
@@ -27,8 +28,10 @@ export interface RefundCopy {
 }
 
 const GENERIC: RefundCopy = {
-  // True of every method, which is exactly why it is the fallback.
-  destination: "on its way back to you",
+  // True of every method, which is exactly why it is the fallback: the event
+  // only fires once a refund is issued, and "on its way" promises no route.
+  // It reads "Your refund has been issued and is on its way back to you."
+  destination: "issued and is on its way back to you",
   bankDelay: false,
 };
 
