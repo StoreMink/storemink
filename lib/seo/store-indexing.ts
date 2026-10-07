@@ -14,7 +14,7 @@ import {
 } from "@/lib/seo/search-engines";
 import { storeOrigin } from "@/lib/site";
 import { ROOT_DOMAIN, SEARCH_INDEXABLE } from "@/lib/store/host";
-import { isStoreSearchIndexable, markStoreLaunched } from "@/lib/store/launch";
+import { isStoreSearchIndexable } from "@/lib/store/launch";
 import { STORE_TAG, type Store } from "@/lib/store/resolve";
 
 // Public verification/status data lives in stores.settings. The Google meta
@@ -309,9 +309,17 @@ export async function notifyStoreContentPublished(input: {
   storeId: string;
   paths: string[];
 }): Promise<void> {
-  await markStoreLaunched(input.storeId);
+  // ★ PUBLISHING NO LONGER OPENS THE STORE. This used to call
+  // markStoreLaunched() first, on the theory that the first thing a merchant
+  // published of their own was the moment the store deserved indexing. The
+  // flag now also drops the storefront password (lib/store/launch-state.ts),
+  // and a merchant saving their first product has not yet written a refund
+  // policy. `launchStore` (app/actions/launch-actions.ts) is the one caller
+  // that opens a store, and it calls this hook itself once it has. Until
+  // then there is nothing public to submit: the pages behind the password
+  // redirect, and robots/sitemap already say so.
   const store = await readStore(input.storeId).catch(() => null);
-  if (!store) return;
+  if (!store || !isStoreSearchIndexable(store)) return;
   const origin = storeOrigin(store);
   const urls = [...new Set(input.paths)].map((path) => {
     const normalized = path === "/" ? "/" : `/${path.replace(/^\/+/, "")}`;

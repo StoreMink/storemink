@@ -14,6 +14,10 @@ vi.mock("@/lib/store/resolve", () => ({
     id: "a0000000-0000-4000-8000-000000000001",
   })),
 }));
+vi.mock("@/lib/store/storefront-access", () => ({
+  storefrontClosedRefusal: vi.fn(async () => null),
+  storefrontAccess: vi.fn(async () => "open"),
+}));
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: vi.fn().mockResolvedValue({ allowed: true }),
   clientIp: vi.fn(() => "1.2.3.4"),

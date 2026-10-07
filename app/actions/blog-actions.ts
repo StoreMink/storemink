@@ -17,6 +17,7 @@ import {
 } from "@/app/dashboard/lib/access";
 import { getCurrentStoreId } from "@/lib/store/resolve";
 import { demoStoreRefusal } from "@/lib/store/demo-guard";
+import { storefrontClosedRefusal } from "@/lib/store/storefront-access";
 import {
   deleteStorageUrls,
   extractMediaUrlsFromHtml,
@@ -895,6 +896,8 @@ export async function submitCustomerBlog(
 ): Promise<ActionResult> {
   const demoRefusal = await demoStoreRefusal();
   if (demoRefusal) return { error: demoRefusal };
+  const closedRefusal = await storefrontClosedRefusal();
+  if (closedRefusal) return { error: closedRefusal };
   const user = await getServerUser();
 
   if (!user) {
@@ -1051,6 +1054,8 @@ export async function saveCustomerBlogDraft(
 ): Promise<ActionResult> {
   const demoRefusal = await demoStoreRefusal();
   if (demoRefusal) return { error: demoRefusal };
+  const closedRefusal = await storefrontClosedRefusal();
+  if (closedRefusal) return { error: closedRefusal };
   const user = await getServerUser();
 
   if (!user) {
@@ -1173,6 +1178,8 @@ export async function updateCustomerBlog(
 ): Promise<ActionResult> {
   const demoRefusal = await demoStoreRefusal();
   if (demoRefusal) return { error: demoRefusal };
+  const closedRefusal = await storefrontClosedRefusal();
+  if (closedRefusal) return { error: closedRefusal };
   const user = await getServerUser();
 
   if (!user) {

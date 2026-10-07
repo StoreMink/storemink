@@ -373,6 +373,13 @@ const EVENT_VARIABLES: Partial<Record<EventKey, TemplateVariable[]>> = {
       sample: "free",
     },
   ],
+  "store.launched": [
+    {
+      name: "store_url",
+      description: "The store's public address.",
+      sample: "https://acme.storemink.com",
+    },
+  ],
   "store.domain_live": [
     {
       name: "domain",

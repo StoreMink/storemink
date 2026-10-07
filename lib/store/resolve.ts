@@ -1,5 +1,5 @@
 import { headers } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 import { and, eq } from "drizzle-orm";
 import { withAnon } from "@/lib/db/client";
@@ -10,6 +10,8 @@ import { studioPreviewMarker } from "@/lib/theme-studio/preview-store";
 
 // Re-exported so existing importers (and resolve.test.ts) keep working.
 export { parseHost, type HostKind } from "@/lib/store/host";
+import { isStorefrontGated } from "@/lib/store/launch-state";
+import { STOREFRONT_PASSWORD_PATH } from "@/lib/store/launch-copy";
 
 // ---------------------------------------------------------------------------
 // Tenant resolution.
@@ -237,6 +239,18 @@ export async function getCurrentStoreId(): Promise<string> {
 export async function requireStorefrontStore(): Promise<Store> {
   const store = await getCurrentStoreOrNull();
   if (!store) notFound();
+  // A store that has not opened yet shows the public a password page. The
+  // question is asked HERE because this is the one function every storefront
+  // page already calls (see the layout-cannot-abort-children note above), and
+  // only for a gated store — a launched store never loads the access module.
+  // Admins and visitors who entered the password resolve as "unlocked" and
+  // see the real shop; everyone else is sent to /password.
+  if (isStorefrontGated(store)) {
+    const { storefrontAccess } = await import("@/lib/store/storefront-access");
+    if ((await storefrontAccess(store)) === "locked") {
+      redirect(STOREFRONT_PASSWORD_PATH);
+    }
+  }
   return store;
 }
 

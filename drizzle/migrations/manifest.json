@@ -6563,6 +6563,58 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261007_0170_store_access",
+      "description": "Storefront password for stores that have not opened; open any store that already took an order",
+      "file": "sql/20261007_0170_store_access.sql",
+      "transaction": true,
+      "requires": ["20261006_0169_retire_card_colours_help"],
+      "verify": {
+        "tables": ["store_access"],
+        "constraints": [
+          "store_access_pkey",
+          "store_access_password_check",
+          "store_access_version_check"
+        ],
+        "rlsTables": ["store_access"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "No trading store is left closed",
+            "sql": "select count(*)::text from public.stores s where s.settings->>'launched'='false' and exists (select 1 from public.orders o where o.store_id=s.id)",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261007_0171_launch_checklist_help",
+      "description": "Help: signup without the address step; the go-live checklist and storefront password",
+      "file": "sql/20261007_0171_launch_checklist_help.sql",
+      "transaction": true,
+      "requires": ["20261007_0170_store_access"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Signup guide no longer asks for the address up front",
+            "sql": "select count(*)::text from public.help_articles where slug='create-your-storemink-store' and status='published' and body like '%added later, from the dashboard, before you open the store%' and body like '%Enter your name, the store name and the country you sell from%' and body not like '%Add the complete business location%' and body not like '%Enter your first and last name.%'",
+            "equals": "1"
+          },
+          {
+            "name": "Signup guide no longer has a separate name step",
+            "sql": "select count(*)::text from public.help_articles where slug='create-your-storemink-store' and status='published' and body like '%Enter your first and last name.%'",
+            "equals": "0"
+          },
+          {
+            "name": "Setup guide describes the private storefront, Go live and the password page",
+            "sql": "select count(*)::text from public.help_articles where slug='complete-your-store-setup' and status='published' and body like '%storefront stays private until you open it%' and body like '%<h2>Open your store</h2>%' and body like '%presses <strong>Go live</strong>%' and body not like '%Before calling the store ready%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

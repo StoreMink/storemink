@@ -156,6 +156,7 @@ export const EVENT_KEYS = [
   "security.password_changed",
   "settings.changed",
   "store.created",
+  "store.launched",
   "store.domain_live",
   "store.domain_reverted",
   // ── Plan & billing ──────────────────────────────────────────────────────
@@ -597,6 +598,20 @@ export const EVENTS: readonly EventDef[] = [
     audiences: { "store-admins": BOTH },
     // Not switchable: a merchant cannot have turned this off before they had
     // an account to turn it off in.
+    configurable: false,
+  },
+  {
+    key: "store.launched",
+    label: "Store opened to customers",
+    description:
+      "The owner completed the go-live checklist and the storefront is now public.",
+    group: "Team & security",
+    section: "settings",
+    severity: "success",
+    // BOTH, like store.created: the password page every colleague has been
+    // typing into has just come down, and the address they have been told to
+    // wait on is now the real shop. The whole team needs to know that once.
+    audiences: { "store-admins": BOTH },
     configurable: false,
   },
   {

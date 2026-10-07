@@ -4,7 +4,11 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/db/client", () => ({ withService: vi.fn() }));
 vi.mock("@/lib/observability/logger", () => ({ logError: vi.fn() }));
 
-import { isStoreLaunched, isStoreSearchIndexable } from "./launch";
+import {
+  isStoreLaunched,
+  isStoreSearchIndexable,
+  isStorefrontGated,
+} from "./launch";
 
 describe("isStoreLaunched", () => {
   it("is false only when the flag is explicitly false", () => {
@@ -58,5 +62,20 @@ describe("isStoreSearchIndexable", () => {
       isStoreSearchIndexable({ settings: { launched: true, demo: true } }),
     ).toBe(false);
     expect(isStoreSearchIndexable(null)).toBe(false);
+  });
+});
+
+describe("isStorefrontGated", () => {
+  it("gates exactly the unlaunched, non-demo store", () => {
+    expect(isStorefrontGated({ settings: { launched: false } })).toBe(true);
+    expect(isStorefrontGated({ settings: { launched: true } })).toBe(false);
+    // Legacy stores (no flag) are open — the password page must never appear
+    // in front of a shop that is already trading.
+    expect(isStorefrontGated({ settings: {} })).toBe(false);
+    // A demo is a public showcase; it carries its own refusals instead.
+    expect(
+      isStorefrontGated({ settings: { launched: false, demo: true } }),
+    ).toBe(false);
+    expect(isStorefrontGated(null)).toBe(false);
   });
 });

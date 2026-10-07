@@ -479,6 +479,7 @@ export const STOREFRONT_CODE_ROUTES: ReadonlySet<string> = new Set([
   "enquiries",
   "notifications",
   "orders",
+  "password",
   "profile",
   "shop",
 ]);

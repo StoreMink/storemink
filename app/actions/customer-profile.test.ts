@@ -38,6 +38,10 @@ const DEMO =
 vi.mock("@/lib/store/demo-guard", () => ({
   demoStoreRefusal: vi.fn(async () => null),
 }));
+vi.mock("@/lib/store/storefront-access", () => ({
+  storefrontClosedRefusal: vi.fn(async () => null),
+  storefrontAccess: vi.fn(async () => "open"),
+}));
 
 function makeFormData(fields: Record<string, string | null | undefined>) {
   const fd = new FormData();

@@ -363,17 +363,22 @@ const TEAM_BLUEPRINTS: Partial<Record<EventKey, TemplateBlueprint>> = {
  */
 const BESPOKE: Record<string, { subject: string; body: string }> = {
   "store.created": {
-    subject: "{{subject_label}} is live on StoreMink",
+    subject: "{{subject_label}} is ready on StoreMink",
     body: [
-      "<p>Your store is ready — here it is:</p>",
+      "<p>Your store is set up — here is its address:</p>",
       '<p><a href="{{store_url}}">{{store_url}}</a></p>',
-      "<p>Three things worth doing next:</p>",
-      "<ol>",
-      "  <li><strong>Add your first product</strong> so there's something to sell.</li>",
-      "  <li><strong>Make it yours</strong> — logo, colours and pages live in the website builder.</li>",
-      "  <li><strong>Take a test order</strong> to see the whole flow end to end.</li>",
-      "</ol>",
-      "<p>Everything is editable later, including the store name and address.</p>",
+      "<p>It stays private until you open it: visitors see a password page, and you can preview the real shop by signing in. Your dashboard Home shows a short checklist of what has to be in place first — your first product, your business details, your policies and your delivery charges — and a <strong>Go live</strong> button for when it is done.</p>",
+      "<p>Everything is editable later, including the store name.</p>",
+    ].join("\n"),
+  },
+  // The password page is down. Lead with the address, because that is the
+  // whole message; the rest is what changed for people who were told to wait.
+  "store.launched": {
+    subject: "{{subject_label}} is open to customers",
+    body: [
+      "<p>Your store is now public:</p>",
+      '<p><a href="{{store_url}}">{{store_url}}</a></p>',
+      "<p>The password page is gone, search engines have been told about the store, and anyone with the address can shop. Links you have already shared now open the real shop.</p>",
     ].join("\n"),
   },
   // A milestone the merchant has usually been waiting days for, and the reason

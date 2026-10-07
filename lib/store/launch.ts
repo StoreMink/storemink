@@ -3,82 +3,34 @@ import { eq, sql } from "drizzle-orm";
 import { stores } from "@/drizzle/schema";
 import { withService } from "@/lib/db/client";
 import { logError } from "@/lib/observability/logger";
-import { STORE_TAG, type Store } from "@/lib/store/resolve";
+import { STORE_TAG } from "@/lib/store/resolve";
+
+// The predicates are pure and import nothing; they live in launch-state.ts so
+// the host resolver can read them without importing this module (which
+// imports the resolver). Re-exported here so every existing caller is
+// unchanged.
+export {
+  isDemoStore,
+  isStoreLaunched,
+  isStoreSearchIndexable,
+  isStorefrontGated,
+} from "@/lib/store/launch-state";
 
 /**
- * "Has this merchant actually put something of their own on this store yet?"
+ * Open the store to the public. Idempotent and best-effort.
  *
- * A store is created in seconds and immediately holds a themed homepage, ~17
- * seeded content pages and a sample catalogue — all byte-identical to every
- * other store on that theme. Before this flag, `createStore` submitted that to
- * Google and IndexNow the moment it existed.
+ * ★★ ONE CALLER: `launchStore` in app/actions/launch-actions.ts, after it has
+ * re-run the go-live checklist server-side. It used to be called from every
+ * publish path (pages, products, blogs, CSV imports, Mink publication) on the
+ * theory that "the merchant published something of their own" was the moment
+ * a store deserved to be indexed. That is still true of indexing — but the
+ * flag now also drops the storefront password, and a merchant saving their
+ * first product has not yet written a refund policy or an address for their
+ * invoices. Opening is an explicit act now; publishing stays private until it.
  *
- * Mass-submitting near-duplicate, placeholder stores is not merely wasted crawl
- * budget: it is the whole `*.storemink.com` domain repeatedly showing search
- * engines thin, templated content, and the cost is borne by every OTHER store
- * on the domain — including the ones that did the work. And the damage is not
- * undoable from code: `robots.txt` Disallow stops future crawling but does not
- * remove what is already indexed.
- *
- * So indexability is opt-in-by-doing: a store becomes crawlable the first time
- * its owner publishes something that is theirs.
- *
- * Stored on `stores.settings` (jsonb) rather than a column because it is a
- * per-store behaviour flag, exactly like `settings.features` — no migration,
- * and `settings` is already loaded on every host resolve. It is NOT a secret
- * (settings is anon-readable, CODEBASE.md §5.9); "this shop is open" is public
- * by definition.
- */
-export function isStoreLaunched(
-  store: Pick<Store, "settings"> | null | undefined,
-): boolean {
-  if (!store) return false;
-  // Legacy stores predate the flag and are already indexed — treating them as
-  // unlaunched would DEINDEX live shops, so absence means launched for anything
-  // created before this shipped. `createStore` writes `launched: false`
-  // explicitly, which is what makes new stores start closed.
-  const v = store.settings?.launched;
-  return v !== false;
-}
-
-/**
- * Is this a theme's showcase store rather than a real merchant's shop?
- *
- * Demo stores are seeded from a theme package, publicly reachable, and reset on
- * demand — so they must never accept anything a real shop would treat as a
- * commitment. A visitor CAN sign in and place a cash-on-delivery order on one
- * otherwise: it writes a real `orders` row, reserves real stock, and emails a
- * confirmation to somebody who now believes shoes are coming.
- *
- * Kept beside `isStoreLaunched` because both answer "what is this store FOR",
- * both read `stores.settings`, and both are consulted by unrelated subsystems
- * that must not each re-derive the rule.
- */
-export function isDemoStore(
-  store: Pick<Store, "settings"> | null | undefined,
-): boolean {
-  return store?.settings?.demo === true;
-}
-
-/**
- * Is this store eligible to appear in search at all?
- *
- * Keep this as the one gate shared by page metadata, robots, sitemaps and the
- * notification pipeline. A demo may be fully populated and a legacy store may
- * have no `launched` key, so neither `isStoreLaunched()` nor `settings.demo`
- * alone answers the search-indexability question.
- */
-export function isStoreSearchIndexable(
-  store: Pick<Store, "settings"> | null | undefined,
-): boolean {
-  return isStoreLaunched(store) && !isDemoStore(store);
-}
-
-/**
- * Mark a store launched. Idempotent, best-effort, and deliberately unable to
- * fail its caller — it runs after a publish that has already succeeded, and a
- * merchant must never see their page fail to publish because a search-engine
- * flag could not be written.
+ * Deliberately unable to fail its caller: it runs after the checklist has
+ * passed, and a merchant must never see "Go live" fail because a search-engine
+ * flag could not be written. The caller re-reads the store afterwards.
  */
 export async function markStoreLaunched(storeId: string): Promise<void> {
   try {
@@ -91,7 +43,7 @@ export async function markStoreLaunched(storeId: string): Promise<void> {
         .where(eq(stores.id, storeId)),
     );
     // The host resolver caches `settings`; without this the store stays
-    // noindex for up to the cache TTL after it goes live.
+    // password-protected and noindex for up to the cache TTL after it opens.
     const { revalidateTag } = await import("next/cache");
     revalidateTag(STORE_TAG, "max");
   } catch (err) {

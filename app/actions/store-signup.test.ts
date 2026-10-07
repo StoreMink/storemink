@@ -235,31 +235,43 @@ describe("createStore gates", () => {
     expect(dbHolder.current.calls.insert).toHaveLength(0);
   });
 
-  it("requires every core invoice-address field server-side", async () => {
-    expect((await createStore({ ...INPUT, country: "" })).error).toMatch(
-      /choose the country/i,
-    );
+  it("★ accepts a store with no address yet, storing only the country", async () => {
+    // The address moved to the dashboard's go-live checklist, which refuses to
+    // open the store without it. Signup must not ask for what a store without
+    // an order cannot yet need.
+    const result = await createStore({
+      name: "Acme Foods",
+      template: DEFAULT_THEME_ID,
+      firstName: "Asha",
+      country: "in",
+    });
+    expect(result).toEqual({ slug: "acme-foods", storeId: "store-1" });
+    expect(dbHolder.current.calls.values[0].settings.business).toEqual({
+      country: "IN",
+    });
+    // The invoice profile is seeded with what IS known, and an honest null
+    // for the address — which is what the checklist reads.
+    expect(dbHolder.current.calls.values[2]).toMatchObject({
+      businessName: "Acme Foods",
+      businessAddress: null,
+      contactEmail: "owner@example.com",
+      contactPhone: "+919876543210",
+    });
+  });
 
-    dbHolder.current = makeDbMock({ selectQueue: [[], []] });
-    expect((await createStore({ ...INPUT, addressLine1: "" })).error).toMatch(
-      /street and building/i,
+  it("falls back to the platform's home country for a missing or unknown code", async () => {
+    await createStore({ ...INPUT, country: "" });
+    expect(dbHolder.current.calls.values[0].settings.business.country).toBe(
+      "IN",
     );
-
-    dbHolder.current = makeDbMock({ selectQueue: [[], []] });
-    expect((await createStore({ ...INPUT, city: "" })).error).toMatch(
-      /enter the city/i,
+    dbHolder.current = makeDbMock({
+      selectQueue: [[], []],
+      returning: [{ id: "store-1", slug: "acme-foods" }],
+    });
+    await createStore({ ...INPUT, country: "zz" });
+    expect(dbHolder.current.calls.values[0].settings.business.country).toBe(
+      "IN",
     );
-
-    dbHolder.current = makeDbMock({ selectQueue: [[], []] });
-    expect((await createStore({ ...INPUT, state: "" })).error).toMatch(
-      /state or province/i,
-    );
-
-    dbHolder.current = makeDbMock({ selectQueue: [[], []] });
-    expect((await createStore({ ...INPUT, postalCode: "" })).error).toMatch(
-      /postal or PIN/i,
-    );
-    expect(dbHolder.current.calls.insert).toHaveLength(0);
   });
 });
 
@@ -370,7 +382,10 @@ describe("createStore provisioning", () => {
     expect(applyTheme).not.toHaveBeenCalled();
   });
 
-  it("rolls back the store if owner creation fails", async () => {
+  it("★★ a failed owner insert fails the ONE transaction — no store, no burned slug, no hand-rolled delete", async () => {
+    // The three rows used to be three withService calls with a manual
+    // rollback; a rollback that is itself a network call can fail and leave a
+    // store nobody owns, blocking every retry on "that name is not available".
     dbHolder.current = makeDbMock({
       selectQueue: [[], []],
       returning: [{ id: "store-1", slug: "acme-foods" }],
@@ -378,26 +393,22 @@ describe("createStore provisioning", () => {
     });
 
     expect(await createStore(INPUT)).toEqual({
-      error: "Could not set up your store account. Please try again.",
+      error: "Could not create your store. Please try again.",
     });
-    expect(dbHolder.current.calls.delete[0]).toBe(stores);
-    expect(sqlParamValues(dbHolder.current.calls.where.at(-1))).toContain(
-      "store-1",
-    );
+    expect(dbHolder.current.calls.delete).toHaveLength(0);
     expect(applyTheme).not.toHaveBeenCalled();
+    expect(emitEvent).not.toHaveBeenCalled();
   });
 
-  it("rolls back the store if its required invoice profile cannot be saved", async () => {
+  it("a failed invoice-profile insert fails the same transaction", async () => {
     dbHolder.current = makeDbMock({
       selectQueue: [[], []],
       returning: [{ id: "store-1", slug: "acme-foods" }],
       failInsertFor: [storeBillingSettings],
     });
 
-    expect(await createStore(INPUT)).toEqual({
-      error: "Could not save your business address. Please try again.",
-    });
-    expect(dbHolder.current.calls.delete[0]).toBe(stores);
+    expect((await createStore(INPUT)).error).toMatch(/could not create/i);
+    expect(dbHolder.current.calls.delete).toHaveLength(0);
     expect(applyTheme).not.toHaveBeenCalled();
   });
 
