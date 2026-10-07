@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { and, eq, sql } from "drizzle-orm";
 import { admins, platformAdmins, storeAccess } from "@/drizzle/schema";
 import { withService } from "@/lib/db/client";
@@ -42,10 +42,18 @@ import {
 // ★ THE HOST DECIDES, never an argument (the demo-guard rule): the store comes
 // from the request, so a caller cannot name a different store to get past it.
 //
-// ★ ADMINS BYPASS WITH THEIR SESSION. The owner reviewing their shop, a staff
-// member checking a product page, the builder's ?preview=1 iframe — all carry
-// `sm_session`, which spans every store subdomain, so none of them is asked
-// for a password they would only have to copy out of their own dashboard.
+// ★★ THE OWNER IS GATED TOO (owner's decision, 2026-10-08). A first version
+// let any signed-in admin of the store through on their session. That made
+// the password invisible to the one person who needs to understand it — the
+// owner never saw what a customer sees — and it made "Preview store" a
+// different experience from sharing the link. Shopify's rule, adopted: the
+// password page is what EVERYONE gets, the owner included; the owner has the
+// password on their dashboard Home and types it like anyone else. The ONE
+// exception is the Website Builder's preview iframe (`?preview=1`, carried as
+// the `x-sm-preview` header by proxy.ts) for a request that also carries an
+// admin session: without it the builder is blind until the store opens, and
+// that preview is already gated by getManagerUserId("builder") in the draft
+// loaders it feeds.
 // ---------------------------------------------------------------------------
 
 export type StorefrontAccess = "open" | "unlocked" | "locked";
@@ -162,7 +170,10 @@ export const storefrontAccess = cache(
   async (store: Pick<Store, "id" | "settings">): Promise<StorefrontAccess> => {
     if (!isStorefrontGated(store)) return "open";
 
-    if (await viewerIsStoreStaff(store.id)) return "unlocked";
+    // The builder's preview iframe only — see the header comment.
+    if ((await headers()).get("x-sm-preview") === "1") {
+      if (await viewerIsStoreStaff(store.id)) return "unlocked";
+    }
 
     if (!storefrontGrantsConfigured()) {
       // No signing key means no grant can ever have been minted, so the only

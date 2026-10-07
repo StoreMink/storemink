@@ -56,6 +56,8 @@ export interface LaunchChecklistItem {
   description: string;
   /** Where to do it. */
   href: string;
+  /** The button that goes there, in two or three words ("Add product"). */
+  action: string;
   required: boolean;
   done: boolean;
 }
@@ -114,6 +116,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       description:
         "Publish at least one product of your own. Theme samples don't count — they're drafts your customers never see.",
       href: "/dashboard/products",
+      action: "Add product",
       required: true,
       done: facts.publishedProducts > 0,
     },
@@ -123,6 +126,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       description:
         "Your trading name, address, email and mobile print on every invoice and decide how tax is applied.",
       href: "/dashboard/billing",
+      action: "Add business details",
       required: true,
       done: businessDone,
     },
@@ -131,6 +135,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       title: POLICY_TITLES[slug],
       description: POLICY_WHY[slug],
       href: "/dashboard/settings/policies",
+      action: "Write policy",
       required: true,
       done: facts.policies[slug] === true,
     })),
@@ -140,6 +145,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       description:
         "Decide what customers pay for delivery and how long it takes. Until you save this, checkout shows a default nobody chose.",
       href: "/dashboard/settings/shipping",
+      action: "Set delivery charges",
       required: true,
       done: facts.shippingSaved,
     },
@@ -149,6 +155,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       description:
         "Your homepage still shows the theme's starting copy and pictures. Make it yours in the Website Builder.",
       href: "/dashboard/builder",
+      action: "Open Website Builder",
       required: false,
       done: facts.homepageEdited,
     },
@@ -158,6 +165,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       description:
         "It shows in your header, on invoices and in every email your store sends.",
       href: "/dashboard/branding",
+      action: "Upload logo",
       required: false,
       done: facts.logo,
     },
@@ -167,6 +175,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       description:
         "The theme's example products are still in your catalogue as drafts. Delete them so they can't be published by mistake.",
       href: "/dashboard/products",
+      action: "Review products",
       required: false,
       done: facts.sampleProducts === 0,
     },
@@ -179,6 +188,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
         ? "Cash on Delivery already works. Connect your own Razorpay account to take cards and UPI too."
         : "Cash on Delivery already works. Upgrade to take cards and UPI through your own Razorpay account.",
       href: limits.onlinePayments ? "/dashboard/channels" : "/dashboard/plans",
+      action: limits.onlinePayments ? "Connect Razorpay" : "See plans",
       required: false,
       done: facts.paymentsConnected,
     },
@@ -188,6 +198,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       description:
         "Only if you're registered. It prints on invoices and lets business customers claim input credit.",
       href: "/dashboard/billing",
+      action: "Add GSTIN",
       required: false,
       done: facts.gstin,
     },
@@ -202,6 +213,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       href: limits.customDomain
         ? "/dashboard/settings/domain"
         : "/dashboard/plans",
+      action: limits.customDomain ? "Connect domain" : "See plans",
       required: false,
       done: facts.customDomainLive,
     },

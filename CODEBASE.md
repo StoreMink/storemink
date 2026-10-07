@@ -2572,11 +2572,11 @@ wholesip/
 │   │   │                      # browser-check, publish and exact-rollback human workflow.
 │   │   ├── mink-feedback.tsx  # Per-answer thumbs + bounded, privacy-redacted issue report.
 │   │   ├── mink-mark.tsx      # Shared solid-purple robot mark matching Help Centre Mink.
-│   │   ├── page.tsx           # Home: greeting, Mink prompt, then LaunchChecklistCard
-│   │   │                      # (launch-checklist.tsx + go-live-controls.tsx — the
-│   │   │                      # go-live checklist, password and Go live, §7) and
-│   │   │                      # PlanCard (plan-card.tsx — "you're on Free", what the
-│   │   │                      # next plan unlocks), then the setup cards
+│   │   ├── page.tsx           # Home: greeting + PlanTag (plan-tag.tsx), then while the
+│   │   │                      # store is closed ONLY LaunchChecklistCard
+│   │   │                      # (launch-checklist.tsx → setup-guide.tsx: password +
+│   │   │                      # Go live head, required-task accordion, folded
+│   │   │                      # Recommended, §7); Mink prompt and setup tiles once open
 │   │   ├── analytics/         # ★ Performance dashboard (§20): URL date/comparison
 │   │   │                      # filters, streamed commerce + tenant-scoped Google
 │   │   │                      # Search aggregates, widget registry, and persisted
@@ -4156,7 +4156,8 @@ wholesip/
 │                              # launched:false store that already took an order;
 │                              # 0171 edits the signup and setup Help guides in place
 │                              # for the shorter wizard, the go-live checklist and the
-│                              # password page. 0172 makes the five RESTRICT foreign
+│                              # password page; 0173 corrects that guide for the owner-
+│                              # gated password. 0172 makes the five RESTRICT foreign
 │                              # keys inside the store cascade (order_items → products/
 │                              # variants, Mink publication/campaign → approval/draft)
 │                              # NO ACTION DEFERRABLE INITIALLY IMMEDIATE: a store that
@@ -4167,7 +4168,7 @@ wholesip/
 │                              # `set constraints all deferred` in its transaction;
 │                              # everywhere else the checks stay immediate, so deleting
 │                              # ONE ordered product is still refused (verified both
-│                              # ways against a copy of production). Next free: 0173.
+│                              # ways against a copy of production). Next free: 0174.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -15879,10 +15880,14 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   rendering child page — the §3 rule). For a gated store it dynamically
   imports `lib/store/storefront-access.ts`, whose request-memoized
   `storefrontAccess()` answers `open | unlocked | locked`: unlocked for a
-  signed-in admin of this store or a platform operator (so the owner, staff
-  and the builder's `?preview=1` never see the password page), or for a
-  visitor carrying a valid `sm_store_pass` grant; locked otherwise →
-  `redirect("/password")`. The layout renders a locked visitor a minimal
+  visitor carrying a valid `sm_store_pass` grant, or for the Website
+  Builder's preview iframe (`x-sm-preview` header AND an admin session);
+  locked otherwise → `redirect("/password")`. ★★ THE OWNER IS GATED TOO
+  (owner's decision, 2026-10-08): a first version let any signed-in admin
+  through, which hid the password page from the one person who needs to
+  understand it. Shopify's rule applies — everyone, owner included, types
+  the password, which sits on Dashboard Home beside Go live. The builder
+  preview is the one exception, or the builder is blind until launch. The layout renders a locked visitor a minimal
   shell (brand tokens, no header/footer/cart, since every link in them would
   lead back to the password page). `/password` (`(storefront)/(pages)/password`,
   reserved in `RESERVED_PAGE_SLUGS` and `STOREFRONT_CODE_ROUTES`) is the one
@@ -15912,14 +15917,24 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   trading shop wakes up behind a password. Demo stores (`settings.demo`) are
   never gated and never indexed. Theme SAMPLE products seed as **drafts**
   (`applyTheme`'s `publishSampleProducts`, true only for demo stores).
-  Dashboard Home renders `LaunchChecklistCard` (progress, each item linking to
-  its page, the password with Copy / New password / Preview store, and Go live
-  for the superadmin) above a `PlanCard` whose "included" and "upgrade to
-  unlock" lines derive from `PLAN_LIMITS` via `lib/plans/upgrade-summary.ts`,
-  so the card cannot advertise what enforcement withholds. The `store.created`
-  welcome says the store is READY, not live, and points at the checklist.
-  Help: `20261007_0171_launch_checklist_help` edits the signup and setup
-  guides in place. Full audit of the SEO half: `docs/seo-action-plan.md`.
+  **Dashboard Home is ONE card while the store is closed** (`setup-guide.tsx`,
+  the Shopify setup-guide shape, redesigned 2026-10-08 after the first version
+  ran to three cards and six tiles): a slim `PlanTag` beside the greeting
+  ("Free plan · Upgrade", with the next plan's unlocks in its title, derived
+  from `PLAN_LIMITS` via `lib/plans/upgrade-summary.ts`); then the card whose
+  HEAD is the store password (Copy / New / Preview) and the Go live button,
+  and whose body is the required tasks as an accordion — exactly one open, the
+  first unfinished, showing its description and a button that goes there
+  (`LaunchChecklistItem.action`). **Recommended renders only once every
+  required task is done, and folds** (collapsed by default with a count).
+  Mink's prompt, the six setup tiles and "All caught up" return once the store
+  is open. `setup-guide.test.tsx` pins the open-first-unfinished, hidden-then-
+  folded and owner-only rules. The `store.created` welcome says the store is
+  READY, not live, and points at the checklist. Help:
+  `20261007_0171_launch_checklist_help` edits the signup and setup guides in
+  place; `20261008_0173_owner_password_help` corrects the setup guide to say
+  the owner enters the password too. Full audit of the SEO half:
+  `docs/seo-action-plan.md`.
 - **StoreMink's own brand identity for schema lives in
   `lib/seo/brand-identity.ts`** — one Organization node (`sameAs` for the
   LinkedIn/YouTube/Instagram profiles, `contactPoint`, `address`) emitted from

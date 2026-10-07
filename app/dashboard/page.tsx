@@ -12,9 +12,10 @@ import {
 import { getViewerAccess, getViewerContext } from "./lib/access";
 import { AskAnything } from "./ask-anything";
 import { LaunchChecklistCard } from "./launch-checklist";
-import { PlanCard } from "./plan-card";
+import { PlanTag } from "./plan-tag";
 import { getCurrentStore } from "@/lib/store/resolve";
 import { effectivePlan } from "@/lib/plans";
+import { isStoreLaunched } from "@/lib/store/launch-state";
 
 type SetupCard = {
   icon: LucideIcon;
@@ -31,6 +32,7 @@ export default async function DashboardHomePage() {
     getCurrentStore(),
   ]);
   const plan = effectivePlan(store);
+  const launched = isStoreLaunched(store);
   const first = ctx?.profile?.first_name?.trim();
   const nameSuffix = first ? `, ${first}` : "";
 
@@ -94,20 +96,22 @@ export default async function DashboardHomePage() {
 
   return (
     <div className="dash-page-enter mx-auto flex w-full max-w-3xl flex-col gap-6 py-1">
-      <h1 className="text-[22px] font-bold tracking-tight text-[var(--dash-text)]">
-        {greeting}
-        {nameSuffix}. Let&apos;s get started.
-      </h1>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h1 className="text-[22px] font-bold tracking-tight text-[var(--dash-text)]">
+          {greeting}
+          {nameSuffix}.
+        </h1>
+        <PlanTag plan={plan} />
+      </div>
 
-      <AskAnything />
-
-      {/* What stands between this store and its first customer, then what
-          the plan includes. Both derive from live rows — nothing here is a
-          stored flag a merchant can tick. */}
+      {/* While the store is closed, the ONE thing on this page is opening it:
+          the password that keeps it private, Go live, and the tasks in the
+          way. Nothing else competes for attention until it is open. */}
       <LaunchChecklistCard />
-      <PlanCard plan={plan} />
 
-      {cards.length > 0 && (
+      {launched && <AskAnything />}
+
+      {launched && cards.length > 0 && (
         <section className="flex flex-col gap-3">
           <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-[var(--dash-text-3)]">
             Set up your store
@@ -140,14 +144,16 @@ export default async function DashboardHomePage() {
         </section>
       )}
 
-      <div className="mt-1 flex items-center gap-3 text-[var(--dash-text-3)]">
-        <div className="h-px flex-1 bg-[var(--dash-border)]" />
-        <span className="inline-flex items-center gap-1.5 text-[13px]">
-          <CheckCircle2 className="h-4 w-4 text-[var(--dash-green)]" />
-          All caught up
-        </span>
-        <div className="h-px flex-1 bg-[var(--dash-border)]" />
-      </div>
+      {launched && (
+        <div className="mt-1 flex items-center gap-3 text-[var(--dash-text-3)]">
+          <div className="h-px flex-1 bg-[var(--dash-border)]" />
+          <span className="inline-flex items-center gap-1.5 text-[13px]">
+            <CheckCircle2 className="h-4 w-4 text-[var(--dash-green)]" />
+            All caught up
+          </span>
+          <div className="h-px flex-1 bg-[var(--dash-border)]" />
+        </div>
+      )}
     </div>
   );
 }

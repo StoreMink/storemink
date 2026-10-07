@@ -6647,6 +6647,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261008_0173_owner_password_help",
+      "description": "Help: the store password applies to the owner too",
+      "file": "sql/20261008_0173_owner_password_help.sql",
+      "transaction": true,
+      "requires": ["20261007_0172_store_purge_fk_timing"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Setup guide says the owner enters the password too",
+            "sql": "select count(*)::text from public.help_articles where slug='complete-your-store-setup' and status='published' and body like '%you included — sees a password page until then%' and body not like '%can browse the real shop by signing in%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

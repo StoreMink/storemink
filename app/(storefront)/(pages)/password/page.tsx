@@ -53,8 +53,8 @@ export default async function StorefrontPasswordPage({
         </p>
         <PasswordForm next={typeof next === "string" ? next : "/"} />
         <p className="sm-password-owner">
-          Store owner? <Link href="/dashboard">Sign in to your dashboard</Link>{" "}
-          to preview the shop and open it to customers.
+          Store owner? The password is on your{" "}
+          <Link href="/dashboard">dashboard Home</Link>, next to Go live.
         </p>
       </div>
     </main>
