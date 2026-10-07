@@ -7,11 +7,39 @@
 // Output is gitignored: regenerate it whenever the design changes.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { renderEmailSamples } from "@/lib/email/email-samples";
+import { renderEmailSamples, SAMPLE_LOGOS } from "@/lib/email/email-samples";
 
 const outDir = join(process.cwd(), ".email-gallery");
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
+
+// Stand-in logos in three shapes, for the "Store logo sizing" samples.
+const logo = (w: number, h: number, body: string) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${body}</svg>`;
+writeFileSync(
+  join(outDir, SAMPLE_LOGOS.wide),
+  logo(
+    800,
+    200,
+    `<rect width="800" height="200" rx="24" fill="#2f6b3a"/><text x="400" y="128" font-family="Georgia" font-size="96" fill="#fff" text-anchor="middle">Acme Juice</text>`,
+  ),
+);
+writeFileSync(
+  join(outDir, SAMPLE_LOGOS.square),
+  logo(
+    600,
+    600,
+    `<rect width="600" height="600" rx="120" fill="#2f6b3a"/><text x="300" y="380" font-family="Georgia" font-size="260" fill="#fff" text-anchor="middle">AJ</text>`,
+  ),
+);
+writeFileSync(
+  join(outDir, SAMPLE_LOGOS.tall),
+  logo(
+    300,
+    600,
+    `<rect width="300" height="600" rx="40" fill="#2f6b3a"/><text x="150" y="330" font-family="Georgia" font-size="140" fill="#fff" text-anchor="middle">AJ</text>`,
+  ),
+);
 
 const samples = renderEmailSamples();
 const escape = (value: string) =>

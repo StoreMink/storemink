@@ -438,12 +438,37 @@ export function emailSignoff(name: string, greeting = "Thanks,"): string {
 
 /** The sender's identity at the top of the canvas. */
 function emailHeader(brand: StoreBrand): string {
-  if (brand.logoUrl) {
-    return `<img src="${escapeHtml(brand.logoUrl)}" alt="${escapeHtml(brand.name)}" width="128" style="display:block; width:128px; max-width:60%; height:auto; border:0;" />`;
-  }
+  if (brand.logoUrl) return merchantLogo(brand.logoUrl, brand.name);
   if (brand.mark) return storeMinkLockup(brand.mark);
   // A store with no logo: its name, set in the serif the headline uses.
   return `<span class="sm-serif" style="font-family:${EMAIL_SERIF}; font-size:25px; line-height:1.2; font-weight:400; letter-spacing:-0.4px; color:${EMAIL_THEME.ink};">${escapeHtml(brand.name)}</span>`;
+}
+
+/** The box a merchant logo is fitted into, keeping its proportions. */
+const LOGO_MAX_WIDTH = 200;
+const LOGO_MAX_HEIGHT = 48;
+
+/**
+ * A merchant's logo, FITTED into a box rather than set to a fixed width.
+ *
+ * The logo is a URL whose shape nobody recorded, and a fixed width treats every
+ * shape the same: a wide wordmark looked right while a square mark at the same
+ * width came out several times taller. Capping both dimensions with `auto`
+ * sizing lets a wide wordmark fill the width and stops a square or tall mark at
+ * the height, with the aspect ratio intact (CSS 2.1 §10.4 resolves the two caps
+ * together for a replaced element).
+ *
+ * ⚠ Word-engine Outlook ignores max-width/max-height, and an image with no size
+ * there renders at its natural pixels, which for an uploaded logo can be over a
+ * thousand. So Outlook gets its own copy fixed to the box HEIGHT only: a wide
+ * logo is then as tall as a square one rather than enormous. The alt text is the
+ * store name, so the header still says who wrote when images are blocked.
+ */
+function merchantLogo(url: string, name: string): string {
+  const src = escapeHtml(url);
+  const alt = escapeHtml(name);
+  return `<!--[if mso]><img src="${src}" alt="${alt}" height="${LOGO_MAX_HEIGHT}" style="display:block; height:${LOGO_MAX_HEIGHT}px; border:0;" /><![endif]-->
+<!--[if !mso]><!--><img src="${src}" alt="${alt}" style="display:block; width:auto; height:auto; max-width:${LOGO_MAX_WIDTH}px; max-height:${LOGO_MAX_HEIGHT}px; border:0;" /><!--<![endif]-->`;
 }
 
 /**
