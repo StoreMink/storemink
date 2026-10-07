@@ -901,7 +901,7 @@
         "queries": [
           {
             "name": "plan guide contains exact product tiers and no-data-loss downgrade contract",
-            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%<td>5</td><td>50</td><td>Unlimited</td>%' and body like '%does not delete store data because a plan becomes lower%' and body like '%Custom domain</td><td>\u2014</td><td>\u2014</td><td>Included%'",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%<td>5</td><td>50</td><td>Unlimited</td>%' and body like '%does not delete store data because a plan becomes lower%' and body like '%Custom domain</td><td>—</td><td>—</td><td>Included%'",
             "equals": "1"
           },
           {
@@ -915,7 +915,7 @@
         "queries": [
           {
             "name": "plan guide contains exact product tiers and no-data-loss downgrade contract",
-            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%<td>5</td><td>50</td><td>Unlimited</td>%' and body like '%does not delete store data because a plan becomes lower%' and body like '%Custom domain</td><td>\u2014</td><td>\u2014</td><td>Included%'",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%<td>5</td><td>50</td><td>Unlimited</td>%' and body like '%does not delete store data because a plan becomes lower%' and body like '%Custom domain</td><td>—</td><td>—</td><td>Included%'",
             "equals": "1"
           },
           {
@@ -1188,7 +1188,7 @@
         "queries": [
           {
             "name": "the dashboard Mink AI alpha guide is published with limits and permissions",
-            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%This alpha is read only.%' and body like '%Products \u2192 View%' and body like '%does not debit AI credits%'",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%This alpha is read only.%' and body like '%Products → View%' and body like '%does not debit AI credits%'",
             "equals": "1"
           }
         ]
@@ -1298,7 +1298,7 @@
         "queries": [
           {
             "name": "the Mink dashboard guide documents Phase 1B tools permissions and reliability",
-            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%Analytics \u2192 View%' and body like '%Inventory \u2192 View%' and body like '%retries a transient model failure at most once%' and body like '%never displays prompts, answers, tool arguments, tool results or model reasoning%'",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%Analytics → View%' and body like '%Inventory → View%' and body like '%retries a transient model failure at most once%' and body like '%never displays prompts, answers, tool arguments, tool results or model reasoning%'",
             "equals": "1"
           }
         ]
@@ -1307,7 +1307,7 @@
         "queries": [
           {
             "name": "the Mink dashboard guide includes sales and low-stock permissions",
-            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%Analytics \u2192 View%' and body like '%Inventory \u2192 View%'",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%Analytics → View%' and body like '%Inventory → View%'",
             "equals": "1"
           }
         ]
@@ -1344,7 +1344,7 @@
         "queries": [
           {
             "name": "the Mink dashboard guide documents the invited beta cards privacy compaction feedback and shadow metering",
-            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%Cards, filters and dashboard context%' and body like '%Customers \u2192 View%' and body like '%bounded extractive summary%' and body like '%Shadow credits%'",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%Cards, filters and dashboard context%' and body like '%Customers → View%' and body like '%bounded extractive summary%' and body like '%Shadow credits%'",
             "equals": "1"
           }
         ]
@@ -1762,7 +1762,7 @@
           },
           {
             "name": "the Mink guide documents guarded delivery order-status transitions",
-            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and category_id is not null and body like '%<h2>Advance one delivery order</h2>%' and body like '%pending \u2192 processing%' and body like '%Delivery order-status transitions%' and body like '%Pending or approved cancellation states and any refund activity block advancement%'",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and category_id is not null and body like '%<h2>Advance one delivery order</h2>%' and body like '%pending → processing%' and body like '%Delivery order-status transitions%' and body like '%Pending or approved cancellation states and any refund activity block advancement%'",
             "equals": "1"
           }
         ]
@@ -4536,7 +4536,7 @@
         "queries": [
           {
             "name": "the guide names the design proposal and its credit weight",
-            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%its two typefaces and its corner roundness \u2014 for 2%'",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%its two typefaces and its corner roundness — for 2%'",
             "equals": "1"
           },
           {
@@ -4755,7 +4755,7 @@
           },
           {
             "name": "the guide explains offer availability and permission",
-            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%<strong>Offers \u2192 View</strong> for offer status%' and body like '%store-wide automatic-offer switch%' and body like '%so \"on any order\" does not mean \"all products\"%'",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%<strong>Offers → View</strong> for offer status%' and body like '%store-wide automatic-offer switch%' and body like '%so \"on any order\" does not mean \"all products\"%'",
             "equals": "1"
           },
           {
@@ -4770,7 +4770,7 @@
           },
           {
             "name": "the obsolete permission paragraph was removed",
-            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%<strong>Inventory \u2192 View</strong> for low-stock lists. Asking for a hidden tool%'",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%<strong>Inventory → View</strong> for low-stock lists. Asking for a hidden tool%'",
             "equals": "0"
           },
           {
@@ -6472,7 +6472,9 @@
         ],
         "rlsTables": ["mink_image_refinements"]
       },
-      "applyVerify": { "queries": [] }
+      "applyVerify": {
+        "queries": []
+      }
     },
     {
       "id": "20261006_0165_image_sizes_refine_help",
@@ -6612,6 +6614,36 @@
             "name": "Setup guide describes the private storefront, Go live and the password page",
             "sql": "select count(*)::text from public.help_articles where slug='complete-your-store-setup' and status='published' and body like '%storefront stays private until you open it%' and body like '%<h2>Open your store</h2>%' and body like '%presses <strong>Go live</strong>%' and body not like '%Before calling the store ready%'",
             "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261007_0172_store_purge_fk_timing",
+      "description": "Let a store purge cascade through ordered products and Mink approvals (deferrable foreign keys)",
+      "file": "sql/20261007_0172_store_purge_fk_timing.sql",
+      "transaction": true,
+      "requires": ["20261007_0171_launch_checklist_help"],
+      "verify": {
+        "constraints": [
+          "order_items_product_id_fkey",
+          "order_items_variant_id_fkey",
+          "mink_blog_publications_approval_store_fkey",
+          "mink_blog_publications_draft_store_fkey",
+          "email_campaigns_mink_approval_store_fkey"
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "No RESTRICT foreign key remains inside the store cascade",
+            "sql": "select count(*)::text from pg_constraint where contype='f' and confdeltype='r' and conrelid::regclass::text <> 'legal_acceptances'",
+            "equals": "0"
+          },
+          {
+            "name": "The five purge-path foreign keys are deferrable",
+            "sql": "select count(*)::text from pg_constraint where conname in ('order_items_product_id_fkey','order_items_variant_id_fkey','mink_blog_publications_approval_store_fkey','mink_blog_publications_draft_store_fkey','email_campaigns_mink_approval_store_fkey') and condeferrable",
+            "equals": "5"
           }
         ]
       }
