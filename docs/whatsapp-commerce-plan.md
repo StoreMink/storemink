@@ -131,8 +131,12 @@ except Meta's Embedded Signup popup does the work, so nobody copies keys.
    or _"Use a new number"_.
 2. **Meta's popup:** Facebook login → pick/create business → enter number →
    OTP. Returns a code; the server exchanges it for a **business token**
-   (server-to-server, never in the browser), subscribes the app to the WABA,
-   registers the number with a 2FA PIN we generate and store encrypted.
+   (server-to-server, never in the browser), **subscribes the app to the
+   WABA** (`POST /{WABA_ID}/subscribed_apps` — ★ NOT optional: Phase 0 found
+   that a WABA with every webhook field subscribed still delivers nothing to
+   an app that is not subscribed to that WABA, and nothing reports it; see
+   `docs/whatsapp-phase0.md` §4.2), registers the number with a 2FA PIN we
+   generate and store encrypted.
 3. **Back in StoreMink:** "✅ Connected: +91 98xxx xxxxx", display name
    status, profile prefilled from the store (logo, address, website), and the
    template bootstrap running: every customer/team event StoreMink ships a

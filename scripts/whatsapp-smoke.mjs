@@ -31,7 +31,7 @@ const arg = (name) =>
     .find((a) => a.startsWith(`--${name}=`))
     ?.slice(name.length + 3);
 
-const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION?.trim() || "v25.0";
+const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION?.trim() || "v26.0";
 const token = process.env.WHATSAPP_ACCESS_TOKEN?.trim();
 const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
 const to = arg("to")?.replace(/[^\d]/g, "");

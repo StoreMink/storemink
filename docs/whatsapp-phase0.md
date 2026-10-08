@@ -116,6 +116,25 @@ named by them):
 
 Do NOT subscribe `calls` (Business Calling is a non-goal, plan §17).
 
+**★★ SUBSCRIBING THE FIELDS IS NOT SUBSCRIBING THE WABA, and the dashboard
+only does the first.** Found on 2026-10-08: with every field subscribed and
+the handshake verified, the dashboard's **Test** button delivered (three
+sample payloads, all logged) while a real message from a handset never
+arrived. `GET /{WABA_ID}/subscribed_apps` showed the test WABA subscribed only
+to Meta's own "WADevX Webhook Events 1P App" — the internal app behind the
+Test button — and not to StoreMink Dev. Meta posts a WABA's events only to
+apps subscribed to THAT WABA, so a subscription has to be made per WABA:
+
+```bash
+curl -s -X POST "https://graph.facebook.com/v26.0/<WABA_ID>/subscribed_apps" \
+  -H "Authorization: Bearer <token from the app>"      # → {"success":true}
+```
+
+The token decides which app is subscribed. ★ Phase 1's connect flow must make
+this call for every merchant's WABA right after the Embedded Signup code is
+exchanged (plan §5 step 2) — without it a merchant's inbox stays silent with
+nothing failing anywhere, which is exactly what this looked like.
+
 ### 4.3 Embedded Signup configuration
 
 Where: app dashboard → **Facebook Login for Business → Configurations →
@@ -262,24 +281,32 @@ Reply from the handset. In Cloud Logging for `storemink-web-dev`, filter
 `jsonPayload.message="whatsapp webhook received"`; the line shows
 `phoneNumberIds`, `messages: {text: 1}` and nothing else. That is the gate.
 
+✅ **Passed 2026-10-08.** `hello_world` from the Dev test number reached the
+owner's handset at 19:20 IST; the handset's reply was logged at 14:10:26 UTC
+as `wabaIds: [2323545385144849]`, `phoneNumberIds: [1280649011808874]`,
+`messages: {text: 1}` — after the WABA subscription in §4.2 was added. Three
+dashboard Test payloads (`phoneNumberIds: [123456123]`) were logged the same
+way. Remaining for the full Phase 0 gate: App Review / Access Verification
+on the production app (§6).
+
 ---
 
 ## 8. Record of ids (fill in)
 
-| Item                                    | Dev                                  | Prod                              |
-| --------------------------------------- | ------------------------------------ | --------------------------------- |
-| Business portfolio id                   | `790150064187400` (StoreMink)        | same                              |
-| Business Verification status + date     |                                      |                                   |
-| App ID                                  | `1045672501851798` (StoreMink Dev)   | `2663634187475548` (StoreMink)    |
-| App Secret → Secret Manager name        | `WHATSAPP_APP_SECRET_STAGING`        | `WHATSAPP_APP_SECRET_PROD`        |
-| Verify token → Secret Manager name      | `WHATSAPP_VERIFY_TOKEN_STAGING`      | `WHATSAPP_VERIFY_TOKEN_PROD`      |
-| Embedded Signup Configuration ID        |                                      |                                   |
-| Test number: phone number id / WABA id  |                                      |                                   |
-| System user token → Secret Manager      | `WHATSAPP_SYSTEM_USER_TOKEN_STAGING` | `WHATSAPP_SYSTEM_USER_TOKEN_PROD` |
-| Webhook verified (date)                 |                                      |                                   |
-| App Review: submitted / granted (dates) | —                                    |                                   |
-| Access Verification granted (date)      | —                                    |                                   |
-| Smoke test passed (date, message id)    |                                      |                                   |
+| Item                                    | Dev                                                       | Prod                              |
+| --------------------------------------- | --------------------------------------------------------- | --------------------------------- |
+| Business portfolio id                   | `790150064187400` (StoreMink)                             | same                              |
+| Business Verification status + date     | Approved (found already verified, 2026-10-08)             | same portfolio                    |
+| App ID                                  | `1045672501851798` (StoreMink Dev)                        | `2663634187475548` (StoreMink)    |
+| App Secret → Secret Manager name        | `WHATSAPP_APP_SECRET_STAGING`                             | `WHATSAPP_APP_SECRET_PROD`        |
+| Verify token → Secret Manager name      | `WHATSAPP_VERIFY_TOKEN_STAGING`                           | `WHATSAPP_VERIFY_TOKEN_PROD`      |
+| Embedded Signup Configuration ID        |                                                           |                                   |
+| Test number: phone number id / WABA id  | `1280649011808874` / `2323545385144849` (+1 555 652-2797) |                                   |
+| System user token → Secret Manager      | `WHATSAPP_SYSTEM_USER_TOKEN_STAGING`                      | `WHATSAPP_SYSTEM_USER_TOKEN_PROD` |
+| Webhook verified (date)                 | 2026-10-08 13:06 UTC                                      |                                   |
+| App Review: submitted / granted (dates) | —                                                         |                                   |
+| Access Verification granted (date)      | —                                                         |                                   |
+| Smoke test passed (date, message id)    | 2026-10-08 (send 19:20 IST, inbound logged 14:10:26 UTC)  | —                                 |
 
 ---
 

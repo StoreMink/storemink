@@ -16002,7 +16002,7 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   **`WHATSAPP_CONFIG_ID`** (Embedded Signup; empty until it exists) are public
   identifiers riding as plain substitutions. `npm run whatsapp:smoke`
   takes `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` from the shell
-  only, never from `.env`; `WHATSAPP_GRAPH_VERSION` defaults to `v25.0`.
+  only, never from `.env`; `WHATSAPP_GRAPH_VERSION` defaults to `v26.0`.
 - **POS** (§22): the `/pos` device + operator cookies are HMAC-signed with env
   **`POS_SESSION_SECRET`** (any high-entropy string; `openssl rand -base64 32`).
   Required for the register to work; when unset, cookie VERIFY returns null
