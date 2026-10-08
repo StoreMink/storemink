@@ -234,18 +234,20 @@ on each (the same grant the existing secrets carry).
 
 ### 7.2 Wiring and deploy
 
-Once the four `_STAGING`/`_PROD` secrets exist, ask for the `cloudbuild.yaml`
-change: `WHATSAPP_APP_SECRET=${_WHATSAPP_APP_SECRET_SECRET}:latest` and
-`WHATSAPP_VERIFY_TOKEN=${_WHATSAPP_VERIFY_TOKEN_SECRET}:latest` appended to
-`--set-secrets`, two `*_SECRET` substitutions defaulting to `_STAGING`, and
-`_WHATSAPP_APP_ID` / `_WHATSAPP_CONFIG_ID` as plain substitutions (both are
-public identifiers, not secrets). The prod trigger must override the two
-secret NAMES, exactly as it does for Razorpay (`docs/gcp-ci-cd.md`). It is
-deliberately not in this commit so a deploy cannot reach Cloud Run ahead of
-the secrets.
+✅ **Done 2026-10-08.** All four secrets exist, `cloudbuild.yaml` reads
+`WHATSAPP_APP_SECRET` / `WHATSAPP_VERIFY_TOKEN` from them and passes
+`WHATSAPP_APP_ID` / `WHATSAPP_CONFIG_ID` as plain env vars (defaults = the
+dev app), and the `storemink-web-prod` trigger overrides all three to the prod
+app and `*_PROD` secrets (verified with `gcloud builds triggers describe`).
+`_WHATSAPP_CONFIG_ID` stays empty on both until §4.3 produces one.
 
-Then merge the `whatsapp` branch to `dev` so `dev.storemink.com` serves the
-route, and only THEN click **Verify and save** in §4.2.
+Remaining: merge `whatsapp` → `dev` so `dev.storemink.com` serves the route,
+wait for the dev build, then click **Verify and save** in §4.2. The verify
+token to paste there is read with (never pasted into chat or a doc):
+
+```bash
+gcloud secrets versions access latest --secret=WHATSAPP_VERIFY_TOKEN_STAGING --project=storemink-prod; echo
+```
 
 ### 7.3 Smoke test
 
@@ -266,9 +268,9 @@ Reply from the handset. In Cloud Logging for `storemink-web-dev`, filter
 
 | Item                                    | Dev                                  | Prod                              |
 | --------------------------------------- | ------------------------------------ | --------------------------------- |
-| Business portfolio id                   |                                      |                                   |
+| Business portfolio id                   | `790150064187400` (StoreMink)        | same                              |
 | Business Verification status + date     |                                      |                                   |
-| App ID                                  |                                      |                                   |
+| App ID                                  | `1045672501851798` (StoreMink Dev)   | `2663634187475548` (StoreMink)    |
 | App Secret → Secret Manager name        | `WHATSAPP_APP_SECRET_STAGING`        | `WHATSAPP_APP_SECRET_PROD`        |
 | Verify token → Secret Manager name      | `WHATSAPP_VERIFY_TOKEN_STAGING`      | `WHATSAPP_VERIFY_TOKEN_PROD`      |
 | Embedded Signup Configuration ID        |                                      |                                   |

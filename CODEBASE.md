@@ -15993,13 +15993,14 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   two Meta apps). With the token unset the handshake answers 503; with the
   secret unset deliveries are acked 200 and logged as ignored (the Resend
   precedent) because Phase 0 processes nothing — Phase 1 flips that to 503 the
-  moment a delivery carries data. ⚠ **NOT yet in `cloudbuild.yaml`**: Cloud Run
-  refuses a revision whose `--set-secrets` names a missing secret, so the
-  Secret Manager entries (`WHATSAPP_APP_SECRET_{STAGING,PROD}`,
-  `WHATSAPP_VERIFY_TOKEN_{STAGING,PROD}`, plus `WHATSAPP_SYSTEM_USER_TOKEN_*`
-  for Phase 1) are created first per `docs/whatsapp-phase0.md` §7.1, then
-  wired. `WHATSAPP_APP_ID` and `WHATSAPP_CONFIG_ID` (Embedded Signup) are public
-  identifiers and will ride as plain substitutions. `npm run whatsapp:smoke`
+  moment a delivery carries data. Wired in `cloudbuild.yaml` since 2026-10-08
+  (`_WHATSAPP_APP_SECRET_SECRET`, `_WHATSAPP_VERIFY_TOKEN_SECRET`, defaults
+  `*_STAGING`; the prod trigger overrides to `*_PROD`) — the Secret Manager
+  entries were created FIRST because Cloud Run refuses a revision whose
+  `--set-secrets` names a missing secret. Dev and prod are two Meta apps
+  (`1045672501851798` / `2663634187475548`), so **`WHATSAPP_APP_ID`** and
+  **`WHATSAPP_CONFIG_ID`** (Embedded Signup; empty until it exists) are public
+  identifiers riding as plain substitutions. `npm run whatsapp:smoke`
   takes `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` from the shell
   only, never from `.env`; `WHATSAPP_GRAPH_VERSION` defaults to `v25.0`.
 - **POS** (§22): the `/pos` device + operator cookies are HMAC-signed with env
