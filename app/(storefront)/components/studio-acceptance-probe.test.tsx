@@ -3,6 +3,7 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import axe from "axe-core";
 import { StudioAcceptanceProbe } from "./studio-acceptance-probe";
+import { CHROME_STATES } from "@/lib/theme-studio/chrome-states";
 
 vi.mock("axe-core", () => ({
   default: { run: vi.fn(async () => ({ violations: [] })) },
@@ -218,4 +219,60 @@ it("measures a storefront containing SVG icons and still detects clipped HTML te
   expect(evidence.violations).toEqual([]);
   delete (HTMLElement.prototype as unknown as Record<string, unknown>)
     .innerText;
+});
+
+it("keeps the contrast nodes axe could not judge, and opens the chrome states on the home page only", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  vi.mocked(axe.run).mockResolvedValueOnce({
+    violations: [],
+    incomplete: [
+      {
+        id: "color-contrast",
+        nodes: [
+          {
+            target: [".home-hero-heading"],
+            any: [{ id: "color-contrast", data: { messageKey: "bgImage" } }],
+          },
+          {
+            target: [".shop-card:nth-child(2) .shop-card-name"],
+            any: [{ id: "color-contrast", data: { messageKey: "bgGradient" } }],
+          },
+          {
+            target: [".shop-card:nth-child(3) .shop-card-name"],
+            any: [{ id: "color-contrast", data: { messageKey: "bgGradient" } }],
+          },
+        ],
+      },
+      { id: "region", nodes: [{ target: ["main"], any: [] }] },
+    ],
+  } as never);
+  render(<StudioAcceptanceProbe />);
+  const pending = window.__smThemeStudioMeasure!();
+  await vi.runAllTimersAsync();
+  const evidence = await pending;
+  expect(evidence.contrastUnresolved).toEqual([
+    { target: ".home-hero-heading", reason: "bgImage" },
+    { target: ".shop-card:nth-child(2) .shop-card-name", reason: "bgGradient" },
+  ]);
+  // No header in this document: every state is reported absent, with the
+  // uniform empty findings the server parses.
+  expect(evidence.states).toEqual(
+    CHROME_STATES.map((state) => ({
+      state,
+      measured: false,
+      reason: "absent",
+      violations: [],
+      contrastUnresolved: [],
+      clippedText: [],
+      smallTapTargets: [],
+    })),
+  );
+
+  window.history.pushState({}, "", "/shop");
+  vi.mocked(axe.run).mockResolvedValueOnce({ violations: [] } as never);
+  const again = window.__smThemeStudioMeasure!();
+  await vi.runAllTimersAsync();
+  expect((await again).states).toEqual([]);
+  window.history.pushState({}, "", "/");
 });

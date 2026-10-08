@@ -5,6 +5,7 @@ import {
   buildVisualQaRequest,
   parseVisualQaReport,
   VISUAL_QA_SYSTEM_PROMPT,
+  visualQaContext,
   visualQaImageIssueText,
 } from "./visual-qa-request";
 
@@ -94,5 +95,61 @@ describe("visual QA request", () => {
         imageAssessments: [],
       })?.verdict,
     ).toBe("pass");
+  });
+});
+
+describe("visual QA context", () => {
+  it("names the text the probe could not judge and the chrome states it opened", () => {
+    const context = visualQaContext(operatorImagePackage(), {
+      evidence: {
+        samples: [
+          {
+            viewport: "phone390",
+            path: "/",
+            width: 390,
+            height: 844,
+            contrastUnresolved: [
+              { target: ".home-hero-heading", reason: "bgImage" },
+            ],
+            states: [
+              {
+                state: "menu",
+                measured: true,
+                contrastUnresolved: [
+                  { target: ".drawer a", reason: "bgOverlap" },
+                ],
+              },
+              { state: "cart", measured: false, reason: "unopened" },
+            ],
+          },
+          { viewport: "desktop1440", path: "/shop", width: 1440, height: 900 },
+        ],
+      },
+    });
+    expect(context.pages).toEqual([
+      {
+        viewport: "phone390",
+        path: "/",
+        width: 390,
+        height: 844,
+        unresolvedContrast: [
+          { target: ".home-hero-heading", reason: "bgImage" },
+        ],
+        states: [
+          {
+            state: "menu",
+            measured: true,
+            unresolvedContrast: [{ target: ".drawer a", reason: "bgOverlap" }],
+          },
+          { state: "cart", measured: false, reason: "unopened" },
+        ],
+      },
+      { viewport: "desktop1440", path: "/shop", width: 1440, height: 900 },
+    ]);
+  });
+
+  it("tells the reviewer to judge unresolved contrast itself", () => {
+    expect(VISUAL_QA_SYSTEM_PROMPT).toContain("unresolvedContrast");
+    expect(VISUAL_QA_SYSTEM_PROMPT).toContain("unopened or stuck");
   });
 });

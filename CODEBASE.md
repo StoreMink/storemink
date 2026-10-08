@@ -2534,6 +2534,11 @@ wholesip/
 │   │       ├── studio-acceptance-probe.tsx # Theme Studio acceptance
 │   │       │                        # measurements; rendered ONLY on preview
 │   │       │                        # stores, answers only a platform-host parent
+│   │       ├── studio-acceptance-states.ts # the probe's chrome states: opens
+│   │       │                        # the menu drawer, search sheet, cart drawer,
+│   │       │                        # account menu and sign-in dialog by their
+│   │       │                        # stable hooks, audits each, closes it (home
+│   │       │                        # page only); names in lib/theme-studio/chrome-states.ts
 │   │       ├── scroll-reveal.tsx     # sections revealed on scroll for a theme
 │   │       │                        # that sets design.motion (never in builder)
 │   │
@@ -5920,6 +5925,46 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `data-sm="footer-newsletter"` hook, so the one-form-per-page rule holds
     there too. Not yet run live; the first live result belongs in
     `docs/theme-studio-shopify-grade-plan.md` Phase 1.
+    **Rendered contrast reaches the hidden states (2026-10-08, plan Phase 1
+    item 3).** axe already judged every text element on a loaded page, but
+    two things it never saw: (1) the menus, drawers and dialogs, which are
+    off-canvas or unmounted on load — the roastery's 1.37:1 delivery trigger
+    (benchmark 2026-10-04) lived in the open phone menu and a human found it;
+    (2) the nodes it marks `incomplete` (text over a photograph, gradient or
+    overlapping layer), which `resultTypes: ["violations"]` silently dropped.
+    `lib/theme-studio/chrome-states.ts` names the five states (menu, search,
+    cart, account, sign_in); `studio-acceptance-states.ts` opens each by a
+    STABLE hook — the aria labels shoppers already get, `#header-profile-btn`
+    / `#profile-dropdown`, and new `data-sm` marks on the menu drawer
+    (`Header.jsx`) and the account dialog (`AuthModal.tsx`,
+    `DemoAccountNotice.tsx`; never a CSS-module class) — waits for it to be on
+    screen and settled, audits it (axe scoped to the panel, clipped text,
+    tap targets), closes it and confirms it left, so the screenshot the job
+    takes afterwards is the page it measured. The sign-in dialog opens from
+    inside the account menu, so that parent stays open until the child is
+    done. ★ On the HOME page only: the chrome is identical on every surface
+    and repeating five states on six pages would crowd the finding cap with
+    duplicates. ★ LCP/CLS are read before the states open — a programmatic
+    click is not "recent input" and a drawer's scroll lock drops the
+    scrollbar, which registers as a shift. `BrowserSample` gains optional
+    `contrastUnresolved` and `states` (older evidence parses unchanged);
+    `evaluateBrowserGates` routes a state's findings to the same gates with
+    the state in `where` (so `qa-diagnosis`'s contrast keys stay distinct)
+    and reports a home sample without states, or a state that was
+    `unopened`/`stuck`, as a COVERAGE failure — "we could not open it" is
+    never a pass; `absent`/`hidden` (no cart on a catalogue store, no
+    hamburger on desktop) only count in the metric. Visual prompt v5 lists
+    each page's `unresolvedContrast` and states so the reviewer judges the
+    pixels the probe could not. `scripts/theme-studio-contrast-check.mjs`
+    gained header × drawer fixtures (four header variants × light/dark page
+    palette × light/dark market bar × drawer closed/open, at 390/768/1440)
+    with the pre-fix inheritance as a negative control. ★ They found one at
+    once: a light market bar over a dark palette put the bar's `#1b1b1b`
+    brand name on the drawer's `#1c1c1c` surface (1.01:1), because the
+    market rule colours `.brandNameText` wherever it renders;
+    `Header.module.css` now gives the drawer's name the page ink, the rule
+    the delivery trigger already followed. Storefront presentation only:
+    no merchant workflow change, no Help Centre update.
     `automatic-qa-policy.ts` queues targeted exact-package revisions for theme
     failures, up to THREE repairs (iterations 0→1→2→3, the ceiling migration
     0145 allows; `MAX_AUTOMATIC_QA_REPAIRS`).
@@ -6488,7 +6533,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         The browser probe checks HTML nodes before reading `innerText`; SVG icons
         previously crashed every measurement. QA capture accepts HTTP 404 only on
         the explicit `not_found` surface, waits for the hydrated probe, bounds
-        each measurement to 45 seconds, and avoids a network-idle wait on all 30
+        each measurement to 60 seconds (45 before the home page's chrome states), and avoids a network-idle wait on all 30
         samples. Capture jobs reserve time to report results, bound capture work
         to seven minutes (or the remaining execution budget), report launch errors,
         close failed browsers before reuse, and fail the execution if the finish

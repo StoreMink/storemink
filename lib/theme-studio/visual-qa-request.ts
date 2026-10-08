@@ -22,7 +22,9 @@ import {
   type Scores,
 } from "./scorecard";
 
-export const VISUAL_QA_PROMPT_VERSION = "theme-studio-visual-qa-v4";
+export const VISUAL_QA_PROMPT_VERSION = "theme-studio-visual-qa-v5";
+
+type UnresolvedContrast = { target: string; reason: string }[];
 
 /** Complete semantic JSON, rather than a prefix of a large package/report.
  * Avoids paying to inspect raw image manifests and repeated successful probes. */
@@ -37,6 +39,13 @@ export function visualQaContext(packageJson: unknown, browserReport: unknown) {
           path: string;
           width: number;
           height: number;
+          contrastUnresolved?: UnresolvedContrast;
+          states?: {
+            state: string;
+            measured: boolean;
+            reason?: string;
+            contrastUnresolved?: UnresolvedContrast;
+          }[];
         }[];
       };
     }
@@ -65,12 +74,33 @@ export function visualQaContext(packageJson: unknown, browserReport: unknown) {
       findings: g.findings.slice(0, 8),
       metrics: g.metrics,
     })),
-    pages: evidence?.samples?.map(({ viewport, path, width, height }) => ({
-      viewport,
-      path,
-      width,
-      height,
-    })),
+    // Per page: the text the automatic contrast check could not judge (it
+    // sits on a photograph, gradient or overlapping layer) and the chrome
+    // states the browser opened. The reviewer can see the pixels the probe
+    // could not measure, so it is told exactly where to look.
+    pages: evidence?.samples?.map(
+      ({ viewport, path, width, height, contrastUnresolved, states }) => ({
+        viewport,
+        path,
+        width,
+        height,
+        ...(contrastUnresolved?.length
+          ? { unresolvedContrast: contrastUnresolved.slice(0, 12) }
+          : {}),
+        ...(states?.length
+          ? {
+              states: states.map((s) => ({
+                state: s.state,
+                measured: s.measured,
+                ...(s.reason ? { reason: s.reason } : {}),
+                ...(s.contrastUnresolved?.length
+                  ? { unresolvedContrast: s.contrastUnresolved.slice(0, 8) }
+                  : {}),
+              })),
+            }
+          : {}),
+      }),
+    ),
   };
 }
 
@@ -258,6 +288,7 @@ export const VISUAL_QA_SYSTEM_PROMPT = [
   "For every required change return a repairs entry: settings targets an exact supplied setting path, image targets an exact generated image slot ID for an artwork defect, renderer has null target for platform code. A framing/crop problem is a layout setting or renderer issue, never a reason to redraw artwork. Uploaded/licensed art is the owner's choice and cannot be redrawn automatically. An unresolvable gap goes to renderer. A passing verdict has no repairs.",
   "Performance findings marked advisory are diagnostic only. Do not request theme revisions solely to clear advisory timing measurements. Keep all required quality and rejection thresholds unchanged.",
   "Inspect readable strips for repeated newsletter modules and invented awards, certifications, endorsements, clinical results or press claims. Two redundant full newsletter signup modules on one page are a detail-quality defect: score that row below 4 and request a supported footer/section change. Factual claims must be supported by the original brief; fictional product names and ordinary demo descriptions are allowed. Never approve unsupported endorsements merely because the layout is attractive.",
+  "Entries under unresolvedContrast are text the automatic contrast check could not measure because it sits on a photograph, a gradient or an overlapping layer. Judge their legibility yourself in the readable strips: copy that cannot be read there is a detail-quality defect and needs a supported repair or a renderer entry. A page's states list names the menu drawer, search sheet, cart drawer, account menu and sign-in dialog the browser opened; one marked unopened or stuck is a renderer defect.",
   "Return imageAssessments for exactly every supplied flagged/unreviewed slot, and no other slots. Each includes slotId, approved and a concrete visual reason. Assess their actual image attachments against the art direction and brief. Every unapproved slot requires verdict revise and an image repair targeting that slot. A passing scorecard cannot bypass unresolved image-review evidence. With no such slots, return an empty array.",
   ...SCORECARD_DIMENSIONS.map(
     (dimension) => `${dimension.key}: ${dimension.question}`,

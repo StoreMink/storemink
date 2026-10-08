@@ -18,8 +18,14 @@
 > Phase 1 item 1 is built but not yet run live: `visual-qa-request.ts`
 > (pure request builder), `visual-fixtures.ts` (10 defect + 10 clean pages)
 > and `npm run theme-studio:visual-fixtures` (offline mechanism check passes
-> for all 20; `--live --yes` grades the reviewer at the 90% bar). Phase 0 items
-> 1, 2 and 4 (deploy, route, re-benchmark) are ops and still open.
+> for all 20; `--live --yes` grades the reviewer at the 90% bar). Phase 1 item 3
+> landed: the probe opens the menu drawer, search sheet, cart drawer, account
+> menu and sign-in dialog on the home page and audits each
+> (`studio-acceptance-states.ts`), keeps axe's unresolved-contrast nodes as
+> reviewer evidence, the coverage gate fails on a state that would not open or
+> close, and the offline contrast script covers header × drawer combinations.
+> Phase 0 items 1, 2 and 4 (deploy, route, re-benchmark) are ops and still
+> open.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

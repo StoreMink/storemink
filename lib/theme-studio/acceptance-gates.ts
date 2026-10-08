@@ -18,6 +18,13 @@ import {
   validateThemePackageV2,
   type ThemePackageV2,
 } from "./contracts";
+import {
+  CHROME_STATES,
+  CHROME_STATE_LABELS,
+  CHROME_STATE_SKIPS,
+  type ChromeState,
+  type ChromeStateSkip,
+} from "./chrome-states";
 
 // ---------------------------------------------------------------------------
 // Theme Studio automated acceptance: the gates, as pure functions.
@@ -821,6 +828,28 @@ export interface BrowserSample {
   }[];
   lcpMs: number | null;
   cls: number | null;
+  /** axe's `incomplete` colour-contrast nodes: text it could not judge
+   * (over a photograph, gradient or overlapping layer). Evidence for the
+   * vision reviewer, never a gate. Absent on evidence older than the probe
+   * that reports it. */
+  contrastUnresolved?: { target: string; reason: string }[];
+  /** The chrome states opened and audited on this page. The probe opens
+   * them on the home page only, and the coverage gate requires them there;
+   * absent on every other surface and on older evidence. */
+  states?: BrowserStateSample[];
+}
+
+/** One chrome state (menu drawer, search sheet, cart drawer, account menu,
+ * sign-in dialog) as the probe opened it. `measured` false carries why;
+ * `stuck` may accompany a measured state that then would not close. */
+export interface BrowserStateSample {
+  state: ChromeState;
+  measured: boolean;
+  reason?: ChromeStateSkip;
+  violations: BrowserSample["violations"];
+  clippedText: BrowserSample["clippedText"];
+  smallTapTargets: BrowserSample["smallTapTargets"];
+  contrastUnresolved: { target: string; reason: string }[];
 }
 
 export interface BrowserEvidence {
@@ -914,90 +943,26 @@ export function parseBrowserEvidence(
         error: `Sample ${index} is missing a layout-quality measurement.`,
       };
     }
-    const violations: BrowserSample["violations"] = [];
-    for (const v of s.violations) {
-      if (!v || typeof v !== "object") {
-        return {
-          ok: false,
-          error: `Sample ${index} has a malformed violation.`,
-        };
-      }
-      const record = v as Record<string, unknown>;
-      const id = str(record.id, 80);
-      const nodes = finiteNumber(record.nodes, 0, 100_000);
-      if (!id || nodes === null) {
-        return {
-          ok: false,
-          error: `Sample ${index} has a malformed violation.`,
-        };
-      }
-      const impact = AXE_IMPACTS.includes(record.impact as AxeImpact)
-        ? (record.impact as AxeImpact)
-        : null;
-      const target = str(record.target, 120);
-      const examples = Array.isArray(record.examples)
-        ? record.examples.slice(0, 3).flatMap((item) => {
-            if (!item || typeof item !== "object") return [];
-            const example = item as Record<string, unknown>;
-            const target = str(example.target, 180);
-            return target
-              ? [{ target, summary: str(example.summary, 300) ?? "" }]
-              : [];
-          })
-        : [];
-      violations.push({
-        id,
-        impact,
-        nodes,
-        help: str(record.help, 200) ?? "",
-        ...(target ? { target } : {}),
-        ...(examples.length ? { examples } : {}),
-        ...(id === "color-contrast" && Array.isArray(record.contrast)
-          ? {
-              contrast: record.contrast.slice(0, 40).flatMap((item) => {
-                if (!item || typeof item !== "object") return [];
-                const value = item as Record<string, unknown>;
-                const target = str(value.target, 180);
-                const ratio = finiteNumber(value.ratio, 1, 21);
-                const required = finiteNumber(value.required, 1, 21);
-                return target && ratio !== null && required !== null
-                  ? [{ target, ratio, required }]
-                  : [];
-              }),
-            }
-          : {}),
-      });
-    }
+    const violations = parseViolations(s.violations, index);
+    if (!violations.ok) return violations;
     const offenders = Array.isArray(s.overflowOffenders)
       ? s.overflowOffenders
           .slice(0, 5)
           .map((o) => str(o, 120))
           .filter((o): o is string => o !== null)
       : [];
-    const clippedText = Array.isArray(s.clippedText)
-      ? s.clippedText.slice(0, 40).flatMap((item) => {
-          if (!item || typeof item !== "object") return [];
-          const value = item as Record<string, unknown>;
-          const target = str(value.target, 120);
-          const clippedX = finiteNumber(value.clippedX, 0, 100_000);
-          const clippedY = finiteNumber(value.clippedY, 0, 100_000);
-          return target && clippedX !== null && clippedY !== null
-            ? [{ target, clippedX, clippedY }]
-            : [];
-        })
-      : [];
-    const smallTapTargets = Array.isArray(s.smallTapTargets)
-      ? s.smallTapTargets.slice(0, 60).flatMap((item) => {
-          if (!item || typeof item !== "object") return [];
-          const value = item as Record<string, unknown>;
-          const target = str(value.target, 120);
-          const width = finiteNumber(value.width, 0, 10_000);
-          const height = finiteNumber(value.height, 0, 10_000);
-          return target && width !== null && height !== null
-            ? [{ target, width, height }]
-            : [];
-        })
-      : [];
+    const clippedText = parseClippedText(s.clippedText);
+    const smallTapTargets = parseSmallTapTargets(s.smallTapTargets);
+    // Both are absent on evidence from a probe older than the one that
+    // reports them; a present value must parse, and the gates decide what an
+    // absent one means (coverage requires states on the home page).
+    const contrastUnresolved =
+      s.contrastUnresolved === undefined
+        ? undefined
+        : parseUnresolved(s.contrastUnresolved);
+    const states =
+      s.states === undefined ? undefined : parseStates(s.states, index);
+    if (states && !states.ok) return states;
     const imageCropIssues = Array.isArray(s.imageCropIssues)
       ? s.imageCropIssues.slice(0, 40).flatMap((item) => {
           if (!item || typeof item !== "object") return [];
@@ -1021,16 +986,277 @@ export function parseBrowserEvidence(
       smallTapTargets,
       imageCropIssues,
       brokenImages,
-      violations,
+      violations: violations.value,
       lcpMs: finiteNumber(s.lcpMs, 0, 600_000),
       cls: finiteNumber(s.cls, 0, 1_000),
+      ...(contrastUnresolved ? { contrastUnresolved } : {}),
+      ...(states ? { states: states.value } : {}),
     });
   }
   return { ok: true, value: { userAgent, samples } };
 }
 
+type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
+
+function parseViolations(
+  raw: unknown[],
+  index: number,
+): Parsed<BrowserSample["violations"]> {
+  const malformed = {
+    ok: false as const,
+    error: `Sample ${index} has a malformed violation.`,
+  };
+  const violations: BrowserSample["violations"] = [];
+  for (const v of raw) {
+    if (!v || typeof v !== "object") return malformed;
+    const record = v as Record<string, unknown>;
+    const id = str(record.id, 80);
+    const nodes = finiteNumber(record.nodes, 0, 100_000);
+    if (!id || nodes === null) return malformed;
+    const impact = AXE_IMPACTS.includes(record.impact as AxeImpact)
+      ? (record.impact as AxeImpact)
+      : null;
+    const target = str(record.target, 120);
+    const examples = Array.isArray(record.examples)
+      ? record.examples.slice(0, 3).flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const example = item as Record<string, unknown>;
+          const target = str(example.target, 180);
+          return target
+            ? [{ target, summary: str(example.summary, 300) ?? "" }]
+            : [];
+        })
+      : [];
+    violations.push({
+      id,
+      impact,
+      nodes,
+      help: str(record.help, 200) ?? "",
+      ...(target ? { target } : {}),
+      ...(examples.length ? { examples } : {}),
+      ...(id === "color-contrast" && Array.isArray(record.contrast)
+        ? {
+            contrast: record.contrast.slice(0, 40).flatMap((item) => {
+              if (!item || typeof item !== "object") return [];
+              const value = item as Record<string, unknown>;
+              const target = str(value.target, 180);
+              const ratio = finiteNumber(value.ratio, 1, 21);
+              const required = finiteNumber(value.required, 1, 21);
+              return target && ratio !== null && required !== null
+                ? [{ target, ratio, required }]
+                : [];
+            }),
+          }
+        : {}),
+    });
+  }
+  return { ok: true, value: violations };
+}
+
+function parseClippedText(raw: unknown): BrowserSample["clippedText"] {
+  return Array.isArray(raw)
+    ? raw.slice(0, 40).flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const value = item as Record<string, unknown>;
+        const target = str(value.target, 120);
+        const clippedX = finiteNumber(value.clippedX, 0, 100_000);
+        const clippedY = finiteNumber(value.clippedY, 0, 100_000);
+        return target && clippedX !== null && clippedY !== null
+          ? [{ target, clippedX, clippedY }]
+          : [];
+      })
+    : [];
+}
+
+function parseSmallTapTargets(raw: unknown): BrowserSample["smallTapTargets"] {
+  return Array.isArray(raw)
+    ? raw.slice(0, 60).flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const value = item as Record<string, unknown>;
+        const target = str(value.target, 120);
+        const width = finiteNumber(value.width, 0, 10_000);
+        const height = finiteNumber(value.height, 0, 10_000);
+        return target && width !== null && height !== null
+          ? [{ target, width, height }]
+          : [];
+      })
+    : [];
+}
+
+function parseUnresolved(raw: unknown): { target: string; reason: string }[] {
+  return Array.isArray(raw)
+    ? raw.slice(0, 40).flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const value = item as Record<string, unknown>;
+        const target = str(value.target, 180);
+        const reason = str(value.reason, 40);
+        return target && reason ? [{ target, reason }] : [];
+      })
+    : [];
+}
+
+/** The chrome states a sample carries. Strict like the sample itself: a
+ * state with an unknown name, no `measured`, an unknown skip reason or no
+ * violations list is refused, because a missing measurement must never be
+ * read as a clean one. */
+function parseStates(
+  raw: unknown,
+  index: number,
+): Parsed<BrowserStateSample[]> {
+  const malformed = {
+    ok: false as const,
+    error: `Sample ${index} has a malformed chrome state.`,
+  };
+  if (!Array.isArray(raw) || raw.length > CHROME_STATES.length * 2) {
+    return malformed;
+  }
+  const states: BrowserStateSample[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") return malformed;
+    const value = item as Record<string, unknown>;
+    const state = value.state as ChromeState;
+    if (!CHROME_STATES.includes(state) || typeof value.measured !== "boolean") {
+      return malformed;
+    }
+    const reason = value.reason as ChromeStateSkip | undefined;
+    if (reason !== undefined && !CHROME_STATE_SKIPS.includes(reason)) {
+      return malformed;
+    }
+    if (!Array.isArray(value.violations) || value.violations.length > 100) {
+      return malformed;
+    }
+    const violations = parseViolations(value.violations, index);
+    if (!violations.ok) return violations;
+    states.push({
+      state,
+      measured: value.measured,
+      ...(reason ? { reason } : {}),
+      violations: violations.value,
+      clippedText: parseClippedText(value.clippedText),
+      smallTapTargets: parseSmallTapTargets(value.smallTapTargets),
+      contrastUnresolved: parseUnresolved(value.contrastUnresolved),
+    });
+  }
+  return { ok: true, value: states };
+}
+
 /** Plan thresholds, applied to operator-machine measurements as advisory. */
 export const PERFORMANCE_THRESHOLDS = { lcpMs: 2500, cls: 0.1 } as const;
+
+interface AuditSinks {
+  clippedText: GateFinding[];
+  tapTargets: GateFinding[];
+  accessibility: GateFinding[];
+  minorA11y: GateFinding[];
+}
+
+/** The findings a page and an opened chrome state share — clipped text,
+ * small targets and axe violations — pushed to their gates under `where`.
+ * Returns how many violations were blocking. */
+function pushAuditFindings(
+  audit: Pick<
+    BrowserStateSample,
+    "violations" | "clippedText" | "smallTapTargets"
+  >,
+  where: string,
+  sinks: AuditSinks,
+): number {
+  for (const item of audit.clippedText) {
+    sinks.clippedText.push({
+      code: "clipped_text",
+      message: `Text is clipped by ${Math.round(item.clippedX)}px horizontally and ${Math.round(item.clippedY)}px vertically (${item.target}).`,
+      where,
+    });
+  }
+  for (const item of audit.smallTapTargets) {
+    sinks.tapTargets.push({
+      code: "small_target",
+      message: `${Math.round(item.width)}×${Math.round(item.height)}px interactive target (${item.target}); minimum is 24×24px.`,
+      where,
+    });
+  }
+  let blocking = 0;
+  for (const violation of audit.violations) {
+    const entry = {
+      code: violation.id,
+      message: `${violation.help || violation.id} (${violation.nodes} element${violation.nodes === 1 ? "" : "s"}, ${violation.impact ?? "unrated"})${
+        violation.examples?.length
+          ? ` — examples: ${violation.examples.map((example) => `${example.target}${example.summary ? `: ${example.summary}` : ""}`).join(" | ")}`
+          : violation.target
+            ? ` — first: ${violation.target}`
+            : ""
+      }`,
+      where,
+      ...(violation.contrast?.length ? { contrast: violation.contrast } : {}),
+    };
+    if (violation.impact && BLOCKING_IMPACTS.has(violation.impact)) {
+      sinks.accessibility.push(entry);
+      blocking += 1;
+    } else {
+      sinks.minorA11y.push(entry);
+    }
+  }
+  return blocking;
+}
+
+/**
+ * The chrome states the probe opened on the home page. They are hidden on
+ * load, so the page audit never sees them — the roastery's 1.37:1 delivery
+ * trigger (benchmark 2026-10-04) lived in the open phone menu. A state the
+ * probe could not open or close is a COVERAGE failure, like a page it could
+ * not measure; what it found inside goes to the same gates as the page, with
+ * the state named in `where`. `absent` and `hidden` are ordinary (no cart on
+ * a catalogue store, no hamburger on desktop) and only count in the metric.
+ */
+function stateFindings(
+  sample: BrowserSample,
+  where: string,
+  coverage: GateFinding[],
+  sinks: AuditSinks,
+): { measured: number; blocking: number } {
+  if (!sample.states) {
+    coverage.push({
+      code: "states_missing",
+      message:
+        "The menu, search, cart, account and sign-in states were not measured.",
+      where,
+    });
+    return { measured: 0, blocking: 0 };
+  }
+  const seen = new Set(sample.states.map((s) => s.state));
+  for (const state of CHROME_STATES) {
+    if (!seen.has(state)) {
+      coverage.push({
+        code: "state_missing",
+        message: `The ${CHROME_STATE_LABELS[state]} was not measured.`,
+        where,
+      });
+    }
+  }
+  let measured = 0;
+  let blocking = 0;
+  for (const state of sample.states) {
+    const label = CHROME_STATE_LABELS[state.state];
+    const stateWhere = `${where} · ${label}`;
+    if (state.reason === "unopened") {
+      coverage.push({
+        code: "state_unopened",
+        message: `The ${label} did not open when its control was pressed.`,
+        where: stateWhere,
+      });
+    } else if (state.reason === "stuck") {
+      coverage.push({
+        code: "state_stuck",
+        message: `The ${label} did not close after it was measured.`,
+        where: stateWhere,
+      });
+    }
+    if (!state.measured) continue;
+    measured += 1;
+    blocking += pushAuditFindings(state, stateWhere, sinks);
+  }
+  return { measured, blocking };
+}
 
 /**
  * Plan §7.2 items 5–7 as far as a browser can measure them: every surface at
@@ -1081,6 +1307,13 @@ export function evaluateBrowserGates(
   let worstLcp: number | null = null;
   let worstCls: number | null = null;
   let blockingViolations = 0;
+  let statesMeasured = 0;
+  const sinks: AuditSinks = {
+    clippedText,
+    tapTargets,
+    accessibility,
+    minorA11y,
+  };
 
   for (const sample of measured) {
     const where = `${sample.viewport} · ${sample.surface}`;
@@ -1091,20 +1324,7 @@ export function evaluateBrowserGates(
         where,
       });
     }
-    for (const item of sample.clippedText) {
-      clippedText.push({
-        code: "clipped_text",
-        message: `Text is clipped by ${Math.round(item.clippedX)}px horizontally and ${Math.round(item.clippedY)}px vertically (${item.target}).`,
-        where,
-      });
-    }
-    for (const item of sample.smallTapTargets) {
-      tapTargets.push({
-        code: "small_target",
-        message: `${Math.round(item.width)}×${Math.round(item.height)}px interactive target (${item.target}); minimum is 24×24px.`,
-        where,
-      });
-    }
+    blockingViolations += pushAuditFindings(sample, where, sinks);
     for (const item of sample.imageCropIssues) {
       imageCrops.push({
         code: "extreme_crop",
@@ -1112,25 +1332,10 @@ export function evaluateBrowserGates(
         where,
       });
     }
-    for (const violation of sample.violations) {
-      const entry = {
-        code: violation.id,
-        message: `${violation.help || violation.id} (${violation.nodes} element${violation.nodes === 1 ? "" : "s"}, ${violation.impact ?? "unrated"})${
-          violation.examples?.length
-            ? ` — examples: ${violation.examples.map((example) => `${example.target}${example.summary ? `: ${example.summary}` : ""}`).join(" | ")}`
-            : violation.target
-              ? ` — first: ${violation.target}`
-              : ""
-        }`,
-        where,
-        ...(violation.contrast?.length ? { contrast: violation.contrast } : {}),
-      };
-      if (violation.impact && BLOCKING_IMPACTS.has(violation.impact)) {
-        accessibility.push(entry);
-        blockingViolations += 1;
-      } else {
-        minorA11y.push(entry);
-      }
+    if (sample.surface === "home") {
+      const states = stateFindings(sample, where, coverage, sinks);
+      statesMeasured += states.measured;
+      blockingViolations += states.blocking;
     }
     if (sample.brokenImages > 0) {
       media.push({
@@ -1174,6 +1379,7 @@ export function evaluateBrowserGates(
       metrics: {
         samples: measured.length,
         expected: ACCEPTANCE_VIEWPORTS.length * expectedSurfaces.length,
+        states: statesMeasured,
       },
     }),
     gate("browser.overflow", overflow),
