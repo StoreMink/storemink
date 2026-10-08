@@ -33,6 +33,7 @@ export default function DemoAccountNotice() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="demo-account-title"
+      data-sm="account-dialog"
     >
       <div className={styles.modal}>
         <div className={styles.content}>

@@ -89,3 +89,15 @@ describe("Theme Studio config", () => {
     }
   });
 });
+
+it("requires the performance gate only when THEME_STUDIO_PERFORMANCE_REQUIRED is true", () => {
+  expect(getThemeStudioConfig({}).performanceRequired).toBe(false);
+  expect(
+    getThemeStudioConfig({ THEME_STUDIO_PERFORMANCE_REQUIRED: " TRUE " })
+      .performanceRequired,
+  ).toBe(true);
+  expect(
+    getThemeStudioConfig({ THEME_STUDIO_PERFORMANCE_REQUIRED: "1" })
+      .performanceRequired,
+  ).toBe(false);
+});

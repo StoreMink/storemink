@@ -46,6 +46,7 @@ import {
   type ThemeStudioContentBlock,
   type ThemeStudioModelClient,
 } from "./provider";
+import { customerCopy, unsupportedClaimIssues } from "./claims";
 import {
   STAGE_A_ENVELOPE_SCHEMA,
   STAGE_B_DRAFT_SCHEMA,
@@ -887,6 +888,21 @@ async function generate(
       prepared.issues,
     );
     if (compiled.package) {
+      // Claims the brief does not support are a repair, like any other floor.
+      // Only generation knows the brief, so this cannot live in the gates. A
+      // revision's evidence adds the base theme's own copy: a claim already
+      // there passed this check when it was made.
+      const claims = unsupportedClaimIssues(
+        compiled.package,
+        [
+          ...input.messages.map((m) => m.body),
+          ...(input.revision ? customerCopy(input.revision.basePackage) : []),
+        ].join("\n"),
+      );
+      if (claims.length) {
+        issuesB = claims;
+        continue;
+      }
       // A revision keeps the images of every slot that survived with the same
       // shape, including a slot renamed with an unchanged brief
       // (slot-images-core.ts).

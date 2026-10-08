@@ -594,6 +594,7 @@ export default function AuthModal() {
       role="dialog"
       aria-modal="true"
       aria-label={`Sign in to ${brand.name}`}
+      data-sm="account-dialog"
     >
       <div className={styles.modal}>
         <button

@@ -1788,3 +1788,19 @@
   color: var(--sm-ink-soft);
   text-decoration: underline;
 }
+
+/* ------------------------------------------------------------------------
+   One signup form per page. The footer always carries the store's newsletter
+   form (DEFAULT_CHROME, and lib/themes/footer.ts copies the theme's own
+   wording onto it), and three of the four bundled themes close their homepage
+   with a newsletter SECTION — so without this a themed homepage ended with
+   two forms back to back, which the 2026-10-04 Theme Studio benchmark flagged
+   as a defect. PageSectionRenderer marks a page that closes on a newsletter
+   section; here the footer's copy stands down on exactly that page. Other
+   pages keep the footer form, which is what carries the signup to the shop,
+   product and cart pages. `:has()` is inside the browserslist floor (§2).
+   ------------------------------------------------------------------------ */
+.storefront-root:has(.home-sections[data-sm-closing="newsletter"])
+  [data-sm="footer-newsletter"] {
+  display: none;
+}

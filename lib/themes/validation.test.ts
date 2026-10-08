@@ -8,6 +8,7 @@ import {
   collectThemeHrefs,
   collectThemeImageUrls,
   validateThemeCatalogMeta,
+  validateThemeCopy,
   validateThemeDefinition,
   validateThemeDesign,
   validateThemeHomepage,
@@ -327,5 +328,112 @@ describe("theme validation", () => {
       expect(issues.join(" ")).toMatch(/500 KiB/);
       expect(issues.join(" ")).toMatch(/4:3/);
     });
+  });
+});
+
+// Copy floors are a Studio rule, not part of validateThemeDefinition, so they
+// get their own positive case: every bundled theme must be clean under them.
+describe("theme copy floors", () => {
+  function homepage(theme: ThemeDefinition) {
+    return theme.preset.pages.find((p) => p.slug === "")!;
+  }
+
+  it("every bundled theme is clean", () => {
+    for (const theme of THEME_DEFINITIONS) {
+      expect(validateThemeCopy(theme)).toEqual([]);
+    }
+  });
+
+  it("unfinished copy in a section, a page title or a product is reported", () => {
+    const theme = clone();
+    const home = homepage(theme);
+    const first = home.sections.find((s) => s.enabled)!;
+    (first.config as unknown as Record<string, unknown>).heading =
+      "Lorem ipsum dolor";
+    home.seo_title = "[Brand] — {{tagline}}";
+    theme.preset.sampleData!.products[0].description = "TODO write this";
+    expect(codes(validateThemeCopy(theme))).toEqual([
+      "placeholder",
+      "placeholder",
+      "placeholder",
+    ]);
+  });
+
+  it("lower-case 'todo' is a word, not an authoring note", () => {
+    const theme = clone();
+    theme.preset.sampleData!.products[0].description = "Un poco de todo.";
+    expect(validateThemeCopy(theme)).toEqual([]);
+  });
+
+  it("the same module twice with identical content is reported once", () => {
+    const theme = clone();
+    const home = homepage(theme);
+    const usp = home.sections.find((s) => s.enabled && s.type === "usp_bar");
+    const source = usp ?? home.sections.find((s) => s.enabled)!;
+    home.sections.splice(1, 0, { ...structuredClone(source), id: "dup" });
+    expect(codes(validateThemeCopy(theme))).toEqual(["duplicate_section"]);
+  });
+
+  it("a closing newsletter is the house convention; two of them is reported", () => {
+    const theme = clone();
+    const home = homepage(theme);
+    const newsletter = {
+      id: "nl-end",
+      type: "newsletter" as const,
+      enabled: true,
+      config: {
+        heading: "Join us",
+        subheading: "",
+        button_label: "Join",
+        consent_text: "",
+        theme: "light",
+        alignment: "center",
+      },
+    } as unknown as (typeof home.sections)[number];
+    home.sections = home.sections
+      .filter((s) => s.type !== "newsletter")
+      .concat(newsletter);
+    expect(validateThemeCopy(theme)).toEqual([]);
+    home.sections.splice(1, 0, {
+      ...structuredClone(newsletter),
+      id: "nl-mid",
+      config: { ...newsletter.config, heading: "Different" },
+    });
+    expect(codes(validateThemeCopy(theme))).toEqual(["duplicate_newsletter"]);
+  });
+
+  it("a content image without alt text is reported per item", () => {
+    const theme = clone();
+    const home = homepage(theme);
+    home.sections.splice(1, 0, {
+      id: "gal",
+      type: "gallery",
+      enabled: true,
+      config: {
+        heading: "Lookbook",
+        subheading: "",
+        items: [
+          {
+            image_url: "/themes/x/a.webp",
+            image_alt: "",
+            caption: "",
+            href: "",
+          },
+          {
+            image_url: "/themes/x/b.webp",
+            image_alt: "Linen",
+            caption: "",
+            href: "",
+          },
+          { image_url: "", image_alt: "", caption: "", href: "" },
+        ],
+        layout: "grid",
+        columns: 3,
+        image_ratio: "square",
+      },
+    } as unknown as (typeof home.sections)[number]);
+    const found = validateThemeCopy(theme);
+    expect(codes(found)).toEqual(["image_alt"]);
+    expect(found[0].message).toContain("item 1");
   });
 });

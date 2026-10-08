@@ -678,7 +678,9 @@ export async function finishThemeStudioCapture(input: {
       return failNow("capture_job_outdated");
     const evidence = (qaEvidence as { ok: true; value: BrowserEvidence }).value;
     const surfaces = previewPagesFor(pkg).map((page) => page.surface);
-    const gates = evaluateBrowserGates(evidence, surfaces);
+    const gates = evaluateBrowserGates(evidence, surfaces, {
+      performanceRequired: getThemeStudioConfig().performanceRequired,
+    });
     return withService(async (db) => {
       const [project] = await db
         .select()

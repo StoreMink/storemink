@@ -267,9 +267,11 @@ export function AcceptanceRunner({
       setError(submitted.error ?? "The browser results could not be saved.");
     } else {
       setNotice(
-        submitted.status === "passed"
-          ? "Every required gate passed. This version is now a candidate."
-          : "Some required gates did not pass. The details are below.",
+        submitted.status !== "passed"
+          ? "Some required gates did not pass. The details are below."
+          : submitted.candidate
+            ? "Every required gate passed. This version is now a candidate."
+            : "Every required gate passed. It becomes a candidate once the automatic visual review has also passed this exact package.",
       );
     }
     router.refresh();
