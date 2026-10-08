@@ -67,6 +67,11 @@ import { formatPrice } from "@/lib/pricing";
 import { getCheckoutShippingOptions } from "@/app/actions/shipping-actions";
 import type { CheckoutShippingOption } from "@/lib/shipping/types";
 import { Button } from "@/components/ui/button";
+import {
+  WHATSAPP_CONSENT_DEFAULT,
+  WHATSAPP_MARKETING_CONSENT,
+  WHATSAPP_UPDATES_CONSENT,
+} from "@/lib/whatsapp/consent-copy";
 import styles from "./checkout.module.css";
 
 const EMPTY_ADDR: AddressInput = {
@@ -130,6 +135,12 @@ export default function CheckoutPage() {
   const [addrError, setAddrError] = useState<string | null>(null);
 
   const [notes, setNotes] = useState("");
+  // The WhatsApp boxes: updates on, offers off (plan §19.2). Rendered only
+  // when the store can send; sent only then too, so an unconnected store
+  // never receives a consent it cannot act on.
+  const [whatsappConsent, setWhatsappConsent] = useState(
+    WHATSAPP_CONSENT_DEFAULT,
+  );
   const [shippingOptions, setShippingOptions] = useState<
     CheckoutShippingOption[]
   >([]);
@@ -745,6 +756,7 @@ export default function CheckoutPage() {
       fulfilment === "delivery" && !billingSame ? billing : null,
       fulfilment === "delivery" ? selectedShippingOption?.id : null,
       fulfilment === "delivery" ? selectedShippingOption?.amount : null,
+      payConfig?.whatsapp ? whatsappConsent : null,
     );
 
     if ("error" in result) {
@@ -1669,6 +1681,42 @@ export default function CheckoutPage() {
                 className={styles.policyConsent}
                 verb="I have read and accept the"
               />
+
+              {/* WhatsApp opt-in — only when the store has connected a number.
+                  Two boxes because they are two questions: updates about THIS
+                  order, and offers later. The first is ticked by default, the
+                  second never (plan §19.2). The exact wording is what the
+                  server records beside the timestamp. */}
+              {payConfig?.whatsapp && (
+                <div className={styles.whatsappConsent}>
+                  <label className={styles.consentRow}>
+                    <input
+                      type="checkbox"
+                      checked={whatsappConsent.updates}
+                      onChange={(e) =>
+                        setWhatsappConsent((c) => ({
+                          ...c,
+                          updates: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span>{WHATSAPP_UPDATES_CONSENT}</span>
+                  </label>
+                  <label className={styles.consentRow}>
+                    <input
+                      type="checkbox"
+                      checked={whatsappConsent.marketing}
+                      onChange={(e) =>
+                        setWhatsappConsent((c) => ({
+                          ...c,
+                          marketing: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span>{WHATSAPP_MARKETING_CONSENT}</span>
+                  </label>
+                </div>
+              )}
 
               {/* A theme's showcase store never takes an order (placeOrder
                   refuses it). Say so plainly rather than leaving a Place Order

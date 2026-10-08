@@ -17,6 +17,7 @@ export interface LogType {
     | "activity"
     | "mail"
     | "message"
+    | "whatsapp"
     | "download"
     | "upload"
     | "alert"
@@ -46,6 +47,13 @@ export const LOG_TYPES: LogType[] = [
     href: "/dashboard/logs/sms-logs",
     icon: "message",
     blurb: "Every text sent, and what it cost.",
+  },
+  {
+    key: "whatsapp",
+    label: "WhatsApp logs",
+    href: "/dashboard/logs/whatsapp-logs",
+    icon: "whatsapp",
+    blurb: "Every WhatsApp message sent, and whether it was read.",
   },
   {
     // Import and Export are ONE page filtered two ways — `data_jobs.kind`
@@ -86,6 +94,7 @@ export function activeLogKey(pathname: string, kind?: string): string {
   }
   if (pathname.startsWith("/dashboard/logs/email-logs")) return "email";
   if (pathname.startsWith("/dashboard/logs/sms-logs")) return "sms";
+  if (pathname.startsWith("/dashboard/logs/whatsapp-logs")) return "whatsapp";
   if (pathname.startsWith("/dashboard/logs/failures")) return "failures";
   return "activity";
 }

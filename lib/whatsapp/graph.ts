@@ -312,6 +312,136 @@ export async function updateBusinessProfile(
   });
 }
 
+// ── Message templates ───────────────────────────────────────────────────────
+
+export interface TemplateCreateInput {
+  name: string;
+  language: string;
+  category: "UTILITY" | "MARKETING" | "AUTHENTICATION";
+  components: unknown[];
+}
+
+export interface TemplateCreateData {
+  id: string;
+  status?: string;
+  category?: string;
+}
+
+/**
+ * Submit a template for review. Meta answers with its id and an initial
+ * status (PENDING, or APPROVED at once for a body it has seen before).
+ * ★ ONE NAME PER WABA: resubmitting an existing name is REJECTED with code
+ * 100 / subcode 2388023, which the bootstrap treats as "already there" and
+ * resolves by listing (below) rather than as a failure.
+ */
+export async function createMessageTemplate(
+  token: string,
+  wabaId: string,
+  input: TemplateCreateInput,
+): Promise<GraphResult<TemplateCreateData>> {
+  return graphRequest<TemplateCreateData>({
+    method: "POST",
+    path: `/${encodeURIComponent(wabaId)}/message_templates`,
+    token,
+    body: input,
+  });
+}
+
+export interface TemplateListRow {
+  id: string;
+  name: string;
+  language: string;
+  status: string;
+  category?: string;
+  rejected_reason?: string;
+  quality_score?: { score?: string };
+}
+
+/** The WABA's templates, first page (Meta pages at 100; a store's bootstrap
+ *  set is under 20, so one page is the whole answer for ours). */
+export async function listMessageTemplates(
+  token: string,
+  wabaId: string,
+  names?: string[],
+): Promise<GraphResult<{ data: TemplateListRow[] }>> {
+  const query: Record<string, string> = {
+    fields: "id,name,language,status,category,rejected_reason,quality_score",
+    limit: "100",
+  };
+  if (names && names.length === 1) query.name = names[0];
+  return graphRequest<{ data: TemplateListRow[] }>({
+    path: `/${encodeURIComponent(wabaId)}/message_templates`,
+    token,
+    query,
+  });
+}
+
+// ── Sending ─────────────────────────────────────────────────────────────────
+
+export interface SendTemplateInput {
+  /** Digits only, country code first — Meta's `to`. */
+  to: string;
+  name: string;
+  language: string;
+  /** Body parameters, positional. */
+  bodyParams: string[];
+}
+
+export interface SendMessageData {
+  messaging_product?: string;
+  contacts?: { input?: string; wa_id?: string }[];
+  messages?: { id: string; message_status?: string }[];
+}
+
+/**
+ * One template message. ★ ONLY `lib/whatsapp/send.ts` MAY CALL THIS — it is
+ * the choke point that writes the log row, and `send-coverage.test.ts` fails
+ * on any other caller.
+ */
+export async function sendTemplateMessage(
+  token: string,
+  phoneNumberId: string,
+  input: SendTemplateInput,
+): Promise<GraphResult<SendMessageData>> {
+  const components =
+    input.bodyParams.length > 0
+      ? [
+          {
+            type: "body",
+            parameters: input.bodyParams.map((text) => ({
+              type: "text",
+              text,
+            })),
+          },
+        ]
+      : [];
+  return graphRequest<SendMessageData>({
+    method: "POST",
+    path: `/${encodeURIComponent(phoneNumberId)}/messages`,
+    token,
+    body: {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: input.to,
+      type: "template",
+      template: {
+        name: input.name,
+        language: { code: input.language },
+        components,
+      },
+    },
+  });
+}
+
+/** Meta's "already exists" answer to a template create. */
+export function isTemplateExistsError(result: GraphResult<unknown>): boolean {
+  return (
+    !result.ok &&
+    result.outcome === "rejected" &&
+    (result.subcode === 2388023 || /already exists/i.test(result.error))
+  );
+}
+
 /** True when Meta says the token itself is dead (revoked, expired, password
  *  changed) rather than the request being wrong — the signal for
  *  `needs_reauth`. */

@@ -29,6 +29,8 @@ import {
   type NotificationDetail,
 } from "@/app/actions/notification-actions";
 import { CHANNELS, type ChannelKey } from "@/lib/notifications/channels";
+import type { WhatsAppEventTemplate } from "@/app/actions/whatsapp-provider-actions";
+import { WhatsAppTemplatePanel } from "./whatsapp-template-panel";
 import { SmsTemplateEditor } from "./sms-template-editor";
 import type { SmsTemplate } from "@/app/actions/sms-template-actions";
 import {
@@ -122,11 +124,15 @@ function Field({
 export function NotificationDetailView({
   detail,
   smsTemplates,
+  whatsappTemplates = [],
   scopedAudience,
 }: {
   detail: NotificationDetail;
   /** The store's mirrored DLT templates for this event, loaded by the page. */
   smsTemplates: SmsTemplate[];
+  /** The WhatsApp templates StoreMink registered for this event, with Meta's
+   *  review status — loaded by the page for the SMS tab's reason. */
+  whatsappTemplates?: WhatsAppEventTemplate[];
   /** Set when the URL named an audience: the page then shows only that one and
    *  hides the switcher — you answered "who is this for" by choosing a tab. */
   scopedAudience?: "team" | "customer";
@@ -541,7 +547,14 @@ export function NotificationDetailView({
                 it. A DLT body is fixed at registration and has no subject, so
                 the generic form would invite a merchant to author something a
                 carrier will silently drop. */}
-            {activeChannel === "sms" ? (
+            {activeChannel === "whatsapp" ? (
+              <WhatsAppTemplatePanel
+                audience={current.key}
+                templates={whatsappTemplates}
+                connected={detail.whatsappConnected}
+                variables={detail.variables}
+              />
+            ) : activeChannel === "sms" ? (
               <SmsTemplateEditor
                 eventKey={notification.key}
                 audience={current.key}

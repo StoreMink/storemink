@@ -102,6 +102,7 @@ import {
 import { validateTemplate } from "@/lib/notifications/template";
 import { sanitizeBlogContent } from "@/lib/sanitize";
 import { storeCanSendSms } from "@/lib/sms/channel";
+import { storeCanSendWhatsApp } from "@/lib/whatsapp/channel";
 import { notificationSettings } from "@/drizzle/schema";
 
 /** Store scope for this request, or null on the platform host. */
@@ -446,6 +447,9 @@ export interface NotificationDetail {
   /** Whether this store has a working SMS connection — so the SMS tab can say
    *  "nothing will send yet" instead of letting someone configure in the dark. */
   smsConnected: boolean;
+  /** Whether this store has a live WhatsApp number — the WhatsApp tab's
+   *  "nothing will send yet" notice, and the guard on its switch. */
+  whatsappConnected: boolean;
   error?: string;
 }
 
@@ -490,6 +494,7 @@ export async function getNotificationDetail(
       audience: await getStoreNotificationAudience(),
       canManage: access.can("notifications", "manage"),
       smsConnected: storeId ? await storeCanSendSms(storeId) : false,
+      whatsappConnected: storeId ? await storeCanSendWhatsApp(storeId) : false,
     };
   } catch (error) {
     logError("notifications: detail read failed", error, { key });
@@ -611,6 +616,21 @@ export async function saveNotificationConfig(
           return {
             error:
               "Connect Twilio in Channels first — SMS also needs your DLT sender header and Entity ID.",
+          };
+        }
+        // ★ THE SAME RULE FOR WHATSAPP: a switch that cannot deliver is
+        // refused, not stored. The template's approval is NOT checked here —
+        // Meta decides that on its own clock, and a merchant who switched the
+        // channel on while a template was still in review should not have to
+        // come back and switch it on again; the fan-out reads the status.
+        if (
+          channelKey === "whatsapp" &&
+          on &&
+          !(await storeCanSendWhatsApp(storeId))
+        ) {
+          return {
+            error:
+              "Connect your WhatsApp number in Channels first. It needs the Basic plan or above.",
           };
         }
         if (!channel.available && on) {

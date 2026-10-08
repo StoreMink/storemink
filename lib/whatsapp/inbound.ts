@@ -1,11 +1,12 @@
 import "server-only";
 
 import crypto from "crypto";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { withService, type Db } from "@/lib/db/client";
 import {
   storeWhatsappAccounts,
   whatsappInboundEvents,
+  whatsappLogs,
   whatsappTemplates,
 } from "@/drizzle/schema";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
@@ -22,12 +23,13 @@ import { isWhatsAppWebhook } from "./webhook-events";
 // trusted: Meta redelivers for up to a week, and a redelivered row is a
 // no-op at the UNIQUE (phone_number_id, field, event_id).
 //
-// `processPendingInboundEvents` drains the rows a handler exists for. In this
-// slice that is template and number/account state — the facts the Channels
-// card and the notification switch read. `messages` rows (inbound text,
-// delivery statuses) are LEFT UNPROCESSED on purpose: slice 2 adds the status
-// handler and slice 3 the inbox, and marking them done now would throw away
-// the backlog those slices drain. The selector therefore names its fields.
+// `processPendingInboundEvents` drains the rows a handler exists for: template
+// and number/account state (the facts the Channels card and the notification
+// switch read), and — since slice 2 — the DELIVERY STATUSES Meta posts against
+// messages we sent, which advance `whatsapp_logs`. Inbound MESSAGES are LEFT
+// UNPROCESSED on purpose: slice 3 adds the inbox, and marking them done now
+// would throw away the backlog it drains. The selector therefore names its
+// fields, and within `messages` only the `status` kind.
 // ---------------------------------------------------------------------------
 
 type Rec = Record<string, unknown>;
@@ -266,7 +268,7 @@ export async function processPendingInboundEvents(
       .where(
         and(
           isNull(whatsappInboundEvents.processedAt),
-          inArray(whatsappInboundEvents.field, [...HANDLED_FIELDS]),
+          sql`(${whatsappInboundEvents.field} = any(${sql.param([...HANDLED_FIELDS])}::text[]) or (${whatsappInboundEvents.field} = 'messages' and ${whatsappInboundEvents.payload}->>'kind' = 'status'))`,
         ),
       )
       .orderBy(whatsappInboundEvents.receivedAt)
@@ -277,7 +279,12 @@ export async function processPendingInboundEvents(
   for (const ev of claimed) {
     try {
       await withService(async (db) => {
-        if (ev.storeId) {
+        if (ev.storeId && ev.field === "messages") {
+          await applyMessageStatus(db, {
+            storeId: ev.storeId,
+            value: isRec(ev.payload) ? ev.payload : {},
+          });
+        } else if (ev.storeId) {
           await applyAccountEvent(db, {
             storeId: ev.storeId,
             field: ev.field,
@@ -499,4 +506,103 @@ export async function applyAccountEvent(
     default:
       return;
   }
+}
+
+/**
+ * A delivery status against a message WE sent — sent / delivered / read /
+ * failed — onto its `whatsapp_logs` row, found by the provider message id
+ * (the UNIQUE partial index).
+ *
+ * ★ THE TIMELINE ONLY MOVES FORWARD. Meta can deliver `read` before
+ * `delivered`, and redeliver either; each step stamps its own timestamp once
+ * and the status column holds the furthest point reached. A `failed` is
+ * terminal and carries Meta's code and title, which is what turns "failed"
+ * into "131026: the number isn't on WhatsApp" in the log.
+ *
+ * A status for an id we never logged (sent from the merchant's phone under
+ * Coexistence, or from another tool on the same number) is ignored — there is
+ * no row to advance, and slice 3's inbox is where the merchant's own replies
+ * are recorded.
+ */
+export async function applyMessageStatus(
+  db: Db,
+  ev: { storeId: string; value: Rec },
+): Promise<void> {
+  const status = isRec(ev.value.status) ? ev.value.status : null;
+  if (!status) return;
+  const messageId = str(status.id);
+  const kind = str(status.status)?.toLowerCase();
+  if (!messageId || !kind) return;
+
+  const at = statusTime(status.timestamp);
+  const conversation = isRec(status.conversation) ? status.conversation : {};
+  const pricing = isRec(status.pricing) ? status.pricing : {};
+  const errors = Array.isArray(status.errors) ? status.errors : [];
+  const firstError = isRec(errors[0]) ? errors[0] : null;
+
+  const set: Partial<typeof whatsappLogs.$inferInsert> = {};
+  if (str(conversation.id)) set.conversationId = str(conversation.id);
+  if (str(pricing.category)) set.pricingCategory = str(pricing.category);
+  if (typeof pricing.billable === "boolean") set.billable = pricing.billable;
+
+  switch (kind) {
+    case "sent":
+      set.sentAt = at;
+      break;
+    case "delivered":
+      set.deliveredAt = at;
+      break;
+    case "read":
+      set.readAt = at;
+      break;
+    case "failed": {
+      set.failedAt = at;
+      const code = firstError?.code;
+      set.errorCode = typeof code === "number" ? code : null;
+      const detail = isRec(firstError?.error_data)
+        ? str(firstError.error_data.details)
+        : null;
+      set.error =
+        [str(firstError?.title), detail].filter(Boolean).join(": ") ||
+        "Meta reported the message as failed.";
+      break;
+    }
+    default:
+      return;
+  }
+
+  // Rank so a late `delivered` never demotes a `read`, and nothing moves a
+  // row off `failed`. The comparison runs in SQL so two statuses landing at
+  // once cannot read the same old row and both win.
+  const incoming = STATUS_RANK[kind] ?? 0;
+  await db
+    .update(whatsappLogs)
+    .set({
+      ...set,
+      status: sql`case when (case ${whatsappLogs.status} when 'skipped' then 0 when 'sent' then 1 when 'delivered' then 2 when 'read' then 3 when 'failed' then 4 else 0 end) < ${incoming} then ${kind} else ${whatsappLogs.status} end`,
+    })
+    .where(
+      and(
+        eq(whatsappLogs.storeId, ev.storeId),
+        eq(whatsappLogs.providerMessageId, messageId),
+      ),
+    );
+}
+
+/** How far along the timeline each status is; mirrored in the SQL above. */
+export const STATUS_RANK: Record<string, number> = {
+  skipped: 0,
+  sent: 1,
+  delivered: 2,
+  read: 3,
+  failed: 4,
+};
+
+/** Meta's `timestamp` is epoch seconds as a string. */
+function statusTime(value: unknown): string {
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 1_000_000_000) {
+    return new Date(n * 1000).toISOString();
+  }
+  return new Date().toISOString();
 }

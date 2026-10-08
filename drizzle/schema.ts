@@ -8780,10 +8780,119 @@ export const whatsappTemplates = pgTable("whatsapp_templates", {
   rejectionReason: text("rejection_reason"),
   quality: text(),
   enabled: boolean().default(true).notNull(),
+  // Why a SUBMISSION was refused — distinct from Meta rejecting a template it
+  // accepted for review (rejection_reason, status REJECTED).
+  syncError: text("sync_error"),
+  lastSyncedAt: timestamp("last_synced_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
     .defaultNow()
     .notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+// ---------------------------------------------------------------------------
+// WhatsApp slice 2 (migration 0175): consent, the queue and the send log.
+// Service-only, like every whatsapp_* table.
+// ---------------------------------------------------------------------------
+
+export const whatsappContacts = pgTable("whatsapp_contacts", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  // E.164; UNIQUE with store_id.
+  phone: text().notNull(),
+  waId: text("wa_id"),
+  profileName: text("profile_name"),
+  userId: text("user_id"),
+  updatesOptInAt: timestamp("updates_opt_in_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  updatesConsentText: text("updates_consent_text"),
+  updatesOptOutAt: timestamp("updates_opt_out_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  marketingOptInAt: timestamp("marketing_opt_in_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  marketingConsentText: text("marketing_consent_text"),
+  marketingOptOutAt: timestamp("marketing_opt_out_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  lastInboundAt: timestamp("last_inbound_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  referral: jsonb(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+export const notificationWhatsappQueue = pgTable(
+  "notification_whatsapp_queue",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    storeId: uuid("store_id").notNull(),
+    eventId: uuid("event_id"),
+    recipientId: text("recipient_id").notNull(),
+    recipientType: text("recipient_type").notNull(),
+    phone: text().notNull(),
+    eventKey: text("event_key").notNull(),
+    audience: text().notNull(),
+    templateId: uuid("template_id").notNull(),
+    values: jsonb().default([]).notNull(),
+    status: text().default("pending").notNull(),
+    attempts: integer().default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", {
+      withTimezone: true,
+      mode: "string",
+    })
+      .defaultNow()
+      .notNull(),
+    error: text(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true, mode: "string" }),
+  },
+);
+
+export const whatsappLogs = pgTable("whatsapp_logs", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  toPhone: text("to_phone").notNull(),
+  eventKey: text("event_key"),
+  templateName: text("template_name"),
+  templateId: uuid("template_id"),
+  category: text(),
+  body: text(),
+  // sent | delivered | read | failed | skipped — advanced by the status webhook.
+  status: text().notNull(),
+  error: text(),
+  errorCode: integer("error_code"),
+  providerMessageId: text("provider_message_id"),
+  conversationId: text("conversation_id"),
+  pricingCategory: text("pricing_category"),
+  billable: boolean(),
+  sentAt: timestamp("sent_at", { withTimezone: true, mode: "string" }),
+  deliveredAt: timestamp("delivered_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  readAt: timestamp("read_at", { withTimezone: true, mode: "string" }),
+  failedAt: timestamp("failed_at", { withTimezone: true, mode: "string" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
     .defaultNow()
     .notNull(),
 });

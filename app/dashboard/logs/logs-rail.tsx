@@ -24,6 +24,7 @@ import {
   Download,
   Mail,
   Megaphone,
+  MessageCircle,
   MessageSquare,
   Upload,
 } from "lucide-react";
@@ -33,6 +34,7 @@ const ICONS = {
   activity: Activity,
   mail: Mail,
   message: MessageSquare,
+  whatsapp: MessageCircle,
   download: Download,
   upload: Upload,
   alert: AlertTriangle,

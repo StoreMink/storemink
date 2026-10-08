@@ -89,11 +89,67 @@ by `inbound.test.ts` and the local Postgres probe (dedupe, cascade, grants)._
 
 ---
 
+## Phase 1, slice 2 — Order updates (2026-10-08)
+
+**WA-2.1 — Connecting registers the templates.** Finish WA-1.3. The card's
+_Order update templates_ line reads "0 of 19 approved by Meta · 19 still in
+review" within a few seconds; in WhatsApp Manager → Message templates the 19
+`sm_*` templates are listed as In review. Pressing **Set up templates** again
+reports "Templates are up to date" and creates nothing at Meta. _Pinned by
+`templates.test.ts`; not yet run against live Meta._
+
+**WA-2.2 — Meta's verdict reaches the console.** When Meta approves
+`sm_order_placed_customer_v1`, Settings → Notifications → New order → WhatsApp
+tab shows **Approved** with the exact wording, rendered with sample values,
+without anyone pressing Refresh (the status webhook). A rejection shows
+**Rejected** and Meta's reason. _Pinned by `inbound.test.ts`._
+
+**WA-2.3 — The switch needs a number, not an approval.** On a store with no
+WhatsApp connected, ticking WhatsApp on any notification is refused with
+"Connect your WhatsApp number in Channels first". On a connected store it
+saves while the template is still in review; nothing sends until approval,
+and the tab says so. _Pinned by `notification-actions.test.ts`._
+
+**WA-2.4 — The checkout asks, only when it can deliver.** On a store with no
+WhatsApp connected the checkout shows no WhatsApp boxes. On a connected store
+two boxes sit under the policy line: _Send me order updates on WhatsApp_
+(ticked) and _Also send me offers and news on WhatsApp_ (unticked). Placing
+the order writes one `whatsapp_contacts` row for the delivery phone with
+`updates_opt_in_at` set and `marketing_opt_in_at` null, and the exact box
+wording in `updates_consent_text`. _Pinned by `consent.test.ts` and
+`checkout-actions.test.ts`._
+
+**WA-2.5 — A consenting customer gets the WhatsApp, not the SMS.** With both
+channels on for New order, Twilio connected, the DLT and WhatsApp templates
+both approved, and the customer opted in: one `notification_whatsapp_queue`
+row, no `notification_sms_queue` row, and within a minute a `whatsapp_logs`
+row reading _Sent_, then _Delivered_, then _Read_ with times, as the handset
+receives and opens it. With the box unticked the SMS goes instead. _Pinned by
+`record-whatsapp.test.ts`; the live half waits on WA-2.1._
+
+**WA-2.6 — A failure says why.** Place an order with a number that is not on
+WhatsApp: the log row reads _Failed_ with "131026: …" and the same row appears
+under Logs → Failures → WhatsApp. The queue row is not retried. _Pinned by
+`worker.test.ts` and `send.test.ts`._
+
+**WA-2.7 — Precedence is the merchant's.** Settings → Channels → WhatsApp →
+Settings, choose _SMS, with WhatsApp as the fallback_: the next qualifying
+order sends the SMS only. Choose _Both_: both go. _Pinned by
+`record-whatsapp.test.ts` and `channel.test.ts`._
+
+**WA-2.8 — A lapsed plan pauses, never deletes.** Move the store to Free: the
+card still shows the connection, no WhatsApp row is queued, the SMS fallback
+applies, and moving back to Basic resumes without reconnecting. _Pinned by
+`channel.test.ts`._
+
+---
+
 ## Known gaps
 
 | Gap                                                                                                                               | Since      | Status                           |
 | --------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------------------- |
 | The connect flow has not run against a live Embedded Signup popup — the Dev app's configuration (runbook §4.3) does not exist yet | 2026-10-08 | Waiting on the console step      |
 | An unreachable database reads as "not connected" on the Channels card (the SMS card's documented gap, shared)                     | 2026-10-08 | Open                             |
-| `messages` events are recorded but not processed — no inbox, no delivery statuses yet                                             | 2026-10-08 | Slices 2 and 3                   |
-| No Help Centre guide yet — nothing a merchant can do changes until the connect button works on a live configuration               | 2026-10-08 | With slice 1's live verification |
+| Inbound `messages` events are recorded but not processed — no inbox yet (delivery statuses ARE processed since slice 2)           | 2026-10-08 | Slice 3                          |
+| Template submission and the status webhook follow Meta's published shapes but have not run against live Meta                      | 2026-10-08 | With slice 2's live verification |
+| A shopper can give WhatsApp consent only at checkout; there is no account-page control to withdraw it, and no STOP reply handling | 2026-10-08 | Slice 3 (inbox reads STOP)       |

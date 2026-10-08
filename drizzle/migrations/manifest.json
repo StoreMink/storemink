@@ -6710,6 +6710,76 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261008_0175_whatsapp_notify",
+      "description": "WhatsApp Commerce slice 2: contacts with consent, the notification WhatsApp queue, a send log with Meta's delivery timeline, and template sync columns (service-only)",
+      "file": "sql/20261008_0175_whatsapp_notify.sql",
+      "transaction": true,
+      "requires": ["20261008_0174_whatsapp_accounts"],
+      "verify": {
+        "tables": [
+          "whatsapp_contacts",
+          "notification_whatsapp_queue",
+          "whatsapp_logs"
+        ],
+        "columns": [
+          "whatsapp_templates.sync_error",
+          "whatsapp_templates.last_synced_at"
+        ],
+        "constraints": [
+          "whatsapp_contacts_store_phone_key",
+          "notification_whatsapp_queue_status_check",
+          "notification_whatsapp_queue_audience_check",
+          "whatsapp_logs_status_check"
+        ],
+        "indexes": [
+          "whatsapp_contacts_user_idx",
+          "notification_whatsapp_queue_claim_idx",
+          "notification_whatsapp_queue_created_idx",
+          "whatsapp_logs_store_created_idx",
+          "whatsapp_logs_status_idx",
+          "whatsapp_logs_provider_message_key",
+          "whatsapp_logs_created_idx",
+          "whatsapp_inbound_events_received_idx"
+        ],
+        "rlsTables": [
+          "whatsapp_contacts",
+          "notification_whatsapp_queue",
+          "whatsapp_logs"
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "app_user holds no privilege on the three new tables",
+            "sql": "select count(*)::text from information_schema.role_table_grants where table_schema='public' and table_name in ('whatsapp_contacts','notification_whatsapp_queue','whatsapp_logs') and grantee='app_user'",
+            "equals": "0"
+          },
+          {
+            "name": "the contact row follows a claimed customer id",
+            "sql": "select confupdtype from pg_constraint where conrelid='public.whatsapp_contacts'::regclass and contype='f' and confrelid='public.users'::regclass",
+            "equals": "c"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261008_0176_whatsapp_notify_help",
+      "description": "Help: send order updates on WhatsApp (connect, templates, notification switches, checkout opt-in, logs)",
+      "file": "sql/20261008_0176_whatsapp_notify_help.sql",
+      "transaction": true,
+      "requires": ["20261008_0175_whatsapp_notify"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "WhatsApp order-updates guide is published under Marketing",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id=a.category_id where a.slug='send-order-updates-on-whatsapp' and a.status='published' and c.slug='marketing' and a.body like '%ticked by default%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

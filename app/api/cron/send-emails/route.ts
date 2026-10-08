@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { processEmailQueue } from "@/lib/email/campaign-worker";
 import { processNotificationEmails } from "@/lib/email/notification-worker";
 import { runSmsWorker } from "@/lib/sms/worker";
+import { runWhatsAppWorker } from "@/lib/whatsapp/worker";
 import { processAnnouncements } from "@/lib/announcements/worker";
 import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 
@@ -11,6 +12,7 @@ import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 //   • notification emails       (notification_email_queue — CODEBASE.md §22)
 //   • platform announcements    (platform_announcement_recipients — §38)
 //   • notification SMS          (notification_sms_queue — §37)
+//   • notification WhatsApp     (notification_whatsapp_queue — WhatsApp slice 2)
 //
 // One route, because they share a trigger, a secret, and a self-chaining
 // pattern — and because the cron plan allows few schedules (Vercel Hobby caps
@@ -60,6 +62,11 @@ async function handle(request: Request) {
   // another in the response.
   const sms = await runSmsWorker().catch(() => null);
 
+  // ★ WHATSAPP RIDES THE SAME HEARTBEAT, for the SMS reason above. Meta is a
+  // third provider with its own limits, so this shares nothing with the two
+  // Resend queues; sequential only so one failure cannot mask another.
+  const whatsapp = await runWhatsAppWorker().catch(() => null);
+
   // ★ ANNOUNCEMENTS RIDE THE SAME HEARTBEAT, for the reason above: a separate
   // schedule is one more thing to create and one more thing to forget.
   // Sequential with the two Resend queues on purpose — it shares their account
@@ -72,7 +79,8 @@ async function handle(request: Request) {
     campaigns.remaining > 0 ||
     notifications.remaining > 0 ||
     (announcements?.remaining ?? 0) > 0 ||
-    (sms?.claimed ?? 0) >= 50
+    (sms?.claimed ?? 0) >= 50 ||
+    (whatsapp?.claimed ?? 0) >= 50
   ) {
     after(() => triggerEmailWorker());
   }
@@ -82,6 +90,7 @@ async function handle(request: Request) {
     campaigns,
     notifications,
     sms,
+    whatsapp,
     announcements,
   });
 }

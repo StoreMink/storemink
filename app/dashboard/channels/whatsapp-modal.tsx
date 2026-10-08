@@ -15,10 +15,13 @@ import {
   connectWhatsApp,
   disconnectWhatsApp,
   refreshWhatsApp,
+  setupWhatsAppTemplates,
   setWhatsAppEnabled,
   type WhatsAppChannelState,
 } from "@/app/actions/whatsapp-provider-actions";
 import { runEmbeddedSignup } from "./embedded-signup";
+import { FeatureToggles } from "@/app/dashboard/components/feature-toggles";
+import type { EditorSetting } from "@/app/actions/store-settings";
 
 // ---------------------------------------------------------------------------
 // Channels → WhatsApp. Connect through Meta's popup; afterwards show what Meta
@@ -51,8 +54,12 @@ export function WhatsAppModal({
   onClose,
   onState,
   onRefresh,
+  settings,
 }: {
   state: WhatsAppChannelState;
+  /** The WhatsApp registry group (SMS/WhatsApp precedence), rendered below
+   *  the connection facts once connected. */
+  settings?: { plan: string; settings: EditorSetting[] };
   canManage: boolean;
   onClose: () => void;
   onState: React.Dispatch<React.SetStateAction<WhatsAppChannelState>>;
@@ -107,6 +114,22 @@ export function WhatsAppModal({
     if (result.error) return toast.error(result.error);
     onState((s) => ({ ...s, enabled: next }));
     toast.success(next ? "WhatsApp enabled." : "WhatsApp paused.");
+    onRefresh();
+  }
+
+  async function handleSetupTemplates() {
+    setBusy(true);
+    const res = await setupWhatsAppTemplates();
+    setBusy(false);
+    if (res.error) {
+      toast.error(res.error);
+      return;
+    }
+    toast.success(
+      res.submitted
+        ? `${res.submitted} template${res.submitted === 1 ? "" : "s"} sent to Meta for review.`
+        : "Templates are up to date.",
+    );
     onRefresh();
   }
 
@@ -182,7 +205,29 @@ export function WhatsAppModal({
 
         <div className="space-y-4 p-5">
           {state.connected ? (
-            <ConnectedView state={state} />
+            <>
+              <ConnectedView
+                state={state}
+                canManage={canManage}
+                busy={busy}
+                onSetupTemplates={handleSetupTemplates}
+              />
+              {/* The one setting that belongs to this channel. Rendered by
+                  the shared registry card so the select, its plan lock and
+                  its save all behave exactly as on every other settings
+                  page — and so the Help guide's "Channels → WhatsApp →
+                  Settings" names a control that exists. */}
+              {settings && settings.settings.length > 0 && (
+                <FeatureToggles
+                  title="Settings"
+                  subtitle="Applies to the next message sent."
+                  successMessage="WhatsApp settings saved."
+                  plan={settings.plan}
+                  initialSettings={settings.settings}
+                  canManage={canManage}
+                />
+              )}
+            </>
           ) : (
             <ConnectView
               state={state}
@@ -239,7 +284,17 @@ export function WhatsAppModal({
   );
 }
 
-function ConnectedView({ state }: { state: WhatsAppChannelState }) {
+function ConnectedView({
+  state,
+  canManage,
+  busy,
+  onSetupTemplates,
+}: {
+  state: WhatsAppChannelState;
+  canManage: boolean;
+  busy: boolean;
+  onSetupTemplates: () => void;
+}) {
   const tier = state.messagingTier
     ? (TIER_LABEL[state.messagingTier] ?? state.messagingTier)
     : "Not reported yet";
@@ -310,6 +365,42 @@ function ConnectedView({ state }: { state: WhatsAppChannelState }) {
           <p className="mt-1 text-xs text-[#5b6472]">{state.lastError}</p>
         </div>
       )}
+
+      {/* Templates: the half that makes the number useful. Order updates send
+          only through a template Meta has approved, so a connected number with
+          none approved sends nothing — said here, with the count, rather than
+          discovered as silence. */}
+      <div className="rounded-lg border border-[rgba(17,24,39,0.08)] p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-[#111827]">
+              Order update templates
+            </p>
+            <p className="mt-1 text-xs text-[#5b6472]">
+              {state.templates.approved} of {state.templates.total} approved by
+              Meta
+              {state.templates.pending > 0
+                ? ` · ${state.templates.pending} still in review`
+                : ""}
+              . Meta usually answers within a day; each message sends only once
+              its template is approved. Which message goes to whom is under
+              Settings → Notifications.
+            </p>
+          </div>
+          {canManage &&
+            state.templates.approved + state.templates.pending <
+              state.templates.total && (
+              <button
+                type="button"
+                onClick={onSetupTemplates}
+                disabled={busy || reauth}
+                className="shrink-0 rounded-md border border-[rgba(17,24,39,0.16)] px-3 py-1.5 text-xs font-medium text-[#111827] hover:bg-[#f9fafb] disabled:opacity-50"
+              >
+                Set up templates
+              </button>
+            )}
+        </div>
+      </div>
 
       <div className="rounded-lg border border-[rgba(17,24,39,0.08)] p-4">
         <p className="text-sm font-semibold text-[#111827]">

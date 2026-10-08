@@ -10,6 +10,7 @@
 export type FailureSourceKey =
   | "email"
   | "sms"
+  | "whatsapp"
   | "notification"
   | "refund"
   | "import"
@@ -65,6 +66,15 @@ export const FAILURE_SOURCE_META: FailureSourceMeta[] = [
     key: "sms",
     label: "SMS",
     blurb: "Texts the provider rejected, or never confirmed.",
+  },
+  {
+    // ★ SEPARATE FROM `sms` for the same reason `sms` is separate from
+    // `email`: a WhatsApp failure carries Meta's own code — "not a WhatsApp
+    // user", a template Meta paused — and its remedy is in WhatsApp Manager
+    // or at checkout, not at a carrier.
+    key: "whatsapp",
+    label: "WhatsApp",
+    blurb: "Messages Meta refused, or reported as failed after sending.",
   },
   {
     key: "notification",

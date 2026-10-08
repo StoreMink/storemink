@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it, vi } from "vitest";
+import { sqlText } from "@/app/actions/_test-helpers";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -8,7 +9,13 @@ vi.mock("@/lib/observability/logger", () => ({
 }));
 vi.mock("@/lib/db/client", () => ({ withService: vi.fn() }));
 
-import { applyAccountEvent, explodeWebhook, HANDLED_FIELDS } from "./inbound";
+import {
+  applyAccountEvent,
+  applyMessageStatus,
+  explodeWebhook,
+  HANDLED_FIELDS,
+  STATUS_RANK,
+} from "./inbound";
 
 const delivery = {
   object: "whatsapp_business_account",
@@ -224,5 +231,76 @@ describe("applyAccountEvent", () => {
 
   it("★ `messages` is deliberately NOT a handled field in this slice", () => {
     expect(HANDLED_FIELDS).not.toContain("messages");
+  });
+});
+
+describe("applyMessageStatus", () => {
+  // The update chain is captured by fakeDb; `set` holds the timeline columns.
+  it("stamps delivered with Meta's timestamp and the conversation it billed to", async () => {
+    const { db, updates } = fakeDb();
+    await applyMessageStatus(db, {
+      storeId: "s",
+      value: {
+        kind: "status",
+        status: {
+          id: "wamid.X",
+          status: "delivered",
+          timestamp: "1759900000",
+          conversation: { id: "conv-1" },
+          pricing: { category: "utility", billable: true },
+        },
+      },
+    });
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.set).toMatchObject({
+      deliveredAt: new Date(1759900000 * 1000).toISOString(),
+      conversationId: "conv-1",
+      pricingCategory: "utility",
+      billable: true,
+    });
+    // The status column is a SQL CASE that only moves forward.
+    expect(sqlText(updates[0]!.set.status)).toMatch(/when 'read' then 3/);
+  });
+
+  it("turns a failure into Meta's code and a readable reason", async () => {
+    const { db, updates } = fakeDb();
+    await applyMessageStatus(db, {
+      storeId: "s",
+      value: {
+        kind: "status",
+        status: {
+          id: "wamid.Y",
+          status: "failed",
+          timestamp: "1759900000",
+          errors: [
+            {
+              code: 131026,
+              title: "Message undeliverable",
+              error_data: { details: "Recipient is not a WhatsApp user" },
+            },
+          ],
+        },
+      },
+    });
+    expect(updates[0]!.set).toMatchObject({
+      errorCode: 131026,
+      error: "Message undeliverable: Recipient is not a WhatsApp user",
+    });
+    expect(updates[0]!.set.failedAt).toBeTruthy();
+  });
+
+  it("ignores a status it cannot place", async () => {
+    const { db, updates } = fakeDb();
+    await applyMessageStatus(db, {
+      storeId: "s",
+      value: { kind: "status", status: { id: "wamid.Z", status: "warning" } },
+    });
+    await applyMessageStatus(db, { storeId: "s", value: { kind: "message" } });
+    expect(updates).toHaveLength(0);
+  });
+
+  it("ranks the timeline so a late delivered cannot demote a read", () => {
+    expect(STATUS_RANK.delivered).toBeLessThan(STATUS_RANK.read!);
+    expect(STATUS_RANK.failed).toBeGreaterThan(STATUS_RANK.read!);
   });
 });

@@ -92,6 +92,79 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### WhatsApp Commerce — Phase 1 slice 2: Order updates (2026-10-08)
+
+Plan §8 built: a WhatsApp notification is the SMS channel with a better
+provider, so it rides the same spine — fan-out branch, queue, worker, choke
+point, log, Failures source, log rail — and `lib/notifications/channels.ts`
+flips `whatsapp` to **available** on the same reasoning SMS flipped on: that
+flag is a platform statement, and deliverability per store is resolved at
+fan-out in `lib/whatsapp/channel.ts` by FOUR conditions (SMS has three): a
+connected, enabled number on a plan that still includes WhatsApp; the
+merchant's per-event per-audience switch; an **APPROVED** template for that
+event and audience; and, for a customer, their own opt-in.
+★★ THE TEMPLATE IS THE SWITCH, AND STOREMINK HOLDS IT. Meta approves exact
+wording, so unlike DLT (where the merchant mirrors an approval they obtained
+elsewhere) `lib/whatsapp/template-catalog.ts` is the one place the copy
+lives: 19 UTILITY templates (12 customer, 7 team), positional `{{n}}` bodies
+mapped onto `variableNamesFor` names exactly as `renderDltBody` maps `{#var#}`,
+one example per placeholder for Meta's review, named
+`sm_<event>_<audience>_v1`. `template-catalog.test.ts` pins every rule Meta
+applies at review (lowercase names, sequential never-adjacent placeholders,
+none first or last, ≤1024 chars) because a refused submission is a store
+whose updates silently never send. `templates.ts` bootstraps them on
+connect (best-effort, after the account row lands) and from the card's
+**Set up templates**; Meta's "already exists" (subcode 2388023) reads as
+existing, a dead token (190) stops the loop and marks `needs_reauth`, a
+refusal lands in the new `sync_error` column — distinct from
+`rejection_reason`, which is Meta turning DOWN a template it accepted for
+review. Status comes from Meta only: the create response, `sync` (listing by
+name on Refresh), or the status webhook 0174 already handled.
+★ A CUSTOMER NEEDS THEIR OWN YES (`whatsapp_contacts`, migration 0175): the
+checkout shows two boxes ONLY when `getCheckoutConfig().whatsapp` is true —
+updates ticked by default, offers never (§19.2) — and `placeOrder` records
+them AFTER the order lands via `recordWhatsAppConsent`, which snapshots the
+exact label beside the timestamp (the §25 shape) and re-checks
+`storeCanSendWhatsApp` so a forged field writes nothing for a channel that
+cannot deliver. An untick withdraws only an opt-in currently in force. Staff
+need no opt-in (plan §8). `textablePhone` normalises both sides, so a
+legacy ten-digit `users.phone` still matches the E.164 contact.
+★★ ONE MESSAGE PER PERSON PER EVENT. `whatsapp.updatePrecedence` (registry,
+group WhatsApp, section `channels`; `whatsapp_first` default, `sms_first`,
+`both`) decides at fan-out: `record.ts` queues the first channel for everyone
+it can reach and the second only for whoever the first could not — no
+consent, no approved template, no connection. Phones are looked up ONCE for
+both channels. `record-whatsapp.test.ts` pins all three orders and every
+fallback. ★ `loadWhatsAppSender` reads the precedence and the plan in the same
+query as the token, so a lapsed plan pauses the channel without deleting it.
+★★ THE LOG IS A TIMELINE. `sendWhatsAppTemplate` (`send.ts`, the choke point;
+`send-coverage.test.ts` fails on any other caller of the Graph send or any
+other file naming `graph.facebook.com`) writes `whatsapp_logs` with the
+provider message id, and `inbound.ts` now processes `messages` rows of kind
+`status` — sent/delivered/read/failed — onto that row by id, ranked in SQL so
+a late `delivered` cannot demote a `read`, with Meta's error code and title on
+a failure. Inbound MESSAGE rows stay unprocessed for slice 3. The worker
+(`worker.ts`, on the send-emails heartbeat) re-checks consent at send, refuses
+a template no longer approved or no longer the id queued, treats `unknown` as
+terminal, and retries only Meta's throttle codes (`RETRYABLE_META_CODES`) —
+a number not on WhatsApp is still not on WhatsApp in five minutes.
+Surfaces: a **WhatsApp** tab on each notification (`whatsapp-template-panel.tsx`:
+the approved wording rendered with sample values, Meta's review state and
+advice per state; the switch is refused without a connection, mirroring the
+SMS rule, but NOT on approval — Meta decides that on its own clock and the
+fan-out reads it); `/dashboard/logs/whatsapp-logs` (seventh rail entry,
+`activity` permission, store-scoped only — the platform has no number);
+`whatsapp` in `FAILURE_SOURCES` ordered by `failed_at`; the Channels card's
+template count. Retention: `whatsapp_logs` 90 days, `whatsapp_inbound_events`
+30 days. Migration `20261008_0175` (contacts with `ON UPDATE CASCADE` to
+`users.id` so a claimed till customer carries their consent, queue, log with a
+UNIQUE partial index on `provider_message_id`, template sync columns) and
+`20261008_0176` (one Help guide, `send-order-updates-on-whatsapp`, under
+Marketing). ⚠ Not yet run against live Meta: template submission and the
+status webhook shapes follow Meta's published reference; the first real
+bootstrap on dev is slice 2's live verification, after the Embedded Signup
+configuration exists.
+
 ### WhatsApp Commerce — Phase 1 slice 1: Connect (2026-10-08)
 
 Spec `docs/whatsapp-commerce-plan.md`; console runbook `docs/whatsapp-phase0.md`
@@ -126,10 +199,9 @@ template rows (`PARTNER_REMOVED` → `needs_reauth`), and `messages` rows are
 deliberately left for slices 2–3. Migration `20261008_0174` (three
 service-only tables, RLS forced, app_user revoked), probed against local
 Postgres: unique phone, both CHECKs, template uniqueness, event dedupe, store
-cascade, zero app_user grants. `lib/notifications/channels.ts` still lists
-`whatsapp` as unavailable — the switch flips in slice 2 with the template
-bootstrap and fan-out. No Help Centre change yet: nothing a merchant can do
-changes until the Embedded Signup configuration exists on the environment.
+cascade, zero app_user grants. Slice 2 (above) flipped
+`lib/notifications/channels.ts`'s `whatsapp` to available and published the
+Help guide.
 
 ### Mink credit charging — ON by default (2026-09-21)
 
@@ -2753,7 +2825,9 @@ wholesip/
 │   │   │                      # there'd be two navigations for the same six rail views.
 │   │   │                      # page.tsx = activity_events audit feed (§22, day-
 │   │   │                      # grouped); email-logs/ = what was SENT (§24);
-│   │   │                      # ★ import-export/ = CSV job history + [jobId] per-ROW
+│   │   │                      # whatsapp-logs/ = every WhatsApp send with Meta's
+│   │                      # delivery timeline (WhatsApp slice 2);
+│   │                      # ★ import-export/ = CSV job history + [jobId] per-ROW
 │   │   │                      # error log (§31), split into Import/Export by ?kind=;
 │   │   │                      # ★ failures/ = everything that DIDN'T work, read
 │   │   │                      # across the other tables (§33). SIX views, ONE
@@ -2877,7 +2951,11 @@ wholesip/
 │   │   ├── whatsapp-provider-actions.ts # ★ Channels → WhatsApp: state (never the
 │   │   │                      # token/PIN), connectWhatsApp (the gate in front of
 │   │   │                      # lib/whatsapp/connect.ts; plan-gated Basic+), pause/
-│   │   │                      # resume, refresh from Meta, disconnect. Tested.
+│   │   │                      # resume, refresh from Meta (+ template sync), disconnect,
+│   │   │                      # setupWhatsAppTemplates, getWhatsAppTemplatesForEvent
+│   │   │                      # (the notification console's WhatsApp tab). Tested.
+│   │   ├── whatsapp-log-actions.ts # ★ the WhatsApp log read (`activity` view, store-
+│   │   │                      # scoped only — the platform has no number of its own)
 │   │   ├── shipping-actions.ts # ★ §35 Shipping settings + authoritative checkout and
 │   │   │                      # public PDP PIN quotes (stock/origin/parcel/COD aware). Tested.
 │   │   ├── shipment-actions.ts # ★ §35 pack/book/AWB/label/pickup/manifest/tracking/NDR;
@@ -3199,10 +3277,25 @@ wholesip/
 │   │                          # our app to the WABA → register with a generated PIN →
 │   │                          # store encrypted; refresh and disconnect), inbound.ts
 │   │                          # (explodeWebhook → idempotent rows; processPendingInbound-
-│   │                          # Events handles template/number/account fields and leaves
-│   │                          # `messages` for slices 2–3), webhook-signature.ts (the two
-│   │                          # Meta verifiers, constant-time, raw body) and
-│   │                          # webhook-events.ts (content-free summary, pinned by test).
+│   │                          # Events handles template/number/account fields and, since
+│   │                          # slice 2, delivery STATUSES onto whatsapp_logs; inbound
+│   │                          # messages wait for slice 3), webhook-signature.ts (the two
+│   │                          # Meta verifiers, constant-time, raw body), webhook-events.ts
+│   │                          # (content-free summary, pinned by test).
+│   │                          # Slice 2: template-catalog.ts (PURE, client-safe: the 19
+│   │                          # UTILITY templates StoreMink registers per store, positional
+│   │                          # bodies + examples; every Meta review rule pinned by test),
+│   │                          # templates.ts (bootstrap on connect / Set up templates, sync
+│   │                          # by name on Refresh; "already exists" = existing, 190 =
+│   │                          # needs_reauth), channel.ts (sender + plan + precedence in one
+│   │                          # read, APPROVED-only templates, consent by E.164, the
+│   │                          # fail-closed storeCanSendWhatsApp gate), send.ts (★★ THE
+│   │                          # CHOKE POINT — every send writes whatsapp_logs with Meta's
+│   │                          # message id; send-coverage.test.ts), worker.ts (send-emails
+│   │                          # heartbeat; consent re-checked at send; unknown terminal;
+│   │                          # only throttle codes retried), consent-copy.ts (the exact
+│   │                          # checkout wording, client-safe) + consent.ts (the record,
+│   │                          # written after the order, only for a store that can send).
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
 │   │                          # positional render, carrier match, 6-char sender header
 │   │                          # and segment cost, plus the one send choke point, queue,
@@ -3357,7 +3450,8 @@ wholesip/
 │   │                          # the permission set, never widens),
 │   │                          # channels.ts (email/web live; SMS configurable only with
 │   │                          # the store's enabled Twilio + mirrored DLT template;
-│   │                          # push/WhatsApp remain locked), config.ts
+│   │                          # WhatsApp only with a connected number + approved template
+│   │                          # + customer opt-in; push remains locked), config.ts
 │   │                          # (registry ← platform definition ← store
 │   │                          # settings), variables.ts + template.ts (merchant
 │   │                          # {{token}} copy, validated at save). Tested,
@@ -4253,7 +4347,10 @@ wholesip/
 │                              # ONE ordered product is still refused (verified both
 │                              # ways against a copy of production). 0174 adds the
 │                              # service-only WhatsApp account, template and inbound-event
-│                              # tables (Phase 1 slice 1). Next free: 0175.
+│                              # tables (Phase 1 slice 1); 0175 adds contacts with consent,
+│                              # the WhatsApp notification queue, the send log with Meta's
+│                              # delivery timeline and template sync columns; 0176
+│                              # publishes the order-updates Help guide. Next free: 0177.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

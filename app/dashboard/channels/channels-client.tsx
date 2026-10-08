@@ -44,6 +44,7 @@ import {
   type WhatsAppChannelState,
 } from "@/app/actions/whatsapp-provider-actions";
 import { WhatsAppModal } from "./whatsapp-modal";
+import type { EditorSetting } from "@/app/actions/store-settings";
 
 // ---------------------------------------------------------------------------
 // Channel catalog — data-driven so new channels (logistics, SMS, marketplace…)
@@ -237,12 +238,15 @@ export function ChannelsClient({
   initialShiprocketState,
   initialSmsState,
   initialWhatsAppState,
+  whatsAppSettings,
   canManage,
 }: {
   initialState: ChannelState;
   initialShiprocketState: ShiprocketChannelState;
   initialSmsState: SmsChannelState;
   initialWhatsAppState: WhatsAppChannelState;
+  /** The "WhatsApp" registry group, shown inside the card once connected. */
+  whatsAppSettings?: { plan: string; settings: EditorSetting[] };
   canManage: boolean;
 }) {
   const router = useRouter();
@@ -469,6 +473,7 @@ export function ChannelsClient({
       {openId === "whatsapp" && (
         <WhatsAppModal
           state={whatsAppState}
+          settings={whatsAppSettings}
           canManage={canManage}
           onClose={() => setOpenId(null)}
           onState={setWhatsAppState}

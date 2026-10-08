@@ -45,6 +45,8 @@ import {
   storefrontEvents,
   storefrontOrderAttribution,
   storeSearchMetrics,
+  whatsappInboundEvents,
+  whatsappLogs,
 } from "@/drizzle/schema";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
@@ -195,7 +197,9 @@ function batchDeleter(
     | typeof billingWebhookEvents
     | typeof storefrontEvents
     | typeof storefrontOrderAttribution
-    | typeof posParkedSales,
+    | typeof posParkedSales
+    | typeof whatsappLogs
+    | typeof whatsappInboundEvents,
   key: AnyPgColumn,
   ts: AnyPgColumn,
 ): (floorIso: string, limit: number) => Promise<number> {
@@ -319,6 +323,31 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       "Holds rendered BODIES, so it is the heaviest of the three and gets the shortest " +
       "life. 90 days still answers 'did last quarter's order confirmation go out?'.",
     deleteBatch: batchDeleter(emailLogs, emailLogs.id, emailLogs.createdAt),
+  },
+  {
+    table: "whatsapp_logs",
+    days: 90,
+    reason:
+      "Holds rendered message bodies, like email_logs, and gets the same 90 days — " +
+      "long enough to answer 'did last quarter's order update reach them?'.",
+    deleteBatch: batchDeleter(
+      whatsappLogs,
+      whatsappLogs.id,
+      whatsappLogs.createdAt,
+    ),
+  },
+  {
+    table: "whatsapp_inbound_events",
+    days: 30,
+    reason:
+      "Raw webhook payloads carry customer message text and exist as evidence for " +
+      "'why did nothing happen?'; a month covers any such question, and the facts " +
+      "they produced live on the account, template, log and (later) inbox rows.",
+    deleteBatch: batchDeleter(
+      whatsappInboundEvents,
+      whatsappInboundEvents.id,
+      whatsappInboundEvents.receivedAt,
+    ),
   },
   {
     table: "mink_csv_files",
