@@ -281,16 +281,19 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
             width: "full",
           }),
           section("featured_products", EMPTY_CONFIG.featured_products),
+          // Not last: the footer carries the store's signup form, and a
+          // closing newsletter section would put two back to back (the
+          // `newsletter_above_footer` copy floor).
+          section("newsletter", EMPTY_CONFIG.newsletter, {
+            scheme: "inverse",
+            padding: "lg",
+            width: "full",
+          }),
           section("promo_banner", {
             ...EMPTY_CONFIG.promo_banner,
             heading: "New arrivals every week",
             cta_label: "Shop now",
             cta_href: "/shop",
-          }),
-          section("newsletter", EMPTY_CONFIG.newsletter, {
-            scheme: "inverse",
-            padding: "lg",
-            width: "full",
           }),
         ],
       },
@@ -304,6 +307,7 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
             ...EMPTY_CONFIG.media_text,
             cta_href: "/shop",
             image_url: `theme-asset://${slot}`,
+            image_alt: "The workshop where every piece is finished by hand",
           }),
         ],
       },

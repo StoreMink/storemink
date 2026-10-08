@@ -10,6 +10,7 @@ vi.mock("next/cache", () => ({
 import { withService } from "@/lib/db/client";
 import {
   currentAcceptanceBuildId,
+  manualAcceptanceTransition,
   startThemeStudioAcceptance,
   submitThemeStudioBrowserEvidence,
   verifyThemeStudioCandidateEvidence,
@@ -80,5 +81,67 @@ describe("acceptance refusals before any database work", () => {
       reason: "Unknown project.",
     });
     expect(withService).not.toHaveBeenCalled();
+  });
+});
+
+// The manual (operator-browser) path must not bypass the visual-QA scorecard
+// where automatic QA is deployed; where it is not, promotion is still allowed
+// but labelled, so a candidate made that way is identifiable.
+describe("manual acceptance → candidate transition", () => {
+  const base = {
+    outcome: "pass" as const,
+    projectStatus: "ready",
+    versionIsCurrent: true,
+    autoQaEnabled: true,
+    finalVisualQaPassed: true,
+  };
+
+  it("promotes when every gate AND the final visual review passed", () => {
+    expect(manualAcceptanceTransition(base)).toEqual({
+      nextState: "candidate",
+      visualQa: "passed",
+    });
+  });
+
+  it("holds at ready when gates passed but visual QA has not", () => {
+    expect(
+      manualAcceptanceTransition({ ...base, finalVisualQaPassed: false }),
+    ).toEqual({ nextState: null, visualQa: "required" });
+  });
+
+  it("promotes with a label where automatic QA is not deployed", () => {
+    expect(
+      manualAcceptanceTransition({
+        ...base,
+        autoQaEnabled: false,
+        finalVisualQaPassed: false,
+      }),
+    ).toEqual({ nextState: "candidate", visualQa: "not_configured" });
+  });
+
+  it("never moves a project for a non-current version", () => {
+    expect(
+      manualAcceptanceTransition({ ...base, versionIsCurrent: false }),
+    ).toEqual({ nextState: null, visualQa: null });
+  });
+
+  it("demotes a failed candidate and blocks a security failure as before", () => {
+    expect(
+      manualAcceptanceTransition({
+        ...base,
+        outcome: "fail",
+        projectStatus: "candidate",
+      }),
+    ).toEqual({ nextState: "ready", visualQa: null });
+    expect(manualAcceptanceTransition({ ...base, outcome: "blocked" })).toEqual(
+      { nextState: "blocked", visualQa: null },
+    );
+    expect(
+      manualAcceptanceTransition({
+        ...base,
+        outcome: "fail",
+        projectStatus: "ready",
+      }),
+    ).toEqual({ nextState: null, visualQa: null });
   });
 });

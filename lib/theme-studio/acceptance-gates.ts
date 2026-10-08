@@ -9,6 +9,7 @@ import {
   validateThemePages,
   validateThemeSampleData,
   type ThemeFinding,
+  validateThemeCopy,
 } from "@/lib/themes/validation";
 import type { ThemeDefinition } from "@/lib/themes/types";
 import { PLACEHOLDER_LICENSE_NOTE, THEME_ASSET_PREFIX } from "./compiler";
@@ -520,6 +521,7 @@ export function evaluatePackageGates(
           ...validateThemeHomepage(theme),
           ...validateThemeSampleData(theme),
           ...validateThemeLinks(theme),
+          ...validateThemeCopy(theme),
         ]).concat(
           pkg.capabilityGaps
             .filter((gap) => gap.blocking)
