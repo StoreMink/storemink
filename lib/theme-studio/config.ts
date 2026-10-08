@@ -44,6 +44,10 @@ export interface ThemeStudioConfig {
   /** Full hidden generation → imagery → browser/vision QA pipeline. It is
    * effective only when the Chromium capture worker is also enabled. */
   autoQaEnabled: boolean;
+  /** `browser.performance` fails a run instead of advising
+   * (THEME_STUDIO_PERFORMANCE_REQUIRED=true). Off until a live batch shows
+   * the probe's frozen timings; see acceptance-gates.ts. */
+  performanceRequired: boolean;
 }
 
 export function getThemeStudioConfig(
@@ -72,6 +76,8 @@ export function getThemeStudioConfig(
     autoQaEnabled:
       captureEnabled &&
       env.THEME_STUDIO_AUTO_QA_ENABLED?.trim().toLowerCase() === "true",
+    performanceRequired:
+      env.THEME_STUDIO_PERFORMANCE_REQUIRED?.trim().toLowerCase() === "true",
     dailySpendMicroUsd: parseDailySpendMicroUsd(
       env.THEME_STUDIO_DAILY_SPEND_USD,
     ),

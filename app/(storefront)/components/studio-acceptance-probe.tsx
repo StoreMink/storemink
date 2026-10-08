@@ -425,6 +425,17 @@ async function measure(perf: { lcp: number | null; cls: number }) {
     );
   }
   if (document.fonts?.ready) await withTimeout(document.fonts.ready, 5_000);
+  // ★★ TIMING IS FROZEN HERE, before anything below moves the page. LCP keeps
+  // accepting larger candidates until a USER scrolls, and the scroll-through
+  // below is programmatic — so a hero far down the page was reported as the
+  // largest paint at 25 s (benchmark 2026-10-04), and lazy images loading as
+  // the page was scrolled counted as layout shifts (CLS up to 1.4 on the
+  // same run). What is frozen is what a shopper's first screen cost, which
+  // is what the thresholds were written for.
+  const timing = {
+    lcpMs: perf.lcp === null ? null : Math.round(perf.lcp),
+    cls: Math.round(perf.cls * 10_000) / 10_000,
+  };
   // A theme that reveals sections on scroll holds some at opacity 0 until
   // they arrive; show them all first, so axe and the overflow check measure
   // every section rather than skipping the ones not yet revealed.
@@ -460,11 +471,8 @@ async function measure(perf: { lcp: number | null; cls: number }) {
     smallTapTargets: smallTapTargets(60),
     imageCropIssues: imageCropIssues(40),
   };
-  // Timing is read BEFORE the chrome states open. A programmatic click is
-  // not "recent input" to the layout-shift observer, and a drawer locks body
-  // scroll, which drops the scrollbar and registers as a shift.
-  const lcpMs = perf.lcp === null ? null : Math.round(perf.lcp);
-  const cls = Math.round(perf.cls * 10_000) / 10_000;
+  // The chrome states open last (a drawer's scroll lock drops the scrollbar,
+  // which would register as a shift — but `timing` was frozen long before).
   // The header chrome is the same on every surface, so its states are
   // opened once, on the home page; the gates expect them there.
   const states = location.pathname === "/" ? await chromeStates() : [];
@@ -480,8 +488,7 @@ async function measure(perf: { lcp: number | null; cls: number }) {
     violations: page.violations,
     contrastUnresolved: page.contrastUnresolved,
     states,
-    lcpMs,
-    cls,
+    ...timing,
   };
 }
 

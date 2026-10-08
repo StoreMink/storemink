@@ -595,8 +595,9 @@ describe("browser evidence", () => {
     expect(statusOf(gates, "browser.media")).toBe("fail");
 
     const soft = fullCoverage(surfaces);
-    soft[0] = {
-      ...soft[0],
+    // phone390 is a judged width, so the slow paint IS a finding — advisory.
+    soft[1] = {
+      ...soft[1],
       lcpMs: 9000,
       cls: 0.5,
       violations: [
@@ -819,5 +820,102 @@ describe("chrome states", () => {
       expect(legacy.value.samples[0].states).toBeUndefined();
       expect(legacy.value.samples[0].contrastUnresolved).toBeUndefined();
     }
+  });
+});
+
+describe("performance gate", () => {
+  const surfaces: AcceptanceSurface[] = ["home"];
+  const slow = (viewport: BrowserSample["viewport"], lcpMs: number) =>
+    fullCoverage(surfaces).map((s) =>
+      s.viewport === viewport ? { ...s, lcpMs } : s,
+    );
+
+  it("is advisory by default and required when the option says so", () => {
+    const samples = slow("phone390", 3500);
+    const advisory = evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    expect(statusOf(advisory, "browser.performance")).toBe("advisory");
+    expect(acceptanceOutcome(advisory)).toBe("pass");
+    const required = evaluateBrowserGates(
+      { userAgent: "", samples },
+      surfaces,
+      { performanceRequired: true },
+    );
+    expect(statusOf(required, "browser.performance")).toBe("fail");
+    expect(acceptanceOutcome(required)).toBe("fail");
+    expect(required.find((g) => g.id === "browser.performance")).toMatchObject({
+      label: "Performance",
+      required: true,
+      findings: [
+        {
+          code: "lcp",
+          message: "LCP 3500ms; the limit is 3000ms.",
+          where: "phone390 · home",
+        },
+      ],
+      metrics: { worstLcpMs: 3500, judgedAt: "phone390, desktop1440" },
+    });
+  });
+
+  it("judges phone390 and desktop1440 only; the other widths are reported, never failed", () => {
+    const samples = slow("phone360", 9000).map((s) =>
+      s.viewport === "tablet768" ? { ...s, cls: 0.4 } : s,
+    );
+    const gates = evaluateBrowserGates({ userAgent: "", samples }, surfaces, {
+      performanceRequired: true,
+    });
+    const performance = gates.find((g) => g.id === "browser.performance")!;
+    expect(performance.status).toBe("pass");
+    expect(performance.metrics).toMatchObject({
+      worstLcpMs: 9000,
+      worstCls: 0.4,
+    });
+  });
+
+  it("allows 3.0 s and refuses a CLS of 0.1", () => {
+    const fine = evaluateBrowserGates(
+      { userAgent: "", samples: slow("desktop1440", 3000) },
+      surfaces,
+      { performanceRequired: true },
+    );
+    expect(statusOf(fine, "browser.performance")).toBe("pass");
+    const shifted = fullCoverage(surfaces).map((s) =>
+      s.viewport === "desktop1440" ? { ...s, cls: 0.1 } : s,
+    );
+    const gates = evaluateBrowserGates(
+      { userAgent: "", samples: shifted },
+      surfaces,
+      { performanceRequired: true },
+    );
+    expect(gates.find((g) => g.id === "browser.performance")!.findings).toEqual(
+      [
+        {
+          code: "cls",
+          message: "CLS 0.100; the limit is under 0.1.",
+          where: "desktop1440 · home",
+        },
+      ],
+    );
+  });
+
+  it("an unreported LCP is a finding only once the gate is required", () => {
+    const framed = fullCoverage(surfaces).map((s) => ({ ...s, lcpMs: null }));
+    const advisory = evaluateBrowserGates(
+      { userAgent: "", samples: framed },
+      surfaces,
+    );
+    expect(statusOf(advisory, "browser.performance")).toBe("pass");
+    const required = evaluateBrowserGates(
+      { userAgent: "", samples: framed },
+      surfaces,
+      { performanceRequired: true },
+    );
+    expect(
+      required
+        .find((g) => g.id === "browser.performance")!
+        .findings.map((f) => [f.code, f.where]),
+    ).toEqual([
+      ["unmeasured", "phone390 · home"],
+      ["unmeasured", "desktop1440 · home"],
+    ]);
   });
 });

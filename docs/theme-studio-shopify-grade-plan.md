@@ -24,8 +24,13 @@
 > (`studio-acceptance-states.ts`), keeps axe's unresolved-contrast nodes as
 > reviewer evidence, the coverage gate fails on a state that would not open or
 > close, and the offline contrast script covers header × drawer combinations.
-> Phase 0 items 1, 2 and 4 (deploy, route, re-benchmark) are ops and still
-> open.
+> Phase 1 item 4 landed behind `THEME_STUDIO_PERFORMANCE_REQUIRED` (default
+> false): the 3.0 s / 0.1 thresholds at phone390 and desktop1440, renderer
+> routing of a failure, and the probe fix that freezes LCP/CLS before its
+> scroll-through are in; the flip waits for one live batch of frozen numbers,
+> because the Oct 4 figures (LCP to 25.9 s, CLS to 1.38) measured the
+> scroll-through, not the page. Phase 0 items 1, 2 and 4 (deploy, route,
+> re-benchmark) are ops and still open.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

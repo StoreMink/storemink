@@ -5965,6 +5965,30 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `Header.module.css` now gives the drawer's name the page ink, the rule
     the delivery trigger already followed. Storefront presentation only:
     no merchant workflow change, no Help Centre update.
+    **Performance from advisory to required, behind a switch (2026-10-08,
+    plan Phase 1 item 4).** Two findings came first. (1) The probe read LCP
+    and CLS AFTER its programmatic scroll-through: LCP keeps accepting larger
+    candidates until a USER scrolls, so a hero far down the page was reported
+    as the largest paint at 25 s, and lazy images loading during the scroll
+    counted as shifts (CLS up to 1.4) — the 2026-10-04 figures (worst LCP
+    2.5–25.9 s, worst CLS 0.06–1.38 across seven themes) measured the probe,
+    not the page. Timing is now frozen after `fonts.ready`, before the reveal
+    and the scroll. (2) With those numbers, flipping the gate to required
+    would have failed every candidate on the next batch for a measurement
+    fault, the opposite of "reliability first". So `evaluateBrowserGates`
+    takes `performanceRequired` (from `getThemeStudioConfig()`, env
+    `THEME_STUDIO_PERFORMANCE_REQUIRED`, Cloud Build default `"false"`):
+    LCP ≤ 3.0 s (relaxed from 2.5 s because the preview is not CDN-fronted)
+    and CLS < 0.1, judged at phone390 and desktop1440 only; the other three
+    widths are reported in the metrics, never failed. Once required, an
+    unreported LCP (the operator's framed browser run never gets one) is a
+    finding — "we could not measure" is not a pass — so performance can pass
+    only from the automatic capture, which the Checks page says.
+    `deterministicRepairs` routes a performance failure to the RENDERER (no
+    paid settings call) and visual prompt v6 tells the reviewer the same.
+    Flip criterion: one live batch whose frozen worst LCP/CLS at the two
+    widths sit under the limits for the candidates a human would accept.
+    Operator-only: no merchant-visible change, no Help Centre update.
     `automatic-qa-policy.ts` queues targeted exact-package revisions for theme
     failures, up to THREE repairs (iterations 0→1→2→3, the ceiling migration
     0145 allows; `MAX_AUTOMATIC_QA_REPAIRS`).
@@ -15885,7 +15909,10 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   off), **`THEME_STUDIO_DAILY_SPEND_USD`** (per-operator rolling-24h
   estimated-spend ceiling; none unless set to a positive number), and
   **`THEME_STUDIO_AUTO_QA_ENABLED`** (code default false and effective only
-  with capture enabled). Cloud Build explicitly sets the provider to
+  with capture enabled), and **`THEME_STUDIO_PERFORMANCE_REQUIRED`** (code
+  default false; `true` makes `browser.performance` a required gate: LCP
+  ≤ 3 s and CLS < 0.1 at phone390 and desktop1440, judged from the
+  automatic capture). Cloud Build explicitly sets the provider to
   `vertex-gemini` and enables generation, capture and automatic QA in dev and
   production; both worker schedules were deployed and smoke-checked on
   2026-09-29. Preview tokens are signed with

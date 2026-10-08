@@ -411,7 +411,9 @@ export async function recordAutomaticAcceptance(
     gate("demo.materialize", []),
     ...input.renderedGates,
   ];
-  const browserGates = evaluateBrowserGates(input.evidence, input.surfaces);
+  const browserGates = evaluateBrowserGates(input.evidence, input.surfaces, {
+    performanceRequired: getThemeStudioConfig().performanceRequired,
+  });
   const gates = [...serverGates, ...browserGates];
   const binding = {
     runId: randomUUID(),
@@ -964,7 +966,9 @@ export async function submitThemeStudioBrowserEvidence(
     }
     const serverReport = readAcceptanceReport(run.serverReport);
     const surfaces = serverReport.surfaces ?? [];
-    const browserGates = evaluateBrowserGates(parsed.value, surfaces);
+    const browserGates = evaluateBrowserGates(parsed.value, surfaces, {
+      performanceRequired: getThemeStudioConfig().performanceRequired,
+    });
     const gates = [...serverReport.gates, ...browserGates];
     const outcome = acceptanceOutcome(gates);
     const finished = await finishRun(db, actor, run, {

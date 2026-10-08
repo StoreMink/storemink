@@ -37,9 +37,10 @@ import {
 //
 // ★ A GATE IS REQUIRED OR ADVISORY, NEVER "PASS WITH A WARNING". The plan is
 // explicit that failure keeps a version out of review rather than publishing
-// with a note. The only advisory gate is performance, and only because it is
-// measured on whatever machine the operator happens to use, which is not the
-// production-build Lighthouse run the thresholds were written for.
+// with a note. The only gate that can be advisory is performance: it is
+// required once THEME_STUDIO_PERFORMANCE_REQUIRED is true (plan Phase 1
+// item 4), judged from the automatic capture's frozen timings at phone390
+// and desktop1440, and advisory until a live batch has shown those numbers.
 //
 // ★ SECURITY FAILURES BLOCK; QUALITY FAILURES DO NOT. A version that carries
 // a script or an off-site asset is not something to iterate on, so the
@@ -110,7 +111,7 @@ export const GATE_LABELS: Record<GateId, string> = {
   "browser.image_crops": "Image crops",
   "browser.accessibility": "Accessibility (axe)",
   "browser.media": "Media loading",
-  "browser.performance": "Performance (advisory)",
+  "browser.performance": "Performance",
 };
 
 /** Findings per gate are capped: a reviewer needs the pattern, not 400 rows. */
@@ -1140,8 +1141,17 @@ function parseStates(
   return { ok: true, value: states };
 }
 
-/** Plan thresholds, applied to operator-machine measurements as advisory. */
-export const PERFORMANCE_THRESHOLDS = { lcpMs: 2500, cls: 0.1 } as const;
+/**
+ * Plan thresholds (docs/theme-studio-shopify-grade-plan.md, Phase 1 item 4):
+ * LCP ≤ 3.0 s — relaxed from the 2.5 s "good" line because the preview is
+ * not CDN-fronted — and CLS under 0.1, judged at the two widths below. The
+ * other three widths are measured and reported in the metrics, never failed.
+ */
+export const PERFORMANCE_THRESHOLDS = { lcpMs: 3000, cls: 0.1 } as const;
+export const PERFORMANCE_VIEWPORTS: readonly AcceptanceViewport[] = [
+  "phone390",
+  "desktop1440",
+];
 
 interface AuditSinks {
   clippedText: GateFinding[];
@@ -1267,6 +1277,17 @@ function stateFindings(
 export function evaluateBrowserGates(
   evidence: BrowserEvidence,
   expectedSurfaces: readonly AcceptanceSurface[],
+  options: {
+    /**
+     * Whether `browser.performance` FAILS a run (`THEME_STUDIO_PERFORMANCE_REQUIRED`).
+     * Advisory by default: the 2026-10-04 benchmark measured LCP up to 25 s
+     * and CLS up to 1.4 because the probe read both AFTER its scroll-through
+     * (fixed in the same change); until a live batch shows the frozen
+     * numbers, requiring the gate would fail every candidate for a
+     * measurement fault. The flip is one environment variable.
+     */
+    performanceRequired?: boolean;
+  } = {},
 ): GateResult[] {
   const coverage: GateFinding[] = [];
   const bySample = new Map<string, BrowserSample>();
@@ -1346,17 +1367,30 @@ export function evaluateBrowserGates(
     }
     if (sample.lcpMs !== null) worstLcp = Math.max(worstLcp ?? 0, sample.lcpMs);
     if (sample.cls !== null) worstCls = Math.max(worstCls ?? 0, sample.cls);
-    if (sample.lcpMs !== null && sample.lcpMs > PERFORMANCE_THRESHOLDS.lcpMs) {
+    if (!PERFORMANCE_VIEWPORTS.includes(sample.viewport)) continue;
+    if (sample.lcpMs === null) {
+      // Not reported inside a frame (the operator's browser run). Once the
+      // gate is required, "we could not measure" is not a pass; while it is
+      // advisory the absence is simply not a finding.
+      if (options.performanceRequired) {
+        performance.push({
+          code: "unmeasured",
+          message:
+            "LCP was not reported; performance passes only from the automatic capture.",
+          where,
+        });
+      }
+    } else if (sample.lcpMs > PERFORMANCE_THRESHOLDS.lcpMs) {
       performance.push({
         code: "lcp",
-        message: `LCP ${Math.round(sample.lcpMs)}ms.`,
+        message: `LCP ${Math.round(sample.lcpMs)}ms; the limit is ${PERFORMANCE_THRESHOLDS.lcpMs}ms.`,
         where,
       });
     }
     if (sample.cls !== null && sample.cls >= PERFORMANCE_THRESHOLDS.cls) {
       performance.push({
         code: "cls",
-        message: `CLS ${sample.cls.toFixed(3)}.`,
+        message: `CLS ${sample.cls.toFixed(3)}; the limit is under ${PERFORMANCE_THRESHOLDS.cls}.`,
         where,
       });
     }
@@ -1389,8 +1423,12 @@ export function evaluateBrowserGates(
     accessibilityGate,
     gate("browser.media", media),
     gate("browser.performance", performance, {
-      required: false,
-      metrics: { worstLcpMs: worstLcp, worstCls },
+      required: options.performanceRequired ?? false,
+      metrics: {
+        worstLcpMs: worstLcp,
+        worstCls,
+        judgedAt: PERFORMANCE_VIEWPORTS.join(", "),
+      },
     }),
   ];
 }

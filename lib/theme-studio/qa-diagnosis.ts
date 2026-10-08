@@ -143,8 +143,12 @@ export function deterministicRepairs(gates: readonly GateResult[]): QaRepair[] {
         ? g.findings
         : [{ code: "incomplete", message: "Required evidence is incomplete." }];
       return findings.map((f) => ({
+        // A slow paint or a layout shift is the platform's to fix (image
+        // sizing, preload, reserved space); a settings edit cannot be
+        // trusted to move it, and a paid revision is not the answer.
         kind: (g.id === "browser.tap_targets" ||
         g.id === "routes.markup" ||
+        g.id === "browser.performance" ||
         (g.id === "browser.accessibility" &&
           !["color-contrast", "contrast"].includes(f.code))
           ? "renderer"

@@ -96,8 +96,10 @@ export default async function ThemeStudioAcceptancePage({
           rendered pages and links, plus layout, accessibility and media at
           phone, tablet and desktop sizes. Generated themes run these checks
           automatically and repair theme issues before visual review. You can
-          also rerun the checks in this browser. Performance is advisory because
-          it depends on the browser and its environment.{" "}
+          also rerun the checks in this browser. Performance (LCP and CLS at
+          phone and desktop width) is judged from the automatic capture only and
+          is advisory until the platform requires it; a rerun in this browser
+          cannot report it.{" "}
           <Link
             href={`/dashboard/themes/studio/${project.id}/versions/${version.id}`}
             className="font-medium text-slate-700 underline underline-offset-2"

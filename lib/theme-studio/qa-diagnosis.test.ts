@@ -211,3 +211,28 @@ describe("QA diagnosis and progress", () => {
     ).toBeNull();
   });
 });
+
+it("routes a failing performance gate to the renderer, never to a settings call", () => {
+  const repairs = deterministicRepairs([
+    {
+      id: "browser.performance",
+      label: "Performance",
+      required: true,
+      status: "fail",
+      findings: [
+        {
+          code: "lcp",
+          message: "LCP 4216ms; the limit is 3000ms.",
+          where: "phone390 · home",
+        },
+      ],
+    },
+  ]);
+  expect(repairs).toEqual([
+    {
+      kind: "renderer",
+      target: null,
+      reason: "Performance: LCP 4216ms; the limit is 3000ms.",
+    },
+  ]);
+});
