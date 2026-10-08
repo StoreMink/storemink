@@ -29,7 +29,9 @@
 > routing of a failure, and the probe fix that freezes LCP/CLS before its
 > scroll-through are in; the flip waits for one live batch of frozen numbers,
 > because the Oct 4 figures (LCP to 25.9 s, CLS to 1.38) measured the
-> scroll-through, not the page. Phase 0 items 1, 2 and 4 (deploy, route,
+> scroll-through, not the page. Phase 1 item 5 landed: `getPublishedPage`
+> validates `published_sections` on read (`salvageSections`, draft-mode rules
+> per section, each drop logged). Phase 0 items 1, 2 and 4 (deploy, route,
 > re-benchmark) are ops and still open.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.

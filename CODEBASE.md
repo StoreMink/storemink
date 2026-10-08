@@ -3388,7 +3388,8 @@ wholesip/
 │   │                          # verify). Delete an auth user does NOT cascade to the Cloud
 │   │                          # SQL admins/users row — callers delete BOTH.
 │   ├── storefront/            # queries.ts (cached storefront reads — getPublishedPage/
-│   │                          # getPublishedPageSlugs, named columns only), tags.ts
+│   │                          # getPublishedPageSlugs, named columns only; getPublishedPage validates
+│   │                          # published_sections on read and logs each dropped section), tags.ts
 │   │                          # (cache tags incl. TAGS.pages)
 │   ├── sections/              # ★ Page-section registry (see §11): re-exports homepage
 │   │                          # section-types + adds page helpers (PageSectionItem,
@@ -5989,6 +5990,25 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     Flip criterion: one live batch whose frozen worst LCP/CLS at the two
     widths sit under the limits for the candidates a human would accept.
     Operator-only: no merchant-visible change, no Help Centre update.
+    **`published_sections` is validated on read (2026-10-08, plan Phase 1
+    item 5).** `getPublishedPage` cast the jsonb column straight to
+    `PageSectionItem[]`, so a section written by an older validator, a theme
+    seed, a hand edit or a Mink path that a renderer no longer accepts
+    reached `PageSectionRenderer` unchecked; the per-section error boundary
+    (Phase 0) turned that into a blank section and a console line AFTER the
+    fact. `salvageSections` (`lib/sections/registry.ts`) is the read-side
+    counterpart of `validateSections`: per section, draft-mode rules — shape,
+    id, type and every safety rule, never completeness, which the lenient
+    custom-code save and the Mink publication reader also waive for stored
+    content — keeping what passes and DROPPING what fails, the first of a
+    duplicate id kept. `getPublishedPage` applies it and logs
+    `storefront.page_section_dropped` (store, slug, index, id, type, reason)
+    per drop, so a page that quietly lost a section is a log line rather than
+    a mystery. ★ Draft mode, not publish: re-judging completeness on read
+    would blank a locked custom-code block the save deliberately let through.
+    The builder's draft preview (`lib/pages/preview.ts`) is untouched; it
+    renders what the merchant is typing. Storefront-internal: no merchant
+    workflow change, no Help Centre update.
     `automatic-qa-policy.ts` queues targeted exact-package revisions for theme
     failures, up to THREE repairs (iterations 0→1→2→3, the ceiling migration
     0145 allows; `MAX_AUTOMATIC_QA_REPAIRS`).
