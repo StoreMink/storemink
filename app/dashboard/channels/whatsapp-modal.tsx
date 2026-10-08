@@ -20,6 +20,7 @@ import {
   type WhatsAppChannelState,
 } from "@/app/actions/whatsapp-provider-actions";
 import { runEmbeddedSignup } from "./embedded-signup";
+import { WhatsAppQr } from "./whatsapp-qr";
 import { FeatureToggles } from "@/app/dashboard/components/feature-toggles";
 import type { EditorSetting } from "@/app/actions/store-settings";
 
@@ -164,6 +165,7 @@ export function WhatsAppModal({
       messagingTier: null,
       qualityRating: null,
       lastError: null,
+      chatLink: null,
     }));
     toast.success("WhatsApp disconnected.");
     onRefresh();
@@ -401,6 +403,22 @@ function ConnectedView({
             )}
         </div>
       </div>
+
+      {/* The way IN for customers: scan or tap, and the first message opens
+          the 24-hour window. The storefront button's switch sits in the
+          Settings card below this one. */}
+      {state.chatLink && (
+        <div className="rounded-lg border border-[rgba(17,24,39,0.08)] p-4">
+          <p className="text-sm font-semibold text-[#111827]">
+            Chat link and QR code
+          </p>
+          <p className="mb-3 mt-1 text-xs text-[#5b6472]">
+            Print the code for your counter or packaging, or share the link.
+            Scanning it opens a chat with your number; replies arrive in Inbox.
+          </p>
+          <WhatsAppQr href={state.chatLink} />
+        </div>
+      )}
 
       <div className="rounded-lg border border-[rgba(17,24,39,0.08)] p-4">
         <p className="text-sm font-semibold text-[#111827]">

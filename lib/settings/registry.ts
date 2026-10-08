@@ -68,6 +68,7 @@ export const SETTING_KEYS = [
   "offers.onSalePrice",
   "offers.maxTotalDiscountPercent",
   "whatsapp.updatePrecedence",
+  "whatsapp.chatButton",
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];
@@ -722,6 +723,22 @@ export const SETTINGS: readonly SettingDef[] = [
         description: "Send on every channel the customer can receive.",
       },
     ],
+  },
+  {
+    // The storefront's floating "chat on WhatsApp" button (plan §6B, slice 3).
+    // ★ DEFAULT ON, and that is not the migration-bug-in-a-config-hat this
+    // file warns about: the button renders only on a store with a CONNECTED,
+    // enabled number, and no store had one before this shipped — connecting
+    // is itself the merchant's act. A merchant who wants enquiries through
+    // the form instead switches it off here.
+    key: "whatsapp.chatButton",
+    label: "Show a WhatsApp chat button on the storefront",
+    description:
+      "A button on every page of your store that opens a chat with your connected WhatsApp number. Shown only while the number is connected and live.",
+    group: "WhatsApp",
+    section: "channels",
+    type: "boolean",
+    defaultValue: true,
   },
 ];
 

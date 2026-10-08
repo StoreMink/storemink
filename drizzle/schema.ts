@@ -8916,3 +8916,66 @@ export const whatsappInboundEvents = pgTable("whatsapp_inbound_events", {
   }),
   error: text(),
 });
+
+// Slice 3 (migration 0177): the inbox. One conversation per contact; every
+// message in both directions. Service-only like the rest.
+export const whatsappConversations = pgTable("whatsapp_conversations", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  // UNIQUE with store_id: WhatsApp has no threads.
+  contactId: uuid("contact_id").notNull(),
+  // needs_reply | open | closed
+  status: text().default("needs_reply").notNull(),
+  assignedAdminId: text("assigned_admin_id"),
+  unreadCount: integer("unread_count").default(0).notNull(),
+  lastMessageAt: timestamp("last_message_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  lastInboundAt: timestamp("last_inbound_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  lastOutboundAt: timestamp("last_outbound_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  lastPreview: text("last_preview"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+export const whatsappMessages = pgTable("whatsapp_messages", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  // in | out
+  direction: text().notNull(),
+  // customer | dashboard | phone_app | template | automation
+  source: text().notNull(),
+  kind: text().notNull(),
+  body: text(),
+  // A copy in OUR bucket under stores/{id}/whatsapp/; never Meta's URL.
+  mediaPath: text("media_path"),
+  mediaMime: text("media_mime"),
+  mediaName: text("media_name"),
+  payload: jsonb(),
+  quotedProviderId: text("quoted_provider_id"),
+  // UNIQUE with store_id where not null — the message-level idempotency key.
+  providerMessageId: text("provider_message_id"),
+  // received | sent | delivered | read | failed
+  status: text().notNull(),
+  error: text(),
+  sentByAdminId: text("sent_by_admin_id"),
+  templateId: uuid("template_id"),
+  sentAt: timestamp("sent_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});

@@ -14,6 +14,7 @@ import {
   applyMessageStatus,
   explodeWebhook,
   HANDLED_FIELDS,
+  HANDLED_MESSAGE_KINDS,
   STATUS_RANK,
 } from "./inbound";
 
@@ -117,6 +118,9 @@ function fakeDb() {
   const updates: { table: string; set: any; where: any; returning?: any[] }[] =
     [];
   const db: any = {
+    // Slice 3's thread update (applyStatusToMessage) is raw SQL; it is not
+    // what these tests assert, so it answers with no rows.
+    execute: vi.fn(async () => ({ rows: [] })),
     update: vi.fn((table: any) => ({
       set: vi.fn((set: any) => ({
         where: vi.fn((where: any) => {
@@ -302,5 +306,61 @@ describe("applyMessageStatus", () => {
   it("ranks the timeline so a late delivered cannot demote a read", () => {
     expect(STATUS_RANK.delivered).toBeLessThan(STATUS_RANK.read!);
     expect(STATUS_RANK.failed).toBeGreaterThan(STATUS_RANK.read!);
+  });
+});
+
+describe("slice 3: echoes and the message selector", () => {
+  it("explodes a Coexistence echo into one row per message, keyed on its id", () => {
+    const rows = explodeWebhook(
+      {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            id: "WABA_1",
+            changes: [
+              {
+                field: "smb_message_echoes",
+                value: {
+                  metadata: { phone_number_id: "PN_1" },
+                  message_echoes: [
+                    {
+                      from: "919000000000",
+                      to: "919876543210",
+                      id: "wamid.e1",
+                      type: "text",
+                      text: { body: "Yes" },
+                    },
+                    {
+                      from: "919000000000",
+                      to: "919876543210",
+                      id: "wamid.e2",
+                      type: "image",
+                      image: { id: "m" },
+                    },
+                    { from: "919000000000", to: "919876543210", type: "text" },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      ({ phoneNumberId }: any) => (phoneNumberId === "PN_1" ? "store-1" : null),
+    );
+    expect(rows.map((r) => r.eventId)).toEqual([
+      "echo:wamid.e1",
+      "echo:wamid.e2",
+    ]);
+    expect(rows[0]!.field).toBe("smb_message_echoes");
+    expect((rows[0]!.payload as any).kind).toBe("echo");
+    expect((rows[0]!.payload as any).message.to).toBe("919876543210");
+    expect(rows[0]!.storeId).toBe("store-1");
+  });
+
+  it("★ inbound messages and echoes are now claimed; nothing else new is", () => {
+    expect(HANDLED_FIELDS).toContain("smb_message_echoes");
+    expect(HANDLED_MESSAGE_KINDS).toEqual(["status", "message"]);
+    // Contact/history sync under Coexistence waits for its own handler.
+    expect(HANDLED_FIELDS).not.toContain("smb_app_state_sync");
   });
 });

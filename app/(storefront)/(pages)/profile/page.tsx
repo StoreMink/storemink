@@ -8,6 +8,7 @@ import { updateCustomerProfile } from "@/app/actions/customer-profile";
 import { useAuth } from "@/app/(storefront)/components/auth/AuthProvider";
 import AddressBook from "./address-book";
 import CreditBalance from "./credit-balance";
+import WhatsAppPreferences from "./whatsapp-preferences";
 import ProfileSkeleton from "./profile-skeleton";
 import styles from "./profile.module.css";
 
@@ -184,6 +185,11 @@ export default function ProfilePage() {
                 first, not fourth, once the columns stack on a phone. It carries
                 its own slot class; see the note in credit-balance.tsx. */}
             <CreditBalance />
+
+            {/* WhatsApp choices — the account-page half of the consent the
+                checkout collects. Renders nothing on a store that cannot
+                message on WhatsApp. */}
+            <WhatsAppPreferences />
 
             {/* Quick links into the rest of the account area. Orders and
                 notifications are their own pages — this is just the signpost. */}

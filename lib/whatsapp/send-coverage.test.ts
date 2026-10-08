@@ -39,7 +39,9 @@ function filesCalling(pattern: string): string[] {
 
 describe("whatsapp send coverage", () => {
   it("nothing sends a WhatsApp message outside the choke point", () => {
-    const rogue = filesCalling("sendTemplateMessage\\(");
+    // Both Graph sends: the template one the notification spine uses and the
+    // free-form one the inbox uses (slice 3).
+    const rogue = filesCalling("send(Template|Text)Message\\(");
     expect(
       rogue,
       rogue.length

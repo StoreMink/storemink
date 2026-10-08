@@ -10,7 +10,16 @@ import {
   whatsappTemplates,
 } from "@/drizzle/schema";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
+import { recordEvent } from "@/lib/notifications/record";
 import { isWhatsAppWebhook } from "./webhook-events";
+import {
+  applyStatusToMessage,
+  hasMedia,
+  recordEchoMessage,
+  recordInboundMessage,
+  storeInboundMedia,
+  type RecordInboundResult,
+} from "./inbox";
 
 // ---------------------------------------------------------------------------
 // Webhook deliveries: ACK FAST, WORK LATER (docs/whatsapp-commerce-plan.md §9).
@@ -25,11 +34,18 @@ import { isWhatsAppWebhook } from "./webhook-events";
 //
 // `processPendingInboundEvents` drains the rows a handler exists for: template
 // and number/account state (the facts the Channels card and the notification
-// switch read), and — since slice 2 — the DELIVERY STATUSES Meta posts against
-// messages we sent, which advance `whatsapp_logs`. Inbound MESSAGES are LEFT
-// UNPROCESSED on purpose: slice 3 adds the inbox, and marking them done now
-// would throw away the backlog it drains. The selector therefore names its
-// fields, and within `messages` only the `status` kind.
+// switch read); the DELIVERY STATUSES Meta posts against messages we sent,
+// which advance `whatsapp_logs` and the thread; and — since slice 3 — inbound
+// MESSAGES and Coexistence ECHOES, which become the inbox
+// (lib/whatsapp/inbox.ts). The selector still names its fields and kinds, so
+// a field this code has no handler for stays pending for the slice that adds
+// one rather than being marked done and lost.
+//
+// ★ A MESSAGE IS RECORDED IN ITS OWN TRANSACTION AND ITS MEDIA FETCHED AFTER.
+// The contact/conversation/message writes and the "processed" mark commit
+// together, so a crash cannot file a message twice or lose one; the media
+// download — a network call of up to twenty seconds — runs once that has
+// committed, on no pooled connection, and the bell is rung after it too.
 // ---------------------------------------------------------------------------
 
 type Rec = Record<string, unknown>;
@@ -126,6 +142,28 @@ export function explodeWebhook(
             field: "messages",
             eventId: `errors:${digest(errors)}`,
             payload: { kind: "errors", errors, ...common },
+          });
+        }
+        continue;
+      }
+
+      if (field === "smb_message_echoes") {
+        // Coexistence: what the merchant sent from the WhatsApp Business app.
+        // One row per echo, keyed on the message id like an inbound one.
+        const echoes = Array.isArray(value.message_echoes)
+          ? value.message_echoes
+          : [];
+        for (const m of echoes) {
+          if (!isRec(m)) continue;
+          const id = str(m.id);
+          if (!id) continue;
+          rows.push({
+            storeId,
+            wabaId,
+            phoneNumberId,
+            field,
+            eventId: `echo:${id}`,
+            payload: { kind: "echo", message: m, metadata },
           });
         }
         continue;
@@ -241,7 +279,11 @@ export const HANDLED_FIELDS = [
   "phone_number_name_update",
   "account_update",
   "business_capability_update",
+  "smb_message_echoes",
 ] as const;
+
+/** Within `messages`, the payload kinds a handler exists for. */
+export const HANDLED_MESSAGE_KINDS = ["status", "message"] as const;
 
 export interface ProcessResult {
   claimed: number;
@@ -268,7 +310,7 @@ export async function processPendingInboundEvents(
       .where(
         and(
           isNull(whatsappInboundEvents.processedAt),
-          sql`(${whatsappInboundEvents.field} = any(${sql.param([...HANDLED_FIELDS])}::text[]) or (${whatsappInboundEvents.field} = 'messages' and ${whatsappInboundEvents.payload}->>'kind' = 'status'))`,
+          sql`(${whatsappInboundEvents.field} = any(${sql.param([...HANDLED_FIELDS])}::text[]) or (${whatsappInboundEvents.field} = 'messages' and ${whatsappInboundEvents.payload}->>'kind' = any(${sql.param([...HANDLED_MESSAGE_KINDS])}::text[])))`,
         ),
       )
       .orderBy(whatsappInboundEvents.receivedAt)
@@ -278,25 +320,36 @@ export async function processPendingInboundEvents(
 
   for (const ev of claimed) {
     try {
-      await withService(async (db) => {
-        if (ev.storeId && ev.field === "messages") {
-          await applyMessageStatus(db, {
-            storeId: ev.storeId,
-            value: isRec(ev.payload) ? ev.payload : {},
-          });
-        } else if (ev.storeId) {
-          await applyAccountEvent(db, {
-            storeId: ev.storeId,
-            field: ev.field,
-            value: isRec(ev.payload) ? ev.payload : {},
-          });
-        }
-        await db
-          .update(whatsappInboundEvents)
-          .set({ processedAt: new Date().toISOString(), error: null })
-          .where(eq(whatsappInboundEvents.id, ev.id));
-      });
+      const value = isRec(ev.payload) ? ev.payload : {};
+      const kind = str(value.kind);
+      const filed = await withService(
+        async (db): Promise<RecordInboundResult | null> => {
+          let out: RecordInboundResult | null = null;
+          if (ev.storeId && ev.field === "messages" && kind === "message") {
+            out = await recordInboundMessage(db, {
+              storeId: ev.storeId,
+              value,
+            });
+          } else if (ev.storeId && ev.field === "smb_message_echoes") {
+            out = await recordEchoMessage(db, { storeId: ev.storeId, value });
+          } else if (ev.storeId && ev.field === "messages") {
+            await applyMessageStatus(db, { storeId: ev.storeId, value });
+          } else if (ev.storeId) {
+            await applyAccountEvent(db, {
+              storeId: ev.storeId,
+              field: ev.field,
+              value,
+            });
+          }
+          await db
+            .update(whatsappInboundEvents)
+            .set({ processedAt: new Date().toISOString(), error: null })
+            .where(eq(whatsappInboundEvents.id, ev.id));
+          return out;
+        },
+      );
       result.processed++;
+      if (filed && ev.storeId) await afterFiled(ev.storeId, filed);
     } catch (err) {
       result.failed++;
       const message = err instanceof Error ? err.message : String(err);
@@ -318,6 +371,47 @@ export async function processPendingInboundEvents(
     }
   }
   return result;
+}
+
+/**
+ * What happens once a message is safely on disk: its file is copied into our
+ * bucket, and — when it moved the conversation into needs_reply — the team is
+ * told. Both best-effort: the message is already filed, and neither failure
+ * is worth retrying the whole event for (a retry would re-file nothing, but
+ * would also ring the bell twice).
+ */
+async function afterFiled(
+  storeId: string,
+  filed: RecordInboundResult,
+): Promise<void> {
+  if (!filed.inserted || !filed.conversationId || !filed.messageId) return;
+  if (filed.media && hasMedia(filed.kind)) {
+    await storeInboundMedia({
+      storeId,
+      conversationId: filed.conversationId,
+      messageId: filed.messageId,
+      media: filed.media,
+    });
+  }
+  if (filed.needsNotify) {
+    await recordEvent({
+      type: "whatsapp.message_received",
+      storeId,
+      actor: {
+        type: "customer",
+        id: filed.userId,
+        label: filed.contactLabel,
+      },
+      subject: {
+        type: "whatsapp_conversation",
+        id: filed.conversationId,
+        label: filed.contactLabel,
+      },
+      payload: { preview: filed.preview },
+    }).catch((err) =>
+      logError("whatsapp inbox: notify failed", err, { storeId }),
+    );
+  }
 }
 
 /** Account- and template-level facts, applied to the rows the card reads. */
@@ -570,6 +664,14 @@ export async function applyMessageStatus(
     default:
       return;
   }
+
+  // The thread's copy of the same message, when the inbox filed one.
+  await applyStatusToMessage(db, {
+    storeId: ev.storeId,
+    providerMessageId: messageId,
+    status: kind,
+    error: set.error ?? null,
+  });
 
   // Rank so a late `delivered` never demotes a `read`, and nothing moves a
   // row off `failed`. The comparison runs in SQL so two statuses landing at

@@ -144,12 +144,110 @@ applies, and moving back to Basic resumes without reconnecting. _Pinned by
 
 ---
 
+## Phase 1, slice 3 — The inbox (2026-10-08)
+
+**WA-3.1 — Inbox appears with the number.** On a store with no WhatsApp
+connected the sidebar has no Inbox entry and `/dashboard/inbox` shows
+"Connect a WhatsApp number to use the inbox" linking to Channels (or to Plans
+on Free). After WA-1.3, **Inbox** appears under Workspace. A role without
+`inbox: view` never sees it; a role with view but not manage can read a
+conversation and sees "You can read this conversation but not reply". _Pinned
+by `inbox-actions.test.ts` and `inbox-client.test.tsx`._
+
+**WA-3.2 — A reply becomes a conversation.** The customer from WA-2.5 replies
+"Is it in stock?" to their order update. Within seconds: Inbox's badge reads
+**1**, the bell shows "New WhatsApp message · Rohan · Is it in stock?", and
+the conversation is listed under **Needs reply** with the customer's WhatsApp
+name, the preview and an unread count. Opening it shows the order update that
+was sent and the reply beneath it, and clears the unread count; the badge does
+not change, because nobody has answered. Meta redelivering the same message
+adds nothing. _Pinned by `inbox.test.ts` (dedupe, bump, bell-once) and
+`inbox-parse.test.ts`; the live half waits on WA-1.3._
+
+**WA-3.3 — Replying inside the window.** Type "Yes, two left" and press
+Enter: the handset receives it from the store's number, the bubble shows one
+tick, then two, then blue as Meta reports delivered and read; the conversation
+moves to **Open** and the badge drops. The same row appears under Logs →
+WhatsApp logs. Above the box: "You can reply freely for 23 h 58 min". _Pinned
+by `inbox-actions.test.ts`, `send.test.ts`, `inbound.test.ts`._
+
+**WA-3.4 — After 24 hours only a template.** On a conversation whose last
+customer message is older than a day, the reply box is replaced by "WhatsApp
+allows only an approved template until they message again" and a template
+picker listing the store's approved customer templates; each `{{n}}` becomes a
+field, and Send is disabled until every one is filled. A reply forced through
+the action anyway is refused with `window_closed`, and nothing is sent. The
+customer writing again restores the free-text box. _Pinned by
+`inbox-actions.test.ts` and `inbox-client.test.tsx`._
+
+**WA-3.5 — Photos, files and places.** The customer sends a photo with a
+caption, a PDF and a location pin. The thread shows the photo inline (served
+from the store's own bucket, never a Meta URL), the PDF as a named link and
+the pin as "📍 name, address"; the list previews read "📷 Photo · caption",
+"📄 Document", "📍 …". A file Meta refuses to hand over stays in the thread
+with its caption and "(not saved)". _Pinned by `inbox.test.ts`
+(`storeInboundMedia`) and `inbox-parse.test.ts`; the live half waits on WA-1.3._
+
+**WA-3.6 — Replies from the merchant's phone.** On a Coexistence number, the
+merchant answers a customer from the WhatsApp Business app. The reply appears
+in the dashboard thread marked "From your phone", the conversation moves to
+**Open**, and the 24-hour countdown does NOT restart (only the customer's
+messages do that). _Pinned by `inbound.test.ts` (echo rows) and
+`inbox.test.ts` (`recordEchoMessage`); not yet run against live Meta._
+
+**WA-3.7 — STOP ends offers, not updates.** The customer replies "STOP" (or
+"band karo", or "बंद करो"). The thread flags the message "Opted out of
+offers", the customer strip reads "Order updates · No offers", and the next
+qualifying order update still sends; the next marketing send would not. The
+customer replying "cancel" changes nothing about consent. Replying "START"
+restores offers only for a customer who had agreed to them before. _Pinned by
+`inbox-intent.test.ts` and `inbox.test.ts`._
+
+**WA-3.8 — The customer strip.** Opening **Details** on a conversation shows
+what the customer agreed to, their store credit when the number matches an
+account on this store, a link to their customer profile, and their five most
+recent orders on this store found by account OR by delivery phone (so a guest
+checkout is found too), each linking to Orders. _Pinned by the read's
+construction in `inbox-read.ts`; not covered by a database probe._
+
+**WA-3.9 — Close and reopen.** **Close** moves a conversation to Closed and
+clears its unread count; the customer's next message reopens it as Needs
+reply. **Reopen** moves a closed one to Open. Neither sends anything.
+
+**WA-3.10 — The customer can change their mind.** A signed-in shopper on a
+connected store opens **My account**: a **WhatsApp** card shows two switches
+with their current choices. Unticking order updates and saving writes
+`updates_opt_out_at`; the next order update goes by SMS or email instead. On a
+store with no WhatsApp, or for an account with no mobile number, the card is
+absent. _Pinned by `customer-whatsapp-actions.test.ts` and `consent.test.ts`._
+
+**WA-3.11 — Customers can start a chat.** With a connected, live number and
+the default settings, every storefront page shows a green **Chat with us**
+button bottom-right (an icon alone on phones) opening `wa.me/<number>` with a
+prefilled greeting in a new tab; the builder preview never shows it, nor does
+a paused number, nor a store whose plan lapsed to Free. Switching **Show a
+WhatsApp chat button** off under Channels → WhatsApp → Settings removes it.
+The WhatsApp card shows the same link as a QR code with Copy link. _Pinned by
+`storefront.test.ts` and `chat-link.test.ts`._
+
+**WA-3.12 — Polling never blocks a reply.** With a conversation open, the
+Network tab shows `/api/dashboard/inbox/live?need=thread` every ~8 s and
+`need=list` every ~15 s while the tab is visible, stretching to two minutes
+when nothing changes and stopping when the tab is hidden; pressing Send is
+never queued behind one. Signed out, a poll answers 401. _Pinned by
+`use-poll.test.ts` and the route's shape._
+
+---
+
 ## Known gaps
 
-| Gap                                                                                                                               | Since      | Status                           |
-| --------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------------------- |
-| The connect flow has not run against a live Embedded Signup popup — the Dev app's configuration (runbook §4.3) does not exist yet | 2026-10-08 | Waiting on the console step      |
-| An unreachable database reads as "not connected" on the Channels card (the SMS card's documented gap, shared)                     | 2026-10-08 | Open                             |
-| Inbound `messages` events are recorded but not processed — no inbox yet (delivery statuses ARE processed since slice 2)           | 2026-10-08 | Slice 3                          |
-| Template submission and the status webhook follow Meta's published shapes but have not run against live Meta                      | 2026-10-08 | With slice 2's live verification |
-| A shopper can give WhatsApp consent only at checkout; there is no account-page control to withdraw it, and no STOP reply handling | 2026-10-08 | Slice 3 (inbox reads STOP)       |
+| Gap                                                                                                                                                 | Since      | Status                      |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------------------------- |
+| The connect flow has not run against a live Embedded Signup popup — the Dev app's configuration (runbook §4.3) does not exist yet                   | 2026-10-08 | Waiting on the console step |
+| An unreachable database reads as "not connected" on the Channels card (the SMS card's documented gap, shared)                                       | 2026-10-08 | Open                        |
+| Template submission, the status webhook, echoes and media download follow Meta's published shapes but have not run against live Meta                | 2026-10-08 | With the live verification  |
+| Dashboard replies are text only; a photo or file must be sent from the phone                                                                        | 2026-10-08 | Phase 2                     |
+| Coexistence contact/history sync (`smb_app_state_sync`) is recorded, not processed — a thread starts at the first message after connecting          | 2026-10-08 | Phase 2                     |
+| No assignment, labels, notes, canned replies, business hours or search inside messages; the thread shows the latest 200 messages                    | 2026-10-08 | Phase 2                     |
+| A STOP gets no acknowledgement message; the opt-out is recorded silently                                                                            | 2026-10-08 | Phase 2 (auto-replies)      |
+| Inbound media is kept in the public media bucket at an unguessable path, like the Media Library; a customer's photo is as public as a product photo | 2026-10-08 | Open                        |

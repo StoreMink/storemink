@@ -6780,6 +6780,69 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261008_0177_whatsapp_inbox",
+      "description": "WhatsApp Commerce slice 3: one conversation per contact and every message in both directions, service-only (the inbox)",
+      "file": "sql/20261008_0177_whatsapp_inbox.sql",
+      "transaction": true,
+      "requires": ["20261008_0175_whatsapp_notify"],
+      "verify": {
+        "tables": ["whatsapp_conversations", "whatsapp_messages"],
+        "constraints": [
+          "whatsapp_conversations_status_check",
+          "whatsapp_conversations_unread_check",
+          "whatsapp_conversations_store_contact_key",
+          "whatsapp_messages_direction_check",
+          "whatsapp_messages_source_check",
+          "whatsapp_messages_kind_check",
+          "whatsapp_messages_status_check"
+        ],
+        "indexes": [
+          "whatsapp_conversations_store_status_idx",
+          "whatsapp_conversations_store_recent_idx",
+          "whatsapp_messages_conversation_idx",
+          "whatsapp_messages_store_created_idx",
+          "whatsapp_messages_provider_message_key"
+        ],
+        "rlsTables": ["whatsapp_conversations", "whatsapp_messages"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "app_user holds no privilege on the two inbox tables",
+            "sql": "select count(*)::text from information_schema.role_table_grants where table_schema='public' and table_name in ('whatsapp_conversations','whatsapp_messages') and grantee='app_user'",
+            "equals": "0"
+          },
+          {
+            "name": "a message cannot outlive its conversation",
+            "sql": "select confdeltype from pg_constraint where conrelid='public.whatsapp_messages'::regclass and contype='f' and confrelid='public.whatsapp_conversations'::regclass",
+            "equals": "c"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261008_0178_whatsapp_inbox_help",
+      "description": "Help: reply to WhatsApp messages (inbox, 24-hour window, phone replies, STOP, chat button and QR); the order-updates guide names the account-page choices",
+      "file": "sql/20261008_0178_whatsapp_inbox_help.sql",
+      "transaction": true,
+      "requires": ["20261008_0176_whatsapp_notify_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "WhatsApp inbox guide is published under Marketing",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id=a.category_id where a.slug='reply-to-whatsapp-messages' and a.status='published' and c.slug='marketing' and a.body like '%restarts the 24 hours%'",
+            "equals": "1"
+          },
+          {
+            "name": "the order-updates guide names the account-page choices",
+            "sql": "select count(*)::text from public.help_articles where slug='send-order-updates-on-whatsapp' and body like '%under <strong>My account</strong> on your store%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

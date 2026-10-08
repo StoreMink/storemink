@@ -149,6 +149,26 @@
   color: var(--sm-ink-faint);
 }
 
+/* A labelled checkbox row (the WhatsApp choices). The box keeps a 24px
+   target and the label wraps beside it. */
+.checkRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--sm-ink);
+  cursor: pointer;
+}
+.checkRow input {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--brand-primary);
+}
+
 .inputGroup {
   display: flex;
   flex-direction: column;
@@ -442,6 +462,10 @@
 
   .slotActivity {
     order: 4;
+  }
+
+  .slotWhatsApp {
+    order: 5;
   }
 }
 

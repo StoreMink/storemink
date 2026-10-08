@@ -92,6 +92,76 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### WhatsApp Commerce — Phase 1 slice 3: The inbox (2026-10-08)
+
+Plan §11 built: the moment a customer receives "Order confirmed" they reply
+to it, and until now that reply was a `whatsapp_inbound_events` row nobody
+read. **Dashboard → Inbox** (permission section `inbox`, group Workspace,
+view/manage; shown only once a number is connected, with the needs-reply
+count as its badge — a count that demands action and goes away) lists one
+conversation per contact and the open thread beside it, with the customer's
+recent orders, store credit and consent in a strip above the messages.
+★★ ONE CONVERSATION PER CONTACT, FOUND BY UPSERT (migration `20261008_0177`:
+`whatsapp_conversations` UNIQUE on (store, contact); `whatsapp_messages`
+UNIQUE partial on (store, provider*message_id)). `lib/whatsapp/inbox.ts`
+`recordInboundMessage` upserts the contact (wa_id, profile name, `user_id`
+matched through `storedPhoneVariants` with a real account winning over a
+`pos*`row, and`last_inbound_at`— the 24-hour window clock, moved by
+inbound messages ONLY), upserts the conversation, then inserts the message
+with DO NOTHING; only an INSERTED message bumps`unread_count`, reopens the
+conversation as `needs_reply` and rings the bell, so Meta's week-long
+redeliveries change nothing twice. The bell (`whatsapp.message_received`,
+section `inbox`, in-app only) fires for the FIRST message since staff last
+answered, not per message. ★ Media is fetched AFTER the recording
+transaction commits (`storeInboundMedia`: `GET /{media_id}`→ bearer
+download, capped at 25 MB, hosts pinned to Meta's so a forged payload cannot
+make us present the token elsewhere) into`stores/{id}/whatsapp/…` in our
+bucket — Meta's URLs expire and need the token; a failed fetch leaves the
+message with its caption and an error, never lost. ★ COEXISTENCE ECHOES
+(`smb_message_echoes`) are exploded one row per message and filed as
+outbound `source = phone_app`: the merchant answered from the WhatsApp
+Business app, so the conversation becomes `open`, the window clock does
+NOT move, nothing is unread. `smb_app_state_sync` stays unhandled (pending
+rows, pruned at 30 days). The status webhook now also advances the thread's
+copy of a sent message (`applyStatusToMessage`, forward-only rank, outbound
+only). ★ STOP IS A MARKETING OPT-OUT, NOT A SILENCE (plan §10):
+`classifyWhatsAppInbound` (`inbox-intent.ts`, pure; English, Hinglish and
+Devanagari; ≤3 words after a courtesy word; **"cancel" is deliberately NOT
+an opt-out** — on WhatsApp it is about an order) sets `marketing_opt_out_at`;
+order updates continue, and START re-opts-in only a contact who had opted
+in before. `inbox-parse.ts`(pure) turns every Meta message type — text,
+five media kinds, location, contacts, button/interactive replies, catalogue
+orders, reactions, unsupported — into one bounded row (4,096-char body,
+200-char name, 50-item payloads).
+★★ REPLIES GO THROUGH THE SAME CHOKE POINT.`sendWhatsAppText`joins`sendWhatsAppTemplate`in`send.ts`(one log row each;`send-coverage.test.ts`now greps both Graph sends).`app/actions/inbox-actions.ts` re-checks the
+window server-side (`serviceWindow`, 24 h from the contact's
+`last_inbound_at`; the composer's countdown is a hint) and answers
+`window_closed`, after which only an APPROVED customer-audience template may
+be sent, with every `{{n}}`filled by staff; a reply is rate-limited at 60 a
+minute per admin, refused on a paused/lapsed number before any send, and
+filed by`recordOutboundMessage`(sent → the conversation is`open`and
+read; failed → the row carries Meta's reason). Reading is not answering:`markInboxRead`clears unread and leaves status alone;`needs_reply` is
+never set by hand. ★ POLLING IS A ROUTE (`/api/dashboard/inbox/live`,
+`need=list|thread|count`, the `/api/pos/live`rule) riding`usePoll`'s
+visibility/online gates and back-off; a signed-out poll gets a 401, not the
+login page's HTML. Phones get the list and a sheet for the thread.
+Three ways in for customers: `whatsapp.chatButton` (registry, default ON —
+the button renders only on a connected, enabled number, and no store had one
+before this shipped) puts a floating wa.me link on every storefront page
+(`lib/whatsapp/storefront.ts`: switch and plan read off the store row, so a
+store with it off costs no query; never in the builder preview); the
+Channels card shows the same link as a QR (`whatsapp-qr.tsx`, zxing's
+writer, the collection-code precedent); and the shopper's account page gains
+a WhatsApp card (`customer-whatsapp-actions.ts`) that writes through the one
+`recordWhatsAppConsent` with the account page's own words
+(`whatsAppConsentCopy("account")`) — three surfaces, three snapshots. Help:
+`20261008_0178`publishes`reply-to-whatsapp-messages`and edits one
+sentence of the order-updates guide in place. ⚠ Not built: dashboard
+replies with media, assignment/labels/notes, search inside messages, and
+the pending`smb_app_state_sync` handler (Phase 2). ⚠ Not run against live
+Meta: echo and media shapes follow Meta's reference; the inbound text path
+is the one Phase 0 proved end to end.
+
 ### WhatsApp Commerce — Phase 1 slice 2: Order updates (2026-10-08)
 
 Plan §8 built: a WhatsApp notification is the SMS channel with a better
@@ -2803,6 +2873,12 @@ wholesip/
 │   │   │                      # route page files export only valid Next entries.
 │   │   │                      # Permission section is still `promotions`
 │   │   ├── enquiries/         # enquiry inbox + @modal detail
+│   │   ├── inbox/             # ★ the WhatsApp inbox (slice 3): page.tsx gates on
+│   │   │                      # `inbox`, inbox-client.tsx = list + thread + composer
+│   │   │                      # (free text inside the 24-hour window, templates after),
+│   │   │                      # polled through /api/dashboard/inbox/live, a sheet on
+│   │   │                      # phones; inbox.css. Shown in the sidebar only once a
+│   │   │                      # number is connected, with the needs-reply badge.
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
 │   │   ├── admins/ roles/     # staff invites + role management
 │   │   ├── branding/          # per-store branding editor (logo, colors)
@@ -2956,6 +3032,13 @@ wholesip/
 │   │   │                      # (the notification console's WhatsApp tab). Tested.
 │   │   ├── whatsapp-log-actions.ts # ★ the WhatsApp log read (`activity` view, store-
 │   │   │                      # scoped only — the platform has no number of its own)
+│   │   ├── inbox-actions.ts   # ★ the WhatsApp inbox (`inbox` view/manage): list,
+│   │   │                      # thread, mark read, close/reopen, sendInboxReply (window
+│   │   │                      # re-checked server-side) and sendInboxTemplate (approved
+│   │   │                      # customer templates only, every value filled). Tested.
+│   │   ├── customer-whatsapp-actions.ts # ★ the shopper's own WhatsApp choices on the
+│   │   │                      # account page; session phone + host store, written
+│   │   │                      # through recordWhatsAppConsent with the page's own words
 │   │   ├── shipping-actions.ts # ★ §35 Shipping settings + authoritative checkout and
 │   │   │                      # public PDP PIN quotes (stock/origin/parcel/COD aware). Tested.
 │   │   ├── shipment-actions.ts # ★ §35 pack/book/AWB/label/pickup/manifest/tracking/NDR;
@@ -3187,6 +3270,9 @@ wholesip/
 │       ├── og/                # Dynamic branded OG card (ImageResponse; ?d=JSON
 │       │                      # {title,subtitle,color}) — default share image for
 │       │                      # homepage/custom pages/platform (lib/seo/og-card.ts)
+│       ├── dashboard/inbox/live/ # ★ the inbox's polls (list, thread, needs-reply
+│       │                  # count) over one authenticated GET — a route, not an
+│       │                  # action, so a refresh never queues ahead of Send
 │       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 2 credits
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
@@ -3296,6 +3382,17 @@ wholesip/
 │   │                          # only throttle codes retried), consent-copy.ts (the exact
 │   │                          # checkout wording, client-safe) + consent.ts (the record,
 │   │                          # written after the order, only for a store that can send).
+│   │                          # Slice 3 (the inbox): inbox-types.ts (wire shapes, pure),
+│   │                          # inbox-parse.ts (every Meta message type → one bounded
+│   │                          # row; echo parse; previews), inbox-intent.ts (STOP/START
+│   │                          # in English, Hinglish, Devanagari — "cancel" is an order,
+│   │                          # not an opt-out), inbox.ts (★★ record inbound/echo/
+│   │                          # outbound by upsert with the dedupe on provider id, the
+│   │                          # 24-hour serviceWindow, media copy into our bucket after
+│   │                          # commit, the sidebar summary), inbox-read.ts (list,
+│   │                          # thread, customer panel, approved reply templates),
+│   │                          # chat-link.ts (wa.me, client-safe) + storefront.ts (the
+│   │                          # chat button's three gates: switch, plan, live number).
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
 │   │                          # positional render, carrier match, 6-char sender header
 │   │                          # and segment cost, plus the one send choke point, queue,
@@ -4350,7 +4447,11 @@ wholesip/
 │                              # tables (Phase 1 slice 1); 0175 adds contacts with consent,
 │                              # the WhatsApp notification queue, the send log with Meta's
 │                              # delivery timeline and template sync columns; 0176
-│                              # publishes the order-updates Help guide. Next free: 0177.
+│                              # publishes the order-updates Help guide. 0177 adds the
+│                              # inbox (one conversation per contact, every message in
+│                              # both directions); 0178 publishes the inbox Help guide
+│                              # and edits one sentence of the order-updates guide in
+│                              # place. Next free: 0179.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

@@ -36,6 +36,8 @@ import {
   syncWhatsAppTemplates,
 } from "@/lib/whatsapp/templates";
 import { WHATSAPP_TEMPLATE_CATALOG } from "@/lib/whatsapp/template-catalog";
+import { whatsAppChatLink } from "@/lib/whatsapp/chat-link";
+import { getCurrentStore } from "@/lib/store/resolve";
 import { whatsappTemplates } from "@/drizzle/schema";
 import { and, eq, sql } from "drizzle-orm";
 
@@ -61,6 +63,9 @@ export interface WhatsAppChannelState {
    *  size. The fan-out queues only approved ones, so "0 of 19 approved" is why
    *  a freshly connected store sends nothing yet. */
   templates: { approved: number; pending: number; total: number };
+  /** The click-to-chat link for this number (QR + storefront button). Null
+   *  until connected. */
+  chatLink: string | null;
   /** The platform has a Meta app and an Embedded Signup configuration. False
    *  means the connect button must not open a popup it cannot finish. */
   configured: boolean;
@@ -95,6 +100,7 @@ const EMPTY: Omit<
     pending: 0,
     total: WHATSAPP_TEMPLATE_CATALOG.length,
   },
+  chatLink: null,
 };
 
 async function templateCounts(
@@ -198,9 +204,11 @@ export async function getWhatsAppChannelState(): Promise<WhatsAppChannelState> {
   ]);
 
   if (!row) return { ...EMPTY, planAllows, ...bits };
+  const store = await getCurrentStore().catch(() => null);
   return {
     connected: true,
     templates: await templateCounts(storeId),
+    chatLink: whatsAppChatLink(row.displayPhone, store?.name ?? null),
     enabled: row.enabled,
     status: row.status,
     displayPhone: row.displayPhone,

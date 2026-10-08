@@ -139,6 +139,7 @@ export const EVENT_KEYS = [
   "customer.signed_up",
   "customer.review_submitted",
   "enquiry.received",
+  "whatsapp.message_received",
   // ── Content ─────────────────────────────────────────────────────────────
   "blog.submitted",
   "blog.published",
@@ -453,6 +454,20 @@ export const EVENTS: readonly EventDef[] = [
     section: "enquiries",
     severity: "info",
     audiences: { "store-admins": BOTH },
+  },
+  {
+    // A WhatsApp conversation that moved into "needs reply" (slice 3). Fired
+    // for the FIRST message since staff last answered, not for every message
+    // — a chatty customer must not ring the bell five times — and in-app
+    // only by default: the inbox is where it is read, and an email per
+    // message is how a channel gets muted.
+    key: "whatsapp.message_received",
+    label: "New WhatsApp message",
+    description: "A customer messaged your WhatsApp number and is waiting.",
+    group: "Customers",
+    section: "inbox",
+    severity: "info",
+    audiences: { "store-admins": IN_APP },
   },
 
   // ── Content ─────────────────────────────────────────────────────────────

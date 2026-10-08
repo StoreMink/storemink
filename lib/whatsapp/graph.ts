@@ -433,6 +433,135 @@ export async function sendTemplateMessage(
   });
 }
 
+export interface SendTextInput {
+  /** Digits only, country code first — Meta's `to`. */
+  to: string;
+  body: string;
+  /** Meta's id of the message being replied to, for a quote bubble. */
+  replyToProviderId?: string | null;
+}
+
+/**
+ * One free-form text message — allowed only inside the 24-hour window the
+ * customer opened by writing first; outside it Meta refuses with 131047.
+ * ★ ONLY `lib/whatsapp/send.ts` MAY CALL THIS, for the template send's
+ * reason: the choke point is what writes the log row.
+ */
+export async function sendTextMessage(
+  token: string,
+  phoneNumberId: string,
+  input: SendTextInput,
+): Promise<GraphResult<SendMessageData>> {
+  return graphRequest<SendMessageData>({
+    method: "POST",
+    path: `/${encodeURIComponent(phoneNumberId)}/messages`,
+    token,
+    body: {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: input.to,
+      type: "text",
+      ...(input.replyToProviderId
+        ? { context: { message_id: input.replyToProviderId } }
+        : {}),
+      text: { preview_url: false, body: input.body },
+    },
+  });
+}
+
+// ── Media ───────────────────────────────────────────────────────────────────
+
+export interface MediaInfo {
+  id: string;
+  url: string;
+  mime_type?: string;
+  sha256?: string;
+  file_size?: number;
+}
+
+/**
+ * Where to fetch an inbound media object. The URL Meta returns is on a
+ * lookaside host, expires in minutes and needs the bearer token — which is
+ * why inbound media is copied into our own bucket rather than linked.
+ */
+export async function getMediaInfo(
+  token: string,
+  mediaId: string,
+): Promise<GraphResult<MediaInfo>> {
+  return graphRequest<MediaInfo>({
+    path: `/${encodeURIComponent(mediaId)}`,
+    token,
+  });
+}
+
+/**
+ * The bytes behind a media URL, bounded. Not a Graph call — the URL is on
+ * Meta's download host — but it is still the merchant's token being
+ * presented, so it lives beside the client that owns that rule.
+ */
+export async function downloadMedia(
+  token: string,
+  url: string,
+  maxBytes: number,
+): Promise<GraphResult<{ bytes: Uint8Array; contentType: string | null }>> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, outcome: "rejected", error: "Bad media URL." };
+  }
+  // The token must only ever go to Meta. A payload naming another host would
+  // otherwise have us present a merchant's token to a stranger.
+  if (
+    parsed.protocol !== "https:" ||
+    !/(^|\.)(facebook\.com|fbcdn\.net|fbsbx\.com|whatsapp\.net)$/i.test(
+      parsed.hostname,
+    )
+  ) {
+    return {
+      ok: false,
+      outcome: "rejected",
+      error: "Media URL is not on a Meta host.",
+    };
+  }
+  let res: Response;
+  try {
+    res = await fetch(parsed, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (err) {
+    logError("whatsapp graph: media download failed", err);
+    return { ok: false, outcome: "unknown", error: "Couldn't reach Meta." };
+  }
+  if (res.status >= 500) {
+    return { ok: false, outcome: "unknown", error: `Meta ${res.status}.` };
+  }
+  if (!res.ok) {
+    return {
+      ok: false,
+      outcome: "rejected",
+      error: `Meta refused the download (${res.status}).`,
+    };
+  }
+  const declared = Number(res.headers.get("content-length") ?? "0");
+  if (declared > maxBytes) {
+    return { ok: false, outcome: "rejected", error: "Media is too large." };
+  }
+  const buf = new Uint8Array(await res.arrayBuffer());
+  if (buf.byteLength === 0 || buf.byteLength > maxBytes) {
+    return {
+      ok: false,
+      outcome: "rejected",
+      error: buf.byteLength === 0 ? "Media is empty." : "Media is too large.",
+    };
+  }
+  return {
+    ok: true,
+    data: { bytes: buf, contentType: res.headers.get("content-type") },
+  };
+}
+
 /** Meta's "already exists" answer to a template create. */
 export function isTemplateExistsError(result: GraphResult<unknown>): boolean {
   return (

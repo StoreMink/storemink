@@ -3,7 +3,7 @@ import "server-only";
 import { withService } from "@/lib/db/client";
 import { logError } from "@/lib/observability/logger";
 import { whatsappLogs } from "@/drizzle/schema";
-import { sendTemplateMessage } from "./graph";
+import { sendTemplateMessage, sendTextMessage } from "./graph";
 import { renderWhatsAppBody, whatsAppParameterText } from "./template-catalog";
 
 // ---------------------------------------------------------------------------
@@ -105,6 +105,89 @@ export async function sendWhatsAppTemplate(
   // because retrying an `unknown` may message somebody twice.
   await writeLog(
     input,
+    body,
+    { status: "failed", code: result.code },
+    result.error,
+  );
+  return {
+    sent: false,
+    outcome: result.outcome,
+    error: result.error,
+    code: result.code,
+  };
+}
+
+export interface SendWhatsAppTextInput {
+  storeId: string;
+  /** E.164. */
+  to: string;
+  token: string;
+  phoneNumberId: string;
+  body: string;
+  replyToProviderId?: string | null;
+}
+
+/**
+ * One free-form reply from the inbox. The SAME choke point and the same log
+ * row: a staff reply a customer says never arrived must be findable in
+ * WhatsApp logs exactly as an order update is. ★ The caller has checked the
+ * 24-hour window; Meta checks it again (131047), and that refusal is logged
+ * as any other.
+ */
+export async function sendWhatsAppText(
+  input: SendWhatsAppTextInput,
+): Promise<SendWhatsAppResult> {
+  const to = input.to.replace(/\D/g, "");
+  const body = input.body.trim();
+  const logInput: SendWhatsAppInput = {
+    storeId: input.storeId,
+    to: input.to,
+    token: input.token,
+    phoneNumberId: input.phoneNumberId,
+    template: { id: "", name: "", language: "", body },
+    values: [],
+    eventKey: null,
+    category: "SERVICE",
+  };
+  if (!to) {
+    await writeLog(logInput, body, { status: "skipped" }, "No phone number.");
+    return { sent: false, outcome: "skipped", error: "No phone number." };
+  }
+  if (!body) {
+    await writeLog(logInput, body, { status: "skipped" }, "Empty message.");
+    return { sent: false, outcome: "skipped", error: "Empty message." };
+  }
+
+  const result = await sendTextMessage(input.token, input.phoneNumberId, {
+    to,
+    body,
+    replyToProviderId: input.replyToProviderId ?? null,
+  });
+
+  if (result.ok) {
+    const messageId = result.data.messages?.[0]?.id ?? null;
+    if (!messageId) {
+      await writeLog(
+        logInput,
+        body,
+        { status: "failed" },
+        "Meta accepted the message but returned no id.",
+      );
+      return {
+        sent: false,
+        outcome: "unknown",
+        error: "Meta accepted the message but returned no id.",
+      };
+    }
+    const logId = await writeLog(logInput, body, {
+      status: "sent",
+      messageId,
+    });
+    return { sent: true, messageId, logId };
+  }
+
+  await writeLog(
+    logInput,
     body,
     { status: "failed", code: result.code },
     result.error,

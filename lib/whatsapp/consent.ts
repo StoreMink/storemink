@@ -5,9 +5,9 @@ import { withService } from "@/lib/db/client";
 import { logError } from "@/lib/observability/logger";
 import { textablePhone } from "@/lib/phone";
 import {
-  WHATSAPP_MARKETING_CONSENT,
-  WHATSAPP_UPDATES_CONSENT,
+  whatsAppConsentCopy,
   type WhatsAppConsentInput,
+  type WhatsAppConsentSurface,
 } from "./consent-copy";
 import { storeCanSendWhatsApp } from "./channel";
 
@@ -32,6 +32,8 @@ export async function recordWhatsAppConsent(input: {
   phone: string | null | undefined;
   userId: string | null;
   consent: WhatsAppConsentInput;
+  /** Which words were in front of the person. Defaults to the checkout's. */
+  surface?: WhatsAppConsentSurface;
 }): Promise<void> {
   const phone = textablePhone(input.phone);
   if (!phone) return;
@@ -40,6 +42,7 @@ export async function recordWhatsAppConsent(input: {
   // without reading, so the gate is the connection check, which is cheap.
   if (!(await storeCanSendWhatsApp(input.storeId))) return;
 
+  const copy = whatsAppConsentCopy(input.surface ?? "checkout");
   const now = new Date().toISOString();
   const updatesIn = input.consent.updates ? now : null;
   const marketingIn = input.consent.marketing ? now : null;
@@ -58,9 +61,9 @@ export async function recordWhatsAppConsent(input: {
            -- still stands, against the phone.
            (select u.id from public.users u where u.id = ${input.userId}),
            ${updatesIn}::timestamptz,
-           ${input.consent.updates ? WHATSAPP_UPDATES_CONSENT : null},
+           ${input.consent.updates ? copy.updates : null},
            ${marketingIn}::timestamptz,
-           ${input.consent.marketing ? WHATSAPP_MARKETING_CONSENT : null})
+           ${input.consent.marketing ? copy.marketing : null})
         on conflict (store_id, phone) do update set
           -- A ticked box always refreshes the opt-in; an unticked one withdraws
           -- only an opt-in that is currently in force.
