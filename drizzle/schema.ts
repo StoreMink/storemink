@@ -8721,3 +8721,89 @@ export const storeAccess = pgTable("store_access", {
     .defaultNow()
     .notNull(),
 });
+
+// ---------------------------------------------------------------------------
+// WhatsApp Commerce (docs/whatsapp-commerce-plan.md; migration 0174).
+// Service-only: RLS on, no policies, app_user revoked.
+// ---------------------------------------------------------------------------
+
+export const storeWhatsappAccounts = pgTable("store_whatsapp_accounts", {
+  storeId: uuid("store_id").primaryKey().notNull(),
+  wabaId: text("waba_id").notNull(),
+  // ★ Globally UNIQUE — the routing key for every webhook delivery.
+  phoneNumberId: text("phone_number_id").notNull(),
+  displayPhone: text("display_phone").notNull(),
+  verifiedName: text("verified_name"),
+  nameStatus: text("name_status"),
+  // AES-256-GCM under PAYMENT_CRED_KEY. Presented to Meta on every request.
+  businessTokenEnc: text("business_token_enc").notNull(),
+  twoFaPinEnc: text("two_fa_pin_enc").notNull(),
+  coexistence: boolean().default(false).notNull(),
+  messagingTier: text("messaging_tier"),
+  qualityRating: text("quality_rating"),
+  wabaName: text("waba_name"),
+  wabaReviewStatus: text("waba_review_status"),
+  appSubscribedAt: timestamp("app_subscribed_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  registeredAt: timestamp("registered_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  status: text().default("connected").notNull(),
+  enabled: boolean().default(true).notNull(),
+  sendRatePerSec: integer("send_rate_per_sec").default(80).notNull(),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+export const whatsappTemplates = pgTable("whatsapp_templates", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  wabaId: text("waba_id").notNull(),
+  eventKey: text("event_key"),
+  audience: text(),
+  name: text().notNull(),
+  language: text().default("en").notNull(),
+  category: text().notNull(),
+  components: jsonb().default([]).notNull(),
+  variables: jsonb().default([]).notNull(),
+  providerTemplateId: text("provider_template_id"),
+  // What Meta last told us; the fan-out queues only APPROVED.
+  status: text().default("PENDING").notNull(),
+  rejectionReason: text("rejection_reason"),
+  quality: text(),
+  enabled: boolean().default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+export const whatsappInboundEvents = pgTable("whatsapp_inbound_events", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  // Nullable: a delivery for a number no store holds is still recorded.
+  storeId: uuid("store_id"),
+  wabaId: text("waba_id"),
+  phoneNumberId: text("phone_number_id"),
+  field: text().notNull(),
+  // UNIQUE with (phone_number_id, field): Meta redelivers, this makes it a no-op.
+  eventId: text("event_id").notNull(),
+  payload: jsonb().notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  processedAt: timestamp("processed_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  error: text(),
+});

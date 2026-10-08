@@ -13,6 +13,7 @@ import {
   Search,
   Truck,
   MessageSquare,
+  MessageCircle,
   Copy,
   RefreshCw,
   type LucideIcon,
@@ -38,6 +39,11 @@ import {
   syncShiprocketPickupLocations,
   type ShiprocketChannelState,
 } from "@/app/actions/logistics-provider-actions";
+import {
+  setWhatsAppEnabled,
+  type WhatsAppChannelState,
+} from "@/app/actions/whatsapp-provider-actions";
+import { WhatsAppModal } from "./whatsapp-modal";
 
 // ---------------------------------------------------------------------------
 // Channel catalog — data-driven so new channels (logistics, SMS, marketplace…)
@@ -49,6 +55,7 @@ type Category =
   | "inventory"
   | "logistics"
   | "sms"
+  | "messaging"
   | "email"
   | "ecommerce"
   | "marketplace";
@@ -98,6 +105,15 @@ const TWILIO_CHANNEL: ChannelDef = {
   logoAspect: 99.7 / 30,
 };
 
+const WHATSAPP_CHANNEL: ChannelDef = {
+  id: "whatsapp",
+  name: "WhatsApp",
+  category: "messaging",
+  tagline: "Order updates, chat and ordering on your own number",
+  accent: "#25D366",
+  icon: MessageCircle,
+};
+
 const CHANNELS: ChannelDef[] = [
   {
     id: "razorpay",
@@ -110,6 +126,7 @@ const CHANNELS: ChannelDef[] = [
     logoAspect: 132 / 38, // Razorpay wordmark
   },
   SHIPROCKET_CHANNEL,
+  WHATSAPP_CHANNEL,
   TWILIO_CHANNEL,
 ];
 
@@ -165,6 +182,7 @@ const CATEGORY_LABEL: Record<Category, string> = {
   inventory: "Inventory",
   logistics: "Logistics",
   sms: "SMS",
+  messaging: "Messaging",
   email: "Email",
   ecommerce: "Ecommerce",
   marketplace: "Marketplace",
@@ -175,6 +193,7 @@ const CATEGORY_BADGE: Record<Category, string> = {
   inventory: "bg-sky-50 text-sky-700",
   logistics: "bg-amber-50 text-amber-700",
   sms: "bg-pink-50 text-pink-700",
+  messaging: "bg-green-50 text-green-700",
   email: "bg-violet-50 text-violet-700",
   ecommerce: "bg-blue-50 text-blue-700",
   marketplace: "bg-orange-50 text-orange-700",
@@ -217,11 +236,13 @@ export function ChannelsClient({
   initialState,
   initialShiprocketState,
   initialSmsState,
+  initialWhatsAppState,
   canManage,
 }: {
   initialState: ChannelState;
   initialShiprocketState: ShiprocketChannelState;
   initialSmsState: SmsChannelState;
+  initialWhatsAppState: WhatsAppChannelState;
   canManage: boolean;
 }) {
   const router = useRouter();
@@ -231,6 +252,7 @@ export function ChannelsClient({
     initialShiprocketState,
   );
   const [smsState, setSmsState] = useState(initialSmsState);
+  const [whatsAppState, setWhatsAppState] = useState(initialWhatsAppState);
   const [tab, setTab] = useState<"all" | Category>("all");
   const [query, setQuery] = useState("");
   // Which channel's connect/manage modal is open.
@@ -245,7 +267,9 @@ export function ChannelsClient({
         ? shiprocketState.connected
         : id === "twilio"
           ? smsState.connected
-          : false;
+          : id === "whatsapp"
+            ? whatsAppState.connected
+            : false;
   const isEnabled = (id: string) =>
     id === "razorpay"
       ? state.enabled
@@ -253,7 +277,11 @@ export function ChannelsClient({
         ? shiprocketState.enabled && shiprocketState.availableOnPlan
         : id === "twilio"
           ? smsState.enabled
-          : false;
+          : id === "whatsapp"
+            ? whatsAppState.enabled &&
+              whatsAppState.planAllows &&
+              whatsAppState.status !== "needs_reauth"
+            : false;
 
   const categories = useMemo(() => {
     const present = new Set(CHANNELS.map((c) => c.category));
@@ -279,7 +307,9 @@ export function ChannelsClient({
     const res =
       id === "shiprocket"
         ? await setShiprocketEnabled(next)
-        : await setRazorpayEnabled(next);
+        : id === "whatsapp"
+          ? await setWhatsAppEnabled(next)
+          : await setRazorpayEnabled(next);
     if (res.error) {
       toast.error(res.error);
       return;
@@ -287,6 +317,9 @@ export function ChannelsClient({
     if (id === "shiprocket") {
       setShiprocketState((s) => ({ ...s, enabled: next }));
       toast.success(next ? "Shiprocket enabled." : "Shiprocket paused.");
+    } else if (id === "whatsapp") {
+      setWhatsAppState((s) => ({ ...s, enabled: next }));
+      toast.success(next ? "WhatsApp enabled." : "WhatsApp paused.");
     } else {
       setState((s) => ({ ...s, enabled: next }));
       toast.success(
@@ -360,7 +393,10 @@ export function ChannelsClient({
               }
               toggle={
                 canManage &&
-                (c.id !== "shiprocket" || shiprocketState.availableOnPlan) ? (
+                (c.id !== "shiprocket" || shiprocketState.availableOnPlan) &&
+                (c.id !== "whatsapp" ||
+                  (whatsAppState.planAllows &&
+                    whatsAppState.status !== "needs_reauth")) ? (
                   <Toggle
                     on={isEnabled(c.id)}
                     onClick={() => handleToggle(c.id)}
@@ -388,7 +424,13 @@ export function ChannelsClient({
                   ? { text: "Basic plan onwards", tone: "amber", icon: Lock }
                   : c.id === "shiprocket" && !shiprocketState.availableOnPlan
                     ? { text: "Basic plan onwards", tone: "amber", icon: Lock }
-                    : undefined
+                    : c.id === "whatsapp" && !whatsAppState.planAllows
+                      ? {
+                          text: "Basic plan onwards",
+                          tone: "amber",
+                          icon: Lock,
+                        }
+                      : undefined
               }
               cta="Connect"
               onClick={() => setOpenId(c.id)}
@@ -421,6 +463,15 @@ export function ChannelsClient({
           canManage={canManage}
           onClose={() => setOpenId(null)}
           onState={setSmsState}
+          onRefresh={refresh}
+        />
+      )}
+      {openId === "whatsapp" && (
+        <WhatsAppModal
+          state={whatsAppState}
+          canManage={canManage}
+          onClose={() => setOpenId(null)}
+          onState={setWhatsAppState}
           onRefresh={refresh}
         />
       )}

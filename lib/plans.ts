@@ -288,6 +288,12 @@ export interface PlanLimits {
   advancedAnalytics: boolean;
   /** "Powered by StoreMink" badge is removed from the storefront footer. */
   removeBadge: boolean;
+  /** May connect the store's own WhatsApp number (Channels → WhatsApp) for
+   *  order updates, the inbox and ordering in chat. Basic+, like
+   *  onlinePayments (docs/whatsapp-commerce-plan.md §19.4). */
+  whatsapp: boolean;
+  /** May send WhatsApp marketing broadcasts. Pro only, like emailCampaigns. */
+  whatsappBroadcasts: boolean;
   /** May use the Point of Sale (in-store register at /pos). Pro only. */
   posEnabled: boolean;
   /** POS locations included at no extra cost. Additional locations are billed
@@ -320,6 +326,8 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     emailCampaigns: false,
     advancedAnalytics: false,
     removeBadge: false,
+    whatsapp: false,
+    whatsappBroadcasts: false,
     posEnabled: false,
     posLocationsIncluded: 0,
     posDevicesPerLocation: 0,
@@ -348,6 +356,8 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     emailCampaigns: false,
     advancedAnalytics: false,
     removeBadge: true,
+    whatsapp: true,
+    whatsappBroadcasts: false,
     posEnabled: false,
     posLocationsIncluded: 0,
     posDevicesPerLocation: 0,
@@ -372,6 +382,8 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     emailCampaigns: true,
     advancedAnalytics: true,
     removeBadge: true,
+    whatsapp: true,
+    whatsappBroadcasts: true,
     posEnabled: true,
     posLocationsIncluded: 2,
     posDevicesPerLocation: 5,

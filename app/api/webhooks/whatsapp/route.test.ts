@@ -6,9 +6,31 @@ vi.mock("@/lib/observability/logger", () => ({
   logWarn: vi.fn(),
   logInfo: vi.fn(),
 }));
+vi.mock("@/lib/whatsapp/inbound", () => ({
+  recordWebhookDelivery: vi.fn(async () => ({
+    rows: 1,
+    inserted: 1,
+    unrouted: 0,
+  })),
+  processPendingInboundEvents: vi.fn(async () => ({
+    claimed: 0,
+    processed: 0,
+    failed: 0,
+  })),
+}));
+// `after()` needs a request scope; here it runs the callback at once so the
+// test can see processing was scheduled.
+vi.mock("next/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/server")>();
+  return { ...actual, after: vi.fn((fn: () => unknown) => fn()) };
+});
 
 import { GET, POST } from "./route";
 import { logInfo, logWarn } from "@/lib/observability/logger";
+import {
+  processPendingInboundEvents,
+  recordWebhookDelivery,
+} from "@/lib/whatsapp/inbound";
 
 const SECRET = "meta-app-secret";
 const URL_ = "https://storemink.com/api/webhooks/whatsapp";
@@ -52,9 +74,8 @@ const inbound = JSON.stringify({
   ],
 });
 
-// Phase 0 of docs/whatsapp-commerce-plan.md: the one route Meta's console
-// needs before anything else can be configured. Verified, summarised, acting
-// on nothing.
+// docs/whatsapp-commerce-plan.md §9: one URL for every merchant, verified,
+// acknowledged fast, recorded idempotently, processed after the response.
 describe("/api/webhooks/whatsapp", () => {
   const OLD_SECRET = process.env.WHATSAPP_APP_SECRET;
   const OLD_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
@@ -105,14 +126,18 @@ describe("/api/webhooks/whatsapp", () => {
   });
 
   describe("POST (deliveries)", () => {
-    it("acknowledges a signed WABA delivery and logs a content-free summary", async () => {
+    it("records a signed WABA delivery, acks it, schedules processing and logs a content-free summary", async () => {
       const res = await POST(post(inbound));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
         ok: true,
         acknowledged: true,
-        acted: false,
+        rows: 1,
+        inserted: 1,
+        unrouted: 0,
       });
+      expect(recordWebhookDelivery).toHaveBeenCalledTimes(1);
+      expect(processPendingInboundEvents).toHaveBeenCalledTimes(1);
 
       const call = vi
         .mocked(logInfo)
@@ -126,16 +151,32 @@ describe("/api/webhooks/whatsapp", () => {
       expect(ctx).not.toContain('"hi"');
     });
 
-    it("rejects a forged or unsigned delivery with 401 before parsing", async () => {
+    it("does not schedule processing when nothing new was inserted (a redelivery)", async () => {
+      vi.mocked(recordWebhookDelivery).mockResolvedValueOnce({
+        rows: 1,
+        inserted: 0,
+        unrouted: 0,
+      });
+      const res = await POST(post(inbound));
+      expect(res.status).toBe(200);
+      expect(processPendingInboundEvents).not.toHaveBeenCalled();
+    });
+
+    it("★ answers 503 so Meta retries when the rows could not be written", async () => {
+      vi.mocked(recordWebhookDelivery).mockRejectedValueOnce(
+        new Error("db down"),
+      );
+      const res = await POST(post(inbound));
+      expect(res.status).toBe(503);
+      expect(processPendingInboundEvents).not.toHaveBeenCalled();
+    });
+
+    it("rejects a forged or unsigned delivery with 401 before touching the database", async () => {
       expect((await POST(post(inbound, sign(inbound, "other")))).status).toBe(
         401,
       );
       expect((await POST(post(inbound, null))).status).toBe(401);
-      expect(
-        vi
-          .mocked(logInfo)
-          .mock.calls.some((c) => c[0] === "whatsapp webhook received"),
-      ).toBe(false);
+      expect(recordWebhookDelivery).not.toHaveBeenCalled();
     });
 
     it("★ verifies the RAW bytes — a signature over re-serialised JSON fails", async () => {
@@ -147,8 +188,7 @@ describe("/api/webhooks/whatsapp", () => {
     });
 
     it("answers 400 to a signed body that is not JSON", async () => {
-      const res = await POST(post("not json"));
-      expect(res.status).toBe(400);
+      expect((await POST(post("not json"))).status).toBe(400);
     });
 
     it("acknowledges and ignores a signed delivery for another object", async () => {
@@ -156,19 +196,14 @@ describe("/api/webhooks/whatsapp", () => {
       const res = await POST(post(body));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ ok: true, ignored: true });
+      expect(recordWebhookDelivery).not.toHaveBeenCalled();
     });
 
-    it("acks without verifying when no app secret is configured, and says so", async () => {
+    it("★ refuses with 503, never a silent 200, when no app secret is configured", async () => {
       delete process.env.WHATSAPP_APP_SECRET;
       const res = await POST(post(inbound));
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: false, reason: "not configured" });
-      expect(logWarn).toHaveBeenCalled();
-      expect(
-        vi
-          .mocked(logInfo)
-          .mock.calls.some((c) => c[0] === "whatsapp webhook received"),
-      ).toBe(false);
+      expect(res.status).toBe(503);
+      expect(recordWebhookDelivery).not.toHaveBeenCalled();
     });
   });
 });
