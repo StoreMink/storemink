@@ -7,6 +7,7 @@ import {
   themeStudioAssets,
   themeStudioProjects,
   themeStudioVersions,
+  themeStudioVisualQaRuns,
 } from "@/drizzle/schema";
 import { withService, type Db } from "@/lib/db/client";
 import { SESSION_COOKIE } from "@/lib/auth/constants";
@@ -42,6 +43,7 @@ import {
 } from "./acceptance-gates";
 import { fetchInternalPageWithRetry } from "./acceptance-http";
 import type { CapturedRoute } from "./capture-profile";
+import { getThemeStudioConfig } from "./config";
 import { validateThemePackageV2, type ThemePackageV2 } from "./contracts";
 import { openThemeStudioPreview, type PreviewPage } from "./preview";
 import {
@@ -409,7 +411,9 @@ export async function recordAutomaticAcceptance(
     gate("demo.materialize", []),
     ...input.renderedGates,
   ];
-  const browserGates = evaluateBrowserGates(input.evidence, input.surfaces);
+  const browserGates = evaluateBrowserGates(input.evidence, input.surfaces, {
+    performanceRequired: getThemeStudioConfig().performanceRequired,
+  });
   const gates = [...serverGates, ...browserGates];
   const binding = {
     runId: randomUUID(),
@@ -457,6 +461,68 @@ export async function recordAutomaticAcceptance(
   return { acceptanceRunId: binding.runId, buildId: input.buildId, gates };
 }
 
+export type ManualVisualQaEvidence = "passed" | "required" | "not_configured";
+
+/**
+ * The manual acceptance path (an operator's browser measurements) must not be
+ * a way around the visual-QA scorecard. Once every gate passes, the project
+ * becomes a candidate only when the automatic reviewer has ALSO passed this
+ * exact package in its final phase. Where the capture/vision pipeline is not
+ * deployed at all (a dev environment), the manual path is the only route and
+ * still promotes, and the event records that the scorecard was unavailable so
+ * a candidate made that way is identifiable. Pure, so the rule is testable
+ * without a database.
+ */
+export function manualAcceptanceTransition(input: {
+  outcome: AcceptanceOutcome;
+  projectStatus: string;
+  versionIsCurrent: boolean;
+  autoQaEnabled: boolean;
+  finalVisualQaPassed: boolean;
+}): { nextState: string | null; visualQa: ManualVisualQaEvidence | null } {
+  if (!input.versionIsCurrent) return { nextState: null, visualQa: null };
+  if (input.outcome === "pass" && input.projectStatus === "ready") {
+    if (!input.autoQaEnabled) {
+      return { nextState: "candidate", visualQa: "not_configured" };
+    }
+    return input.finalVisualQaPassed
+      ? { nextState: "candidate", visualQa: "passed" }
+      : { nextState: null, visualQa: "required" };
+  }
+  if (input.outcome === "fail" && input.projectStatus === "candidate") {
+    return { nextState: "ready", visualQa: null };
+  }
+  if (
+    input.outcome === "blocked" &&
+    (input.projectStatus === "ready" || input.projectStatus === "candidate")
+  ) {
+    return { nextState: "blocked", visualQa: null };
+  }
+  return { nextState: null, visualQa: null };
+}
+
+/** A final-phase visual QA pass over this exact package. The layout preflight
+ * also stores `passed`, so the phase is read from the run's own report. */
+async function finalVisualQaPassed(
+  db: Db,
+  versionId: string,
+  packageDigest: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: themeStudioVisualQaRuns.id })
+    .from(themeStudioVisualQaRuns)
+    .where(
+      and(
+        eq(themeStudioVisualQaRuns.versionId, versionId),
+        eq(themeStudioVisualQaRuns.packageDigest, packageDigest),
+        eq(themeStudioVisualQaRuns.status, "passed"),
+        sql`coalesce(${themeStudioVisualQaRuns.browserReport}->>'phase','final') = 'final'`,
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
 /**
  * Record a verdict and move the project. Runs inside one transaction with the
  * project locked, and writes the run BEFORE the project, because the project
@@ -472,7 +538,10 @@ async function finishRun(
     serverReport: Record<string, unknown>;
     browserReport?: Record<string, unknown>;
   },
-): Promise<void> {
+): Promise<{
+  projectStatus: string | null;
+  visualQa: ManualVisualQaEvidence | null;
+}> {
   const [project] = await db
     .select()
     .from(themeStudioProjects)
@@ -504,17 +573,26 @@ async function finishRun(
     .where(eq(themeStudioAcceptanceRuns.id, run.id));
 
   let nextState: string | null = null;
-  if (project && project.currentVersionId === run.versionId) {
-    if (input.outcome === "pass" && project.status === "ready") {
-      nextState = "candidate";
-    } else if (input.outcome === "fail" && project.status === "candidate") {
-      nextState = "ready";
-    } else if (
-      input.outcome === "blocked" &&
-      (project.status === "ready" || project.status === "candidate")
-    ) {
-      nextState = "blocked";
-    }
+  let visualQa: ManualVisualQaEvidence | null = null;
+  if (project) {
+    const versionIsCurrent = project.currentVersionId === run.versionId;
+    const autoQaEnabled = getThemeStudioConfig().autoQaEnabled;
+    const wouldPromote =
+      versionIsCurrent &&
+      input.outcome === "pass" &&
+      project.status === "ready";
+    const transition = manualAcceptanceTransition({
+      outcome: input.outcome,
+      projectStatus: project.status,
+      versionIsCurrent,
+      autoQaEnabled,
+      finalVisualQaPassed:
+        wouldPromote && autoQaEnabled
+          ? await finalVisualQaPassed(db, run.versionId, run.packageDigest)
+          : false,
+    });
+    nextState = transition.nextState;
+    visualQa = transition.visualQa;
   }
   if (project && nextState) {
     await db
@@ -535,9 +613,11 @@ async function finishRun(
           .filter((g) => g.required && g.status !== "pass")
           .map((g) => g.id),
         ...(nextState ? { projectStatus: nextState } : {}),
+        ...(visualQa ? { visualQa } : {}),
       },
     });
   }
+  return { projectStatus: nextState, visualQa };
 }
 
 /**
@@ -818,7 +898,12 @@ export async function submitThemeStudioBrowserEvidence(
     nonce: unknown;
     evidence: unknown;
   },
-): Promise<{ status: "passed" | "failed" | "blocked" }> {
+): Promise<{
+  status: "passed" | "failed" | "blocked";
+  /** True only when this submission moved the project to `candidate`. */
+  candidate: boolean;
+  visualQa: ManualVisualQaEvidence | null;
+}> {
   if (!isUuid(input.projectId) || !isUuid(input.runId)) {
     throw new ThemeStudioError("not_found", "That check no longer exists.");
   }
@@ -881,10 +966,12 @@ export async function submitThemeStudioBrowserEvidence(
     }
     const serverReport = readAcceptanceReport(run.serverReport);
     const surfaces = serverReport.surfaces ?? [];
-    const browserGates = evaluateBrowserGates(parsed.value, surfaces);
+    const browserGates = evaluateBrowserGates(parsed.value, surfaces, {
+      performanceRequired: getThemeStudioConfig().performanceRequired,
+    });
     const gates = [...serverReport.gates, ...browserGates];
     const outcome = acceptanceOutcome(gates);
-    await finishRun(db, actor, run, {
+    const finished = await finishRun(db, actor, run, {
       outcome,
       gates,
       serverReport: run.serverReport as Record<string, unknown>,
@@ -894,7 +981,11 @@ export async function submitThemeStudioBrowserEvidence(
         userAgent: parsed.value.userAgent,
       },
     });
-    return { status: OUTCOME_STATUS[outcome] };
+    return {
+      status: OUTCOME_STATUS[outcome],
+      candidate: finished.projectStatus === "candidate",
+      visualQa: finished.visualQa,
+    };
   });
 }
 

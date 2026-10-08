@@ -4,6 +4,7 @@ import { THEME_DEFINITIONS } from "@/lib/themes";
 import { collectThemeImageUrls } from "@/lib/themes/validation";
 import type { ThemeDefinition } from "@/lib/themes/types";
 import {
+  type BrowserStateSample,
   acceptanceAssetsDigest,
   acceptanceEvidenceDigest,
   acceptanceOutcome,
@@ -456,6 +457,7 @@ function sample(overrides: Partial<BrowserSample> = {}): BrowserSample {
     imageCropIssues: [],
     brokenImages: 0,
     violations: [],
+    states: measuredStates(),
     lcpMs: 900,
     cls: 0.01,
     ...overrides,
@@ -593,8 +595,9 @@ describe("browser evidence", () => {
     expect(statusOf(gates, "browser.media")).toBe("fail");
 
     const soft = fullCoverage(surfaces);
-    soft[0] = {
-      ...soft[0],
+    // phone390 is a judged width, so the slow paint IS a finding — advisory.
+    soft[1] = {
+      ...soft[1],
       lcpMs: 9000,
       cls: 0.5,
       violations: [
@@ -638,5 +641,281 @@ describe("stored reports", () => {
     expect(report.gates.map((g) => g.id)).toEqual(["package.schema"]);
     expect(report.surfaces).toEqual(["home"]);
     expect(readAcceptanceReport(null).gates).toEqual([]);
+  });
+});
+
+/** Every chrome state opened and found clean — what a sound home page reports. */
+function measuredStates(): BrowserStateSample[] {
+  return (["menu", "search", "cart", "account", "sign_in"] as const).map(
+    (state) => chromeState(state),
+  );
+}
+
+function chromeState(
+  state: BrowserStateSample["state"],
+  over: Partial<BrowserStateSample> = {},
+): BrowserStateSample {
+  return {
+    state,
+    measured: true,
+    violations: [],
+    clippedText: [],
+    smallTapTargets: [],
+    contrastUnresolved: [],
+    ...over,
+  };
+}
+
+describe("chrome states", () => {
+  it("a home page without states fails coverage; absent and hidden states do not", () => {
+    const surfaces: AcceptanceSurface[] = ["home"];
+    const samples = fullCoverage(surfaces);
+    samples[0] = { ...samples[0], states: undefined };
+    samples[1] = {
+      ...samples[1],
+      states: [
+        chromeState("menu", { measured: false, reason: "hidden" }),
+        chromeState("search", { measured: false, reason: "hidden" }),
+        chromeState("cart", { measured: false, reason: "absent" }),
+        chromeState("account"),
+        chromeState("sign_in"),
+      ],
+    };
+    const gates = evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    const coverage = gates[0];
+    expect(coverage.status).toBe("fail");
+    expect(coverage.findings).toEqual([
+      expect.objectContaining({
+        code: "states_missing",
+        where: "phone360 · home",
+      }),
+    ]);
+    // Three full viewports (5 each) plus the two measured on the second.
+    expect(coverage.metrics?.states).toBe(17);
+  });
+
+  it("a state that did not open, or would not close, fails coverage and names itself", () => {
+    const surfaces: AcceptanceSurface[] = ["home"];
+    const samples = fullCoverage(surfaces);
+    samples[0] = {
+      ...samples[0],
+      states: [
+        chromeState("menu", { measured: false, reason: "unopened" }),
+        chromeState("search"),
+        chromeState("cart", { reason: "stuck" }),
+        chromeState("account"),
+        chromeState("sign_in"),
+      ],
+    };
+    const gates = evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    expect(gates[0].findings).toEqual([
+      expect.objectContaining({
+        code: "state_unopened",
+        where: "phone360 · home · menu drawer",
+      }),
+      expect.objectContaining({
+        code: "state_stuck",
+        where: "phone360 · home · cart drawer",
+      }),
+    ]);
+    expect(acceptanceOutcome(gates)).toBe("fail");
+  });
+
+  it("what a state contained reaches the same gates as the page, with the state named", () => {
+    const surfaces: AcceptanceSurface[] = ["home"];
+    const samples = fullCoverage(surfaces);
+    samples[0] = {
+      ...samples[0],
+      states: [
+        chromeState("menu", {
+          violations: [
+            {
+              id: "color-contrast",
+              impact: "serious",
+              nodes: 1,
+              help: "Contrast",
+              contrast: [{ target: "small", ratio: 1.37, required: 4.5 }],
+            },
+          ],
+          clippedText: [{ target: "a.nav", clippedX: 9, clippedY: 0 }],
+        }),
+        chromeState("search"),
+        chromeState("cart"),
+        chromeState("account"),
+        chromeState("sign_in"),
+      ],
+    };
+    const gates = evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    expect(statusOf(gates, "browser.coverage")).toBe("pass");
+    const a11y = gates.find((g) => g.id === "browser.accessibility")!;
+    expect(a11y.status).toBe("fail");
+    expect(a11y.findings[0]).toMatchObject({
+      code: "color-contrast",
+      where: "phone360 · home · menu drawer",
+      contrast: [{ target: "small", ratio: 1.37, required: 4.5 }],
+    });
+    expect(a11y.metrics?.blockingViolations).toBe(1);
+    const clipped = gates.find((g) => g.id === "browser.clipped_text")!;
+    expect(clipped.findings[0]?.where).toBe("phone360 · home · menu drawer");
+  });
+
+  it("a surface other than home needs no states", () => {
+    const surfaces: AcceptanceSurface[] = ["shop"];
+    const samples = fullCoverage(surfaces).map((s) => ({
+      ...s,
+      states: undefined,
+    }));
+    const gates = evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    expect(statusOf(gates, "browser.coverage")).toBe("pass");
+  });
+
+  it("parsing keeps unresolved contrast and states, and refuses a malformed state", () => {
+    const base = {
+      ...sample({ viewport: "phone390", surface: "home" }),
+      contrastUnresolved: [
+        { target: ".home-hero-heading", reason: "bgImage" },
+        { target: 7, reason: "bgImage" },
+      ],
+      states: [
+        {
+          ...chromeState("cart", { measured: false, reason: "unopened" }),
+          violations: [],
+        },
+        chromeState("menu", {
+          contrastUnresolved: [{ target: ".drawer a", reason: "bgOverlap" }],
+        }),
+      ],
+    };
+    const parsed = parseBrowserEvidence({
+      userAgent: "ua",
+      samples: [base],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(parsed.value.samples[0].contrastUnresolved).toEqual([
+      { target: ".home-hero-heading", reason: "bgImage" },
+    ]);
+    expect(parsed.value.samples[0].states).toEqual([
+      chromeState("cart", { measured: false, reason: "unopened" }),
+      chromeState("menu", {
+        contrastUnresolved: [{ target: ".drawer a", reason: "bgOverlap" }],
+      }),
+    ]);
+
+    const bad = parseBrowserEvidence({
+      userAgent: "ua",
+      samples: [{ ...base, states: [{ state: "attic", measured: true }] }],
+    });
+    expect(bad).toEqual({
+      ok: false,
+      error: "Sample 0 has a malformed chrome state.",
+    });
+
+    const legacy = parseBrowserEvidence({
+      userAgent: "ua",
+      samples: [{ ...base, states: undefined, contrastUnresolved: undefined }],
+    });
+    expect(legacy.ok).toBe(true);
+    if (legacy.ok) {
+      expect(legacy.value.samples[0].states).toBeUndefined();
+      expect(legacy.value.samples[0].contrastUnresolved).toBeUndefined();
+    }
+  });
+});
+
+describe("performance gate", () => {
+  const surfaces: AcceptanceSurface[] = ["home"];
+  const slow = (viewport: BrowserSample["viewport"], lcpMs: number) =>
+    fullCoverage(surfaces).map((s) =>
+      s.viewport === viewport ? { ...s, lcpMs } : s,
+    );
+
+  it("is advisory by default and required when the option says so", () => {
+    const samples = slow("phone390", 3500);
+    const advisory = evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    expect(statusOf(advisory, "browser.performance")).toBe("advisory");
+    expect(acceptanceOutcome(advisory)).toBe("pass");
+    const required = evaluateBrowserGates(
+      { userAgent: "", samples },
+      surfaces,
+      { performanceRequired: true },
+    );
+    expect(statusOf(required, "browser.performance")).toBe("fail");
+    expect(acceptanceOutcome(required)).toBe("fail");
+    expect(required.find((g) => g.id === "browser.performance")).toMatchObject({
+      label: "Performance",
+      required: true,
+      findings: [
+        {
+          code: "lcp",
+          message: "LCP 3500ms; the limit is 3000ms.",
+          where: "phone390 · home",
+        },
+      ],
+      metrics: { worstLcpMs: 3500, judgedAt: "phone390, desktop1440" },
+    });
+  });
+
+  it("judges phone390 and desktop1440 only; the other widths are reported, never failed", () => {
+    const samples = slow("phone360", 9000).map((s) =>
+      s.viewport === "tablet768" ? { ...s, cls: 0.4 } : s,
+    );
+    const gates = evaluateBrowserGates({ userAgent: "", samples }, surfaces, {
+      performanceRequired: true,
+    });
+    const performance = gates.find((g) => g.id === "browser.performance")!;
+    expect(performance.status).toBe("pass");
+    expect(performance.metrics).toMatchObject({
+      worstLcpMs: 9000,
+      worstCls: 0.4,
+    });
+  });
+
+  it("allows 3.0 s and refuses a CLS of 0.1", () => {
+    const fine = evaluateBrowserGates(
+      { userAgent: "", samples: slow("desktop1440", 3000) },
+      surfaces,
+      { performanceRequired: true },
+    );
+    expect(statusOf(fine, "browser.performance")).toBe("pass");
+    const shifted = fullCoverage(surfaces).map((s) =>
+      s.viewport === "desktop1440" ? { ...s, cls: 0.1 } : s,
+    );
+    const gates = evaluateBrowserGates(
+      { userAgent: "", samples: shifted },
+      surfaces,
+      { performanceRequired: true },
+    );
+    expect(gates.find((g) => g.id === "browser.performance")!.findings).toEqual(
+      [
+        {
+          code: "cls",
+          message: "CLS 0.100; the limit is under 0.1.",
+          where: "desktop1440 · home",
+        },
+      ],
+    );
+  });
+
+  it("an unreported LCP is a finding only once the gate is required", () => {
+    const framed = fullCoverage(surfaces).map((s) => ({ ...s, lcpMs: null }));
+    const advisory = evaluateBrowserGates(
+      { userAgent: "", samples: framed },
+      surfaces,
+    );
+    expect(statusOf(advisory, "browser.performance")).toBe("pass");
+    const required = evaluateBrowserGates(
+      { userAgent: "", samples: framed },
+      surfaces,
+      { performanceRequired: true },
+    );
+    expect(
+      required
+        .find((g) => g.id === "browser.performance")!
+        .findings.map((f) => [f.code, f.where]),
+    ).toEqual([
+      ["unmeasured", "phone390 · home"],
+      ["unmeasured", "desktop1440 · home"],
+    ]);
   });
 });

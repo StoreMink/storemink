@@ -107,6 +107,87 @@ export function validateSections(
   return { sections };
 }
 
+export interface DroppedSection {
+  index: number;
+  id: string | null;
+  type: string | null;
+  reason: string;
+}
+
+/**
+ * The READ-side counterpart of `validateSections`: every section that passes
+ * is kept and every one that fails is DROPPED and named, so one stored
+ * section whose shape no longer matches its renderer costs that section
+ * rather than the page. `validateSections` refuses the whole list at its
+ * first error, which is right for a save (the builder points at the culprit)
+ * and wrong for serving, where there is no human to point at.
+ *
+ * Draft mode by default, deliberately: the rules a stored list is held to are
+ * shape, id, type and every SAFETY rule (safeHref, size caps, key dropping),
+ * never completeness — which the lenient custom-code save (page-actions.ts)
+ * and the Mink publication reader (storefront-publication-actions.ts) also
+ * waive for stored content. A duplicate id keeps the first section; the
+ * renderer keys by id. Anything past MAX_PAGE_SECTIONS is dropped and counted.
+ */
+export function salvageSections(
+  raw: unknown,
+  { mode = "draft" }: { mode?: ValidateMode } = {},
+): { sections: PageSectionItem[]; dropped: DroppedSection[] } {
+  if (!Array.isArray(raw)) {
+    return {
+      sections: [],
+      dropped: [
+        { index: 0, id: null, type: null, reason: "Sections must be a list." },
+      ],
+    };
+  }
+  const sections: PageSectionItem[] = [];
+  const dropped: DroppedSection[] = [];
+  const seen = new Set<string>();
+  raw.slice(0, MAX_PAGE_SECTIONS).forEach((item, index) => {
+    const record = (item && typeof item === "object" ? item : {}) as Record<
+      string,
+      unknown
+    >;
+    const id =
+      typeof record.id === "string" && record.id.trim()
+        ? record.id.trim()
+        : null;
+    const type = typeof record.type === "string" ? record.type : null;
+    const single = validateSections([item], { mode });
+    if ("error" in single) {
+      dropped.push({
+        index,
+        id,
+        type,
+        reason: single.error.replace(/^Section 1(?: \([^)]*\))?: /, ""),
+      });
+      return;
+    }
+    const section = single.sections[0];
+    if (seen.has(section.id)) {
+      dropped.push({
+        index,
+        id: section.id,
+        type: section.type,
+        reason: "duplicate id.",
+      });
+      return;
+    }
+    seen.add(section.id);
+    sections.push(section);
+  });
+  if (raw.length > MAX_PAGE_SECTIONS) {
+    dropped.push({
+      index: MAX_PAGE_SECTIONS,
+      id: null,
+      type: null,
+      reason: `${raw.length - MAX_PAGE_SECTIONS} more past the ${MAX_PAGE_SECTIONS}-section limit.`,
+    });
+  }
+  return { sections, dropped };
+}
+
 // --- Page slugs --------------------------------------------------------------
 
 /**

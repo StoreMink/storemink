@@ -221,9 +221,12 @@ export async function takeQaScreenshots(
               return await Promise.race([
                 window.__smThemeStudioMeasure(),
                 new Promise((_, reject) => {
+                  // 60s: the home page also opens and audits five chrome
+                  // states (studio-acceptance-states.ts), up to ~25s when
+                  // every one times out.
                   timer = setTimeout(
                     () => reject(new Error("qa_measure_timeout")),
-                    45_000,
+                    60_000,
                   );
                 }),
               ]);

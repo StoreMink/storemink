@@ -10,6 +10,7 @@ import {
   validateConfig,
   validatePageSlug,
   validateSections,
+  salvageSections,
   validateSectionStyle,
   summarizeSection,
   type CustomCodeConfig,
@@ -322,5 +323,96 @@ describe("RESERVED_PAGE_SLUGS drift guard", () => {
         `app/(storefront)/(pages)/${dir} exists but is not in RESERVED_PAGE_SLUGS — a merchant page with this slug would never render. Add it to lib/sections/registry.ts.`,
       ).toBe(true);
     }
+  });
+});
+
+describe("salvageSections", () => {
+  const hero = {
+    id: "hero",
+    type: "hero",
+    enabled: true,
+    config: { heading: "Hi" },
+  };
+  const usp = {
+    id: "usp",
+    type: "usp_bar",
+    enabled: false,
+    config: { items: [] },
+  };
+
+  it("keeps a clean list byte for byte, in order, with nothing dropped", () => {
+    const { sections, dropped } = salvageSections([hero, usp]);
+    expect(dropped).toEqual([]);
+    expect(sections.map((s) => [s.id, s.type, s.enabled])).toEqual([
+      ["hero", "hero", true],
+      ["usp", "usp_bar", false],
+    ]);
+    // What a clean list salvages is what validateSections would store.
+    expect(sections).toEqual(
+      (
+        validateSections([hero, usp], { mode: "draft" }) as {
+          sections: unknown;
+        }
+      ).sections,
+    );
+  });
+
+  it("drops only the sections that fail, naming index, id, type and reason", () => {
+    const { sections, dropped } = salvageSections([
+      hero,
+      { id: "x", type: "carousel_v9", config: {} },
+      { type: "ticker", config: { messages: ["a"] } },
+      { id: "hero", type: "usp_bar", config: { items: [] } },
+      42,
+      usp,
+    ]);
+    expect(sections.map((s) => s.id)).toEqual(["hero", "usp"]);
+    expect(dropped).toEqual([
+      {
+        index: 1,
+        id: "x",
+        type: "carousel_v9",
+        reason: "unknown section type.",
+      },
+      { index: 2, id: null, type: "ticker", reason: "missing id." },
+      { index: 3, id: "hero", type: "usp_bar", reason: "duplicate id." },
+      { index: 4, id: null, type: null, reason: "missing id." },
+    ]);
+  });
+
+  it("does not re-judge completeness: an empty custom-code block the save let through still renders", () => {
+    const code = {
+      id: "code",
+      type: "custom_code",
+      enabled: true,
+      config: { html: "", css: "", js: "" },
+    };
+    expect(salvageSections([code]).dropped).toEqual([]);
+    expect(salvageSections([code], { mode: "publish" }).dropped).toHaveLength(
+      1,
+    );
+  });
+
+  it("a non-list is no sections with one reason; a list past the cap is cut and counted", () => {
+    expect(salvageSections({ legacy: true })).toEqual({
+      sections: [],
+      dropped: [
+        { index: 0, id: null, type: null, reason: "Sections must be a list." },
+      ],
+    });
+    const many = Array.from({ length: MAX_PAGE_SECTIONS + 2 }, (_, i) => ({
+      ...hero,
+      id: `s${i}`,
+    }));
+    const { sections, dropped } = salvageSections(many);
+    expect(sections).toHaveLength(MAX_PAGE_SECTIONS);
+    expect(dropped).toEqual([
+      {
+        index: MAX_PAGE_SECTIONS,
+        id: null,
+        type: null,
+        reason: `2 more past the ${MAX_PAGE_SECTIONS}-section limit.`,
+      },
+    ]);
   });
 });

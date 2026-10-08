@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import type { ShopCardProduct } from "../shop-card";
+import { SectionErrorBoundary } from "../sections/section-error-boundary";
 import { FeaturedProductsSection } from "./featured-products-section";
 import {
   ShopByCategorySection,
@@ -64,7 +66,29 @@ export interface ResolvedData {
   storeLowStockThreshold: number;
 }
 
+// One section's failure must cost that section, never the page. Section
+// components render on the server; a throw there is serialised into the RSC
+// payload and re-thrown at this slot on the client, where the boundary catches
+// it. The Suspense wrapper is what lets the server stream past the failure
+// instead of failing the whole shell (React only client-retries a thrown
+// subtree at a Suspense boundary). Both render nothing to the DOM on success.
 export function HomepageSectionRenderer({
+  section,
+  resolved,
+}: {
+  section: RenderableSection;
+  resolved: ResolvedData;
+}) {
+  return (
+    <Suspense fallback={null}>
+      <SectionErrorBoundary sectionId={section.id} sectionType={section.type}>
+        <SectionBody section={section} resolved={resolved} />
+      </SectionErrorBoundary>
+    </Suspense>
+  );
+}
+
+function SectionBody({
   section,
   resolved,
 }: {

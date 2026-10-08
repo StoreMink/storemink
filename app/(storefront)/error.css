@@ -1,0 +1,82 @@
+/* ------------------------------------------------------------------------
+   In-store error page. Renders INSIDE the storefront layout (header +
+   footer + the store's chrome), so every colour, radius and font resolves
+   through the --sm-* theme tokens the (storefront) layout writes on
+   .storefront-root — the same rule not-found.css follows.
+   ------------------------------------------------------------------------ */
+
+.sferr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-height: 60vh;
+  /* Clears the CLASSIC header, which is position:fixed over page content
+     (only the "market" variant reserves its own height). */
+  padding: clamp(120px, 17vh, 180px) 24px clamp(52px, 8vh, 96px);
+  color: var(--sm-ink);
+}
+
+.sferr-tag {
+  margin: 0 0 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sm-accent);
+}
+
+.sferr-title {
+  margin: 0;
+  font-size: clamp(1.6rem, 3.4vw, 2.4rem);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.sferr-lede {
+  max-width: 44ch;
+  margin: 14px 0 0;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--sm-ink-soft);
+}
+
+.sferr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.sferr-retry,
+.sferr-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 22px;
+  border-radius: var(--sm-radius-pill);
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sferr-retry {
+  border: 0;
+  background: var(--sm-accent);
+  color: var(--sm-on-accent);
+}
+
+.sferr-link {
+  border: 1px solid var(--sm-border);
+  background: transparent;
+  color: var(--sm-ink);
+}
+
+.sferr-ref {
+  margin: 28px 0 0;
+  font-size: 0.78rem;
+  color: var(--sm-ink-faint);
+}

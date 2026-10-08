@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { CHROME_STATES } from "./chrome-states";
 import { createHash } from "node:crypto";
 import { THEME_DEFINITIONS } from "@/lib/themes";
 import { collectThemeImageUrls } from "@/lib/themes/validation";
@@ -110,6 +111,16 @@ const evidence = (): BrowserEvidence => ({
       imageCropIssues: [],
       brokenImages: 0,
       violations: [],
+      // The home sample carries every chrome state measured clean, as a sound
+      // probe reports; the coverage gate requires them there.
+      states: CHROME_STATES.map((state) => ({
+        state,
+        measured: true,
+        violations: [],
+        clippedText: [],
+        smallTapTargets: [],
+        contrastUnresolved: [],
+      })),
       lcpMs: 1000,
       cls: 0,
     }),

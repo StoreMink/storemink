@@ -7,10 +7,13 @@
 //
 // Publication is ONE superadmin step (2026-10-03): a candidate has already
 // passed every automated acceptance gate and the visual QA scorecard, so the
-// two-chair human scorecard that used to follow was removed. The database
-// repeats the load-bearing half (migration 0151): a project cannot enter
-// `approved` without passing acceptance evidence, nor `published` without a
-// publication.
+// two-chair human scorecard that used to follow was removed. The manual
+// acceptance path honours the same bar: where automatic QA is deployed, an
+// operator's browser evidence promotes to candidate only after a final-phase
+// visual QA pass over the same package (acceptance.ts,
+// manualAcceptanceTransition). The database repeats the load-bearing half
+// (migration 0151): a project cannot enter `approved` without passing
+// acceptance evidence, nor `published` without a publication.
 // ---------------------------------------------------------------------------
 
 import {

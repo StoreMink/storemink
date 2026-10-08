@@ -43,6 +43,7 @@ import {
   validateThemeLinks,
   validateThemePages,
   validateThemeSampleData,
+  validateThemeCopy,
 } from "@/lib/themes/validation";
 
 // ---------------------------------------------------------------------------
@@ -944,6 +945,7 @@ export function contentFloorIssues(pkg: ThemePackageV2): string[] {
     ...validateThemeSampleData(theme),
     ...validateThemeLinks(theme),
     ...validateThemeDesign(theme),
+    ...validateThemeCopy(theme),
   ].map((finding) => finding.message);
 }
 

@@ -13,7 +13,8 @@ import {
   storePages,
   taxClasses,
 } from "@/drizzle/schema";
-import type { PageSectionItem } from "@/lib/sections/registry";
+import { salvageSections, type PageSectionItem } from "@/lib/sections/registry";
+import { logWarn } from "@/lib/observability/logger";
 import { normalizeMenus, type StoreMenus } from "@/lib/menus";
 import {
   rowToBillingSettings,
@@ -336,7 +337,30 @@ export const getPublishedPage = cache(
           )
           .limit(1),
       );
-      return (rows[0] as unknown as PublishedPage | undefined) ?? null;
+      const row = rows[0] as
+        | (Omit<PublishedPage, "published_sections"> & {
+            published_sections: unknown;
+          })
+        | undefined;
+      if (!row) return null;
+      // ★ VALIDATED ON READ (plan Phase 1 item 5). The column is jsonb cast to
+      // a type, and a section written by an older validator, a theme seed, a
+      // hand edit or a Mink path can be a shape its renderer no longer
+      // accepts. The per-section error boundary turns that into a blank
+      // section AFTER the fact; this turns it into a named log line BEFORE
+      // anything renders, and the page keeps every section that still passes.
+      const salvaged = salvageSections(row.published_sections);
+      for (const drop of salvaged.dropped) {
+        logWarn("storefront.page_section_dropped", {
+          storeId,
+          slug,
+          index: drop.index,
+          sectionId: drop.id,
+          sectionType: drop.type,
+          reason: drop.reason,
+        });
+      }
+      return { ...row, published_sections: salvaged.sections };
     } catch {
       return null;
     }

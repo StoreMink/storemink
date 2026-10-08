@@ -1086,6 +1086,15 @@
   color: var(--sm-header-fg, var(--sm-on-ink));
 }
 
+/* The drawer is a PAGE surface whatever the bar's colours — the rule
+   delivery-location.module.css already applies to its trigger. Without it a
+   light market bar over a dark palette put the bar's #1b1b1b brand name on
+   the drawer's #1c1c1c surface (1.01:1). Found by
+   scripts/theme-studio-contrast-check.mjs. */
+:global(.sm-header-market) .mobileDrawer .brandNameText {
+  color: var(--sm-ink);
+}
+
 /* The search box becomes the header's centrepiece: white pill, grows to fill
    the middle. */
 :global(.sm-header-market) .headerRight {

@@ -16,6 +16,9 @@ const home = readCss("../app/(storefront)/components/homepage/homepage.css");
 const delivery = readCss(
   "../app/(storefront)/components/delivery/delivery-location.module.css",
 ).replace(/:global\(([^)]+)\)/g, "$1");
+const headerCss = readCss(
+  "../app/(storefront)/components/header/Header.module.css",
+).replace(/:global\(([^)]+)\)/g, "$1");
 const macChrome =
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const browser = await chromium.launch({
@@ -47,6 +50,50 @@ const heroFixture = (
 *{box-sizing:border-box}body{margin:0;font:16px Arial;background:#fff}
 :root{--sm-cream:#fff;--sm-cream-deep:#f5d061;--sm-ink:#111111;--sm-on-ink:#fff;--sm-page-cream-deep:#f5d061;--sm-page-ink:#111111;--sm-page-on-ink:#fff;--sm-scheme-inverse-bg:#111111;--sm-scheme-inverse-fg:#fff;--sm-scheme-inverse-surface:#222;--sm-scheme-inverse-accent:#fff;--sm-scheme-inverse-on-accent:#111111}
 ${home}</style></head><body><main class="storefront-root"><section class="home-section ${scheme ? "sm-scheme sm-scheme-inverse" : ""}"><div class="home-hero variant-${variant} theme-${mode}" ${field ? `style="background:${field}"` : ""}><div class="home-hero-copy"><h1 class="home-hero-heading">Living bubbles</h1><p class="home-hero-sub">Slow brewed botanical drinks</p></div></div></section></main></body></html>`;
+const PALETTES = {
+  light:
+    "--sm-cream:#faf8f5;--sm-surface:#ffffff;--sm-sand:#f1ede6;--sm-cream-deep:#efece9;--sm-ink:#211c25;--sm-ink-soft:#554d59;--sm-ink-faint:#675c6b;--sm-border:#cfc9c2;--sm-on-ink:#ffffff;--sm-accent:#45243c;--sm-on-accent:#ffffff;--brand-primary:#45243c",
+  dark: "--sm-cream:#141414;--sm-surface:#1c1c1c;--sm-sand:#242424;--sm-cream-deep:#1a1a1a;--sm-ink:#eeeeee;--sm-ink-soft:#bdbdbd;--sm-ink-faint:#a0a0a0;--sm-border:#555555;--sm-on-ink:#111111;--sm-accent:#f0e6d8;--sm-on-accent:#111111;--brand-primary:#f0e6d8",
+};
+const HEADER_BARS = {
+  light: "--sm-header-bg:#f3efe8;--sm-header-fg:#1b1b1b",
+  dark: "--sm-header-bg:#1f2a37;--sm-header-fg:#ffffff",
+};
+// The rule the 2026-10-04 fix replaced: the drawer trigger took the header's
+// foreground over the page's cream.
+const drawerNegative =
+  ".sm-header-market .drawerRoot .trigger{color:var(--sm-header-fg)}.sm-header-market .drawerRoot .triggerCopy small{color:var(--sm-header-fg)}";
+const deliveryTrigger =
+  '<button class="trigger"><svg width="18" height="18" aria-hidden="true"></svg><span class="triggerCopy"><small>Deliver to</small><strong>Select location</strong></span><svg width="15" height="15" aria-hidden="true"></svg></button>';
+// Markup follows Header.jsx / drawer-nav.tsx / delivery-location-control.tsx
+// by class; icon-only controls are left empty, since axe judges text.
+const headerFixture = (
+  variant,
+  palette,
+  headerBar,
+  drawerOpen,
+  broken = "",
+) => `<!doctype html><html lang="en"><head><style>
+*{box-sizing:border-box}body{margin:0;font:16px Arial;background:var(--sm-cream);color:var(--sm-ink)}
+:root{${PALETTES[palette]};${HEADER_BARS[headerBar]};--sm-shadow-rgb:0,0,0;--sm-radius-control:12px;--sm-radius-sm:8px;--sm-radius-pill:999px;--font-outfit:Arial}
+${headerCss}\n${delivery}
+.hamburgerBtn{display:flex!important}
+${broken}</style></head><body><main class="storefront-root sm-header-${variant}">
+<header class="header">
+ <div class="headerLeft"><a class="logo" href="#"><span class="brandNameText">Roastery</span></a><nav class="navLinks"><a href="#">Shop</a><a href="#">About</a></nav></div>
+ <div class="headerRight">
+  <div class="root">${deliveryTrigger}</div>
+  <div class="iconGroup"><button class="userIcon" aria-label="Sign in"></button><button class="cartBtn" aria-label="Open cart"></button></div>
+  <button class="hamburgerBtn" aria-label="Open Menu"></button>
+ </div>
+ <div class="mobileDrawer ${drawerOpen ? "drawerOpen" : ""}">
+  <div class="drawerHeader"><a class="logo" href="#"><span class="brandNameText">Roastery</span></a><button class="closeBtn" aria-label="Close Menu"></button></div>
+  <div class="root drawerRoot">${deliveryTrigger}</div>
+  <nav class="drawerNav"><a href="#">Shop</a><button class="drawerNavParent">Collections</button><a href="#" class="drawerViewAll">View all</a><div class="drawerLevelHead"><button class="drawerBack">Back</button><h2 class="drawerLevelTitle">Coffee</h2></div></nav>
+  <div class="drawerAuth"><button class="drawerAuthBtn">Sign in</button></div>
+ </div>
+ <div class="drawerOverlay ${drawerOpen ? "overlayVisible" : ""}"></div>
+</header></main></body></html>`;
 try {
   const page = await browser.newPage();
   await page.route("**/*", (route) => route.abort());
@@ -126,8 +173,54 @@ try {
         failures.push({ width, variant, mode, scheme, field, violations });
     }
   }
+  // Header × drawer. The roastery's 1.37:1 (benchmark 2026-10-04) was the
+  // market header's white text inherited by the light phone drawer; the
+  // drawer is a PAGE surface whatever the header's colours. Each header
+  // variant is rendered over a light and a dark page palette, the market
+  // variant also under a light and a dark header bar, with the drawer closed
+  // (the bar is measured) and open (the drawer is).
+  const badDrawer = await checkHtml(
+    390,
+    headerFixture("market", "light", "dark", true, drawerNegative),
+  );
+  if (
+    !badDrawer.some(
+      (v) => /small|strong/.test(v.target) && v.data?.fgColor === "#ffffff",
+    )
+  )
+    failures.push({
+      negativeControl:
+        "did not reproduce the drawer inheriting the header's white text",
+      badDrawer,
+    });
+  for (const width of [390, 768, 1440]) {
+    for (const variant of ["classic", "market", "centered", "minimal"]) {
+      for (const palette of ["light", "dark"]) {
+        for (const header of variant === "market"
+          ? ["light", "dark"]
+          : ["light"]) {
+          for (const drawerOpen of [false, true]) {
+            const violations = await checkHtml(
+              width,
+              headerFixture(variant, palette, header, drawerOpen),
+            );
+            cases++;
+            if (violations.length)
+              failures.push({
+                width,
+                variant,
+                palette,
+                header,
+                drawerOpen,
+                violations,
+              });
+          }
+        }
+      }
+    }
+  }
 } finally {
   await browser.close();
 }
-console.log(JSON.stringify({ cases, negativeControls: 5, failures }, null, 2));
+console.log(JSON.stringify({ cases, negativeControls: 6, failures }, null, 2));
 if (failures.length) process.exitCode = 1;

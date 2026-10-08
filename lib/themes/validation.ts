@@ -390,6 +390,137 @@ export function validateThemeHomepage(theme: ThemeDefinition): ThemeFinding[] {
   return out;
 }
 
+// ----------------------------------------------------------------- copy
+
+/** Copy that reads as unfinished: lorem, bracketed slots, authoring notes
+ * and merge tags. Broader than PLACEHOLDER_COPY_RE (names and taglines)
+ * because section copy is where a model leaves scaffolding. The upper-case
+ * notes are matched case-sensitively: "todo" is a word in several languages. */
+export const UNFINISHED_COPY_RE =
+  /\b(?:lorem ipsum|dolor sit amet|your (?:headline|heading|title|text|copy|tagline) here|insert (?:text|copy|headline|heading) here|sample text|placeholder text)\b|\[(?:brand|store|product|name|headline|image)[^\]]*\]|\{\{[^}]*\}\}/i;
+const AUTHORING_NOTE_RE = /\b(?:TODO|TBD|FIXME)\b/;
+
+/** `<thing>_url` → `<thing>_alt` pairs an author must fill. Hero, promo and
+ * tile images carry their headline as the accessible text, so they are not
+ * listed; these four render the image as content in its own right. */
+const ALT_TEXT_PAIRS: Readonly<
+  Record<string, readonly { url: string; alt: string; items?: string }[]>
+> = {
+  media_text: [{ url: "image_url", alt: "image_alt" }],
+  gallery: [{ url: "image_url", alt: "image_alt", items: "items" }],
+  testimonials: [{ url: "logo_url", alt: "logo_alt", items: "items" }],
+  video: [{ url: "poster_url", alt: "poster_alt" }],
+};
+
+/** Every string inside a value, depth-first. */
+export function collectStrings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) for (const v of value) collectStrings(v, out);
+  else if (value && typeof value === "object")
+    for (const v of Object.values(value)) collectStrings(v, out);
+  return out;
+}
+
+function unfinished(text: string): boolean {
+  return UNFINISHED_COPY_RE.test(text) || AUTHORING_NOTE_RE.test(text);
+}
+
+/**
+ * Deterministic copy defects a reviewer should never have to notice:
+ * unfinished copy, a page carrying one module twice, a signup form sitting
+ * directly above the footer's own, and content images without alt text.
+ * Every one is model-controlled, so the compiler repairs them inside
+ * generation and the package.content gate repeats them at acceptance.
+ *
+ * ★ NOT part of validateThemeDefinition. Bundled themes and installed stores
+ * predate these rules and must keep rendering; this is a Studio floor.
+ */
+export function validateThemeCopy(theme: ThemeDefinition): ThemeFinding[] {
+  const out: ThemeFinding[] = [];
+  const add = (code: string, message: string) =>
+    out.push(finding("pages", code, message));
+  for (const page of theme.preset.pages) {
+    const where = page.slug === "" ? "Homepage" : `Page "${page.slug}"`;
+    const enabled = page.sections.filter((section) => section.enabled);
+
+    if (
+      [page.title, page.seo_title ?? "", page.seo_description ?? ""].some(
+        unfinished,
+      )
+    ) {
+      add("placeholder", `${where}: its title or SEO copy is unfinished.`);
+    }
+    enabled.forEach((section, i) => {
+      const hit = collectStrings(section.config).find(unfinished);
+      if (hit !== undefined) {
+        add(
+          "placeholder",
+          `${where}: section ${i + 1} (${section.type}) carries unfinished copy: "${hit.slice(0, 60)}".`,
+        );
+      }
+    });
+
+    // One module twice: same type, identical content.
+    const seen = new Map<string, number>();
+    enabled.forEach((section, i) => {
+      const key = `${section.type}:${JSON.stringify(section.config)}`;
+      const first = seen.get(key);
+      if (first === undefined) seen.set(key, i);
+      else
+        add(
+          "duplicate_section",
+          `${where}: sections ${first + 1} and ${i + 1} are the same ${section.type} module with identical content.`,
+        );
+    });
+
+    // Two signup sections on one page is a defect. A CLOSING newsletter
+    // section beside the footer's own form is not: three of the four bundled
+    // themes end their homepage that way, so it is the house convention, and
+    // the renderer hides the footer's form on such a page instead
+    // (closingSectionType + the data-sm-closing rule in storefront-theme.css).
+    const newsletters = enabled.filter((s) => s.type === "newsletter").length;
+    if (newsletters > 1) {
+      add(
+        "duplicate_newsletter",
+        `${where}: has ${newsletters} newsletter sections; one is enough.`,
+      );
+    }
+
+    enabled.forEach((section, i) => {
+      const config = section.config as unknown as Record<string, unknown>;
+      for (const pair of ALT_TEXT_PAIRS[section.type] ?? []) {
+        const targets = pair.items
+          ? Array.isArray(config[pair.items])
+            ? config[pair.items]
+            : []
+          : [config];
+        (targets as unknown[]).forEach((target, j) => {
+          if (!target || typeof target !== "object") return;
+          const t = target as Record<string, unknown>;
+          const url = typeof t[pair.url] === "string" ? t[pair.url] : "";
+          const alt = typeof t[pair.alt] === "string" ? t[pair.alt] : "";
+          if ((url as string).trim() && !(alt as string).trim()) {
+            add(
+              "image_alt",
+              `${where}: section ${i + 1} (${section.type})${pair.items ? ` item ${j + 1}` : ""} shows an image with no alt text.`,
+            );
+          }
+        });
+      }
+    });
+  }
+  for (const product of theme.preset.sampleData?.products ?? []) {
+    const hit = collectStrings(product).find(unfinished);
+    if (hit !== undefined) {
+      add(
+        "placeholder",
+        `Product "${product.name}" carries unfinished copy: "${hit.slice(0, 60)}".`,
+      );
+    }
+  }
+  return out;
+}
+
 /** TA-2.5: enough sample catalogue to render a credible demo. */
 export function validateThemeSampleData(
   theme: ThemeDefinition,

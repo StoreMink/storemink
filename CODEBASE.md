@@ -2283,7 +2283,7 @@ permission sections, which read the database. Pinned by `proxy.test.ts`.
 ### Tenant resolution — `lib/store/`
 
 - `host.ts` — pure host classification (`parseHost`, `isPlatformHost`, `isHelpHost`, `isPosHost`, `isThemesHost`, `cookieDomainForHost`). No Node imports; safe on edge. `ROOT_DOMAIN` from `NEXT_PUBLIC_ROOT_DOMAIN` (default `storemink.com`). Cookies are scoped to `.storemink.com` so a session spans platform + all store subdomains.
-- `resolve.ts` — DB-backed store lookup, cached with `unstable_cache` (tag `STORE_TAG = "stores"`, 300 s revalidate). **Only positive host resolutions are cached**: an unknown/ineligible store host is an internal rejected cache read and becomes an uncached `null`, so a slug claimed moments later is visible on the next request even when that request reaches a different Cloud Run instance. Caching negative resolutions made a successful signup land on the legacy WholeSip fallback for up to five minutes, producing both a WholeSip tab title and a false "No access" screen. Three resolvers: `getCurrentStoreOrNull()` (honest — null when the host maps to no active store); `getCurrentStore()`/`getCurrentStoreId()` (never-null — fall back to WholeSip; for dashboard/actions/internal callers that must always have a store id); **`requireStorefrontStore()`/`requireStorefrontStoreId()`** (render-only — `notFound()` on an unknown host). **Storefront PAGES must use the `require…` variants** (the `(storefront)` layout guards too, but a layout `notFound()` does NOT abort concurrently-rendering child pages, so each content page guards itself — otherwise an unclaimed subdomain streams the WholeSip fallback content into its HTML). Unknown store host → root `app/not-found.tsx` ("store doesn't exist"); missing page within a real store → `app/(storefront)/not-found.tsx` ("page not found", with store chrome).
+- `resolve.ts` — DB-backed store lookup, cached with `unstable_cache` (tag `STORE_TAG = "stores"`, 300 s revalidate). **Only positive host resolutions are cached**: an unknown/ineligible store host is an internal rejected cache read and becomes an uncached `null`, so a slug claimed moments later is visible on the next request even when that request reaches a different Cloud Run instance. Caching negative resolutions made a successful signup land on the legacy WholeSip fallback for up to five minutes, producing both a WholeSip tab title and a false "No access" screen. Three resolvers: `getCurrentStoreOrNull()` (honest — null when the host maps to no active store); `getCurrentStore()`/`getCurrentStoreId()` (never-null — fall back to WholeSip; for dashboard/actions/internal callers that must always have a store id); **`requireStorefrontStore()`/`requireStorefrontStoreId()`** (render-only — `notFound()` on an unknown host). **Storefront PAGES must use the `require…` variants** (the `(storefront)` layout guards too, but a layout `notFound()` does NOT abort concurrently-rendering child pages, so each content page guards itself — otherwise an unclaimed subdomain streams the WholeSip fallback content into its HTML). Unknown store host → root `app/not-found.tsx` ("store doesn't exist"); missing page within a real store → `app/(storefront)/not-found.tsx` ("page not found", with store chrome). A page that THROWS inside a real store → `app/(storefront)/error.tsx` (client boundary with retry, styled off `--sm-*` tokens like the 404; logs the digest). Below that, every section on a sections-composed page is wrapped by `HomepageSectionRenderer` in `<Suspense>` + `SectionErrorBoundary` (`components/sections/section-error-boundary.tsx`), so a section whose stored config no longer matches its component renders nothing and logs its id/type instead of taking the page down.
   **★★ AND THOSE 404s WERE ALL SOFT 404s UNTIL 2026-08-29.** `app/loading.tsx`
   existed at the ROOT, so one Suspense boundary wrapped the entire app; Next
   flushes the shell — with the HTTP status already committed as **200** — before
@@ -2534,6 +2534,11 @@ wholesip/
 │   │       ├── studio-acceptance-probe.tsx # Theme Studio acceptance
 │   │       │                        # measurements; rendered ONLY on preview
 │   │       │                        # stores, answers only a platform-host parent
+│   │       ├── studio-acceptance-states.ts # the probe's chrome states: opens
+│   │       │                        # the menu drawer, search sheet, cart drawer,
+│   │       │                        # account menu and sign-in dialog by their
+│   │       │                        # stable hooks, audits each, closes it (home
+│   │       │                        # page only); names in lib/theme-studio/chrome-states.ts
 │   │       ├── scroll-reveal.tsx     # sections revealed on scroll for a theme
 │   │       │                        # that sets design.motion (never in builder)
 │   │
@@ -3383,7 +3388,8 @@ wholesip/
 │   │                          # verify). Delete an auth user does NOT cascade to the Cloud
 │   │                          # SQL admins/users row — callers delete BOTH.
 │   ├── storefront/            # queries.ts (cached storefront reads — getPublishedPage/
-│   │                          # getPublishedPageSlugs, named columns only), tags.ts
+│   │                          # getPublishedPageSlugs, named columns only; getPublishedPage validates
+│   │                          # published_sections on read and logs each dropped section), tags.ts
 │   │                          # (cache tags incl. TAGS.pages)
 │   ├── sections/              # ★ Page-section registry (see §11): re-exports homepage
 │   │                          # section-types + adds page helpers (PageSectionItem,
@@ -5889,6 +5895,120 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     Settlement reveals `operator/passed` and moves generating → ready → candidate
     atomically, so there is no extra manual acceptance step for a successful
     automatic run. Human design/commerce approval and publication stay separate.
+    **The manual path cannot bypass that review (2026-10-08):** an operator's
+    browser evidence (`submitThemeStudioBrowserEvidence`) still records the
+    passing acceptance run, but `manualAcceptanceTransition` promotes
+    ready → candidate only when a FINAL-phase `theme_studio_visual_qa_runs`
+    row has passed the same version/package digest; otherwise the project
+    stays `ready` and the event/result carry `visualQa: "required"`. Where
+    automatic QA is not deployed (`autoQaEnabled` false) promotion proceeds
+    and is labelled `visualQa: "not_configured"`.
+    **The reviewer is benchmarked against known defects (2026-10-08).**
+    `lib/theme-studio/visual-qa-request.ts` holds the reviewer's request with
+    no I/O — `visualQaContext`, `VISUAL_QA_SCHEMA`, `parseVisualQaReport`,
+    `VISUAL_QA_SYSTEM_PROMPT` and `buildVisualQaRequest` — and `visual-qa.ts`
+    calls and re-exports it, so a fixture and a real claimed run build the
+    same request byte for byte. `lib/theme-studio/visual-fixtures.ts` is
+    twenty whole homepages in the storefront's own section markup, built
+    from a bundled theme's catalogue (so the reviewer's context matches the
+    page): ten each carry ONE defect it must catch (duplicate newsletter,
+    lorem copy, invented awards/ratings, white-on-gold hero, flat
+    placeholder art, empty sections, overlapping copy, 9px grey text, a
+    neon palette against an ivory brief, clipped headings) and ten are
+    clean. `npm run theme-studio:visual-fixtures` renders them in local
+    Chrome with production CSS at phone390/desktop1440, runs the screenshots
+    through the real `buildVisualEvidence` and request, and answers with the
+    fake client (mechanism only); `-- --live --yes` sends the twenty reviews
+    to Vertex and exits 1 unless ≥9/10 defects are caught AND ≥9/10 clean
+    pages pass (`VISUAL_FIXTURE_BAR`). ★ Both directions, because a false
+    fail buys a paid repair. ★ The fixtures carry the theme's own
+    `designToCssVars` inline, the `data-sm-closing` mark and the footer's
+    `data-sm="footer-newsletter"` hook, so the one-form-per-page rule holds
+    there too. Not yet run live; the first live result belongs in
+    `docs/theme-studio-shopify-grade-plan.md` Phase 1.
+    **Rendered contrast reaches the hidden states (2026-10-08, plan Phase 1
+    item 3).** axe already judged every text element on a loaded page, but
+    two things it never saw: (1) the menus, drawers and dialogs, which are
+    off-canvas or unmounted on load — the roastery's 1.37:1 delivery trigger
+    (benchmark 2026-10-04) lived in the open phone menu and a human found it;
+    (2) the nodes it marks `incomplete` (text over a photograph, gradient or
+    overlapping layer), which `resultTypes: ["violations"]` silently dropped.
+    `lib/theme-studio/chrome-states.ts` names the five states (menu, search,
+    cart, account, sign_in); `studio-acceptance-states.ts` opens each by a
+    STABLE hook — the aria labels shoppers already get, `#header-profile-btn`
+    / `#profile-dropdown`, and new `data-sm` marks on the menu drawer
+    (`Header.jsx`) and the account dialog (`AuthModal.tsx`,
+    `DemoAccountNotice.tsx`; never a CSS-module class) — waits for it to be on
+    screen and settled, audits it (axe scoped to the panel, clipped text,
+    tap targets), closes it and confirms it left, so the screenshot the job
+    takes afterwards is the page it measured. The sign-in dialog opens from
+    inside the account menu, so that parent stays open until the child is
+    done. ★ On the HOME page only: the chrome is identical on every surface
+    and repeating five states on six pages would crowd the finding cap with
+    duplicates. ★ LCP/CLS are read before the states open — a programmatic
+    click is not "recent input" and a drawer's scroll lock drops the
+    scrollbar, which registers as a shift. `BrowserSample` gains optional
+    `contrastUnresolved` and `states` (older evidence parses unchanged);
+    `evaluateBrowserGates` routes a state's findings to the same gates with
+    the state in `where` (so `qa-diagnosis`'s contrast keys stay distinct)
+    and reports a home sample without states, or a state that was
+    `unopened`/`stuck`, as a COVERAGE failure — "we could not open it" is
+    never a pass; `absent`/`hidden` (no cart on a catalogue store, no
+    hamburger on desktop) only count in the metric. Visual prompt v5 lists
+    each page's `unresolvedContrast` and states so the reviewer judges the
+    pixels the probe could not. `scripts/theme-studio-contrast-check.mjs`
+    gained header × drawer fixtures (four header variants × light/dark page
+    palette × light/dark market bar × drawer closed/open, at 390/768/1440)
+    with the pre-fix inheritance as a negative control. ★ They found one at
+    once: a light market bar over a dark palette put the bar's `#1b1b1b`
+    brand name on the drawer's `#1c1c1c` surface (1.01:1), because the
+    market rule colours `.brandNameText` wherever it renders;
+    `Header.module.css` now gives the drawer's name the page ink, the rule
+    the delivery trigger already followed. Storefront presentation only:
+    no merchant workflow change, no Help Centre update.
+    **Performance from advisory to required, behind a switch (2026-10-08,
+    plan Phase 1 item 4).** Two findings came first. (1) The probe read LCP
+    and CLS AFTER its programmatic scroll-through: LCP keeps accepting larger
+    candidates until a USER scrolls, so a hero far down the page was reported
+    as the largest paint at 25 s, and lazy images loading during the scroll
+    counted as shifts (CLS up to 1.4) — the 2026-10-04 figures (worst LCP
+    2.5–25.9 s, worst CLS 0.06–1.38 across seven themes) measured the probe,
+    not the page. Timing is now frozen after `fonts.ready`, before the reveal
+    and the scroll. (2) With those numbers, flipping the gate to required
+    would have failed every candidate on the next batch for a measurement
+    fault, the opposite of "reliability first". So `evaluateBrowserGates`
+    takes `performanceRequired` (from `getThemeStudioConfig()`, env
+    `THEME_STUDIO_PERFORMANCE_REQUIRED`, Cloud Build default `"false"`):
+    LCP ≤ 3.0 s (relaxed from 2.5 s because the preview is not CDN-fronted)
+    and CLS < 0.1, judged at phone390 and desktop1440 only; the other three
+    widths are reported in the metrics, never failed. Once required, an
+    unreported LCP (the operator's framed browser run never gets one) is a
+    finding — "we could not measure" is not a pass — so performance can pass
+    only from the automatic capture, which the Checks page says.
+    `deterministicRepairs` routes a performance failure to the RENDERER (no
+    paid settings call) and visual prompt v6 tells the reviewer the same.
+    Flip criterion: one live batch whose frozen worst LCP/CLS at the two
+    widths sit under the limits for the candidates a human would accept.
+    Operator-only: no merchant-visible change, no Help Centre update.
+    **`published_sections` is validated on read (2026-10-08, plan Phase 1
+    item 5).** `getPublishedPage` cast the jsonb column straight to
+    `PageSectionItem[]`, so a section written by an older validator, a theme
+    seed, a hand edit or a Mink path that a renderer no longer accepts
+    reached `PageSectionRenderer` unchecked; the per-section error boundary
+    (Phase 0) turned that into a blank section and a console line AFTER the
+    fact. `salvageSections` (`lib/sections/registry.ts`) is the read-side
+    counterpart of `validateSections`: per section, draft-mode rules — shape,
+    id, type and every safety rule, never completeness, which the lenient
+    custom-code save and the Mink publication reader also waive for stored
+    content — keeping what passes and DROPPING what fails, the first of a
+    duplicate id kept. `getPublishedPage` applies it and logs
+    `storefront.page_section_dropped` (store, slug, index, id, type, reason)
+    per drop, so a page that quietly lost a section is a log line rather than
+    a mystery. ★ Draft mode, not publish: re-judging completeness on read
+    would blank a locked custom-code block the save deliberately let through.
+    The builder's draft preview (`lib/pages/preview.ts`) is untouched; it
+    renders what the merchant is typing. Storefront-internal: no merchant
+    workflow change, no Help Centre update.
     `automatic-qa-policy.ts` queues targeted exact-package revisions for theme
     failures, up to THREE repairs (iterations 0→1→2→3, the ceiling migration
     0145 allows; `MAX_AUTOMATIC_QA_REPAIRS`).
@@ -6457,7 +6577,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         The browser probe checks HTML nodes before reading `innerText`; SVG icons
         previously crashed every measurement. QA capture accepts HTTP 404 only on
         the explicit `not_found` surface, waits for the hydrated probe, bounds
-        each measurement to 45 seconds, and avoids a network-idle wait on all 30
+        each measurement to 60 seconds (45 before the home page's chrome states), and avoids a network-idle wait on all 30
         samples. Capture jobs reserve time to report results, bound capture work
         to seven minutes (or the remaining execution budget), report launch errors,
         close failed browsers before reuse, and fail the execution if the finish
@@ -7042,275 +7162,303 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         returns them as repair issues. Asset rules stay at acceptance, where images
         stop being placeholders. The offline provider seeds four categories and
         eight products to clear them, and `theme-studio-v7` states the floors.
-        ★★ `.storefront-root > main` now has `width: 100%`: the root is a flex
-        column and a `margin: 0 auto` main was sized shrink-to-fit, so one wide
-        child (the related-products carousel) made the grocery product page 734px
-        wide on a 390px phone, its right half silently cut off by
-        `overflow-x: clip`. The single-column PDP grids use `minmax(0, 1fr)` for the same
-        reason — a bare `1fr` never shrinks below its widest child.
-        **Predictive search (1.7).** Header search submits to `/shop?q=` on
-        every variant and, as the shopper types, shows up to six products (image,
-        price, struck-through compare-at), up to three categories and "See all N
-        results". `lib/storefront/product-search.ts` (pure) is the ONE matching
-        rule — whole phrase in name, description or category — used by BOTH the
-        shop grid (`shop-client.tsx`) and the dropdown, so a suggestion is always
-        something `/shop?q=` shows; `productMatchRank` only ORDERS matches (name
-        prefix → word prefix → name → category → description). ★
-        `GET /api/storefront/search?q=` is a ROUTE HANDLER, not a server action
-        (actions run one at a time per client, so a keystroke would queue in
-        front of Add to cart — §22's POS lesson), resolves the store from the
-        Host (never a parameter; `/api` bypasses proxy.ts), reads the cached
-        `getPublishedProducts`/`getActiveCategories`, and answers
-        `private, max-age=30` because nothing in front of Cloud Run varies on
-        Host. `header/predictive-search.tsx` is the ARIA 1.2 combobox (focus
-        stays in the input; `aria-activedescendant`; arrows, Enter, Escape closes
-        then clears), keeps the old `searchBar`/`searchInput` classes so every
-        header variant styles it as before, debounces 150ms, aborts the previous
-        request, remembers 30 answers, and never shows a result for a query other
-        than the one in the box. ★ `.searchWrap` is now the header's flex item,
-        so the market pill's sizing lives on it and it needs `min-width: 0`.
-        ★ PHONES: the box is hidden below 768px, so `header/phone-search.tsx`
-        puts a search icon in the phone header that opens a full-width sheet,
-        PORTALLED into `.storefront-root` — the scrolled header's
-        `backdrop-filter` makes it the containing block for fixed children, and
-        the root carries the theme tokens. The drawer's own search was removed;
-        the merchant's `showSearch` switch now governs phone search as well
-        (it used to show in the drawer regardless).
-        **★★ THE HEADER FOLDS BY FIT, NOT BY BREAKPOINT (2026-09-26).** Between
-        769px and ~1100px the menu ran into the delivery control and search box
-        on Vitrine, Studio and Ritual (at 800px Vitrine's header was 817px wide
-        and its links wrapped onto two lines). A breakpoint cannot fix that:
-        whether a header fits depends on the theme's font, the merchant's links
-        and their length, the logo, and whether search and cart are on.
-        `header/use-header-fit.ts` measures the live header and writes
-        `data-header-compact` on it; `lib/storefront/header-fit.ts` (pure) picks
-        the fewest steps from `COMPACT_STEPS`, in order: `nav` (menu hidden,
-        hamburger shown), `delivery` (header control hidden, the drawer's copy
-        shown), `search` (box hidden, the phone search icon shown). The CSS for
-        each step is in `Header.module.css` and `delivery-location.module.css`,
-        and a test fails if a step has none. Fits means: no horizontal overflow,
-        ≥12px between neighbouring items sorted by position (so the centred
-        variant, whose menu sits left of the logo, is judged correctly), and
-        search/delivery not squeezed below 140/120px. They can shrink to a
-        sliver without overlapping anything.
-        ★ Every check starts from the full header, so a tablet rotated to
-        landscape unfolds again.
-        ★ Transitions are switched off while measuring
-        (`data-header-measuring`). The search box animates its width and the
-        header its padding, and a mid-animation reading once passed a fit that
-        then closed to a 4px gap.
-        ★ A `ResizeObserver` on the header triggers it, not the window `resize`
-        event, which can fire before the new width is laid out. So do
-        `document.fonts.ready` and the header's content deps.
-        ★ The attribute is written to the DOM, never rendered, so React never
-        writes it back, and the fold lands before paint rather than after a
-        state round trip.
-        ★ Phones (≤768px) keep CSS horizontal layout and skip fit compaction:
-        their row overlaps hit areas on purpose. Height is still measured.
-        The same observer publishes the final bar height as `--sm-header-h`
-        on its own `.storefront-root`, including on phones and after font or
-        size changes, and restores the previous inline value on cleanup.
-        Before hydration CSS supplies 80/88/68px desktop/tablet/phone fallbacks.
-        Market headers reserve this height on the root instead of estimating
-        it as 10vh. Non-market section pages whose first rendered section is
-        neither a native hero/carousel nor custom-code hero reserve the height
-        plus a 16–32px gap on `.home-sections`. Thus a leading ticker or text
-        cannot sit behind the logo/actions; existing hero-led origins remain.
-        `scripts/storefront-header-layout-check.mjs` checks production CSS in
-        local Chromium across header variants, viewport sizes, content origins,
-        server/measured clearance and stylesheet load order; fixture screenshots
-        are not live-theme evidence. Presentation only; shopper actions stay the
-        same, so no Help Centre update.
-        ★ Nav links are `white-space: nowrap`, so a wrapped link shows up as
-        overlap instead of hiding it.
-        ★ The header has a 24px `column-gap` above 768px. The market header's
-        growing search pill had put its delivery control flush against the last
-        menu link.
-        ★★ The delivery control was unreachable between 769px and 900px: the
-        header's copy hid below 900px while the drawer's only appeared below
-        768px. It is now always in exactly one of the two.
-        **Delivery-location and PDP delivery polish (2026-09-29).** The
-        header selector now uses a compact, fixed-radius control with a clear
-        icon badge, stronger focus/hover treatment and a stable width, while
-        the drawer keeps the theme's control radius. Product delivery details
-        are content cards rather than control pills, so themes whose control
-        shape is a 999px pill no longer render a giant oval. The PIN form has
-        a clear disabled state, active button treatment, focus ring and a
-        stacked button/input layout below 560px so it cannot squeeze or clip
-        on narrow product pages. This is presentation-only; postal-code
-        validation, remembered locations and server estimates are unchanged.
-        ⚠ The server cannot measure, so on a tablet the first paint before
-        hydration can still show the unfolded header for a moment.
-        **Shop page and collection pages (1.8).** Every active category has its
-        own page, `(pages)/collections/[slug]/page.tsx`: self-canonical, the
-        category's name as title and h1, its description as meta description
-        (cut to 155 characters on a word), its image as OG image, a
-        BreadcrumbList, `noindex` while `?q` is present, 404 for an unknown or
-        hidden slug. ★ There is NO `collections/page.tsx`, so a merchant page
-        slugged `collections` could still resolve — "collections" is nonetheless
-        in `RESERVED_PAGE_SLUGS` and `STOREFRONT_CODE_ROUTES` so no new one can be
-        made. `/shop?category=<active slug>` answers **308** to it
-        (`legacyCategoryRedirect`, `lib/storefront/collection-links.ts`),
-        carrying every other parameter; an unknown slug and the `uncategorized`
-        "Other" view stay on /shop. `collectionPath(slug)` is the ONE builder,
-        used by the shop's category chips (now real `<Link>`s in a
-        `nav[aria-label=Categories]`), homepage category tiles, search
-        suggestions, the product breadcrumb (active category only), the builder
-        placeholder and the sitemap, which lists a collection only when a product
-        is on it, dated by its newest product's `content_updated_at`
-        (`populatedCollections`). Theme validation accepts `/collections/<slug>`
-        as a category link and refuses a bare `/collections`.
-        `shop/shop-view.ts` (server-only) is the ONE loader both pages share
-        (products, categories, resolved layout, low-stock threshold, offer
-        badges), so /shop and a collection cannot price or badge differently.
-        **Shared shop filters (2026-10-05).** Sorting, price and availability
-        filters, active-filter chips, result counts and Load more are available
-        on every theme, including existing pinned themes that omit or disable
-        `ThemeLayout.shopFilters`. The legacy package field remains accepted
-        for installed themes and paid-request replay; the appearance resolver
-        returns `shopFilters: true`, and `ShopClient` defaults on. URL filters
-        therefore apply consistently on /shop and /collections/<slug>.
-        `collectionBanner` remains a theme opt-in (`=== true`). `lib/storefront/shop-filters.ts`
-        (pure) owns the vocabulary: sorts featured | price-asc | price-desc |
-        newest | name, `stock=in`, rupee `min`/`max` (a backwards pair swaps,
-        negative or absurd bounds drop), `page` = how many 24-product pages are
-        revealed (capped at 200). Defaults are omitted from the URL and junk is
-        ignored, never an error. Sorting is stable with the featured order as
-        tie-break; price means `effectivePricing(p).selling` and sold out means
-        `productIsSoldOut` — the card's own rules. ★ State changes go through
-        `history.replaceState`: every product is already loaded, so a sort is a
-        re-order, not a round trip, and Back leaves the shop rather than undoing
-        one filter at a time. When Next reuses `ShopClient` for a new same-route URL
-        (header search, navigation or history), it adopts the complete server-parsed
-        query/sort/stock/price/page state; a filter removed from the URL therefore
-        cannot remain active invisibly. ★ "Load more" reveals already-loaded products;
-        it paginates the DOM, not the query. `shop/shop-filter-panel.tsx` is a
-        dialog (side drawer; bottom sheet at ≤600px), PORTALLED into
-        `.storefront-root` for the theme tokens, with a focus trap and scroll
-        lock. ★ ITS CHANGES ARE A DRAFT until "Show N products", which quotes the
-        count first; Escape, the backdrop or Close discard it. Active filters show
-        as removable chips beside a Sort select and an `aria-live` count, and an
-        empty result offers "Clear filters". `collectionBanner` puts the
-        category's image and description above a collection's grid (no search in
-        the box). The row types gained `products.created_at` and
-        `categories.description`, so both cache keys moved to `-v2`. Stage B, the
-        package contract, the fake provider and prompt `theme-studio-v8` carry the
-        two keys and write `/collections/<slug>` menu links. Help:
-        `20260925_0139_collection_pages_help` replaces the categories guide's
-        handle sentence in place. `20261005_0160_shared_shop_filters_help`
-        corrects the product-visibility guide's troubleshooting paragraph to
-        explain clearing price/availability filters, sorting and mobile access.
-        **★★ Shopify-style filters, Phase 1 (2026-10-06).** Category (on
-        /shop and search only — a collection is one category), Availability,
-        product OPTIONS (Size, Colour, any axis) and Price, with a count on
-        every value. `lib/storefront/shop-filters.ts` owns the query and the
-        one predicate `matchesShopQuery`; `shop-facets.ts` builds the lists;
-        `shop-product-facts.ts` turns a product row into facts with the card's
-        own price (`variantEffectiveSelling`) and stock (`isSoldOut`) rules.
-        `getPublishedProducts` now also selects `products.options` and
-        `product_variants.option_values`.
-        ★ AND between filters, OR within one (Shopify's rule).
-        ★★ VARIANT-AWARE: one VARIANT must satisfy every option filter, In stock
-        only and the price range together. Otherwise "M + in stock" matches a
-        product whose M is sold out and whose L is in stock.
-        ★ Each value's count ignores its own filter (disjunctive), so with M
-        ticked the list still says how many L would add. Values come from
-        the products in scope BEFORE the shopper's filters, so a value stays
-        listed (greyed, 0) instead of vanishing. A filter with one value is
-        hidden unless ticked. "Colour"/"Color" are one filter (`facetKey`).
-        Values compare case-insensitively (`valueKey`). Sizes sort by wear
-        order (XS…6XL), then by the first number inside ("UK 6" before
-        "UK 10"), then first-seen.
-        ★ URLs: `filter.v.option.<key>=<value>` and `filter.p.category=<slug>`,
-        repeated for several values; `stock=in`/`min`/`max` keep working and
-        Shopify's `filter.v.availability=1`/`filter.v.price.gte|lte` are read.
-        `withShopQuery` drops every `filter.*` key it rewrites.
-        ★ ≥1024px: a sticky sidebar (`.shop-sidebar`) that applies at once, and
-        the Filter button is hidden. Smaller screens: the drawer, a draft until
-        "Show N". One `ShopFilterControls` renders both. Price commits on
-        Enter/blur in the sidebar, and a backwards range is swapped only when
-        applied, never mid-typing.
-        ⚠ Legacy name-only variants (no option axes) match no option filter.
-        The merchant sets options in the product editor, as the Help guide
-        (0167) says. Merchant-configurable filters, vendor/type/tags and
-        server-side filtering are Phases 2–3, not built.
-        **★★ Colourways: photos per colour, one card per colour (2026-10-06).**
-        The H&M model stays ONE product with a Colour × Size matrix (one place
-        to edit, one inventory). Four parts:
-        (1) `ProductOption.images` holds photos per colour value, uploaded once
-        in the options editor under "Photos for each colour" instead of once
-        per variant row. `photoAxis` picks the option that carries them: the
-        first with photos, else the swatch option, else one named like a
-        colour. `photosForVariant` gives a variant's photos: its own (an
-        exception set on that variant), else its colour's.
-        ★★ They are ordinary product images to the save path:
-        `productFormImageUrls` and `fetchProductImageUrls` include
-        `optionImageUrls`, so ownership is checked and the clean-up sweep
-        counts them as still in use. Without that, a save would delete the
-        product's own colour photos from storage (pinned by a mutation-checked
-        test).
-        (2) The product page and quick add show the selected colour's photos,
-        and the picker draws a colour with photos as a photo tile
-        (`.sm-opt-value.is-photo`).
-        (3) Every card shows a colour row (up to 4 squares and "+N"). It is
-        display-only, because the card is one link.
-        (4) `StorefrontAppearance.productCards` (`product` | `colour`, Website
-        Builder → Brand → Storefront layout) makes `ShopClient` expand each
-        product through `lib/storefront/colour-cards.ts`. Each colour becomes
-        a card restricted to that colour's variants, so its price, sold-out
-        flag, filters and counts follow those variants alone. Its link is
-        `?variant=<the colour's first in-stock variant>`.
-        ★ A product splits only when at least one colour has its own photo,
-        or every card would show the same picture.
-        ⚠ Homepage carousels and related products stay one card per product.
-        The setting reaches the Builder preview only after the page reloads.
-        `getPublishedProducts` now also selects variant `id` and `images`.
-        `storefront: "grocery"` is the deepest variant: it swaps the shared
-        product cards, the product-detail page and the cart for a distinct
-        premium grocery layout, so a store on such a theme looks NOTHING like the
-        classic WholeSip storefront. Product cards restyle via the
-        `sm-storefront-grocery` root class (CSS-only, in `storefront-theme.css`,
-        doubled-class specificity over the per-grid rules). The PDP and cart
-        branch to ENTIRELY SEPARATE markup + classes (`grocery-product-detail.tsx`
-        / `gpdp-*` in shop.css; `grocery-cart.tsx` / `gcart-*` in cart.css) — the
-        page servers read the flag via `lib/store/storefront-layout.ts`
-        (`getStorefrontLayout`) and pass a `grocery` prop to the client
-        components; the grocery shop listing swaps in a clean neutral header. (The
-        classic shop hero is now brand-aware — store name + tagline, not hardcoded
-        WholeSip — and the old hardcoded promo ticker was removed; a ticker is a
-        builder section type now, §11.)
-        All of this is GATED, so the WholeSip fallback and any classic theme keep
-        today's shared layout untouched. (Basket is the first grocery theme.)
-        Shared `ShopCard` spacing is width-aware across these skins: the card
-        is an inline-size container, and non-overlay cards with ≤220px of
-        content width use compact body spacing and typography, with a full-width
-        40px-minimum quick-add target. Category pills have explicit 1.25 line
-        height, bounded width and a 6px title gap; long labels wrap without
-        clipping. Starting prices and each base-price/discount pair wrap as
-        groups, and absent stock/offer badges reserve no empty column. Homepage
-        carousel cards stretch to a common bottom edge. Overlay cards retain
-        their full-photo proportions. These shared styles apply to existing
-        themes on deployment without regenerating their packages or images.
-        `scripts/product-card-layout-check.mjs` checks 200 offline Chromium
-        fixtures across five viewport widths, five skins, home/shop surfaces,
-        both CSS load orders, and ordinary/long-label price cases; it checks
-        overflow, pill spacing, content height and quick-add target size. Its
-        optional screenshots are local fixtures, not evidence from a live theme.
-        Design derives from the installed preset release at RENDER time. New
-        installs are version-pinned in store settings; legacy stores without the
-        pin resolve the catalog's current release. - **Newsletter capture**:
-        `newsletter-form.tsx` is shared by the footer and the builder newsletter
-        section. `subscribeNewsletter` derives tenancy from the request host,
-        validates email plus explicit consent, honeypots bots, rate-limits per
-        store/IP, and service-upserts one active row per store/email while recording
-        the displayed consent copy and source. Storage is
-        `newsletter_subscribers` (`themes_01_newsletter_subscribers.sql`): anon has
-        no direct write grant and authenticated store admins have read-only RLS. - **Phase 4d (not built, by design)**: nothing pending — homepage, static
-        pages, and menus are all migrated. config/site.ts, brand.md and the
-        file-based AI skills are deleted, and the shop hero is brand-aware. The
-        `--wholesip-*` CSS token namespace (→ `--sm-*`) and `WHOLESIP_STORE_ID` (→
-        `FALLBACK_STORE_ID`) are now renamed too; only the repo name `wholesip` and
-        the `brand/` dir remain as legacy WholeSip naming.
+
+    **Copy floors and unsupported claims (2026-10-08).** `validateThemeCopy`
+    (`lib/themes/validation.ts`) is a deterministic floor for what a vision
+    reviewer should never have to notice: unfinished copy (lorem, bracketed
+    slots, `{{merge tags}}`, upper-case TODO/TBD/FIXME), one module twice with
+    identical content, two newsletter sections on one page, and a content
+    image (media_text, gallery items, testimonial logos, video poster) with no
+    alt text. It runs inside `contentFloorIssues` (a repair turn) and again in
+    the `package.content` gate. ★ NOT in `validateThemeDefinition`: bundled
+    themes and installed stores predate it. ★ A CLOSING newsletter section is
+    deliberately not a finding — three of four bundled themes end that way —
+    the footer dedupes instead (§11 newsletter capture).
+    `lib/theme-studio/claims.ts` `unsupportedClaimIssues` catches marketing
+    claims the brief does not support (awards, press, #1, voted, clinical,
+    dermatologist, certified, customer counts, ratings, founding years,
+    percentages; numeric claims need their numbers in the brief). It runs in
+    the pipeline after a successful compile as a Stage B repair, because only
+    generation knows the brief; a revision's evidence adds the base theme's
+    own copy so an accepted claim is not re-flagged. The offline provider's
+    draft moved its newsletter ahead of the promo banner and gave its About
+    image alt text to clear the floors.
+    ★★ `.storefront-root > main` now has `width: 100%`: the root is a flex
+    column and a `margin: 0 auto` main was sized shrink-to-fit, so one wide
+    child (the related-products carousel) made the grocery product page 734px
+    wide on a 390px phone, its right half silently cut off by
+    `overflow-x: clip`. The single-column PDP grids use `minmax(0, 1fr)` for the same
+    reason — a bare `1fr` never shrinks below its widest child.
+    **Predictive search (1.7).** Header search submits to `/shop?q=` on
+    every variant and, as the shopper types, shows up to six products (image,
+    price, struck-through compare-at), up to three categories and "See all N
+    results". `lib/storefront/product-search.ts` (pure) is the ONE matching
+    rule — whole phrase in name, description or category — used by BOTH the
+    shop grid (`shop-client.tsx`) and the dropdown, so a suggestion is always
+    something `/shop?q=` shows; `productMatchRank` only ORDERS matches (name
+    prefix → word prefix → name → category → description). ★
+    `GET /api/storefront/search?q=` is a ROUTE HANDLER, not a server action
+    (actions run one at a time per client, so a keystroke would queue in
+    front of Add to cart — §22's POS lesson), resolves the store from the
+    Host (never a parameter; `/api` bypasses proxy.ts), reads the cached
+    `getPublishedProducts`/`getActiveCategories`, and answers
+    `private, max-age=30` because nothing in front of Cloud Run varies on
+    Host. `header/predictive-search.tsx` is the ARIA 1.2 combobox (focus
+    stays in the input; `aria-activedescendant`; arrows, Enter, Escape closes
+    then clears), keeps the old `searchBar`/`searchInput` classes so every
+    header variant styles it as before, debounces 150ms, aborts the previous
+    request, remembers 30 answers, and never shows a result for a query other
+    than the one in the box. ★ `.searchWrap` is now the header's flex item,
+    so the market pill's sizing lives on it and it needs `min-width: 0`.
+    ★ PHONES: the box is hidden below 768px, so `header/phone-search.tsx`
+    puts a search icon in the phone header that opens a full-width sheet,
+    PORTALLED into `.storefront-root` — the scrolled header's
+    `backdrop-filter` makes it the containing block for fixed children, and
+    the root carries the theme tokens. The drawer's own search was removed;
+    the merchant's `showSearch` switch now governs phone search as well
+    (it used to show in the drawer regardless).
+    **★★ THE HEADER FOLDS BY FIT, NOT BY BREAKPOINT (2026-09-26).** Between
+    769px and ~1100px the menu ran into the delivery control and search box
+    on Vitrine, Studio and Ritual (at 800px Vitrine's header was 817px wide
+    and its links wrapped onto two lines). A breakpoint cannot fix that:
+    whether a header fits depends on the theme's font, the merchant's links
+    and their length, the logo, and whether search and cart are on.
+    `header/use-header-fit.ts` measures the live header and writes
+    `data-header-compact` on it; `lib/storefront/header-fit.ts` (pure) picks
+    the fewest steps from `COMPACT_STEPS`, in order: `nav` (menu hidden,
+    hamburger shown), `delivery` (header control hidden, the drawer's copy
+    shown), `search` (box hidden, the phone search icon shown). The CSS for
+    each step is in `Header.module.css` and `delivery-location.module.css`,
+    and a test fails if a step has none. Fits means: no horizontal overflow,
+    ≥12px between neighbouring items sorted by position (so the centred
+    variant, whose menu sits left of the logo, is judged correctly), and
+    search/delivery not squeezed below 140/120px. They can shrink to a
+    sliver without overlapping anything.
+    ★ Every check starts from the full header, so a tablet rotated to
+    landscape unfolds again.
+    ★ Transitions are switched off while measuring
+    (`data-header-measuring`). The search box animates its width and the
+    header its padding, and a mid-animation reading once passed a fit that
+    then closed to a 4px gap.
+    ★ A `ResizeObserver` on the header triggers it, not the window `resize`
+    event, which can fire before the new width is laid out. So do
+    `document.fonts.ready` and the header's content deps.
+    ★ The attribute is written to the DOM, never rendered, so React never
+    writes it back, and the fold lands before paint rather than after a
+    state round trip.
+    ★ Phones (≤768px) keep CSS horizontal layout and skip fit compaction:
+    their row overlaps hit areas on purpose. Height is still measured.
+    The same observer publishes the final bar height as `--sm-header-h`
+    on its own `.storefront-root`, including on phones and after font or
+    size changes, and restores the previous inline value on cleanup.
+    Before hydration CSS supplies 80/88/68px desktop/tablet/phone fallbacks.
+    Market headers reserve this height on the root instead of estimating
+    it as 10vh. Non-market section pages whose first rendered section is
+    neither a native hero/carousel nor custom-code hero reserve the height
+    plus a 16–32px gap on `.home-sections`. Thus a leading ticker or text
+    cannot sit behind the logo/actions; existing hero-led origins remain.
+    `scripts/storefront-header-layout-check.mjs` checks production CSS in
+    local Chromium across header variants, viewport sizes, content origins,
+    server/measured clearance and stylesheet load order; fixture screenshots
+    are not live-theme evidence. Presentation only; shopper actions stay the
+    same, so no Help Centre update.
+    ★ Nav links are `white-space: nowrap`, so a wrapped link shows up as
+    overlap instead of hiding it.
+    ★ The header has a 24px `column-gap` above 768px. The market header's
+    growing search pill had put its delivery control flush against the last
+    menu link.
+    ★★ The delivery control was unreachable between 769px and 900px: the
+    header's copy hid below 900px while the drawer's only appeared below
+    768px. It is now always in exactly one of the two.
+    **Delivery-location and PDP delivery polish (2026-09-29).** The
+    header selector now uses a compact, fixed-radius control with a clear
+    icon badge, stronger focus/hover treatment and a stable width, while
+    the drawer keeps the theme's control radius. Product delivery details
+    are content cards rather than control pills, so themes whose control
+    shape is a 999px pill no longer render a giant oval. The PIN form has
+    a clear disabled state, active button treatment, focus ring and a
+    stacked button/input layout below 560px so it cannot squeeze or clip
+    on narrow product pages. This is presentation-only; postal-code
+    validation, remembered locations and server estimates are unchanged.
+    ⚠ The server cannot measure, so on a tablet the first paint before
+    hydration can still show the unfolded header for a moment.
+    **Shop page and collection pages (1.8).** Every active category has its
+    own page, `(pages)/collections/[slug]/page.tsx`: self-canonical, the
+    category's name as title and h1, its description as meta description
+    (cut to 155 characters on a word), its image as OG image, a
+    BreadcrumbList, `noindex` while `?q` is present, 404 for an unknown or
+    hidden slug. ★ There is NO `collections/page.tsx`, so a merchant page
+    slugged `collections` could still resolve — "collections" is nonetheless
+    in `RESERVED_PAGE_SLUGS` and `STOREFRONT_CODE_ROUTES` so no new one can be
+    made. `/shop?category=<active slug>` answers **308** to it
+    (`legacyCategoryRedirect`, `lib/storefront/collection-links.ts`),
+    carrying every other parameter; an unknown slug and the `uncategorized`
+    "Other" view stay on /shop. `collectionPath(slug)` is the ONE builder,
+    used by the shop's category chips (now real `<Link>`s in a
+    `nav[aria-label=Categories]`), homepage category tiles, search
+    suggestions, the product breadcrumb (active category only), the builder
+    placeholder and the sitemap, which lists a collection only when a product
+    is on it, dated by its newest product's `content_updated_at`
+    (`populatedCollections`). Theme validation accepts `/collections/<slug>`
+    as a category link and refuses a bare `/collections`.
+    `shop/shop-view.ts` (server-only) is the ONE loader both pages share
+    (products, categories, resolved layout, low-stock threshold, offer
+    badges), so /shop and a collection cannot price or badge differently.
+    **Shared shop filters (2026-10-05).** Sorting, price and availability
+    filters, active-filter chips, result counts and Load more are available
+    on every theme, including existing pinned themes that omit or disable
+    `ThemeLayout.shopFilters`. The legacy package field remains accepted
+    for installed themes and paid-request replay; the appearance resolver
+    returns `shopFilters: true`, and `ShopClient` defaults on. URL filters
+    therefore apply consistently on /shop and /collections/<slug>.
+    `collectionBanner` remains a theme opt-in (`=== true`). `lib/storefront/shop-filters.ts`
+    (pure) owns the vocabulary: sorts featured | price-asc | price-desc |
+    newest | name, `stock=in`, rupee `min`/`max` (a backwards pair swaps,
+    negative or absurd bounds drop), `page` = how many 24-product pages are
+    revealed (capped at 200). Defaults are omitted from the URL and junk is
+    ignored, never an error. Sorting is stable with the featured order as
+    tie-break; price means `effectivePricing(p).selling` and sold out means
+    `productIsSoldOut` — the card's own rules. ★ State changes go through
+    `history.replaceState`: every product is already loaded, so a sort is a
+    re-order, not a round trip, and Back leaves the shop rather than undoing
+    one filter at a time. When Next reuses `ShopClient` for a new same-route URL
+    (header search, navigation or history), it adopts the complete server-parsed
+    query/sort/stock/price/page state; a filter removed from the URL therefore
+    cannot remain active invisibly. ★ "Load more" reveals already-loaded products;
+    it paginates the DOM, not the query. `shop/shop-filter-panel.tsx` is a
+    dialog (side drawer; bottom sheet at ≤600px), PORTALLED into
+    `.storefront-root` for the theme tokens, with a focus trap and scroll
+    lock. ★ ITS CHANGES ARE A DRAFT until "Show N products", which quotes the
+    count first; Escape, the backdrop or Close discard it. Active filters show
+    as removable chips beside a Sort select and an `aria-live` count, and an
+    empty result offers "Clear filters". `collectionBanner` puts the
+    category's image and description above a collection's grid (no search in
+    the box). The row types gained `products.created_at` and
+    `categories.description`, so both cache keys moved to `-v2`. Stage B, the
+    package contract, the fake provider and prompt `theme-studio-v8` carry the
+    two keys and write `/collections/<slug>` menu links. Help:
+    `20260925_0139_collection_pages_help` replaces the categories guide's
+    handle sentence in place. `20261005_0160_shared_shop_filters_help`
+    corrects the product-visibility guide's troubleshooting paragraph to
+    explain clearing price/availability filters, sorting and mobile access.
+    **★★ Shopify-style filters, Phase 1 (2026-10-06).** Category (on
+    /shop and search only — a collection is one category), Availability,
+    product OPTIONS (Size, Colour, any axis) and Price, with a count on
+    every value. `lib/storefront/shop-filters.ts` owns the query and the
+    one predicate `matchesShopQuery`; `shop-facets.ts` builds the lists;
+    `shop-product-facts.ts` turns a product row into facts with the card's
+    own price (`variantEffectiveSelling`) and stock (`isSoldOut`) rules.
+    `getPublishedProducts` now also selects `products.options` and
+    `product_variants.option_values`.
+    ★ AND between filters, OR within one (Shopify's rule).
+    ★★ VARIANT-AWARE: one VARIANT must satisfy every option filter, In stock
+    only and the price range together. Otherwise "M + in stock" matches a
+    product whose M is sold out and whose L is in stock.
+    ★ Each value's count ignores its own filter (disjunctive), so with M
+    ticked the list still says how many L would add. Values come from
+    the products in scope BEFORE the shopper's filters, so a value stays
+    listed (greyed, 0) instead of vanishing. A filter with one value is
+    hidden unless ticked. "Colour"/"Color" are one filter (`facetKey`).
+    Values compare case-insensitively (`valueKey`). Sizes sort by wear
+    order (XS…6XL), then by the first number inside ("UK 6" before
+    "UK 10"), then first-seen.
+    ★ URLs: `filter.v.option.<key>=<value>` and `filter.p.category=<slug>`,
+    repeated for several values; `stock=in`/`min`/`max` keep working and
+    Shopify's `filter.v.availability=1`/`filter.v.price.gte|lte` are read.
+    `withShopQuery` drops every `filter.*` key it rewrites.
+    ★ ≥1024px: a sticky sidebar (`.shop-sidebar`) that applies at once, and
+    the Filter button is hidden. Smaller screens: the drawer, a draft until
+    "Show N". One `ShopFilterControls` renders both. Price commits on
+    Enter/blur in the sidebar, and a backwards range is swapped only when
+    applied, never mid-typing.
+    ⚠ Legacy name-only variants (no option axes) match no option filter.
+    The merchant sets options in the product editor, as the Help guide
+    (0167) says. Merchant-configurable filters, vendor/type/tags and
+    server-side filtering are Phases 2–3, not built.
+    **★★ Colourways: photos per colour, one card per colour (2026-10-06).**
+    The H&M model stays ONE product with a Colour × Size matrix (one place
+    to edit, one inventory). Four parts:
+    (1) `ProductOption.images` holds photos per colour value, uploaded once
+    in the options editor under "Photos for each colour" instead of once
+    per variant row. `photoAxis` picks the option that carries them: the
+    first with photos, else the swatch option, else one named like a
+    colour. `photosForVariant` gives a variant's photos: its own (an
+    exception set on that variant), else its colour's.
+    ★★ They are ordinary product images to the save path:
+    `productFormImageUrls` and `fetchProductImageUrls` include
+    `optionImageUrls`, so ownership is checked and the clean-up sweep
+    counts them as still in use. Without that, a save would delete the
+    product's own colour photos from storage (pinned by a mutation-checked
+    test).
+    (2) The product page and quick add show the selected colour's photos,
+    and the picker draws a colour with photos as a photo tile
+    (`.sm-opt-value.is-photo`).
+    (3) Every card shows a colour row (up to 4 squares and "+N"). It is
+    display-only, because the card is one link.
+    (4) `StorefrontAppearance.productCards` (`product` | `colour`, Website
+    Builder → Brand → Storefront layout) makes `ShopClient` expand each
+    product through `lib/storefront/colour-cards.ts`. Each colour becomes
+    a card restricted to that colour's variants, so its price, sold-out
+    flag, filters and counts follow those variants alone. Its link is
+    `?variant=<the colour's first in-stock variant>`.
+    ★ A product splits only when at least one colour has its own photo,
+    or every card would show the same picture.
+    ⚠ Homepage carousels and related products stay one card per product.
+    The setting reaches the Builder preview only after the page reloads.
+    `getPublishedProducts` now also selects variant `id` and `images`.
+    `storefront: "grocery"` is the deepest variant: it swaps the shared
+    product cards, the product-detail page and the cart for a distinct
+    premium grocery layout, so a store on such a theme looks NOTHING like the
+    classic WholeSip storefront. Product cards restyle via the
+    `sm-storefront-grocery` root class (CSS-only, in `storefront-theme.css`,
+    doubled-class specificity over the per-grid rules). The PDP and cart
+    branch to ENTIRELY SEPARATE markup + classes (`grocery-product-detail.tsx`
+    / `gpdp-*` in shop.css; `grocery-cart.tsx` / `gcart-*` in cart.css) — the
+    page servers read the flag via `lib/store/storefront-layout.ts`
+    (`getStorefrontLayout`) and pass a `grocery` prop to the client
+    components; the grocery shop listing swaps in a clean neutral header. (The
+    classic shop hero is now brand-aware — store name + tagline, not hardcoded
+    WholeSip — and the old hardcoded promo ticker was removed; a ticker is a
+    builder section type now, §11.)
+    All of this is GATED, so the WholeSip fallback and any classic theme keep
+    today's shared layout untouched. (Basket is the first grocery theme.)
+    Shared `ShopCard` spacing is width-aware across these skins: the card
+    is an inline-size container, and non-overlay cards with ≤220px of
+    content width use compact body spacing and typography, with a full-width
+    40px-minimum quick-add target. Category pills have explicit 1.25 line
+    height, bounded width and a 6px title gap; long labels wrap without
+    clipping. Starting prices and each base-price/discount pair wrap as
+    groups, and absent stock/offer badges reserve no empty column. Homepage
+    carousel cards stretch to a common bottom edge. Overlay cards retain
+    their full-photo proportions. These shared styles apply to existing
+    themes on deployment without regenerating their packages or images.
+    `scripts/product-card-layout-check.mjs` checks 200 offline Chromium
+    fixtures across five viewport widths, five skins, home/shop surfaces,
+    both CSS load orders, and ordinary/long-label price cases; it checks
+    overflow, pill spacing, content height and quick-add target size. Its
+    optional screenshots are local fixtures, not evidence from a live theme.
+    Design derives from the installed preset release at RENDER time. New
+    installs are version-pinned in store settings; legacy stores without the
+    pin resolve the catalog's current release. - **Newsletter capture**:
+    `newsletter-form.tsx` is shared by the footer and the builder newsletter
+    section. ★ ONE FORM PER PAGE (2026-10-08): `PageSectionRenderer` sets
+    `data-sm-closing="newsletter"` on `.home-sections` when the page's last
+    enabled section is a newsletter (`lib/sections/closing-section.ts`,
+    pure), and a `:has()` rule in `storefront-theme.css` hides the footer's
+    `[data-sm="footer-newsletter"]` bar on exactly that page — three of the
+    four bundled themes close on a newsletter, and the 2026-10-04 benchmark
+    flagged the back-to-back forms as a defect. Other pages keep the footer
+    form. `subscribeNewsletter` derives tenancy from the request host,
+    validates email plus explicit consent, honeypots bots, rate-limits per
+    store/IP, and service-upserts one active row per store/email while recording
+    the displayed consent copy and source. Storage is
+    `newsletter_subscribers` (`themes_01_newsletter_subscribers.sql`): anon has
+    no direct write grant and authenticated store admins have read-only RLS. - **Phase 4d (not built, by design)**: nothing pending — homepage, static
+    pages, and menus are all migrated. config/site.ts, brand.md and the
+    file-based AI skills are deleted, and the shop hero is brand-aware. The
+    `--wholesip-*` CSS token namespace (→ `--sm-*`) and `WHOLESIP_STORE_ID` (→
+    `FALLBACK_STORE_ID`) are now renamed too; only the repo name `wholesip` and
+    the `brand/` dir remain as legacy WholeSip naming.
 
 12. **Checkout & orders security model (COD).** A signed-in shopper places an
     order from `/checkout`; `placeOrder` (`app/actions/checkout-actions.ts`) is
@@ -15781,7 +15929,10 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   off), **`THEME_STUDIO_DAILY_SPEND_USD`** (per-operator rolling-24h
   estimated-spend ceiling; none unless set to a positive number), and
   **`THEME_STUDIO_AUTO_QA_ENABLED`** (code default false and effective only
-  with capture enabled). Cloud Build explicitly sets the provider to
+  with capture enabled), and **`THEME_STUDIO_PERFORMANCE_REQUIRED`** (code
+  default false; `true` makes `browser.performance` a required gate: LCP
+  ≤ 3 s and CLS < 0.1 at phone390 and desktop1440, judged from the
+  automatic capture). Cloud Build explicitly sets the provider to
   `vertex-gemini` and enables generation, capture and automatic QA in dev and
   production; both worker schedules were deployed and smoke-checked on
   2026-09-29. Preview tokens are signed with

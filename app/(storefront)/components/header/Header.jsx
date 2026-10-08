@@ -409,9 +409,11 @@ export default function Header() {
         </button>
       </div>
 
-      {/* Mobile Drawer Menu */}
+      {/* Mobile Drawer Menu. `data-sm` is the acceptance probe's stable hook
+          (studio-acceptance-states.ts): it opens the drawer and audits it. */}
       <div
         className={`${styles.mobileDrawer} ${isMenuOpen ? styles.drawerOpen : ""}`}
+        data-sm="menu-drawer"
       >
         <div className={styles.drawerHeader}>
           <Link

@@ -94,7 +94,7 @@ export default function Footer() {
     <footer className={styles.footer}>
       {/* Newsletter Bar */}
       {footerCfg.newsletter.enabled && (
-        <div className={styles.newsletterBar}>
+        <div className={styles.newsletterBar} data-sm="footer-newsletter">
           <div className={styles.newsletterInner}>
             <div className={styles.newsletterText}>
               <span className={styles.newsletterLabel}>

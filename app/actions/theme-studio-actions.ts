@@ -60,6 +60,7 @@ import {
   startThemeStudioAcceptance,
   submitThemeStudioBrowserEvidence,
   type AcceptanceBrowserPlan,
+  type ManualVisualQaEvidence,
 } from "@/lib/theme-studio/acceptance";
 
 export interface ThemeStudioActionResult {
@@ -486,7 +487,11 @@ export async function submitThemeStudioBrowserEvidenceAction(input: {
   nonce: string;
   evidence: unknown;
 }): Promise<
-  ThemeStudioActionResult & { status?: "passed" | "failed" | "blocked" }
+  ThemeStudioActionResult & {
+    status?: "passed" | "failed" | "blocked";
+    candidate?: boolean;
+    visualQa?: ManualVisualQaEvidence | null;
+  }
 > {
   const actor = await getThemeStudioActor();
   if (!actor) return NOT_AUTHORIZED;
@@ -498,7 +503,13 @@ export async function submitThemeStudioBrowserEvidenceAction(input: {
       evidence: input.evidence,
     });
     revalidatePath(`${STUDIO_PATH}/${input.projectId}`, "layout");
-    return { ok: true, id: input.runId, status: result.status };
+    return {
+      ok: true,
+      id: input.runId,
+      status: result.status,
+      candidate: result.candidate,
+      visualQa: result.visualQa,
+    };
   } catch (error) {
     return failure(error, "submit browser evidence");
   }

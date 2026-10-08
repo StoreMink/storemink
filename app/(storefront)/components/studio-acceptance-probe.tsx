@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
-import type { Result as AxeResult } from "axe-core";
+import type { ElementContext, Result as AxeResult } from "axe-core";
 import { isPlatformHost } from "@/lib/store/host";
 import { REVEAL_ALL_EVENT } from "@/lib/themes/motion";
+import { measureChromeStates } from "./studio-acceptance-states";
 
 // ---------------------------------------------------------------------------
 // The Theme Studio acceptance probe.
@@ -17,7 +18,13 @@ import { REVEAL_ALL_EVENT } from "@/lib/themes/motion";
 //   • horizontal overflow in pixels, and the elements causing it;
 //   • axe-core WCAG 2.1 A/AA violations with their impact;
 //   • images that failed to load (after scrolling, so lazy images load);
-//   • LCP and cumulative layout shift from the Performance timeline.
+//   • LCP and cumulative layout shift from the Performance timeline;
+//   • on the home page, the menu drawer, search sheet, cart drawer, account
+//     menu and sign-in dialog, each opened, audited and closed
+//     (studio-acceptance-states.ts) — they are hidden on load, so nothing
+//     else ever measured them;
+//   • the text axe could not judge (over a photograph, gradient or
+//     overlapping layer), as evidence for the vision reviewer.
 //
 // ★ IT DECIDES NOTHING. Thresholds are applied on the server
 // (lib/theme-studio/acceptance-gates.ts); there is no "passed" field here.
@@ -89,6 +96,29 @@ function contrastMeasurements(violation: AxeResult) {
         : [];
     }),
   );
+}
+
+/** The colour-contrast nodes axe could not judge, with its reason
+ * (`bgImage`, `bgGradient`, `bgOverlap`, `imgNode`, …), deduplicated by
+ * selector pattern so twenty cards over one photograph count once. */
+function unresolvedContrast(incomplete: AxeResult[]) {
+  const seen = new Set<string>();
+  const out: { target: string; reason: string }[] = [];
+  for (const result of incomplete) {
+    if (result.id !== "color-contrast") continue;
+    for (const node of result.nodes) {
+      const target = String(node.target[0] ?? "");
+      const check = (node.any ?? []).find((c) => c.id === "color-contrast");
+      const data = check?.data as { messageKey?: unknown } | null | undefined;
+      const reason = String(data?.messageKey ?? "unknown").slice(0, 40);
+      const key = `${target.replace(/:nth-(?:child|of-type)\(\d+\)/g, "")}|${reason}`;
+      if (!target || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ target: target.slice(-180), reason });
+      if (out.length === 40) return out;
+    }
+  }
+  return out;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<void> {
@@ -174,9 +204,9 @@ function clippedOverflow(limit: number): { px: number; offenders: string[] } {
   return { px, offenders };
 }
 
-function clippedText(limit: number) {
+function clippedText(limit: number, root: ParentNode | null = document.body) {
   const findings: { target: string; clippedX: number; clippedY: number }[] = [];
-  const elements = document.body?.querySelectorAll("*") ?? [];
+  const elements = root?.querySelectorAll("*") ?? [];
   for (let i = 0; i < elements.length && i < 6000; i += 1) {
     const element = elements[i];
     // querySelectorAll's type parameter does not filter SVG/MathML nodes.
@@ -248,12 +278,12 @@ function clippedText(limit: number) {
   return findings;
 }
 
-function smallTapTargets(limit: number) {
+function smallTapTargets(limit: number, root: ParentNode = document) {
   if (window.innerWidth > 768) return [];
   const findings: { target: string; width: number; height: number }[] = [];
   const selector =
     'a[href],button,input:not([type="hidden"]),select,textarea,[role="button"],[role="link"]';
-  for (const element of document.querySelectorAll<HTMLElement>(selector)) {
+  for (const element of root.querySelectorAll<HTMLElement>(selector)) {
     if (findings.length >= limit) break;
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
@@ -395,6 +425,17 @@ async function measure(perf: { lcp: number | null; cls: number }) {
     );
   }
   if (document.fonts?.ready) await withTimeout(document.fonts.ready, 5_000);
+  // ★★ TIMING IS FROZEN HERE, before anything below moves the page. LCP keeps
+  // accepting larger candidates until a USER scrolls, and the scroll-through
+  // below is programmatic — so a hero far down the page was reported as the
+  // largest paint at 25 s (benchmark 2026-10-04), and lazy images loading as
+  // the page was scrolled counted as layout shifts (CLS up to 1.4 on the
+  // same run). What is frozen is what a shopper's first screen cost, which
+  // is what the thresholds were written for.
+  const timing = {
+    lcpMs: perf.lcp === null ? null : Math.round(perf.lcp),
+    cls: Math.round(perf.cls * 10_000) / 10_000,
+  };
   // A theme that reveals sections on scroll holds some at opacity 0 until
   // they arrive; show them all first, so axe and the overflow check measure
   // every section rather than skipping the ones not yet revealed.
@@ -424,17 +465,17 @@ async function measure(perf: { lcp: number | null; cls: number }) {
   const overflowPx = Math.max(scrollWidth - root.clientWidth, clipped.px);
   const brokenImages = await confirmBrokenImages();
 
-  const axe = (await import("axe-core")).default;
-  const results = await axe.run(
-    { exclude: [["nextjs-portal"]] },
-    {
-      runOnly: {
-        type: "tag",
-        values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
-      },
-      resultTypes: ["violations"],
-    },
-  );
+  const page = await axeAudit({ exclude: [["nextjs-portal"]] });
+  const pageFindings = {
+    clippedText: clippedText(40),
+    smallTapTargets: smallTapTargets(60),
+    imageCropIssues: imageCropIssues(40),
+  };
+  // The chrome states open last (a drawer's scroll lock drops the scrollbar,
+  // which would register as a shift — but `timing` was frozen long before).
+  // The header chrome is the same on every surface, so its states are
+  // opened once, on the home page; the gates expect them there.
+  const states = location.pathname === "/" ? await chromeStates() : [];
 
   return {
     path: `${location.pathname}${location.search}`.slice(0, 512),
@@ -442,10 +483,34 @@ async function measure(perf: { lcp: number | null; cls: number }) {
     height: window.innerHeight,
     overflowPx,
     overflowOffenders: overflowPx > 1 ? clipped.offenders : [],
-    clippedText: clippedText(40),
-    smallTapTargets: smallTapTargets(60),
-    imageCropIssues: imageCropIssues(40),
+    ...pageFindings,
     brokenImages,
+    violations: page.violations,
+    contrastUnresolved: page.contrastUnresolved,
+    states,
+    ...timing,
+  };
+}
+
+type AxeAudit = Awaited<ReturnType<typeof axeAudit>>;
+
+/** WCAG 2.1 A/AA over `context`: the violations with their measured
+ * contrast, plus the colour-contrast nodes axe left `incomplete`. */
+async function axeAudit(context: ElementContext) {
+  const axe = (await import("axe-core")).default;
+  const results = await axe.run(context, {
+    runOnly: {
+      type: "tag",
+      values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
+    },
+    // `incomplete` is what axe could not judge — text over a photograph, a
+    // gradient or an overlapping layer. Asking for violations alone (the
+    // previous setting) left a hero caption on a pale photograph unmeasured
+    // AND unreported; the vision reviewer can see the pixels, so it gets
+    // the list.
+    resultTypes: ["violations", "incomplete"],
+  });
+  return {
     violations: results.violations.slice(0, 100).map((violation) => ({
       id: violation.id,
       impact: violation.impact ?? null,
@@ -458,9 +523,30 @@ async function measure(perf: { lcp: number | null; cls: number }) {
       examples: violationExamples(violation),
       contrast: contrastMeasurements(violation),
     })),
-    lcpMs: perf.lcp === null ? null : Math.round(perf.lcp),
-    cls: Math.round(perf.cls * 10_000) / 10_000,
+    contrastUnresolved: unresolvedContrast(results.incomplete ?? []),
   };
+}
+
+const EMPTY_STATE_AUDIT = {
+  violations: [] as AxeAudit["violations"],
+  contrastUnresolved: [] as AxeAudit["contrastUnresolved"],
+  clippedText: [] as ReturnType<typeof clippedText>,
+  smallTapTargets: [] as ReturnType<typeof smallTapTargets>,
+};
+
+/** Open each chrome state and audit what appeared, scoped to its panel. A
+ * state that was not measured carries empty findings and its reason, so the
+ * wire shape is uniform and the server can tell "clean" from "never opened". */
+async function chromeStates() {
+  const measured = await measureChromeStates(async (panel) => ({
+    ...(await axeAudit(panel)),
+    clippedText: clippedText(20, panel),
+    smallTapTargets: smallTapTargets(30, panel),
+  }));
+  return measured.map(({ audit, ...rest }) => ({
+    ...rest,
+    ...(audit ?? EMPTY_STATE_AUDIT),
+  }));
 }
 
 export function StudioAcceptanceProbe() {
