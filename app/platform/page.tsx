@@ -6,14 +6,15 @@ import {
   Check,
   ChevronDown,
   CircleCheck,
+  Code2,
   Globe2,
   LayoutTemplate,
-  Megaphone,
+  MessageSquare,
   Package,
-  Receipt,
-  RefreshCcw,
+  Palette,
   ShoppingBag,
   Smartphone,
+  Sparkles,
   Store,
   Users,
 } from "lucide-react";
@@ -24,407 +25,64 @@ import {
   platformOrganizationSchema,
   platformWebsiteSchema,
 } from "@/lib/seo/brand-identity";
-import {
-  planFeatureMatrix,
-  allowanceLabel,
-  includedMinkCredits,
-  type IncludedMinkCredits,
-  PLAN_LIMITS,
-  PLAN_META,
-  type PlanMatrixValue,
-} from "@/lib/plans";
+import { allowanceLabel, includedMinkCredits } from "@/lib/plans";
 import { getPlanPricing } from "@/lib/plans/pricing";
 import { getPlanAllowances } from "@/lib/plans/allowances";
 import { getMinkConfig } from "@/lib/mink/config";
-import { BrandMark } from "./brand-mark";
 import { SiteFooter } from "./site-footer";
 import { SiteHeader } from "./site-header";
 import { PricingCards, type PricingCard } from "./pricing-cards";
-import { BuilderArt, InvoiceArt, StorefrontArt } from "./product-art";
+import { FAQS, PLANS } from "./pricing-content";
+import {
+  ChannelsArt,
+  CommerceCommandCentre,
+  GrowthArt,
+  MinkArt,
+  OrderFlowArt,
+} from "./homepage-art";
+import {
+  BuilderArt,
+  InvoiceArt,
+  RegisterArt,
+  StorefrontArt,
+} from "./product-art";
 import "./homepage.css";
 
 // The homepage stays a server component. The only client JavaScript is the
 // isolated monthly/yearly switch inside PricingCards and the mobile menu;
-// everything else remains fast, crawlable and keyboard-friendly.
+// everything else — the rotating hero line, the channel marquee, the header
+// dropdowns — is CSS, so it remains fast, crawlable and keyboard-friendly.
+//
+// Structure follows the shopify.com homepage beat for beat (dark hero with a
+// rotating promise → "sell everywhere" strip → three product cards → regional
+// section → merchant-stage stories → AI assistant → customisation → POS →
+// trust numbers → pricing → three steps → FAQ → final CTA → dark footer), but
+// every claim on it is a StoreMink capability that exists today. No invented
+// merchants, no invented conversion statistics.
 
-const PLANS = [
-  {
-    meta: PLAN_META.free,
-    who: "Try everything. Launch your first store.",
-    features: [
-      "Storefront on your own subdomain",
-      "Website builder — every section type",
-      `Up to ${PLAN_LIMITS.free.maxProducts} products`,
-      "Blogs, reviews and enquiries",
-      "GST invoicing and tax classes",
-      "Cash on delivery checkout",
-      "Full admin dashboard",
-    ],
-    cta: "Start free",
-    popular: false,
-  },
-  {
-    meta: PLAN_META.basic,
-    who: "For new brands getting their first orders.",
-    features: [
-      "Everything in Free, plus:",
-      "Online payments — your own gateway, 0% to us",
-      `${PLAN_LIMITS.basic.maxProducts} products`,
-      `${PLAN_LIMITS.basic.maxStaff} staff accounts with roles`,
-      "Customer groups and blog submissions",
-      "Shiprocket fulfilment and custom code",
-    ],
-    cta: `Choose ${PLAN_META.basic.name}`,
-    popular: true,
-  },
-  {
-    meta: PLAN_META.pro,
-    who: "For growing brands, a team, and a counter.",
-    features: [
-      `Everything in ${PLAN_META.basic.name}, plus:`,
-      "Point of Sale — till, staff PINs, shifts",
-      `${PLAN_LIMITS.pro.posLocationsIncluded} shop locations, ${PLAN_LIMITS.pro.posDevicesPerLocation} tills each`,
-      "Stock per location, and transfers",
-      "Buy online, collect in store",
-      "Email campaigns",
-      "Your own custom domain",
-      "Advanced analytics — GA4, Meta Pixel and conversion insights",
-      "Unlimited products and staff",
-    ],
-    cta: `Choose ${PLAN_META.pro.name}`,
-    popular: false,
-  },
+// The rotating second line of the hero. The first entry is also the one a
+// screen reader and a reduced-motion visitor get, so it has to stand alone.
+const HERO_ROTATION = [
+  "the store they line up for.",
+  "a household name.",
+  "a shop on every street.",
+  "a wholesale business.",
+  "the next big thing.",
 ];
 
-function MatrixValue({ value }: { value: PlanMatrixValue }) {
-  if (value === true) {
-    return (
-      <span className="smh-matrix-yes" aria-label="Included">
-        <Check size={17} aria-hidden="true" />
-      </span>
-    );
-  }
-  if (value === false || value === "—") {
-    return (
-      <span className="smh-matrix-no" aria-label="Not included">
-        —
-      </span>
-    );
-  }
-  return <span>{value}</span>;
-}
-
-function PlanComparison({ included }: { included: IncludedMinkCredits }) {
-  return (
-    <div className="smh-matrix-wrap">
-      <h3>Compare every feature</h3>
-      <div className="smh-matrix-scroll">
-        <table className="smh-matrix">
-          <thead>
-            <tr>
-              <th scope="col">Feature</th>
-              <th scope="col">Free</th>
-              <th scope="col">Basic</th>
-              <th scope="col">Pro</th>
-            </tr>
-          </thead>
-          <tbody>
-            {planFeatureMatrix(included).flatMap((section) => [
-              <tr className="smh-matrix-section" key={section.title}>
-                <th colSpan={4} scope="colgroup">
-                  {section.title}
-                </th>
-              </tr>,
-              ...section.rows.map((row) => (
-                <tr key={`${section.title}-${row.label}`}>
-                  <th scope="row">{row.label}</th>
-                  <td>
-                    <MatrixValue value={row.free} />
-                  </td>
-                  <td>
-                    <MatrixValue value={row.basic} />
-                  </td>
-                  <td>
-                    <MatrixValue value={row.pro} />
-                  </td>
-                </tr>
-              )),
-            ])}
-          </tbody>
-        </table>
-      </div>
-      <p className="smh-matrix-note">
-        If a payment fails or you downgrade, StoreMink keeps your existing
-        products, settings, content and history. Lower-plan limits only pause
-        gated features and new over-limit additions; upgrading restores access.
-      </p>
-    </div>
-  );
-}
-
-const FAQS = [
-  {
-    q: "Can I start without paying?",
-    a: "Yes. The Free plan lets you build and publish a working StoreMink storefront without a credit card. When you need your own domain, online payments, more products or Point of Sale, you can upgrade without rebuilding anything.",
-  },
-  {
-    q: "Does StoreMink charge a transaction fee?",
-    a: "No. Connect your own supported payment gateway and customer payments settle directly to you. StoreMink charges the plan price, not a percentage of your sales.",
-  },
-  {
-    q: "Can my website and physical shop share inventory?",
-    a: "Yes. StoreMink Point of Sale uses the same catalogue, customer records and location-aware inventory as your online store. Sales, returns, pickup orders and stock transfers stay connected.",
-  },
-  {
-    q: "Do I need a developer to design my store?",
-    a: "No. Choose a theme, add your brand, and arrange ready-made sections in the visual website builder. You can preview changes before publishing them.",
-  },
-  {
-    q: "Can I sell both D2C and B2B?",
-    a: "Yes. A single StoreMink store can handle regular online purchases alongside enquiry-based and wholesale selling, so your catalogue and customer data do not split into separate systems.",
-  },
-  {
-    q: "Is StoreMink built for Indian businesses?",
-    a: "Yes. Plans are priced in rupees, GST tax classes and invoices are built in, and StoreMink supports the payment and fulfilment workflows Indian brands use every day.",
-  },
-  {
-    q: "What can Mink AI do?",
-    a: "Mink AI is StoreMink's built-in assistant, currently in beta. It can answer permission-aware questions from your store data and prepare private, editable content drafts. Guarded dashboard actions will expand as their approval controls are ready.",
-  },
+// The "sell everywhere" strip. Each is a real StoreMink channel or capability.
+const CHANNELS = [
+  { icon: Globe2, label: "Online store", note: "yourbrand.storemink.com" },
+  { icon: Store, label: "Point of Sale", note: "Counter, tablet or phone" },
+  { icon: MessageSquare, label: "Enquiries", note: "Quote-based selling" },
+  { icon: Package, label: "Pickup in store", note: "Buy online, collect" },
+  { icon: Users, label: "Wholesale (B2B)", note: "Customer groups & pricing" },
+  { icon: BarChart3, label: "Email campaigns", note: "Merge-tag emails" },
+  { icon: Palette, label: "Your own domain", note: "yourbrand.com" },
+  { icon: Sparkles, label: "Mink AI", note: "Built into the dashboard" },
 ];
 
 const priceInr = (value: number) => `₹${value.toLocaleString("en-IN")}`;
-
-function CommerceCommandCentre() {
-  const orders = [
-    ["#1028", "Aarav Mehta", "₹2,490", "Paid"],
-    ["#1027", "Naina Kapoor", "₹1,280", "Ready"],
-    ["#1026", "Riya Shah", "₹3,940", "Packed"],
-  ];
-
-  return (
-    <div className="smh-command" aria-hidden="true">
-      <div className="smh-command-window">
-        <div className="smh-command-bar">
-          <span className="smh-command-dots">
-            <i />
-            <i />
-            <i />
-          </span>
-          <span className="smh-command-address">app.storemink.com</span>
-          <span className="smh-live">
-            <i /> Live
-          </span>
-        </div>
-        <div className="smh-command-body">
-          <aside className="smh-command-rail">
-            <span className="is-brand">
-              <BrandMark size={18} />
-            </span>
-            <span className="is-active">
-              <BarChart3 size={15} />
-            </span>
-            <span>
-              <ShoppingBag size={15} />
-            </span>
-            <span>
-              <Package size={15} />
-            </span>
-            <span>
-              <Users size={15} />
-            </span>
-          </aside>
-          <div className="smh-command-main">
-            <div className="smh-command-heading">
-              <div>
-                <small>Tuesday, 25 August</small>
-                <b>Good afternoon, Rhea</b>
-              </div>
-              <span>
-                Last 30 days <ChevronDown size={11} />
-              </span>
-            </div>
-            <div className="smh-metrics">
-              <div>
-                <span>Net sales</span>
-                <b>₹48,420</b>
-                <small>↗ 18.4%</small>
-              </div>
-              <div>
-                <span>Orders</span>
-                <b>128</b>
-                <small>↗ 12.1%</small>
-              </div>
-              <div>
-                <span>Customers</span>
-                <b>94</b>
-                <small>↗ 8.7%</small>
-              </div>
-            </div>
-            <div className="smh-command-grid">
-              <div className="smh-chart-card">
-                <span>Sales across your store</span>
-                <div className="smh-chart">
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                </div>
-                <div className="smh-chart-labels">
-                  <span>1 Aug</span>
-                  <span>15 Aug</span>
-                  <span>Today</span>
-                </div>
-              </div>
-              <div className="smh-channel-card">
-                <span>Sales by channel</span>
-                <div className="smh-donut">
-                  <i>76%</i>
-                </div>
-                <small>
-                  <i className="online" /> Online store
-                </small>
-                <small>
-                  <i className="retail" /> Retail POS
-                </small>
-              </div>
-            </div>
-            <div className="smh-orders-card">
-              <div>
-                <b>Latest orders</b>
-                <span>View all</span>
-              </div>
-              {orders.map(([id, customer, amount, status]) => (
-                <p key={id}>
-                  <b>{id}</b>
-                  <span>{customer}</span>
-                  <strong>{amount}</strong>
-                  <em>{status}</em>
-                </p>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="smh-float-store">
-        <span>
-          <Globe2 size={15} />
-        </span>
-        <div>
-          <small>Online store</small>
-          <b>yourbrand.com</b>
-        </div>
-        <em>Live</em>
-      </div>
-      <div className="smh-float-pos">
-        <span>
-          <Store size={16} />
-        </span>
-        <div>
-          <small>Retail POS</small>
-          <b>Connaught Place</b>
-        </div>
-        <em>Online</em>
-      </div>
-      <div className="smh-float-order">
-        <CircleCheck size={16} />
-        <span>
-          <b>New order</b>
-          <small>₹2,490 · just now</small>
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function OrderFlowArt() {
-  return (
-    <div className="smh-order-art" aria-hidden="true">
-      <div className="smh-order-top">
-        <span>Orders</span>
-        <em>All locations</em>
-      </div>
-      <div className="smh-order-tabs">
-        <b>All</b>
-        <span>Unfulfilled</span>
-        <span>Ready</span>
-        <span>Delivered</span>
-      </div>
-      <div className="smh-order-row is-head">
-        <span>Order</span>
-        <span>Customer</span>
-        <span>Channel</span>
-        <span>Total</span>
-      </div>
-      <div className="smh-order-row">
-        <b>#1028</b>
-        <span>Aarav Mehta</span>
-        <span>
-          <i className="smh-dot-purple" /> Online
-        </span>
-        <strong>₹2,490</strong>
-      </div>
-      <div className="smh-order-row">
-        <b>#1027</b>
-        <span>Naina Kapoor</span>
-        <span>
-          <i className="smh-dot-green" /> POS
-        </span>
-        <strong>₹1,280</strong>
-      </div>
-      <div className="smh-order-row">
-        <b>#1026</b>
-        <span>Riya Shah</span>
-        <span>
-          <i className="smh-dot-purple" /> Online
-        </span>
-        <strong>₹3,940</strong>
-      </div>
-      <div className="smh-sync-pill">
-        <RefreshCcw size={13} /> Inventory synced across 2 locations
-      </div>
-    </div>
-  );
-}
-
-function GrowthArt() {
-  return (
-    <div className="smh-growth-art" aria-hidden="true">
-      <div className="smh-growth-stat">
-        <small>Returning customer rate</small>
-        <b>34.8%</b>
-        <span>+6.2% this month</span>
-      </div>
-      <div className="smh-growth-bars">
-        <i />
-        <i />
-        <i />
-        <i />
-        <i />
-        <i />
-        <i />
-        <i />
-        <i />
-      </div>
-      <div className="smh-growth-actions">
-        <span>
-          <Megaphone size={15} /> Campaign sent <b>2,840</b>
-        </span>
-        <span>
-          <Receipt size={15} /> Coupon orders <b>126</b>
-        </span>
-      </div>
-    </div>
-  );
-}
 
 export default async function StoreminkLanding() {
   // The allowance is operator-editable (lib/plans/allowances.ts), so the
@@ -521,152 +179,322 @@ export default async function StoreminkLanding() {
         <SiteHeader />
 
         <main id="main-content">
+          {/* Hero — dark, full-bleed, one promise and one button. */}
           <section className="smh-hero">
-            <div className="smh-hero-wash" aria-hidden="true" />
+            <div className="smh-hero-glow" aria-hidden="true" />
             <div className="smh-container smh-hero-copy">
               <p className="smh-eyebrow">
-                <span>AI-native</span> business platform, built in India{" "}
-                <ArrowRight size={13} />
+                <span>AI-native</span> business platform, built in India
               </p>
               <h1>
                 Build <em>what&apos;s yours.</em>
+                <span className="smh-rotator">
+                  <span className="smh-rotator-static">
+                    Be {HERO_ROTATION[0]}
+                  </span>
+                  <span className="smh-rotator-track" aria-hidden="true">
+                    {/* The first line is repeated at the end so the slide
+                        loops back to it without a visible jump. */}
+                    {[...HERO_ROTATION, HERO_ROTATION[0]].map((line, i) => (
+                      <span key={`${line}-${i}`}>Be {line}</span>
+                    ))}
+                  </span>
+                </span>
               </h1>
               <p className="smh-hero-lead">
-                Turn your idea into a distinctive brand, a working business and
-                something that can grow. StoreMink brings your commerce,
-                operations and intelligence together in one place.
+                Dream big and build fast on StoreMink. Your storefront,
+                operations and intelligence together in one place — the commerce
+                platform made for how India sells.
               </p>
               <div className="smh-hero-actions">
-                <Link href="/signup" className="smh-button smh-button-primary">
-                  Start building free <ArrowRight size={17} />
+                <Link href="/signup" className="smh-button smh-button-light">
+                  Start for free
                 </Link>
-                <a href="#platform" className="smh-button smh-button-soft">
-                  Explore the platform
-                </a>
               </div>
-              <div className="smh-hero-proof">
-                <span>
-                  <Check size={15} /> Free plan forever
-                </span>
-                <span>
-                  <Check size={15} /> No credit card
-                </span>
-                <span>
-                  <Check size={15} /> 0% transaction fee
-                </span>
-              </div>
+              <p className="smh-hero-proof">
+                Free plan forever · No credit card · 0% StoreMink transaction
+                fee
+              </p>
             </div>
             <div className="smh-container smh-command-wrap">
               <CommerceCommandCentre />
             </div>
           </section>
 
-          <section className="smh-outcomes" aria-label="StoreMink advantages">
-            <div className="smh-container smh-outcome-grid">
-              <div>
-                <b>₹0</b>
-                <span>to start building</span>
-              </div>
-              <div>
-                <b>0%</b>
-                <span>StoreMink transaction fee</span>
-              </div>
-              <div>
-                <b>D2C + B2B</b>
-                <span>in one storefront</span>
-              </div>
-              <div>
-                <b>Online + POS</b>
-                <span>one connected operation</span>
+          {/* Sell everywhere — the channel strip. */}
+          <section className="smh-everywhere" aria-label="Where you can sell">
+            <div className="smh-container">
+              <h2>
+                Sell everywhere people shop. <span>Online and in person.</span>{" "}
+                <span>On enquiry and wholesale.</span>{" "}
+                <span>From one dashboard.</span>
+              </h2>
+            </div>
+            <div className="smh-marquee" aria-hidden="true">
+              <div className="smh-marquee-track">
+                {[...CHANNELS, ...CHANNELS].map((channel, index) => (
+                  <div className="smh-marquee-card" key={index}>
+                    <span>
+                      <channel.icon size={18} />
+                    </span>
+                    <b>{channel.label}</b>
+                    <small>{channel.note}</small>
+                  </div>
+                ))}
               </div>
             </div>
+            <ul className="smh-everywhere-list">
+              {CHANNELS.map((channel) => (
+                <li key={channel.label}>{channel.label}</li>
+              ))}
+            </ul>
           </section>
 
-          <section className="smh-intro" id="platform">
+          {/* Three product cards. */}
+          <section className="smh-cards-area" id="platform">
             <div className="smh-container">
               <p className="smh-section-label">One business operating system</p>
-              <h2>
-                Everything behind your brand.
-                <br />
-                <em>Nothing to stitch together.</em>
-              </h2>
-              <p className="smh-section-lead">
-                Start with an idea. Build the brand, shape how it sells and run
-                the business behind it without outgrowing the platform.
-              </p>
+              <div className="smh-cards">
+                <article className="smh-card">
+                  <div className="smh-card-art smh-card-art-store">
+                    <StorefrontArt />
+                  </div>
+                  <div className="smh-card-copy">
+                    <h2>Get a store that&apos;s built to sell</h2>
+                    <p>
+                      Pick a theme, arrange ready-made sections in the visual
+                      builder and publish on your own domain. No developer
+                      needed.
+                    </p>
+                    <Link
+                      href="/products/online-store"
+                      className="smh-text-link"
+                    >
+                      Build your online store <ArrowRight size={15} />
+                    </Link>
+                  </div>
+                </article>
+
+                <article className="smh-card">
+                  <div className="smh-card-art smh-card-art-orders">
+                    <OrderFlowArt />
+                  </div>
+                  <div className="smh-card-copy">
+                    <h2>Control everything in one place</h2>
+                    <p>
+                      Orders, inventory, customers and the counter. Run it all
+                      from one dashboard that stays in sync.
+                    </p>
+                    <ul className="smh-chip-list">
+                      <li>Payments</li>
+                      <li>Shipping</li>
+                      <li>Customers</li>
+                      <li>Retail</li>
+                      <li>Inventory</li>
+                      <li>Catalogue</li>
+                    </ul>
+                  </div>
+                </article>
+
+                <article className="smh-card">
+                  <div className="smh-card-art smh-card-art-channels">
+                    <ChannelsArt />
+                  </div>
+                  <div className="smh-card-copy">
+                    <h2>Sell on every channel</h2>
+                    <p>
+                      Online orders, counter sales, pickups, enquiries and
+                      wholesale — one catalogue, one customer list.
+                    </p>
+                    <Link
+                      href="/products/orders-inventory"
+                      className="smh-text-link"
+                    >
+                      Sell online and in store <ArrowRight size={15} />
+                    </Link>
+                  </div>
+                </article>
+              </div>
             </div>
           </section>
 
-          <section
-            className="smh-bento smh-container"
-            aria-label="Commerce platform features"
-          >
-            <article className="smh-bento-card smh-bento-store">
-              <div className="smh-bento-copy">
-                <span className="smh-icon-chip">
-                  <LayoutTemplate size={20} />
-                </span>
-                <p className="smh-card-label">Online store</p>
-                <h3>A storefront that feels like your brand.</h3>
+          {/* Built for India. */}
+          <section className="smh-india" id="india">
+            <div className="smh-container smh-india-grid">
+              <div className="smh-india-copy">
+                <h2>Built for the way India sells</h2>
                 <p>
-                  Choose a theme, arrange sections, add your own domain and
-                  publish—without waiting on a developer.
+                  Rupee pricing, GST tax classes and printable invoices are
+                  built in. Connect your own payment gateway and keep every
+                  rupee — StoreMink takes 0% of your sales.
                 </p>
-                <a href={THEMES_URL}>
-                  Explore themes <ArrowRight size={15} />
-                </a>
+                <ul className="smh-check-list">
+                  <li>
+                    <Check size={16} /> Inclusive or exclusive GST pricing
+                  </li>
+                  <li>
+                    <Check size={16} /> HSN codes and CGST/SGST breakdowns
+                  </li>
+                  <li>
+                    <Check size={16} /> Cash on delivery and online payments
+                  </li>
+                  <li>
+                    <Check size={16} /> Shiprocket fulfilment
+                  </li>
+                </ul>
+                <Link href="/pricing" className="smh-button smh-button-dark">
+                  See plans in rupees
+                </Link>
               </div>
-              <div className="smh-store-art">
-                <StorefrontArt />
+              <div className="smh-india-art">
+                <InvoiceArt />
               </div>
-            </article>
-
-            <article className="smh-bento-card smh-bento-builder">
-              <div className="smh-bento-copy">
-                <span className="smh-icon-chip">
-                  <Globe2 size={20} />
-                </span>
-                <p className="smh-card-label">Visual builder</p>
-                <h3>Make every page yours.</h3>
-                <p>
-                  Build with ready-made sections, preview every change and
-                  publish when it is right.
-                </p>
-              </div>
-              <BuilderArt />
-            </article>
-
-            <article className="smh-bento-card smh-bento-orders">
-              <div className="smh-bento-copy">
-                <span className="smh-icon-chip">
-                  <Package size={20} />
-                </span>
-                <p className="smh-card-label">Orders & inventory</p>
-                <h3>Every order. Every location. One clear view.</h3>
-                <p>
-                  Track fulfilment, pickup, returns and stock without hopping
-                  between systems.
-                </p>
-              </div>
-              <OrderFlowArt />
-            </article>
-
-            <article className="smh-bento-card smh-bento-growth">
-              <div className="smh-bento-copy">
-                <span className="smh-icon-chip">
-                  <BarChart3 size={20} />
-                </span>
-                <p className="smh-card-label">Customers & growth</p>
-                <h3>Turn first orders into lasting relationships.</h3>
-                <p>
-                  Use customer groups, coupons, reviews, blogs and email
-                  campaigns—all fed by the same customer history.
-                </p>
-              </div>
-              <GrowthArt />
-            </article>
+            </div>
           </section>
 
+          {/* For every stage. */}
+          <section className="smh-stories">
+            <div className="smh-container">
+              <h2>For anyone from a first order to a growing brand</h2>
+              <div className="smh-story-grid">
+                <article className="smh-story is-start">
+                  <div className="smh-story-copy">
+                    <small>Get started fast</small>
+                    <h3>
+                      Launch from your kitchen table, with a store that looks
+                      the part.
+                    </h3>
+                  </div>
+                  <div className="smh-story-art">
+                    <StorefrontArt />
+                  </div>
+                </article>
+                <article className="smh-story is-grow">
+                  <div className="smh-story-copy">
+                    <small>Grow as big as you want</small>
+                    <h3>
+                      Turn first orders into repeat customers with groups,
+                      coupons and campaigns.
+                    </h3>
+                  </div>
+                  <div className="smh-story-art">
+                    <GrowthArt />
+                  </div>
+                </article>
+                <article className="smh-story is-retail">
+                  <div className="smh-story-copy">
+                    <small>Open the counter</small>
+                    <h3>
+                      Add a shop, a second one, and keep every shelf in sync
+                      with your site.
+                    </h3>
+                  </div>
+                  <div className="smh-story-art">
+                    <RegisterArt compact />
+                  </div>
+                </article>
+              </div>
+              <div className="smh-stories-cta">
+                <Link href="/pricing" className="smh-button smh-button-dark">
+                  Pick a plan that fits
+                </Link>
+              </div>
+            </div>
+          </section>
+
+          {/* Mink AI. */}
+          <section className="smh-mink" id="mink">
+            <div className="smh-container smh-mink-grid">
+              <div className="smh-mink-copy">
+                <p className="smh-section-label">Your very own commerce AI</p>
+                <h2>Meet your secret weapon, Mink.</h2>
+                <p>
+                  Ask questions about your store and get answers from your own
+                  data. Have Mink prepare product descriptions, emails and pages
+                  as private drafts you review before anything goes live. Built
+                  right into your StoreMink dashboard.
+                </p>
+                <ul className="smh-check-list is-light">
+                  <li>
+                    <Check size={16} /> Permission-aware answers from your store
+                    data
+                  </li>
+                  <li>
+                    <Check size={16} /> Private, editable drafts — nothing
+                    publishes itself
+                  </li>
+                  <li>
+                    <Check size={16} /> Mink credits included on every plan
+                  </li>
+                </ul>
+                <Link
+                  href="/products/mink-ai"
+                  className="smh-text-link is-light"
+                >
+                  Meet Mink AI <ArrowRight size={15} />
+                </Link>
+              </div>
+              <MinkArt />
+            </div>
+          </section>
+
+          {/* Customise everything. */}
+          <section className="smh-custom">
+            <div className="smh-container">
+              <div className="smh-custom-head">
+                <h2>Make every page yours</h2>
+                <p>
+                  Start from a theme, shape it in the builder, and go further
+                  with your own code when you want to.
+                </p>
+              </div>
+              <div className="smh-custom-grid">
+                <article className="smh-custom-card is-wide">
+                  <div className="smh-custom-copy">
+                    <span className="smh-icon-chip">
+                      <LayoutTemplate size={20} />
+                    </span>
+                    <h3>Visual website builder</h3>
+                    <p>
+                      Arrange ready-made sections, preview every change and
+                      publish when it is right.
+                    </p>
+                  </div>
+                  <div className="smh-custom-art">
+                    <BuilderArt />
+                  </div>
+                </article>
+                <article className="smh-custom-card">
+                  <span className="smh-icon-chip">
+                    <Palette size={20} />
+                  </span>
+                  <h3>Themes</h3>
+                  <p>
+                    Distinct looks with their own type and colour, ready to make
+                    your own.
+                  </p>
+                  <a href={THEMES_URL} className="smh-text-link">
+                    Browse themes <ArrowRight size={15} />
+                  </a>
+                </article>
+                <article className="smh-custom-card">
+                  <span className="smh-icon-chip">
+                    <Code2 size={20} />
+                  </span>
+                  <h3>Custom code</h3>
+                  <p>
+                    Add your own snippets and tracking on paid plans when the
+                    builder is not enough.
+                  </p>
+                  <Link href="/pricing" className="smh-text-link">
+                    See what each plan includes <ArrowRight size={15} />
+                  </Link>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          {/* Point of Sale. */}
           <section className="smh-pos">
             <div className="smh-container smh-pos-grid">
               <div className="smh-pos-copy">
@@ -721,77 +549,39 @@ export default async function StoreminkLanding() {
             </div>
           </section>
 
-          <section className="smh-journey">
+          {/* Trust. */}
+          <section className="smh-trust" aria-label="Why build on StoreMink">
             <div className="smh-container">
-              <div className="smh-journey-head">
+              <h2>There&apos;s no better place for you to build</h2>
+              <div className="smh-trust-grid">
                 <div>
-                  <p className="smh-section-label">From idea to first order</p>
-                  <h2>Open your store today.</h2>
+                  <b>₹0</b>
+                  <span>to start. Free plan, no card.</span>
                 </div>
-                <p>
-                  No agency handoff. No app checklist. Just three focused steps
-                  inside one dashboard.
-                </p>
+                <div>
+                  <b>0%</b>
+                  <span>
+                    StoreMink transaction fee. Your gateway, your money.
+                  </span>
+                </div>
+                <div>
+                  <b>D2C + B2B</b>
+                  <span>in one storefront, one catalogue.</span>
+                </div>
+                <div>
+                  <b>Online + POS</b>
+                  <span>one inventory, every location.</span>
+                </div>
               </div>
-              <ol className="smh-journey-steps">
-                <li>
-                  <span>01</span>
-                  <div className="smh-step-icon">
-                    <Store size={22} />
-                  </div>
-                  <h3>Create your store</h3>
-                  <p>
-                    Choose your name and your storefront is ready immediately.
-                  </p>
-                </li>
-                <li>
-                  <span>02</span>
-                  <div className="smh-step-icon">
-                    <LayoutTemplate size={22} />
-                  </div>
-                  <h3>Make it unmistakably yours</h3>
-                  <p>Add products, colours, content and your own domain.</p>
-                </li>
-                <li>
-                  <span>03</span>
-                  <div className="smh-step-icon">
-                    <ShoppingBag size={22} />
-                  </div>
-                  <h3>Start selling everywhere</h3>
-                  <p>
-                    Take online orders, counter sales, enquiries and pickups.
-                  </p>
-                </li>
-              </ol>
-            </div>
-          </section>
-
-          <section className="smh-tax smh-container">
-            <div className="smh-tax-copy">
-              <p className="smh-section-label">Built for the way India sells</p>
-              <h2>GST-ready from the first invoice.</h2>
-              <p>
-                Set your tax classes and place of supply once. StoreMink
-                prepares clear, printable invoices for every order—online or in
-                store.
+              <p className="smh-trust-note">
+                <CircleCheck size={16} /> Your products, settings, content and
+                history are never deleted by a plan downgrade or a failed
+                payment.
               </p>
-              <div className="smh-tax-points">
-                <span>
-                  <Check size={16} /> Inclusive or exclusive pricing
-                </span>
-                <span>
-                  <Check size={16} /> HSN and tax breakdowns
-                </span>
-                <span>
-                  <Check size={16} /> Downloadable invoices
-                </span>
-              </div>
-            </div>
-            <div className="smh-tax-art">
-              <InvoiceArt />
             </div>
           </section>
 
+          {/* Pricing. */}
           <section className="smh-pricing-area" id="pricing">
             <div className="smh-container">
               <div className="smh-pricing-head">
@@ -806,14 +596,66 @@ export default async function StoreminkLanding() {
               <div className="smh-pricing-component">
                 <PricingCards plans={pricingCards} />
               </div>
-              <PlanComparison included={included} />
               <p className="smh-pricing-foot">
                 <CircleCheck size={16} /> Your store data is never deleted by a
                 plan downgrade or failed payment.
               </p>
+              <div className="smh-pricing-more">
+                <Link href="/pricing" className="smh-text-link">
+                  Compare every feature on every plan <ArrowRight size={15} />
+                </Link>
+              </div>
             </div>
           </section>
 
+          {/* Three steps. */}
+          <section className="smh-steps">
+            <div className="smh-container">
+              <h2>Build fast on StoreMink</h2>
+              <ol className="smh-steps-list">
+                <li>
+                  <span>1</span>
+                  <div className="smh-step-icon">
+                    <Package size={22} />
+                  </div>
+                  <h3>Add your first product</h3>
+                  <p>
+                    Name, price, photos and GST class. Mink can draft the
+                    description.
+                  </p>
+                </li>
+                <li>
+                  <span>2</span>
+                  <div className="smh-step-icon">
+                    <LayoutTemplate size={22} />
+                  </div>
+                  <h3>Customise your store</h3>
+                  <p>
+                    Choose a theme, arrange sections, add your logo and your own
+                    domain.
+                  </p>
+                </li>
+                <li>
+                  <span>3</span>
+                  <div className="smh-step-icon">
+                    <ShoppingBag size={22} />
+                  </div>
+                  <h3>Set up payments</h3>
+                  <p>
+                    Turn on cash on delivery, or connect your own gateway and
+                    start taking orders.
+                  </p>
+                </li>
+              </ol>
+              <div className="smh-steps-cta">
+                <Link href="/signup" className="smh-button smh-button-dark">
+                  Take your shot <ArrowRight size={17} />
+                </Link>
+              </div>
+            </div>
+          </section>
+
+          {/* FAQ. */}
           <section className="smh-faq" id="faq">
             <div className="smh-container smh-faq-grid">
               <div className="smh-faq-copy">
@@ -840,22 +682,21 @@ export default async function StoreminkLanding() {
             </div>
           </section>
 
+          {/* Final CTA. */}
           <section className="smh-final">
-            <div className="smh-container smh-final-card">
-              <div className="smh-final-glow" aria-hidden="true" />
-              <p className="smh-section-label">Your next chapter starts here</p>
-              <h2>Build a store people remember.</h2>
+            <div className="smh-container smh-final-inner">
+              <h2>Start selling with StoreMink today</h2>
               <p>
-                Start free today. Bring your products, your brand and your
-                ambition.
+                Free plan forever. No credit card. Bring your products, your
+                brand and your ambition.
               </p>
               <div>
-                <Link href="/signup" className="smh-button smh-button-light">
-                  Create your store free <ArrowRight size={17} />
+                <Link href="/signup" className="smh-button smh-button-dark">
+                  Start for free
                 </Link>
-                <a href="#pricing" className="smh-button smh-button-outline">
+                <Link href="/pricing" className="smh-button smh-button-soft">
                   See plans
-                </a>
+                </Link>
               </div>
             </div>
           </section>

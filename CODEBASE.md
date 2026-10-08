@@ -2726,10 +2726,55 @@ wholesip/
 │   │                          # (e.g. blogs → blogs/settings — see convention #9)
 │   │
 │   ├── platform/              # ★ STOREMINK PLATFORM (served on storemink.com via rewrite)
-│   │   ├── page.tsx           # Marketing landing page — connected commerce
-│   │   │                      # story (storefront + operations + POS + growth),
-│   │   │                      # with scoped visuals in homepage.css; live plan
+│   │   ├── page.tsx           # Marketing landing page, laid out beat for beat
+│   │   │                      # like shopify.com (2026-10-08): dark full-bleed
+│   │   │                      # hero with a CSS-rotated promise line + the
+│   │   │                      # dashboard art rising out of it → "sell
+│   │   │                      # everywhere" channel marquee → three product
+│   │   │                      # cards → Built for India (GST) → three
+│   │   │                      # merchant-stage story cards → Mink AI (the
+│   │   │                      # Sidekick slot) → customise (builder/themes/
+│   │   │                      # code) → POS → trust tiles → pricing + matrix
+│   │   │                      # → three steps → FAQ → final CTA → dark footer.
+│   │   │                      # Every claim is a shipped capability: no
+│   │   │                      # invented merchants or conversion statistics.
+│   │   │                      # Still a server component; the only client JS
+│   │   │                      # is the pricing switch and the mobile menu —
+│   │   │                      # rotator, marquee and header dropdowns are CSS.
+│   │   │                      # Scoped visuals in homepage.css; live plan
 │   │   │                      # prices still resolve from the canonical catalog
+│   │   ├── homepage-art.tsx   # The drawn dashboard/orders/channels/growth/
+│   │   │                      # Mink artwork, shared by the homepage and
+│   │   │                      # the product pages (product-art.tsx holds the
+│   │   │                      # storefront/builder/register/invoice ones)
+│   │   ├── pricing-content.tsx # PLANS copy, the feature matrix and FAQS —
+│   │   │                      # one source for the homepage and /pricing
+│   │   ├── marketing-routes.ts # ★ THE REGISTRY of marketing pages (Why
+│   │   │                      # StoreMink, Products + five product pages,
+│   │   │                      # Pricing). Pure. Read by the header, footer,
+│   │   │                      # mobile menu AND app/sitemap.ts, and pinned
+│   │   │                      # both ways by homepage.test.ts (every entry
+│   │   │                      # has a page.tsx, every page.tsx is an entry).
+│   │   ├── (marketing)/       # ★ The inner marketing site (2026-10-08) —
+│   │   │                      # storemink.com was one long page while
+│   │   │                      # shopify.com is a family of pages. layout.tsx
+│   │   │                      # = .smh + SiteHeader/SiteFooter; blocks.tsx =
+│   │   │                      # PageHero / FeatureRow(s) / PillarGrid /
+│   │   │                      # CtaBand / RelatedPages + marketingMetadata
+│   │   │                      # (canonical per page); marketing.css = the
+│   │   │                      # smm-* blocks on top of homepage.css.
+│   │   │                      # why-storemink/, products/ (overview) +
+│   │   │                      # products/{online-store,orders-inventory,
+│   │   │                      # payments,marketing,mink-ai}/, pricing/ (cards
+│   │   │                      # + full matrix + FAQ; the homepage keeps the
+│   │   │                      # cards and links here for the comparison).
+│   │   │                      # Point of Sale and Themes stay on their own
+│   │   │                      # hosts and are linked, not duplicated.
+│   │   ├── site-header.tsx    # Shared header: Why StoreMink + Products are
+│   │   │                      # hover/focus-within CSS dropdowns (no JS),
+│   │   │                      # every item a real route from the registry
+│   │   ├── site-footer.tsx    # Shared dark footer: four columns, a static
+│   │   │                      # "India · English · ₹" region line, legal row
 │   │   ├── homepage-mobile-nav.tsx # Accessible, auto-closing mobile menu
 │   │   ├── signup/            # ★ Store creation wizard (see §19): Shopify-style
 │   │   │                      # step order — email → password (+ Continue with

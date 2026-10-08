@@ -1,0 +1,620 @@
+/* --------------------------------------------------------------------------
+   Marketing pages (Why StoreMink, Products, Pricing).
+
+   Loaded beside homepage.css and scoped under the same .smh root, so the
+   tokens, buttons, links and chrome are shared. These are only the blocks the
+   inner pages compose from: page hero, feature rows, pillar grid, CTA band.
+   -------------------------------------------------------------------------- */
+
+/* Page hero -------------------------------------------------------------- */
+
+.smm-hero {
+  padding: 96px 0 72px;
+  background: linear-gradient(180deg, #fff 0%, var(--smh-grey) 100%);
+}
+
+.smm-hero.is-dark {
+  background:
+    radial-gradient(
+      ellipse 60% 50% at 50% 0%,
+      rgba(87, 60, 240, 0.45),
+      transparent 70%
+    ),
+    var(--smh-black);
+  color: #fff;
+}
+
+.smm-hero.is-dark .smh-section-label {
+  color: #c9bdff;
+}
+
+.smm-hero-copy {
+  max-width: 900px;
+  text-align: center;
+}
+
+.smm-hero h1 {
+  margin-top: 16px;
+  font-size: clamp(42px, 6vw, 80px);
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -0.045em;
+}
+
+.smm-hero h1 em {
+  font-style: normal;
+  color: var(--smh-purple);
+}
+
+.smm-hero.is-dark h1 em {
+  color: #c9bdff;
+}
+
+.smm-hero-lead {
+  max-width: 680px;
+  margin: 24px auto 0 !important;
+  color: var(--smh-muted);
+  font-size: clamp(17px, 1.6vw, 20px);
+  line-height: 1.55;
+}
+
+.smm-hero.is-dark .smm-hero-lead {
+  color: #c4c5d4;
+}
+
+.smm-hero-actions {
+  display: flex;
+  justify-content: center;
+  gap: 11px;
+  margin-top: 30px;
+}
+
+.smm-hero-actions .smh-button {
+  min-height: 54px;
+  padding-inline: 30px;
+  font-size: 16px;
+}
+
+.smm-hero-art {
+  margin-top: 56px;
+}
+
+/* Feature rows ----------------------------------------------------------- */
+
+.smm-features {
+  padding: 96px 0;
+  background: #fff;
+}
+
+.smm-feature-list {
+  display: grid;
+  gap: 96px;
+}
+
+.smm-feature {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  align-items: center;
+  gap: 72px;
+}
+
+.smm-feature.is-flip .smm-feature-copy {
+  order: 2;
+}
+
+.smm-feature-list
+  > .smm-feature:nth-child(even):not(.is-flip)
+  .smm-feature-copy {
+  order: 2;
+}
+
+.smm-feature h2 {
+  margin-top: 14px;
+  font-size: clamp(30px, 3.4vw, 44px);
+}
+
+.smm-feature-copy > p:not(.smh-section-label) {
+  max-width: 500px;
+  margin-top: 18px !important;
+  color: var(--smh-muted);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.smm-feature-copy .smh-check-list {
+  margin-top: 22px;
+}
+
+.smm-feature-copy .smh-text-link {
+  margin-top: 24px;
+}
+
+.smm-art {
+  position: relative;
+  min-height: 420px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 40px;
+  border-radius: var(--smh-radius);
+}
+
+.smm-art.is-lilac {
+  background: linear-gradient(160deg, #ece8ff, #f6f4ff 55%, #e6f7ed);
+}
+
+.smm-art.is-mint {
+  background: linear-gradient(160deg, #e2f7ea, #f3fbf6 60%, #eeeaff);
+}
+
+.smm-art.is-cream {
+  background:
+    radial-gradient(
+      circle at 95% 0%,
+      rgba(107, 83, 239, 0.16),
+      transparent 39%
+    ),
+    var(--smh-cream);
+}
+
+.smm-art.is-grey {
+  background: var(--smh-grey);
+}
+
+.smm-art.is-navy {
+  background:
+    radial-gradient(circle at 90% 0%, rgba(100, 73, 233, 0.6), transparent 40%),
+    var(--smh-navy);
+  color: #fff;
+}
+
+/* Artwork sizing inside a feature panel. */
+.smm-art .sm-art {
+  width: 100%;
+  max-width: 520px;
+  font-size: 12px;
+}
+
+.smm-art .sm-art-invoice {
+  max-width: 380px;
+  font-size: 14px;
+  transform: rotate(1.5deg);
+}
+
+.smm-art .sm-art-invoice .art-sheet {
+  padding: 23px 25px;
+  border-radius: 15px;
+}
+
+.smm-art .sm-art-invoice .art-inv-title,
+.smm-art .sm-art-invoice .art-inv-meta,
+.smm-art .sm-art-invoice .art-inv-table,
+.smm-art .sm-art-invoice .art-inv-gst div {
+  font-size: 11px;
+}
+
+.smm-art .sm-art-invoice .art-inv-total {
+  padding: 11px 13px;
+  font-size: 13px;
+}
+
+.smm-art .sm-art-store .art-browser {
+  border-radius: 14px;
+  box-shadow: 0 30px 55px -32px rgba(42, 29, 110, 0.6);
+}
+
+.smm-art .sm-art-register {
+  max-width: 560px;
+  font-size: 11px;
+}
+
+.smm-art .smh-order-art {
+  width: 100%;
+  max-width: 520px;
+  margin: 0;
+}
+
+.smm-art .smh-channels-art,
+.smm-art .smh-growth-art {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  max-width: 460px;
+}
+
+.smm-art .smh-mink-art {
+  max-width: 460px;
+  justify-self: center;
+}
+
+.smm-art .smh-command {
+  width: 100%;
+  padding: 10px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.smm-art .smh-command-body {
+  min-height: 0;
+  max-height: 420px;
+  overflow: hidden;
+}
+
+.smm-art .smh-float-order,
+.smm-art .smh-float-store,
+.smm-art .smh-float-pos {
+  display: none;
+}
+
+/* Pillars ---------------------------------------------------------------- */
+
+.smm-pillars {
+  padding: 96px 0;
+}
+
+.smm-pillars.is-grey {
+  background: var(--smh-grey);
+}
+
+.smm-pillars.is-white {
+  background: #fff;
+}
+
+.smm-pillars-head {
+  max-width: 760px;
+  margin-bottom: 44px;
+}
+
+.smm-pillars-head h2 {
+  margin-top: 14px;
+  font-size: clamp(32px, 4.2vw, 54px);
+}
+
+.smm-pillars-head > p:not(.smh-section-label) {
+  margin-top: 16px !important;
+  color: var(--smh-muted);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.smm-pillar-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.smm-pillar-grid.is-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.smm-pillar-grid.is-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.smm-pillar-grid.is-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.smm-pillar {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 30px;
+  border-radius: 24px;
+  background: #fff;
+  color: inherit;
+  text-decoration: none;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.smm-pillars.is-white .smm-pillar {
+  background: var(--smh-grey);
+}
+
+.smm-pillars.is-white .smm-pillar .smh-icon-chip {
+  background: #fff;
+}
+
+.smm-pillar.is-link:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 30px 60px -40px rgba(17, 18, 38, 0.5);
+}
+
+.smm-pillar .smh-icon-chip {
+  background: var(--smh-grey);
+}
+
+.smm-pillar h3 {
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+}
+
+.smm-pillar p {
+  flex: 1;
+  margin-top: 10px !important;
+  color: var(--smh-muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.smm-pillar .smh-text-link {
+  margin-top: 20px;
+  font-size: 14px;
+}
+
+/* CTA band --------------------------------------------------------------- */
+
+.smm-cta {
+  padding: 110px 0;
+  background:
+    radial-gradient(
+      ellipse 50% 60% at 85% 50%,
+      rgba(87, 60, 240, 0.5),
+      transparent 70%
+    ),
+    var(--smh-black);
+  color: #fff;
+}
+
+.smm-cta-inner {
+  max-width: 760px;
+  text-align: center;
+}
+
+.smm-cta h2 {
+  font-size: clamp(38px, 5.2vw, 68px);
+}
+
+.smm-cta p {
+  margin-top: 18px !important;
+  color: #c4c5d4;
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.smm-cta-inner > div {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 32px;
+}
+
+.smm-cta-inner .smh-button {
+  min-height: 54px;
+  padding-inline: 30px;
+  font-size: 16px;
+}
+
+/* Related pages ---------------------------------------------------------- */
+
+.smm-related {
+  padding: 72px 0 96px;
+  background: #fff;
+}
+
+.smm-related-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.smm-related-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 12px;
+  padding: 20px 22px;
+  border: 1px solid var(--smh-line);
+  border-radius: 18px;
+  text-decoration: none;
+  transition: border-color 150ms ease;
+}
+
+.smm-related-card:hover {
+  border-color: rgba(16, 16, 24, 0.35);
+}
+
+.smm-related-card b {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.smm-related-card span {
+  grid-column: 1;
+  margin-top: 3px;
+  color: var(--smh-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.smm-related-card svg {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  color: var(--smh-muted);
+}
+
+/* Pricing page ----------------------------------------------------------- */
+
+.smm-pricing .smh-pricing-area {
+  padding-top: 0;
+}
+
+.smm-pricing .smm-hero {
+  padding-bottom: 36px;
+}
+
+.smm-pricing-faq {
+  padding: 96px 0;
+  background: #fff;
+}
+
+.smm-pricing-faq h2 {
+  margin-top: 15px;
+  font-size: clamp(32px, 4.2vw, 54px);
+}
+
+/* Products overview ------------------------------------------------------ */
+
+.smm-product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.smm-product-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--smh-radius);
+  background: #fff;
+  color: inherit;
+  text-decoration: none;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.smm-product-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 30px 60px -40px rgba(17, 18, 38, 0.5);
+}
+
+.smm-product-card .smm-art {
+  height: 320px;
+  min-height: 0;
+  place-items: start center;
+  padding: 28px;
+  border-radius: 0;
+}
+
+/* Every card's art box is the same height; a tall drawing is cropped at the
+   bottom rather than stretching its card past its neighbours. */
+.smm-product-card .smm-art > * {
+  max-height: 100%;
+}
+
+.smm-product-card .smm-art .sm-art,
+.smm-product-card .smm-art .smh-order-art,
+.smm-product-card .smm-art .smh-channels-art,
+.smm-product-card .smm-art .smh-growth-art,
+.smm-product-card .smm-art .smh-mink-art {
+  max-width: 440px;
+}
+
+.smm-product-copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 28px 30px 30px;
+}
+
+.smm-product-copy h2 {
+  font-size: clamp(22px, 2.2vw, 28px);
+  letter-spacing: -0.03em;
+}
+
+.smm-product-copy p {
+  flex: 1;
+  margin-top: 10px !important;
+  color: var(--smh-muted);
+  font-size: 15.5px;
+  line-height: 1.55;
+}
+
+.smm-product-copy .smh-text-link {
+  margin-top: 20px;
+}
+
+/* Responsive ------------------------------------------------------------- */
+
+@media (max-width: 940px) {
+  .smm-feature {
+    grid-template-columns: 1fr;
+    gap: 36px;
+  }
+  .smm-feature.is-flip .smm-feature-copy,
+  .smm-feature-list
+    > .smm-feature:nth-child(even):not(.is-flip)
+    .smm-feature-copy {
+    order: 0;
+  }
+  .smm-art {
+    min-height: 360px;
+  }
+  .smm-pillar-grid.is-3,
+  .smm-pillar-grid.is-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .smm-related-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .smm-product-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .smm-hero {
+    padding: 64px 0 48px;
+  }
+  .smm-hero h1 {
+    font-size: 40px;
+  }
+  .smm-hero-lead {
+    font-size: 16px;
+  }
+  .smm-hero-actions {
+    flex-direction: column;
+  }
+  .smm-hero-actions .smh-button {
+    width: 100%;
+  }
+  .smm-features,
+  .smm-pillars,
+  .smm-pricing-faq {
+    padding: 64px 0;
+  }
+  .smm-feature-list {
+    gap: 64px;
+  }
+  .smm-feature h2,
+  .smm-pillars-head h2 {
+    font-size: 30px;
+  }
+  .smm-art {
+    min-height: 300px;
+    padding: 22px;
+    border-radius: 22px;
+  }
+  .smm-pillar-grid.is-2,
+  .smm-pillar-grid.is-3,
+  .smm-pillar-grid.is-4,
+  .smm-related-grid {
+    grid-template-columns: 1fr;
+  }
+  .smm-pillar {
+    padding: 24px 22px;
+  }
+  .smm-cta {
+    padding: 72px 0;
+  }
+  .smm-cta h2 {
+    font-size: 38px;
+  }
+  .smm-cta-inner > div {
+    flex-direction: column;
+  }
+  .smm-product-card {
+    border-radius: 22px;
+  }
+  .smm-product-copy {
+    padding: 22px;
+  }
+}
