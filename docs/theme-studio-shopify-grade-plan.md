@@ -14,7 +14,11 @@
 > (default spend ceiling) is dropped by owner decision — no ceiling, matching
 > `config.ts`'s 2026-09-29 note. Phase 1 item 2
 > landed early (deterministic copy floors + brief-aware claims check); the
-> closing-newsletter case became a renderer fix, not a floor. Phase 0 items
+> closing-newsletter case became a renderer fix, not a floor.
+> Phase 1 item 1 is built but not yet run live: `visual-qa-request.ts`
+> (pure request builder), `visual-fixtures.ts` (10 defect + 10 clean pages)
+> and `npm run theme-studio:visual-fixtures` (offline mechanism check passes
+> for all 20; `--live --yes` grades the reviewer at the 90% bar). Phase 0 items
 > 1, 2 and 4 (deploy, route, re-benchmark) are ops and still open.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.

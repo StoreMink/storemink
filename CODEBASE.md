@@ -5897,6 +5897,29 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     stays `ready` and the event/result carry `visualQa: "required"`. Where
     automatic QA is not deployed (`autoQaEnabled` false) promotion proceeds
     and is labelled `visualQa: "not_configured"`.
+    **The reviewer is benchmarked against known defects (2026-10-08).**
+    `lib/theme-studio/visual-qa-request.ts` holds the reviewer's request with
+    no I/O — `visualQaContext`, `VISUAL_QA_SCHEMA`, `parseVisualQaReport`,
+    `VISUAL_QA_SYSTEM_PROMPT` and `buildVisualQaRequest` — and `visual-qa.ts`
+    calls and re-exports it, so a fixture and a real claimed run build the
+    same request byte for byte. `lib/theme-studio/visual-fixtures.ts` is
+    twenty whole homepages in the storefront's own section markup, built
+    from a bundled theme's catalogue (so the reviewer's context matches the
+    page): ten each carry ONE defect it must catch (duplicate newsletter,
+    lorem copy, invented awards/ratings, white-on-gold hero, flat
+    placeholder art, empty sections, overlapping copy, 9px grey text, a
+    neon palette against an ivory brief, clipped headings) and ten are
+    clean. `npm run theme-studio:visual-fixtures` renders them in local
+    Chrome with production CSS at phone390/desktop1440, runs the screenshots
+    through the real `buildVisualEvidence` and request, and answers with the
+    fake client (mechanism only); `-- --live --yes` sends the twenty reviews
+    to Vertex and exits 1 unless ≥9/10 defects are caught AND ≥9/10 clean
+    pages pass (`VISUAL_FIXTURE_BAR`). ★ Both directions, because a false
+    fail buys a paid repair. ★ The fixtures carry the theme's own
+    `designToCssVars` inline, the `data-sm-closing` mark and the footer's
+    `data-sm="footer-newsletter"` hook, so the one-form-per-page rule holds
+    there too. Not yet run live; the first live result belongs in
+    `docs/theme-studio-shopify-grade-plan.md` Phase 1.
     `automatic-qa-policy.ts` queues targeted exact-package revisions for theme
     failures, up to THREE repairs (iterations 0→1→2→3, the ceiling migration
     0145 allows; `MAX_AUTOMATIC_QA_REPAIRS`).
