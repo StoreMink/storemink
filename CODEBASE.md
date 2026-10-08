@@ -2970,6 +2970,15 @@ wholesip/
 │       ├── webhooks/logistics/[connectionId]/ # ★ §35 authenticated carrier events;
 │       │                      # provider-neutral URL accepted by Shiprocket; duplicate and
 │       │                      # out-of-order safe, raw payload service-only
+│       ├── webhooks/whatsapp/ # ★ WhatsApp Cloud API, ONE URL for every merchant
+│       │                      # (docs/whatsapp-commerce-plan.md §9; Phase 0 runbook
+│       │                      # docs/whatsapp-phase0.md). GET answers Meta's handshake
+│       │                      # against WHATSAPP_VERIFY_TOKEN; POST verifies
+│       │                      # X-Hub-Signature-256 over the RAW body with
+│       │                      # WHATSAPP_APP_SECRET, then logs a content-free summary and
+│       │                      # ACTS ON NOTHING. Exists before any table because Meta's
+│       │                      # console cannot be configured without it. Phase 1 routes
+│       │                      # deliveries to stores by metadata.phone_number_id.
 │       ├── cron/send-emails/  # Minute Cloud Scheduler heartbeat for outbound queues:
 │       │                      # coupon campaigns + notification emails (§22).
 │       │                      # Phase 5E promotes due campaigns atomically and
@@ -3125,6 +3134,13 @@ wholesip/
 │   │                          # creation caps; soft downgrades never mutate existing data
 │   ├── shipping/              # ★ §35 checkout policy/types + pure rate translation +
 │   │                          # server-only origin-aware Shiprocket quotation
+│   ├── whatsapp/              # ★ WhatsApp Commerce (docs/whatsapp-commerce-plan.md),
+│   │                          # Phase 0 only: webhook-signature.ts (the two Meta
+│   │                          # verifiers — verify-token handshake and app-secret HMAC,
+│   │                          # constant-time, raw body) and webhook-events.ts (a
+│   │                          # content-free delivery summary: counts and ids, never
+│   │                          # message text or a wa_id, pinned by test). Phase 1 adds
+│   │                          # the SMS-shaped channel/send/worker beside these.
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
 │   │                          # positional render, carrier match, 6-char sender header
 │   │                          # and segment cost, plus the one send choke point, queue,
@@ -15816,6 +15832,25 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   only) is env **`RAZORPAY_KEY_ID`** / **`RAZORPAY_KEY_SECRET`**. Cron routes
   (`/api/cron/*`) require **`CRON_SECRET`** (Vercel Cron sends it as a Bearer
   header).
+- **WhatsApp** (docs/whatsapp-commerce-plan.md; Phase 0 as of 2026-10-08):
+  the webhook reads **`WHATSAPP_VERIFY_TOKEN`** (ours — a high-entropy string
+  pasted into the Meta console, used only for the GET handshake) and
+  **`WHATSAPP_APP_SECRET`** (Meta's, signs every POST). ⚠ They are two
+  different secrets for two different proofs — the token proves we own the
+  URL, the secret proves a delivery came from Meta — and both are per
+  environment, since a Meta app has exactly one callback URL (dev and prod are
+  two Meta apps). With the token unset the handshake answers 503; with the
+  secret unset deliveries are acked 200 and logged as ignored (the Resend
+  precedent) because Phase 0 processes nothing — Phase 1 flips that to 503 the
+  moment a delivery carries data. ⚠ **NOT yet in `cloudbuild.yaml`**: Cloud Run
+  refuses a revision whose `--set-secrets` names a missing secret, so the
+  Secret Manager entries (`WHATSAPP_APP_SECRET_{STAGING,PROD}`,
+  `WHATSAPP_VERIFY_TOKEN_{STAGING,PROD}`, plus `WHATSAPP_SYSTEM_USER_TOKEN_*`
+  for Phase 1) are created first per `docs/whatsapp-phase0.md` §7.1, then
+  wired. `WHATSAPP_APP_ID` and `WHATSAPP_CONFIG_ID` (Embedded Signup) are public
+  identifiers and will ride as plain substitutions. `npm run whatsapp:smoke`
+  takes `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` from the shell
+  only, never from `.env`; `WHATSAPP_GRAPH_VERSION` defaults to `v25.0`.
 - **POS** (§22): the `/pos` device + operator cookies are HMAC-signed with env
   **`POS_SESSION_SECRET`** (any high-entropy string; `openssl rand -base64 32`).
   Required for the register to work; when unset, cookie VERIFY returns null

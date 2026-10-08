@@ -49,7 +49,8 @@
     "help:lint": "node scripts/help-content-lint.mjs",
     "help:audit:local": "DB_HOST=127.0.0.1 DB_PORT=5544 DB_NAME=storemink_local DB_ADMIN_USER=postgres node scripts/help-content-audit.mjs",
     "help:audit:staging": "DB_HOST=127.0.0.1 DB_PORT=6543 DB_NAME=storemink_staging DB_ADMIN_PASSWORD=\"$(gcloud secrets versions access latest --secret=CLOUDSQL_PROD_POSTGRES_PW --project=storemink-prod)\" DB_ADMIN_USER=postgres node scripts/help-content-audit.mjs",
-    "help:audit:prod": "DB_HOST=127.0.0.1 DB_PORT=6543 DB_NAME=storemink DB_ADMIN_PASSWORD=\"$(gcloud secrets versions access latest --secret=CLOUDSQL_PROD_POSTGRES_PW --project=storemink-prod)\" DB_ADMIN_USER=postgres node scripts/help-content-audit.mjs"
+    "help:audit:prod": "DB_HOST=127.0.0.1 DB_PORT=6543 DB_NAME=storemink DB_ADMIN_PASSWORD=\"$(gcloud secrets versions access latest --secret=CLOUDSQL_PROD_POSTGRES_PW --project=storemink-prod)\" DB_ADMIN_USER=postgres node scripts/help-content-audit.mjs",
+    "whatsapp:smoke": "node scripts/whatsapp-smoke.mjs"
   },
   "browserslist": [
     "chrome >= 111",
