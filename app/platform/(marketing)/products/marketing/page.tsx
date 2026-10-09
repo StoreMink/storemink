@@ -1,4 +1,3 @@
-import { BarChart3, Mail, Star, Users } from "lucide-react";
 import { ChannelsArt, GrowthArt } from "../../../homepage-art";
 import { PRODUCT_PAGES } from "../../../marketing-routes";
 import {
@@ -73,22 +72,18 @@ export default function MarketingPage() {
         columns={4}
         pillars={[
           {
-            icon: <Mail size={20} />,
             title: "Email campaigns",
             body: "Send a coupon to all customers or one group, with merge tags and AI-drafted copy, on the Pro plan.",
           },
           {
-            icon: <Star size={20} />,
             title: "Reviews and blogs",
             body: "Product reviews, a blog with reactions and comments, and optional customer submissions you approve.",
           },
           {
-            icon: <Users size={20} />,
             title: "Newsletter capture",
             body: "A consent-aware signup form in the footer and as a section, with the wording recorded alongside each subscriber.",
           },
           {
-            icon: <BarChart3 size={20} />,
             title: "Analytics",
             body: "Sales, channels, locations, top products and Google Search performance. GA4, Meta Pixel and conversion funnels on Pro.",
           },

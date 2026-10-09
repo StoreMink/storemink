@@ -1,4 +1,3 @@
-import { Banknote, CreditCard, FileText, ShieldCheck } from "lucide-react";
 import { PRODUCT_PAGES } from "../../../marketing-routes";
 import { InvoiceArt, RegisterArt } from "../../../product-art";
 import {
@@ -74,22 +73,18 @@ export default function PaymentsPage() {
         columns={4}
         pillars={[
           {
-            icon: <ShieldCheck size={20} />,
             title: "Prices are re-checked",
             body: "Every order is re-priced from your catalogue on the server. A tampered cart cannot change what is charged.",
           },
           {
-            icon: <CreditCard size={20} />,
             title: "Paid means paid",
             body: "An online payment is confirmed with the gateway before an order is marked paid, and reconciled again if a tab is closed.",
           },
           {
-            icon: <Banknote size={20} />,
             title: "Refunds never double",
             body: "A refund is recorded before the money moves and matched back by reference, so a retry cannot pay twice.",
           },
           {
-            icon: <FileText size={20} />,
             title: "Nothing deleted on downgrade",
             body: "Invoices, orders and payment history stay with your store whatever plan you are on.",
           },

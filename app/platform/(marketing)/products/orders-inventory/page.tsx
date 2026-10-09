@@ -1,4 +1,3 @@
-import { MapPin, PackageCheck, RotateCcw, Truck } from "lucide-react";
 import { POS_URL } from "@/lib/site";
 import { ChannelsArt, OrderFlowArt } from "../../../homepage-art";
 import { PRODUCT_PAGES } from "../../../marketing-routes";
@@ -92,22 +91,18 @@ export default function OrdersInventoryPage() {
         columns={4}
         pillars={[
           {
-            icon: <Truck size={20} />,
             title: "Shiprocket, your account",
             body: "Book, label, schedule pickup and track from the order. Live courier rates at checkout, or your own flat and free-shipping rules.",
           },
           {
-            icon: <MapPin size={20} />,
             title: "Routed to the right shop",
             body: "Online orders are routed to a location that has the stock. Customers can pick a shop to collect from instead.",
           },
           {
-            icon: <PackageCheck size={20} />,
             title: "Pickup in store",
             body: "A collection code and a hand-over step at the counter, with the customer's phone verified before goods leave.",
           },
           {
-            icon: <RotateCcw size={20} />,
             title: "Returns and exchanges",
             body: "Requests from the customer's account or returns at the counter, with refunds to the original method or store credit.",
           },

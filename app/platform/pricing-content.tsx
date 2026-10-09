@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Check, Minus } from "lucide-react";
 import {
   planFeatureMatrix,
   type IncludedMinkCredits,
@@ -10,49 +10,50 @@ import {
 // The plan cards' copy, the comparison matrix and the FAQ, shared by the
 // homepage (cards + a short FAQ) and /pricing (everything). One source so the
 // two pages can never advertise different plans.
+//
+// Each feature line is written to fit ONE row of the card at its narrowest
+// width, the way shopify.com/pricing keeps its rows to a few words. Anything
+// longer belongs in the comparison matrix, which /pricing renders in full.
 
 export const PLANS = [
   {
     meta: PLAN_META.free,
-    who: "Try everything. Launch your first store.",
+    who: "For your first store",
     features: [
       "Storefront on your own subdomain",
-      "Website builder — every section type",
+      "Visual website builder",
       `Up to ${PLAN_LIMITS.free.maxProducts} products`,
       "Blogs, reviews and enquiries",
-      "GST invoicing and tax classes",
+      "GST invoices and tax classes",
       "Cash on delivery checkout",
-      "Full admin dashboard",
     ],
     cta: "Start free",
     popular: false,
   },
   {
     meta: PLAN_META.basic,
-    who: "For new brands getting their first orders.",
+    who: "For new brands",
     features: [
-      "Everything in Free, plus:",
-      "Online payments — your own gateway, 0% to us",
+      "Everything in Free",
+      "Online payments, 0% to StoreMink",
       `${PLAN_LIMITS.basic.maxProducts} products`,
-      `${PLAN_LIMITS.basic.maxStaff} staff accounts with roles`,
-      "Customer groups and blog submissions",
-      "Shiprocket fulfilment and custom code",
+      `${PLAN_LIMITS.basic.maxStaff} staff accounts`,
+      "Customer groups",
+      "Shiprocket and custom code",
     ],
     cta: `Choose ${PLAN_META.basic.name}`,
     popular: true,
   },
   {
     meta: PLAN_META.pro,
-    who: "For growing brands, a team, and a counter.",
+    who: "For growing brands",
     features: [
-      `Everything in ${PLAN_META.basic.name}, plus:`,
-      "Point of Sale — till, staff PINs, shifts",
-      `${PLAN_LIMITS.pro.posLocationsIncluded} shop locations, ${PLAN_LIMITS.pro.posDevicesPerLocation} tills each`,
-      "Stock per location, and transfers",
+      `Everything in ${PLAN_META.basic.name}`,
+      `Point of Sale, ${PLAN_LIMITS.pro.posLocationsIncluded} locations`,
       "Buy online, collect in store",
       "Email campaigns",
-      "Your own custom domain",
-      "Advanced analytics — GA4, Meta Pixel and conversion insights",
+      "Your own domain",
+      "Advanced analytics",
       "Unlimited products and staff",
     ],
     cta: `Choose ${PLAN_META.pro.name}`,
@@ -71,7 +72,7 @@ function MatrixValue({ value }: { value: PlanMatrixValue }) {
   if (value === false || value === "—") {
     return (
       <span className="smh-matrix-no" aria-label="Not included">
-        —
+        <Minus size={15} aria-hidden="true" />
       </span>
     );
   }

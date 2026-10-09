@@ -64,7 +64,14 @@ export default async function PricingPage() {
       <section className="smh-pricing-area" id="pricing">
         <div className="smh-container">
           <div className="smh-pricing-component">
-            <PricingCards plans={pricingCards} />
+            <PricingCards
+              plans={pricingCards}
+              aside={
+                <a href="#compare" className="smh-text-link">
+                  Compare all features
+                </a>
+              }
+            />
           </div>
           <p className="smh-pricing-foot">
             <CircleCheck size={16} /> Your store data is never deleted by a plan

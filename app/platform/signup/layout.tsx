@@ -8,12 +8,12 @@ import { SignupThemeCatalogProvider } from "./theme-catalog-context";
 // served the homepage's exact title + og:url — two URLs claiming to be the same
 // page, one of which app/sitemap.ts submits.
 export const metadata: Metadata = {
-  title: `${BRAND_TAGLINE} — StoreMink`,
+  title: `${BRAND_TAGLINE} · StoreMink`,
   description:
     "Turn your idea into a distinctive brand and a working business with StoreMink, the AI-native business operating system for independent brands.",
   alternates: { canonical: "/signup" },
   openGraph: {
-    title: `${BRAND_TAGLINE} — StoreMink`,
+    title: `${BRAND_TAGLINE} · StoreMink`,
     description:
       "Turn your idea into a distinctive brand and a working business with StoreMink, the AI-native business operating system for independent brands.",
     url: "/signup",

@@ -325,7 +325,7 @@ export function MinkArt() {
         </div>
         <p className="is-user">Draft a launch email for the new cold brew.</p>
         <div className="is-mink">
-          <b>Draft ready — private until you send it.</b>
+          <b>Draft ready. Private until you send it.</b>
           <span className="smh-mink-draft">
             Subject: The cold brew you asked for is here ☕
           </span>

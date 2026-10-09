@@ -1,4 +1,4 @@
-import { Globe2, Palette, Search, Smartphone } from "lucide-react";
+import Image from "next/image";
 import { THEMES_URL } from "@/lib/site";
 import { PRODUCT_PAGES } from "../../../marketing-routes";
 import { BuilderArt, StorefrontArt } from "../../../product-art";
@@ -31,7 +31,18 @@ export default function OnlineStorePage() {
         }
         lead="Choose a theme, arrange ready-made sections, add your own domain and publish, without waiting on a developer. Your store is live on its own subdomain from day one."
         secondary={{ href: THEMES_URL, text: "Browse themes" }}
-      />
+      >
+        <div className="smm-hero-photo">
+          <Image
+            src="/marketing/scenes/builder-desk.webp"
+            alt="A laptop and a phone on a desk, both showing an online store being built"
+            width={1600}
+            height={900}
+            sizes="100vw"
+            priority
+          />
+        </div>
+      </PageHero>
 
       <FeatureRows>
         <FeatureRow
@@ -76,22 +87,18 @@ export default function OnlineStorePage() {
         columns={4}
         pillars={[
           {
-            icon: <Globe2 size={20} />,
             title: "Your own domain",
             body: "Connect a domain you already own. StoreMink issues the certificate and keeps it renewed.",
           },
           {
-            icon: <Search size={20} />,
             title: "Search-ready",
             body: "Clean URLs, product and collection pages, sitemaps and structured data, submitted to Google when you go live.",
           },
           {
-            icon: <Smartphone size={20} />,
             title: "Phone-first",
             body: "Swipeable galleries, a sticky add-to-cart bar and filters that work on a 390px screen.",
           },
           {
-            icon: <Palette size={20} />,
             title: "Product options",
             body: "Size, colour, pack: up to three option axes with swatches, photos per colour and per-variant stock.",
           },

@@ -1,11 +1,3 @@
-import {
-  Eye,
-  FileCheck,
-  Image as ImageIcon,
-  Lock,
-  MessageSquare,
-  ShieldCheck,
-} from "lucide-react";
 import { CommerceCommandCentre, MinkArt } from "../../../homepage-art";
 import { PRODUCT_PAGES } from "../../../marketing-routes";
 import { BuilderArt } from "../../../product-art";
@@ -31,7 +23,6 @@ export default function MinkAiPage() {
     <>
       <PageHero
         label="Mink AI · Beta"
-        dark
         title={
           <>
             Meet your secret weapon, <em>Mink.</em>
@@ -86,35 +77,28 @@ export default function MinkAiPage() {
         title="Built for a business, not a demo."
         lead="Mink can do real work in your store, so every action it prepares is checked the same way a staff member's would be."
         columns={3}
-        tone="white"
         pillars={[
           {
-            icon: <ShieldCheck size={20} />,
             title: "Permission-aware",
             body: "Mink holds exactly the permissions of the person asking. A cashier's Mink cannot read what a cashier cannot.",
           },
           {
-            icon: <FileCheck size={20} />,
             title: "Human approval",
             body: "A change is applied only when you approve it, and only if the record has not moved since Mink looked at it.",
           },
           {
-            icon: <Lock size={20} />,
             title: "Private by default",
             body: "Drafts belong to the person who asked. Nothing is sent, published or charged to a customer by Mink itself.",
           },
           {
-            icon: <MessageSquare size={20} />,
             title: "Talk or type",
             body: "Dictate a request, attach images or a PDF, or paste a product CSV. Mink reads it and asks when something is unclear.",
           },
           {
-            icon: <ImageIcon size={20} />,
             title: "Images that match your shop",
             body: "Generated campaign art is grounded in your own product photos, saved to your Media Library and never pretends to be a product photo.",
           },
           {
-            icon: <Eye size={20} />,
             title: "Clear on cost",
             body: "Every plan includes Mink credits each month. A simple question costs one; a bigger piece of work costs more, and the balance is always visible.",
           },
