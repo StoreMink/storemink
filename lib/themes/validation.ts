@@ -1134,8 +1134,7 @@ export function validateStudioDesign(theme: ThemeDefinition): ThemeFinding[] {
         ),
       );
   }
-  for (const [id, raw] of Object.entries(design.schemes ?? {})) {
-    const scheme = raw as Record<string, unknown> | null;
+  for (const [id, scheme] of Object.entries(design.schemes ?? {})) {
     const accent = hex(scheme?.accent);
     const label = hex(scheme?.onAccent);
     if (!accent || !label) continue;

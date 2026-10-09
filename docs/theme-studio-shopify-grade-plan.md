@@ -133,7 +133,8 @@
 > colours, two aria-hidden clones with focusable links), and one gap in
 > the contract: the 3:1 on-accent floor lets a candidate through whose
 > every button label fails axe at 4.5:1, so the Studio now holds
-> `button_label_contrast` at compile time and in the package gate. Still open, and
+> `button_label_contrast` at compile time and in the package gate. With
+> those in, all seven exemplars pass every gate the script runs. Still open, and
 > needing a deploy: the deployed acceptance run per exemplar (LCP/CLS, the
 > probe's clipped-text scan, the chrome states through the real probe) and
 > one live Gemini batch under v32, which is also where the 2a–2e prompt

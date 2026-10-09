@@ -6671,7 +6671,10 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     under `reducedMotion: "no-preference"`, so axe sampled a carousel's
     second slide mid-fade and reported its CTA in blended colours
     (4.33:1 where the settled button is 5.7:1); the script measures under
-    reduced motion now, as the capture job does.
+    reduced motion now, as the capture job does. With all of it in, every
+    one of the seven exemplars passes every package, route and browser gate
+    the script runs (2026-10-10; `browser.clipped_text` and
+    `browser.performance` skipped, as only the deployed probe measures them).
     **The first live v26 run found four renderer defects, all shared chrome
     (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
     before artwork as `renderer_fix_required`, so every image stayed a

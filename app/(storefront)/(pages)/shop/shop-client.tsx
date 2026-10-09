@@ -360,7 +360,11 @@ export default function ShopClient({
   // to the rest.
   const sentinelRef = useRef<HTMLDivElement>(null);
   const shopRef = useRef(shop);
-  shopRef.current = shop;
+  // Kept current from an effect, never during render (react-hooks/refs);
+  // it runs before the observer effect below on every commit.
+  useEffect(() => {
+    shopRef.current = shop;
+  }, [shop]);
   useEffect(() => {
     if (paging !== "infinite" || !more) return;
     const sentinel = sentinelRef.current;
