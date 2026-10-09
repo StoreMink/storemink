@@ -131,6 +131,56 @@ function fixtures() {
     label: "media-text/stories",
     html: `<div class="home-media-stories">${["left", "right", "left"].map((position, i) => `<div class="home-media-text media-${position} align-left"><div class="home-media-text-media ratio-portrait">${fill("home-media-text-image", "portrait")}</div><div class="home-media-text-copy"><p class="home-section-eyebrow">Step ${i + 1}</p>${i === 0 ? `<h2 class="home-media-text-heading">${heading}</h2>` : `<h3 class="home-media-text-heading">${heading}</h3>`}<p class="home-media-text-body">${copy}</p><a href="/shop" class="home-media-text-cta sm-btn-primary">Explore the collection</a></div></div>`).join("")}</div>`,
   });
+  // Plan Phase 2c, first slice. The marquee and the logo strip drift inside
+  // an overflow-hidden band (never the page); the hotspot card opens inwards
+  // near the far edges; the before/after range covers the frame as one
+  // 24px+ target; the spotlight stacks on phones; the collage spans cells.
+  for (const cols of [2, 3, 4])
+    for (const media of ["icon", "image"])
+      out.push({
+        label: `multicolumn/${cols}/${media}`,
+        html: `<div class="home-section-head"><h2 class="home-section-title">${heading}</h2></div><div class="home-multicolumn cols-${cols} align-center">${Array.from({ length: cols }, (_, i) => `<div class="home-multicolumn-item">${media === "image" ? `<div class="home-multicolumn-media ratio-landscape">${fill("home-multicolumn-image", "landscape")}</div>` : `<svg class="home-multicolumn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="currentColor"/></svg>`}<h3 class="home-multicolumn-heading">Thoughtfully made for everyday ${i + 1}</h3><p class="home-multicolumn-body">${copy}</p><a href="/shop" class="home-multicolumn-link">Read the story</a></div>`).join("")}</div>`,
+      });
+  for (const size of ["sm", "md", "lg"])
+    out.push({
+      label: `image-marquee/${size}`,
+      html: `<div class="home-marquee size-${size} speed-medium"><div class="home-marquee-track">${[false, true].map((hidden) => `<div class="home-marquee-seq"${hidden ? ' aria-hidden="true"' : ""}>${Array.from({ length: 6 }, () => `<a href="/shop" class="home-marquee-item ratio-square">${fill("home-marquee-image", "square")}</a>`).join("")}</div>`).join("")}</div></div>`,
+    });
+  for (const layout of ["row", "scroll"])
+    out.push({
+      label: `logo-strip/${layout}`,
+      html:
+        layout === "row"
+          ? `<div class="home-logos layout-row is-monochrome"><p class="home-logos-heading">As seen in</p><div class="home-logos-row">${Array.from({ length: 5 }, () => `<a href="/shop" class="home-logo">${fill("home-logo-image", "landscape")}</a>`).join("")}</div></div>`
+          : `<div class="home-logos layout-scroll"><div class="home-marquee size-sm speed-slow home-logos-scroll"><div class="home-marquee-track">${[false, true].map((hidden) => `<div class="home-marquee-seq"${hidden ? ' aria-hidden="true"' : ""}>${Array.from({ length: 5 }, () => `<span class="home-logo">${fill("home-logo-image", "landscape")}</span>`).join("")}</div>`).join("")}</div></div></div>`,
+    });
+  for (const [x, y, edge] of [
+    [22, 30, ""],
+    [84, 74, " from-right from-bottom"],
+  ])
+    out.push({
+      label: `hotspots/${x}-${y}`,
+      html: `<div class="home-hotspots ratio-landscape">${fill("home-hotspots-image", "landscape")}<div class="home-hotspot open${edge}" style="left:${x}%;top:${y}%"><button type="button" class="home-hotspot-dot" aria-expanded="true" aria-label="Jug"><span class="home-hotspot-pulse" aria-hidden="true"></span></button><div class="home-hotspot-card"><strong class="home-hotspot-title">Stoneware jug</strong><p class="home-hotspot-body">${copy}</p><a href="/shop" class="home-hotspot-link">Shop</a></div></div><div class="home-hotspot" style="left:55%;top:50%"><button type="button" class="home-hotspot-dot" aria-expanded="false" aria-label="Bowl"><span class="home-hotspot-pulse" aria-hidden="true"></span></button></div></div>`,
+    });
+  for (const ratio of ["landscape", "square"])
+    out.push({
+      label: `before-after/${ratio}`,
+      html: `<div class="home-before-after ratio-${ratio}"><div class="home-before-after-layer is-after">${fill("home-before-after-image", "landscape")}</div><div class="home-before-after-layer is-before" style="clip-path:inset(0 50% 0 0)">${fill("home-before-after-image", "landscape")}</div><span class="home-before-after-label is-before">Before</span><span class="home-before-after-label is-after">After</span><div class="home-before-after-handle" style="left:50%"><span class="home-before-after-grip"></span></div><input type="range" min="0" max="100" value="50" class="home-before-after-range" aria-label="Reveal Before or After"></div>`,
+    });
+  for (const position of ["left", "right"])
+    out.push({
+      label: `spotlight/${position}`,
+      html: `<div class="home-spotlight media-${position}"><a href="/shop/jug" class="home-spotlight-media">${fill("home-spotlight-image", "portrait")}</a><div class="home-spotlight-copy"><p class="home-section-eyebrow">New this season</p><h2 class="home-spotlight-heading">${heading}</h2><p class="home-spotlight-product">Stoneware jug</p><p class="home-spotlight-price"><span class="home-spotlight-from">from </span><span class="home-spotlight-selling">₹950</span><s class="home-spotlight-base">₹1,200</s></p><p class="home-spotlight-body">${copy}</p><a class="home-spotlight-cta sm-btn-primary" href="/shop/jug">View product</a></div></div>`,
+    });
+  for (const align of ["center", "left"])
+    out.push({
+      label: `countdown/${align}`,
+      html: `<div class="home-countdown align-${align}"><p class="home-section-eyebrow">Limited release</p><h2 class="home-countdown-heading">${heading}</h2><p class="home-countdown-sub">${copy}</p><div class="home-countdown-tiles" role="timer">${["days", "hours", "minutes", "seconds"].map((unit) => `<div class="home-countdown-tile"><span class="home-countdown-value">12</span><span class="home-countdown-unit">${unit}</span></div>`).join("")}</div><a class="home-countdown-cta sm-btn-primary" href="/shop">Shop the drop</a></div>`,
+    });
+  out.push({
+    label: "tiles/collage",
+    html: `<div class="home-tile-grid cols-4 size-md layout-collage">${["2x2", "", "", "2x1", "1x2", "", ""].map((span) => `<a href="/shop" class="home-tile theme-dark${span ? ` span-${span}` : ""}"><span class="home-tile-copy"><span class="home-tile-title">Everyday essentials</span><span class="home-tile-sub">${copy}</span></span></a>`).join("")}</div>`,
+  });
   out.push({
     label: "faq/long-text",
     html: `<div class="home-faq-filters"><button class="home-faq-pill active">Delivery and returns</button><button class="home-faq-pill">Care and materials</button></div><div class="home-faq-list"><div class="home-faq-item open"><button class="home-faq-q">How do you select and care for thoughtfully crafted natural materials?</button><p class="home-faq-a">${copy.repeat(3)}</p></div></div>`,

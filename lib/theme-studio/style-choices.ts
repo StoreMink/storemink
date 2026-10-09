@@ -53,6 +53,18 @@ export const VISIBLE_SECTION_CHOICES: Readonly<
   faq_accordion: { show_filters: [true, false] },
   accordion: { open_first: [true, false], allow_multiple: [true, false] },
   comparison: { style: ["table", "cards"] },
+  // ⚠ tile_grid.layout is deliberately NOT a required choice: a v29 draft
+  // replayed from its paid checkpoint has no such key, and the compiler's
+  // defaults make it "grid".
+  multicolumn: { columns: [2, 3, 4], alignment: ["left", "center"] },
+  image_marquee: {
+    speed: ["slow", "medium", "fast"],
+    size: ["sm", "md", "lg"],
+    image_ratio: ["square", "landscape", "portrait"],
+  },
+  image_hotspots: { image_ratio: ["landscape", "square", "portrait"] },
+  before_after: { image_ratio: ["landscape", "square", "portrait"] },
+  product_spotlight: { media_position: ["left", "right"] },
   rich_text: { width: ["contained", "full"] },
 };
 

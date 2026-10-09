@@ -507,4 +507,55 @@ describe("theme copy floors", () => {
     expect(found[0].message).toContain("(media_text) item 1");
     expect(found[1].message).toContain("(accordion) item 1");
   });
+
+  it("reaches both sides of a before/after and a hotspot scene", () => {
+    const theme = clone();
+    const home = homepage(theme);
+    home.sections.splice(
+      1,
+      0,
+      {
+        id: "ba",
+        type: "before_after",
+        enabled: true,
+        config: {
+          eyebrow: "",
+          heading: "",
+          subheading: "",
+          before: {
+            image_url: "/themes/x/b.webp",
+            image_alt: "",
+            label: "Before",
+          },
+          after: {
+            image_url: "/themes/x/a.webp",
+            image_alt: "After",
+            label: "After",
+          },
+          image_ratio: "landscape",
+          start: 50,
+        },
+      } as unknown as (typeof home.sections)[number],
+      {
+        id: "hs",
+        type: "image_hotspots",
+        enabled: true,
+        config: {
+          eyebrow: "",
+          heading: "Shop the look",
+          subheading: "",
+          image_url: "/themes/x/scene.webp",
+          image_alt: "",
+          image_ratio: "landscape",
+          hotspots: [
+            { x: 10, y: 10, title: "Jug", body: "", href: "", cta_label: "" },
+          ],
+        },
+      } as unknown as (typeof home.sections)[number],
+    );
+    const found = validateThemeCopy(theme);
+    expect(codes(found)).toEqual(["image_alt", "image_alt"]);
+    expect(found[0].message).toContain("(before_after)");
+    expect(found[1].message).toContain("(image_hotspots)");
+  });
 });

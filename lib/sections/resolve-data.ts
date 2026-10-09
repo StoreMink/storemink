@@ -29,7 +29,10 @@ export async function fetchSectionDatasets(
   { all = false }: { all?: boolean } = {},
 ): Promise<SectionDatasets> {
   const needsProducts =
-    all || sections.some((s) => s.type === "featured_products");
+    all ||
+    sections.some(
+      (s) => s.type === "featured_products" || s.type === "product_spotlight",
+    );
   const needsCategories =
     all || sections.some((s) => s.type === "shop_by_category");
   const needsBlogs = all || sections.some((s) => s.type === "latest_blogs");

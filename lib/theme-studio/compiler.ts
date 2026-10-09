@@ -503,6 +503,14 @@ function buildPages(
         if (section.type === "shop_by_category" && config.source !== "all") {
           issues.push(`${where}: shop_by_category must use source "all".`);
         }
+        if (
+          section.type === "product_spotlight" &&
+          (config.source !== "featured" || config.product_id)
+        ) {
+          issues.push(
+            `${where}: product_spotlight must use source "featured" with product_id null (ids are assigned at install).`,
+          );
+        }
         const style = buildSectionStyle(section.style, String(section.type));
         return [
           {

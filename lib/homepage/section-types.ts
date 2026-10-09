@@ -37,6 +37,13 @@ export type HomepageSectionType =
   | "faq_accordion"
   | "accordion"
   | "comparison"
+  | "multicolumn"
+  | "image_marquee"
+  | "image_hotspots"
+  | "before_after"
+  | "product_spotlight"
+  | "logo_strip"
+  | "countdown"
   | "latest_blogs"
   | "rich_text"
   | "custom_code";
@@ -58,6 +65,13 @@ export const HOMEPAGE_SECTION_TYPES: HomepageSectionType[] = [
   "faq_accordion",
   "accordion",
   "comparison",
+  "multicolumn",
+  "image_marquee",
+  "image_hotspots",
+  "before_after",
+  "product_spotlight",
+  "logo_strip",
+  "countdown",
   "latest_blogs",
   "rich_text",
   "custom_code",
@@ -270,6 +284,10 @@ export interface TickerConfig {
  * collection grids, gift-pack grids and 2-up mini-banner pairs. Tile
  * `background` is a strict colour (inline style attr rule).
  */
+/** How many grid cells a collage tile covers (columns × rows). */
+export const TILE_SPANS = ["1x1", "2x1", "1x2", "2x2"] as const;
+export type TileSpan = (typeof TILE_SPANS)[number];
+
 export interface TileItem {
   title: string;
   subtitle: string;
@@ -278,6 +296,9 @@ export interface TileItem {
   background: string;
   /** Text colour on the tile: "dark" ink or "light". */
   theme: BannerTheme;
+  /** Collage layout only: the cells this tile covers. Absent = one cell,
+   *  and omitted again on save so untouched tiles store as they always did. */
+  span?: TileSpan;
 }
 
 export interface TileGridConfig {
@@ -288,6 +309,9 @@ export interface TileGridConfig {
   columns: 2 | 3 | 4;
   /** Tile height scale — sm chip-like offers, lg banner-like. */
   height: "sm" | "md" | "lg";
+  /** "grid" is the even grid; "collage" (bento) lets tiles span cells and
+   *  packs them densely. Absent on rows saved before collage existed. */
+  layout?: "grid" | "collage";
 }
 
 /**
@@ -477,6 +501,149 @@ export interface ComparisonConfig {
   style: "table" | "cards";
 }
 
+/** One column of a multi-column section: an icon or a picture, a heading,
+ *  copy and an optional link. The icon comes from the trust bar's catalogue. */
+export interface MulticolumnItem {
+  icon: UspIcon | "";
+  image_url: string;
+  image_alt: string;
+  heading: string;
+  body: string;
+  cta_label: string;
+  cta_href: string;
+}
+
+/**
+ * Multi-column rich text (Shopify's "Multicolumn", the most-used section in
+ * Dawn): two to four columns of icon-or-image, heading, copy and a link —
+ * values, benefits, how it works, a founder note in three parts.
+ */
+export interface MulticolumnConfig {
+  eyebrow: string;
+  heading: string;
+  subheading: string;
+  items: MulticolumnItem[];
+  columns: 2 | 3 | 4;
+  alignment: "left" | "center";
+  image_ratio: "square" | "landscape" | "portrait";
+}
+
+export interface MarqueeImage {
+  image_url: string;
+  image_alt: string;
+  href: string;
+}
+
+/**
+ * Scrolling image marquee: a row of pictures that drifts sideways (product
+ * shots, moods, press). The ticker's animation for images: pauses on hover,
+ * static and wrapped under reduced motion.
+ */
+export interface ImageMarqueeConfig {
+  items: MarqueeImage[];
+  speed: TickerSpeed;
+  size: "sm" | "md" | "lg";
+  image_ratio: "square" | "landscape" | "portrait";
+}
+
+/** One shoppable point on a hotspot image: a position in percent of the
+ *  picture, and what the dot opens. */
+export interface Hotspot {
+  /** 0–100, from the left and the top of the image. */
+  x: number;
+  y: number;
+  title: string;
+  body: string;
+  href: string;
+  cta_label: string;
+}
+
+/**
+ * Image with hotspots (a shoppable image): one picture with dots the
+ * shopper opens to read about, and go to, what is in it.
+ */
+export interface ImageHotspotsConfig {
+  eyebrow: string;
+  heading: string;
+  subheading: string;
+  image_url: string;
+  image_alt: string;
+  image_ratio: "landscape" | "square" | "portrait";
+  hotspots: Hotspot[];
+}
+
+/** One side of a before/after comparison. */
+export interface BeforeAfterSide {
+  image_url: string;
+  image_alt: string;
+  label: string;
+}
+
+/**
+ * Before/after: two photographs in one frame with a handle the shopper
+ * drags (or moves with the keyboard) to reveal one under the other.
+ */
+export interface BeforeAfterConfig {
+  eyebrow: string;
+  heading: string;
+  subheading: string;
+  before: BeforeAfterSide;
+  after: BeforeAfterSide;
+  image_ratio: "landscape" | "square" | "portrait";
+  /** Where the handle starts, 0–100 from the left. */
+  start: number;
+}
+
+/**
+ * Product spotlight: one product, large — its photo, name and price from the
+ * catalogue beside authored copy and a link to its page. "featured" shows
+ * the store's first featured product (else its first product), so a theme
+ * can carry the section before any product id exists.
+ */
+export interface ProductSpotlightConfig {
+  eyebrow: string;
+  heading: string;
+  body: string;
+  source: "featured" | "manual";
+  product_id: string | null;
+  media_position: "left" | "right";
+  cta_label: string;
+  show_price: boolean;
+}
+
+export interface LogoItem {
+  image_url: string;
+  image_alt: string;
+  href: string;
+}
+
+/**
+ * Logo strip ("As seen in", partners, stockists): a row of marks, static or
+ * drifting, optionally rendered monochrome so mixed brands sit quietly.
+ */
+export interface LogoStripConfig {
+  heading: string;
+  items: LogoItem[];
+  layout: "row" | "scroll";
+  monochrome: boolean;
+}
+
+/**
+ * Countdown to a moment (a drop, a sale's end). `ends_at` is an ISO instant;
+ * once it passes the section shows `expired_message`, or nothing when that
+ * is empty. The clock runs in the browser; the server renders the frame.
+ */
+export interface CountdownConfig {
+  eyebrow: string;
+  heading: string;
+  subheading: string;
+  ends_at: string;
+  expired_message: string;
+  cta_label: string;
+  cta_href: string;
+  alignment: "left" | "center";
+}
+
 export type BlogSource = "latest" | "manual" | "featured";
 
 export interface LatestBlogsConfig {
@@ -537,6 +704,13 @@ export type AnySectionConfig =
   | FaqAccordionConfig
   | AccordionConfig
   | ComparisonConfig
+  | MulticolumnConfig
+  | ImageMarqueeConfig
+  | ImageHotspotsConfig
+  | BeforeAfterConfig
+  | ProductSpotlightConfig
+  | LogoStripConfig
+  | CountdownConfig
   | LatestBlogsConfig
   | RichTextConfig
   | CustomCodeConfig
@@ -560,6 +734,13 @@ export type HomepageSectionConfig =
   | { type: "faq_accordion"; config: FaqAccordionConfig }
   | { type: "accordion"; config: AccordionConfig }
   | { type: "comparison"; config: ComparisonConfig }
+  | { type: "multicolumn"; config: MulticolumnConfig }
+  | { type: "image_marquee"; config: ImageMarqueeConfig }
+  | { type: "image_hotspots"; config: ImageHotspotsConfig }
+  | { type: "before_after"; config: BeforeAfterConfig }
+  | { type: "product_spotlight"; config: ProductSpotlightConfig }
+  | { type: "logo_strip"; config: LogoStripConfig }
+  | { type: "countdown"; config: CountdownConfig }
   | { type: "latest_blogs"; config: LatestBlogsConfig }
   | { type: "rich_text"; config: RichTextConfig }
   | { type: "custom_code"; config: CustomCodeConfig };
@@ -594,6 +775,13 @@ export const EMPTY_CONFIG: {
   faq_accordion: FaqAccordionConfig;
   accordion: AccordionConfig;
   comparison: ComparisonConfig;
+  multicolumn: MulticolumnConfig;
+  image_marquee: ImageMarqueeConfig;
+  image_hotspots: ImageHotspotsConfig;
+  before_after: BeforeAfterConfig;
+  product_spotlight: ProductSpotlightConfig;
+  logo_strip: LogoStripConfig;
+  countdown: CountdownConfig;
   latest_blogs: LatestBlogsConfig;
   rich_text: RichTextConfig;
   custom_code: CustomCodeConfig;
@@ -749,6 +937,65 @@ export const EMPTY_CONFIG: {
     columns: [],
     rows: [],
     style: "table",
+  },
+  multicolumn: {
+    eyebrow: "",
+    heading: "Why shop with us",
+    subheading: "",
+    items: [],
+    columns: 3,
+    alignment: "center",
+    image_ratio: "landscape",
+  },
+  image_marquee: {
+    items: [],
+    speed: "medium",
+    size: "md",
+    image_ratio: "square",
+  },
+  image_hotspots: {
+    eyebrow: "",
+    heading: "Shop the look",
+    subheading: "",
+    image_url: "",
+    image_alt: "",
+    image_ratio: "landscape",
+    hotspots: [],
+  },
+  before_after: {
+    eyebrow: "",
+    heading: "",
+    subheading: "",
+    before: { image_url: "", image_alt: "", label: "Before" },
+    after: { image_url: "", image_alt: "", label: "After" },
+    image_ratio: "landscape",
+    start: 50,
+  },
+  product_spotlight: {
+    eyebrow: "",
+    heading: "",
+    body: "",
+    source: "featured",
+    product_id: null,
+    media_position: "left",
+    cta_label: "View product",
+    show_price: true,
+  },
+  logo_strip: {
+    heading: "As seen in",
+    items: [],
+    layout: "row",
+    monochrome: true,
+  },
+  countdown: {
+    eyebrow: "",
+    heading: "",
+    subheading: "",
+    ends_at: "",
+    expired_message: "",
+    cta_label: "",
+    cta_href: "",
+    alignment: "center",
   },
   latest_blogs: {
     heading: "From the Journal",
@@ -945,6 +1192,69 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
     category: "content",
     keywords: ["compare", "table", "versus", "plans", "features", "specs"],
   },
+  multicolumn: {
+    label: "Multi-column",
+    description:
+      "Two to four columns of icon or picture, heading and copy — values, benefits, how it works.",
+    icon: "multicolumn",
+    category: "content",
+    keywords: ["columns", "benefits", "values", "features", "icons", "steps"],
+  },
+  image_marquee: {
+    label: "Image Marquee",
+    description:
+      "A row of pictures drifting sideways — product shots, moods, press.",
+    icon: "image_marquee",
+    category: "content",
+    keywords: ["scrolling", "images", "strip", "carousel", "moodboard"],
+  },
+  image_hotspots: {
+    label: "Image with Hotspots",
+    description:
+      "One picture with dots a shopper opens to read about, and go to, what is in it.",
+    icon: "image_hotspots",
+    category: "commerce",
+    keywords: ["shoppable", "shop the look", "pins", "dots", "scene"],
+  },
+  before_after: {
+    label: "Before / After",
+    description:
+      "Two photographs in one frame with a handle that reveals one under the other.",
+    icon: "before_after",
+    category: "content",
+    keywords: ["compare", "slider", "reveal", "results", "transformation"],
+  },
+  product_spotlight: {
+    label: "Product Spotlight",
+    description:
+      "One product, large — its photo, name and price beside your copy and a link.",
+    icon: "product_spotlight",
+    category: "commerce",
+    keywords: ["featured product", "hero product", "launch", "single", "focus"],
+  },
+  logo_strip: {
+    label: "Logo Strip",
+    description:
+      "A row of press, partner or stockist marks, static or drifting.",
+    icon: "logo_strip",
+    category: "content",
+    keywords: [
+      "as seen in",
+      "press",
+      "partners",
+      "stockists",
+      "trust",
+      "logos",
+    ],
+  },
+  countdown: {
+    label: "Countdown",
+    description:
+      "A live countdown to a drop or a sale's end, with a message once it passes.",
+    icon: "countdown",
+    category: "commerce",
+    keywords: ["timer", "sale", "launch", "drop", "urgency", "deadline"],
+  },
   latest_blogs: {
     label: "Blog Posts",
     description: "Latest or hand-picked blog posts.",
@@ -988,6 +1298,10 @@ export const ACCORDION_BODY_MAX_CHARS = 2000;
 export const MIN_COMPARISON_COLUMNS = 2;
 export const MAX_COMPARISON_COLUMNS = 4;
 export const MAX_COMPARISON_ROWS = 12;
+export const MAX_MULTICOLUMN_ITEMS = 6;
+export const MAX_MARQUEE_IMAGES = 12;
+export const MAX_HOTSPOTS = 8;
+export const MAX_LOGO_ITEMS = 12;
 
 // --- Nested blocks (Shopify's block model, as a registry) -------------------
 //
@@ -1096,6 +1410,38 @@ export const SECTION_BLOCKS: Readonly<
     typed: true,
     min: 1,
     max: MAX_COMPARISON_ROWS,
+  },
+  multicolumn: {
+    key: "items",
+    label: "Column",
+    types: ["column"],
+    typed: false,
+    min: 1,
+    max: MAX_MULTICOLUMN_ITEMS,
+  },
+  image_marquee: {
+    key: "items",
+    label: "Image",
+    types: ["image"],
+    typed: false,
+    min: 2,
+    max: MAX_MARQUEE_IMAGES,
+  },
+  image_hotspots: {
+    key: "hotspots",
+    label: "Hotspot",
+    types: ["hotspot"],
+    typed: false,
+    min: 1,
+    max: MAX_HOTSPOTS,
+  },
+  logo_strip: {
+    key: "items",
+    label: "Logo",
+    types: ["logo"],
+    typed: false,
+    min: 2,
+    max: MAX_LOGO_ITEMS,
   },
 };
 
@@ -1267,6 +1613,15 @@ function percent(v: unknown, min: number, max: number): number | null {
     return Math.min(max, Math.max(min, Math.round(Number(v))));
   }
   return null;
+}
+
+/** A date-time the browser's clock can count down to, stored as an ISO
+ *  instant, or "" when the value is absent or not a date. */
+function isoInstant(v: unknown): string {
+  const s = str(v);
+  if (!s) return "";
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : "";
 }
 
 /** The optional image controls, emitted only where they differ from the
@@ -1457,6 +1812,11 @@ export function validateConfig(
         image_url: str(t.image_url),
         background: safeColor(t.background),
         theme: textTheme(t.theme, "dark"),
+        // A one-cell span is the default and is not stored.
+        ...((TILE_SPANS as readonly unknown[]).includes(t.span) &&
+        t.span !== "1x1"
+          ? { span: t.span as TileSpan }
+          : {}),
       };
       if (!tile.title && !tile.image_url && !tile.subtitle) continue;
       tiles.push(tile);
@@ -1472,6 +1832,9 @@ export function validateConfig(
       columns: columns === 2 || columns === 3 ? columns : 4,
       height:
         input.height === "md" || input.height === "lg" ? input.height : "sm",
+      // The even grid is the default and is not stored (rows saved before
+      // collage existed keep their shape).
+      ...(input.layout === "collage" ? { layout: "collage" as const } : {}),
     };
     return { config };
   }
@@ -1831,6 +2194,232 @@ export function validateConfig(
     return { config };
   }
 
+  if (type === "multicolumn") {
+    const spec = SECTION_BLOCKS.multicolumn!;
+    const rawItems = Array.isArray(input.items) ? input.items : [];
+    const items: MulticolumnItem[] = [];
+    for (const rawItem of rawItems) {
+      const it = (rawItem ?? {}) as Record<string, unknown>;
+      const heading = str(it.heading).slice(0, 120);
+      const body = str(it.body).slice(0, 800);
+      const image_url = safeHref(it.image_url);
+      if (!heading && !body && !image_url) continue; // drop empty columns
+      items.push({
+        icon: (USP_ICONS as readonly unknown[]).includes(it.icon)
+          ? (it.icon as UspIcon)
+          : "",
+        image_url,
+        image_alt: str(it.image_alt).slice(0, 180),
+        heading,
+        body,
+        cta_label: str(it.cta_label).slice(0, 60),
+        cta_href: safeHref(it.cta_href),
+      });
+    }
+    const count = blockCountError(
+      spec,
+      rawItems.length,
+      items.length,
+      strict,
+      "columns",
+    );
+    if (count) return { error: count };
+    const columns = Number(input.columns);
+    const config: MulticolumnConfig = {
+      eyebrow: str(input.eyebrow).slice(0, 80),
+      heading: str(input.heading).slice(0, 160),
+      subheading: str(input.subheading).slice(0, 300),
+      items,
+      columns: columns === 2 || columns === 4 ? columns : 3,
+      alignment: input.alignment === "left" ? "left" : "center",
+      image_ratio:
+        input.image_ratio === "square" || input.image_ratio === "portrait"
+          ? input.image_ratio
+          : "landscape",
+    };
+    return { config };
+  }
+
+  if (type === "image_marquee") {
+    const spec = SECTION_BLOCKS.image_marquee!;
+    const rawItems = Array.isArray(input.items) ? input.items : [];
+    const items: MarqueeImage[] = [];
+    for (const rawItem of rawItems) {
+      const it = (rawItem ?? {}) as Record<string, unknown>;
+      const image_url = safeHref(it.image_url);
+      if (!image_url && strict) continue; // an image is the whole block
+      items.push({
+        image_url,
+        image_alt: str(it.image_alt).slice(0, 180),
+        href: safeHref(it.href),
+      });
+    }
+    const count = blockCountError(
+      spec,
+      rawItems.length,
+      items.length,
+      strict,
+      "images",
+    );
+    if (count) return { error: count };
+    const config: ImageMarqueeConfig = {
+      items,
+      speed:
+        input.speed === "slow" || input.speed === "fast"
+          ? input.speed
+          : "medium",
+      size: input.size === "sm" || input.size === "lg" ? input.size : "md",
+      image_ratio:
+        input.image_ratio === "landscape" || input.image_ratio === "portrait"
+          ? input.image_ratio
+          : "square",
+    };
+    return { config };
+  }
+
+  if (type === "image_hotspots") {
+    const spec = SECTION_BLOCKS.image_hotspots!;
+    const image_url = safeHref(input.image_url);
+    if (strict && !image_url) {
+      return { error: "Add the picture the hotspots sit on." };
+    }
+    const rawSpots = Array.isArray(input.hotspots) ? input.hotspots : [];
+    const hotspots: Hotspot[] = [];
+    for (const rawSpot of rawSpots) {
+      const it = (rawSpot ?? {}) as Record<string, unknown>;
+      const title = str(it.title).slice(0, 120);
+      const body = str(it.body).slice(0, 400);
+      const href = safeHref(it.href);
+      if (!title && !body && !href) continue; // drop empty dots
+      hotspots.push({
+        x: percent(it.x, 0, 100) ?? 50,
+        y: percent(it.y, 0, 100) ?? 50,
+        title,
+        body,
+        href,
+        cta_label: str(it.cta_label).slice(0, 60),
+      });
+    }
+    const count = blockCountError(
+      spec,
+      rawSpots.length,
+      hotspots.length,
+      strict,
+      "hotspots",
+    );
+    if (count) return { error: count };
+    const config: ImageHotspotsConfig = {
+      eyebrow: str(input.eyebrow).slice(0, 80),
+      heading: str(input.heading).slice(0, 160),
+      subheading: str(input.subheading).slice(0, 300),
+      image_url,
+      image_alt: str(input.image_alt).slice(0, 180),
+      image_ratio:
+        input.image_ratio === "square" || input.image_ratio === "portrait"
+          ? input.image_ratio
+          : "landscape",
+      hotspots,
+    };
+    return { config };
+  }
+
+  if (type === "before_after") {
+    const side = (raw: unknown, fallbackLabel: string): BeforeAfterSide => {
+      const it = (raw ?? {}) as Record<string, unknown>;
+      return {
+        image_url: safeHref(it.image_url),
+        image_alt: str(it.image_alt).slice(0, 180),
+        label: str(it.label).slice(0, 40) || fallbackLabel,
+      };
+    };
+    const before = side(input.before, "Before");
+    const after = side(input.after, "After");
+    if (strict && (!before.image_url || !after.image_url)) {
+      return { error: "Add both the before and the after picture." };
+    }
+    const config: BeforeAfterConfig = {
+      eyebrow: str(input.eyebrow).slice(0, 80),
+      heading: str(input.heading).slice(0, 160),
+      subheading: str(input.subheading).slice(0, 300),
+      before,
+      after,
+      image_ratio:
+        input.image_ratio === "square" || input.image_ratio === "portrait"
+          ? input.image_ratio
+          : "landscape",
+      start: percent(input.start, 5, 95) ?? 50,
+    };
+    return { config };
+  }
+
+  if (type === "product_spotlight") {
+    const source = input.source === "manual" ? "manual" : "featured";
+    const product_id = str(input.product_id) || null;
+    if (strict && source === "manual" && !product_id) {
+      return { error: "Pick the product to spotlight." };
+    }
+    const config: ProductSpotlightConfig = {
+      eyebrow: str(input.eyebrow).slice(0, 80),
+      heading: str(input.heading).slice(0, 160),
+      body: str(input.body).slice(0, 1200),
+      source,
+      product_id: source === "manual" ? product_id : null,
+      media_position: input.media_position === "right" ? "right" : "left",
+      cta_label: str(input.cta_label).slice(0, 60),
+      show_price: input.show_price !== false,
+    };
+    return { config };
+  }
+
+  if (type === "logo_strip") {
+    const spec = SECTION_BLOCKS.logo_strip!;
+    const rawItems = Array.isArray(input.items) ? input.items : [];
+    const items: LogoItem[] = [];
+    for (const rawItem of rawItems) {
+      const it = (rawItem ?? {}) as Record<string, unknown>;
+      const image_url = safeHref(it.image_url);
+      if (!image_url && strict) continue; // a mark is the whole block
+      items.push({
+        image_url,
+        image_alt: str(it.image_alt).slice(0, 120),
+        href: safeHref(it.href),
+      });
+    }
+    const count = blockCountError(
+      spec,
+      rawItems.length,
+      items.length,
+      strict,
+      "logos",
+    );
+    if (count) return { error: count };
+    const config: LogoStripConfig = {
+      heading: str(input.heading).slice(0, 120),
+      items,
+      layout: input.layout === "scroll" ? "scroll" : "row",
+      monochrome: input.monochrome !== false,
+    };
+    return { config };
+  }
+
+  if (type === "countdown") {
+    const ends_at = isoInstant(input.ends_at);
+    if (strict && !ends_at) {
+      return { error: "Set the date and time the countdown ends." };
+    }
+    const config: CountdownConfig = {
+      eyebrow: str(input.eyebrow).slice(0, 80),
+      heading: str(input.heading).slice(0, 160),
+      subheading: str(input.subheading).slice(0, 300),
+      ends_at,
+      expired_message: str(input.expired_message).slice(0, 200),
+      cta_label: str(input.cta_label).slice(0, 60),
+      cta_href: safeHref(input.cta_href),
+      alignment: input.alignment === "left" ? "left" : "center",
+    };
+    return { config };
+  }
+
   if (type === "latest_blogs") {
     const source =
       input.source === "manual" || input.source === "featured"
@@ -1948,7 +2537,7 @@ export function summarizeSection(section: {
     case "tile_grid": {
       const t = c as TileGridConfig;
       const head = t.heading?.trim();
-      return `Tiles · ${t.tiles.length} tile${t.tiles.length === 1 ? "" : "s"}${head ? ` · ${head}` : ""}`;
+      return `Tiles · ${t.tiles.length} tile${t.tiles.length === 1 ? "" : "s"}${t.layout === "collage" ? " · collage" : ""}${head ? ` · ${head}` : ""}`;
     }
     case "media_text": {
       const m = c as MediaTextConfig;
@@ -1982,6 +2571,34 @@ export function summarizeSection(section: {
     case "comparison": {
       const t = c as ComparisonConfig;
       return `Comparison · ${t.columns.length} column${t.columns.length === 1 ? "" : "s"} · ${t.rows.length} row${t.rows.length === 1 ? "" : "s"} · ${t.style}`;
+    }
+    case "multicolumn": {
+      const m = c as MulticolumnConfig;
+      return `Multi-column · ${m.items.length} column${m.items.length === 1 ? "" : "s"}${m.heading?.trim() ? ` · ${m.heading.trim()}` : ""}`;
+    }
+    case "image_marquee": {
+      const m = c as ImageMarqueeConfig;
+      return `Image marquee · ${m.items.length} image${m.items.length === 1 ? "" : "s"} · ${m.speed}`;
+    }
+    case "image_hotspots": {
+      const h = c as ImageHotspotsConfig;
+      return `Hotspots · ${h.hotspots.length} dot${h.hotspots.length === 1 ? "" : "s"}${h.heading?.trim() ? ` · ${h.heading.trim()}` : ""}`;
+    }
+    case "before_after": {
+      const b = c as BeforeAfterConfig;
+      return `Before / after · ${b.heading?.trim() || `${b.before.label} → ${b.after.label}`}`;
+    }
+    case "product_spotlight": {
+      const p = c as ProductSpotlightConfig;
+      return `Spotlight · ${p.source === "manual" ? "chosen product" : "featured product"}${p.heading?.trim() ? ` · ${p.heading.trim()}` : ""}`;
+    }
+    case "logo_strip": {
+      const l = c as LogoStripConfig;
+      return `Logos · ${l.items.length} mark${l.items.length === 1 ? "" : "s"} · ${l.layout}`;
+    }
+    case "countdown": {
+      const d = c as CountdownConfig;
+      return `Countdown · ${d.heading?.trim() || (d.ends_at ? `ends ${d.ends_at.slice(0, 10)}` : "(no end date)")}`;
     }
     case "featured_products": {
       const f = c as FeaturedProductsConfig;

@@ -37,6 +37,13 @@ import {
   sectionBlocks,
   blockTypeOf,
   type HomepageSectionType,
+  MAX_MARQUEE_IMAGES,
+  type ImageMarqueeConfig,
+  type ImageHotspotsConfig,
+  type BeforeAfterConfig,
+  type ProductSpotlightConfig,
+  type LogoStripConfig,
+  type CountdownConfig,
 } from "./section-types";
 
 // clampLimit() pins the "max products/blogs to show" knob into 1..12, falling
@@ -878,6 +885,266 @@ describe("validateConfig", () => {
           "draft",
         ),
       ).toEqual({ error: `At most ${MAX_COMPARISON_ROWS} rows.` });
+    });
+  });
+
+  describe("tile_grid collage (v30)", () => {
+    it("stores the collage layout and spans only when chosen", () => {
+      const grid = validateConfig("tile_grid", {
+        tiles: [
+          { title: "A", span: "1x1" },
+          { title: "B", span: "2x2" },
+        ],
+      });
+      const config = (grid as { config: TileGridConfig }).config;
+      expect("layout" in config).toBe(false);
+      expect(config.tiles[0]).not.toHaveProperty("span");
+      expect(config.tiles[1].span).toBe("2x2");
+      const collage = validateConfig("tile_grid", {
+        layout: "collage",
+        tiles: [{ title: "A", span: "bogus" }],
+      });
+      expect((collage as { config: TileGridConfig }).config.layout).toBe(
+        "collage",
+      );
+      expect(
+        (collage as { config: TileGridConfig }).config.tiles[0],
+      ).not.toHaveProperty("span");
+    });
+  });
+
+  describe("multicolumn", () => {
+    it("normalises columns, keeps catalogue icons only and drops empty columns", () => {
+      const out = validateConfig("multicolumn", {
+        heading: " Why us ",
+        columns: "4",
+        alignment: "left",
+        items: [
+          {
+            icon: "leaf",
+            heading: "Made to last",
+            body: "",
+            cta_href: "/shop",
+          },
+          { icon: "rocket", heading: "", body: "Packed by hand." },
+          { heading: "", body: "", image_url: "" },
+        ],
+      });
+      expect(out).toEqual({
+        config: {
+          eyebrow: "",
+          heading: "Why us",
+          subheading: "",
+          items: [
+            {
+              icon: "leaf",
+              image_url: "",
+              image_alt: "",
+              heading: "Made to last",
+              body: "",
+              cta_label: "",
+              cta_href: "/shop",
+            },
+            {
+              icon: "",
+              image_url: "",
+              image_alt: "",
+              heading: "",
+              body: "Packed by hand.",
+              cta_label: "",
+              cta_href: "",
+            },
+          ],
+          columns: 4,
+          alignment: "left",
+          image_ratio: "landscape",
+        },
+      });
+      expect(validateConfig("multicolumn", {})).toEqual({
+        error: "Add at least one column.",
+      });
+    });
+  });
+
+  describe("image_marquee", () => {
+    it("needs two pictures to publish, keeps imageless drafts and caps the list", () => {
+      expect(
+        validateConfig("image_marquee", {
+          items: [{ image_url: "https://cdn.example.com/a.webp" }],
+        }),
+      ).toEqual({ error: "Add at least 2 images." });
+      const draft = validateConfig(
+        "image_marquee",
+        { items: [{ image_url: "" }], speed: "fast", size: "lg" },
+        "draft",
+      );
+      expect((draft as { config: ImageMarqueeConfig }).config).toEqual({
+        items: [{ image_url: "", image_alt: "", href: "" }],
+        speed: "fast",
+        size: "lg",
+        image_ratio: "square",
+      });
+      expect(
+        validateConfig(
+          "image_marquee",
+          {
+            items: Array.from({ length: MAX_MARQUEE_IMAGES + 1 }, () => ({
+              image_url: "x",
+            })),
+          },
+          "draft",
+        ),
+      ).toEqual({ error: `At most ${MAX_MARQUEE_IMAGES} images.` });
+    });
+  });
+
+  describe("image_hotspots", () => {
+    it("clamps dot positions, defaults a missing one to the centre and needs the picture", () => {
+      const out = validateConfig("image_hotspots", {
+        image_url: "https://cdn.example.com/scene.webp",
+        image_alt: "A set table",
+        image_ratio: "square",
+        hotspots: [
+          { x: 120, y: -5, title: "Jug", href: "/shop/jug" },
+          { title: "Bowl" },
+          { title: "", body: "", href: "" },
+        ],
+      });
+      const config = (out as { config: ImageHotspotsConfig }).config;
+      expect(config.hotspots).toEqual([
+        {
+          x: 100,
+          y: 0,
+          title: "Jug",
+          body: "",
+          href: "/shop/jug",
+          cta_label: "",
+        },
+        { x: 50, y: 50, title: "Bowl", body: "", href: "", cta_label: "" },
+      ]);
+      expect(config.image_ratio).toBe("square");
+      expect(
+        validateConfig("image_hotspots", { hotspots: [{ title: "x" }] }),
+      ).toEqual({ error: "Add the picture the hotspots sit on." });
+      expect(
+        validateConfig("image_hotspots", {
+          image_url: "https://cdn.example.com/scene.webp",
+        }),
+      ).toEqual({ error: "Add at least one hotspot." });
+    });
+  });
+
+  describe("before_after", () => {
+    it("fills side labels, clamps the start and needs both pictures to publish", () => {
+      const out = validateConfig("before_after", {
+        before: { image_url: "https://cdn.example.com/b.webp", label: "" },
+        after: { image_url: "https://cdn.example.com/a.webp", label: "Now" },
+        start: 2,
+      });
+      const config = (out as { config: BeforeAfterConfig }).config;
+      expect(config.before.label).toBe("Before");
+      expect(config.after.label).toBe("Now");
+      expect(config.start).toBe(5);
+      expect(
+        validateConfig("before_after", {
+          before: { image_url: "https://cdn.example.com/b.webp" },
+        }),
+      ).toEqual({ error: "Add both the before and the after picture." });
+      expect("config" in validateConfig("before_after", {}, "draft")).toBe(
+        true,
+      );
+    });
+  });
+
+  describe("product_spotlight", () => {
+    it("keeps a chosen id only in manual mode and requires one to publish", () => {
+      expect(
+        validateConfig("product_spotlight", {
+          source: "featured",
+          product_id: "p1",
+          show_price: false,
+        }),
+      ).toEqual({
+        config: {
+          eyebrow: "",
+          heading: "",
+          body: "",
+          source: "featured",
+          product_id: null,
+          media_position: "left",
+          cta_label: "",
+          show_price: false,
+        },
+      });
+      expect(validateConfig("product_spotlight", { source: "manual" })).toEqual(
+        { error: "Pick the product to spotlight." },
+      );
+      expect(
+        (
+          validateConfig("product_spotlight", {
+            source: "manual",
+            product_id: " p9 ",
+            media_position: "right",
+          }) as { config: ProductSpotlightConfig }
+        ).config.product_id,
+      ).toBe("p9");
+    });
+  });
+
+  describe("logo_strip", () => {
+    it("needs two marks to publish and normalises the layout", () => {
+      expect(validateConfig("logo_strip", { items: [] })).toEqual({
+        error: "Add at least 2 logos.",
+      });
+      const out = validateConfig("logo_strip", {
+        heading: "Stockists",
+        layout: "scroll",
+        monochrome: false,
+        items: [
+          { image_url: "https://cdn.example.com/a.svg", image_alt: "A" },
+          { image_url: "https://cdn.example.com/b.svg", href: "javascript:x" },
+        ],
+      });
+      expect((out as { config: LogoStripConfig }).config).toEqual({
+        heading: "Stockists",
+        items: [
+          {
+            image_url: "https://cdn.example.com/a.svg",
+            image_alt: "A",
+            href: "",
+          },
+          {
+            image_url: "https://cdn.example.com/b.svg",
+            image_alt: "",
+            href: "",
+          },
+        ],
+        layout: "scroll",
+        monochrome: false,
+      });
+    });
+  });
+
+  describe("countdown", () => {
+    it("stores the end as an ISO instant and refuses a missing one on publish", () => {
+      const out = validateConfig("countdown", {
+        heading: "Ends soon",
+        ends_at: "2026-12-31T18:30:00+05:30",
+        cta_href: "/shop",
+      });
+      expect((out as { config: CountdownConfig }).config.ends_at).toBe(
+        "2026-12-31T13:00:00.000Z",
+      );
+      expect(validateConfig("countdown", { ends_at: "not a date" })).toEqual({
+        error: "Set the date and time the countdown ends.",
+      });
+      expect(
+        (
+          validateConfig("countdown", { ends_at: "soon" }, "draft") as {
+            config: CountdownConfig;
+          }
+        ).config.ends_at,
+      ).toBe("");
     });
   });
 

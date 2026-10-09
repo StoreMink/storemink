@@ -62,22 +62,56 @@ import {
  * be empty — a request for one is a capability gap). */
 export const THEME_STUDIO_SECTION_TYPES = HOMEPAGE_SECTION_TYPES.filter(
   (type) =>
-    type !== "custom_code" && type !== "latest_blogs" && type !== "video",
+    type !== "custom_code" &&
+    type !== "latest_blogs" &&
+    type !== "video" &&
+    // Builder-only: the image model draws no real press marks (and a mark
+    // would be somebody's brand), and a model cannot know a real end date.
+    type !== "logo_strip" &&
+    type !== "countdown",
 );
 
-/** The section types every request before prompt v29 was keyed on: the list
- * above without the two sections that arrived with nested blocks. */
-export const LEGACY_THEME_STUDIO_SECTION_TYPES =
-  THEME_STUDIO_SECTION_TYPES.filter(
-    (type) => type !== "accordion" && type !== "comparison",
-  );
+/** The sections each prompt revision added; a request before that revision
+ * never saw them. */
+const SECTIONS_BY_REVISION = {
+  nestedBlocks: ["accordion", "comparison"],
+  moreSections: [
+    "multicolumn",
+    "image_marquee",
+    "image_hotspots",
+    "before_after",
+    "product_spotlight",
+  ],
+} as const;
 
-/** The section vocabulary a prompt revision prints and its schemas admit. */
-export function themeStudioSectionTypes(nestedBlocks: boolean) {
-  return nestedBlocks
-    ? THEME_STUDIO_SECTION_TYPES
-    : LEGACY_THEME_STUDIO_SECTION_TYPES;
+const SECTION_TYPES_BY_FLAGS = new Map<string, typeof HOMEPAGE_SECTION_TYPES>();
+
+/** The section vocabulary a prompt revision prints and its schemas admit,
+ * one list per flag pair so callers can compare lists by reference. */
+export function themeStudioSectionTypes(
+  nestedBlocks: boolean,
+  moreSections = false,
+) {
+  const key = `${nestedBlocks}:${moreSections}`;
+  let list = SECTION_TYPES_BY_FLAGS.get(key);
+  if (!list) {
+    const hidden = new Set<string>([
+      ...(nestedBlocks ? [] : SECTIONS_BY_REVISION.nestedBlocks),
+      ...(moreSections ? [] : SECTIONS_BY_REVISION.moreSections),
+    ]);
+    list = hidden.size
+      ? THEME_STUDIO_SECTION_TYPES.filter((type) => !hidden.has(type))
+      : THEME_STUDIO_SECTION_TYPES;
+    SECTION_TYPES_BY_FLAGS.set(key, list);
+  }
+  return list;
 }
+
+/** The section types every request before prompt v29 was keyed on. */
+export const LEGACY_THEME_STUDIO_SECTION_TYPES = themeStudioSectionTypes(
+  false,
+  false,
+);
 
 export const THEME_STUDIO_FONT_VALUES = Object.values(DESIGN_FONTS);
 
@@ -504,11 +538,11 @@ function legacyFontSchema(schema: Schema): Schema {
   return legacy;
 }
 
-/** The same schema with every section-type enum narrowed to the pre-v29
- * list, wherever it appears (Stage A page plans, Stage B sections). Matched
- * by value, so the enum helper's shape is not assumed. */
-function withoutNestedBlockSections(schema: Schema): Schema {
-  const legacy = structuredClone(schema);
+/** The same schema with every section-type enum narrowed to an earlier
+ * revision's list, wherever it appears (Stage A page plans, Stage B
+ * sections). Matched by value, so the enum helper's shape is not assumed. */
+function withSectionTypes(schema: Schema, types: readonly string[]): Schema {
+  const twin = structuredClone(schema);
   const full = JSON.stringify(THEME_STUDIO_SECTION_TYPES);
   const walk = (node: unknown) => {
     if (!node || typeof node !== "object") return;
@@ -518,11 +552,11 @@ function withoutNestedBlockSections(schema: Schema): Schema {
     }
     const record = node as Record<string, unknown>;
     if (Array.isArray(record.enum) && JSON.stringify(record.enum) === full)
-      record.enum = [...LEGACY_THEME_STUDIO_SECTION_TYPES];
+      record.enum = [...types];
     Object.values(record).forEach(walk);
   };
-  walk(legacy);
-  return legacy;
+  walk(twin);
+  return twin;
 }
 
 const STAGE_B_SCHEMAS = [
@@ -531,8 +565,8 @@ const STAGE_B_SCHEMAS = [
   STAGE_B_VARIETY_DRAFT_SCHEMA,
   STAGE_B_VARIETY_INITIAL_SCHEMA,
 ];
-/** Twins keyed by schema and the two capabilities that reshape it, built
- * once: a persisted paid request is keyed on the exact schema it was sent. */
+/** Twins keyed by schema and the capabilities that reshape it, built once: a
+ * persisted paid request is keyed on the exact schema it was sent. */
 const STAGE_B_TWINS = new Map<string, Schema>();
 
 /** The Stage A schema without the brief's `people` field: the shape every
@@ -568,15 +602,20 @@ export function stageASchemaFor(
   schema: Schema,
   peopleInImagery: boolean,
   nestedBlocks = true,
+  moreSections = true,
 ): Schema {
-  if (peopleInImagery && nestedBlocks) return schema;
+  if (peopleInImagery && nestedBlocks && moreSections) return schema;
   const index = STAGE_A_SCHEMAS.indexOf(schema);
   if (index < 0) throw new Error("Unknown Stage A schema.");
-  const key = `${index}:${peopleInImagery}:${nestedBlocks}`;
+  const key = `${index}:${peopleInImagery}:${nestedBlocks}:${moreSections}`;
   let twin = STAGE_A_TWINS.get(key);
   if (!twin) {
     twin = schema;
-    if (!nestedBlocks) twin = withoutNestedBlockSections(twin);
+    if (!nestedBlocks || !moreSections)
+      twin = withSectionTypes(
+        twin,
+        themeStudioSectionTypes(nestedBlocks, moreSections),
+      );
     if (!peopleInImagery) twin = withoutBriefPeople(twin);
     STAGE_A_TWINS.set(key, twin);
   }
@@ -590,15 +629,20 @@ export function stageBSchemaFor(
   schema: Schema,
   fontPairings: boolean,
   nestedBlocks = true,
+  moreSections = true,
 ): Schema {
-  if (fontPairings && nestedBlocks) return schema;
+  if (fontPairings && nestedBlocks && moreSections) return schema;
   const index = STAGE_B_SCHEMAS.indexOf(schema);
   if (index < 0) throw new Error("Unknown Stage B schema.");
-  const key = `${index}:${fontPairings}:${nestedBlocks}`;
+  const key = `${index}:${fontPairings}:${nestedBlocks}:${moreSections}`;
   let twin = STAGE_B_TWINS.get(key);
   if (!twin) {
     twin = schema;
-    if (!nestedBlocks) twin = withoutNestedBlockSections(twin);
+    if (!nestedBlocks || !moreSections)
+      twin = withSectionTypes(
+        twin,
+        themeStudioSectionTypes(nestedBlocks, moreSections),
+      );
     if (!fontPairings) twin = legacyFontSchema(twin);
     STAGE_B_TWINS.set(key, twin);
   }

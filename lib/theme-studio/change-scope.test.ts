@@ -172,14 +172,15 @@ describe("operator edit targets", () => {
 
   it("will not hide a section the theme's content floors still need", async () => {
     const { package: pkg, intent } = await baseVersion();
-    // The homepage floor is five sections; hide every other one of the
-    // offline homepage's eight so four are left, whatever else it grows.
+    // The homepage floor is five sections of four types; hide every section
+    // after the third so three are left, however much the offline homepage
+    // grows.
     const sections = pkg.definition.preset.pages[0].sections.length;
     const decision = parseChangeDecision({
       scope: "edit",
-      summary: "Hid half the sections.",
+      summary: "Hid most of the sections.",
       edits: Array.from({ length: sections }, (_, i) => i)
-        .filter((i) => i % 2 === 1)
+        .filter((i) => i >= 3)
         .map((i) => ({
           path: `/definition/preset/pages/0/sections/${i}/enabled`,
           valueJson: "false",

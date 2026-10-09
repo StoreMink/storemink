@@ -420,6 +420,14 @@ const ALT_TEXT_PAIRS: Readonly<
   gallery: [{ url: "image_url", alt: "image_alt", items: "items" }],
   testimonials: [{ url: "logo_url", alt: "logo_alt", items: "items" }],
   accordion: [{ url: "image_url", alt: "image_alt", items: "items" }],
+  multicolumn: [{ url: "image_url", alt: "image_alt", items: "items" }],
+  image_marquee: [{ url: "image_url", alt: "image_alt", items: "items" }],
+  image_hotspots: [{ url: "image_url", alt: "image_alt" }],
+  before_after: [
+    { url: "image_url", alt: "image_alt", items: "before" },
+    { url: "image_url", alt: "image_alt", items: "after" },
+  ],
+  logo_strip: [{ url: "image_url", alt: "image_alt", items: "items" }],
   video: [{ url: "poster_url", alt: "poster_alt" }],
 };
 
@@ -500,11 +508,14 @@ export function validateThemeCopy(theme: ThemeDefinition): ThemeFinding[] {
     enabled.forEach((section, i) => {
       const config = section.config as unknown as Record<string, unknown>;
       for (const pair of ALT_TEXT_PAIRS[section.type] ?? []) {
-        const targets = pair.items
-          ? Array.isArray(config[pair.items])
-            ? config[pair.items]
-            : []
-          : [config];
+        // `items` names a block list, or one nested object (a before/after
+        // side); the config itself otherwise.
+        const container = pair.items ? config[pair.items] : config;
+        const targets = Array.isArray(container)
+          ? container
+          : container && typeof container === "object"
+            ? [container]
+            : [];
         (targets as unknown[]).forEach((target, j) => {
           if (!target || typeof target !== "object") return;
           const t = target as Record<string, unknown>;

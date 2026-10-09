@@ -58,7 +58,19 @@
 > the new sections), the Studio vocabulary gated so pre-v29 requests replay
 > byte for byte, and renderer fixtures for the new markup at the five widths.
 > Not yet run against live Gemini; the 2b exit (every new item on an
-> exemplar theme per direction) is folded into the Phase 2 exit.
+> exemplar theme per direction) is folded into the Phase 2 exit. Phase 2c,
+> first slice (same day, prompt v30): seven of the fourteen candidates
+> landed — multicolumn, image marquee, image hotspots (Bubble's gap),
+> before/after, product spotlight, logo strip and countdown (the last two
+> builder-only) — plus the tile grid's collage layout, each with builder
+> form, thumbnail, validator, renderer fixtures and prompt vocabulary. Of
+> the rest: comparison table landed in 2b; lookbook is the gallery's
+> editorial layout; the video-background hero exists (`hero.video_url` on
+> every variant); split banner duo is a two-column tile grid; collection
+> list is `shop_by_category` in cards. Still open from the pool: the
+> announcement bar, which belongs in the header group above the header
+> (chrome, not a page section — the v27 opening rule puts the carousel
+> first on the homepage), and a true collection list with descriptions.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

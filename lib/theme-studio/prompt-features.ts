@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v29";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v30";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -36,5 +36,9 @@ export function themePromptFeatures(version: string) {
      * a prompt prints and a schema admits grows with it; earlier requests
      * keep the shorter list byte for byte. */
     nestedBlocks: revision >= 29,
+    /** Five more sections a theme may use (plan Phase 2c, first slice):
+     * multicolumn, image_marquee, image_hotspots, before_after and
+     * product_spotlight, plus the tile grid's collage layout. */
+    moreSections: revision >= 30,
   };
 }

@@ -1325,6 +1325,56 @@ describe("theme generation pipeline", () => {
     ).toContain(blocks);
   });
 
+  // Plan Phase 2c, first slice: five more sections under v30; v29 text is
+  // unchanged.
+  it("prints the v30 sections only under v30 and keeps v29 text byte for byte", async () => {
+    const {
+      stageASystemPrompt,
+      stageBSystemPrompt,
+      stageBInitialSystemPrompt,
+      stageBVarietySystemPrompt,
+    } = await import("./prompts");
+    const more = "- More sections: multicolumn holds";
+    const v30 = stageBSystemPrompt(true, true, true, true, true, true);
+    expect(v30).toContain(more);
+    expect(v30).toContain("\nimage_hotspots: {");
+    expect(v30).toContain("\nproduct_spotlight: {");
+    expect(v30).not.toContain("\nlogo_strip: {");
+    expect(v30).not.toContain("\ncountdown: {");
+    const v29 = stageBSystemPrompt(true, true, true, true, true);
+    expect(v29).not.toContain(more);
+    expect(v29).not.toContain("\nimage_hotspots: {");
+    expect(v29).toContain("\ncomparison: {");
+    expect(v29).toBe(stageBSystemPrompt(true, true, true, true, true, false));
+    expect(stageASystemPrompt(true, true, true, true, true, true)).toContain(
+      "Further sections give a homepage",
+    );
+    expect(stageASystemPrompt(true, true, true, true, true)).not.toContain(
+      "- before_after:",
+    );
+    const first = await run();
+    if (first.kind !== "version") throw new Error("fixture failed");
+    const variety = stageBVarietySystemPrompt(
+      first.intent,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety).toContain(
+      '"media_position":"CHOOSE ONE: [\\"left\\",\\"right\\"]"',
+    );
+    expect(variety).toContain("\nmulticolumn: {");
+    expect(
+      stageBVarietySystemPrompt(first.intent, true, true, true, true, true),
+    ).not.toContain("\nmulticolumn: {");
+    expect(
+      stageBInitialSystemPrompt(first.intent, true, true, true, true, true),
+    ).toContain(more);
+  });
+
   it("keeps the system prompts deterministic so they cache", async () => {
     const { stageASystemPrompt, stageBSystemPrompt } =
       await import("./prompts");

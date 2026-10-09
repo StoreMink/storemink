@@ -412,6 +412,40 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
               },
             ],
           }),
+          // v30 (plan Phase 2c): columns of values with icons.
+          section("multicolumn", {
+            ...EMPTY_CONFIG.multicolumn,
+            heading: "Why shop with us",
+            items: [
+              {
+                icon: "leaf",
+                image_url: "",
+                image_alt: "",
+                heading: "Made to last",
+                body: "Materials chosen for the years, not the season.",
+                cta_label: "",
+                cta_href: "",
+              },
+              {
+                icon: "truck",
+                image_url: "",
+                image_alt: "",
+                heading: "Delivered with care",
+                body: "Packed by hand and sent within a few working days.",
+                cta_label: "",
+                cta_href: "",
+              },
+              {
+                icon: "refresh",
+                image_url: "",
+                image_alt: "",
+                heading: "Easy returns",
+                body: "Changed your mind? Send it back; we make it simple.",
+                cta_label: "Read our policy",
+                cta_href: "/refund-policy",
+              },
+            ],
+          }),
         ],
       },
       {
@@ -425,6 +459,20 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
             cta_href: "/shop",
             image_url: `theme-asset://${slot}`,
             image_alt: "The workshop where every piece is finished by hand",
+          }),
+          section("before_after", {
+            ...EMPTY_CONFIG.before_after,
+            heading: "From the kiln to the shelf",
+            before: {
+              image_url: `theme-asset://${slot}`,
+              image_alt: "A piece before glazing",
+              label: "Before",
+            },
+            after: {
+              image_url: `theme-asset://${secondSlot}`,
+              image_alt: "The same piece after glazing",
+              label: "After",
+            },
           }),
         ],
       },

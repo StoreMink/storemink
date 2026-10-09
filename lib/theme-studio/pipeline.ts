@@ -528,6 +528,7 @@ async function generate(
     input.promptVersion,
   ).peopleInImagery;
   const nestedBlocks = themePromptFeatures(input.promptVersion).nestedBlocks;
+  const moreSections = themePromptFeatures(input.promptVersion).moreSections;
   // Explicit styles (intent schema 2) apply to new builds and to revisions of
   // themes that already carry a design direction. A revision of an older
   // schema-1 theme keeps its original contract: forcing a new direction and
@@ -717,6 +718,7 @@ async function generate(
               carouselOpening,
               peopleInImagery,
               nestedBlocks,
+              moreSections,
             )
           : stageASystemPrompt(
               themePromptFeatures(input.promptVersion).nativeCommerce,
@@ -724,12 +726,14 @@ async function generate(
               false,
               peopleInImagery,
               nestedBlocks,
+              moreSections,
             ),
         content: [{ type: "text", text: userText }, ...images],
         schema: stageASchemaFor(
           explicitStyles ? STAGE_A_VARIETY_SCHEMA : STAGE_A_ENVELOPE_SCHEMA,
           peopleInImagery,
           nestedBlocks,
+          moreSections,
         ),
         effort: "high",
       },
@@ -869,6 +873,7 @@ async function generate(
                 fullBleedOpening,
                 carouselOpening,
                 nestedBlocks,
+                moreSections,
               )
             : compactInitial
               ? stageBInitialSystemPrompt(
@@ -877,6 +882,7 @@ async function generate(
                   fullBleedOpening,
                   carouselOpening,
                   nestedBlocks,
+                  moreSections,
                 )
               : stageBSystemPrompt(
                   themePromptFeatures(input.promptVersion).nativeFraming,
@@ -884,6 +890,7 @@ async function generate(
                   fullBleedOpening,
                   carouselOpening,
                   nestedBlocks,
+                  moreSections,
                 )) + (heroContrast ? heroContrastPrompt(fullBleedOpening) : ""),
         content: [{ type: "text", text: userText }],
         schema: stageBSchemaFor(
@@ -896,6 +903,7 @@ async function generate(
               : STAGE_B_DRAFT_SCHEMA,
           fontPairings,
           nestedBlocks,
+          moreSections,
         ),
         effort: "high",
       },

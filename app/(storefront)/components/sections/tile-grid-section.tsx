@@ -37,7 +37,7 @@ function Tile({ tile }: { tile: TileItem }) {
     </>
   );
 
-  const className = `home-tile theme-${tile.theme}`;
+  const className = `home-tile theme-${tile.theme}${tile.span ? ` span-${tile.span}` : ""}`;
   const styleAttr = tile.background
     ? { background: tile.background }
     : undefined;
@@ -95,7 +95,7 @@ export function TileGridSection({
         </div>
       )}
       <div
-        className={`home-tile-grid cols-${config.columns} size-${config.height}`}
+        className={`home-tile-grid cols-${config.columns} size-${config.height} layout-${config.layout ?? "grid"}`}
       >
         {config.tiles.map((tile, i) => (
           <Tile key={i} tile={tile} />

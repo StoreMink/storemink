@@ -65,8 +65,8 @@ export function heroContrastPrompt(fullBleedOpening: boolean): string {
 
 /** The section lines a Stage A prompt prints: pre-v29 requests keep the
  * shorter list byte for byte (prompt-features.ts). */
-function sectionLines(nestedBlocks: boolean): string {
-  return themeStudioSectionTypes(nestedBlocks)
+function sectionLines(nestedBlocks: boolean, moreSections: boolean): string {
+  return themeStudioSectionTypes(nestedBlocks, moreSections)
     .map((type) => `- ${type}: ${SECTION_TYPE_META[type].description}`)
     .join("\n");
 }
@@ -103,11 +103,15 @@ export function stageASystemPrompt(
   carouselOpening = false,
   peopleInImagery = false,
   nestedBlocks = false,
+  moreSections = false,
 ): string {
   // v29+: sections hold blocks, and two block-shaped sections exist. The
-  // pre-v29 list and text are kept byte for byte.
+  // pre-v29 list and text are kept byte for byte. v30+ adds five sections.
   const blocksSentence = nestedBlocks
     ? " Sections hold blocks: a media_text may carry several stories under its first band, an accordion holds rows of copy or copy with a picture, and a comparison holds rows of text or ticks across two to four columns. Plan a comparison where the range has tiers, sizes, bundles or plans a shopper weighs, and an accordion where care, materials, shipping or sizing belong on a product-led page; neither is required."
+    : "";
+  const moreSentence = moreSections
+    ? " Further sections give a homepage the rhythm of a premium theme: multicolumn (two to four columns of icon or picture, heading and copy — values, benefits, how it works), image_marquee (a drifting row of pictures, each its own brief), image_hotspots (one scene with dots that open a product — write one wide brief for the scene and plan two to five dots), before_after (two pictures of the same subject, each its own brief) and product_spotlight (one featured product, large, beside copy). Plan a tile_grid as a collage where tiles of different sizes suit the brief. Use each where it serves the store; none is required."
     : "";
   // v28+: the image model may show adults where a brief asks for them. The
   // people-free paragraph below is pre-v28 text, kept byte for byte.
@@ -126,8 +130,8 @@ Decide first.
 - "decline" when the request is to clone a specific brand's identity, to deceive shoppers, or is otherwise not something StoreMink should build. Give a one-sentence reason. Set intent to null.
 
 StoreMink themes are data rendered by one shared storefront. A theme can only use these section types:
-${sectionLines(nestedBlocks)}
-It can also choose palette colours, two fonts, corner radii and a fixed set of header, product-card, product-page, cart and footer layout variants. When the brief needs something those cannot express — a new kind of section, an interaction, animation beyond simple transitions, a font or token that does not exist, or anything that would need custom code — record a capability gap with the matching code instead of approximating it silently. Mark it blocking when the brief makes it a hard requirement. Never propose custom code.${blocksSentence}${
+${sectionLines(nestedBlocks, moreSections)}
+It can also choose palette colours, two fonts, corner radii and a fixed set of header, product-card, product-page, cart and footer layout variants. When the brief needs something those cannot express — a new kind of section, an interaction, animation beyond simple transitions, a font or token that does not exist, or anything that would need custom code — record a capability gap with the matching code instead of approximating it silently. Mark it blocking when the brief makes it a hard requirement. Never propose custom code.${blocksSentence}${moreSentence}${
     nativeCommerce
       ? `
 
@@ -154,8 +158,8 @@ Read reference screenshots one by one. referenceAnalysis contains exactly one it
 Respond with JSON only, matching the provided schema.`;
 }
 
-function configExamples(nestedBlocks: boolean): string {
-  return themeStudioSectionTypes(nestedBlocks)
+function configExamples(nestedBlocks: boolean, moreSections: boolean): string {
+  return themeStudioSectionTypes(nestedBlocks, moreSections)
     .map(
       (type) => `${type}: ${JSON.stringify(configExample(type, nestedBlocks))}`,
     )
@@ -173,6 +177,7 @@ export function stageBSystemPrompt(
   fullBleedOpening = false,
   carouselOpening = false,
   nestedBlocks = false,
+  moreSections = false,
 ): string {
   const reserved = [...RESERVED_PAGE_SLUGS].sort().join(", ");
   // v29+: sections hold blocks (plan Phase 2b). Appended to the opening
@@ -180,6 +185,11 @@ export function stageBSystemPrompt(
   // rewrites; an empty string keeps pre-v29 text byte for byte.
   const blocksBullet = nestedBlocks
     ? `\n- Blocks: list-shaped sections hold blocks the way Shopify sections do, and the block lists are content to author, never left empty. media_text may carry up to five stories under its first band (each with its own eyebrow, heading, body, cta, image slot, image_alt and media_position; alternate the image side from band to band), which is how a craft or ingredient story is told in beats. accordion holds one to twenty rows with open_first and allow_multiple; each row has type "text" (heading and body) or "image" (the same plus image_url naming a slot and image_alt, a picture inside the open row) — use it for care, materials, shipping and sizing. comparison holds two to four columns (label, caption, optional cta_label and cta_href, highlight true on at most one recommended column) and one to twelve rows of type "text" (values: one short value per column, in column order) or "check" (values: "yes", "no" or "" per column), with style "table" or "cards" — use it where the range has tiers, sizes, bundles or plans a shopper weighs.`
+    : "";
+  // v30+: five more sections and the collage tile layout; pre-v30 text is
+  // kept byte for byte.
+  const moreBullet = moreSections
+    ? `\n- More sections: multicolumn holds one to six columns (items: icon from the trust-bar catalogue or "", image_url "" or a slot, image_alt, heading, body, cta_label, cta_href) with columns 2–4, alignment and image_ratio; use icons for values and benefits, pictures for a process. image_marquee holds two to twelve pictures (items: image_url slot, image_alt, href) with speed, size and image_ratio — a moodboard or product shots drifting sideways. image_hotspots is one wide scene (image_url, image_alt, image_ratio) with one to eight hotspots (x and y as integers 0–100 from the left and top, title, body, href to a product or collection you seed, cta_label), a shoppable picture. before_after holds two pictures of one subject (before and after, each with image_url, image_alt and a short label) with image_ratio and start 20–80. product_spotlight shows one product large: source "featured", product_id null, eyebrow, heading (or "" to use the product's name), body, media_position, cta_label and show_price. A tile_grid may set layout "collage" and give some tiles span "2x1", "1x2" or "2x2" (omit span for one cell) for a bento arrangement.`
     : "";
   // v26+: the homepage opens with a photograph filling the band (opening.ts
   // is the check). Placed before the section-style bullet, which the variety
@@ -224,12 +234,12 @@ Pages
 - Each section has a type from the schema and configJson: a JSON object, encoded as a string, with exactly the fields of that type's example below. Keep id-based fields (product_ids, category_ids, blog_ids) as empty arrays; featured_products must use source "featured" and shop_by_category must use source "all".
 - The examples below show each type's field names and value types with EMPTY defaults. Fill them: a gallery needs at least two images, testimonials and FAQs at least one item, a promo banner an image or heading, a tile grid at least one tile, and rich text real HTML paragraphs.
 - hero and hero_carousel (and each carousel slide) also accept these OPTIONAL fields, which you may add to that config only: height ("auto", "small", "medium", "large" or "screen" — ${nativeFraming ? 'match height to the image shape at phone, tablet and desktop widths; use "medium" for a landscape banner and reserve "large"/"screen" for framing that can keep at least 35% of the source image visible. Prefer split composition for portrait-led artwork. Never force a wide landscape photograph into a tall screen-height tablet frame' : 'use "large" or "screen" for an image-led homepage, never on a text-only hero'}), mobile_image_url (a separate portrait image slot for phones, when the desktop banner is wide and its subject would be cropped away), focal_x and focal_y (integers 0–100, the subject's position in the image, so phones crop around it), overlay_opacity (integer 0–80, a veil behind the copy; use 20–45 when light text sits over a busy photo) and content_position ("top", "middle" or "bottom"). Leave any of them out to keep the default.
-- Image fields (keys ending in _url) are either "" or "theme-asset://<asset-brief-id>" using an id from the intent's asset briefs. video_url must always be "". Never write an external URL. Links (keys ending in _href) are either "" or a site path starting with "/", such as "/shop" or "/about". Every link must reach something the store will have: one of your own page slugs, /shop, /collections/<a category slug you seed>, /shop/<a product slug you seed>, or a policy page such as /privacy-policy. The examples' own links (such as /our-story) are placeholders — replace them.${openingBullet}${blocksBullet}
+- Image fields (keys ending in _url) are either "" or "theme-asset://<asset-brief-id>" using an id from the intent's asset briefs. video_url must always be "". Never write an external URL. Links (keys ending in _href) are either "" or a site path starting with "/", such as "/shop" or "/about". Every link must reach something the store will have: one of your own page slugs, /shop, /collections/<a category slug you seed>, /shop/<a product slug you seed>, or a policy page such as /privacy-policy. The examples' own links (such as /our-story) are placeholders — replace them.${openingBullet}${blocksBullet}${moreBullet}
 - Each section has a style. Use it to give the homepage rhythm the way a premium theme does: put two or three sections in a scheme — for example the trust bar or ticker in accent or inverse, one story or media-and-text section in soft or tint, the newsletter in inverse — and leave the rest null so bands alternate with the page. Never give neighbouring sections the same scheme. hero_carousel and promo_banner sit on their own photo and take no scheme. padding ("sm", "md" or "lg") adds space inside the band — a banded section without it gets "md". width "full" runs the band edge to edge; use it for banded sections.
 - Write original copy in the store's voice. No lorem ipsum, no placeholder brand names such as "Brand Name".
 
 Section config examples:
-${configExamples(nestedBlocks)}
+${configExamples(nestedBlocks, moreSections)}
 
 Navigation: header links point to /shop and to your pages. Footer groups hold two to four columns. Legal links are optional.
 - A header item may open a menu: its children are shown when a shopper opens it. Give a store with several categories a "Shop" item whose children group them — two to four children, each a column heading with two to six links such as "/collections/<slug>" — and set that item's image_url to a category or hero image slot to feature it. A child may have no children of its own. An item that only opens a menu may leave href "". Keep other header items plain: children [] and image_url "". Never nest deeper than a child's links.
@@ -246,12 +256,13 @@ export function stageBInitialSystemPrompt(
   fullBleedOpening = false,
   carouselOpening = false,
   nestedBlocks = false,
+  moreSections = false,
 ): string {
   const planned = new Set(intent.pagePlans.flatMap((p) => p.sectionTypes));
   // Brand-story pages often add rich_text after planning. Keep its content
   // shape explicit even when it was not listed in the original section plan.
   planned.add("rich_text");
-  const examples = themeStudioSectionTypes(nestedBlocks)
+  const examples = themeStudioSectionTypes(nestedBlocks, moreSections)
     .filter((type) => planned.has(type))
     .map(
       (type) => `${type}: ${JSON.stringify(configExample(type, nestedBlocks))}`,
@@ -264,10 +275,11 @@ export function stageBInitialSystemPrompt(
       fullBleedOpening,
       carouselOpening,
       nestedBlocks,
+      moreSections,
     )
       .replace(
-        configExamples(nestedBlocks),
-        examples || configExamples(nestedBlocks),
+        configExamples(nestedBlocks, moreSections),
+        examples || configExamples(nestedBlocks, moreSections),
       )
       .replace(
         "with exactly the fields of that type's example below",
@@ -304,6 +316,7 @@ export function stageAVarietySystemPrompt(
   carouselOpening = false,
   peopleInImagery = false,
   nestedBlocks = false,
+  moreSections = false,
 ): string {
   return (
     stageASystemPrompt(
@@ -312,6 +325,7 @@ export function stageAVarietySystemPrompt(
       carouselOpening,
       peopleInImagery,
       nestedBlocks,
+      moreSections,
     )
       .replace(
         /- Product cards can[\s\S]*?\n- Native shop/,
@@ -368,6 +382,7 @@ export function stageBVarietySystemPrompt(
   fullBleedOpening = false,
   carouselOpening = false,
   nestedBlocks = false,
+  moreSections = false,
 ): string {
   // v25+: the pairings the chosen direction suits, as guidance; the brief
   // and references still win, and any pairing stays allowed.
@@ -382,6 +397,7 @@ export function stageBVarietySystemPrompt(
         fullBleedOpening,
         carouselOpening,
         nestedBlocks,
+        moreSections,
       ).replace(/\nChoose a native commerce composition:[\s\S]*$/, "")
     : stageBSystemPrompt(
         true,
@@ -389,6 +405,7 @@ export function stageBVarietySystemPrompt(
         fullBleedOpening,
         carouselOpening,
         nestedBlocks,
+        moreSections,
       );
   const choices = visibleSectionChoices(fullBleedOpening);
   return (
@@ -426,6 +443,7 @@ export function stageBVarietySystemPrompt(
         /Section config examples:\n[\s\S]*?\n\nNavigation:/,
         `Section content fields (empty content must be authored) and required visible choices:\n${themeStudioSectionTypes(
           nestedBlocks,
+          moreSections,
         )
           .map(
             (type) =>

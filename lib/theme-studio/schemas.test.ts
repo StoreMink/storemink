@@ -146,7 +146,7 @@ describe("nested-block sections in the Studio schemas (v29)", () => {
     expect(THEME_STUDIO_SECTION_TYPES).toContain("comparison");
     expect(LEGACY_THEME_STUDIO_SECTION_TYPES).not.toContain("accordion");
     expect(LEGACY_THEME_STUDIO_SECTION_TYPES).not.toContain("comparison");
-    expect(themeStudioSectionTypes(false)).toBe(
+    expect(themeStudioSectionTypes(false, false)).toBe(
       LEGACY_THEME_STUDIO_SECTION_TYPES,
     );
     for (const schema of [
@@ -159,30 +159,93 @@ describe("nested-block sections in the Studio schemas (v29)", () => {
       expect(current.length).toBeGreaterThan(0);
       for (const list of current)
         expect(list).toEqual(THEME_STUDIO_SECTION_TYPES);
-      const legacy = sectionEnums(stageBSchemaFor(schema, true, false));
+      const legacy = sectionEnums(stageBSchemaFor(schema, true, false, false));
       expect(legacy.length).toBe(current.length);
       for (const list of legacy)
         expect(list).toEqual(LEGACY_THEME_STUDIO_SECTION_TYPES);
       // Both capabilities absent: the pre-v25 twin over the pre-v29 list.
-      const oldest = stageBSchemaFor(schema, false, false) as {
+      const oldest = stageBSchemaFor(schema, false, false, false) as {
         properties: Record<string, unknown>;
       };
       expect(oldest.properties.fontPairing).toBeUndefined();
       for (const list of sectionEnums(oldest))
         expect(list).toEqual(LEGACY_THEME_STUDIO_SECTION_TYPES);
       // Twins are built once and reused.
-      expect(stageBSchemaFor(schema, true, false)).toBe(
-        stageBSchemaFor(schema, true, false),
+      expect(stageBSchemaFor(schema, true, false, false)).toBe(
+        stageBSchemaFor(schema, true, false, false),
       );
     }
     for (const schema of [STAGE_A_ENVELOPE_SCHEMA, STAGE_A_VARIETY_SCHEMA]) {
       for (const list of sectionEnums(stageASchemaFor(schema, true, true)))
         expect(list).toEqual(THEME_STUDIO_SECTION_TYPES);
-      for (const list of sectionEnums(stageASchemaFor(schema, true, false)))
+      for (const list of sectionEnums(
+        stageASchemaFor(schema, true, false, false),
+      ))
         expect(list).toEqual(LEGACY_THEME_STUDIO_SECTION_TYPES);
-      const oldest = JSON.stringify(stageASchemaFor(schema, false, false));
+      const oldest = JSON.stringify(
+        stageASchemaFor(schema, false, false, false),
+      );
       expect(oldest).not.toContain('"people"');
       expect(oldest).not.toContain('"comparison"');
     }
+  });
+});
+
+describe("the v30 sections in the Studio schemas", () => {
+  const enums = (schema: unknown): string[][] => {
+    const found: string[][] = [];
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      const record = node as Record<string, unknown>;
+      if (Array.isArray(record.enum) && record.enum.includes("faq_accordion"))
+        found.push(record.enum as string[]);
+      Object.values(record).forEach(walk);
+    };
+    walk(schema);
+    return found;
+  };
+
+  it("admits them only when both v29 and v30 capabilities are on, and never the builder-only sections", async () => {
+    const {
+      stageBSchemaFor,
+      stageASchemaFor,
+      STAGE_A_ENVELOPE_SCHEMA,
+      THEME_STUDIO_SECTION_TYPES,
+      themeStudioSectionTypes,
+    } = await import("./schemas");
+    for (const type of [
+      "multicolumn",
+      "image_marquee",
+      "image_hotspots",
+      "before_after",
+      "product_spotlight",
+    ]) {
+      expect(THEME_STUDIO_SECTION_TYPES).toContain(type);
+      expect(themeStudioSectionTypes(true, false)).not.toContain(type);
+      expect(themeStudioSectionTypes(false, false)).not.toContain(type);
+    }
+    expect(THEME_STUDIO_SECTION_TYPES).not.toContain("logo_strip");
+    expect(THEME_STUDIO_SECTION_TYPES).not.toContain("countdown");
+    // v30 implies v29: the v29-only list keeps accordion and comparison.
+    expect(themeStudioSectionTypes(true, false)).toContain("comparison");
+    for (const list of enums(
+      stageBSchemaFor(STAGE_B_DRAFT_SCHEMA, true, true, false),
+    ))
+      expect(list).toEqual(themeStudioSectionTypes(true, false));
+    for (const list of enums(
+      stageBSchemaFor(STAGE_B_DRAFT_SCHEMA, true, true, true),
+    ))
+      expect(list).toEqual(THEME_STUDIO_SECTION_TYPES);
+    for (const list of enums(
+      stageASchemaFor(STAGE_A_ENVELOPE_SCHEMA, true, true, false),
+    ))
+      expect(list).not.toContain("multicolumn");
+    expect(stageASchemaFor(STAGE_A_ENVELOPE_SCHEMA, true, true, true)).toBe(
+      STAGE_A_ENVELOPE_SCHEMA,
+    );
   });
 });

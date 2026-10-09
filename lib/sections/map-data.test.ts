@@ -146,3 +146,35 @@ describe("mapSectionData", () => {
     expect(mapSectionData([], datasets).storeLowStockThreshold).toBe(0);
   });
 });
+
+describe("product_spotlight", () => {
+  it("resolves the chosen product, or the first featured one, else the first", () => {
+    const local: SectionDatasets = {
+      products: [product("a"), product("b", { featured: true }), product("c")],
+      categories: [],
+      blogs: [],
+    };
+    const chosen = section("s1", "product_spotlight", {
+      source: "manual",
+      product_id: "c",
+    });
+    const featured = section("s2", "product_spotlight", {
+      source: "featured",
+      product_id: null,
+    });
+    const missing = section("s3", "product_spotlight", {
+      source: "manual",
+      product_id: "zzz",
+    });
+    const out = mapSectionData([chosen, featured, missing], local);
+    expect(out.productsBySection.get("s1")?.map((p) => p.id)).toEqual(["c"]);
+    expect(out.productsBySection.get("s2")?.map((p) => p.id)).toEqual(["b"]);
+    expect(out.productsBySection.get("s3")).toEqual([]);
+    const none: SectionDatasets = { ...local, products: [product("a")] };
+    expect(
+      mapSectionData([featured], none)
+        .productsBySection.get("s2")
+        ?.map((p) => p.id),
+    ).toEqual(["a"]);
+  });
+});

@@ -2519,7 +2519,11 @@ wholesip/
 │   │       │                  # custom-code-section, rich-text-section, hero-section,
 │   │       │                  # usp-bar-section, ticker-section, tile-grid-section,
 │   │       │                  # faq-accordion-section, accordion-section,
-│       │                  # comparison-section, media-text-section,
+│       │                  # comparison-section, multicolumn-section,
+│       │                  # image-marquee-section, image-hotspots-section,
+│       │                  # before-after-section, product-spotlight-section,
+│       │                  # logo-strip-section, countdown-section (usp-icons
+│       │                  # is the shared trust-bar icon map), media-text-section,
 │   │       │                  # gallery-section, testimonials-section, video-section/player,
 │   │       │                  # newsletter-section,
 │   │       │                  # preview-bridge, draft-canvas (client-side instant
@@ -4915,7 +4919,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
 11. **Website Builder — pages & custom code are per-store, dashboard-editable.**
     The storefront itself is a per-store artifact, not hardcoded: - **Section registry**: `lib/homepage/section-types.ts` is the single typed
     section schema (config types, `EMPTY_CONFIG`, `META`, `validateConfig`),
-    shared by the homepage AND custom pages. Nineteen block types: `hero`
+    shared by the homepage AND custom pages. Twenty-six block types: `hero`
     (banner/split/minimal/fullbleed variants — first-class hero, replaces the old
     custom_code hero hack; optional `video_url` plays muted/looping in place
     of the image with the image as poster), `hero_carousel` (auto-playing
@@ -4941,12 +4945,23 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     (products, sizes or plans side by side, feature by feature, as a table
     that scrolls sideways on phones with the feature column pinned or as
     stacking cards; rows are text per column or yes/no ticks that carry a
-    screen-reader word),
+    screen-reader word), `multicolumn` (two to four columns of trust-bar
+    icon or picture, heading, copy and a link), `image_marquee` (pictures
+    drifting sideways on the ticker's track), `image_hotspots` (a shoppable
+    picture: dots at percentage positions open a card with copy and a link,
+    one at a time, opening inwards near the far edges), `before_after` (two
+    pictures in one frame; a native range input laid over the frame moves
+    the clip, so it drags, steps by keyboard and reads as a slider),
+    `product_spotlight` (one product large, resolved like featured products:
+    the chosen id, else the first featured product, else the first product),
+    `logo_strip` (press or stockist marks, still or drifting, optionally one
+    tone; builder-only), `countdown` (a live countdown to an ISO instant,
+    ticking only in the browser; builder-only),
     `latest_blogs`, `rich_text` (inline sanitized HTML, SEO-friendly) and
     `custom_code` (merchant HTML/CSS/JS). Hero/tile/slide `background` fields
     are strict colours (`safeColor`) because they render into inline style
     attrs; media, logo, CTA and `video_url` fields are `safeHref`-validated.
-    All nineteen types have builder forms and section-library thumbnails;
+    All twenty-six types have builder forms and section-library thumbnails;
     Phase 3's renderers live in `media-text-section.tsx`, `gallery-section.tsx`,
     `testimonials-section.tsx`, `video-section.tsx`, and
     `newsletter-section.tsx`.
@@ -6299,6 +6314,43 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     Merchant-visible (two section types and stories in the library):
     migration `20261009_0174_nested_blocks_help` edits the section guide's
     list sentence in place and adds one paragraph on blocks.
+    **Phase 2c, first slice (2026-10-09; prompt v30).** Seven sections and
+    one layout, chosen for what Shopify themes ship everywhere and what the
+    Studio can author (there is no capability-gap report yet to rank the
+    plan's candidate pool): `multicolumn`, `image_marquee`, `image_hotspots`
+    (Bubble's gap), `before_after`, `product_spotlight`, and the builder-only
+    `logo_strip` and `countdown` — the image model draws no real press marks
+    (and a mark is somebody's brand), and a model cannot know a real end
+    date, so `THEME_STUDIO_SECTION_TYPES` excludes both the way it excludes
+    video. `tile_grid` gains `layout: "collage"` with per-tile `span`
+    (`2x1`, `1x2`, `2x2`; one cell stored as absence), packed with
+    `grid-auto-flow: dense`. ★ `tile_grid.layout` is deliberately NOT a
+    required visible choice: `sectionChoiceIssues` runs at every compile, so
+    a v29 draft replayed from its paid checkpoint, which has no such key,
+    would otherwise fail a check its prompt never set; the compiler's
+    defaults make it grid. The spotlight needs product data: `map-data.ts`
+    resolves the chosen id, else the first featured product, else the first,
+    and `fetchSectionDatasets` fetches products for it; the compiler requires
+    `source "featured"` with `product_id null` (ids are assigned at install),
+    the `featured_products` rule. Every tick, dot and handle is a 24px+
+    target; the before/after control is a native range input covering the
+    frame with an invisible thumb and a drawn grip, so it drags anywhere,
+    steps by keyboard and is a slider to a screen reader; the countdown
+    renders blank tiles on the server and ticks only after mount, so there
+    is nothing a hydration could disagree with. Theme Studio: feature
+    `moreSections` (v30). The vocabulary is now `SECTIONS_BY_REVISION` in
+    `schemas.ts`: `themeStudioSectionTypes(nestedBlocks, moreSections)` gives
+    each revision its list, the twins take a fourth flag, and the prompts a
+    sixth parameter; a v30 Stage B bullet describes each section's fields
+    and the collage. `validateThemeCopy`'s alt-text pairs cover every new
+    picture, including the two nested before/after sides (a pair's `items`
+    may now name one nested object). The offline draft carries a
+    multicolumn on the homepage and a before/after on About; the renderer
+    check renders every new section at the five widths (marquee and strip
+    drifting inside their band, the hotspot card opening inwards, the
+    spotlight stacking, the collage spanning). Merchant-visible: the pending
+    migration 0174 (never applied) was widened in place to name the seven
+    new sections, rather than chaining a second `replace()` on it.
     **The first live v26 run found four renderer defects, all shared chrome
     (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
     before artwork as `renderer_fix_required`, so every image stayed a
