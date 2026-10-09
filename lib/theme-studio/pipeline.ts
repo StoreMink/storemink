@@ -520,6 +520,9 @@ async function generate(
   const fullBleedOpening = themePromptFeatures(
     input.promptVersion,
   ).fullBleedOpening;
+  const carouselOpening = themePromptFeatures(
+    input.promptVersion,
+  ).carouselOpening;
   // Explicit styles (intent schema 2) apply to new builds and to revisions of
   // themes that already carry a design direction. A revision of an older
   // schema-1 theme keeps its original contract: forcing a new direction and
@@ -550,6 +553,8 @@ async function generate(
     // A theme that opens with a full-band photograph keeps it: the opening's
     // variant, height and width are not repair settings, and a repair that
     // moved them anyway is a validation issue below.
+    // Any full-band opening the base already has (a slideshow or a single
+    // photo) is kept, whichever rule the base was built under.
     const keepOpening = fullBleedOpening && !homepageOpeningIssues(base).length;
     const context = JSON.stringify({
       request: input.messages.map((m) => m.body),
@@ -702,7 +707,7 @@ async function generate(
         modelKey: input.compile.modelKey,
         providerModel: input.providerModel,
         system: explicitStyles
-          ? stageAVarietySystemPrompt(fullBleedOpening)
+          ? stageAVarietySystemPrompt(fullBleedOpening, carouselOpening)
           : stageASystemPrompt(
               themePromptFeatures(input.promptVersion).nativeCommerce,
             ),
@@ -846,17 +851,20 @@ async function generate(
                 compactInitial,
                 fontPairings,
                 fullBleedOpening,
+                carouselOpening,
               )
             : compactInitial
               ? stageBInitialSystemPrompt(
                   intent,
                   fontPairings,
                   fullBleedOpening,
+                  carouselOpening,
                 )
               : stageBSystemPrompt(
                   themePromptFeatures(input.promptVersion).nativeFraming,
                   fontPairings,
                   fullBleedOpening,
+                  carouselOpening,
                 )) + (heroContrast ? heroContrastPrompt(fullBleedOpening) : ""),
         content: [{ type: "text", text: userText }],
         schema: stageBSchemaFor(
@@ -946,7 +954,9 @@ async function generate(
       // been given one.
       const opened =
         fullBleedOpening && !input.revision
-          ? enforceHomepageOpening(compiled.package)
+          ? enforceHomepageOpening(compiled.package, {
+              carousel: carouselOpening,
+            })
           : { package: compiled.package, issues: [] as string[] };
       if (claims.length || opened.issues.length) {
         issuesB = [...claims, ...opened.issues];

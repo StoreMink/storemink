@@ -318,6 +318,16 @@
 }
 
 .home-product-scroll {
+  /* ★ The scroll container is POSITIONED so it is the containing block of
+     every absolutely positioned descendant — the cards' screen-reader-only
+     labels above all. Left static, those 1px `sr-only` spans resolve against
+     the carousel wrapper outside the clip, sit where their card scrolls to,
+     and extend the body's layout overflow by the whole off-screen track
+     (measured on demo-ritual at 360px: body.scrollWidth 960 for a 360px
+     page), which the acceptance probe reports as the page being wider than
+     the viewport with no visible offender. Same gotcha as the dashboard
+     tables' sr-only cells. */
+  position: relative;
   display: flex;
   align-items: stretch;
   gap: var(--sm-grid-gap, 22px);
@@ -479,6 +489,7 @@
 }
 
 .home-cat-scroll {
+  position: relative; /* contains absolute descendants; see .home-product-scroll */
   display: flex;
   gap: 18px;
   overflow-x: auto;
@@ -616,6 +627,7 @@
 }
 
 .home-blog-scroll {
+  position: relative; /* contains absolute descendants; see .home-product-scroll */
   display: flex;
   gap: 24px;
   overflow-x: auto;

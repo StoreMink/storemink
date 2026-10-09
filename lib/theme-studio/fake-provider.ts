@@ -131,6 +131,16 @@ export function runFakeProvider(
         artDirection: "Natural light, no third-party logos or copied artwork.",
         source: "operator",
       },
+      // The opening is a slideshow (opening.ts, v27): a second scene of the
+      // same shoot for its second slide.
+      {
+        id: "home-hero-2",
+        purpose: "Homepage opening, slide 2",
+        subject: "The same products set out on a table by a window",
+        aspectRatio: "16:9",
+        artDirection: "Natural light, no third-party logos or copied artwork.",
+        source: "operator",
+      },
       {
         id: "product-photo",
         purpose: "Product photography for the whole range",
@@ -187,6 +197,10 @@ const FAKE_CATEGORIES = [
 
 function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
   const slot = intent.assetBriefs[0]?.id ?? "home-hero";
+  const secondSlot =
+    intent.assetBriefs.find((b) => /slide 2/i.test(b.purpose))?.id ??
+    intent.assetBriefs[1]?.id ??
+    slot;
   // Products name the range's photography brief; the compiler gives each its
   // own slot from it (compiler.ts productSlotId).
   const productBrief =
@@ -273,8 +287,40 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
         seoTitle: null,
         seoDescription: null,
         sections: [
-          // The opening every Studio theme uses (opening.ts): the photo
-          // fills the band behind the copy, edge to edge.
+          // The opening every Studio theme uses (opening.ts): a slideshow of
+          // photographs filling the band behind the copy, edge to edge, with
+          // previous/next arrows.
+          section(
+            "hero_carousel",
+            {
+              ...EMPTY_CONFIG.hero_carousel,
+              slides: [
+                {
+                  ...EMPTY_CONFIG.hero_carousel.slides[0],
+                  heading: name,
+                  subheading: `${name} everyday essentials`,
+                  image_url: `theme-asset://${slot}`,
+                  focal_y: 40,
+                },
+                {
+                  ...EMPTY_CONFIG.hero_carousel.slides[0],
+                  heading: "New this season",
+                  cta_label: "See what's new",
+                  image_url: `theme-asset://${secondSlot}`,
+                  theme: "light",
+                },
+              ],
+              interval_seconds: 6,
+              height: "large",
+            },
+            { width: "full" },
+          ),
+          section("shop_by_category", EMPTY_CONFIG.shop_by_category, {
+            scheme: "tint",
+            width: "full",
+          }),
+          // A single full-band photo hero further down: the fullbleed variant
+          // stays exercised, and the solid-hero fixtures copy it to About.
           section(
             "hero",
             {
@@ -287,10 +333,6 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
             },
             { width: "full" },
           ),
-          section("shop_by_category", EMPTY_CONFIG.shop_by_category, {
-            scheme: "tint",
-            width: "full",
-          }),
           section("featured_products", EMPTY_CONFIG.featured_products),
           // Not last: the footer carries the store's signup form, and a
           // closing newsletter section would put two back to back (the

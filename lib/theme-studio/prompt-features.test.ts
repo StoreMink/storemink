@@ -17,6 +17,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     convergence: false,
     fontPairings: false,
     fullBleedOpening: false,
+    carouselOpening: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -30,6 +31,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     convergence: false,
     fontPairings: false,
     fullBleedOpening: false,
+    carouselOpening: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -43,8 +45,9 @@ it("preserves old paid request shapes and carries capabilities into future promp
     convergence: true,
     fontPairings: true,
     fullBleedOpening: true,
+    carouselOpening: true,
   });
-  expect(themePromptFeatures("theme-studio-v27")).toEqual(
+  expect(themePromptFeatures("theme-studio-v28")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
   );
   expect(themePromptFeatures("invalid").compactInitial).toBe(false);
@@ -80,4 +83,10 @@ it("enables font pairings only for v25 and later", () => {
 it("asks for a full-band photograph opening only from v26, so v25 requests replay unchanged", () => {
   expect(themePromptFeatures("theme-studio-v25").fullBleedOpening).toBe(false);
   expect(themePromptFeatures("theme-studio-v26").fullBleedOpening).toBe(true);
+});
+
+it("makes the opening a slideshow only from v27, so v26 requests replay unchanged", () => {
+  expect(themePromptFeatures("theme-studio-v26").carouselOpening).toBe(false);
+  expect(themePromptFeatures("theme-studio-v27").carouselOpening).toBe(true);
+  expect(themePromptFeatures("theme-studio-v27").fullBleedOpening).toBe(true);
 });

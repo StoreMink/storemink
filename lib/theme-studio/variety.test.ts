@@ -256,7 +256,12 @@ it.each([
       ["design/page/width", "full"],
       ["design/shape/card", "0px"],
       ["design/typography/headingScale", "small"],
-      ["pages/0/sections/0/config/variant", "split"],
+      // The opening's own settings are not offered to a correction (v26+),
+      // so the distance comes from the other axes.
+      ["design/page/gridGap", "roomy"],
+      ["design/motion/reveal", "rise"],
+      ["pages/0/sections/1/config/display", "cards"],
+      ["pages/0/sections/4/config/theme", "light"],
     ].map(([path, value]) => ({
       path: `/definition/preset/${path}`,
       valueJson: JSON.stringify(value),

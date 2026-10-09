@@ -1,5 +1,7 @@
 /** Replays the dark discount badge, faint compare price and market drawer
- * failures and Bubble's white-on-gold hero using production CSS in offline
+ * failures, Bubble's white-on-gold hero, and the three chrome-state defects
+ * of 2026-10-09 (sign-in subtitle contrast, the search sheet's 18px submit
+ * target, the account menu's bare button) using production CSS in offline
  * Chromium. Negative controls must reproduce the defects first. */
 import { readFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -223,8 +225,89 @@ try {
       }
     }
   }
+  // Chrome states (Phase 1 item 3 opens them): the sign-in dialog's copy on
+  // the dialog surface, the search sheet's submit target, the account menu's
+  // ARIA children. Each with the pre-2026-10-09 rule as a negative control.
+  const authCss = readCss(
+    "../app/(storefront)/components/auth/AuthModal.module.css",
+  ).replace(/:global\(([^)]+)\)/g, "$1");
+  const authFixture = (broken) => `<!doctype html><html lang="en"><head><style>
+*{box-sizing:border-box}body{margin:0;font:16px Arial;background:#f5d061}
+:root{--sm-surface:#ffffff;--sm-cream:#f5d061;--sm-ink:#1b1b1b;--sm-ink-soft:#554d59;--sm-ink-faint:#9c958c;--sm-accent:#b5173f;--sm-on-accent:#fff;--sm-radius-card:20px}
+${authCss}
+${broken ? ".subtitle,.secondaryAction,.divider,.backBtn{color:var(--sm-ink-faint)}" : ""}
+</style></head><body><div class="overlay overlayVisible"><div class="modal"><p class="subtitle">Sign in with your mobile number to continue</p><p class="secondaryAction">Didn't get the code? <button class="backBtn">Resend</button></p><div class="divider"><span>or</span></div></div></div></body></html>`;
+  const badAuth = await checkHtml(390, authFixture(true));
+  if (!badAuth.some((v) => v.target.includes("subtitle")))
+    failures.push({
+      negativeControl: "did not reproduce Bubble's sign-in subtitle failure",
+      badAuth,
+    });
+  for (const width of [360, 390, 768]) {
+    const violations = await checkHtml(width, authFixture(false));
+    cases++;
+    if (violations.length) failures.push({ width, authDialog: violations });
+  }
+  const sheetFixture = (broken) => `<!doctype html><html lang="en"><head><style>
+*{box-sizing:border-box}body{margin:0;font:16px Arial}
+:root{--sm-surface:#fff;--sm-sand:#f4f1ec;--sm-border:#ddd;--sm-ink:#1b1b1b;--sm-ink-faint:#777;--sm-radius-control:10px;--sm-shadow-rgb:0,0,0}
+${headerCss}
+${broken ? ".searchIcon{width:auto;height:auto;margin:0}" : ""}
+</style></head><body><div class="searchSheet" role="dialog"><form class="drawerSearchBar" role="search"><input class="searchInput" placeholder="Search products"><button type="submit" class="searchIcon" aria-label="Search"><svg width="18" height="18" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/></svg></button></form></div></body></html>`;
+  const measureIcon = async (width, html) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.setContent(html);
+    return page.evaluate(() => {
+      const r = document.querySelector(".searchIcon").getBoundingClientRect();
+      const bar = document
+        .querySelector(".drawerSearchBar")
+        .getBoundingClientRect();
+      return {
+        width: r.width,
+        height: r.height,
+        inside: r.right <= bar.right + 0.5 && r.bottom <= bar.bottom + 0.5,
+      };
+    });
+  };
+  const badIcon = await measureIcon(390, sheetFixture(true));
+  if (badIcon.width >= 24 && badIcon.height >= 24)
+    failures.push({
+      negativeControl: "did not reproduce the 18px search target",
+      badIcon,
+    });
+  for (const width of [360, 390, 768]) {
+    const icon = await measureIcon(width, sheetFixture(false));
+    cases++;
+    if (icon.width < 24 || icon.height < 24 || !icon.inside)
+      failures.push({ width, searchSheetIcon: icon });
+  }
+  const menuFixture = (broken) => `<!doctype html><html lang="en"><head><style>
+*{box-sizing:border-box}body{margin:0;font:16px Arial}
+:root{--sm-surface:#fff;--sm-sand:#f4f1ec;--sm-border:#ddd;--sm-ink:#1b1b1b;--sm-ink-soft:#555;--sm-ink-faint:#777;--sm-accent:#b5173f;--sm-on-accent:#fff;--sm-radius-card:16px;--sm-radius-control:10px;--sm-shadow-rgb:0,0,0}
+${headerCss}
+</style></head><body><div class="profileDropdown" id="profile-dropdown" role="menu"><div class="profileDropdownLogin"><div class="profileDropdownLoginText"><span class="profileDropdownLoginSub">Sign in to access your profile, orders, and more!</span></div><button class="profileDropdownLoginBtn"${broken ? "" : ' role="menuitem"'}>Login/Sign Up</button></div><div class="profileDropdownDivider"></div><a href="/profile" class="profileDropdownItem" role="menuitem">My Profile</a><a href="/track-order" class="profileDropdownItem" role="menuitem">Track Order</a></div></body></html>`;
+  const menuChildren = async (html) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.setContent(html);
+    await page.addScriptTag({ content: axe });
+    return page.evaluate(async () =>
+      (
+        await window.axe.run(document, {
+          runOnly: { type: "rule", values: ["aria-required-children"] },
+        })
+      ).violations.flatMap((v) => v.nodes.map((n) => n.target.join(" "))),
+    );
+  };
+  const badMenu = await menuChildren(menuFixture(true));
+  if (!badMenu.length)
+    failures.push({
+      negativeControl: "did not reproduce the account menu's disallowed button",
+    });
+  const menu = await menuChildren(menuFixture(false));
+  cases++;
+  if (menu.length) failures.push({ accountMenu: menu });
 } finally {
   await browser.close();
 }
-console.log(JSON.stringify({ cases, negativeControls: 6, failures }, null, 2));
+console.log(JSON.stringify({ cases, negativeControls: 9, failures }, null, 2));
 if (failures.length) process.exitCode = 1;

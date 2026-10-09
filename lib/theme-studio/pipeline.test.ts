@@ -1250,6 +1250,19 @@ describe("theme generation pipeline", () => {
     expect(stageBInitialSystemPrompt(first.intent, true, true)).toContain(
       opening,
     );
+    // v27: the opening is a slideshow with previous/next arrows; v26 text is
+    // unchanged.
+    const slideshow = "hero_carousel with two or three slides";
+    expect(stageBSystemPrompt(true, true, true, true)).toContain(slideshow);
+    expect(stageBSystemPrompt(true, true, true, true)).not.toContain(opening);
+    expect(stageBSystemPrompt(true, true, true)).not.toContain(slideshow);
+    expect(stageASystemPrompt(true, true, true)).toContain(
+      "one dedicated brief per slide",
+    );
+    expect(stageASystemPrompt(true, true)).not.toContain("per slide");
+    expect(
+      stageBVarietySystemPrompt(first.intent, true, true, true, true),
+    ).toContain(slideshow);
   });
 
   it("keeps the system prompts deterministic so they cache", async () => {

@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v26";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v27";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -23,5 +23,9 @@ export function themePromptFeatures(version: string) {
      * hero_carousel or a fullbleed hero at full width), the way Shopify
      * themes do; checked in generation as a repair issue. */
     fullBleedOpening: revision >= 26,
+    /** The opening is a slideshow: hero_carousel with two or three
+     * photograph slides, previous/next arrows and dots (owner, 2026-10-09),
+     * never a single hero. */
+    carouselOpening: revision >= 27,
   };
 }

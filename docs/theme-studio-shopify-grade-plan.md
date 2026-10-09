@@ -43,7 +43,11 @@
 > at full width (`lib/theme-studio/opening.ts`, checked in generation only;
 > revisions keep their base's opening). The rest of 2d (stacked, offset-card,
 > collage, text-only, video, carousel-split heroes; the transparent-sticky
-> header that would float over this opening) is still open.
+> header that would float over this opening) is still open. v27 (same day)
+> makes that opening a two- or three-slide `hero_carousel` with arrows and
+> dots; the first live v26 run on Bubble stopped before artwork on four
+> shared-chrome renderer defects, all fixed (CODEBASE §11), which is the kind
+> of stall Phase 1's "reliability first" exists to remove.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

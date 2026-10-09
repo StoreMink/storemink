@@ -6195,6 +6195,60 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     hero-contrast note and the printed hero variants are all gated on the
     feature flag (`visibleSectionChoices(false)`, `heroContrastPrompt(false)`),
     while the compiler accepts the fourth variant at every version. The
+    **v27: the opening is a slideshow (2026-10-09, owner: "carousel designs
+    with < > buttons to move around").** Feature `carouselOpening`: a new
+    theme's first enabled homepage section must be a `hero_carousel` of two
+    or three slides, each with its own image brief (a different scene of the
+    same shoot, never the same brief twice), at height large or screen and
+    full width, so the storefront renders its previous/next arrows and dots
+    (arrows hide on touch phones under 640px, where shoppers swipe). Stage A
+    writes one 21:9 brief per slide; Stage B is told the slideshow is the
+    opening and a single hero of any variant may open another page, never the
+    homepage. `homepageOpeningIssues(pkg, { carousel })` holds both rules:
+    v26 bytes and the v26 hero-or-carousel rule are unchanged, and an
+    automatic repair keeps whichever full-band opening its base has. The
+    offline provider's homepage opens with a two-slide carousel and keeps a
+    fullbleed hero further down for the solid-hero fixtures. Not yet run
+    against live Gemini.
+    **The first live v26 run found four renderer defects, all shared chrome
+    (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
+    before artwork as `renderer_fix_required`, so every image stayed a
+    placeholder and the preview looked like flat colour blocks; the findings
+    were the deployed probe seeing shared storefront defects for the first
+    time, not the theme. (1) **"The page is 274px wider than the viewport"
+    with no offender named.** Reproduced on demo-ritual and demo-vitrine
+    locally at 360/390/768: `body.scrollWidth` was 960 on a 360px page with
+    nothing visibly overflowing. The product carousel's `sr-only` price labels
+    are absolutely positioned, the scroll track and the card were static, so
+    their containing block was the carousel wrapper OUTSIDE the track: each
+    label sat where its off-screen card had scrolled to and the page's layout
+    overflow grew by the whole hidden track, while the probe's rectangle scan
+    (walking parents) exempted them as "inside a fitting scroll container" and
+    named nothing. `.home-product-scroll`, `.home-cat-scroll` and
+    `.home-blog-scroll` are `position: relative` now, so they contain what
+    they clip (the dashboard tables' sr-only gotcha, again), measured back to
+    360/390/768 on both demos. The probe's `exemptFromOverflow` applies the
+    containing-block rule: an absolutely positioned box is clipped only by its
+    `offsetParent` and that block's ancestors, so the same page now reports
+    `span.sr-only` as the offender (verified in Chrome with the fix reverted;
+    pinned in jsdom). ★ Both `body.scrollWidth` and the rectangles are kept:
+    the first saw this overflow the rectangles missed, the rectangles see the
+    clipped overflow `scrollWidth` misses. (2) The phone search sheet's submit
+    button was its 18px glyph (`.searchIcon`, `padding: 0`); it is a 36px
+    round hit area inside the 44px bar. (3) The account menu is `role="menu"`
+    and its "Login/Sign Up" button had no role, axe's critical
+    `aria-required-children`, so it is a `menuitem` like the links. (4) The
+    sign-in dialog's subtitle, resend line, back link and "or" divider used
+    `--sm-ink-faint` on the dialog surface (2.96:1 on Bubble); readable copy
+    there uses `--sm-ink-soft`, which the design contract holds to 4.5:1 on
+    surface, and ink-faint stays for placeholders. The offline contrast
+    script (`scripts/theme-studio-contrast-check.mjs`) gained the three
+    chrome-state fixtures with negative controls (122 cases). None of the
+    four is a theme setting, which is why the repair loop could not clear
+    them. After deploying, **Images → Retry automatic QA** on Bubble
+    re-captures the same version; artwork then runs. Storefront presentation
+    and accessibility only: no merchant workflow change, no Help Centre
+    update.
     offline provider's draft now opens with a fullbleed hero at full width.
     ⚠ The header still sits above the opening with the page's breathing gap,
     as it does over Vitrine's carousel; a transparent header floating over the

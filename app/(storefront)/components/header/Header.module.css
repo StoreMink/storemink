@@ -330,12 +330,21 @@
   justify-content: center;
   color: var(--sm-ink-faint);
   cursor: pointer;
-  margin-left: 8px;
+  margin-left: 4px;
   transition: color 0.2s ease;
-  /* It's a submit button now — keep the old icon-only look. */
+  /* It's a submit button now — keep the old icon-only look, on a hit area
+     the acceptance probe accepts: the 18px glyph alone was the 18×18 target
+     flagged in every theme's search sheet (2026-10-09). The box fills the
+     38px bar, and the negative right margin keeps the glyph where the pill's
+     padding used to put it. */
   background: transparent;
   border: none;
   padding: 0;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  margin-right: -10px;
+  border-radius: 999px;
 }
 
 .searchBar:focus-within .searchIcon {

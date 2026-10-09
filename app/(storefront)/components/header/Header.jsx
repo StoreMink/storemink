@@ -253,6 +253,11 @@ export default function Header() {
                     </div>
                     <button
                       className={styles.profileDropdownLoginBtn}
+                      // The panel is role="menu", whose children must be menu
+                      // items: a bare button inside it is an axe critical
+                      // (aria-required-children) the acceptance probe reports
+                      // on every theme's account menu.
+                      role="menuitem"
                       onClick={() => {
                         setIsProfileOpen(false);
                         openAuthModal();
