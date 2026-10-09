@@ -49,6 +49,7 @@ import {
 import { customerCopy, unsupportedClaimIssues } from "./claims";
 import {
   STAGE_A_ENVELOPE_SCHEMA,
+  stageASchemaFor,
   STAGE_B_DRAFT_SCHEMA,
   STAGE_B_INITIAL_DRAFT_SCHEMA,
   STAGE_A_VARIETY_SCHEMA,
@@ -523,6 +524,9 @@ async function generate(
   const carouselOpening = themePromptFeatures(
     input.promptVersion,
   ).carouselOpening;
+  const peopleInImagery = themePromptFeatures(
+    input.promptVersion,
+  ).peopleInImagery;
   // Explicit styles (intent schema 2) apply to new builds and to revisions of
   // themes that already carry a design direction. A revision of an older
   // schema-1 theme keeps its original contract: forcing a new direction and
@@ -707,14 +711,22 @@ async function generate(
         modelKey: input.compile.modelKey,
         providerModel: input.providerModel,
         system: explicitStyles
-          ? stageAVarietySystemPrompt(fullBleedOpening, carouselOpening)
+          ? stageAVarietySystemPrompt(
+              fullBleedOpening,
+              carouselOpening,
+              peopleInImagery,
+            )
           : stageASystemPrompt(
               themePromptFeatures(input.promptVersion).nativeCommerce,
+              false,
+              false,
+              peopleInImagery,
             ),
         content: [{ type: "text", text: userText }, ...images],
-        schema: explicitStyles
-          ? STAGE_A_VARIETY_SCHEMA
-          : STAGE_A_ENVELOPE_SCHEMA,
+        schema: stageASchemaFor(
+          explicitStyles ? STAGE_A_VARIETY_SCHEMA : STAGE_A_ENVELOPE_SCHEMA,
+          peopleInImagery,
+        ),
         effort: "high",
       },
       telemetry,

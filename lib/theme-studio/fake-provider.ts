@@ -130,6 +130,8 @@ export function runFakeProvider(
         aspectRatio: "16:9",
         artDirection: "Natural light, no third-party logos or copied artwork.",
         source: "operator",
+        // v28: a lifestyle hero may show an adult using the product.
+        people: "adults",
       },
       // The opening is a slideshow (opening.ts, v27): a second scene of the
       // same shoot for its second slide.
@@ -140,6 +142,7 @@ export function runFakeProvider(
         aspectRatio: "16:9",
         artDirection: "Natural light, no third-party logos or copied artwork.",
         source: "operator",
+        people: "none",
       },
       {
         id: "product-photo",
@@ -148,6 +151,7 @@ export function runFakeProvider(
         aspectRatio: "4:5",
         artDirection: "Soft window light from the left, eye-level camera.",
         source: "generate",
+        people: "none",
       },
     ],
     referenceAnalysis: Array.from(

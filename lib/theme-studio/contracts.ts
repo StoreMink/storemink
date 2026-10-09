@@ -158,6 +158,10 @@ export interface ThemeIntent {
     aspectRatio: string;
     artDirection: string;
     source: "operator" | "curated" | "generate";
+    /** Whether the image may show adults (a model wearing the garment, a
+     *  hand holding the cup). Absent on intents before prompt v28 and means
+     *  "none"; never children, never a real person. */
+    people?: "none" | "adults";
   }[];
   /** One bounded, structured reading for every supplied screenshot, in the
    * same order as the immutable reference ids on the message. Legacy intents
@@ -765,7 +769,15 @@ export function validateThemeIntent(
       }
       rejectUnknownKeys(
         raw,
-        ["id", "purpose", "subject", "aspectRatio", "artDirection", "source"],
+        [
+          "id",
+          "purpose",
+          "subject",
+          "aspectRatio",
+          "artDirection",
+          "source",
+          "people",
+        ],
         `assetBriefs[${index}]`,
         issues,
       );
@@ -808,6 +820,16 @@ export function validateThemeIntent(
         `assetBriefs[${index}].source`,
         issues,
       );
+      // Optional: intents stored before prompt v28 never carry it.
+      const people =
+        raw.people === undefined
+          ? undefined
+          : enumValue(
+              raw.people,
+              ["none", "adults"] as const,
+              `assetBriefs[${index}].people`,
+              issues,
+            );
       if (id && purpose && subject && aspectRatio && artDirection && source) {
         assetBriefs.push({
           id,
@@ -816,6 +838,7 @@ export function validateThemeIntent(
           aspectRatio,
           artDirection,
           source,
+          ...(people ? { people } : {}),
         });
       }
     }

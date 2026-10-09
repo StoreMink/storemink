@@ -89,6 +89,12 @@ const FONT_VAR_RE = /^var\(--font-[a-z-]+\)$/;
 
 export const THEME_IMAGE_RULES = {
   maxBytes: 500 * 1024,
+  /** A wide image (16:9 and wider: heroes, banners, slides) may be twice the
+   *  size: it is served at up to 2400px across a desktop screen, where 1600px
+   *  reads soft on a retina display (owner, 2026-10-09). */
+  maxWideBytes: 1000 * 1024,
+  /** The aspect ratio from which an image counts as wide. */
+  wideAspect: 16 / 9 - 0.02,
   maxPreviewBytes: 250 * 1024,
   minWidth: 800,
   minPreviewHeight: 600,
@@ -1023,9 +1029,13 @@ export function validateThemeImage(
       `${label}: must be at least ${rules.minWidth}px wide (is ${facts.width ?? 0}px).`,
     );
   }
-  if (facts.bytes > rules.maxBytes) {
+  const wide =
+    (facts.width ?? 0) / (facts.height || 1) >= rules.wideAspect &&
+    !options.preview;
+  const maxBytes = wide ? rules.maxWideBytes : rules.maxBytes;
+  if (facts.bytes > maxBytes) {
     issues.push(
-      `${label}: must be at most 500 KiB (is ${Math.ceil(facts.bytes / 1024)} KiB).`,
+      `${label}: must be at most ${Math.round(maxBytes / 1024)} KiB (is ${Math.ceil(facts.bytes / 1024)} KiB).`,
     );
   }
   if (options.preview) {

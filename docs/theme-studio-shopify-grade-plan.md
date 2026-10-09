@@ -48,6 +48,10 @@
 > dots; the first live v26 run on Bubble stopped before artwork on four
 > shared-chrome renderer defects, all fixed (CODEBASE §11), which is the kind
 > of stall Phase 1's "reliability first" exists to remove.
+> v28 (owner's decisions, same day): a Stage A brief may allow adults where
+> the picture is about the product being worn or used, with the provider,
+> prompt and reviewer following that one choice; wide slots are stored at
+> 2400px and up to 1000 KiB.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

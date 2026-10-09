@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v27";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v28";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -27,5 +27,9 @@ export function themePromptFeatures(version: string) {
      * photograph slides, previous/next arrows and dots (owner, 2026-10-09),
      * never a single hero. */
     carouselOpening: revision >= 27,
+    /** Stage A may put adults in a brief where the picture is about how the
+     * product is worn or used (owner, 2026-10-09); the image model then
+     * allows adults for that image only. Most briefs stay people-free. */
+    peopleInImagery: revision >= 28,
   };
 }

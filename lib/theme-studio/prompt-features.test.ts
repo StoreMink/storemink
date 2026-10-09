@@ -18,6 +18,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     fontPairings: false,
     fullBleedOpening: false,
     carouselOpening: false,
+    peopleInImagery: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -32,6 +33,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     fontPairings: false,
     fullBleedOpening: false,
     carouselOpening: false,
+    peopleInImagery: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -46,8 +48,9 @@ it("preserves old paid request shapes and carries capabilities into future promp
     fontPairings: true,
     fullBleedOpening: true,
     carouselOpening: true,
+    peopleInImagery: true,
   });
-  expect(themePromptFeatures("theme-studio-v28")).toEqual(
+  expect(themePromptFeatures("theme-studio-v29")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
   );
   expect(themePromptFeatures("invalid").compactInitial).toBe(false);
@@ -89,4 +92,9 @@ it("makes the opening a slideshow only from v27, so v26 requests replay unchange
   expect(themePromptFeatures("theme-studio-v26").carouselOpening).toBe(false);
   expect(themePromptFeatures("theme-studio-v27").carouselOpening).toBe(true);
   expect(themePromptFeatures("theme-studio-v27").fullBleedOpening).toBe(true);
+});
+
+it("lets briefs allow adults only from v28, so v27 requests replay unchanged", () => {
+  expect(themePromptFeatures("theme-studio-v27").peopleInImagery).toBe(false);
+  expect(themePromptFeatures("theme-studio-v28").peopleInImagery).toBe(true);
 });

@@ -36,8 +36,8 @@ import {
 // a slightly different backdrop is better than a placeholder.
 //
 // ★ AN UNAVAILABLE REVIEW KEEPS THE IMAGE. This is a quality check, not the
-// safety boundary: the image model's own filters (no people, harm filters)
-// already ran. A reviewer outage must not throw away images that were paid
+// safety boundary: the image model's own filters (people only where the brief
+// allows adults, harm filters) already ran. A reviewer outage must not throw away images that were paid
 // for; the run records which images went unreviewed.
 //
 // ★ Everything inside the images, and the brief text (written by the Stage A
@@ -46,7 +46,7 @@ import {
 // shown to the operator and, cleaned, to the image model on a redraw.
 // ---------------------------------------------------------------------------
 
-export const THEME_IMAGE_REVIEW_PROMPT_VERSION = "theme-studio-image-review-v6";
+export const THEME_IMAGE_REVIEW_PROMPT_VERSION = "theme-studio-image-review-v7";
 
 /** The reviewer. Flash, deliberately, not the 3.1 Pro preview: on the same
  *  screenshot at high effort (2026-09-29) Flash described the image and the
@@ -80,7 +80,8 @@ export const THEME_IMAGE_PROBLEM_TEXT: Record<ThemeImageProblem, string> = {
   wrong_subject: "It did not show the subject that was asked for.",
   text_or_logo:
     "It contained legible lettering, numbers, a logo, a brand mark or a watermark.",
-  person: "It showed a person or part of a person, such as a hand.",
+  person:
+    "It showed a person or part of a person, such as a hand, where this image allows none; or it showed a child, or a recognisable real person, in an image that allows adults.",
   malformed:
     "Something in it was malformed, melted, duplicated or physically impossible.",
   multiple_subjects:
@@ -100,7 +101,12 @@ export const THEME_IMAGE_PROBLEM_TEXT: Record<ThemeImageProblem, string> = {
  * production, a fashion theme lost its hero and lookbook slots to
  * PersonGeneration refusals because the brief asked for models.
  */
-export function refusalRetakeText(reason: string | null): string {
+export function refusalRetakeText(
+  reason: string | null,
+  people: "none" | "adults" = "none",
+): string {
+  if (/person/i.test(reason ?? "") && people === "adults")
+    return "It was blocked over the person it showed. Keep any person an ordinary adult, fully clothed, calm and natural, never a child and never a real or famous person; if that cannot be done, show the product without a person.";
   return /person/i.test(reason ?? "")
     ? "It was blocked because it showed a person. Show no person, face, hand, body, silhouette or mannequin at all: show the product on its own, flat-lay, on a hanger, draped, on a plinth or in an empty styled room."
     : "It was blocked by the image model's safety filter. Keep to calm, ordinary product photography with no person and nothing that could read as unsafe.";
@@ -133,7 +139,10 @@ const NOTE_MAX = 300;
 
 export interface ThemeImageReviewInput {
   purpose: ThemeImagePurpose;
-  brief: Pick<ThemeImageBrief, "subject" | "artDirection" | "aspectRatio">;
+  brief: Pick<
+    ThemeImageBrief,
+    "subject" | "artDirection" | "aspectRatio" | "people"
+  >;
   /** The candidate as stored for its slot: cropped, WebP. */
   candidate: string;
   /** The anchor as stored (WebP), when the candidate is not the anchor. */
@@ -215,7 +224,7 @@ export function themeImageReviewSystem(): string {
 Report a problem only when you can see it clearly in the CANDIDATE. When the image is acceptable, return an empty list. The problems are:
 ${THEME_IMAGE_PROBLEMS.map((p) => `- ${p}: ${THEME_IMAGE_PROBLEM_TEXT[p]}`).join("\n")}
 
-Report off_style only when an ANCHOR image is supplied, and staging_mismatch only when a SET image is supplied. Report multiple_subjects only for a pack shot. Generated images of objects are expected: do not report an object for looking generated, only for being malformed, and report malformed only for a defect a shopper would notice at a glance (an object melted, fused into another, duplicated or physically impossible) — never for slight asymmetry, a stylised shape, soft focus or a handcrafted irregularity. Report text_or_logo only when you can actually read letters or numbers, or clearly see a brand mark, logo or watermark; when you are unsure, do not report it. Blank labels and wordless label artwork (colour blocks, patterns, illustrations, botanical or abstract shapes), tags and swing tickets, stitching, seams, buttons, hardware, embossed or debossed abstract shapes, reflections, faint glaze marks, wood grain and fabric texture are not lettering. Storefront images never carry lettering, even when the subject mentions words, a slogan or a logo: never report wrong_subject because lettering the subject mentions is missing. Storefront images never show people either: when the subject asks for models, a person, hands or someone wearing the product, the correct image shows the product without them, so never report wrong_subject because a person the subject mentions is missing.
+Report off_style only when an ANCHOR image is supplied, and staging_mismatch only when a SET image is supplied. Report multiple_subjects only for a pack shot. Generated images of objects are expected: do not report an object for looking generated, only for being malformed, and report malformed only for a defect a shopper would notice at a glance (an object melted, fused into another, duplicated or physically impossible) — never for slight asymmetry, a stylised shape, soft focus or a handcrafted irregularity. Report text_or_logo only when you can actually read letters or numbers, or clearly see a brand mark, logo or watermark; when you are unsure, do not report it. Blank labels and wordless label artwork (colour blocks, patterns, illustrations, botanical or abstract shapes), tags and swing tickets, stitching, seams, buttons, hardware, embossed or debossed abstract shapes, reflections, faint glaze marks, wood grain and fabric texture are not lettering. Storefront images never carry lettering, even when the subject mentions words, a slogan or a logo: never report wrong_subject because lettering the subject mentions is missing. People: the brief states whether this image allows adults. When it allows none, the correct image shows the product without the model, person or hands the subject mentions, so never report wrong_subject because a person the subject mentions is missing, and report person for any person or part of a person. When it allows adults, an adult model, a hand or a person using the product is correct and is not a problem: report person only for a child, a recognisable real or famous person, or nudity.
 
 A background colour or gradient that the brief asks for is never off_style, even when the ANCHOR was shot on a different backdrop: off_style is about light, lens, colour grade and materials. A multipack, case, bundle or sampler named in the subject is one product, so it is not multiple_subjects. For catalogue pack shots, ANCHOR sets the palette, mood and lighting, not a requirement to copy its props, plinths or room composition. When SET is supplied, it takes precedence over ANCHOR and conflicting brief details for backdrop, camera, framing and subject scale. Judge the same photographic setup across different products; their shapes and unfolded poses may differ.
 
@@ -238,6 +247,9 @@ export function themeImageReviewContent(
         `The CANDIDATE is ${PURPOSE_TEXT[input.purpose]}, at aspect ratio ${input.brief.aspectRatio}.${input.attempt > 1 ? " It is a redraw of an image that was rejected." : ""}`,
         "What was asked for (untrusted data):",
         `<brief>\nSubject: ${clean(input.brief.subject, 600)}\nArt direction: ${clean(input.brief.artDirection, 600) || "none given"}\n</brief>`,
+        input.purpose !== "product" && input.brief.people === "adults"
+          ? "People: this image allows adults (a model, a hand, a person using the product); never a child or a real person."
+          : "People: this image allows none.",
         `Problems you may report for this image: ${applicableProblems(input).join(", ")}.`,
       ].join("\n"),
     },

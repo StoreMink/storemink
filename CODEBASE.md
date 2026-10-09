@@ -6210,6 +6210,39 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     offline provider's homepage opens with a two-slide carousel and keeps a
     fullbleed hero further down for the solid-hero fixtures. Not yet run
     against live Gemini.
+    **v28: a brief may allow adults, and wide images are stored larger
+    (2026-10-09, owner's decisions).** (1) People. Stage A decides per brief
+    whether a person belongs in the picture and sets `people: "adults"` only
+    where the photograph is about the product being worn, used or enjoyed (a
+    garment on a model, a hand holding a cup, a lifestyle hero); pack shots,
+    still lifes, category tiles and interiors stay `"none"`, which most
+    briefs in most themes are. The field is optional in the intent contract
+    (absent means none, so stored intents load), required in the v28 Stage A
+    schema, and `stageASchemaFor(schema, false)` is the pre-v28 twin a
+    persisted request is keyed on. The image prompt (`theme-studio-image-v4`)
+    turned its people line into the fifth placeholder `{{people}}`,
+    rendered by `peopleRule`: the people-free rule byte for byte unless the
+    brief allows adults, when the picture may include one or two adults with
+    the product as the subject, never a child, never a real or famous person,
+    no nudity. The provider sets `personGeneration` per request
+    (`ALLOW_ADULT` only for such a brief, otherwise `ALLOW_NONE`) and keeps
+    prominent people blocked and the harm filters unchanged. A product pack
+    shot never allows a person whatever its range brief says, and the anchor
+    is always a still life. The reviewer (`theme-studio-image-review-v7`) is
+    told which rule the brief carries: under "none" any person is the
+    blocking `person` problem; under "adults" only a child, a recognisable
+    real person or nudity is. A people-filter refusal is redrawn with the
+    rule its brief has. (2) Size. Wide slots (16:9 and wider: heroes,
+    banners, slides) are stored at 2400px across instead of 1600 and may be
+    1000 KiB instead of 500 (`THEME_IMAGE_RULES.maxWideBytes`,
+    `SLOT_IMAGE_WIDE_LONG_EDGE`): they fill a desktop screen, where 1600px
+    read soft on a retina display, and the model already draws them wider
+    (3168px for 21:9 at 2K). Never upscaled; every other slot keeps 1600px and
+    500 KiB, and the catalog card its 250 KiB. ⚠ The image prompt version
+    moved, so a run interrupted across the deploy misses its checkpoint cache
+    for the images not yet settled and redraws them. Not yet run against live
+    Gemini; the first live adults brief should be checked by eye. Operator-
+    only: no merchant-visible change, no Help Centre update.
     **The first live v26 run found four renderer defects, all shared chrome
     (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
     before artwork as `renderer_fix_required`, so every image stayed a

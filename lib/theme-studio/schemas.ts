@@ -184,6 +184,8 @@ export const STAGE_A_INTENT_SCHEMA: Schema = obj({
       ]),
       artDirection: str,
       source: enumOf(["operator", "curated", "generate"]),
+      // v28+: whether this picture may show adults (prompt-features.ts).
+      people: enumOf(["none", "adults"]),
     }),
   },
   referenceAnalysis: { type: "array", items: referenceAnalysis },
@@ -496,6 +498,48 @@ const LEGACY_STAGE_B_SCHEMAS = new Map<Schema, Schema>(
     STAGE_B_VARIETY_INITIAL_SCHEMA,
   ].map((schema) => [schema, legacyFontSchema(schema)]),
 );
+
+/** The Stage A schema without the brief's `people` field: the shape every
+ * request before prompt v28 was keyed on. */
+function withoutBriefPeople(schema: Schema): Schema {
+  const legacy = structuredClone(schema);
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    const properties = record.properties as Record<string, unknown> | undefined;
+    if (properties && "people" in properties && "artDirection" in properties) {
+      delete properties.people;
+      if (Array.isArray(record.required))
+        record.required = record.required.filter((k) => k !== "people");
+    }
+    Object.values(record).forEach(walk);
+  };
+  walk(legacy);
+  return legacy;
+}
+
+const LEGACY_STAGE_A_SCHEMAS = new Map<Schema, Schema>(
+  [STAGE_A_ENVELOPE_SCHEMA, STAGE_A_VARIETY_SCHEMA].map((schema) => [
+    schema,
+    withoutBriefPeople(schema),
+  ]),
+);
+
+/** The Stage A schema a run of this prompt revision sends: the current one,
+ * or its pre-v28 twin when the revision predates people in imagery. */
+export function stageASchemaFor(
+  schema: Schema,
+  peopleInImagery: boolean,
+): Schema {
+  if (peopleInImagery) return schema;
+  const legacy = LEGACY_STAGE_A_SCHEMAS.get(schema);
+  if (!legacy) throw new Error("Unknown Stage A schema.");
+  return legacy;
+}
 
 /** The schema a run of this prompt revision sends: the current one, or its
  * pre-v25 twin when the revision predates font pairings. */
