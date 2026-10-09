@@ -51,8 +51,8 @@ export function ThemeRail({
     <div className="smh-theme-rail">
       <div className="smh-theme-rail-bar">
         <p>
-          <strong>{count}</strong> {count === 1 ? "theme" : "themes"}, newest
-          first. Swipe, or use the arrows.
+          <strong>{count}</strong> {count === 1 ? "new theme" : "new themes"}.
+          Preview and explore →
         </p>
         <div className="smh-theme-rail-controls" aria-label="Browse themes">
           <button

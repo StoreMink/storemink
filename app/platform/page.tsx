@@ -2,12 +2,14 @@ import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowRight,
+  ArrowUpRight,
   Check,
   ChevronDown,
   CircleCheck,
   Smartphone,
 } from "lucide-react";
 import { PLATFORM_URL, POS_URL, THEMES_URL } from "@/lib/site";
+import { subdomainOrigin } from "@/lib/store/host";
 import {
   BRAND_DESCRIPTION,
   SUPPORT_EMAIL,
@@ -19,6 +21,7 @@ import { getPlanPricing } from "@/lib/plans/pricing";
 import { getPlanAllowances } from "@/lib/plans/allowances";
 import { getMinkConfig } from "@/lib/mink/config";
 import {
+  canPreviewTheme,
   isThemeSelectable,
   newestThemesFirst,
   type ThemeMeta,
@@ -358,30 +361,55 @@ export default async function StoreminkLanding() {
                 From one dashboard.
               </h2>
               <ThemeRail count={themes.length}>
-                {themes.map((theme) => (
-                  <a
-                    key={theme.id}
-                    href={THEMES_URL}
-                    className="smh-theme-card"
-                  >
-                    <span className="smh-theme-card-media">
-                      <Image
-                        src={theme.catalog.previewImage}
-                        alt={
-                          theme.catalog.screenshots[0]?.alt ??
-                          `${theme.name} theme storefront preview`
-                        }
-                        width={1200}
-                        height={900}
-                        sizes="(max-width: 680px) 78vw, (max-width: 940px) 320px, 360px"
-                      />
-                    </span>
-                    <span className="smh-theme-card-copy">
-                      <b>{theme.name}</b>
-                      <small>{industryLabel(theme)}</small>
-                    </span>
-                  </a>
-                ))}
+                {themes.map((theme) => {
+                  // The card is the theme's live demo store, opened in a new
+                  // tab so the visitor keeps their place here. A theme whose
+                  // demo is down links to the catalogue instead, where its
+                  // "being restored" notice lives, and shows no preview cue.
+                  const live = canPreviewTheme(theme);
+                  return (
+                    <a
+                      key={theme.id}
+                      href={
+                        live ? subdomainOrigin(theme.demo.slug) : THEMES_URL
+                      }
+                      target={live ? "_blank" : undefined}
+                      rel={live ? "noopener noreferrer" : undefined}
+                      className={
+                        live
+                          ? "smh-theme-card smh-theme-card-live"
+                          : "smh-theme-card"
+                      }
+                    >
+                      <span className="smh-theme-card-media">
+                        <Image
+                          src={theme.catalog.previewImage}
+                          alt={
+                            theme.catalog.screenshots[0]?.alt ??
+                            `${theme.name} theme storefront preview`
+                          }
+                          width={1200}
+                          height={900}
+                          sizes="(max-width: 680px) 78vw, (max-width: 940px) 320px, 360px"
+                        />
+                        {live && (
+                          <span
+                            className="smh-theme-card-preview"
+                            aria-hidden="true"
+                          >
+                            <span>
+                              Preview <ArrowUpRight size={15} aria-hidden />
+                            </span>
+                          </span>
+                        )}
+                      </span>
+                      <span className="smh-theme-card-copy">
+                        <b>{theme.name}</b>
+                        <small>{industryLabel(theme)}</small>
+                      </span>
+                    </a>
+                  );
+                })}
               </ThemeRail>
               <div className="smh-storefronts-foot">
                 <span>
