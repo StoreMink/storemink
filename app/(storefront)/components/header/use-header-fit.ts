@@ -36,7 +36,14 @@ const MIN_WIDTHS: Record<string, number> = {
 function boxOf(el: Element, minWidth?: number): FitBox | null {
   const r = el.getBoundingClientRect();
   if (r.width <= 0 || r.height <= 0) return null; // hidden
-  return { left: r.left, right: r.right, minWidth };
+  // Top and bottom let a two-row header be judged row by row.
+  return {
+    left: r.left,
+    right: r.right,
+    top: r.top,
+    bottom: r.bottom,
+    minWidth,
+  };
 }
 
 export function useHeaderFit(

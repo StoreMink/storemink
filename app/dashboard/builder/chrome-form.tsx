@@ -871,6 +871,8 @@ export function BrandForm({
             <option value="minimal">Minimal</option>
             <option value="transparent">Transparent over the opening</option>
             <option value="hamburger">Centred logo, menu button</option>
+            <option value="stacked">Centred logo, menu below</option>
+            <option value="utility">Utility bar above the logo</option>
           </select>
         </label>
         <label className="sm-b-field">

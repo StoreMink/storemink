@@ -1,7 +1,8 @@
 /** Offline header clearance regression using production CSS and local Chrome.
  * No network, database or provider calls. The measured cases model the height
- * published by useHeaderFit; its observer/lifecycle is tested in Vitest. Six
- * header variants: the four originals plus transparent and hamburger (2026-10-09).
+ * published by useHeaderFit; its observer/lifecycle is tested in Vitest. Eight
+ * header variants: the four originals plus transparent, hamburger, stacked and
+ * utility (2026-10-09); the last two are two rows tall on desktop.
  * Run: node scripts/storefront-header-layout-check.mjs
  * --css-ref=<revision> diagnoses old CSS; --screenshots=<dir> saves fixtures,
  * not live storefront evidence.
@@ -90,6 +91,8 @@ try {
       "market",
       "transparent",
       "hamburger",
+      "stacked",
+      "utility",
     ])
       for (const content of Object.keys(first))
         for (const order of ["forward", "reverse"])

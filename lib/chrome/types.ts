@@ -57,7 +57,9 @@ export type HeaderVariant =
   | "centered"
   | "minimal"
   | "transparent"
-  | "hamburger";
+  | "hamburger"
+  | "stacked"
+  | "utility";
 export type CardVariant =
   | "classic"
   | "quick_add"
@@ -309,6 +311,8 @@ const HEADER_VARIANTS: HeaderVariant[] = [
   "minimal",
   "transparent",
   "hamburger",
+  "stacked",
+  "utility",
 ];
 const CARD_VARIANTS: CardVariant[] = [
   "classic",

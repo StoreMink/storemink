@@ -111,6 +111,17 @@
     --sm-header-h: 68px;
   }
 }
+/* The two-row headers (plan Phase 2d) are taller than the 80px fallback
+   above; useHeaderFit publishes the measured height once hydrated, this is
+   what leading content clears before then. Desktop only, where they apply. */
+@media (min-width: 1025px) {
+  .storefront-root.sm-header-stacked {
+    --sm-header-h: 112px; /* measured 108.5px */
+  }
+  .storefront-root.sm-header-utility {
+    --sm-header-h: 138px; /* measured 135px */
+  }
+}
 
 /* The "market" header (theme layout.header = "market") is a SOLID, opaque bar
    pinned with position:fixed (see Header.module.css) — it takes no

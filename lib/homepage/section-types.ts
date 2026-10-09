@@ -237,6 +237,10 @@ export interface HeroSlide extends HeroImageOptions {
  */
 export interface HeroCarouselConfig {
   slides: HeroSlide[];
+  /** "split": each slide is copy on a colour field beside its photograph
+   *  (plan Phase 2d), stacked photo-first on phones. Absent = "full", the
+   *  photograph filling the band with the copy over it. */
+  layout?: "full" | "split";
   /** Absent = "auto". */
   height?: HeroHeight;
   autoplay: boolean;
@@ -1748,6 +1752,9 @@ export function validateConfig(
     const rawInterval = Number(input.interval_seconds);
     const config: HeroCarouselConfig = {
       slides,
+      // Stored only when chosen, so every carousel saved before the split
+      // layout existed stays byte-identical.
+      ...(input.layout === "split" ? { layout: "split" as const } : {}),
       ...heroHeight(input.height),
       autoplay: input.autoplay !== false,
       interval_seconds: Number.isFinite(rawInterval)
@@ -2535,7 +2542,7 @@ export function summarizeSection(section: {
     case "hero_carousel": {
       const hc = c as HeroCarouselConfig;
       const first = hc.slides[0]?.heading?.trim();
-      return `Carousel · ${hc.slides.length} slide${hc.slides.length === 1 ? "" : "s"}${first ? ` · ${first}` : ""}`;
+      return `Carousel · ${hc.slides.length} slide${hc.slides.length === 1 ? "" : "s"}${hc.layout === "split" ? " · split" : ""}${first ? ` · ${first}` : ""}`;
     }
     case "usp_bar": {
       const u = c as UspBarConfig;

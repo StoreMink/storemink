@@ -4,6 +4,7 @@ import {
   chooseCompaction,
   COMPACT_STEPS,
   headerFits,
+  headerRows,
   type CompactStep,
   type HeaderLayout,
 } from "./header-fit";
@@ -46,6 +47,29 @@ describe("headerFits", () => {
         ]),
       ),
     ).toBe(true);
+  });
+
+  // Plan Phase 2d: the stacked and utility headers are two rows tall, and
+  // the second row sits right under the first. Judged row by row.
+  it("judges a two-row header row by row, and a header without rows as one", () => {
+    const logo = { left: 460, right: 600, top: 14, bottom: 46 };
+    const controls = { left: 700, right: 976, top: 10, bottom: 50 };
+    const menu = { left: 200, right: 800, top: 58, bottom: 78 };
+    expect(headerFits(layout([logo, controls, menu]))).toBe(true);
+    // The same menu read without a vertical extent is one row with the
+    // logo, which it overlaps.
+    expect(
+      headerFits(layout([logo, controls, { left: 200, right: 800 }])),
+    ).toBe(false);
+    // Rows still need their own clear space.
+    expect(
+      headerFits(
+        layout([logo, { left: 605, right: 976, top: 10, bottom: 50 }, menu]),
+      ),
+    ).toBe(false);
+    expect(headerRows([logo, controls, menu]).map((r) => r.length)).toEqual([
+      2, 1,
+    ]);
   });
 
   it("rejects a header wider than the screen", () => {

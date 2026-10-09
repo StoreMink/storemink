@@ -77,7 +77,7 @@ export function HeroCarouselSection({
   return (
     <SectionShell sectionId={sectionId} style={style}>
       <div
-        className={`home-carousel${count > 1 ? " has-arrows" : ""}${config.height && config.height !== "auto" ? ` height-${config.height}` : ""}`}
+        className={`home-carousel${count > 1 ? " has-arrows" : ""}${config.height && config.height !== "auto" ? ` height-${config.height}` : ""}${config.layout === "split" ? " layout-split" : ""}`}
         onMouseEnter={() => setPaused(true)}
         onMouseLeave={() => setPaused(false)}
         onFocus={() => setPaused(true)}
@@ -104,7 +104,13 @@ export function HeroCarouselSection({
         aria-roledescription="carousel"
       >
         {slides.map((slide, i) => (
-          <Slide key={i} slide={slide} active={i === index} first={i === 0} />
+          <Slide
+            key={i}
+            slide={slide}
+            active={i === index}
+            first={i === 0}
+            split={config.layout === "split"}
+          />
         ))}
 
         {count > 1 && (
@@ -148,10 +154,14 @@ function Slide({
   slide,
   active,
   first,
+  split,
 }: {
   slide: HeroSlide;
   active: boolean;
   first: boolean;
+  /** Copy beside the photo on a field, not over it (plan Phase 2d): the
+   *  figure is a column, and no overlay or tone probe applies. */
+  split: boolean;
 }) {
   const hasCta = slide.cta_label && slide.cta_href;
   const isExternal = /^https?:\/\//i.test(slide.cta_href);
@@ -162,40 +172,45 @@ function Slide({
       style={slide.background ? { background: slide.background } : undefined}
       aria-hidden={!active}
     >
-      {videoEmbedUrl(slide.video_url) ? (
-        <span className="home-video-embed-wrap">
-          <iframe
-            src={videoEmbedUrl(slide.video_url) as string}
-            className="home-video-embed"
-            allow="autoplay; encrypted-media; picture-in-picture"
-            title={slide.heading || "Slide video"}
-            tabIndex={-1}
-            aria-hidden
+      <div className="home-carousel-figure">
+        {videoEmbedUrl(slide.video_url) ? (
+          <span className="home-video-embed-wrap">
+            <iframe
+              src={videoEmbedUrl(slide.video_url) as string}
+              className="home-video-embed"
+              allow="autoplay; encrypted-media; picture-in-picture"
+              title={slide.heading || "Slide video"}
+              tabIndex={-1}
+              aria-hidden
+            />
+          </span>
+        ) : slide.video_url ? (
+          <video
+            src={slide.video_url}
+            poster={slide.image_url || undefined}
+            className="home-carousel-media"
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
           />
-        </span>
-      ) : slide.video_url ? (
-        <video
-          src={slide.video_url}
-          poster={slide.image_url || undefined}
-          className="home-carousel-media"
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="metadata"
-        />
-      ) : slide.image_url ? (
-        <HeroImage
-          src={slide.image_url}
-          alt={slide.heading || "Slide"}
-          eager={first}
-          sizes="100vw"
-          className="home-carousel-media"
-          options={slide}
-        />
-      ) : null}
-      <HeroOverlay opacity={slide.overlay_opacity} theme={slide.theme} />
-      {slide.image_url && !slide.video_url && (
+        ) : slide.image_url ? (
+          <HeroImage
+            src={slide.image_url}
+            alt={slide.heading || "Slide"}
+            eager={first}
+            sizes="100vw"
+            className="home-carousel-media"
+            options={slide}
+          />
+        ) : null}
+      </div>
+      <HeroOverlay
+        opacity={split ? undefined : slide.overlay_opacity}
+        theme={slide.theme}
+      />
+      {!split && slide.image_url && !slide.video_url && (
         <MediaTone
           preferred={slide.theme}
           copy=".home-carousel-copy"

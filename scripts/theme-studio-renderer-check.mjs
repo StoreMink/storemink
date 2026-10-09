@@ -457,6 +457,66 @@ try {
         }
       }
     }
+    // The split carousel (plan Phase 2d): each slide is copy on a field
+    // beside its photo. At every width the active slide must hold both,
+    // the photo beside the copy on desktop and above it on phones, the
+    // band taking the slide's height, nothing overflowing.
+    for (const mode of ["dark", "light"]) {
+      for (const height of ["auto", "large"]) {
+        const label = `${width}px carousel-split/${mode}/${height}`;
+        await page.setContent(
+          documentHtml(`<section class="home-section is-fullbleed"><div class="home-carousel has-arrows layout-split ${height === "auto" ? "" : `height-${height}`}">
+          <div class="home-carousel-slide theme-${mode} is-active"><div class="home-carousel-figure"><img class="home-carousel-media" alt="Slide" src="${image(1600, 1200)}" style="position:absolute;inset:0;height:100%;width:100%;object-fit:cover"></div><div class="home-carousel-copy"><h2 class="home-carousel-heading">${heading}</h2><p class="home-carousel-sub">${copy}</p><a class="home-hero-cta sm-btn-primary" href="/shop">Shop the collection</a></div></div>
+          <div class="home-carousel-slide theme-dark"><div class="home-carousel-figure"><img class="home-carousel-media" alt="Slide" src="${image(1600, 1200)}" style="position:absolute;inset:0;height:100%;width:100%;object-fit:cover"></div><div class="home-carousel-copy"><h2 class="home-carousel-heading">Second</h2></div></div>
+          <button type="button" class="home-carousel-arrow is-prev" aria-label="Previous slide">‹</button><button type="button" class="home-carousel-arrow is-next" aria-label="Next slide">›</button>
+          <div class="home-carousel-dots"><button class="home-carousel-dot is-active" aria-label="Go to slide 1"></button><button class="home-carousel-dot" aria-label="Go to slide 2"></button></div>
+          </div></section>`),
+        );
+        const measurement = await page.evaluate(async () => {
+          const img = document.querySelector(".is-active img");
+          await img.decode();
+          const band = document
+            .querySelector(".home-carousel")
+            .getBoundingClientRect();
+          const slide = document
+            .querySelector(".home-carousel-slide.is-active")
+            .getBoundingClientRect();
+          const figure = document
+            .querySelector(".is-active .home-carousel-figure")
+            .getBoundingClientRect();
+          const copy = document
+            .querySelector(".is-active .home-carousel-copy")
+            .getBoundingClientRect();
+          const hidden = document.querySelectorAll(".home-carousel-slide")[1];
+          return {
+            overflow: document.documentElement.scrollWidth > innerWidth,
+            slideFillsBand:
+              Math.abs(slide.height - band.height) < 1 &&
+              Math.abs(slide.width - band.width) < 1,
+            figureHeight: figure.height,
+            beside: figure.left >= copy.right - 0.5,
+            above: figure.bottom <= copy.top + 0.5,
+            copyInside:
+              copy.left >= slide.left - 0.5 &&
+              copy.right <= slide.right + 0.5 &&
+              copy.bottom <= slide.bottom + 0.5,
+            inactiveHidden: getComputedStyle(hidden).display === "none",
+            figureLeft: Math.round(figure.left),
+            copyRight: Math.round(copy.right),
+          };
+        });
+        cases++;
+        if (
+          measurement.overflow ||
+          !measurement.slideFillsBand ||
+          measurement.figureHeight < 200 ||
+          !(width <= 860 ? measurement.above : measurement.beside) ||
+          !measurement.copyInside ||
+          !measurement.inactiveHidden
+        )
+          failures.push({ label, ...measurement });
+      }
+    }
     for (const fixture of fixtures()) {
       for (const [scheme, padding, bleed] of [
         ["soft", "sm", false],

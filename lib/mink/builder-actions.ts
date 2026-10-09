@@ -289,6 +289,8 @@ export async function readMinkBuilderContext(
           "minimal",
           "transparent",
           "hamburger",
+          "stacked",
+          "utility",
         ],
         card: [
           "theme",

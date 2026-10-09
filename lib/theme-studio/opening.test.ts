@@ -194,6 +194,23 @@ describe("homepage opening as a slideshow (v27)", () => {
     ]);
   });
 
+  // Plan Phase 2d: a split carousel puts the copy beside the photo, so it
+  // may open any page but the homepage, under either revision of the rule.
+  it("refuses a split carousel as the opening: its photographs must fill the band", () => {
+    const split = pkgWith("vitrine", (def) => {
+      carouselFirst(def);
+      const config = home(def).sections[0].config as HeroCarouselConfig;
+      config.height = "large";
+      config.layout = "split";
+    });
+    expect(homepageOpeningIssues(split, carousel)).toEqual([
+      expect.stringContaining('set it to "full"'),
+    ]);
+    expect(homepageOpeningIssues(split)).toEqual([
+      expect.stringContaining('set it to "full"'),
+    ]);
+  });
+
   it("refuses any single hero as the opening, which the v26 rule still allows", () => {
     const single = pkgWith("ritual", fullbleed);
     expect(homepageOpeningIssues(single)).toEqual([]);

@@ -80,9 +80,12 @@
 > contract and the Studio vocabulary (gated so v30 requests replay byte for
 > byte), with the offline checks widened to cover them. Of the plan's list:
 > collage is the tile grid's collage layout, text-only is a minimal hero
-> without media, video is `hero.video_url`; carousel-split and the
-> utility-bar double-row header are still open. Not yet run against live
-> Gemini.
+> without media, video is `hero.video_url`. The second slice (same day,
+> same prompt version, unused by any run) closed the list: the split
+> carousel (`hero_carousel.layout: "split"`, copy beside the photo, never
+> the homepage opening) and the `stacked` (logo centred, menu below) and
+> `utility` (double row) headers, which needed the header fit rule to judge
+> rows rather than one line. Not yet run against live Gemini.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

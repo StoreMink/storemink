@@ -1500,6 +1500,8 @@ function validateDefinitionDesign(value: unknown, issues: string[]): void {
           "minimal",
           "transparent",
           "hamburger",
+          "stacked",
+          "utility",
         ],
       ],
       [

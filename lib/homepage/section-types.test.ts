@@ -207,6 +207,25 @@ describe("validateConfig", () => {
       expect(config.badge_text).toBe("51% off");
     });
 
+    it("stores a carousel's split layout only when chosen", () => {
+      const slides = [{ heading: "One", image_url: "/a.webp" }];
+      const full = validateConfig("hero_carousel", { slides });
+      expect("layout" in (full as { config: HeroCarouselConfig }).config).toBe(
+        false,
+      );
+      const split = validateConfig("hero_carousel", {
+        slides,
+        layout: "split",
+      });
+      expect((split as { config: HeroCarouselConfig }).config.layout).toBe(
+        "split",
+      );
+      const junk = validateConfig("hero_carousel", { slides, layout: "wide" });
+      expect("layout" in (junk as { config: HeroCarouselConfig }).config).toBe(
+        false,
+      );
+    });
+
     it("keeps every hero variant, including the full-bleed opening and the Phase 2d pair", () => {
       for (const variant of [
         "banner",

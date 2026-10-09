@@ -267,10 +267,10 @@ describe("resolveStorefrontAppearance", () => {
     expect(chrome.appearance.header).toBe("transparent");
     expect(chrome.appearance.card).toBe("soft");
     expect(chrome.appearance.footer).toBe("compact");
-    expect(
-      normalizeChrome({ appearance: { header: "hamburger" } }).appearance
-        .header,
-    ).toBe("hamburger");
+    for (const header of ["hamburger", "stacked", "utility"] as const)
+      expect(
+        normalizeChrome({ appearance: { header } }).appearance.header,
+      ).toBe(header);
     for (const card of ["centered", "wide"] as const)
       expect(normalizeChrome({ appearance: { card } }).appearance.card).toBe(
         card,

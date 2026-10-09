@@ -207,6 +207,8 @@ try {
       "minimal",
       "transparent",
       "hamburger",
+      "stacked",
+      "utility",
     ]) {
       for (const palette of ["light", "dark"]) {
         for (const header of variant === "market"

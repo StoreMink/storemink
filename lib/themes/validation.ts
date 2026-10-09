@@ -115,6 +115,8 @@ const LAYOUT_VARIANTS = {
     "minimal",
     "transparent",
     "hamburger",
+    "stacked",
+    "utility",
   ],
   card: [
     "classic",

@@ -1275,6 +1275,83 @@
   }
 }
 
+/* ---- "stacked" header variant (theme layout.header = "stacked") ----
+   The logo centred on the first row with the controls to its right, the
+   menu centred on a row of its own beneath: the classic "logo centre, menu
+   below" boutique header. Desktop only; tablets and phones keep the proven
+   row. useHeaderFit judges the menu's row on its own (header-fit.ts
+   groups items into rows), so a wide menu still folds into the drawer only
+   when its own row runs out of room. */
+@media (min-width: 1025px) {
+  :global(.sm-header-stacked) .header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    row-gap: 12px;
+    column-gap: 24px;
+    padding-block: 14px 12px;
+  }
+  :global(.sm-header-stacked) .headerLeft {
+    display: contents;
+  }
+  :global(.sm-header-stacked) .logo {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  :global(.sm-header-stacked) .navLinks {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: clamp(18px, 2.4vw, 36px);
+  }
+  :global(.sm-header-stacked) .headerRight {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    gap: 20px;
+  }
+  :global(.sm-header-stacked) .searchBar {
+    width: clamp(170px, 18vw, 260px);
+  }
+
+  /* ---- "utility" header variant (theme layout.header = "utility") ----
+     A slim utility bar across the top, delivery on its left and search,
+     account and cart on its right under a hairline, then the brand row of
+     logo and menu: the double-row department-store header. Desktop only,
+     like stacked. */
+  :global(.sm-header-utility) .header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    row-gap: 0;
+    padding-top: 4px;
+    padding-bottom: 14px;
+  }
+  /* The bar's controls keep 12px clear of the header's top edge (the
+     clearance every header variant gives its controls). */
+  :global(.sm-header-utility) .headerRight {
+    grid-row: 1;
+    width: 100%;
+    justify-content: flex-end;
+    gap: 20px;
+    padding: 10px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--sm-ink) 12%, transparent);
+  }
+  :global(.sm-header-utility) .headerRight > [data-delivery-control] {
+    margin-right: auto;
+  }
+  :global(.sm-header-utility) .headerLeft {
+    grid-row: 2;
+    padding-top: 12px;
+    gap: clamp(24px, 3vw, 48px);
+  }
+  :global(.sm-header-utility) .searchBar {
+    height: 34px;
+    width: clamp(170px, 18vw, 260px);
+  }
+}
+
 /* Unread count beside "Notifications" in the profile dropdown. */
 .profileItemBadge {
   margin-left: auto;

@@ -1361,8 +1361,9 @@ describe("theme generation pipeline", () => {
     expect(v30).toBe(
       stageBSystemPrompt(true, true, true, true, true, true, false),
     );
+    expect(v31).toContain('layout "split"');
     const a31 = stageASystemPrompt(true, true, true, true, true, true, true);
-    expect(a31).toContain("transparent and hamburger");
+    expect(a31).toContain("transparent, hamburger, stacked and utility");
     expect(a31).toContain("soft (the photograph on a padded");
     expect(a31).toContain("compact (one slim row");
     const a30 = stageASystemPrompt(true, true, true, true, true, true);

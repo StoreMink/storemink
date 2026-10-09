@@ -6402,6 +6402,33 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     the offset card at both alignments, both text modes and both positions.
     Not yet run against live Gemini. Merchant-visible only as more options
     in selects that no published guide enumerates, so no Help Centre update.
+    **Phase 2d, second slice (2026-10-09; still prompt v31, which no run
+    has used).** The rest of the plan's list. `hero_carousel.layout`
+    `"split"` (stored only when chosen, so every saved carousel is
+    byte-identical): each slide is copy on a colour field beside its
+    photograph instead of over it, slides in flow so the band takes the
+    active slide's height and long copy never clips, a short fade on the
+    swap, photo first on phones, and no scrim, overlay or tone probe (the
+    copy sits on the field). The media now lives in a `.home-carousel-figure`
+    that is `display: contents` in the full layout, so the absolutely placed
+    photo still fills the slide, and the photo's column in the split one.
+    `homepageOpeningIssues` refuses a split opening (the homepage's
+    photographs fill the band); a split carousel may open any other page.
+    Headers `stacked` (the logo centred on one row with the controls to its
+    right, the menu centred on a row beneath) and `utility` (a slim bar of
+    delivery, search, account and cart under a hairline, then the brand row
+    of logo and menu), desktop only like centered and minimal, with a taller
+    pre-hydration `--sm-header-h` fallback in `storefront-theme.css`. ★ They
+    needed `headerFits` to judge ROWS: it sorted every item by its left edge
+    and demanded clear space between neighbours, so a menu directly under a
+    logo read as an overlap and the fit would have folded the very menu the
+    layout exists to show. `FitBox` gained `top`/`bottom`, `headerRows`
+    groups items by vertical overlap, and the gap rule runs within each
+    row; a box with no extent is one row, as before (`use-header-fit.ts`
+    now reads the extents). The header, contrast and renderer checks cover
+    the two headers and the split carousel. Of the plan's 2d list, that
+    leaves nothing open: collage is the tile grid's collage layout,
+    text-only is a minimal hero without media, video is `hero.video_url`.
     **The first live v26 run found four renderer defects, all shared chrome
     (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
     before artwork as `renderer_fix_required`, so every image stayed a
@@ -7131,7 +7158,8 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         `themes.test.ts` assert each theme ships a complete, injectable design.
         **Layout variants** (`ThemeDesign.layout`, all optional — absent = classic
         WholeSip chrome): header supports `classic`, `market`, `centered`,
-        `minimal`, `transparent` and `hamburger`; cards support `classic`,
+        `minimal`, `transparent`, `hamburger`, `stacked` and `utility`; cards
+        support `classic`,
         `quick_add`, `overlay`, `framed`, `grocery`, `centered`, `soft` and
         `wide`; product detail supports `classic`, `grocery`, and `editorial`;
         cart supports `classic`, `grocery`, and `compact`; footer supports `rich`,

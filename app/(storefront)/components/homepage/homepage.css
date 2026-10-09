@@ -3155,6 +3155,90 @@ a.home-gallery-card:hover .home-gallery-image {
   touch-action: pan-y pinch-zoom;
 }
 
+/* ---- Split carousel (plan Phase 2d) ----
+   Each slide is copy on a colour field beside its photograph, the way a
+   split hero is, instead of copy over the photo. Slides are in flow here
+   (the band takes the active slide's height, so long copy never clips) and
+   swap with a short fade; the figure wrapper, `display: contents` in the
+   full layout so the absolutely placed media still fills the slide, is the
+   photo's column. No scrim, tone probe or overlay: the copy sits on the
+   field, so the slide's own light or dark text mode is the whole answer. */
+.home-carousel-figure {
+  display: contents;
+}
+.home-carousel.layout-split {
+  display: grid;
+  min-height: 0;
+}
+.home-carousel.layout-split .home-carousel-slide {
+  position: relative;
+  inset: auto;
+  display: none;
+  background: var(--sm-cream-deep);
+}
+.home-carousel.layout-split .home-carousel-slide.is-active {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  animation: home-carousel-fade 0.55s ease;
+}
+.home-carousel.layout-split .home-carousel-slide::after {
+  display: none;
+}
+/* Copy left, photograph right, like a split hero; the figure precedes the
+   copy in the markup (it does in the full layout too), so both are placed. */
+.home-carousel.layout-split .home-carousel-figure {
+  display: block;
+  position: relative;
+  grid-column: 2;
+  grid-row: 1;
+  min-height: clamp(320px, 42vw, 540px);
+}
+.home-carousel.layout-split .home-carousel-copy {
+  grid-column: 1;
+  grid-row: 1;
+  justify-content: center;
+  padding: clamp(24px, 5vw, 64px);
+  max-width: none;
+}
+.home-carousel.layout-split
+  .home-carousel-slide.content-top
+  .home-carousel-copy {
+  justify-content: flex-start;
+}
+.home-carousel.layout-split
+  .home-carousel-slide.content-bottom
+  .home-carousel-copy {
+  justify-content: flex-end;
+}
+@keyframes home-carousel-fade {
+  from {
+    opacity: 0;
+  }
+}
+@media (max-width: 860px) {
+  .home-carousel.layout-split .home-carousel-slide.is-active {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .home-carousel.layout-split .home-carousel-figure {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 0;
+    aspect-ratio: 4 / 3;
+  }
+  /* Clear the dots, which sit over the copy once it is the lower half. */
+  .home-carousel.layout-split .home-carousel-copy {
+    grid-column: 1;
+    grid-row: 2;
+    padding-bottom: clamp(44px, 6vw, 72px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-carousel.layout-split .home-carousel-slide.is-active {
+    animation: none;
+  }
+}
+
 /* ---- Copy over a photo: readable on any image ----
    ★ Text colour over a photo is chosen by `MediaTone` (sections/media-tone.tsx)
    from the pixels actually behind the words: the section's own theme-dark /

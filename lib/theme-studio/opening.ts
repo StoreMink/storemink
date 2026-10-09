@@ -66,6 +66,12 @@ export function homepageOpeningIssues(
       issues.push(
         `${where} must give every slide an image from the asset briefs: the homepage opens with a photograph filling the band.`,
       );
+    // v31+: a split carousel (copy beside the photo) may sit on any other
+    // page; earlier drafts never carry the key.
+    if (config.layout === "split")
+      issues.push(
+        `${where} must keep its photographs filling the band (omit layout or set it to "full"); the split layout may open another page, never the homepage.`,
+      );
     if (options.carousel) {
       if (
         slides.length < OPENING_SLIDES.min ||

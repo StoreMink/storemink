@@ -130,7 +130,7 @@ type Schema = Record<string, unknown>;
 const str: Schema = { type: "string" };
 const strList: Schema = { type: "array", items: str };
 /** The header, card and footer layouts a Stage B draft may choose. v31
- * (plan Phase 2d, first slice) added transparent and hamburger headers,
+ * (plan Phase 2d) added transparent, hamburger, stacked and utility headers,
  * centered, soft and wide cards, and centered and compact footers; a request
  * before it is keyed on the shorter lists, which `stageBSchemaFor` narrows
  * every earlier revision's twin back to. */
@@ -142,6 +142,8 @@ export const LAYOUT_VARIANT_ENUMS = {
     "minimal",
     "transparent",
     "hamburger",
+    "stacked",
+    "utility",
   ],
   card: [
     "classic",

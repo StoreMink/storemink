@@ -136,14 +136,19 @@ export interface ThemeLayout {
    *  box (grocery style). "classic" (default): transparent-to-cream bar.
    *  "transparent": floats over the opening photograph with the controls in
    *  the colour that reads over it, solid once the page scrolls.
-   *  "hamburger": every link behind one menu button, the logo centred. */
+   *  "hamburger": every link behind one menu button, the logo centred.
+   *  "stacked": the logo centred on one row and the menu on a row below.
+   *  "utility": a slim utility bar (delivery, search, account, cart) above
+   *  the brand row of logo and menu. */
   header?:
     | "classic"
     | "market"
     | "centered"
     | "minimal"
     | "transparent"
-    | "hamburger";
+    | "hamburger"
+    | "stacked"
+    | "utility";
   /** Market header colours (strict colours; defaults: ink / on-ink). */
   headerBackground?: string;
   headerForeground?: string;

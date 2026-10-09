@@ -879,8 +879,36 @@ function CarouselFields({
     set("slides", next);
   };
 
+  // The split layout is stored only when chosen: a carousel saved before
+  // it existed stays byte-identical and renders full, as it always has.
+  const setLayout = (layout: string) => {
+    const next = { ...config };
+    if (layout === "split") next.layout = "split";
+    else delete next.layout;
+    setConfig(next);
+  };
+
   return (
     <>
+      <FieldGroup title="Layout">
+        <div>
+          <label className={labelClass}>Slide layout</label>
+          <select
+            className={fieldClass}
+            value={config.layout === "split" ? "split" : "full"}
+            onChange={(e) => setLayout(e.target.value)}
+          >
+            <option value="full">Full photo (copy over it)</option>
+            <option value="split">Split (copy beside the photo)</option>
+          </select>
+          <p className="text-muted-foreground mt-1 text-[11px]">
+            Split puts each slide&apos;s copy on a colour field beside its
+            photo, photo first on phones; the overlay and text-over-photo
+            controls do not apply to it.
+          </p>
+        </div>
+      </FieldGroup>
+
       <FieldGroup title="Playback">
         <label className="flex items-center gap-2 text-sm">
           <input
