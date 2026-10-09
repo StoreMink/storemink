@@ -1237,7 +1237,21 @@ describe("theme generation pipeline", () => {
       "split",
       "minimal",
     ]);
+    expect(visibleSectionChoices(false, false).hero.variant).toEqual([
+      "banner",
+      "split",
+      "minimal",
+    ]);
+    // v26 to v30 print the four; v31 adds the Phase 2d pair.
+    expect(visibleSectionChoices(true, false).hero.variant).toEqual([
+      "banner",
+      "split",
+      "minimal",
+      "fullbleed",
+    ]);
     expect(VISIBLE_SECTION_CHOICES.hero.variant).toContain("fullbleed");
+    expect(VISIBLE_SECTION_CHOICES.hero.variant).toContain("stacked");
+    expect(VISIBLE_SECTION_CHOICES.hero.variant).toContain("offset");
     const first = await run();
     if (first.kind !== "version") throw new Error("fixture failed");
     const v25 = stageBVarietySystemPrompt(first.intent, true, true, false);
@@ -1323,6 +1337,98 @@ describe("theme generation pipeline", () => {
     expect(
       stageBInitialSystemPrompt(first.intent, true, true, true, true),
     ).toContain(blocks);
+  });
+
+  // Plan Phase 2d, first slice: more layout variants under v31; v30 text is
+  // unchanged, and so is the Stage B schema a v30 request is keyed on.
+  it("prints the v31 layout variants only under v31 and keeps v30 text byte for byte", async () => {
+    const {
+      stageASystemPrompt,
+      stageAVarietySystemPrompt,
+      stageBSystemPrompt,
+      stageBInitialSystemPrompt,
+      stageBVarietySystemPrompt,
+    } = await import("./prompts");
+    const bullet = "- More layouts: hero variants stacked";
+    const v31 = stageBSystemPrompt(true, true, true, true, true, true, true);
+    expect(v31).toContain(bullet);
+    expect(v31).toContain('"transparent"');
+    expect(v31).toContain('"soft"');
+    expect(v31).toContain('"compact"');
+    const v30 = stageBSystemPrompt(true, true, true, true, true, true);
+    expect(v30).not.toContain(bullet);
+    expect(v30).not.toContain("hamburger");
+    expect(v30).toBe(
+      stageBSystemPrompt(true, true, true, true, true, true, false),
+    );
+    const a31 = stageASystemPrompt(true, true, true, true, true, true, true);
+    expect(a31).toContain("transparent and hamburger");
+    expect(a31).toContain("soft (the photograph on a padded");
+    expect(a31).toContain("compact (one slim row");
+    const a30 = stageASystemPrompt(true, true, true, true, true, true);
+    expect(a30).not.toContain("hamburger");
+    expect(a30).toBe(
+      stageASystemPrompt(true, true, true, true, true, true, false),
+    );
+    expect(
+      stageAVarietySystemPrompt(true, true, true, true, true, true),
+    ).toContain("centered or compact");
+    expect(
+      stageAVarietySystemPrompt(true, true, true, true, true),
+    ).not.toContain("centered or compact");
+    const first = await run();
+    if (first.kind !== "version") throw new Error("fixture failed");
+    expect(
+      stageBInitialSystemPrompt(
+        first.intent,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+      ),
+    ).toContain(bullet);
+    expect(
+      stageBInitialSystemPrompt(first.intent, true, true, true, true, true),
+    ).not.toContain(bullet);
+    const variety31 = stageBVarietySystemPrompt(
+      first.intent,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety31).toContain(bullet);
+    // The hero's CHOOSE ONE list (a JSON string inside the example's JSON,
+    // so its quotes are escaped) prints the six variants under v31.
+    expect(variety31).toContain('\\"stacked\\"');
+    const variety30 = stageBVarietySystemPrompt(
+      first.intent,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety30).not.toContain('\\"stacked\\"');
+    expect(variety30).not.toContain(bullet);
+    expect(variety30).toBe(
+      stageBVarietySystemPrompt(
+        first.intent,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+      ),
+    );
   });
 
   // Plan Phase 2c, first slice: five more sections under v30; v29 text is

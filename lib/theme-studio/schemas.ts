@@ -129,6 +129,38 @@ type Schema = Record<string, unknown>;
 
 const str: Schema = { type: "string" };
 const strList: Schema = { type: "array", items: str };
+/** The header, card and footer layouts a Stage B draft may choose. v31
+ * (plan Phase 2d, first slice) added transparent and hamburger headers,
+ * centered, soft and wide cards, and centered and compact footers; a request
+ * before it is keyed on the shorter lists, which `stageBSchemaFor` narrows
+ * every earlier revision's twin back to. */
+export const LAYOUT_VARIANT_ENUMS = {
+  header: [
+    "classic",
+    "market",
+    "centered",
+    "minimal",
+    "transparent",
+    "hamburger",
+  ],
+  card: [
+    "classic",
+    "quick_add",
+    "overlay",
+    "framed",
+    "grocery",
+    "centered",
+    "soft",
+    "wide",
+  ],
+  footer: ["rich", "minimal", "editorial", "centered", "compact"],
+} as const;
+export const LEGACY_LAYOUT_VARIANT_ENUMS = {
+  header: ["classic", "market", "centered", "minimal"],
+  card: ["classic", "quick_add", "overlay", "framed", "grocery"],
+  footer: ["rich", "minimal", "editorial"],
+} as const;
+
 const nullable = (schema: Schema): Schema => ({
   anyOf: [schema, { type: "null" }],
 });
@@ -337,12 +369,10 @@ export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
     }),
     shape: obj({ card: str, control: str, sm: str, pill: str }),
     layout: obj({
-      header: nullable(enumOf(["classic", "market", "centered", "minimal"])),
+      header: nullable(enumOf(LAYOUT_VARIANT_ENUMS.header)),
       headerBackground: nullable(hex),
       headerForeground: nullable(hex),
-      card: nullable(
-        enumOf(["classic", "quick_add", "overlay", "framed", "grocery"]),
-      ),
+      card: nullable(enumOf(LAYOUT_VARIANT_ENUMS.card)),
       cardHoverImage: nullable({ type: "boolean" }),
       stickyAddToCart: nullable({ type: "boolean" }),
       gridColumnsMobile: nullable({ type: "integer", enum: [1, 2] }),
@@ -351,7 +381,7 @@ export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
       collectionBanner: nullable({ type: "boolean" }),
       productDetail: nullable(enumOf(["classic", "grocery", "editorial"])),
       cart: nullable(enumOf(["classic", "grocery", "compact"])),
-      footer: nullable(enumOf(["rich", "minimal", "editorial"])),
+      footer: nullable(enumOf(LAYOUT_VARIANT_ENUMS.footer)),
       storefront: nullable(enumOf(["classic", "grocery"])),
     }),
     schemes: obj(
@@ -559,6 +589,34 @@ function withSectionTypes(schema: Schema, types: readonly string[]): Schema {
   return twin;
 }
 
+/** The same schema with the three layout enums narrowed to the pre-v31
+ * lists, wherever they appear. Matched by value, like `withSectionTypes`. */
+function withLegacyLayoutVariants(schema: Schema): Schema {
+  const twin = structuredClone(schema);
+  const lists = (
+    Object.keys(LAYOUT_VARIANT_ENUMS) as (keyof typeof LAYOUT_VARIANT_ENUMS)[]
+  ).map((key) => ({
+    full: JSON.stringify(LAYOUT_VARIANT_ENUMS[key]),
+    legacy: [...LEGACY_LAYOUT_VARIANT_ENUMS[key]],
+  }));
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (Array.isArray(record.enum)) {
+      const current = JSON.stringify(record.enum);
+      const match = lists.find((list) => list.full === current);
+      if (match) record.enum = match.legacy;
+    }
+    Object.values(record).forEach(walk);
+  };
+  walk(twin);
+  return twin;
+}
+
 const STAGE_B_SCHEMAS = [
   STAGE_B_DRAFT_SCHEMA,
   STAGE_B_INITIAL_DRAFT_SCHEMA,
@@ -623,18 +681,21 @@ export function stageASchemaFor(
 }
 
 /** The schema a run of this prompt revision sends: the current one, or a
- * twin without font pairings (pre-v25) and/or without the nested-block
- * sections (pre-v29), whichever the revision predates. */
+ * twin without font pairings (pre-v25), without the nested-block sections
+ * (pre-v29), the v30 sections, and/or the v31 layout variants, whichever
+ * the revision predates. */
 export function stageBSchemaFor(
   schema: Schema,
   fontPairings: boolean,
   nestedBlocks = true,
   moreSections = true,
+  moreVariants = true,
 ): Schema {
-  if (fontPairings && nestedBlocks && moreSections) return schema;
+  if (fontPairings && nestedBlocks && moreSections && moreVariants)
+    return schema;
   const index = STAGE_B_SCHEMAS.indexOf(schema);
   if (index < 0) throw new Error("Unknown Stage B schema.");
-  const key = `${index}:${fontPairings}:${nestedBlocks}:${moreSections}`;
+  const key = `${index}:${fontPairings}:${nestedBlocks}:${moreSections}:${moreVariants}`;
   let twin = STAGE_B_TWINS.get(key);
   if (!twin) {
     twin = schema;
@@ -643,6 +704,7 @@ export function stageBSchemaFor(
         twin,
         themeStudioSectionTypes(nestedBlocks, moreSections),
       );
+    if (!moreVariants) twin = withLegacyLayoutVariants(twin);
     if (!fontPairings) twin = legacyFontSchema(twin);
     STAGE_B_TWINS.set(key, twin);
   }

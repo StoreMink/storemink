@@ -133,14 +133,34 @@ export interface ThemeShape {
 // means the classic WholeSip chrome, so existing themes are untouched.
 export interface ThemeLayout {
   /** "market": solid coloured header bar with a prominent, functional search
-   *  box (grocery style). "classic" (default): transparent-to-cream bar. */
-  header?: "classic" | "market" | "centered" | "minimal";
+   *  box (grocery style). "classic" (default): transparent-to-cream bar.
+   *  "transparent": floats over the opening photograph with the controls in
+   *  the colour that reads over it, solid once the page scrolls.
+   *  "hamburger": every link behind one menu button, the logo centred. */
+  header?:
+    | "classic"
+    | "market"
+    | "centered"
+    | "minimal"
+    | "transparent"
+    | "hamburger";
   /** Market header colours (strict colours; defaults: ink / on-ink). */
   headerBackground?: string;
   headerForeground?: string;
   /** "quick_add": product cards get an inline "+ Add" to-cart button.
    *  "classic" (default): the whole card is a click-through link only. */
-  card?: "classic" | "quick_add" | "overlay" | "framed" | "grocery";
+  /** "centered": a 4:5 photograph with the name and price centred beneath
+   *  it in the display face. "soft": the photograph inset on a tinted,
+   *  rounded tile. "wide": a 4:3 photograph, name and price on one line. */
+  card?:
+    | "classic"
+    | "quick_add"
+    | "overlay"
+    | "framed"
+    | "grocery"
+    | "centered"
+    | "soft"
+    | "wide";
   /** Cross-fade the product card to the product's SECOND photograph on hover.
    *  Opt-in per theme because, unlike the quick-add button (which is rendered
    *  always and hidden by CSS), a second image costs a network request — see
@@ -152,8 +172,10 @@ export interface ThemeLayout {
   productDetail?: "classic" | "grocery" | "editorial";
   /** Cart composition. `storefront:grocery` remains the legacy fallback. */
   cart?: "classic" | "grocery" | "compact";
-  /** Footer composition; current multi-column footer is `rich`. */
-  footer?: "rich" | "minimal" | "editorial";
+  /** Footer composition; current multi-column footer is `rich`. "centered"
+   *  stacks everything centred with the links in one row; "compact" is one
+   *  slim row of brand, links and social marks. */
+  footer?: "rich" | "minimal" | "editorial" | "centered" | "compact";
   /** The overall storefront treatment. "grocery" switches product cards, the
    *  product-detail page and the cart to a distinct premium grocery layout
    *  (new markup + new classes, gated by the `sm-storefront-grocery` root

@@ -9,12 +9,18 @@ import {
 /** The hero variants prompts before v26 were written with; a persisted paid
  * request prints exactly these (prompt-features.ts). */
 export const LEGACY_HERO_VARIANTS = ["banner", "split", "minimal"] as const;
+/** v26 to v30: the full-bleed opening joined the three; v31 (plan Phase 2d)
+ * adds stacked and offset. */
+export const V26_HERO_VARIANTS = [
+  ...LEGACY_HERO_VARIANTS,
+  "fullbleed",
+] as const;
 
 export const VISIBLE_SECTION_CHOICES: Readonly<
   Record<string, Readonly<Record<string, readonly unknown[]>>>
 > = {
   hero: {
-    variant: [...LEGACY_HERO_VARIANTS, "fullbleed"],
+    variant: [...V26_HERO_VARIANTS, "stacked", "offset"],
     height: HERO_HEIGHTS,
     theme: ["dark", "light"],
     alignment: ["left", "center"],
@@ -69,16 +75,20 @@ export const VISIBLE_SECTION_CHOICES: Readonly<
 };
 
 /** The choices a Stage B prompt prints. Pre-v26 requests keep the three hero
- * variants they were written with, byte for byte; the compiler accepts the
- * full list at every version, since a stored answer never names a variant
- * its prompt did not offer. */
+ * variants they were written with, byte for byte, and v26 to v30 requests the
+ * four; the compiler accepts the full list at every version, since a stored
+ * answer never names a variant its prompt did not offer. */
 export function visibleSectionChoices(
   fullBleedOpening: boolean,
+  moreVariants = true,
 ): typeof VISIBLE_SECTION_CHOICES {
-  if (fullBleedOpening) return VISIBLE_SECTION_CHOICES;
+  if (fullBleedOpening && moreVariants) return VISIBLE_SECTION_CHOICES;
   return {
     ...VISIBLE_SECTION_CHOICES,
-    hero: { ...VISIBLE_SECTION_CHOICES.hero, variant: LEGACY_HERO_VARIANTS },
+    hero: {
+      ...VISIBLE_SECTION_CHOICES.hero,
+      variant: fullBleedOpening ? V26_HERO_VARIANTS : LEGACY_HERO_VARIANTS,
+    },
   };
 }
 

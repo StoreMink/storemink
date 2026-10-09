@@ -343,6 +343,120 @@ try {
         }
       }
     }
+    // The stacked hero (plan Phase 2d): the copy sits above a full-width
+    // photograph. The picture must sit below the copy, keep a real frame
+    // (21:9 on desktop, 4:3 stacked on phones) and never overflow; the
+    // height presets grow the picture, never the copy.
+    for (const height of width <= 860
+      ? ["auto", "medium", "large"]
+      : ["auto", "large"]) {
+      for (const [sourceWidth, sourceHeight] of [
+        [2100, 900],
+        [1280, 1600],
+      ]) {
+        const label = `${width}px stacked/${height} ${sourceWidth}×${sourceHeight}`;
+        await page.setContent(
+          documentHtml(`<section class="home-section">
+          <div class="home-hero variant-stacked theme-dark align-left ${height === "auto" ? "" : `height-${height}`}">
+            <div class="home-hero-copy"><h1 class="home-hero-heading">${heading}</h1><p class="home-hero-sub">${copy}</p><a class="home-hero-cta sm-btn-primary" href="/shop">Shop the collection</a></div>
+            <div class="home-hero-media"><img class="home-hero-img" alt="Editorial" src="${image(sourceWidth, sourceHeight)}" style="position:absolute;inset:0;height:100%;width:100%;object-fit:cover"></div>
+          </div></section>`),
+        );
+        const measurement = await page.evaluate(async () => {
+          const img = document.querySelector("img");
+          await img.decode();
+          const band = document
+            .querySelector(".home-hero")
+            .getBoundingClientRect();
+          const copyBox = document
+            .querySelector(".home-hero-copy")
+            .getBoundingClientRect();
+          const mediaBox = document
+            .querySelector(".home-hero-media")
+            .getBoundingClientRect();
+          return {
+            overflow: document.documentElement.scrollWidth > innerWidth,
+            below: mediaBox.top >= copyBox.bottom - 0.5,
+            fullWidth: Math.abs(mediaBox.width - band.width) < 1,
+            mediaRatio: mediaBox.width / mediaBox.height,
+            mediaHeight: mediaBox.height,
+          };
+        });
+        cases++;
+        const wantRatio = width <= 860 ? 4 / 3 : 21 / 9;
+        if (
+          measurement.overflow ||
+          !measurement.below ||
+          !measurement.fullWidth ||
+          !measurement.mediaHeight ||
+          (height === "auto" &&
+            Math.abs(measurement.mediaRatio - wantRatio) > 0.05) ||
+          (height !== "auto" && measurement.mediaRatio > wantRatio + 0.05)
+        )
+          failures.push({ label, ...measurement });
+      }
+    }
+    // The offset hero: the photograph covers the band and the copy card
+    // sits over it, inside the band, at its lower edge (or the top under
+    // content-top), both alignments, light and dark text modes (the card
+    // keeps its own ink either way).
+    for (const alignment of ["left", "center"]) {
+      for (const mode of ["dark", "light"]) {
+        for (const position of ["", "content-top"]) {
+          const label = `${width}px offset/${alignment}/${mode}/${position || "bottom"}`;
+          await page.setContent(
+            documentHtml(`<section class="home-section">
+            <div class="home-hero variant-offset theme-${mode} align-${alignment} ${position}" style="background:#2a211f">
+              <div class="home-hero-bgmedia"><img class="home-hero-img" alt="Opening" src="${image(2100, 900)}" style="position:absolute;inset:0;height:100%;width:100%;object-fit:cover"></div>
+              <div class="home-hero-copy"><h1 class="home-hero-heading">${heading}</h1><p class="home-hero-sub">${copy}</p><a class="home-hero-cta sm-btn-primary" href="/shop">Shop the collection</a></div>
+            </div></section>`),
+          );
+          const measurement = await page.evaluate(async () => {
+            const img = document.querySelector("img");
+            await img.decode();
+            const band = document
+              .querySelector(".home-hero")
+              .getBoundingClientRect();
+            const copy = document.querySelector(".home-hero-copy");
+            const copyBox = copy.getBoundingClientRect();
+            const imgBox = img.getBoundingClientRect();
+            const style = getComputedStyle(copy);
+            // The page ink, read the way the card reads it, so the check
+            // holds whatever palette the fixture carries.
+            const probe = document.createElement("span");
+            probe.style.color = "var(--sm-ink)";
+            document.body.append(probe);
+            const ink = getComputedStyle(probe).color;
+            probe.remove();
+            return {
+              overflow: document.documentElement.scrollWidth > innerWidth,
+              covers:
+                Math.abs(imgBox.width - band.width) < 1 &&
+                Math.abs(imgBox.height - band.height) < 1,
+              copyInside:
+                copyBox.left >= band.left - 0.5 &&
+                copyBox.right <= band.right + 0.5 &&
+                copyBox.top >= band.top - 0.5 &&
+                copyBox.bottom <= band.bottom + 0.5,
+              atBottom: band.bottom - copyBox.bottom < band.height / 3,
+              atTop: copyBox.top - band.top < band.height / 3,
+              cardIsInk: style.color === ink,
+              cardFill: style.backgroundColor,
+            };
+          });
+          cases++;
+          if (
+            measurement.overflow ||
+            !measurement.covers ||
+            !measurement.copyInside ||
+            (position ? !measurement.atTop : !measurement.atBottom) ||
+            !measurement.cardIsInk ||
+            measurement.cardFill === "rgba(0, 0, 0, 0)"
+          )
+            failures.push({ label, ...measurement });
+        }
+      }
+    }
     for (const fixture of fixtures()) {
       for (const [scheme, padding, bleed] of [
         ["soft", "sm", false],

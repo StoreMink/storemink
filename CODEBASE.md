@@ -4920,7 +4920,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     The storefront itself is a per-store artifact, not hardcoded: - **Section registry**: `lib/homepage/section-types.ts` is the single typed
     section schema (config types, `EMPTY_CONFIG`, `META`, `validateConfig`),
     shared by the homepage AND custom pages. Twenty-six block types: `hero`
-    (banner/split/minimal/fullbleed variants — first-class hero, replaces the old
+    (banner/split/minimal/fullbleed/stacked/offset variants — first-class hero, replaces the old
     custom_code hero hack; optional `video_url` plays muted/looping in place
     of the image with the image as poster), `hero_carousel` (auto-playing
     photo/video slideshow — `slides[]` of HeroSlide, dot + arrow nav,
@@ -6351,6 +6351,57 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     spotlight stacking, the collage spanning). Merchant-visible: the pending
     migration 0174 (never applied) was widened in place to name the seven
     new sections, rather than chaining a second `replace()` on it.
+    **Phase 2d, first slice (2026-10-09; prompt v31).** Nine more layout
+    variants, each a CSS treatment of markup that already exists, so no
+    section or chrome component changed shape. Hero: `stacked` (the copy
+    above a full-width picture in a 21:9 frame, 4:3 stacked on phones; the
+    height presets grow the picture, never the copy) and `offset` (the
+    picture fills the band and the copy sits in an opaque surface card over
+    its lower edge, or the top under content_position "top"; the card paints
+    its own ink, so `MediaTone`, the overlay and the scrims stay off it, and
+    `hero-contrast.ts` leaves it to the design contract's ink-on-surface
+    pair while a stacked hero is measured like a split one). Header:
+    `transparent`, the owner-flagged gap (the Shopify transparent header:
+    nothing behind the bar at the top of the page and the opening photograph
+    runs under it — homepage.css drops the `.home-sections` reserve for a
+    hero- or carousel-led page and a screen-height opening fills the whole
+    viewport — with the controls in the colour that reads over the picture,
+    which `Header.module.css` reads with `:has()` from the `theme-light`
+    class `MediaTone` settles on the first hero or the carousel's active
+    slide, and solid cream with ink controls once scrolled; every class
+    inside that `:has()` is wrapped in its own `:global()`, because the
+    offline header checks strip `:global(...)` with a regex that cannot see
+    past nested parentheses) and `hamburger` (every link behind the menu
+    button at every width, so the drawer is the navigation, with the logo
+    page-centred between two equal grid columns above phone width). Cards:
+    `centered` (a 4:5 photograph, name and price centred beneath it in the
+    display face), `soft` (the photograph contained on a padded, tinted,
+    rounded tile) and `wide` (a 4:3 photograph, name and price on one line
+    under a hairline); all three share classic's no-chrome rule, hide the
+    "% off" pill and the category label and keep the one flag on the photo.
+    Footer: `centered` (everything stacked and centred, each link column one
+    wrapping row, the newsletter centred) and `compact` (one slim wrapping
+    band, contact lines in a row, a thin newsletter bar); every merchant
+    block still renders. The lists widened together in `ThemeLayout`,
+    `lib/chrome/types.ts`, `lib/themes/validation.ts`, the package contract,
+    Mink's builder reader and the builder's selects; `HERO_VARIANTS` and
+    Mink's screenshot reader carry the two hero shapes. Theme Studio:
+    feature `moreVariants` (v31). Stage A names the new chrome and cards,
+    Stage B gains a "More layouts" bullet and prints the six hero variants
+    in its choice list (three hero variants before v26, four to v30, six
+    from v31, from `visibleSectionChoices(fullBleedOpening, moreVariants)`),
+    and the Stage B layout enums live in `LAYOUT_VARIANT_ENUMS`, with
+    `stageBSchemaFor`'s fifth flag narrowing every earlier twin back to
+    `LEGACY_LAYOUT_VARIANT_ENUMS`; a targeted repair derives its choices
+    from whichever schema the run's revision sends, so a v30 repair is never
+    offered a v31 value. The opening rule is unchanged: a stacked or offset
+    hero may not open the homepage. Checks: the header layout and contrast
+    scripts loop six variants (a transparent header puts a hero or carousel
+    opening at the top of the page), the card script eight skins, and the
+    renderer check renders the stacked hero at every width and preset and
+    the offset card at both alignments, both text modes and both positions.
+    Not yet run against live Gemini. Merchant-visible only as more options
+    in selects that no published guide enumerates, so no Help Centre update.
     **The first live v26 run found four renderer defects, all shared chrome
     (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
     before artwork as `renderer_fix_required`, so every image stayed a
@@ -7079,11 +7130,14 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         profile/enquiry forms, blog + write-blog editor). CI-guards in
         `themes.test.ts` assert each theme ships a complete, injectable design.
         **Layout variants** (`ThemeDesign.layout`, all optional — absent = classic
-        WholeSip chrome): header supports `classic`, `market`, `centered`, and
-        `minimal`; cards support `classic`, `quick_add`, `overlay`, `framed`, and
-        `grocery`; product detail supports `classic`, `grocery`, and `editorial`;
+        WholeSip chrome): header supports `classic`, `market`, `centered`,
+        `minimal`, `transparent` and `hamburger`; cards support `classic`,
+        `quick_add`, `overlay`, `framed`, `grocery`, `centered`, `soft` and
+        `wide`; product detail supports `classic`, `grocery`, and `editorial`;
         cart supports `classic`, `grocery`, and `compact`; footer supports `rich`,
-        `minimal`, and `editorial`. `resolveStorefrontAppearance` in
+        `minimal`, `editorial`, `centered` and `compact` (the last two of each
+        list landed with plan Phase 2d, 2026-10-09, §11 below).
+        `resolveStorefrontAppearance` in
         `lib/chrome/types.ts` is the single pure resolver for theme defaults plus
         published merchant overrides; it also preserves the pinned legacy
         `storefront:"grocery"` shorthand. Root `sm-*` classes drive CSS variants,

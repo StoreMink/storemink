@@ -52,6 +52,11 @@ export function solidHeroContrast(
         (config.image_url || config.video_url)
       )
         return;
+      // An offset hero's copy sits in a surface card (over the band or its
+      // photo): the design contract's ink-on-surface pair, which
+      // validateThemeDesign already holds to 4.5:1. A stacked hero's copy
+      // sits on the band field like a split one and is measured below.
+      if (config.variant === "offset") return;
 
       let ink = opaqueHex(design.palette.ink);
       let onInk = opaqueHex(design.palette.onInk);

@@ -51,16 +51,30 @@ export interface NewsletterConfig extends FooterBlockToggle {
   consentText: string;
 }
 
-export type HeaderVariant = "classic" | "market" | "centered" | "minimal";
+export type HeaderVariant =
+  | "classic"
+  | "market"
+  | "centered"
+  | "minimal"
+  | "transparent"
+  | "hamburger";
 export type CardVariant =
   | "classic"
   | "quick_add"
   | "overlay"
   | "framed"
-  | "grocery";
+  | "grocery"
+  | "centered"
+  | "soft"
+  | "wide";
 export type ProductDetailVariant = "classic" | "grocery" | "editorial";
 export type CartVariant = "classic" | "grocery" | "compact";
-export type FooterVariant = "rich" | "minimal" | "editorial";
+export type FooterVariant =
+  | "rich"
+  | "minimal"
+  | "editorial"
+  | "centered"
+  | "compact";
 /** The classic card's photo frame. Portrait (3:4) is the default; a store
  *  whose product photos are square picks square (1:1) so nothing is cropped. */
 export type CardPhoto = "portrait" | "square";
@@ -293,6 +307,8 @@ const HEADER_VARIANTS: HeaderVariant[] = [
   "market",
   "centered",
   "minimal",
+  "transparent",
+  "hamburger",
 ];
 const CARD_VARIANTS: CardVariant[] = [
   "classic",
@@ -300,6 +316,9 @@ const CARD_VARIANTS: CardVariant[] = [
   "overlay",
   "framed",
   "grocery",
+  "centered",
+  "soft",
+  "wide",
 ];
 const PRODUCT_VARIANTS: ProductDetailVariant[] = [
   "classic",
@@ -307,7 +326,13 @@ const PRODUCT_VARIANTS: ProductDetailVariant[] = [
   "editorial",
 ];
 const CART_VARIANTS: CartVariant[] = ["classic", "grocery", "compact"];
-const FOOTER_VARIANTS: FooterVariant[] = ["rich", "minimal", "editorial"];
+const FOOTER_VARIANTS: FooterVariant[] = [
+  "rich",
+  "minimal",
+  "editorial",
+  "centered",
+  "compact",
+];
 
 function appearanceValue<T extends string>(
   value: unknown,

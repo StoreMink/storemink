@@ -1186,6 +1186,95 @@
   }
 }
 
+/* ---- "transparent" header variant (theme layout.header = "transparent") ----
+   The Shopify transparent header: nothing behind the bar while the page is
+   at the top, so the opening photograph runs under it (homepage.css drops
+   the reserve for a hero- or carousel-led page), and the controls take the
+   colour that reads over that photograph. Which colour is NOT decided here:
+   MediaTone (sections/media-tone.tsx) settles `theme-light` or `theme-dark`
+   on the first hero, or on the carousel's active slide, from the pixels
+   behind the copy, and this rule follows it with :has(). Scrolled, the bar
+   is the classic cream bar with ink controls. Every class inside :has() is
+   wrapped in :global() on its own, because the offline header checks strip
+   `:global(...)` with a regex that cannot see past nested parentheses. */
+:global(.sm-header-transparent) .header {
+  box-shadow: none;
+}
+:global(.sm-header-transparent):has(
+    :global(.home-sections)
+      > :global(.home-section):first-child
+      > :global(.home-hero):global(.theme-light),
+    :global(.home-sections)
+      > :global(.home-section):first-child
+      > :global(.home-carousel)
+      :global(.home-carousel-slide):global(.is-active):global(.theme-light)
+  )
+  .header:not(.headerScrolled)
+  :is(
+    .brandNameText,
+    .navLinks a,
+    .navTrigger,
+    .userIcon,
+    .cartBtn,
+    .hamburgerBtn,
+    .phoneSearchBtn,
+    [data-delivery-control] > button,
+    [data-delivery-control] > button small,
+    [data-delivery-control] > button strong
+  ) {
+  color: var(--sm-on-ink);
+}
+:global(.sm-header-transparent):has(
+    :global(.home-sections)
+      > :global(.home-section):first-child
+      > :global(.home-hero):global(.theme-light),
+    :global(.home-sections)
+      > :global(.home-section):first-child
+      > :global(.home-carousel)
+      :global(.home-carousel-slide):global(.is-active):global(.theme-light)
+  )
+  .header:not(.headerScrolled)
+  [data-delivery-control]
+  > button {
+  border-color: color-mix(in srgb, var(--sm-on-ink) 32%, transparent);
+  background: color-mix(in srgb, var(--sm-on-ink) 12%, transparent);
+}
+/* The drawer and the account menu are page surfaces whatever sits behind
+   the bar: their text keeps the page ink (the market rule, for its reason). */
+:global(.sm-header-transparent) .mobileDrawer .brandNameText,
+:global(.sm-header-transparent) .mobileDrawer .hamburgerBtn {
+  color: var(--sm-ink);
+}
+
+/* ---- "hamburger" header variant (theme layout.header = "hamburger") ----
+   Every link lives behind the menu button at every width, so the drawer is
+   THE navigation (nested menus drill down there already) and the bar is
+   logo, search and the icons: the logo page-centred between two equal
+   columns above phone width, the phone row unchanged. */
+:global(.sm-header-hamburger) .navLinks {
+  display: none;
+}
+:global(.sm-header-hamburger) .hamburgerBtn {
+  display: flex;
+}
+@media (min-width: 769px) {
+  :global(.sm-header-hamburger) .header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    column-gap: 24px;
+  }
+  :global(.sm-header-hamburger) .headerLeft {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+  }
+  :global(.sm-header-hamburger) .headerRight {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+  }
+}
+
 /* Unread count beside "Notifications" in the profile dropdown. */
 .profileItemBadge {
   margin-left: auto;

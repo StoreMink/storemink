@@ -249,3 +249,83 @@ describe("the v30 sections in the Studio schemas", () => {
     );
   });
 });
+
+describe("the v31 layout variants in the Stage B schemas", () => {
+  // Every enum that names a header, card or footer variant, wherever it sits.
+  const layoutEnums = (schema: unknown) => {
+    const found: Record<"header" | "card" | "footer", string[][]> = {
+      header: [],
+      card: [],
+      footer: [],
+    };
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      const record = node as Record<string, unknown>;
+      if (Array.isArray(record.enum)) {
+        const list = record.enum as string[];
+        if (list.includes("market")) found.header.push(list);
+        if (list.includes("framed")) found.card.push(list);
+        if (list.includes("rich")) found.footer.push(list);
+      }
+      Object.values(record).forEach(walk);
+    };
+    walk(schema);
+    return found;
+  };
+
+  it("admits them from v31 and narrows every earlier request's enums back, once per twin", async () => {
+    const {
+      stageBSchemaFor,
+      LAYOUT_VARIANT_ENUMS,
+      LEGACY_LAYOUT_VARIANT_ENUMS,
+      STAGE_B_DRAFT_SCHEMA,
+      STAGE_B_INITIAL_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_INITIAL_SCHEMA,
+    } = await import("./schemas");
+    for (const key of ["header", "card", "footer"] as const)
+      for (const legacy of LEGACY_LAYOUT_VARIANT_ENUMS[key])
+        expect(LAYOUT_VARIANT_ENUMS[key]).toContain(legacy);
+    expect(LAYOUT_VARIANT_ENUMS.header).toContain("transparent");
+    expect(LAYOUT_VARIANT_ENUMS.card).toContain("soft");
+    expect(LAYOUT_VARIANT_ENUMS.footer).toContain("compact");
+    // The compact initial draft asks for layoutOverridesJson instead of
+    // design.layout, so it carries no layout enum; the other three do.
+    for (const schema of [
+      STAGE_B_DRAFT_SCHEMA,
+      STAGE_B_INITIAL_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_INITIAL_SCHEMA,
+    ]) {
+      expect(stageBSchemaFor(schema, true, true, true, true)).toBe(schema);
+      const current = layoutEnums(schema);
+      const legacy = layoutEnums(
+        stageBSchemaFor(schema, true, true, true, false),
+      );
+      for (const key of ["header", "card", "footer"] as const) {
+        if (schema === STAGE_B_INITIAL_DRAFT_SCHEMA)
+          expect(current[key]).toHaveLength(0);
+        else expect(current[key].length).toBeGreaterThan(0);
+        expect(legacy[key]).toHaveLength(current[key].length);
+        for (const list of current[key])
+          expect(list).toEqual([...LAYOUT_VARIANT_ENUMS[key]]);
+        for (const list of legacy[key])
+          expect(list).toEqual([...LEGACY_LAYOUT_VARIANT_ENUMS[key]]);
+      }
+      // A v30 request predates the variants as well as nothing else; a v29
+      // one also the v30 sections. Each twin is built once.
+      const v30 = stageBSchemaFor(schema, true, true, true, false);
+      expect(stageBSchemaFor(schema, true, true, true, false)).toBe(v30);
+      const v29 = stageBSchemaFor(schema, true, true, false, false);
+      if (schema !== STAGE_B_INITIAL_DRAFT_SCHEMA)
+        expect(layoutEnums(v29).header[0]).toEqual([
+          ...LEGACY_LAYOUT_VARIANT_ENUMS.header,
+        ]);
+      expect(v29).not.toBe(v30);
+    }
+  });
+});

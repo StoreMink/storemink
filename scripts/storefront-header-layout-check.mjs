@@ -1,6 +1,7 @@
 /** Offline header clearance regression using production CSS and local Chrome.
  * No network, database or provider calls. The measured cases model the height
- * published by useHeaderFit; its observer/lifecycle is tested in Vitest.
+ * published by useHeaderFit; its observer/lifecycle is tested in Vitest. Six
+ * header variants: the four originals plus transparent and hamburger (2026-10-09).
  * Run: node scripts/storefront-header-layout-check.mjs
  * --css-ref=<revision> diagnoses old CSS; --screenshots=<dir> saves fixtures,
  * not live storefront evidence.
@@ -82,7 +83,14 @@ try {
     [844, 390],
     [1440, 900],
   ])
-    for (const header of ["classic", "centered", "minimal", "market"])
+    for (const header of [
+      "classic",
+      "centered",
+      "minimal",
+      "market",
+      "transparent",
+      "hamburger",
+    ])
       for (const content of Object.keys(first))
         for (const order of ["forward", "reverse"])
           for (const mode of ["server", "measured"]) {
@@ -148,11 +156,15 @@ try {
             )
               problems.push("custom hero clearance changed");
             if (["hero", "carousel"].includes(content)) {
+              // The transparent header floats over the opening photograph,
+              // which therefore starts at the top of the page.
               const expected =
                 header === "market"
                   ? result.headerHeight +
                     Math.min(32, Math.max(16, width * 0.025))
-                  : Math.min(72, Math.max(40, width * 0.06));
+                  : header === "transparent"
+                    ? 0
+                    : Math.min(72, Math.max(40, width * 0.06));
               if (
                 Math.abs(result.contentTop - expected) >
                 (mode === "server" ? 16 : 1)

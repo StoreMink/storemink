@@ -120,8 +120,18 @@ describe("solid hero contrast against the rendered field", () => {
     // A fullbleed hero's copy sits over its photo too.
     (hero.config as HeroConfig).variant = "fullbleed";
     expect(solidHeroContrast(theme)).toHaveLength(1);
+    // An offset hero's copy sits in its own surface card, photo or not: the
+    // design contract's ink-on-surface pair, never this check. A stacked
+    // hero's copy sits on the band field like a split one.
+    (hero.config as HeroConfig).variant = "offset";
+    expect(solidHeroContrast(theme)).toHaveLength(1);
+    (hero.config as HeroConfig).variant = "stacked";
+    expect(solidHeroContrast(theme)).toHaveLength(2);
+    (hero.config as HeroConfig).variant = "fullbleed";
     (hero.config as HeroConfig).image_url = "";
     expect(solidHeroContrast(theme)).toHaveLength(2);
+    (hero.config as HeroConfig).variant = "offset";
+    expect(solidHeroContrast(theme)).toHaveLength(1);
     (hero.config as HeroConfig).variant = "minimal";
     expect(solidHeroContrast(theme)).toHaveLength(2);
     for (const background of [

@@ -257,6 +257,37 @@ describe("resolveStorefrontAppearance", () => {
     const chrome = normalizeChrome({ appearance: { header: "impossible" } });
     expect(chrome.appearance).toEqual(DEFAULT_CHROME.appearance);
   });
+
+  // Plan Phase 2d (2026-10-09): two headers, three cards and two footers
+  // joined the lists, as merchant overrides and as theme defaults.
+  it("keeps the Phase 2d variants a merchant or a theme may choose", () => {
+    const chrome = normalizeChrome({
+      appearance: { header: "transparent", card: "soft", footer: "compact" },
+    });
+    expect(chrome.appearance.header).toBe("transparent");
+    expect(chrome.appearance.card).toBe("soft");
+    expect(chrome.appearance.footer).toBe("compact");
+    expect(
+      normalizeChrome({ appearance: { header: "hamburger" } }).appearance
+        .header,
+    ).toBe("hamburger");
+    for (const card of ["centered", "wide"] as const)
+      expect(normalizeChrome({ appearance: { card } }).appearance.card).toBe(
+        card,
+      );
+    expect(
+      normalizeChrome({ appearance: { footer: "centered" } }).appearance.footer,
+    ).toBe("centered");
+    const resolved = resolveStorefrontAppearance({
+      header: "hamburger",
+      card: "wide",
+      footer: "centered",
+    });
+    expect(resolved.header).toBe("hamburger");
+    expect(resolved.card).toBe("wide");
+    expect(resolved.cardQuickAdd).toBe(false);
+    expect(resolved.footer).toBe("centered");
+  });
 });
 
 describe("sanitizeChromeForSave", () => {

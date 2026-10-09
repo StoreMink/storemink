@@ -497,6 +497,10 @@ function HeroFields({
               <option value="banner">Banner card (copy + image)</option>
               <option value="split">Split (half copy, half image)</option>
               <option value="minimal">Minimal (centred statement)</option>
+              <option value="stacked">Stacked (copy above a wide photo)</option>
+              <option value="offset">
+                Offset card (copy card over the photo)
+              </option>
             </select>
           </div>
           <div>
@@ -580,16 +584,17 @@ function HeroFields({
           <ImageUpload
             folder="homepage"
             spec={
-              config.variant === "minimal" || config.variant === "fullbleed"
-                ? "hero_wide"
-                : "hero_side"
+              config.variant === "banner" || config.variant === "split"
+                ? "hero_side"
+                : "hero_wide"
             }
             defaultImage={config.image_url || undefined}
             onUploadSuccess={(url) => set("image_url", url)}
           />
           <p className="text-muted-foreground mt-1 text-[11px]">
-            Banner/split show it beside the copy; full-bleed and minimal use it
-            as the band&apos;s background behind the copy.
+            Banner/split show it beside the copy; stacked puts it under the
+            copy; full-bleed, minimal and offset use it as the band&apos;s
+            background (offset puts the copy in a card over it).
           </p>
         </div>
 

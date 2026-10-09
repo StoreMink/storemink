@@ -1153,8 +1153,15 @@
 }
 
 /* Non-classic cards already state the markdown in their "% off" price pill,
-   so the photo flag would say it twice. */
-.storefront-root:not(.sm-card-classic) .shop-card-flag--save {
+   so the photo flag would say it twice; the three Phase 2d photo-is-the-card
+   styles hide the pill like classic and keep the flag. */
+.storefront-root:not(
+    .sm-card-classic,
+    .sm-card-centered,
+    .sm-card-soft,
+    .sm-card-wide
+  )
+  .shop-card-flag--save {
   display: none;
 }
 
@@ -1251,6 +1258,228 @@
 .sm-card-classic.storefront-root .shop-card .shop-card-from {
   font-size: 0.85rem;
   font-weight: 400;
+}
+
+/* ---- Phase 2d product-card variants (2026-10-09) -----------------------
+   Three more "the photograph is the card" styles beside classic: they share
+   its no-chrome rule, its one flag on the photo (so the "% off" pill and the
+   category label stay hidden) and its doubled root-class specificity. */
+
+/* centered: a taller 4:5 photograph with the name and price centred under it
+   in the theme's display face, normal case. */
+.sm-card-centered.storefront-root .shop-card,
+.sm-card-soft.storefront-root .shop-card,
+.sm-card-wide.storefront-root .shop-card {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+.sm-card-centered.storefront-root .shop-card:hover,
+.sm-card-soft.storefront-root .shop-card:hover,
+.sm-card-wide.storefront-root .shop-card:hover {
+  transform: none;
+  box-shadow: none;
+}
+.sm-card-centered.storefront-root .shop-card .shop-card-cat,
+.sm-card-centered.storefront-root .shop-card .shop-card-off,
+.sm-card-soft.storefront-root .shop-card .shop-card-cat,
+.sm-card-soft.storefront-root .shop-card .shop-card-off,
+.sm-card-wide.storefront-root .shop-card .shop-card-cat,
+.sm-card-wide.storefront-root .shop-card .shop-card-off {
+  display: none;
+}
+.sm-card-centered.storefront-root .shop-card .shop-card-sell,
+.sm-card-soft.storefront-root .shop-card .shop-card-sell,
+.sm-card-wide.storefront-root .shop-card .shop-card-sell {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--sm-ink);
+}
+.sm-card-centered.storefront-root .shop-card .shop-card-sell--sale,
+.sm-card-soft.storefront-root .shop-card .shop-card-sell--sale,
+.sm-card-wide.storefront-root .shop-card .shop-card-sell--sale {
+  color: var(--sm-sale);
+}
+.sm-card-centered.storefront-root .shop-card .shop-card-base,
+.sm-card-soft.storefront-root .shop-card .shop-card-base,
+.sm-card-wide.storefront-root .shop-card .shop-card-base {
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: var(--sm-ink-soft);
+}
+.sm-card-centered.storefront-root .shop-card .shop-card-from,
+.sm-card-soft.storefront-root .shop-card .shop-card-from,
+.sm-card-wide.storefront-root .shop-card .shop-card-from {
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.sm-card-centered.storefront-root .shop-card-img {
+  aspect-ratio: 4 / 5;
+  height: auto;
+  overflow: hidden;
+  border-radius: var(--sm-radius-card);
+  background: var(--sm-sand, #f2f2f0);
+}
+.sm-card-centered.storefront-root .shop-card-img-el {
+  padding: 0;
+  object-fit: cover;
+  transition: transform 0.5s ease;
+}
+.sm-card-centered.storefront-root .shop-card .shop-card-body {
+  padding: 14px 4px 4px;
+  gap: 4px;
+  align-items: center;
+  text-align: center;
+}
+.sm-card-centered.storefront-root .shop-card .shop-card-head {
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.sm-card-centered.storefront-root .shop-card .shop-card-name {
+  font-family: var(--font-stick-no-bills), var(--font-outfit), sans-serif;
+  font-size: 1.1rem;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--sm-ink);
+}
+.sm-card-centered.storefront-root .shop-card .shop-card-price {
+  justify-content: center;
+  padding-top: 2px;
+  gap: 4px 10px;
+  color: var(--sm-ink);
+}
+.sm-card-centered.storefront-root .shop-card .shop-card-colours {
+  justify-content: center;
+}
+
+/* soft: the photograph inset on a tinted, rounded tile (contained, so the
+   whole picture shows), the name and price beneath in sentence case. */
+.sm-card-soft.storefront-root .shop-card-img {
+  aspect-ratio: 1 / 1;
+  height: auto;
+  overflow: hidden;
+  border-radius: var(--sm-radius-card);
+  background: var(--sm-cream-deep);
+  transition: background 0.3s ease;
+}
+.sm-card-soft.storefront-root .shop-card-img-el {
+  padding: 9%;
+  object-fit: contain;
+  transition: transform 0.5s ease;
+}
+.sm-card-soft.storefront-root .shop-card:hover .shop-card-img {
+  background: var(--sm-sand, var(--sm-cream-deep));
+}
+.sm-card-soft.storefront-root .shop-card .shop-card-body {
+  padding: 12px 2px 4px;
+  gap: 4px;
+}
+.sm-card-soft.storefront-root .shop-card .shop-card-head {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.sm-card-soft.storefront-root .shop-card .shop-card-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--sm-ink);
+}
+.sm-card-soft.storefront-root .shop-card .shop-card-price {
+  padding-top: 2px;
+  gap: 4px 10px;
+  color: var(--sm-ink);
+}
+
+/* wide: a landscape 4:3 photograph, then the name and the price on one
+   line under a hairline, for ranges whose pictures are wider than tall. */
+.sm-card-wide.storefront-root .shop-card-img {
+  aspect-ratio: 4 / 3;
+  height: auto;
+  overflow: hidden;
+  border-radius: var(--sm-radius-card);
+  background: var(--sm-sand, #f2f2f0);
+}
+.sm-card-wide.storefront-root .shop-card-img-el {
+  padding: 0;
+  object-fit: cover;
+  transition: transform 0.5s ease;
+}
+.sm-card-wide.storefront-root .shop-card .shop-card-body {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 12px 0 10px;
+  border-bottom: 1px solid var(--sm-border);
+}
+.sm-card-wide.storefront-root .shop-card .shop-card-head {
+  flex: 1 1 55%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.sm-card-wide.storefront-root .shop-card .shop-card-name {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--sm-ink);
+}
+.sm-card-wide.storefront-root .shop-card .shop-card-price {
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding-top: 0;
+  gap: 4px 10px;
+  color: var(--sm-ink);
+}
+.sm-card-wide.storefront-root .shop-card .shop-card-colours {
+  flex-basis: 100%;
+}
+/* A narrow card (the phone two-up grid, a dense desktop grid) has no room
+   for a name and a five-figure price on one line: they stack, the price
+   group staying whole. Measured by scripts/product-card-layout-check.mjs. */
+@container product-card (max-width: 220px) {
+  .sm-card-wide.storefront-root .shop-card .shop-card-body {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .sm-card-wide.storefront-root .shop-card .shop-card-head,
+  .sm-card-wide.storefront-root .shop-card .shop-card-price {
+    flex: 0 0 auto;
+    max-width: 100%;
+  }
+}
+@media (hover: hover) and (pointer: fine) {
+  .sm-card-centered.storefront-root:not(.sm-card-hoverimg)
+    .shop-card:hover
+    .shop-card-img-el,
+  .sm-card-soft.storefront-root:not(.sm-card-hoverimg)
+    .shop-card:hover
+    .shop-card-img-el,
+  .sm-card-wide.storefront-root:not(.sm-card-hoverimg)
+    .shop-card:hover
+    .shop-card-img-el {
+    transform: scale(1.03);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sm-card-centered.storefront-root .shop-card-img-el,
+  .sm-card-soft.storefront-root .shop-card-img-el,
+  .sm-card-wide.storefront-root .shop-card-img-el {
+    transition: none;
+  }
 }
 
 /* ---------------------------------------------------------------------------

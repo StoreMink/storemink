@@ -529,6 +529,7 @@ async function generate(
   ).peopleInImagery;
   const nestedBlocks = themePromptFeatures(input.promptVersion).nestedBlocks;
   const moreSections = themePromptFeatures(input.promptVersion).moreSections;
+  const moreVariants = themePromptFeatures(input.promptVersion).moreVariants;
   // Explicit styles (intent schema 2) apply to new builds and to revisions of
   // themes that already carry a design direction. A revision of an older
   // schema-1 theme keeps its original contract: forcing a new direction and
@@ -719,6 +720,7 @@ async function generate(
               peopleInImagery,
               nestedBlocks,
               moreSections,
+              moreVariants,
             )
           : stageASystemPrompt(
               themePromptFeatures(input.promptVersion).nativeCommerce,
@@ -727,6 +729,7 @@ async function generate(
               peopleInImagery,
               nestedBlocks,
               moreSections,
+              moreVariants,
             ),
         content: [{ type: "text", text: userText }, ...images],
         schema: stageASchemaFor(
@@ -874,6 +877,7 @@ async function generate(
                 carouselOpening,
                 nestedBlocks,
                 moreSections,
+                moreVariants,
               )
             : compactInitial
               ? stageBInitialSystemPrompt(
@@ -883,6 +887,7 @@ async function generate(
                   carouselOpening,
                   nestedBlocks,
                   moreSections,
+                  moreVariants,
                 )
               : stageBSystemPrompt(
                   themePromptFeatures(input.promptVersion).nativeFraming,
@@ -891,6 +896,7 @@ async function generate(
                   carouselOpening,
                   nestedBlocks,
                   moreSections,
+                  moreVariants,
                 )) + (heroContrast ? heroContrastPrompt(fullBleedOpening) : ""),
         content: [{ type: "text", text: userText }],
         schema: stageBSchemaFor(
@@ -904,6 +910,7 @@ async function generate(
           fontPairings,
           nestedBlocks,
           moreSections,
+          moreVariants,
         ),
         effort: "high",
       },

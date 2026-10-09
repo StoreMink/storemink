@@ -207,8 +207,15 @@ describe("validateConfig", () => {
       expect(config.badge_text).toBe("51% off");
     });
 
-    it("keeps every hero variant, including the full-bleed opening", () => {
-      for (const variant of ["banner", "split", "minimal", "fullbleed"]) {
+    it("keeps every hero variant, including the full-bleed opening and the Phase 2d pair", () => {
+      for (const variant of [
+        "banner",
+        "split",
+        "minimal",
+        "fullbleed",
+        "stacked",
+        "offset",
+      ]) {
         const out = validateConfig("hero", { heading: "Hi", variant });
         expect((out as { config: HeroConfig }).config.variant).toBe(variant);
       }

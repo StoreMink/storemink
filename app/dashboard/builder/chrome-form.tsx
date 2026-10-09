@@ -869,6 +869,8 @@ export function BrandForm({
             <option value="market">Market search bar</option>
             <option value="centered">Centered logo</option>
             <option value="minimal">Minimal</option>
+            <option value="transparent">Transparent over the opening</option>
+            <option value="hamburger">Centred logo, menu button</option>
           </select>
         </label>
         <label className="sm-b-field">
@@ -888,6 +890,9 @@ export function BrandForm({
             <option value="overlay">Editorial overlay</option>
             <option value="framed">Framed</option>
             <option value="grocery">Grocery</option>
+            <option value="centered">Centred under a tall photo</option>
+            <option value="soft">Soft tile</option>
+            <option value="wide">Wide photo</option>
           </select>
         </label>
         <label className="sm-b-field">
@@ -980,6 +985,8 @@ export function BrandForm({
             <option value="rich">Rich columns</option>
             <option value="editorial">Editorial</option>
             <option value="minimal">Minimal</option>
+            <option value="centered">Centred</option>
+            <option value="compact">Compact row</option>
           </select>
         </label>
       </Group>

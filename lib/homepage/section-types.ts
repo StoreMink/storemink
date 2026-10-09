@@ -133,12 +133,25 @@ export interface PromoBannerConfig {
  * attr, same rule as SectionStyle.background); empty = the theme's default
  * surface, and what a fullbleed hero shows while it has no image.
  */
-export type HeroVariant = "banner" | "split" | "minimal" | "fullbleed";
+/** banner: an inset card, copy beside the picture. split: an edge-to-edge
+ *  two-column band. minimal: a centred statement, a picture as its cover.
+ *  fullbleed: the picture fills the band and the copy sits over it.
+ *  stacked: the copy above a full-width picture (plan Phase 2d). offset:
+ *  the picture fills the band and the copy sits in a card over it. */
+export type HeroVariant =
+  | "banner"
+  | "split"
+  | "minimal"
+  | "fullbleed"
+  | "stacked"
+  | "offset";
 export const HERO_VARIANTS: readonly HeroVariant[] = [
   "banner",
   "split",
   "minimal",
   "fullbleed",
+  "stacked",
+  "offset",
 ];
 
 /** Hero/carousel height preset. "auto" is the long-standing clamp each

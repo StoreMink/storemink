@@ -200,7 +200,14 @@ try {
       badDrawer,
     });
   for (const width of [390, 768, 1440]) {
-    for (const variant of ["classic", "market", "centered", "minimal"]) {
+    for (const variant of [
+      "classic",
+      "market",
+      "centered",
+      "minimal",
+      "transparent",
+      "hamburger",
+    ]) {
       for (const palette of ["light", "dark"]) {
         for (const header of variant === "market"
           ? ["light", "dark"]

@@ -108,11 +108,27 @@ export const THEME_TEXT_CONTRAST = 4.5;
 export const THEME_UI_CONTRAST = 3;
 
 const LAYOUT_VARIANTS = {
-  header: ["classic", "market", "centered", "minimal"],
-  card: ["classic", "quick_add", "overlay", "framed", "grocery"],
+  header: [
+    "classic",
+    "market",
+    "centered",
+    "minimal",
+    "transparent",
+    "hamburger",
+  ],
+  card: [
+    "classic",
+    "quick_add",
+    "overlay",
+    "framed",
+    "grocery",
+    "centered",
+    "soft",
+    "wide",
+  ],
   productDetail: ["classic", "grocery", "editorial"],
   cart: ["classic", "grocery", "compact"],
-  footer: ["rich", "minimal", "editorial"],
+  footer: ["rich", "minimal", "editorial", "centered", "compact"],
 } as const;
 
 function finding(

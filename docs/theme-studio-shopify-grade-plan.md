@@ -71,6 +71,18 @@
 > announcement bar, which belongs in the header group above the header
 > (chrome, not a page section — the v27 opening rule puts the carousel
 > first on the homepage), and a true collection list with descriptions.
+> Phase 2d, first slice (same day, prompt v31): nine variants — hero
+> `stacked` and `offset`, header `transparent` (the owner-flagged gap: the
+> bar floats over the opening photograph with its controls in the colour
+> that reads over it, solid once scrolled) and `hamburger`, cards
+> `centered`, `soft` and `wide`, footers `centered` and `compact` — each a
+> CSS treatment of existing markup, in the builder selects, the package
+> contract and the Studio vocabulary (gated so v30 requests replay byte for
+> byte), with the offline checks widened to cover them. Of the plan's list:
+> collage is the tile grid's collage layout, text-only is a minimal hero
+> without media, video is `hero.video_url`; carousel-split and the
+> utility-bar double-row header are still open. Not yet run against live
+> Gemini.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

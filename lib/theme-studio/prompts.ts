@@ -104,7 +104,20 @@ export function stageASystemPrompt(
   peopleInImagery = false,
   nestedBlocks = false,
   moreSections = false,
+  moreVariants = false,
 ): string {
+  // v31+: more header, card and footer layouts (plan Phase 2d). Each
+  // addition is an empty string before v31, so that text stays byte for byte.
+  const headersMore = moreVariants ? ", transparent and hamburger" : "";
+  const headersBullet = moreVariants
+    ? "\n- A transparent header floats over the opening photograph with nothing behind it: its controls take whichever colour reads over the picture and the bar turns solid once the page scrolls, the way Shopify themes pair a header with a full-band opening. A hamburger header keeps every link behind one menu button at every width with the logo centred, for a store whose navigation is a short list."
+    : "";
+  const cardsMore = moreVariants
+    ? ", or centered (a taller 4:5 photograph with the name and price centred beneath it in the display face), soft (the photograph on a padded, tinted, rounded tile) or wide (a landscape photograph with the name and price on one line)"
+    : "";
+  const footersMore = moreVariants
+    ? ", centered (everything stacked and centred, links in one row) or compact (one slim row of brand, links and social marks)"
+    : "";
   // v29+: sections hold blocks, and two block-shaped sections exist. The
   // pre-v29 list and text are kept byte for byte. v30+ adds five sections.
   const blocksSentence = nestedBlocks
@@ -136,9 +149,9 @@ It can also choose palette colours, two fonts, corner radii and a fixed set of h
       ? `
 
 Native commerce capabilities (trusted facts about the shared renderer):
-- Headers classic, market, centered and minimal have predictive product search on desktop/tablet and a phone search panel when search is enabled. The market header styles the desktop search as a persistent input. Product suggestions and ordinary search are supported; do not declare them missing or describe every header as modal-only.
-- Product cards can be classic, quick_add, overlay, framed or grocery. quick_add and the grocery storefront expose + Add: products without variants add directly within stock limits; products with variants open an option chooser instead of silently choosing a variant. Native cards do not have an inline +/- quantity stepper. A brief asking for quick add can be fully met by the native control; do not invent a stepper requirement.
-- Native shop settings support sorting, availability/price filters, Load more, category navigation and image-led collection banners. Menus can have nested collection links. Product-page variants are classic, editorial or grocery; cart variants are classic, compact or grocery; footer variants are rich, minimal or editorial. A phone sticky add-to-cart bar is supported.
+- Headers classic, market, centered and minimal${headersMore} have predictive product search on desktop/tablet and a phone search panel when search is enabled. The market header styles the desktop search as a persistent input. Product suggestions and ordinary search are supported; do not declare them missing or describe every header as modal-only.${headersBullet}
+- Product cards can be classic, quick_add, overlay, framed or grocery${cardsMore}. quick_add and the grocery storefront expose + Add: products without variants add directly within stock limits; products with variants open an option chooser instead of silently choosing a variant. Native cards do not have an inline +/- quantity stepper. A brief asking for quick add can be fully met by the native control; do not invent a stepper requirement.
+- Native shop settings support sorting, availability/price filters, Load more, category navigation and image-led collection banners. Menus can have nested collection links. Product-page variants are classic, editorial or grocery; cart variants are classic, compact or grocery; footer variants are rich, minimal or editorial${footersMore}. A phone sticky add-to-cart bar is supported.
 - Start from these working native capabilities. Record a gap only for behavior the brief actually requires beyond them, never for an optional enhancement you invented. A shop "organized around routines and ingredient education" can use routine categories, tiles and rich-text education; it does not require an interactive builder, progression stepper or bundle-discount engine unless explicitly requested.`
       : ""
   }
@@ -178,8 +191,16 @@ export function stageBSystemPrompt(
   carouselOpening = false,
   nestedBlocks = false,
   moreSections = false,
+  moreVariants = false,
 ): string {
   const reserved = [...RESERVED_PAGE_SLUGS].sort().join(", ");
+  // v31+: two more hero variants and more header, card and footer layouts
+  // (plan Phase 2d). Appended after the v30 bullet, so it still sits before
+  // the section-style bullet the variety prompt rewrites; an empty string
+  // keeps pre-v31 text byte for byte.
+  const variantsBullet = moreVariants
+    ? `\n- More layouts: hero variants stacked (the copy above a full-width photograph, which takes the rest of the band) and offset (the photograph fills the band and the copy sits in a surface card over its lower edge, or the top with content_position "top") join banner, split, minimal and fullbleed on any page but the homepage opening. design.layout.header may be "transparent" (the bar floats over the opening photograph with nothing behind it, its controls in whichever colour reads over the picture, solid once the page scrolls: the natural partner of the full-band opening, so prefer it unless the brief wants a solid bar, and keep the opening's copy middle or bottom so the controls have the top of the picture) or "hamburger" (every link behind one menu button, logo centred). design.layout.card may be "centered" (a 4:5 photograph with the name and price centred beneath it in the display face: fashion, editorial), "soft" (the photograph on a padded, tinted, rounded tile: beauty, objects and food shot as cut-outs) or "wide" (a 4:3 photograph with the name and price on one line: furniture, food, wide products). design.layout.footer may be "centered" (everything stacked and centred, links in one row) or "compact" (one slim row of brand, links and social marks).`
+    : "";
   // v29+: sections hold blocks (plan Phase 2b). Appended to the opening
   // bullet, so it sits before the section-style bullet the variety prompt
   // rewrites; an empty string keeps pre-v29 text byte for byte.
@@ -234,7 +255,7 @@ Pages
 - Each section has a type from the schema and configJson: a JSON object, encoded as a string, with exactly the fields of that type's example below. Keep id-based fields (product_ids, category_ids, blog_ids) as empty arrays; featured_products must use source "featured" and shop_by_category must use source "all".
 - The examples below show each type's field names and value types with EMPTY defaults. Fill them: a gallery needs at least two images, testimonials and FAQs at least one item, a promo banner an image or heading, a tile grid at least one tile, and rich text real HTML paragraphs.
 - hero and hero_carousel (and each carousel slide) also accept these OPTIONAL fields, which you may add to that config only: height ("auto", "small", "medium", "large" or "screen" — ${nativeFraming ? 'match height to the image shape at phone, tablet and desktop widths; use "medium" for a landscape banner and reserve "large"/"screen" for framing that can keep at least 35% of the source image visible. Prefer split composition for portrait-led artwork. Never force a wide landscape photograph into a tall screen-height tablet frame' : 'use "large" or "screen" for an image-led homepage, never on a text-only hero'}), mobile_image_url (a separate portrait image slot for phones, when the desktop banner is wide and its subject would be cropped away), focal_x and focal_y (integers 0–100, the subject's position in the image, so phones crop around it), overlay_opacity (integer 0–80, a veil behind the copy; use 20–45 when light text sits over a busy photo) and content_position ("top", "middle" or "bottom"). Leave any of them out to keep the default.
-- Image fields (keys ending in _url) are either "" or "theme-asset://<asset-brief-id>" using an id from the intent's asset briefs. video_url must always be "". Never write an external URL. Links (keys ending in _href) are either "" or a site path starting with "/", such as "/shop" or "/about". Every link must reach something the store will have: one of your own page slugs, /shop, /collections/<a category slug you seed>, /shop/<a product slug you seed>, or a policy page such as /privacy-policy. The examples' own links (such as /our-story) are placeholders — replace them.${openingBullet}${blocksBullet}${moreBullet}
+- Image fields (keys ending in _url) are either "" or "theme-asset://<asset-brief-id>" using an id from the intent's asset briefs. video_url must always be "". Never write an external URL. Links (keys ending in _href) are either "" or a site path starting with "/", such as "/shop" or "/about". Every link must reach something the store will have: one of your own page slugs, /shop, /collections/<a category slug you seed>, /shop/<a product slug you seed>, or a policy page such as /privacy-policy. The examples' own links (such as /our-story) are placeholders — replace them.${openingBullet}${blocksBullet}${moreBullet}${variantsBullet}
 - Each section has a style. Use it to give the homepage rhythm the way a premium theme does: put two or three sections in a scheme — for example the trust bar or ticker in accent or inverse, one story or media-and-text section in soft or tint, the newsletter in inverse — and leave the rest null so bands alternate with the page. Never give neighbouring sections the same scheme. hero_carousel and promo_banner sit on their own photo and take no scheme. padding ("sm", "md" or "lg") adds space inside the band — a banded section without it gets "md". width "full" runs the band edge to edge; use it for banded sections.
 - Write original copy in the store's voice. No lorem ipsum, no placeholder brand names such as "Brand Name".
 
@@ -257,6 +278,7 @@ export function stageBInitialSystemPrompt(
   carouselOpening = false,
   nestedBlocks = false,
   moreSections = false,
+  moreVariants = false,
 ): string {
   const planned = new Set(intent.pagePlans.flatMap((p) => p.sectionTypes));
   // Brand-story pages often add rich_text after planning. Keep its content
@@ -276,6 +298,7 @@ export function stageBInitialSystemPrompt(
       carouselOpening,
       nestedBlocks,
       moreSections,
+      moreVariants,
     )
       .replace(
         configExamples(nestedBlocks, moreSections),
@@ -317,7 +340,13 @@ export function stageAVarietySystemPrompt(
   peopleInImagery = false,
   nestedBlocks = false,
   moreSections = false,
+  moreVariants = false,
 ): string {
+  // v31+: the card and footer guidance names the Phase 2d layouts too.
+  const cardsVarietyMore = moreVariants
+    ? " centered (a tall photo, name centred) suits fashion and editorial ranges, soft (a padded tile) suits beauty, objects and food shot as cut-outs, wide (a landscape photo) suits furniture and wide products."
+    : "";
+  const footersVarietyMore = moreVariants ? ", centered or compact" : "";
   return (
     stageASystemPrompt(
       true,
@@ -326,14 +355,15 @@ export function stageAVarietySystemPrompt(
       peopleInImagery,
       nestedBlocks,
       moreSections,
+      moreVariants,
     )
       .replace(
         /- Product cards can[\s\S]*?\n- Native shop/,
-        "- Choose card styles deliberately: framed/overlay for image-led luxury and editorial stores, classic for balanced discovery, quick_add or grocery for utility and dense catalogues. These are alternatives, not a checklist of premium features. Quick add handles options safely when chosen; no native inline quantity stepper.\n- Native shop",
+        `- Choose card styles deliberately: framed/overlay for image-led luxury and editorial stores, classic for balanced discovery, quick_add or grocery for utility and dense catalogues.${cardsVarietyMore} These are alternatives, not a checklist of premium features. Quick add handles options safely when chosen; no native inline quantity stepper.\n- Native shop`,
       )
       .replace(
         /- Native shop settings[\s\S]*?\n- Start from these working native capabilities\./,
-        "- Sorting, filters, category navigation, collection banners, sticky phone purchase and hover second images are supported OPTIONS, not mandatory commerce requirements. Choose their on/off states deliberately and record them in assumptions. Quiet editorial or luxury presentation can omit the sticky purchase bar, hover image swap and repeated collection banners; utility stores can enable these conveniences. Only promise hover swapping when appropriate photography is available. Small curated ranges can omit filters. Native product pages can be classic, editorial or grocery; carts classic, compact or grocery; footers rich, minimal or editorial.\n- commerceRequirements describes what this brief or requiredFeatures actually requires, never a checklist of every supported option.",
+        `- Sorting, filters, category navigation, collection banners, sticky phone purchase and hover second images are supported OPTIONS, not mandatory commerce requirements. Choose their on/off states deliberately and record them in assumptions. Quiet editorial or luxury presentation can omit the sticky purchase bar, hover image swap and repeated collection banners; utility stores can enable these conveniences. Only promise hover swapping when appropriate photography is available. Small curated ranges can omit filters. Native product pages can be classic, editorial or grocery; carts classic, compact or grocery; footers rich, minimal or editorial${footersVarietyMore}.\n- commerceRequirements describes what this brief or requiredFeatures actually requires, never a checklist of every supported option.`,
       ) +
     `
 
@@ -383,6 +413,7 @@ export function stageBVarietySystemPrompt(
   carouselOpening = false,
   nestedBlocks = false,
   moreSections = false,
+  moreVariants = false,
 ): string {
   // v25+: the pairings the chosen direction suits, as guidance; the brief
   // and references still win, and any pairing stays allowed.
@@ -398,6 +429,7 @@ export function stageBVarietySystemPrompt(
         carouselOpening,
         nestedBlocks,
         moreSections,
+        moreVariants,
       ).replace(/\nChoose a native commerce composition:[\s\S]*$/, "")
     : stageBSystemPrompt(
         true,
@@ -406,8 +438,9 @@ export function stageBVarietySystemPrompt(
         carouselOpening,
         nestedBlocks,
         moreSections,
+        moreVariants,
       );
-  const choices = visibleSectionChoices(fullBleedOpening);
+  const choices = visibleSectionChoices(fullBleedOpening, moreVariants);
   return (
     "Author a FLAT configJson object for every section. All visible choice keys listed for that type are REQUIRED at the root of configJson, alongside its content keys. Never emit nested content or choices objects. CHOOSE ONE notation below means choose a single supported scalar value, never copy the notation or an array.\n\n" +
     base

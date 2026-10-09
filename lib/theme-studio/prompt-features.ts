@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v30";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v31";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -40,5 +40,11 @@ export function themePromptFeatures(version: string) {
      * multicolumn, image_marquee, image_hotspots, before_after and
      * product_spotlight, plus the tile grid's collage layout. */
     moreSections: revision >= 30,
+    /** More layout variants (plan Phase 2d, first slice): hero stacked and
+     * offset, header transparent and hamburger, cards centered, soft and
+     * wide, footers centered and compact. The prompts print them and the
+     * Stage B layout enums admit them from v31; earlier requests keep the
+     * shorter lists byte for byte. */
+    moreVariants: revision >= 31,
   };
 }

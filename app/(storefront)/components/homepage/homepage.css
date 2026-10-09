@@ -31,6 +31,26 @@
   padding-top: calc(var(--sm-header-h, 68px) + clamp(16px, 2.5vw, 32px));
 }
 
+/* The transparent header (theme layout.header = "transparent") floats over
+   the opening photograph the way Shopify themes do, so a hero- or
+   carousel-led page starts at the very top and its picture runs under the
+   bar; a screen-height opening then fills the whole viewport rather than
+   the viewport minus a bar that is not there. Any other leading section
+   keeps the reserve above. */
+.storefront-root.sm-header-transparent
+  .home-sections:has(
+    > .home-section:first-child > :is(.home-hero, .home-carousel)
+  ) {
+  padding-top: 0;
+}
+.storefront-root.sm-header-transparent
+  .home-sections
+  > .home-section:first-child
+  > :is(.home-hero, .home-carousel).height-screen {
+  min-height: 100vh;
+  min-height: 100svh;
+}
+
 .home-section {
   width: 100%;
   /* The gutter, or — once a theme sets a page width — whatever holds the
@@ -1086,6 +1106,57 @@
   background: rgba(0, 0, 0, 0.35);
 }
 
+/* stacked — the copy above a full-width photograph (plan Phase 2d): the
+   band is a column, the copy block sits on the field and the picture takes
+   the rest, a 21:9 frame on desktop and the stacked 4:3 frame on phones.
+   Without a picture it is a rounded statement card. */
+.home-hero.variant-stacked {
+  flex-direction: column;
+  gap: 0;
+  border-radius: var(--sm-radius-card, 20px);
+}
+.home-hero.variant-stacked .home-hero-copy {
+  flex: 0 0 auto;
+  max-width: 64ch;
+  padding: clamp(28px, 5vw, 64px) clamp(24px, 5vw, 64px) clamp(20px, 3vw, 40px);
+}
+.home-hero.variant-stacked .home-hero-media {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  aspect-ratio: 21 / 9;
+}
+
+/* offset — the photograph fills the band and the copy sits in an opaque
+   surface card over it, at the lower edge (content_position top lifts it),
+   left or centred. The card paints its own ink on its own surface whatever
+   the hero's text mode says, so no tone probe, overlay or scrim applies;
+   without a picture the card sits on the colour field. */
+.home-hero.variant-offset {
+  min-height: clamp(360px, 48vw, 640px);
+  align-items: flex-end;
+  border-radius: var(--sm-radius-card, 20px);
+}
+.home-hero.variant-offset.content-top {
+  align-items: flex-start;
+}
+.home-hero.variant-offset .home-hero-copy {
+  flex: 0 1 auto;
+  max-width: min(52ch, 100%);
+  margin: clamp(20px, 4vw, 48px);
+  padding: clamp(24px, 3.5vw, 44px);
+  border-radius: var(--sm-radius-card, 20px);
+  background: var(--sm-surface);
+  color: var(--sm-ink);
+  box-shadow: 0 18px 48px rgba(var(--sm-shadow-rgb), 0.14);
+}
+.home-hero.variant-offset.align-center .home-hero-copy {
+  margin-inline: auto;
+}
+.home-hero.variant-offset .home-hero-badge {
+  background: var(--sm-cream-deep);
+}
+
 @media (max-width: 860px) {
   .home-hero.variant-banner,
   .home-hero.variant-split {
@@ -1106,6 +1177,13 @@
     margin: 12px 12px 0;
     border-radius: calc(var(--sm-radius-card, 20px) - 8px);
     overflow: hidden;
+  }
+  .home-hero.variant-stacked .home-hero-media {
+    aspect-ratio: 4 / 3;
+  }
+  .home-hero.variant-offset .home-hero-copy {
+    margin: 12px;
+    padding: 20px;
   }
 }
 
