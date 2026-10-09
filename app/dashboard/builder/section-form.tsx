@@ -397,6 +397,9 @@ function HeroFields({
                 set("variant", e.target.value as HeroConfig["variant"])
               }
             >
+              <option value="fullbleed">
+                Full-bleed (photo fills the band, copy on top)
+              </option>
               <option value="banner">Banner card (copy + image)</option>
               <option value="split">Split (half copy, half image)</option>
               <option value="minimal">Minimal (centred statement)</option>
@@ -482,20 +485,26 @@ function HeroFields({
           <label className={labelClass}>Image</label>
           <ImageUpload
             folder="homepage"
-            spec={config.variant === "minimal" ? "hero_wide" : "hero_side"}
+            spec={
+              config.variant === "minimal" || config.variant === "fullbleed"
+                ? "hero_wide"
+                : "hero_side"
+            }
             defaultImage={config.image_url || undefined}
             onUploadSuccess={(url) => set("image_url", url)}
           />
           <p className="text-muted-foreground mt-1 text-[11px]">
-            Banner/split show it beside the copy; minimal uses it as a full
-            background.
+            Banner/split show it beside the copy; full-bleed and minimal use it
+            as the band&apos;s background behind the copy.
           </p>
         </div>
 
         <HeroImageFields
           image={config.image_url}
           value={config}
-          overlay={config.variant === "minimal"}
+          overlay={
+            config.variant === "minimal" || config.variant === "fullbleed"
+          }
           onChange={(patch) => setConfig(withImageOptions(config, patch))}
         />
 

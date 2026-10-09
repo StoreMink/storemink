@@ -303,7 +303,9 @@ export const CONVERGENCE_CHOICES = [
   "primaryButton",
   "categoryDisplay",
   "card",
-  "hero",
+  // Not the hero: since 2026-10-09 every Studio theme opens with a photograph
+  // filling the band (opening.ts), so a shared opening is the rule, not a
+  // repeated default. The weighted distance still counts the hero axis.
   "motion",
 ] as const;
 /** A value this share of the catalogue already uses is "the default answer". */

@@ -7,7 +7,6 @@ import { NAV_LIMITS } from "@/lib/chrome/nav";
 import { ImageUpload } from "@/components/ui/image-upload";
 import {
   contrastIssuesFor,
-  DESIGN_FONT_NAMES,
   DESIGN_PALETTE_TOKENS,
   DESIGN_PILL_MAX,
   DESIGN_RADIUS_MAX,
@@ -18,6 +17,11 @@ import {
   type StorefrontDesignOverrides,
   type ThemeDesignDefaults,
 } from "@/lib/chrome/design";
+import {
+  FONT_CATEGORIES,
+  FONT_CATEGORY_LABELS,
+  THEME_FONT_FACES,
+} from "@/lib/themes/fonts";
 
 // ---------------------------------------------------------------------------
 // Header + footer editors, inside the builder's inspector.
@@ -608,18 +612,6 @@ const PALETTE_LABELS: Record<DesignPaletteToken, string> = {
   accent: "Accent",
 };
 
-const FONT_LABELS: Record<DesignFont, string> = {
-  inter: "Inter",
-  fraunces: "Fraunces",
-  spaceGrotesk: "Space Grotesk",
-  jakarta: "Plus Jakarta Sans",
-  jost: "Jost",
-  instrumentSerif: "Instrument Serif",
-  outfit: "Outfit",
-  roboto: "Roboto",
-  stickNoBills: "Stick No Bills",
-};
-
 const SHAPE_LABELS: Record<DesignShapeKey, string> = {
   card: "Cards",
   control: "Buttons and inputs",
@@ -735,10 +727,16 @@ function DesignForm({
               }
             >
               <option value="theme">Theme default</option>
-              {DESIGN_FONT_NAMES.map((font) => (
-                <option key={font} value={font}>
-                  {FONT_LABELS[font]}
-                </option>
+              {FONT_CATEGORIES.map((category) => (
+                <optgroup key={category} label={FONT_CATEGORY_LABELS[category]}>
+                  {THEME_FONT_FACES.filter(
+                    (face) => face.category === category,
+                  ).map((face) => (
+                    <option key={face.key} value={face.key}>
+                      {face.label}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </label>

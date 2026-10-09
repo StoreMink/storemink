@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v24";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v26";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -16,5 +16,12 @@ export function themePromptFeatures(version: string) {
     changeScope: revision >= 24,
     /** A draft repeating the catalogue's dominant style answers is corrected. */
     convergence: revision >= 24,
+    /** Stage B chooses a font pairing from lib/themes/fonts.ts (31 faces,
+     * 26 pairings) instead of two faces from nine. */
+    fontPairings: revision >= 25,
+    /** The homepage opens with a photograph filling the whole band (a
+     * hero_carousel or a fullbleed hero at full width), the way Shopify
+     * themes do; checked in generation as a repair issue. */
+    fullBleedOpening: revision >= 26,
   };
 }

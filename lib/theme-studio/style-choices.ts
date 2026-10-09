@@ -6,11 +6,15 @@ import {
 
 /** Visible native settings must be authored, rather than copied from create-mode
  * presets. Ordinary registry validation still owns content and valid values. */
+/** The hero variants prompts before v26 were written with; a persisted paid
+ * request prints exactly these (prompt-features.ts). */
+export const LEGACY_HERO_VARIANTS = ["banner", "split", "minimal"] as const;
+
 export const VISIBLE_SECTION_CHOICES: Readonly<
   Record<string, Readonly<Record<string, readonly unknown[]>>>
 > = {
   hero: {
-    variant: ["banner", "split", "minimal"],
+    variant: [...LEGACY_HERO_VARIANTS, "fullbleed"],
     height: HERO_HEIGHTS,
     theme: ["dark", "light"],
     alignment: ["left", "center"],
@@ -49,6 +53,20 @@ export const VISIBLE_SECTION_CHOICES: Readonly<
   faq_accordion: { show_filters: [true, false] },
   rich_text: { width: ["contained", "full"] },
 };
+
+/** The choices a Stage B prompt prints. Pre-v26 requests keep the three hero
+ * variants they were written with, byte for byte; the compiler accepts the
+ * full list at every version, since a stored answer never names a variant
+ * its prompt did not offer. */
+export function visibleSectionChoices(
+  fullBleedOpening: boolean,
+): typeof VISIBLE_SECTION_CHOICES {
+  if (fullBleedOpening) return VISIBLE_SECTION_CHOICES;
+  return {
+    ...VISIBLE_SECTION_CHOICES,
+    hero: { ...VISIBLE_SECTION_CHOICES.hero, variant: LEGACY_HERO_VARIANTS },
+  };
+}
 
 export function sectionChoiceIssues(
   type: string,

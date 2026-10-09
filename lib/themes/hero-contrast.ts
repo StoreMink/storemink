@@ -45,8 +45,10 @@ export function solidHeroContrast(
     page.sections.forEach((section, s) => {
       if (section.enabled === false || section.type !== "hero") return;
       const config = section.config as HeroConfig;
+      // Minimal and fullbleed heroes with media put their copy over the
+      // photo, which only the browser and vision stages can judge.
       if (
-        config.variant === "minimal" &&
+        (config.variant === "minimal" || config.variant === "fullbleed") &&
         (config.image_url || config.video_url)
       )
         return;

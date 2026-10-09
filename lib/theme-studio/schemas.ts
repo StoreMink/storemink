@@ -1,4 +1,8 @@
-import { DESIGN_FONTS } from "@/lib/chrome/design";
+import {
+  DESIGN_FONTS,
+  FONT_PAIRING_KEYS,
+  LEGACY_DESIGN_FONT_VALUES,
+} from "@/lib/themes/fonts";
 import { HOMEPAGE_SECTION_TYPES } from "@/lib/homepage/section-types";
 import { SECTION_SCHEMES } from "@/lib/themes/schemes";
 import {
@@ -263,6 +267,11 @@ const colorScheme = obj({
 export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
   description: str,
   keywords: strList,
+  // v25: the pairing Stage B chose (lib/themes/fonts.ts); null is a free
+  // choice of two catalogue faces for a brief that names a typeface. The
+  // compiler resolves it into design.fonts; it is never stored. Top level,
+  // not under design, so it is not offered as a repair target.
+  fontPairing: nullable(enumOf(FONT_PAIRING_KEYS)),
   features: { type: "array", items: enumOf(THEME_STUDIO_FEATURES) },
   brand: obj({ primaryColor: hex, tagline: str, blurb: str }),
   design: obj({
@@ -460,3 +469,39 @@ export const STAGE_B_VARIETY_INITIAL_SCHEMA: Schema = (() => {
   schema.required = Object.keys(fields);
   return schema;
 })();
+
+/**
+ * The pre-v25 shape of a Stage B schema: no `fontPairing`, and `design.fonts`
+ * drawn from the nine faces those prompts enumerated. A persisted paid
+ * request is keyed on its exact schema (generation-recovery.ts), so a run
+ * recorded under an older prompt revision must be rebuilt byte for byte.
+ */
+function legacyFontSchema(schema: Schema): Schema {
+  const legacy = structuredClone(schema);
+  const properties = legacy.properties as Record<string, Schema>;
+  delete properties.fontPairing;
+  legacy.required = Object.keys(properties);
+  const fonts = (properties.design.properties as Record<string, Schema>).fonts
+    .properties as Record<string, Schema>;
+  fonts.body = enumOf(LEGACY_DESIGN_FONT_VALUES);
+  fonts.display = enumOf(LEGACY_DESIGN_FONT_VALUES);
+  return legacy;
+}
+
+const LEGACY_STAGE_B_SCHEMAS = new Map<Schema, Schema>(
+  [
+    STAGE_B_DRAFT_SCHEMA,
+    STAGE_B_INITIAL_DRAFT_SCHEMA,
+    STAGE_B_VARIETY_DRAFT_SCHEMA,
+    STAGE_B_VARIETY_INITIAL_SCHEMA,
+  ].map((schema) => [schema, legacyFontSchema(schema)]),
+);
+
+/** The schema a run of this prompt revision sends: the current one, or its
+ * pre-v25 twin when the revision predates font pairings. */
+export function stageBSchemaFor(schema: Schema, fontPairings: boolean): Schema {
+  if (fontPairings) return schema;
+  const legacy = LEGACY_STAGE_B_SCHEMAS.get(schema);
+  if (!legacy) throw new Error("Unknown Stage B schema.");
+  return legacy;
+}

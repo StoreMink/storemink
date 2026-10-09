@@ -1039,6 +1039,41 @@
   background: rgba(0, 0, 0, 0.35);
 }
 
+/* fullbleed — the photograph fills the band and the copy sits over it, the
+   way a carousel slide does (same copy padding, width and scrim), with the
+   alignment honoured and never a rounded corner: it pairs with Style → full
+   width to run edge to edge, and a radius against the screen edge reads as a
+   mistake. Without an image it is a plain colour field like minimal. */
+.home-hero.variant-fullbleed {
+  min-height: clamp(360px, 48vw, 640px);
+  border-radius: 0;
+}
+.home-hero.variant-fullbleed .home-hero-copy {
+  padding: clamp(24px, 5vw, 64px);
+  flex: 1 1 auto;
+  max-width: 60ch;
+}
+.home-hero.variant-fullbleed.align-center .home-hero-copy {
+  max-width: 64ch;
+}
+/* Legibility scrim for light (on-dark) copy over the photo: from the copy's
+   edge for left-aligned copy, an even veil behind centred copy. */
+.home-hero.variant-fullbleed.theme-light .home-hero-bgmedia::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.45) 0%,
+    rgba(0, 0, 0, 0.12) 60%,
+    rgba(0, 0, 0, 0) 100%
+  );
+}
+.home-hero.variant-fullbleed.align-center.theme-light
+  .home-hero-bgmedia::after {
+  background: rgba(0, 0, 0, 0.35);
+}
+
 @media (max-width: 860px) {
   .home-hero.variant-banner,
   .home-hero.variant-split {
@@ -2099,20 +2134,46 @@ a.home-gallery-card:hover .home-gallery-image {
     transparent 75%
   );
 }
-.home-hero.variant-minimal.sm-scrim .home-hero-bgmedia::after {
+.home-hero.variant-minimal.sm-scrim .home-hero-bgmedia::after,
+.home-hero.variant-fullbleed.sm-scrim .home-hero-bgmedia::after {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
-.home-hero.variant-minimal.sm-scrim.theme-light .home-hero-bgmedia::after {
+/* A fullbleed hero's copy sits against one edge like a carousel slide, so
+   its measured scrim runs from that edge; centred copy keeps the radial veil
+   below. */
+.home-hero.variant-fullbleed.sm-scrim.theme-light:not(.align-center)
+  .home-hero-bgmedia::after {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--sm-shadow-rgb, 16, 24, 40), 0.62) 0%,
+    rgba(var(--sm-shadow-rgb, 16, 24, 40), 0.3) 45%,
+    rgba(var(--sm-shadow-rgb, 16, 24, 40), 0) 75%
+  );
+}
+.home-hero.variant-fullbleed.sm-scrim.theme-dark:not(.align-center)
+  .home-hero-bgmedia::after {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--sm-cream, #fdfcfb) 72%, transparent) 0%,
+    color-mix(in srgb, var(--sm-cream, #fdfcfb) 36%, transparent) 45%,
+    transparent 75%
+  );
+}
+.home-hero.variant-minimal.sm-scrim.theme-light .home-hero-bgmedia::after,
+.home-hero.variant-fullbleed.align-center.sm-scrim.theme-light
+  .home-hero-bgmedia::after {
   background: radial-gradient(
     ellipse at center,
     rgba(var(--sm-shadow-rgb, 16, 24, 40), 0.55) 0%,
     rgba(var(--sm-shadow-rgb, 16, 24, 40), 0.25) 70%
   );
 }
-.home-hero.variant-minimal.sm-scrim.theme-dark .home-hero-bgmedia::after {
+.home-hero.variant-minimal.sm-scrim.theme-dark .home-hero-bgmedia::after,
+.home-hero.variant-fullbleed.align-center.sm-scrim.theme-dark
+  .home-hero-bgmedia::after {
   background: radial-gradient(
     ellipse at center,
     color-mix(in srgb, var(--sm-cream, #fdfcfb) 65%, transparent) 0%,

@@ -108,11 +108,20 @@ export interface PromoBannerConfig {
 /**
  * First-class hero — replaces the custom_code hero hack. "banner" is an inset
  * rounded card on a solid colour field (grocery style), "split" is a
- * half-copy / half-image band, "minimal" is a centred statement. `background`
- * is a strict colour (rendered into an inline style attr, same rule as
- * SectionStyle.background); empty = the theme's default surface.
+ * half-copy / half-image band, "minimal" is a centred statement, and
+ * "fullbleed" is the Shopify-style opening: the photograph fills the whole
+ * band and the copy sits over it, left or centred (the carousel's one-slide
+ * sibling). `background` is a strict colour (rendered into an inline style
+ * attr, same rule as SectionStyle.background); empty = the theme's default
+ * surface, and what a fullbleed hero shows while it has no image.
  */
-export type HeroVariant = "banner" | "split" | "minimal";
+export type HeroVariant = "banner" | "split" | "minimal" | "fullbleed";
+export const HERO_VARIANTS: readonly HeroVariant[] = [
+  "banner",
+  "split",
+  "minimal",
+  "fullbleed",
+];
 
 /** Hero/carousel height preset. "auto" is the long-standing clamp each
  *  variant already had, so an existing hero is unchanged. */
@@ -1025,10 +1034,9 @@ export function validateConfig(
       return { error: "Add a headline or an image for the hero." };
     }
     const config: HeroConfig = {
-      variant:
-        input.variant === "split" || input.variant === "minimal"
-          ? input.variant
-          : "banner",
+      variant: (HERO_VARIANTS as readonly unknown[]).includes(input.variant)
+        ? (input.variant as HeroVariant)
+        : "banner",
       ...heroHeight(input.height),
       heading,
       subheading: str(input.subheading),

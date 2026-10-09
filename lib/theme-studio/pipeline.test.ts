@@ -125,6 +125,9 @@ describe("theme generation pipeline", () => {
     const home = pkg.definition.preset.pages[0].sections.find(
       (s) => s.type === "hero",
     )!;
+    // Bubble's homepage hero was a solid field. The v26 opening carries a
+    // photograph (no solid evidence), so this fixture takes it away.
+    (home.config as HeroConfig).image_url = "";
     const about = structuredClone(home);
     about.id = "about-hero";
     delete about.style;
@@ -829,6 +832,9 @@ describe("theme generation pipeline", () => {
             ...draft.design.fonts,
             display: "var(--font-instrument-serif)",
           };
+          // The fake names its pairing (Inter + Fraunces), which would win over
+          // the face set above; a free choice is what lets it through.
+          (draft as { fontPairing?: unknown }).fontPairing = null;
           draft.design.typography = {
             ...draft.design.typography,
             headingWeight: "bold",
@@ -902,6 +908,7 @@ describe("theme generation pipeline", () => {
             ...draft.design.fonts,
             body: "var(--font-jost)",
           };
+          (draft as { fontPairing?: unknown }).fontPairing = null;
           draft.design.buttons = { ...draft.design.buttons, weight: "bold" };
         }
         return result;
@@ -1195,6 +1202,54 @@ describe("theme generation pipeline", () => {
   it("tells Stage A that every image brief must be people-free", async () => {
     const { stageASystemPrompt } = await import("./prompts");
     expect(stageASystemPrompt()).toContain("never write a person into a brief");
+  });
+
+  // Owner's rule (2026-10-09): every generated theme opens with a photograph
+  // filling the band, the way the Vitrine demo and Shopify themes do.
+  it("asks v26 prompts for a full-band photograph opening and keeps v25 text byte for byte", async () => {
+    const {
+      stageASystemPrompt,
+      stageBSystemPrompt,
+      stageBInitialSystemPrompt,
+      stageBVarietySystemPrompt,
+      heroContrastPrompt,
+      HERO_CONTRAST_PROMPT,
+    } = await import("./prompts");
+    const { visibleSectionChoices, VISIBLE_SECTION_CHOICES } =
+      await import("./style-choices");
+    const opening = 'hero with variant "fullbleed"';
+    expect(stageBSystemPrompt(true, true, true)).toContain(opening);
+    expect(stageBSystemPrompt(true, true, true)).toContain(
+      'style width "full" and height "large" or "screen"',
+    );
+    expect(stageBSystemPrompt(true, true)).not.toContain(opening);
+    expect(stageBSystemPrompt(true, true)).toBe(
+      stageBSystemPrompt(true, true, false),
+    );
+    expect(stageASystemPrompt(true, true)).toContain("aspectRatio 21:9");
+    expect(stageASystemPrompt(true)).not.toContain("aspectRatio 21:9");
+    expect(heroContrastPrompt(false)).toBe(HERO_CONTRAST_PROMPT);
+    expect(heroContrastPrompt(true)).toContain(
+      "minimal and fullbleed heroes with media",
+    );
+    expect(visibleSectionChoices(false).hero.variant).toEqual([
+      "banner",
+      "split",
+      "minimal",
+    ]);
+    expect(VISIBLE_SECTION_CHOICES.hero.variant).toContain("fullbleed");
+    const first = await run();
+    if (first.kind !== "version") throw new Error("fixture failed");
+    const v25 = stageBVarietySystemPrompt(first.intent, true, true, false);
+    const v26 = stageBVarietySystemPrompt(first.intent, true, true, true);
+    expect(v25).toContain(
+      '"variant":"CHOOSE ONE: [\\"banner\\",\\"split\\",\\"minimal\\"]"',
+    );
+    expect(v25).not.toContain("fullbleed");
+    expect(v26).toContain("fullbleed");
+    expect(stageBInitialSystemPrompt(first.intent, true, true)).toContain(
+      opening,
+    );
   });
 
   it("keeps the system prompts deterministic so they cache", async () => {

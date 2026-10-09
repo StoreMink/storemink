@@ -192,6 +192,13 @@ describe("validateConfig", () => {
       expect(config.badge_text).toBe("51% off");
     });
 
+    it("keeps every hero variant, including the full-bleed opening", () => {
+      for (const variant of ["banner", "split", "minimal", "fullbleed"]) {
+        const out = validateConfig("hero", { heading: "Hi", variant });
+        expect((out as { config: HeroConfig }).config.variant).toBe(variant);
+      }
+    });
+
     it("keeps a strict colour background", () => {
       const out = validateConfig("hero", {
         heading: "x",

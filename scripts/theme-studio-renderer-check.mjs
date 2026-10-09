@@ -180,6 +180,66 @@ try {
         }
       }
     }
+    // The full-bleed hero (the opening every Studio theme uses since
+    // 2026-10-09): the photo covers the band, the copy sits over it. Checked
+    // at every width, both alignments, light and dark copy, the auto and
+    // tall presets, contained and edge to edge: the copy must stay inside
+    // the band, the image must cover it, and nothing may overflow.
+    for (const alignment of ["left", "center"]) {
+      for (const mode of ["dark", "light"]) {
+        for (const height of ["auto", "large", "screen"]) {
+          for (const bleed of [false, true]) {
+            const label = `${width}px fullbleed/${alignment}/${mode}/${height}/${bleed ? "full" : "contained"}`;
+            await page.setContent(
+              documentHtml(`<section class="home-section ${bleed ? "is-fullbleed" : ""}">
+              <div class="home-hero variant-fullbleed theme-${mode} align-${alignment} ${height === "auto" ? "" : `height-${height}`}" style="background:#2a211f">
+                <div class="home-hero-bgmedia"><img class="home-hero-img" alt="Opening" src="${image(2100, 900)}" style="position:absolute;inset:0;height:100%;width:100%;object-fit:cover"></div>
+                <div class="home-hero-copy"><h1 class="home-hero-heading">${heading}</h1><p class="home-hero-sub">${copy}</p><a class="home-hero-cta sm-btn-primary" href="/shop">Shop the collection</a></div>
+              </div></section>`),
+            );
+            const measurement = await page.evaluate(async () => {
+              const img = document.querySelector("img");
+              await img.decode();
+              const band = document.querySelector(".home-hero");
+              const copyBox = document
+                .querySelector(".home-hero-copy")
+                .getBoundingClientRect();
+              const bandBox = band.getBoundingClientRect();
+              const imgBox = img.getBoundingClientRect();
+              const section = document
+                .querySelector(".home-section")
+                .getBoundingClientRect();
+              return {
+                overflow: document.documentElement.scrollWidth > innerWidth,
+                bandHeight: bandBox.height,
+                covers:
+                  Math.abs(imgBox.width - bandBox.width) < 1 &&
+                  Math.abs(imgBox.height - bandBox.height) < 1,
+                copyInside:
+                  copyBox.left >= bandBox.left - 0.5 &&
+                  copyBox.right <= bandBox.right + 0.5 &&
+                  copyBox.top >= bandBox.top - 0.5 &&
+                  copyBox.bottom <= bandBox.bottom + 0.5,
+                edgeToEdge:
+                  Math.abs(bandBox.left - section.left) < 1 &&
+                  Math.abs(bandBox.right - section.right) < 1,
+                radius: getComputedStyle(band).borderTopLeftRadius,
+              };
+            });
+            cases++;
+            if (
+              measurement.overflow ||
+              !measurement.covers ||
+              !measurement.copyInside ||
+              measurement.bandHeight < 300 ||
+              (bleed && !measurement.edgeToEdge) ||
+              measurement.radius !== "0px"
+            )
+              failures.push({ label, ...measurement });
+          }
+        }
+      }
+    }
     for (const fixture of fixtures()) {
       for (const [scheme, padding, bleed] of [
         ["soft", "sm", false],

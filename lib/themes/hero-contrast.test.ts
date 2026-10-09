@@ -117,7 +117,12 @@ describe("solid hero contrast against the rendered field", () => {
     const hero = theme.preset.pages[1].sections[0];
     (hero.config as HeroConfig).variant = "minimal";
     expect(solidHeroContrast(theme)).toHaveLength(1);
+    // A fullbleed hero's copy sits over its photo too.
+    (hero.config as HeroConfig).variant = "fullbleed";
+    expect(solidHeroContrast(theme)).toHaveLength(1);
     (hero.config as HeroConfig).image_url = "";
+    expect(solidHeroContrast(theme)).toHaveLength(2);
+    (hero.config as HeroConfig).variant = "minimal";
     expect(solidHeroContrast(theme)).toHaveLength(2);
     for (const background of [
       "rgba(20, 20, 20, 0.5)",

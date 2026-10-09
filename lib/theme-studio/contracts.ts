@@ -12,6 +12,7 @@ import type {
   ThemeIndustry,
 } from "@/lib/themes/meta";
 import type { ThemeDefinition } from "@/lib/themes/types";
+import { isThemeFontValue } from "@/lib/themes/fonts";
 import { SECTION_SCHEMES } from "@/lib/themes/schemes";
 import { cleanButtons } from "@/lib/themes/buttons";
 import { cleanMotion } from "@/lib/themes/motion";
@@ -341,7 +342,6 @@ const HEX_RE = /^#[0-9a-fA-F]{3,8}$/;
 const SCHEME_HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const RGB_TRIPLE_RE = /^\d{1,3},\s*\d{1,3},\s*\d{1,3}$/;
 const CSS_LENGTH_RE = /^\d+(?:\.\d+)?(?:px|rem|em|%)$/;
-const FONT_RE = /^var\(--font-[a-z0-9-]+\)$/;
 const RATIO_RE = /^\d{1,3}:\d{1,3}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1421,9 +1421,9 @@ function validateDefinitionDesign(value: unknown, issues: string[]): void {
     issues,
   );
   for (const key of ["body", "display"] as const) {
-    if (!FONT_RE.test(String(fonts[key] ?? ""))) {
+    if (!isThemeFontValue(fonts[key])) {
       issues.push(
-        `definition.preset.design.fonts.${key} must reference a loaded font variable.`,
+        `definition.preset.design.fonts.${key} must be a loaded font value (lib/themes/fonts.ts).`,
       );
     }
   }
