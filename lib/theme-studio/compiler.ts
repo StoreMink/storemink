@@ -36,6 +36,7 @@ import {
 } from "./contracts";
 import type { ThemeStudioModelKey } from "./models";
 import { validateSectionStyle } from "@/lib/homepage/section-types";
+import { defaultTemplates, normalizeTemplates } from "@/lib/themes/templates";
 import {
   isSectionScheme,
   SCHEMELESS_SECTION_TYPES,
@@ -958,6 +959,18 @@ export function assemblePackage(
       pages: withSeoDescriptions(pages, text(draft.description), facts.name),
       menus,
       sampleData: catalogue,
+      // v32 (plan Phase 2e): the page templates the draft wrote, completed
+      // and bounded by the renderer's own normaliser so the contract's strict
+      // report has nothing to object to. A pre-v32 draft carries none, and
+      // the storefront then composes the pages its layout implies.
+      ...(isRec(draft.templates)
+        ? {
+            templates: normalizeTemplates(
+              draft.templates,
+              defaultTemplates(design?.layout),
+            ),
+          }
+        : {}),
     },
   };
 

@@ -303,7 +303,7 @@ export async function readMinkBuilderContext(
           "soft",
           "wide",
         ],
-        productDetail: ["theme", "classic", "grocery", "editorial"],
+        productDetail: ["theme", "classic", "grocery", "editorial", "stacked"],
         cart: ["theme", "classic", "grocery", "compact"],
         footer: [
           "theme",

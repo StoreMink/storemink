@@ -49,6 +49,26 @@ export const SHOP_SORT_LABELS: Record<ShopSort, string> = {
 
 /** Cards per "page". 24 fills whole rows at 2, 3 and 4 columns. */
 export const SHOP_PAGE_SIZE = 24;
+
+/** The page numbers a paged collection shows around the current one: the
+ *  first and last always, a window of one either side of the current page,
+ *  and `null` where pages are skipped. Seven slots at most, so the control
+ *  never wraps on a phone. */
+export function pageNumbers(current: number, count: number): (number | null)[] {
+  if (count <= 7)
+    return Array.from({ length: Math.max(count, 0) }, (_, i) => i + 1);
+  const page = Math.min(Math.max(current, 1), count);
+  const near = new Set([1, count, page - 1, page, page + 1]);
+  if (page <= 3) [2, 3, 4].forEach((n) => near.add(n));
+  if (page >= count - 2)
+    [count - 3, count - 2, count - 1].forEach((n) => near.add(n));
+  const out: (number | null)[] = [];
+  for (let n = 1; n <= count; n++) {
+    if (near.has(n)) out.push(n);
+    else if (out[out.length - 1] !== null) out.push(null);
+  }
+  return out;
+}
 /** A crafted `page=` must not ask the grid to draw a whole catalogue twice. */
 const MAX_PAGES = 200;
 /** Rupees; an absurd bound is dropped rather than honoured. */

@@ -530,6 +530,7 @@ async function generate(
   const nestedBlocks = themePromptFeatures(input.promptVersion).nestedBlocks;
   const moreSections = themePromptFeatures(input.promptVersion).moreSections;
   const moreVariants = themePromptFeatures(input.promptVersion).moreVariants;
+  const templatesFeature = themePromptFeatures(input.promptVersion).templates;
   // Explicit styles (intent schema 2) apply to new builds and to revisions of
   // themes that already carry a design direction. A revision of an older
   // schema-1 theme keeps its original contract: forcing a new direction and
@@ -878,6 +879,7 @@ async function generate(
                 nestedBlocks,
                 moreSections,
                 moreVariants,
+                templatesFeature,
               )
             : compactInitial
               ? stageBInitialSystemPrompt(
@@ -888,6 +890,7 @@ async function generate(
                   nestedBlocks,
                   moreSections,
                   moreVariants,
+                  templatesFeature,
                 )
               : stageBSystemPrompt(
                   themePromptFeatures(input.promptVersion).nativeFraming,
@@ -897,6 +900,7 @@ async function generate(
                   nestedBlocks,
                   moreSections,
                   moreVariants,
+                  templatesFeature,
                 )) + (heroContrast ? heroContrastPrompt(fullBleedOpening) : ""),
         content: [{ type: "text", text: userText }],
         schema: stageBSchemaFor(
@@ -911,6 +915,7 @@ async function generate(
           nestedBlocks,
           moreSections,
           moreVariants,
+          templatesFeature,
         ),
         effort: "high",
       },

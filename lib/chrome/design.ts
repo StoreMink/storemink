@@ -17,6 +17,7 @@
 // draft → publish safety that page sections and chrome already have.
 // ---------------------------------------------------------------------------
 
+import { defaultTemplates, type ThemeTemplates } from "@/lib/themes/templates";
 import type { ThemeDesign, ThemePalette } from "@/lib/themes/types";
 import {
   DESIGN_FONTS,
@@ -326,6 +327,9 @@ export interface ThemeDesignDefaults {
   palette: Partial<Record<DesignPaletteToken, string>>;
   fonts: { body: string | null; display: string | null };
   shape: Partial<Record<DesignShapeKey, number>>;
+  /** The templates the theme renders (plan Phase 2e), so the builder can
+   *  start a merchant override from them and show what "theme" means. */
+  templates: ThemeTemplates;
 }
 
 /** Radii are authored as CSS lengths ("20px"); the panel edits numbers. */
@@ -336,6 +340,7 @@ function pxNumber(value: unknown): number | undefined {
 
 export function themeDesignDefaults(
   theme: ThemeDesign | null,
+  templates?: ThemeTemplates,
 ): ThemeDesignDefaults {
   const palette: Partial<Record<DesignPaletteToken, string>> = {};
   for (const token of DESIGN_PALETTE_TOKENS) {
@@ -354,5 +359,6 @@ export function themeDesignDefaults(
       display: theme?.fonts?.display ?? null,
     },
     shape,
+    templates: templates ?? defaultTemplates(theme?.layout),
   };
 }

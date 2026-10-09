@@ -128,7 +128,7 @@ const LAYOUT_VARIANTS = {
     "soft",
     "wide",
   ],
-  productDetail: ["classic", "grocery", "editorial"],
+  productDetail: ["classic", "grocery", "editorial", "stacked"],
   cart: ["classic", "grocery", "compact"],
   footer: ["rich", "minimal", "editorial", "centered", "compact"],
 } as const;

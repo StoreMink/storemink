@@ -1,3 +1,10 @@
+import { USP_ICONS } from "@/lib/homepage/section-types";
+import {
+  COLLECTION_FILTERS,
+  COLLECTION_PAGINATIONS,
+  PRODUCT_BLOCK_TYPES,
+  PRODUCT_GALLERIES,
+} from "@/lib/themes/templates";
 import {
   DESIGN_FONTS,
   FONT_PAIRING_KEYS,
@@ -348,6 +355,58 @@ const colorScheme = obj({
   onAccent: nullable(hex),
 });
 
+/** The product-page layouts a Stage B draft may choose. v32 (plan Phase
+ * 2e) added "stacked"; `withoutTemplates` narrows every earlier twin back. */
+export const PRODUCT_DETAIL_ENUM = [
+  "classic",
+  "grocery",
+  "editorial",
+  "stacked",
+] as const;
+export const LEGACY_PRODUCT_DETAIL_ENUM = [
+  "classic",
+  "grocery",
+  "editorial",
+] as const;
+
+/** v32 (plan Phase 2e): the product and collection page templates
+ * (lib/themes/templates.ts). Top level like `fontPairing`, so a targeted
+ * repair never edits it; the compiler normalises it into preset.templates.
+ * Every block carries every field (a closed schema), unused ones empty. */
+const TEMPLATES_SCHEMA: Schema = obj({
+  product: obj({
+    gallery: enumOf(PRODUCT_GALLERIES),
+    blocks: {
+      type: "array",
+      items: obj({
+        type: enumOf(PRODUCT_BLOCK_TYPES),
+        items: {
+          type: "array",
+          items: obj({ icon: enumOf(USP_ICONS), label: str }),
+        },
+        rows: { type: "array", items: obj({ heading: str, body: str }) },
+        html: str,
+      }),
+    },
+  }),
+  collection: obj({
+    filters: enumOf(COLLECTION_FILTERS),
+    pagination: enumOf(COLLECTION_PAGINATIONS),
+    promoTiles: {
+      type: "array",
+      items: obj({
+        afterIndex: { type: "integer" },
+        heading: str,
+        body: str,
+        cta_label: str,
+        href: str,
+        theme: enumOf(["dark", "light"]),
+        background: nullable(hex),
+      }),
+    },
+  }),
+});
+
 export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
   description: str,
   keywords: strList,
@@ -356,6 +415,7 @@ export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
   // compiler resolves it into design.fonts; it is never stored. Top level,
   // not under design, so it is not offered as a repair target.
   fontPairing: nullable(enumOf(FONT_PAIRING_KEYS)),
+  templates: TEMPLATES_SCHEMA,
   features: { type: "array", items: enumOf(THEME_STUDIO_FEATURES) },
   brand: obj({ primaryColor: hex, tagline: str, blurb: str }),
   design: obj({
@@ -381,7 +441,7 @@ export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
       gridColumnsDesktop: nullable({ type: "integer", enum: [3, 4, 5] }),
       shopFilters: nullable({ type: "boolean" }),
       collectionBanner: nullable({ type: "boolean" }),
-      productDetail: nullable(enumOf(["classic", "grocery", "editorial"])),
+      productDetail: nullable(enumOf(PRODUCT_DETAIL_ENUM)),
       cart: nullable(enumOf(["classic", "grocery", "compact"])),
       footer: nullable(enumOf(LAYOUT_VARIANT_ENUMS.footer)),
       storefront: nullable(enumOf(["classic", "grocery"])),
@@ -682,25 +742,52 @@ export function stageASchemaFor(
   return twin;
 }
 
+/** The pre-v32 shape of a Stage B schema: no top-level `templates`, and
+ * design.layout.productDetail without "stacked". Matched by value like the
+ * other twins; the initial schemas carry no layout enum and lose only the
+ * object. */
+function withoutTemplates(schema: Schema): Schema {
+  const twin = structuredClone(schema);
+  const properties = twin.properties as Record<string, Schema>;
+  delete properties.templates;
+  twin.required = Object.keys(properties);
+  const full = JSON.stringify(PRODUCT_DETAIL_ENUM);
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (Array.isArray(record.enum) && JSON.stringify(record.enum) === full)
+      record.enum = [...LEGACY_PRODUCT_DETAIL_ENUM];
+    Object.values(record).forEach(walk);
+  };
+  walk(twin);
+  return twin;
+}
+
 /** The schema a run of this prompt revision sends: the current one, or a
  * twin without font pairings (pre-v25), without the nested-block sections
- * (pre-v29), the v30 sections, and/or the v31 layout variants, whichever
- * the revision predates. */
+ * (pre-v29), the v30 sections, the v31 layout variants and/or the v32
+ * templates, whichever the revision predates. */
 export function stageBSchemaFor(
   schema: Schema,
   fontPairings: boolean,
   nestedBlocks = true,
   moreSections = true,
   moreVariants = true,
+  templates = true,
 ): Schema {
-  if (fontPairings && nestedBlocks && moreSections && moreVariants)
+  if (fontPairings && nestedBlocks && moreSections && moreVariants && templates)
     return schema;
   const index = STAGE_B_SCHEMAS.indexOf(schema);
   if (index < 0) throw new Error("Unknown Stage B schema.");
-  const key = `${index}:${fontPairings}:${nestedBlocks}:${moreSections}:${moreVariants}`;
+  const key = `${index}:${fontPairings}:${nestedBlocks}:${moreSections}:${moreVariants}:${templates}`;
   let twin = STAGE_B_TWINS.get(key);
   if (!twin) {
     twin = schema;
+    if (!templates) twin = withoutTemplates(twin);
     if (!nestedBlocks || !moreSections)
       twin = withSectionTypes(
         twin,

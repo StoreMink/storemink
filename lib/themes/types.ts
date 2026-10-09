@@ -173,8 +173,9 @@ export interface ThemeLayout {
    *  storefront changes. */
   cardHoverImage?: boolean;
   /** Product-detail composition. `storefront:grocery` remains the legacy
-   *  shorthand and is used when this field is absent. */
-  productDetail?: "classic" | "grocery" | "editorial";
+   *  shorthand and is used when this field is absent. "stacked" (plan
+   *  Phase 2e) puts the gallery above a centred information column. */
+  productDetail?: "classic" | "grocery" | "editorial" | "stacked";
   /** Cart composition. `storefront:grocery` remains the legacy fallback. */
   cart?: "classic" | "grocery" | "compact";
   /** Footer composition; current multi-column footer is `rich`. "centered"
@@ -244,6 +245,10 @@ export interface ThemePreset {
     categories: ThemeCategorySeed[];
     products: ThemeProductSeed[];
   };
+  /** How the product and collection pages are composed (plan Phase 2e,
+   *  lib/themes/templates.ts). Absent = the composition the layout already
+   *  implies, so every stored release renders as it did. */
+  templates?: import("./templates").ThemeTemplates;
 }
 
 /** One immutable preset release. Multiple releases with the same id may stay

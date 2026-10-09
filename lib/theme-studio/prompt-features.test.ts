@@ -22,6 +22,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     nestedBlocks: false,
     moreSections: false,
     moreVariants: false,
+    templates: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -40,6 +41,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     nestedBlocks: false,
     moreSections: false,
     moreVariants: false,
+    templates: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -58,8 +60,9 @@ it("preserves old paid request shapes and carries capabilities into future promp
     nestedBlocks: true,
     moreSections: true,
     moreVariants: true,
+    templates: true,
   });
-  expect(themePromptFeatures("theme-studio-v32")).toEqual(
+  expect(themePromptFeatures("theme-studio-v33")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
   );
   expect(themePromptFeatures("invalid").compactInitial).toBe(false);
@@ -124,4 +127,10 @@ it("adds the v31 layout variants only from v31, so v30 requests replay unchanged
   expect(themePromptFeatures("theme-studio-v30").moreVariants).toBe(false);
   expect(themePromptFeatures("theme-studio-v31").moreVariants).toBe(true);
   expect(themePromptFeatures("theme-studio-v31").moreSections).toBe(true);
+});
+
+it("adds the page templates only from v32, so v31 requests replay unchanged", () => {
+  expect(themePromptFeatures("theme-studio-v31").templates).toBe(false);
+  expect(themePromptFeatures("theme-studio-v32").templates).toBe(true);
+  expect(themePromptFeatures("theme-studio-v32").moreVariants).toBe(true);
 });

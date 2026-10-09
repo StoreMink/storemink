@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
@@ -474,5 +474,205 @@ describe("ShopClient one card per colour", () => {
       />,
     );
     expect(names()).toEqual(["Loose Fit Sweatshirt"]);
+  });
+});
+
+// Plan Phase 2e: the collection template decides where the filters live, how
+// the grid pages, and which promotional tiles sit among the cards.
+describe("ShopClient collection template", () => {
+  const many = Array.from({ length: 30 }, (_, i) =>
+    product(`p${i}`, `Product ${i}`, 100 + i),
+  );
+  const tpl = (
+    over: Partial<
+      Parameters<typeof ShopClient>[0]["collectionTemplate"] & object
+    >,
+  ) => ({
+    filters: "sidebar" as const,
+    pagination: "load-more" as const,
+    promoTiles: [],
+    ...over,
+  });
+
+  it("keeps the sidebar by default, drops it for the drawer and floats a filter bar for top-bar", () => {
+    const { container, rerender } = render(
+      <ShopClient products={products} categories={categories} />,
+    );
+    expect(container.querySelector(".shop-sidebar")).toBeTruthy();
+    expect(
+      container.querySelector(".shop-filter-btn.has-sidebar"),
+    ).toBeTruthy();
+    rerender(
+      <ShopClient
+        products={products}
+        categories={categories}
+        collectionTemplate={tpl({ filters: "drawer" })}
+      />,
+    );
+    expect(container.querySelector(".shop-sidebar")).toBeNull();
+    expect(container.querySelector(".shop-topbar-filters")).toBeNull();
+    expect(container.querySelector(".shop-filter-btn.has-sidebar")).toBeNull();
+    rerender(
+      <ShopClient
+        products={products}
+        categories={categories}
+        collectionTemplate={tpl({ filters: "top-bar" })}
+      />,
+    );
+    expect(container.querySelector(".shop-sidebar")).toBeNull();
+    const bar = container.querySelector(".shop-topbar-filters")!;
+    expect(bar).toBeTruthy();
+    // Every group starts closed, a popover rather than an open list.
+    const groups = bar.querySelectorAll("details.shop-filter-group");
+    expect(groups.length).toBeGreaterThan(0);
+    groups.forEach((g) => expect((g as HTMLDetailsElement).open).toBe(false));
+    expect(container.querySelector(".shop-filter-btn.has-topbar")).toBeTruthy();
+    // Ticking a value in the bar applies at once.
+    fireEvent.click(within(bar as HTMLElement).getByLabelText(/In stock only/));
+    expect(lastUrl()).toBe("/shop?stock=in");
+  });
+
+  it("pages by number: one page at a time, Previous and Next, the URL page", () => {
+    render(
+      <ShopClient
+        products={many}
+        categories={categories}
+        collectionTemplate={tpl({ pagination: "paged" })}
+      />,
+    );
+    expect(names()).toHaveLength(24);
+    expect(screen.getByText("Showing 1–24 of 30 products")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "Pages" });
+    expect(
+      within(nav).getByRole("button", { name: "Previous" }),
+    ).toHaveProperty("disabled", true);
+    fireEvent.click(within(nav).getByRole("button", { name: "Page 2" }));
+    expect(names()).toHaveLength(6);
+    expect(names()[0]).toBe("Product 24");
+    expect(lastUrl()).toBe("/shop?page=2");
+    expect(
+      within(nav)
+        .getByRole("button", { name: "Page 2" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    expect(within(nav).getByRole("button", { name: "Next" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    fireEvent.click(within(nav).getByRole("button", { name: "Previous" }));
+    expect(names()).toHaveLength(24);
+  });
+
+  it("shows the last page when a shared link names a page past the end", () => {
+    render(
+      <ShopClient
+        products={many}
+        categories={categories}
+        initialShop={{ ...DEFAULT_SHOP_QUERY, pages: 9 }}
+        collectionTemplate={tpl({ pagination: "paged" })}
+      />,
+    );
+    expect(names()).toHaveLength(6);
+  });
+
+  it("reveals the next page as the sentinel comes into view, keeping Load more", () => {
+    const observers: {
+      cb: IntersectionObserverCallback;
+      observe: ReturnType<typeof vi.fn>;
+    }[] = [];
+    class FakeObserver {
+      observe = vi.fn();
+      disconnect = vi.fn();
+      constructor(cb: IntersectionObserverCallback) {
+        observers.push({ cb, observe: this.observe });
+      }
+    }
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+    try {
+      render(
+        <ShopClient
+          products={many}
+          categories={categories}
+          collectionTemplate={tpl({ pagination: "infinite" })}
+        />,
+      );
+      expect(names()).toHaveLength(24);
+      expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+      expect(observers).toHaveLength(1);
+      act(() => {
+        observers[0].cb(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+      expect(names()).toHaveLength(30);
+      expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+      expect(lastUrl()).toBe("/shop?page=2");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("places a promotional tile after the Nth card, on the page that holds it", () => {
+    const tile = {
+      afterIndex: 2,
+      heading: "Summer edit",
+      body: "Linen, loosened.",
+      cta_label: "See the edit",
+      href: "/collections/summer",
+      image_url: "",
+      image_alt: "",
+      theme: "dark" as const,
+      background: "#123456",
+    };
+    const far = { ...tile, afterIndex: 26, heading: "Last call", href: "" };
+    const { container, rerender } = render(
+      <ShopClient
+        products={many}
+        categories={categories}
+        collectionTemplate={tpl({
+          pagination: "paged",
+          promoTiles: [tile, far],
+        })}
+      />,
+    );
+    const grid = container.querySelector(".shop-grid")!;
+    const kinds = () =>
+      Array.from(grid.children).map((el) =>
+        el.classList.contains("shop-promo-tile") ? "tile" : "card",
+      );
+    expect(kinds().slice(0, 4)).toEqual(["card", "card", "tile", "card"]);
+    const link = grid.querySelector("a.shop-promo-tile")!;
+    expect(link.getAttribute("href")).toBe("/collections/summer");
+    expect((link as HTMLElement).style.background).toContain("rgb(18, 52, 86)");
+    expect(screen.getByText("See the edit")).toBeTruthy();
+    expect(screen.queryByText("Last call")).toBeNull();
+    // Page 2 holds cards 25–30, so the tile after card 26 appears there, and
+    // a tile with no link is a plain box.
+    rerender(
+      <ShopClient
+        products={many}
+        categories={categories}
+        initialShop={{ ...DEFAULT_SHOP_QUERY, pages: 2 }}
+        collectionTemplate={tpl({
+          pagination: "paged",
+          promoTiles: [tile, far],
+        })}
+      />,
+    );
+    expect(kinds()).toEqual([
+      "card",
+      "card",
+      "tile",
+      "card",
+      "card",
+      "card",
+      "card",
+    ]);
+    expect(grid.querySelector("div.shop-promo-tile")?.textContent).toContain(
+      "Last call",
+    );
+    expect(screen.queryByText("Summer edit")).toBeNull();
   });
 });

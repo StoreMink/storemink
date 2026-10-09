@@ -86,6 +86,20 @@
 > the homepage opening) and the `stacked` (logo centred, menu below) and
 > `utility` (double row) headers, which needed the header fit rule to judge
 > rows rather than one line. Not yet run against live Gemini.
+> Phase 2e, first slice (same day, prompt v32): the product and collection
+> pages compose from `templates` (an optional `preset.templates`, no schema
+> bump) — a gallery shape and the ordered blocks of the information column
+> (price, options, buy box, description, delivery, share, trust row,
+> accordion, rich text, then reviews, recommendations and the sticky bar)
+> for the product page; filters placement (sidebar, drawer, top-bar), paging
+> (load more, numbered pages, infinite) and promotional tiles for the
+> collection page — rendered by the block renderers in
+> `product-detail-client.tsx` and `shop-client.tsx`, overridable per store
+> in the Brand row, written by Stage B under v32 and normalised by the
+> compiler; `productDetail` gains `stacked`. Not yet run against live
+> Gemini. Still open from 2e: blog and account templates, cart templates
+> (the cart stays a layout variant), and the fingerprint axes for templates
+> (Phase 3).
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

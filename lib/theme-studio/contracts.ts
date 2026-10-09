@@ -1,3 +1,4 @@
+import { templateIssues } from "@/lib/themes/templates";
 import { THEME_RELEASE_OBJECT_ROOT } from "@/lib/storage/paths";
 import {
   HOMEPAGE_SECTION_TYPES,
@@ -1243,10 +1244,14 @@ function validateThemeDefinition(
     issues.push("definition.preset must be an object.");
   rejectUnknownKeys(
     preset,
-    ["brand", "design", "pages", "menus", "sampleData"],
+    ["brand", "design", "pages", "menus", "sampleData", "templates"],
     "definition.preset",
     issues,
   );
+  // Plan Phase 2e: optional, and judged as written (nothing is coerced on
+  // the way in, so a draft is repaired rather than silently trimmed).
+  if (preset.templates !== undefined)
+    issues.push(...templateIssues(preset.templates));
   const brand = isRecord(preset.brand) ? preset.brand : {};
   if (!isRecord(preset.brand))
     issues.push("definition.preset.brand must be an object.");
@@ -1517,7 +1522,7 @@ function validateDefinitionDesign(value: unknown, issues: string[]): void {
           "wide",
         ],
       ],
-      ["productDetail", ["classic", "grocery", "editorial"]],
+      ["productDetail", ["classic", "grocery", "editorial", "stacked"]],
       ["cart", ["classic", "grocery", "compact"]],
       ["footer", ["rich", "minimal", "editorial", "centered", "compact"]],
       ["storefront", ["classic", "grocery"]],

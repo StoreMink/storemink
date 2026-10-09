@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v31";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v32";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -46,5 +46,11 @@ export function themePromptFeatures(version: string) {
      * Stage B layout enums admit them from v31; earlier requests keep the
      * shorter lists byte for byte. */
     moreVariants: revision >= 31,
+    /** Templates (plan Phase 2e): Stage B writes the product and collection
+     * page compositions (gallery shape and ordered blocks; filters, paging
+     * and promotional tiles) as a top-level `templates` object the compiler
+     * normalises into preset.templates, and design.layout.productDetail may
+     * be "stacked". Earlier requests keep the shorter schema byte for byte. */
+    templates: revision >= 32,
   };
 }

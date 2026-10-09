@@ -2,9 +2,37 @@
 
 import { useState } from "react";
 import { ChevronDown, GripVertical, Plus, X } from "lucide-react";
-import type { ChromeLink, FooterGroup, StoreChrome } from "@/lib/chrome/types";
+import type {
+  ChromeLink,
+  FooterGroup,
+  StoreChrome,
+  StorefrontAppearance,
+} from "@/lib/chrome/types";
 import { NAV_LIMITS } from "@/lib/chrome/nav";
 import { ImageUpload } from "@/components/ui/image-upload";
+import { BlockList } from "./block-list";
+import { USP_ICON_LABELS } from "./section-form";
+import { USP_ICONS, type UspIcon } from "@/lib/homepage/section-types";
+import {
+  COLLECTION_FILTERS,
+  COLLECTION_PAGINATIONS,
+  MAX_ACCORDION_ROWS,
+  MAX_PROMO_AFTER,
+  MAX_PROMO_TILES,
+  MAX_TRUST_ROW_ITEMS,
+  PRODUCT_BLOCK_TYPES,
+  PRODUCT_GALLERIES,
+  type AccordionRow,
+  type CollectionFilters,
+  type CollectionPagination,
+  type CollectionTemplate,
+  type ProductBlock,
+  type ProductBlockType,
+  type ProductGalleryMode,
+  type ProductTemplate,
+  type PromoTile,
+  type TrustRowItem,
+} from "@/lib/themes/templates";
 import {
   contrastIssuesFor,
   DESIGN_PALETTE_TOKENS,
@@ -790,6 +818,487 @@ export interface BrandAppearance {
   logoUrl: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// The page templates (plan Phase 2e, lib/themes/templates.ts): the product
+// page's gallery shape and ordered blocks, and the collection page's filters,
+// paging and promotional tiles. Each page inherits the theme's template until
+// the merchant customises it, starting from a copy of that template, and can
+// go back to the theme's with one choice. Saved with the chrome draft and
+// published with the website; the preview shows the pages after a reload.
+// ---------------------------------------------------------------------------
+
+const GALLERY_LABELS: Record<ProductGalleryMode, string> = {
+  "thumbs-bottom": "Thumbnails under the photo",
+  "thumbs-left": "Thumbnails beside the photo",
+  stacked: "Every photo in a column",
+  carousel: "One photo at a time, with arrows",
+  grid: "A grid of photos",
+};
+const PRODUCT_BLOCK_LABELS: Record<ProductBlockType, string> = {
+  price: "Price",
+  variant_picker: "Options",
+  buy_box: "Quantity and buttons",
+  description: "Description",
+  delivery_estimate: "Delivery check",
+  share: "Share buttons",
+  trust_row: "Trust row",
+  accordion: "Collapsible rows",
+  rich_text: "Rich text",
+  reviews: "Reviews",
+  recommendations: "You may also like",
+  sticky_bar: "Sticky add to cart on phones",
+};
+const FILTER_LABELS: Record<CollectionFilters, string> = {
+  sidebar: "Column beside the grid",
+  drawer: "Filter button only",
+  "top-bar": "Row of filters above the grid",
+};
+const PAGINATION_LABELS: Record<CollectionPagination, string> = {
+  "load-more": "Load more button",
+  paged: "Numbered pages",
+  infinite: "Load as the shopper scrolls",
+};
+
+function freshBlock(type: ProductBlockType): ProductBlock {
+  switch (type) {
+    case "trust_row":
+      return { type, items: [{ icon: "truck", label: "Free delivery" }] };
+    case "accordion":
+      return { type, rows: [{ heading: "Care", body: "" }] };
+    case "rich_text":
+      return { type, html: "" };
+    default:
+      return { type };
+  }
+}
+
+function TemplatesForm({
+  templates,
+  themeDefaults,
+  onChange,
+}: {
+  templates: StorefrontAppearance["templates"];
+  themeDefaults: ThemeDesignDefaults;
+  onChange: (next: StorefrontAppearance["templates"]) => void;
+}) {
+  const product = templates.product;
+  const collection = templates.collection;
+  const setProduct = (next: "theme" | ProductTemplate) =>
+    onChange({ ...templates, product: next });
+  const setCollection = (next: "theme" | CollectionTemplate) =>
+    onChange({ ...templates, collection: next });
+  const used = new Set<ProductBlockType>(
+    product === "theme" ? [] : product.blocks.map((b) => b.type),
+  );
+
+  return (
+    <>
+      <Group
+        title="Product page"
+        hint="The gallery's shape and the blocks under the product name, in order. Price and the quantity and buttons are always shown. The preview shows the product page after a reload."
+        defaultOpen={false}
+      >
+        <label className="sm-b-field">
+          <span>Blocks and gallery</span>
+          <select
+            className="sm-b-input"
+            value={product === "theme" ? "theme" : "custom"}
+            onChange={(e) =>
+              setProduct(
+                e.target.value === "theme"
+                  ? "theme"
+                  : structuredClone(themeDefaults.templates.product),
+              )
+            }
+          >
+            <option value="theme">Theme default</option>
+            <option value="custom">Customise</option>
+          </select>
+        </label>
+        {product !== "theme" && (
+          <>
+            <label className="sm-b-field">
+              <span>Gallery</span>
+              <select
+                className="sm-b-input"
+                value={product.gallery}
+                onChange={(e) =>
+                  setProduct({
+                    ...product,
+                    gallery: e.target.value as ProductGalleryMode,
+                  })
+                }
+              >
+                {PRODUCT_GALLERIES.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {GALLERY_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <BlockList<ProductBlock>
+              label="Blocks"
+              itemLabel="Block"
+              items={product.blocks}
+              max={PRODUCT_BLOCK_TYPES.length}
+              newItem={() =>
+                freshBlock(
+                  PRODUCT_BLOCK_TYPES.find((t) => !used.has(t)) ?? "rich_text",
+                )
+              }
+              onChange={(blocks) => setProduct({ ...product, blocks })}
+              title={(block) => PRODUCT_BLOCK_LABELS[block.type]}
+            >
+              {(block, index, setItem) => (
+                <div className="space-y-2">
+                  <label className="sm-b-field">
+                    <span>Block</span>
+                    <select
+                      className="sm-b-input"
+                      value={block.type}
+                      onChange={(e) =>
+                        setProduct({
+                          ...product,
+                          blocks: product.blocks.map((b, i) =>
+                            i === index
+                              ? freshBlock(e.target.value as ProductBlockType)
+                              : b,
+                          ),
+                        })
+                      }
+                    >
+                      {PRODUCT_BLOCK_TYPES.filter(
+                        (t) => t === block.type || !used.has(t),
+                      ).map((t) => (
+                        <option key={t} value={t}>
+                          {PRODUCT_BLOCK_LABELS[t]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {block.type === "trust_row" && (
+                    <BlockList<TrustRowItem>
+                      label="Items"
+                      itemLabel="Item"
+                      items={block.items}
+                      max={MAX_TRUST_ROW_ITEMS}
+                      newItem={() => ({ icon: "star", label: "" })}
+                      onChange={(items) => setItem({ items })}
+                      title={(item) => item.label || USP_ICON_LABELS[item.icon]}
+                    >
+                      {(item, _i, setRow) => (
+                        <div className="space-y-2">
+                          <label className="sm-b-field">
+                            <span>Icon</span>
+                            <select
+                              className="sm-b-input"
+                              value={item.icon}
+                              onChange={(e) =>
+                                setRow({ icon: e.target.value as UspIcon })
+                              }
+                            >
+                              {USP_ICONS.map((icon) => (
+                                <option key={icon} value={icon}>
+                                  {USP_ICON_LABELS[icon]}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="sm-b-field">
+                            <span>Label</span>
+                            <input
+                              className="sm-b-input"
+                              value={item.label}
+                              maxLength={60}
+                              onChange={(e) =>
+                                setRow({ label: e.target.value })
+                              }
+                            />
+                          </label>
+                        </div>
+                      )}
+                    </BlockList>
+                  )}
+                  {block.type === "accordion" && (
+                    <BlockList<AccordionRow>
+                      label="Rows"
+                      itemLabel="Row"
+                      items={block.rows}
+                      max={MAX_ACCORDION_ROWS}
+                      newItem={() => ({ heading: "", body: "" })}
+                      onChange={(rows) => setItem({ rows })}
+                      title={(row) => row.heading}
+                    >
+                      {(row, _i, setRow) => (
+                        <div className="space-y-2">
+                          <label className="sm-b-field">
+                            <span>Heading</span>
+                            <input
+                              className="sm-b-input"
+                              value={row.heading}
+                              maxLength={120}
+                              onChange={(e) =>
+                                setRow({ heading: e.target.value })
+                              }
+                            />
+                          </label>
+                          <label className="sm-b-field">
+                            <span>Text</span>
+                            <textarea
+                              className="sm-b-input"
+                              rows={4}
+                              value={row.body}
+                              onChange={(e) => setRow({ body: e.target.value })}
+                            />
+                          </label>
+                        </div>
+                      )}
+                    </BlockList>
+                  )}
+                  {block.type === "rich_text" && (
+                    <label className="sm-b-field">
+                      <span>HTML</span>
+                      <textarea
+                        className="sm-b-input sm-b-input-mono"
+                        rows={5}
+                        value={block.html}
+                        onChange={(e) => setItem({ html: e.target.value })}
+                      />
+                      <span className="sm-b-hint">
+                        Paragraphs, links, bold and lists; anything else is
+                        removed when the page renders.
+                      </span>
+                    </label>
+                  )}
+                </div>
+              )}
+            </BlockList>
+          </>
+        )}
+      </Group>
+
+      <Group
+        title="Collection page"
+        hint="Where the filters sit, how the grid pages, and the promotional tiles among the products. The preview shows the shop after a reload."
+        defaultOpen={false}
+      >
+        <label className="sm-b-field">
+          <span>Filters, paging and tiles</span>
+          <select
+            className="sm-b-input"
+            value={collection === "theme" ? "theme" : "custom"}
+            onChange={(e) =>
+              setCollection(
+                e.target.value === "theme"
+                  ? "theme"
+                  : structuredClone(themeDefaults.templates.collection),
+              )
+            }
+          >
+            <option value="theme">Theme default</option>
+            <option value="custom">Customise</option>
+          </select>
+        </label>
+        {collection !== "theme" && (
+          <>
+            <label className="sm-b-field">
+              <span>Filters</span>
+              <select
+                className="sm-b-input"
+                value={collection.filters}
+                onChange={(e) =>
+                  setCollection({
+                    ...collection,
+                    filters: e.target.value as CollectionFilters,
+                  })
+                }
+              >
+                {COLLECTION_FILTERS.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {FILTER_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="sm-b-field">
+              <span>Paging</span>
+              <select
+                className="sm-b-input"
+                value={collection.pagination}
+                onChange={(e) =>
+                  setCollection({
+                    ...collection,
+                    pagination: e.target.value as CollectionPagination,
+                  })
+                }
+              >
+                {COLLECTION_PAGINATIONS.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {PAGINATION_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <BlockList<PromoTile>
+              label="Promotional tiles"
+              itemLabel="Tile"
+              items={collection.promoTiles}
+              max={MAX_PROMO_TILES}
+              newItem={() => ({
+                afterIndex: 4,
+                heading: "",
+                body: "",
+                cta_label: "",
+                href: "",
+                image_url: "",
+                image_alt: "",
+                theme: "dark",
+                background: "",
+              })}
+              onChange={(promoTiles) =>
+                setCollection({ ...collection, promoTiles })
+              }
+              title={(tile) => tile.heading}
+            >
+              {(tile, _i, setTile) => (
+                <div className="space-y-2">
+                  <label className="sm-b-field">
+                    <span>After how many products</span>
+                    <input
+                      className="sm-b-input"
+                      type="number"
+                      min={1}
+                      max={MAX_PROMO_AFTER}
+                      value={tile.afterIndex}
+                      onChange={(e) =>
+                        setTile({
+                          afterIndex: Math.min(
+                            MAX_PROMO_AFTER,
+                            Math.max(
+                              1,
+                              Math.floor(Number(e.target.value) || 1),
+                            ),
+                          ),
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="sm-b-field">
+                    <span>Heading</span>
+                    <input
+                      className="sm-b-input"
+                      value={tile.heading}
+                      maxLength={120}
+                      onChange={(e) => setTile({ heading: e.target.value })}
+                    />
+                  </label>
+                  <label className="sm-b-field">
+                    <span>Text</span>
+                    <textarea
+                      className="sm-b-input"
+                      rows={3}
+                      value={tile.body}
+                      onChange={(e) => setTile({ body: e.target.value })}
+                    />
+                  </label>
+                  <label className="sm-b-field">
+                    <span>Button label</span>
+                    <input
+                      className="sm-b-input"
+                      value={tile.cta_label}
+                      maxLength={60}
+                      onChange={(e) => setTile({ cta_label: e.target.value })}
+                    />
+                  </label>
+                  <label className="sm-b-field">
+                    <span>Link</span>
+                    <input
+                      className="sm-b-input"
+                      value={tile.href}
+                      placeholder="/collections/sale"
+                      onChange={(e) => setTile({ href: e.target.value })}
+                    />
+                  </label>
+                  <div className="sm-b-field">
+                    <span>Picture</span>
+                    <ImageUpload
+                      key={tile.image_url || "none"}
+                      folder="promo-tiles"
+                      spec="category"
+                      defaultImage={tile.image_url || undefined}
+                      onUploadSuccess={(url) => setTile({ image_url: url })}
+                    />
+                    {tile.image_url && (
+                      <button
+                        type="button"
+                        className="sm-b-link"
+                        onClick={() =>
+                          setTile({ image_url: "", image_alt: "" })
+                        }
+                      >
+                        Remove picture
+                      </button>
+                    )}
+                  </div>
+                  {tile.image_url && (
+                    <label className="sm-b-field">
+                      <span>Picture description</span>
+                      <input
+                        className="sm-b-input"
+                        value={tile.image_alt}
+                        maxLength={160}
+                        onChange={(e) => setTile({ image_alt: e.target.value })}
+                      />
+                    </label>
+                  )}
+                  <label className="sm-b-field">
+                    <span>Text colour</span>
+                    <select
+                      className="sm-b-input"
+                      value={tile.theme}
+                      onChange={(e) =>
+                        setTile({
+                          theme: e.target.value === "light" ? "light" : "dark",
+                        })
+                      }
+                    >
+                      <option value="dark">Light text on a dark tile</option>
+                      <option value="light">Dark text on a light tile</option>
+                    </select>
+                  </label>
+                  <label className="sm-b-field">
+                    <span>Background colour</span>
+                    <div className="sm-b-colorrow">
+                      <input
+                        type="color"
+                        className="sm-b-color"
+                        value={tile.background || "#000000"}
+                        onChange={(e) =>
+                          setTile({ background: e.target.value })
+                        }
+                        aria-label="Tile background colour"
+                      />
+                      <input
+                        className="sm-b-input sm-b-input-mono"
+                        value={tile.background}
+                        placeholder="Theme ink"
+                        onChange={(e) =>
+                          setTile({ background: e.target.value })
+                        }
+                        aria-label="Tile background colour hex"
+                      />
+                    </div>
+                  </label>
+                </div>
+              )}
+            </BlockList>
+          </>
+        )}
+      </Group>
+    </>
+  );
+}
+
 /**
  * Brand — the third global "section".
  *
@@ -953,6 +1462,7 @@ export function BrandForm({
             <option value="classic">Classic</option>
             <option value="editorial">Editorial</option>
             <option value="grocery">Grocery</option>
+            <option value="stacked">Stacked (photos above the details)</option>
           </select>
         </label>
         <label className="sm-b-field">
@@ -992,6 +1502,12 @@ export function BrandForm({
           </select>
         </label>
       </Group>
+
+      <TemplatesForm
+        templates={appearance.templates}
+        themeDefaults={themeDefaults}
+        onChange={(templates) => patchAppearance({ templates })}
+      />
 
       <Group title="Logo" defaultOpen={false}>
         <label className="sm-b-field">

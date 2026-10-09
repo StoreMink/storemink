@@ -34,6 +34,13 @@ import ReviewsSection, {
   RatingStars,
   type ProductReview,
 } from "./reviews-section";
+import {
+  defaultTemplates,
+  splitProductBlocks,
+  type ProductBlock,
+  type ProductTemplate,
+} from "@/lib/themes/templates";
+import { USP_ICON_COMPONENTS } from "@/app/(storefront)/components/sections/usp-icons";
 
 export interface DetailVariant {
   id: string;
@@ -102,6 +109,7 @@ export default function ProductDetailClient({
   related,
   reviews,
   grocery = false,
+  template = defaultTemplates(undefined).product,
   storeLowStockThreshold = 0,
   offerMarker = null,
   requestedVariantId = null,
@@ -110,6 +118,14 @@ export default function ProductDetailClient({
   related: RelatedProduct[];
   reviews: ProductReview[];
   grocery?: boolean;
+  /**
+   * The product page's composition (plan Phase 2e, lib/themes/templates.ts):
+   * the gallery's shape and the ordered blocks of the information column,
+   * plus which page-level blocks render under the grid and whether the phone
+   * sticky bar exists. Resolved by the page from the theme and the
+   * merchant's override; the default is the page exactly as it was.
+   */
+  template?: ProductTemplate;
   // Store-wide default (inventory.lowStockThreshold), resolved by the page; a
   // per-SKU threshold overrides it. Drives the "Only X left" badge.
   storeLowStockThreshold?: number;
@@ -246,6 +262,8 @@ export default function ProductDetailClient({
   const maxQty = maxPurchasable(sellableSku);
   const qty = Math.min(Math.max(1, quantity), Math.max(1, maxQty));
 
+  const blocks = splitProductBlocks(template.blocks);
+
   // Aggregate rating for the summary shown near the title.
   const reviewCount = reviews.length;
   const averageRating =
@@ -312,6 +330,7 @@ export default function ProductDetailClient({
           maxQty={maxQty}
           onAddToCart={handleAddToCart}
           onBuyNow={handleBuyNow}
+          galleryMode={template.gallery}
           deliveryEstimator={
             <ProductDeliveryEstimator
               productId={product.id}
@@ -322,17 +341,23 @@ export default function ProductDetailClient({
           }
         />
 
-        <ReviewsSection
-          productId={product.id}
-          productSlug={product.slug}
-          reviews={reviews}
-        />
-
-        <RelatedProducts
-          products={related}
-          grocery
-          storeLowStockThreshold={storeLowStockThreshold}
-        />
+        {blocks.page.map((block) =>
+          block.type === "reviews" ? (
+            <ReviewsSection
+              key="reviews"
+              productId={product.id}
+              productSlug={product.slug}
+              reviews={reviews}
+            />
+          ) : (
+            <RelatedProducts
+              key="recommendations"
+              products={related}
+              grocery
+              storeLowStockThreshold={storeLowStockThreshold}
+            />
+          ),
+        )}
         {zoomIndex !== null && gallery.length > 0 && (
           <ProductLightbox
             images={gallery}
@@ -346,19 +371,203 @@ export default function ProductDetailClient({
           />
         )}
 
-        <StickyAddToCart
-          target={actionsRef}
-          name={product.name}
-          variantName={selectedVariant?.name ?? null}
-          image={activeImg ?? gallery[0] ?? null}
-          price={selling}
-          compareAt={discount > 0 ? base : null}
-          disabled={outOfStock}
-          onAdd={handleAddToCart}
-        />
+        {blocks.sticky && (
+          <StickyAddToCart
+            target={actionsRef}
+            name={product.name}
+            variantName={selectedVariant?.name ?? null}
+            image={activeImg ?? gallery[0] ?? null}
+            price={selling}
+            compareAt={discount > 0 ? base : null}
+            disabled={outOfStock}
+            onAdd={handleAddToCart}
+          />
+        )}
       </main>
     );
   }
+
+  // ── The information column's blocks, in the template's order ──────────
+  // Each is the markup the page always had for it; the template decides which
+  // appear and where. The title block above them is fixed.
+  const renderInfoBlock = (block: ProductBlock) => {
+    switch (block.type) {
+      case "price":
+        return (
+          <div className="pdp-price" key="price">
+            <span className="pdp-price-sell">{formatPrice(selling)}</span>
+            {discount > 0 && (
+              <>
+                <span className="pdp-price-base">{formatPrice(base)}</span>
+                <span className="pdp-price-off">{discount}% OFF</span>
+              </>
+            )}
+          </div>
+        );
+      case "share":
+        return (
+          <div style={{ marginTop: 14 }} key="share">
+            <ShareButtons title={product.name} />
+          </div>
+        );
+      case "variant_picker":
+        if (optionPicker) return <div key="variants">{optionPicker}</div>;
+        if (!hasVariants) return null;
+        return (
+          <div className="pdp-variants" key="variants">
+            <label className="pdp-variants-label">Options</label>
+            <div className="pdp-variant-options">
+              {product.variants.map((v) => {
+                const disabled =
+                  v.track_inventory && !v.allow_backorder && v.stock <= 0;
+                const hasSale = hasSpecialPrice(v);
+                const vSelling = variantSellingWithFallback(v);
+                // Show the struck-through original only when it's genuinely
+                // higher than what the customer pays for this variant.
+                const showWas = v.base_price > vSelling;
+                return (
+                  <button
+                    key={v.id}
+                    className={`pdp-variant${variantId === v.id ? " active" : ""}${
+                      disabled ? " disabled" : ""
+                    }${hasSale ? " has-sale" : ""}`}
+                    onClick={() => !disabled && selectVariant(v)}
+                    disabled={disabled}
+                    aria-label={`${v.name} — ${formatPrice(vSelling)}${
+                      hasSale ? ", best value" : ""
+                    }${disabled ? ", sold out" : ""}`}
+                  >
+                    {hasSale && (
+                      <span className="pdp-variant-badge">Best value</span>
+                    )}
+                    <span className="pdp-variant-name">{v.name}</span>
+                    <span className="pdp-variant-price">
+                      {formatPrice(vSelling)}
+                      {showWas && (
+                        <span className="pdp-variant-was">
+                          {formatPrice(v.base_price)}
+                        </span>
+                      )}
+                    </span>
+                    {disabled && (
+                      <span className="pdp-variant-oos">Sold out</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      case "delivery_estimate":
+        return (
+          <ProductDeliveryEstimator
+            key="delivery"
+            productId={product.id}
+            variantId={selectedVariant?.id ?? null}
+            quantity={qty}
+            outOfStock={outOfStock}
+          />
+        );
+      case "buy_box":
+        return (
+          <div key="buy">
+            <div className="pdp-qty">
+              <label className="pdp-qty-label">Quantity</label>
+              <div className="pdp-stepper">
+                <button
+                  type="button"
+                  className="pdp-stepper-btn"
+                  onClick={() => setQuantity(Math.max(1, qty - 1))}
+                  disabled={outOfStock || qty <= 1}
+                  aria-label="Decrease quantity"
+                >
+                  −
+                </button>
+                <span className="pdp-stepper-value" aria-live="polite">
+                  {qty}
+                </span>
+                <button
+                  type="button"
+                  className="pdp-stepper-btn"
+                  onClick={() => setQuantity(Math.min(maxQty, qty + 1))}
+                  disabled={outOfStock || qty >= maxQty}
+                  aria-label="Increase quantity"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div className="pdp-actions" ref={actionsRef}>
+              <button
+                className="pdp-btn pdp-btn-cart sm-btn-secondary"
+                onClick={handleAddToCart}
+                disabled={outOfStock}
+              >
+                {outOfStock ? "Out of stock" : "Add to Cart"}
+              </button>
+              <button
+                className="pdp-btn pdp-btn-buy sm-btn-primary"
+                onClick={handleBuyNow}
+                disabled={outOfStock}
+              >
+                Buy Now
+              </button>
+            </div>
+          </div>
+        );
+      case "description":
+        return product.description ? (
+          <div className="pdp-description" key="description">
+            <h2>Description</h2>
+            <p>{product.description}</p>
+          </div>
+        ) : null;
+      case "trust_row":
+        return (
+          <ul className="pdp-trust" key="trust">
+            {block.items.map((item, index) => {
+              const Icon = USP_ICON_COMPONENTS[item.icon];
+              return (
+                <li key={`${item.label}-${index}`}>
+                  <Icon size={18} strokeWidth={1.8} aria-hidden />
+                  <span>{item.label}</span>
+                </li>
+              );
+            })}
+          </ul>
+        );
+      case "accordion":
+        return (
+          <div className="pdp-accordion" key="accordion">
+            {block.rows.map((row, index) => (
+              <details
+                className="pdp-accordion-row"
+                key={`${row.heading}-${index}`}
+              >
+                <summary>{row.heading}</summary>
+                <div className="pdp-accordion-body">
+                  <p>{row.body}</p>
+                </div>
+              </details>
+            ))}
+          </div>
+        );
+      case "rich_text":
+        // The page (a server component) sanitised this at the render
+        // boundary, the rich-text section's rule; the sanitiser is not a
+        // browser-sized dependency, so it is not repeated here.
+        return block.html.trim() ? (
+          <div
+            className="pdp-rich"
+            key="rich"
+            dangerouslySetInnerHTML={{ __html: block.html }}
+          />
+        ) : null;
+      default:
+        return null;
+    }
+  };
 
   return (
     <main className="shop-main pdp-page">
@@ -383,6 +592,7 @@ export default function ProductDetailClient({
           onActiveIndexChange={setActiveIndex}
           onZoom={setZoomIndex}
           classPrefix="pdp"
+          mode={template.gallery}
           sizes="(max-width: 860px) 100vw, 560px"
         />
 
@@ -431,140 +641,26 @@ export default function ProductDetailClient({
             )}
           </a>
 
-          <div className="pdp-price">
-            <span className="pdp-price-sell">{formatPrice(selling)}</span>
-            {discount > 0 && (
-              <>
-                <span className="pdp-price-base">{formatPrice(base)}</span>
-                <span className="pdp-price-off">{discount}% OFF</span>
-              </>
-            )}
-          </div>
-
-          <div style={{ marginTop: 14 }}>
-            <ShareButtons title={product.name} />
-          </div>
-
-          {optionPicker}
-
-          {hasVariants && !optionPicker && (
-            <div className="pdp-variants">
-              <label className="pdp-variants-label">Options</label>
-              <div className="pdp-variant-options">
-                {product.variants.map((v) => {
-                  const disabled =
-                    v.track_inventory && !v.allow_backorder && v.stock <= 0;
-                  const hasSale = hasSpecialPrice(v);
-                  const vSelling = variantSellingWithFallback(v);
-                  // Show the struck-through original only when it's genuinely
-                  // higher than what the customer pays for this variant.
-                  const showWas = v.base_price > vSelling;
-                  return (
-                    <button
-                      key={v.id}
-                      className={`pdp-variant${variantId === v.id ? " active" : ""}${
-                        disabled ? " disabled" : ""
-                      }${hasSale ? " has-sale" : ""}`}
-                      onClick={() => !disabled && selectVariant(v)}
-                      disabled={disabled}
-                      aria-label={`${v.name} — ${formatPrice(vSelling)}${
-                        hasSale ? ", best value" : ""
-                      }${disabled ? ", sold out" : ""}`}
-                    >
-                      {hasSale && (
-                        <span className="pdp-variant-badge">Best value</span>
-                      )}
-                      <span className="pdp-variant-name">{v.name}</span>
-                      <span className="pdp-variant-price">
-                        {formatPrice(vSelling)}
-                        {showWas && (
-                          <span className="pdp-variant-was">
-                            {formatPrice(v.base_price)}
-                          </span>
-                        )}
-                      </span>
-                      {disabled && (
-                        <span className="pdp-variant-oos">Sold out</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          <ProductDeliveryEstimator
-            productId={product.id}
-            variantId={selectedVariant?.id ?? null}
-            quantity={qty}
-            outOfStock={outOfStock}
-          />
-
-          <div className="pdp-qty">
-            <label className="pdp-qty-label">Quantity</label>
-            <div className="pdp-stepper">
-              <button
-                type="button"
-                className="pdp-stepper-btn"
-                onClick={() => setQuantity(Math.max(1, qty - 1))}
-                disabled={outOfStock || qty <= 1}
-                aria-label="Decrease quantity"
-              >
-                −
-              </button>
-              <span className="pdp-stepper-value" aria-live="polite">
-                {qty}
-              </span>
-              <button
-                type="button"
-                className="pdp-stepper-btn"
-                onClick={() => setQuantity(Math.min(maxQty, qty + 1))}
-                disabled={outOfStock || qty >= maxQty}
-                aria-label="Increase quantity"
-              >
-                +
-              </button>
-            </div>
-          </div>
-
-          <div className="pdp-actions" ref={actionsRef}>
-            <button
-              className="pdp-btn pdp-btn-cart sm-btn-secondary"
-              onClick={handleAddToCart}
-              disabled={outOfStock}
-            >
-              {outOfStock ? "Out of stock" : "Add to Cart"}
-            </button>
-            <button
-              className="pdp-btn pdp-btn-buy sm-btn-primary"
-              onClick={handleBuyNow}
-              disabled={outOfStock}
-            >
-              Buy Now
-            </button>
-          </div>
-
-          {product.description && (
-            <div className="pdp-description">
-              <h2>Description</h2>
-              <p>{product.description}</p>
-            </div>
-          )}
+          {blocks.info.map(renderInfoBlock)}
         </div>
       </div>
 
-      {/* Reviews */}
-      <ReviewsSection
-        productId={product.id}
-        productSlug={product.slug}
-        reviews={reviews}
-      />
-
-      {/* You may also like */}
-      <RelatedProducts
-        products={related}
-        storeLowStockThreshold={storeLowStockThreshold}
-      />
+      {blocks.page.map((block) =>
+        block.type === "reviews" ? (
+          <ReviewsSection
+            key="reviews"
+            productId={product.id}
+            productSlug={product.slug}
+            reviews={reviews}
+          />
+        ) : (
+          <RelatedProducts
+            key="recommendations"
+            products={related}
+            storeLowStockThreshold={storeLowStockThreshold}
+          />
+        ),
+      )}
 
       {/* Zoom lightbox */}
       {zoomIndex !== null && gallery.length > 0 && (
@@ -580,16 +676,18 @@ export default function ProductDetailClient({
         />
       )}
 
-      <StickyAddToCart
-        target={actionsRef}
-        name={product.name}
-        variantName={selectedVariant?.name ?? null}
-        image={activeImg ?? gallery[0] ?? null}
-        price={selling}
-        compareAt={discount > 0 ? base : null}
-        disabled={outOfStock}
-        onAdd={handleAddToCart}
-      />
+      {blocks.sticky && (
+        <StickyAddToCart
+          target={actionsRef}
+          name={product.name}
+          variantName={selectedVariant?.name ?? null}
+          image={activeImg ?? gallery[0] ?? null}
+          price={selling}
+          compareAt={discount > 0 ? base : null}
+          disabled={outOfStock}
+          onAdd={handleAddToCart}
+        />
+      )}
     </main>
   );
 }

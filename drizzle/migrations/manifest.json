@@ -6681,6 +6681,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261009_0175_page_templates_help",
+      "description": "Help: product and collection page templates in the Brand row",
+      "file": "sql/20261009_0175_page_templates_help.sql",
+      "transaction": true,
+      "requires": ["20261009_0174_nested_blocks_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Branding guide describes the product and collection page templates",
+            "sql": "select count(*)::text from public.help_articles where slug='change-your-storefront-branding-and-layout' and status='published' and body like '%pick the gallery style and the order of the blocks under the product name%' and body like '%whether the grid loads more, turns pages or keeps scrolling%' and body not like '%Choose the available header, product-card, product-detail, cart, and footer layout options.%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

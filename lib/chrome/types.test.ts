@@ -5,6 +5,7 @@ import {
   resolveStorefrontAppearance,
   sanitizeChromeForSave,
 } from "./types";
+import { defaultTemplates } from "@/lib/themes/templates";
 
 describe("normalizeChrome", () => {
   it("returns the defaults for empty input", () => {
@@ -143,6 +144,7 @@ describe("resolveStorefrontAppearance", () => {
       productDetail: "editorial",
       cart: "compact",
       footer: "minimal",
+      templates: defaultTemplates({ stickyAddToCart: false }),
     });
   });
 
@@ -250,7 +252,59 @@ describe("resolveStorefrontAppearance", () => {
       productDetail: "classic",
       cart: "classic",
       footer: "editorial",
+      templates: defaultTemplates({ stickyAddToCart: false }),
     });
+  });
+
+  // Plan Phase 2e (2026-10-09): the product and collection pages are
+  // composed from a template the theme writes and a merchant may override.
+  it("resolves templates from the theme, the merchant override or the defaults", () => {
+    const theme = { stickyAddToCart: true } as const;
+    const inherited = resolveStorefrontAppearance(
+      theme,
+      DEFAULT_CHROME.appearance,
+    );
+    expect(inherited.templates).toEqual(defaultTemplates(theme));
+    expect(inherited.stickyAddToCart).toBe(true);
+    // A theme-authored template wins over the layout's defaults.
+    const authored = resolveStorefrontAppearance(
+      theme,
+      DEFAULT_CHROME.appearance,
+      {
+        ...defaultTemplates(theme),
+        product: {
+          gallery: "grid",
+          blocks: [{ type: "price" }, { type: "buy_box" }],
+        },
+      },
+    );
+    expect(authored.templates.product.gallery).toBe("grid");
+    // The sticky bar follows the blocks, not the layout flag.
+    expect(authored.stickyAddToCart).toBe(false);
+    // A merchant override replaces one page and inherits the other.
+    const overridden = resolveStorefrontAppearance(theme, {
+      ...DEFAULT_CHROME.appearance,
+      templates: {
+        product: "theme",
+        collection: { filters: "top-bar", pagination: "paged", promoTiles: [] },
+      },
+    });
+    expect(overridden.templates.product).toEqual(
+      defaultTemplates(theme).product,
+    );
+    expect(overridden.templates.collection.filters).toBe("top-bar");
+    // Rows saved before templates existed carry no key and inherit.
+    const legacy = resolveStorefrontAppearance(theme, {
+      ...DEFAULT_CHROME.appearance,
+      templates: undefined as never,
+    });
+    expect(legacy.templates).toEqual(defaultTemplates(theme));
+    // Stored junk normalises back to inheritance.
+    expect(
+      normalizeChrome({
+        appearance: { templates: { product: 7, collection: "x" } },
+      }).appearance.templates,
+    ).toEqual({ product: "theme", collection: "theme" });
   });
 
   it("normalises invalid stored appearance values back to theme inheritance", () => {

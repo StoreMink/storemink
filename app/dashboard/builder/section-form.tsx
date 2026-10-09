@@ -453,7 +453,7 @@ function VideoField({
   );
 }
 
-const USP_ICON_LABELS: Record<(typeof USP_ICONS)[number], string> = {
+export const USP_ICON_LABELS: Record<(typeof USP_ICONS)[number], string> = {
   star: "Star",
   "badge-check": "Badge check",
   truck: "Truck (delivery)",

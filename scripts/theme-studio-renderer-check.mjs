@@ -35,11 +35,26 @@ function image(width, height) {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
+// The product and collection pages' stylesheet, for the template fixtures
+// (plan Phase 2e). Its own document builder, so the homepage fixtures above
+// measure exactly the stylesheet they did.
+const shopCss = readFileSync(
+  new URL("../app/(storefront)/(pages)/shop/shop.css", import.meta.url),
+  "utf8",
+);
+const documentHtmlShop = (html, rootClass = "") =>
+  documentHtml(html)
+    .replace("/* shop-css */", shopCss)
+    .replace(
+      'class="storefront-root sm-page-width"',
+      `class="storefront-root sm-page-width ${rootClass}"`,
+    );
 const documentHtml = (html) => `<!doctype html><html><head><style>
   *{box-sizing:border-box}body{margin:0;font:16px Arial}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0}
   :root{--sm-ink:#211c25;--sm-ink-soft:#554d59;--sm-ink-faint:#675c6b;--sm-cream:#faf8f5;--sm-cream-deep:#efece9;--sm-border:#ccc;--sm-surface:#fff;--sm-on-ink:#fff;--sm-accent:#45243c;--sm-on-accent:#fff;--brand-primary:#45243c;--sm-shadow-rgb:30,20,30;--sm-page-width:1320px;--sm-page-cream:#faf8f5;--sm-page-cream-deep:#efece9;--sm-page-surface:#fff;--sm-page-sand:#efece9;--sm-page-tile:#efece9;--sm-page-ink:#211c25;--sm-page-ink-soft:#554d59;--sm-page-ink-faint:#675c6b;--sm-page-border:#ccc;--sm-page-on-ink:#fff;--sm-page-accent:#45243c;--sm-page-on-accent:#fff;--sm-scheme-soft-bg:#faf8f5;--sm-scheme-soft-fg:#211c25;--sm-scheme-soft-surface:#fff;--sm-scheme-soft-accent:#45243c;--sm-scheme-soft-on-accent:#fff;--sm-scheme-inverse-bg:#211c25;--sm-scheme-inverse-fg:#faf8f5;--sm-scheme-inverse-surface:#211c25;--sm-scheme-inverse-accent:#faf8f5;--sm-scheme-inverse-on-accent:#211c25}
   ${css}
+  /* shop-css */
   </style></head><body><main class="storefront-root sm-page-width"><div class="home-sections">${html}</div></main></body></html>`;
 
 // Markup follows the native sections' public classes. Synthetic media uses the
@@ -551,6 +566,242 @@ try {
             contrast,
           });
       }
+    }
+    // Page templates (2026-10-09, plan Phase 2e). The product gallery's five
+    // shapes: on desktop the thumbnail shapes show one photo with the
+    // thumbnails under or beside it, stacked and grid show every photo, the
+    // carousel is the phone strip; under 860px every shape is the strip with
+    // its counter. The stacked product layout puts the gallery above the
+    // information column at every width.
+    for (const mode of [
+      "thumbs-bottom",
+      "thumbs-left",
+      "stacked",
+      "carousel",
+      "grid",
+    ]) {
+      for (const stacked of [false, true]) {
+        if (stacked && mode !== "thumbs-bottom") continue;
+        const thumbs = mode === "thumbs-bottom" || mode === "thumbs-left";
+        const label = `${width}px pdp/${stacked ? "stacked/" : ""}${mode}`;
+        await page.setContent(
+          documentHtmlShop(
+            `<main class="shop-main pdp-page"><div class="pdp-grid">
+            <div class="pdp-gallery sm-gallery mode-${mode}"><div class="sm-gallery-frame"><div class="sm-gallery-track is-multi">${[0, 1, 2].map((i) => `<button class="pdp-main-img sm-gallery-slide" data-active="${i === 0}" aria-label="Zoom photo ${i + 1} of 3"><img class="pdp-main-img-el" alt="" src="${image(1280, 1600)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain"></button>`).join("")}</div><span class="sm-gallery-count">1 / 3</span></div>${thumbs ? `<div class="pdp-thumbs">${[0, 1, 2].map((i) => `<button class="pdp-thumb${i === 0 ? " active" : ""}" aria-label="Show photo ${i + 1} of 3"><img class="pdp-thumb-el" alt="" src="${image(400, 400)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"></button>`).join("")}</div>` : ""}</div>
+            <div class="pdp-info"><h1 class="pdp-name">${heading}</h1><div class="pdp-price"><span class="pdp-price-sell">₹1,800</span></div><ul class="pdp-trust"><li><span style="display:inline-block;width:18px;height:18px"></span><span>Free delivery</span></li><li><span style="display:inline-block;width:18px;height:18px"></span><span>Easy returns</span></li></ul><div class="pdp-accordion"><details class="pdp-accordion-row" open><summary>Care</summary><div class="pdp-accordion-body"><p>${copy}</p></div></details><details class="pdp-accordion-row"><summary>Shipping</summary><div class="pdp-accordion-body"><p>${copy}</p></div></details></div><div class="pdp-rich"><p>${copy}</p></div><div class="pdp-actions"><button class="pdp-btn pdp-btn-cart sm-btn-secondary">Add to Cart</button><button class="pdp-btn pdp-btn-buy sm-btn-primary">Buy Now</button></div></div>
+            </div></main>`,
+            stacked ? "sm-pdp-stacked" : "",
+          ),
+        );
+        const m = await page.evaluate(async () => {
+          await Promise.all(
+            [...document.images].map((i) => i.decode().catch(() => {})),
+          );
+          const rect = (el) => el.getBoundingClientRect();
+          const visible = (el) => {
+            if (!el) return false;
+            const r = rect(el);
+            return r.width > 0 && r.height > 0;
+          };
+          const slides = [...document.querySelectorAll(".sm-gallery-slide")];
+          const track = document.querySelector(".sm-gallery-track");
+          const frame = rect(document.querySelector(".sm-gallery-frame"));
+          const thumbs = document.querySelector(".pdp-thumbs");
+          const info = rect(document.querySelector(".pdp-info"));
+          const gallery = rect(document.querySelector(".sm-gallery"));
+          return {
+            visibleSlides: slides.filter(visible).length,
+            slideBoxes: slides.map((s) => {
+              const r = rect(s);
+              return {
+                top: r.top,
+                bottom: r.bottom,
+                left: r.left,
+                width: r.width,
+              };
+            }),
+            strip: track.scrollWidth > track.clientWidth + 10,
+            countVisible: visible(document.querySelector(".sm-gallery-count")),
+            thumbsBox: thumbs ? rect(thumbs) : null,
+            frame: {
+              left: frame.left,
+              right: frame.right,
+              top: frame.top,
+              bottom: frame.bottom,
+            },
+            thumbButtons: thumbs
+              ? [...thumbs.querySelectorAll("button")].map((b) => {
+                  const r = rect(b);
+                  return { width: r.width, height: r.height };
+                })
+              : [],
+            galleryBottom: gallery.bottom,
+            galleryWidth: gallery.width,
+            infoTop: info.top,
+            infoWidth: info.width,
+            summaries: [
+              ...document.querySelectorAll(".pdp-accordion-row > summary"),
+            ].map((s) => rect(s).height),
+          };
+        });
+        const measured = await measureNative(page);
+        cases++;
+        const problems = [];
+        const desktop = width >= 860;
+        if (measured.overflow) problems.push("overflow");
+        if (measured.targets.length) problems.push("small targets");
+        if (measured.clipped.length) problems.push("clipped text");
+        if (!desktop) {
+          if (!m.strip) problems.push("no strip under 860px");
+          if (!m.countVisible) problems.push("no counter under 860px");
+        } else {
+          if (thumbs) {
+            if (m.visibleSlides !== 1)
+              problems.push(`${m.visibleSlides} slides visible`);
+            if (
+              m.thumbButtons.length !== 3 ||
+              m.thumbButtons.some((b) => b.width < 24 || b.height < 24)
+            )
+              problems.push("thumbnails");
+            if (
+              mode === "thumbs-bottom" &&
+              m.thumbsBox.top < m.frame.bottom - 1
+            )
+              problems.push("thumbnails not under the photo");
+            if (mode === "thumbs-left" && m.thumbsBox.right > m.frame.left + 1)
+              problems.push("thumbnails not beside the photo");
+          }
+          if (mode === "stacked") {
+            if (m.visibleSlides !== 3)
+              problems.push(`${m.visibleSlides} visible`);
+            const [a, b, c] = m.slideBoxes;
+            if (!(b.top >= a.bottom - 1 && c.top >= b.bottom - 1))
+              problems.push("not stacked");
+          }
+          if (mode === "grid") {
+            if (m.visibleSlides !== 3)
+              problems.push(`${m.visibleSlides} visible`);
+            const [a, b, c] = m.slideBoxes;
+            if (
+              !(
+                b.top >= a.bottom - 1 &&
+                Math.abs(b.top - c.top) < 2 &&
+                c.left > b.left + 10 &&
+                a.width > b.width * 1.5
+              )
+            )
+              problems.push("not a two-up grid led by the first photo");
+          }
+          if (mode === "carousel") {
+            if (!m.strip) problems.push("carousel does not scroll");
+            if (!m.countVisible) problems.push("carousel has no counter");
+          }
+          if (m.summaries.some((h) => h < 44))
+            problems.push("accordion summary under 44px");
+          if (stacked) {
+            if (m.galleryBottom > m.infoTop + 1)
+              problems.push("stacked layout: info beside the gallery");
+            if (width >= 1024 && (m.galleryWidth > 881 || m.infoWidth > 721))
+              problems.push("stacked layout widths");
+          }
+        }
+        if (problems.length)
+          failures.push({ label, problems, ...m, ...measured });
+      }
+    }
+    // The collection template: a row of filter popovers above the grid on
+    // desktop (hidden under 1024px, where the Filter button's drawer serves),
+    // an open popover floating over the grid rather than pushing it, a
+    // promotional tile among the cards, and numbered pages whose buttons are
+    // 40px targets that never overflow a phone.
+    {
+      const label = `${width}px collection/top-bar/paged/tile`;
+      const card = (i) =>
+        `<a class="shop-card" href="/shop"><div class="shop-card-img"><img class="shop-card-img-el" alt="" src="${image(1200, 1600)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"></div><div class="shop-card-body"><h2 class="shop-card-name">Linen shirt ${i}</h2><div class="shop-card-price"><span class="shop-card-sell">₹1,800</span></div></div></a>`;
+      const group = (title) =>
+        `<details class="shop-filter-group"><summary><span>${title}</span></summary><div class="shop-filter-group-body"><ul class="shop-filter-list">${["Small", "Medium", "Large"].map((v) => `<li><label class="shop-filter-check"><input type="checkbox"><span>${v}</span><span class="shop-filter-muted">(3)</span></label></li>`).join("")}</ul></div></details>`;
+      await page.setContent(
+        documentHtmlShop(
+          `<div class="shop-listing"><div class="shop-layout"><div class="shop-results"><div class="shop-topbar-filters"><div class="shop-facets">${["Availability", "Size", "Colour", "Price"].map(group).join("")}</div></div><div class="shop-grid">${card(1)}${card(2)}<a class="shop-promo-tile theme-dark" href="/collections/summer" style="background:#2a211f"><div class="shop-promo-tile-copy"><h2>${heading}</h2><p>${copy}</p><span class="shop-promo-tile-cta">See the edit</span></div></a>${card(3)}${card(4)}${card(5)}</div><nav class="shop-pages" aria-label="Pages"><p class="shop-pages-count">Showing 1–24 of 160 products</p><button disabled>Previous</button><button aria-current="page" aria-label="Page 1">1</button><button aria-label="Page 2">2</button><button aria-label="Page 3">3</button><button aria-label="Page 4">4</button><span class="shop-pages-gap" aria-hidden="true">…</span><button aria-label="Page 7">7</button><button>Next</button></nav></div></div></div>`,
+        ),
+      );
+      const measured = await measureNative(page);
+      const before = await page.evaluate(() => {
+        const rect = (el) => el.getBoundingClientRect();
+        const bar = document.querySelector(".shop-topbar-filters");
+        const barBox = rect(bar);
+        // Links and buttons only: a filter checkbox is 20px by design and
+        // its 40px label is the target (the acceptance probe's own rule),
+        // and a closed popover's inputs still report a box in Chromium.
+        const smallTargets = [...document.querySelectorAll("a,button")]
+          .map((el) => rect(el))
+          .filter(
+            (r) => r.width && r.height && (r.width < 24 || r.height < 24),
+          ).length;
+        return {
+          smallTargets,
+          barVisible: barBox.width > 0 && barBox.height > 0,
+          summaryTops: [...bar.querySelectorAll("summary")].map(
+            (s) => rect(s).top,
+          ),
+          gridTop: rect(document.querySelector(".shop-grid")).top,
+          tile: rect(document.querySelector(".shop-promo-tile")).height,
+          pageButtons: [...document.querySelectorAll(".shop-pages button")].map(
+            (b) => {
+              const r = rect(b);
+              return { width: r.width, height: r.height, right: r.right };
+            },
+          ),
+          current: getComputedStyle(
+            document.querySelector('.shop-pages [aria-current="page"]'),
+          ).backgroundColor,
+        };
+      });
+      await page.evaluate(() => {
+        const first = document.querySelector(".shop-topbar-filters details");
+        if (first) first.open = true;
+      });
+      const after = await page.evaluate(() => {
+        const rect = (el) => el.getBoundingClientRect();
+        const body = document.querySelector(
+          ".shop-topbar-filters details[open] > .shop-filter-group-body",
+        );
+        const box = body ? rect(body) : null;
+        return {
+          gridTop: rect(document.querySelector(".shop-grid")).top,
+          bodyVisible: !!box && box.width > 0 && box.height > 0,
+          bodyWithin: !!box && box.right <= innerWidth && box.left >= 0,
+          overflow: document.documentElement.scrollWidth > innerWidth + 1,
+        };
+      });
+      cases++;
+      const problems = [];
+      if (measured.overflow || after.overflow) problems.push("overflow");
+      if (before.smallTargets) problems.push("small targets");
+      if (measured.clipped.length) problems.push("clipped text");
+      if (before.pageButtons.some((b) => b.width < 40 || b.height < 40))
+        problems.push("page buttons under 40px");
+      if (before.pageButtons.some((b) => b.right > width))
+        problems.push("page buttons overflow");
+      if (before.current === "rgba(0, 0, 0, 0)")
+        problems.push("current page not marked");
+      if (before.tile < 240) problems.push("promo tile too short");
+      if (width >= 1024) {
+        if (!before.barVisible) problems.push("filter bar hidden on desktop");
+        if (
+          Math.max(...before.summaryTops) - Math.min(...before.summaryTops) >
+          2
+        )
+          problems.push("filter pills wrap");
+        if (!after.bodyVisible || !after.bodyWithin)
+          problems.push("open popover not shown within the viewport");
+        if (Math.abs(after.gridTop - before.gridTop) > 1)
+          problems.push("open popover pushes the grid");
+      } else if (before.barVisible) {
+        problems.push("filter bar shown under 1024px");
+      }
+      if (problems.length)
+        failures.push({ label, problems, before, after, ...measured });
     }
     // Maximum supported slide count, including active and inactive controls.
     await page.setContent(

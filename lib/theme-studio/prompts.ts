@@ -194,8 +194,15 @@ export function stageBSystemPrompt(
   nestedBlocks = false,
   moreSections = false,
   moreVariants = false,
+  templates = false,
 ): string {
   const reserved = [...RESERVED_PAGE_SLUGS].sort().join(", ");
+  // v32+: the product and collection page templates (plan Phase 2e).
+  // Appended after the v31 bullet; an empty string keeps pre-v32 text byte
+  // for byte.
+  const templatesBullet = templates
+    ? `\n- Templates: write a top-level "templates" object, the product and collection pages composed the way Shopify's are. templates.product.gallery is one of "thumbs-bottom" (thumbnails under the photo), "thumbs-left" (a thumbnail column beside it), "stacked" (every photo in a column, for fashion and editorial ranges), "carousel" (one photo at a time with arrows and dots) or "grid" (a two-up grid led by the first photo). templates.product.blocks is the ordered information column: "price", "variant_picker", "buy_box" (quantity and the two buttons; price and buy_box are required), "description", "delivery_estimate", "share", "trust_row" (items: two to six, each an icon from the trust-bar catalogue and a short label such as free delivery, easy returns or secure checkout), "accordion" (rows: one to eight of heading and body — care, materials, shipping, sizing, in the brand's voice), "rich_text" (html: one or two short paragraphs about the maker or the range, never a claim the brief does not support), then "reviews" and "recommendations" (rendered under the grid, in this order, or omitted) and "sticky_bar" (the phone's sticky add-to-cart: include it exactly when design.layout.stickyAddToCart is true). Each block carries items, rows and html; leave them [] or "" where the type has no use for them, and use each type at most once. templates.collection.filters is "sidebar" (a filter column beside the grid), "drawer" (the Filter button alone) or "top-bar" (a row of filter popovers above the grid); pagination is "load-more", "paged" (numbered pages) or "infinite" (more products as the shopper scrolls); promoTiles holds zero to four editorial tiles placed among the product cards (afterIndex 1–48 is how many cards come before the tile; heading, body, cta_label; href to a collection or page you seed; theme "dark" or "light" for the copy; background a palette hex, or null for the ink colour) — a fashion or lifestyle theme places one or two, a grocery theme none. design.layout.productDetail may also be "stacked" (the gallery above a centred information column, a lookbook product page).`
+    : "";
   // v31+: two more hero variants and more header, card and footer layouts
   // (plan Phase 2d). Appended after the v30 bullet, so it still sits before
   // the section-style bullet the variety prompt rewrites; an empty string
@@ -257,7 +264,7 @@ Pages
 - Each section has a type from the schema and configJson: a JSON object, encoded as a string, with exactly the fields of that type's example below. Keep id-based fields (product_ids, category_ids, blog_ids) as empty arrays; featured_products must use source "featured" and shop_by_category must use source "all".
 - The examples below show each type's field names and value types with EMPTY defaults. Fill them: a gallery needs at least two images, testimonials and FAQs at least one item, a promo banner an image or heading, a tile grid at least one tile, and rich text real HTML paragraphs.
 - hero and hero_carousel (and each carousel slide) also accept these OPTIONAL fields, which you may add to that config only: height ("auto", "small", "medium", "large" or "screen" — ${nativeFraming ? 'match height to the image shape at phone, tablet and desktop widths; use "medium" for a landscape banner and reserve "large"/"screen" for framing that can keep at least 35% of the source image visible. Prefer split composition for portrait-led artwork. Never force a wide landscape photograph into a tall screen-height tablet frame' : 'use "large" or "screen" for an image-led homepage, never on a text-only hero'}), mobile_image_url (a separate portrait image slot for phones, when the desktop banner is wide and its subject would be cropped away), focal_x and focal_y (integers 0–100, the subject's position in the image, so phones crop around it), overlay_opacity (integer 0–80, a veil behind the copy; use 20–45 when light text sits over a busy photo) and content_position ("top", "middle" or "bottom"). Leave any of them out to keep the default.
-- Image fields (keys ending in _url) are either "" or "theme-asset://<asset-brief-id>" using an id from the intent's asset briefs. video_url must always be "". Never write an external URL. Links (keys ending in _href) are either "" or a site path starting with "/", such as "/shop" or "/about". Every link must reach something the store will have: one of your own page slugs, /shop, /collections/<a category slug you seed>, /shop/<a product slug you seed>, or a policy page such as /privacy-policy. The examples' own links (such as /our-story) are placeholders — replace them.${openingBullet}${blocksBullet}${moreBullet}${variantsBullet}
+- Image fields (keys ending in _url) are either "" or "theme-asset://<asset-brief-id>" using an id from the intent's asset briefs. video_url must always be "". Never write an external URL. Links (keys ending in _href) are either "" or a site path starting with "/", such as "/shop" or "/about". Every link must reach something the store will have: one of your own page slugs, /shop, /collections/<a category slug you seed>, /shop/<a product slug you seed>, or a policy page such as /privacy-policy. The examples' own links (such as /our-story) are placeholders — replace them.${openingBullet}${blocksBullet}${moreBullet}${variantsBullet}${templatesBullet}
 - Each section has a style. Use it to give the homepage rhythm the way a premium theme does: put two or three sections in a scheme — for example the trust bar or ticker in accent or inverse, one story or media-and-text section in soft or tint, the newsletter in inverse — and leave the rest null so bands alternate with the page. Never give neighbouring sections the same scheme. hero_carousel and promo_banner sit on their own photo and take no scheme. padding ("sm", "md" or "lg") adds space inside the band — a banded section without it gets "md". width "full" runs the band edge to edge; use it for banded sections.
 - Write original copy in the store's voice. No lorem ipsum, no placeholder brand names such as "Brand Name".
 
@@ -281,6 +288,7 @@ export function stageBInitialSystemPrompt(
   nestedBlocks = false,
   moreSections = false,
   moreVariants = false,
+  templates = false,
 ): string {
   const planned = new Set(intent.pagePlans.flatMap((p) => p.sectionTypes));
   // Brand-story pages often add rich_text after planning. Keep its content
@@ -301,6 +309,7 @@ export function stageBInitialSystemPrompt(
       nestedBlocks,
       moreSections,
       moreVariants,
+      templates,
     )
       .replace(
         configExamples(nestedBlocks, moreSections),
@@ -416,6 +425,7 @@ export function stageBVarietySystemPrompt(
   nestedBlocks = false,
   moreSections = false,
   moreVariants = false,
+  templates = false,
 ): string {
   // v25+: the pairings the chosen direction suits, as guidance; the brief
   // and references still win, and any pairing stays allowed.
@@ -432,6 +442,7 @@ export function stageBVarietySystemPrompt(
         nestedBlocks,
         moreSections,
         moreVariants,
+        templates,
       ).replace(/\nChoose a native commerce composition:[\s\S]*$/, "")
     : stageBSystemPrompt(
         true,
@@ -441,6 +452,7 @@ export function stageBVarietySystemPrompt(
         nestedBlocks,
         moreSections,
         moreVariants,
+        templates,
       );
   const choices = visibleSectionChoices(fullBleedOpening, moreVariants);
   return (

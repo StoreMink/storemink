@@ -329,3 +329,100 @@ describe("the v31 layout variants in the Stage B schemas", () => {
     }
   });
 });
+
+// Plan Phase 2e: the page templates and the stacked product page under v32;
+// every earlier request's twin has neither, built once per key.
+describe("the v32 templates in the Stage B schemas", () => {
+  it("admits them from v32 and removes them from every earlier twin", async () => {
+    const {
+      stageBSchemaFor,
+      PRODUCT_DETAIL_ENUM,
+      LEGACY_PRODUCT_DETAIL_ENUM,
+      STAGE_B_DRAFT_SCHEMA,
+      STAGE_B_INITIAL_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_INITIAL_SCHEMA,
+    } = await import("./schemas");
+    const { PRODUCT_BLOCK_TYPES, PRODUCT_GALLERIES } =
+      await import("@/lib/themes/templates");
+    expect(PRODUCT_DETAIL_ENUM).toContain("stacked");
+    expect(LEGACY_PRODUCT_DETAIL_ENUM).not.toContain("stacked");
+    const productDetailEnums = (schema: unknown): string[][] => {
+      const found: string[][] = [];
+      const walk = (node: unknown, key?: string) => {
+        if (!node || typeof node !== "object") return;
+        if (Array.isArray(node)) return node.forEach((n) => walk(n));
+        const record = node as Record<string, unknown>;
+        if (key === "productDetail") {
+          const list = (
+            record.anyOf as { enum?: string[] }[] | undefined
+          )?.find((s) => s.enum)?.enum;
+          if (list) found.push(list);
+        }
+        for (const [k, v] of Object.entries(record)) walk(v, k);
+      };
+      walk(schema);
+      return found;
+    };
+    for (const schema of [
+      STAGE_B_DRAFT_SCHEMA,
+      STAGE_B_INITIAL_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_INITIAL_SCHEMA,
+    ]) {
+      const current = schema as {
+        properties: Record<string, { properties?: Record<string, unknown> }>;
+        required: string[];
+      };
+      expect(stageBSchemaFor(schema, true, true, true, true, true)).toBe(
+        schema,
+      );
+      // The current schema carries the object, required, with the whole
+      // vocabulary of blocks and galleries.
+      expect(current.required).toContain("templates");
+      const product = current.properties.templates.properties!.product as {
+        properties: {
+          gallery: { enum: string[] };
+          blocks: { items: { properties: { type: { enum: string[] } } } };
+        };
+      };
+      expect(product.properties.gallery.enum).toEqual([...PRODUCT_GALLERIES]);
+      expect(product.properties.blocks.items.properties.type.enum).toEqual([
+        ...PRODUCT_BLOCK_TYPES,
+      ]);
+      for (const list of productDetailEnums(schema))
+        expect(list).toEqual([...PRODUCT_DETAIL_ENUM]);
+      // The pre-v32 twin has no templates and no stacked product page, and
+      // is otherwise the v31 schema (the initial schema has no layout enum).
+      const v31 = stageBSchemaFor(
+        schema,
+        true,
+        true,
+        true,
+        true,
+        false,
+      ) as typeof current;
+      expect(stageBSchemaFor(schema, true, true, true, true, false)).toBe(v31);
+      expect(v31.properties.templates).toBeUndefined();
+      expect(v31.required).not.toContain("templates");
+      expect(v31.required).toEqual(
+        current.required.filter((key) => key !== "templates"),
+      );
+      const legacyLists = productDetailEnums(v31);
+      expect(legacyLists).toHaveLength(productDetailEnums(schema).length);
+      for (const list of legacyLists)
+        expect(list).toEqual([...LEGACY_PRODUCT_DETAIL_ENUM]);
+      // Older twins drop it too, and stay distinct from the v31 twin.
+      const v30 = stageBSchemaFor(
+        schema,
+        true,
+        true,
+        true,
+        false,
+        false,
+      ) as typeof current;
+      expect(v30.properties.templates).toBeUndefined();
+      expect(v30).not.toBe(v31);
+    }
+  });
+});

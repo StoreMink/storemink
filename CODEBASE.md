@@ -2445,7 +2445,9 @@ wholesip/
 │   │   ├── storefront-theme.css
 │   │   ├── (pages)/           # Customer-facing pages:
 │   │   │   ├── shop/          #   product listing + [slug] product detail (reviews, related);
-│   │   │   │                  #   shop-filter-controls.tsx = the filter groups (sidebar + drawer)
+│   │   │   │                  #   shop-filter-controls.tsx = the filter groups (sidebar, drawer,
+│   │   │   │                  #   and ShopFilterBar's top-bar popovers); the product and collection
+│   │   │   │                  #   pages compose from lib/themes/templates.ts (§11, Phase 2e)
 │   │   │   │                  #   shop-view.ts (shared loader) + shop-filter-panel.tsx
 │   │   │   ├── collections/[slug]/ # ★ a category's own page (1.8); /shop?category= 308s here
 │   │   │   ├── cart/          #   cart page (CartProvider-driven)
@@ -4296,7 +4298,9 @@ wholesip/
 │                              # `set constraints all deferred` in its transaction;
 │                              # everywhere else the checks stay immediate, so deleting
 │                              # ONE ordered product is still refused (verified both
-│                              # ways against a copy of production). Next free: 0174.
+│                              # ways against a copy of production). 0175 edits the
+│                              # branding guide's layout step in place for the page
+│                              # templates (plan Phase 2e). Next free: 0176.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -6429,6 +6433,67 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     the two headers and the split carousel. Of the plan's 2d list, that
     leaves nothing open: collage is the tile grid's collage layout,
     text-only is a minimal hero without media, video is `hero.video_url`.
+    **Phase 2e, first slice (2026-10-09; prompt v32).** The product and
+    collection pages are composed from a template (`lib/themes/templates.ts`),
+    the way Shopify's are, instead of two hard-coded compositions.
+    `ThemeTemplates` is an optional `preset.templates` field (no schema
+    bump; the `people` precedent): `product` is a gallery shape
+    (`thumbs-bottom`, `thumbs-left`, `stacked`, `carousel`, `grid`) and the
+    ordered blocks of the information column — `price`, `variant_picker`,
+    `buy_box`, `description`, `delivery_estimate`, `share`, a `trust_row` of
+    icon-and-label items, an `accordion` of heading-and-body rows,
+    `rich_text` — plus `reviews` and `recommendations` under the grid and
+    `sticky_bar` for the phone's sticky add-to-cart; `collection` is where
+    the filters live (`sidebar`, `drawer`, or `top-bar`: a row of filter
+    popovers above the grid), how the grid pages (`load-more`, `paged`,
+    `infinite`) and up to four promotional tiles placed after the Nth card.
+    `defaultTemplates(layout)` is today's pages exactly (the sticky bar iff
+    `layout.stickyAddToCart`), so a theme without the field and a store
+    without an override render byte for byte as before; `normalizeTemplates`
+    keeps order, drops unknown or empty blocks, dedupes (the first wins),
+    appends the two required commerce blocks and bounds every list, and
+    `templateIssues` is the contract's strict report of what normalising
+    would change. ★ Merchant overrides ride in
+    `StorefrontAppearance.templates` (`"theme"` or a complete template per
+    page, the other layout fields' pattern; a row saved before the key
+    inherits), resolved by the three-argument `resolveStorefrontAppearance`
+    into `ResolvedStorefrontAppearance.templates`, and `stickyAddToCart` is
+    now derived from the blocks.
+    `product-detail-client.tsx` renders the information column from
+    `splitProductBlocks` (the title area stays fixed), the page blocks in
+    order, and the sticky bar only when the template carries it; the grocery
+    layout honours the page blocks, the gallery shape and the sticky bar.
+    ★ The page sanitises a `rich_text` block on the server before the
+    template reaches the client bundle (sanitize-html is not a browser-sized
+    dependency). `ProductGallery` takes `mode`, a class the CSS reads: the
+    two thumbnail shapes keep thumbnails, the three that show every photo
+    have none, and under 860px every shape is the phone strip. A fourth
+    `productDetail` layout, `stacked` (`sm-pdp-stacked`: the gallery above a
+    centred information column), joined the list. `shop-client.tsx` takes
+    `collectionTemplate`: `ShopFilterBar` is the top-bar (closed `<details>`
+    popovers that close each other, on a press outside and on Escape; the
+    Filter button's drawer serves under 1024px), numbered pages show one page
+    (`pageNumbers` windows the control to seven slots, and a page past the
+    end shows the last), the infinite reveal watches a sentinel under the
+    grid with Load more kept beneath it for keyboards and browsers without
+    `IntersectionObserver`, and a promo tile lands on whichever page holds
+    its Nth card. Builder: the Brand row gains **Product page** (gallery,
+    the block list with per-type fields, starting from a copy of the theme's
+    template) and **Collection page** (filters, paging, promotional tiles
+    with a picture) groups; the preview shows them after a reload. Theme
+    Studio: feature `templates` (v32). Stage B writes a top-level
+    `templates` object (every block with every field, a closed schema) the
+    compiler normalises into `preset.templates`, the Stage B layout enum
+    admits `stacked`, and `stageBSchemaFor`'s sixth flag gives every earlier
+    revision a twin without either; Stage A text does not move. The renderer
+    check loads shop.css for its product and collection fixtures (the five
+    gallery shapes at five widths, the stacked layout, the filter bar's
+    popover floating over the grid, the tile, the page buttons; 1,128 cases
+    pass). Help: `20261009_0175_page_templates_help` replaces the branding
+    guide's layout step in place. Not yet run against live Gemini. Not in
+    this slice: blog and account templates, cart templates (the cart stays a
+    layout variant), and theme-authored tile pictures (a tile's picture is
+    the merchant's; a Studio tile is a colour field).
     **The first live v26 run found four renderer defects, all shared chrome
     (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
     before artwork as `renderer_fix_required`, so every image stayed a
@@ -7161,7 +7226,8 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         `minimal`, `transparent`, `hamburger`, `stacked` and `utility`; cards
         support `classic`,
         `quick_add`, `overlay`, `framed`, `grocery`, `centered`, `soft` and
-        `wide`; product detail supports `classic`, `grocery`, and `editorial`;
+        `wide`; product detail supports `classic`, `grocery`, `editorial` and
+        `stacked` (plan Phase 2e, 2026-10-09);
         cart supports `classic`, `grocery`, and `compact`; footer supports `rich`,
         `minimal`, `editorial`, `centered` and `compact` (the last two of each
         list landed with plan Phase 2d, 2026-10-09, §11 below).

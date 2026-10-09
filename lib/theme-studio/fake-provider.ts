@@ -227,6 +227,57 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
     // The studio preset is Inter + Fraunces, which is the editorial pairing;
     // v25 drafts name the pairing they chose.
     fontPairing: pairingForFonts(fonts),
+    // v32: the page templates (plan Phase 2e), every block with every field.
+    templates: {
+      product: {
+        gallery: "thumbs-left",
+        blocks: [
+          { type: "price", items: [], rows: [], html: "" },
+          { type: "variant_picker", items: [], rows: [], html: "" },
+          { type: "buy_box", items: [], rows: [], html: "" },
+          {
+            type: "trust_row",
+            items: [
+              { icon: "truck", label: "Free delivery over ₹999" },
+              { icon: "refresh", label: "Easy 14-day returns" },
+            ],
+            rows: [],
+            html: "",
+          },
+          { type: "description", items: [], rows: [], html: "" },
+          {
+            type: "accordion",
+            items: [],
+            rows: [
+              { heading: "Care", body: "Wipe clean with a soft cloth." },
+              {
+                heading: "Shipping",
+                body: "Dispatched within two working days.",
+              },
+            ],
+            html: "",
+          },
+          { type: "reviews", items: [], rows: [], html: "" },
+          { type: "recommendations", items: [], rows: [], html: "" },
+          { type: "sticky_bar", items: [], rows: [], html: "" },
+        ],
+      },
+      collection: {
+        filters: "top-bar",
+        pagination: "paged",
+        promoTiles: [
+          {
+            afterIndex: 4,
+            heading: "The everyday edit",
+            body: "Pieces made to be used daily.",
+            cta_label: "See the edit",
+            href: "/shop",
+            theme: "dark",
+            background: null,
+          },
+        ],
+      },
+    },
     brand: {
       primaryColor: palette.ink,
       tagline: `${name} everyday essentials`,
@@ -761,6 +812,14 @@ export function createFakeModelClient(
             section.style.width ??= "contained";
           }
       }
+      // A pre-v32 request's schema has no templates; the answer must not.
+      if (
+        !Object.hasOwn(
+          (request.schema?.properties ?? {}) as object,
+          "templates",
+        )
+      )
+        delete draft.templates;
       if (
         Object.hasOwn(
           (request.schema?.properties ?? {}) as object,

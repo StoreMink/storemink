@@ -13,6 +13,15 @@
 // ---------------------------------------------------------------------------
 
 import {
+  defaultTemplates,
+  hasProductBlock,
+  normalizeCollectionTemplate,
+  normalizeProductTemplate,
+  type CollectionTemplate,
+  type ProductTemplate,
+  type ThemeTemplates,
+} from "@/lib/themes/templates";
+import {
   EMPTY_DESIGN_OVERRIDES,
   validateStorefrontDesign,
   type StorefrontDesignOverrides,
@@ -69,7 +78,11 @@ export type CardVariant =
   | "centered"
   | "soft"
   | "wide";
-export type ProductDetailVariant = "classic" | "grocery" | "editorial";
+export type ProductDetailVariant =
+  | "classic"
+  | "grocery"
+  | "editorial"
+  | "stacked";
 export type CartVariant = "classic" | "grocery" | "compact";
 export type FooterVariant =
   | "rich"
@@ -95,6 +108,13 @@ export interface StorefrontAppearance {
   cardPhoto: CardPhoto;
   /** Merchant-only: one shop-grid card per product, or per colour. */
   productCards: ProductCards;
+  /** Page templates (plan Phase 2e): the product page's gallery and blocks
+   *  and the collection page's filters, paging and promo tiles. `theme`
+   *  inherits the pinned preset's (or the composition its layout implies). */
+  templates: {
+    product: "theme" | ProductTemplate;
+    collection: "theme" | CollectionTemplate;
+  };
 }
 
 export interface ResolvedStorefrontAppearance {
@@ -118,6 +138,8 @@ export interface ResolvedStorefrontAppearance {
   productDetail: ProductDetailVariant;
   cart: CartVariant;
   footer: FooterVariant;
+  /** The templates the pages render: the theme's, or the merchant's. */
+  templates: ThemeTemplates;
 }
 
 export interface FooterConfig {
@@ -177,6 +199,7 @@ export const DEFAULT_CHROME: StoreChrome = {
     footer: "theme",
     cardPhoto: "portrait",
     productCards: "product",
+    templates: { product: "theme", collection: "theme" },
   },
   header: {
     links: [
@@ -328,6 +351,7 @@ const PRODUCT_VARIANTS: ProductDetailVariant[] = [
   "classic",
   "grocery",
   "editorial",
+  "stacked",
 ];
 const CART_VARIANTS: CartVariant[] = ["classic", "grocery", "compact"];
 const FOOTER_VARIANTS: FooterVariant[] = [
@@ -358,6 +382,27 @@ function cleanAppearance(raw: unknown): StorefrontAppearance {
     // Absent on every row saved before this setting existed: portrait.
     cardPhoto: r.cardPhoto === "square" ? "square" : "portrait",
     productCards: r.productCards === "colour" ? "colour" : "product",
+    templates: cleanTemplateOverrides(r.templates),
+  };
+}
+
+/** A merchant's template overrides: "theme" (the default, and what every
+ *  row saved before templates existed reads as) or a complete template,
+ *  coerced the way the storefront will render it. */
+function cleanTemplateOverrides(
+  raw: unknown,
+): StorefrontAppearance["templates"] {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const neutral = defaultTemplates(undefined);
+  return {
+    product:
+      r.product && typeof r.product === "object"
+        ? normalizeProductTemplate(r.product, neutral.product)
+        : "theme",
+    collection:
+      r.collection && typeof r.collection === "object"
+        ? normalizeCollectionTemplate(r.collection, neutral.collection)
+        : "theme",
   };
 }
 
@@ -414,7 +459,17 @@ export function sanitizeChromeForSave(raw: unknown): StoreChrome {
 export function resolveStorefrontAppearance(
   theme: import("@/lib/themes/types").ThemeLayout | undefined,
   overrides: StorefrontAppearance = DEFAULT_CHROME.appearance,
+  /** The preset's own templates; absent = what its layout implies. */
+  themeTemplates?: ThemeTemplates,
 ): ResolvedStorefrontAppearance {
+  const base = themeTemplates ?? defaultTemplates(theme);
+  // Older callers (and rows saved before templates existed) carry no key.
+  const chosen = overrides.templates ?? DEFAULT_CHROME.appearance.templates;
+  const templates: ThemeTemplates = {
+    product: chosen.product === "theme" ? base.product : chosen.product,
+    collection:
+      chosen.collection === "theme" ? base.collection : chosen.collection,
+  };
   const legacyGrocery = theme?.storefront === "grocery";
   const themeCard = legacyGrocery ? "grocery" : (theme?.card ?? "classic");
   const overrideCard = overrides.card;
@@ -441,7 +496,9 @@ export function resolveStorefrontAppearance(
     cardPhoto: overrides.cardPhoto === "square" ? "square" : "portrait",
     productCards: overrides.productCards === "colour" ? "colour" : "product",
     cardHoverImage: theme?.cardHoverImage === true,
-    stickyAddToCart: theme?.stickyAddToCart === true,
+    // One truth: the phone sticky bar is a product-page block (the default
+    // blocks carry it exactly when the layout asked for it).
+    stickyAddToCart: hasProductBlock(templates.product, "sticky_bar"),
     gridColumnsMobile: theme?.gridColumnsMobile === 2 ? 2 : 1,
     gridColumnsDesktop:
       theme?.gridColumnsDesktop === 3 || theme?.gridColumnsDesktop === 5
@@ -463,5 +520,6 @@ export function resolveStorefrontAppearance(
       overrides.footer === "theme"
         ? (theme?.footer ?? "rich")
         : overrides.footer,
+    templates,
   };
 }

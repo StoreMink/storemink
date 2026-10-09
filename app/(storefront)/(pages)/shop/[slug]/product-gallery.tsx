@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { ChevronLeft, ChevronRight, ImageIcon, X } from "lucide-react";
+import type { ProductGalleryMode } from "@/lib/themes/templates";
 
 // ---------------------------------------------------------------------------
 // The product-page gallery and its full-screen viewer, shared by every PDP
@@ -23,6 +24,10 @@ import { ChevronLeft, ChevronRight, ImageIcon, X } from "lucide-react";
 //   changes is that a phone can now reach the other photos without aiming at
 //   a 72px thumbnail. The counter is the only new element, and only when
 //   there is more than one photo.
+// ★ FIVE SHAPES ON DESKTOP (plan Phase 2e, `mode`), all CSS over the same
+//   track: thumbnails under or beside the active photo, every photo stacked
+//   in a column, every photo in a two-up grid (the first full width), or the
+//   phone strip at every width. Phones keep the strip whatever the mode.
 // ---------------------------------------------------------------------------
 
 function prefersReducedMotion(): boolean {
@@ -88,6 +93,7 @@ export function ProductGallery({
   onActiveIndexChange,
   onZoom,
   classPrefix,
+  mode = "thumbs-bottom",
   sizes,
 }: {
   images: string[];
@@ -97,6 +103,8 @@ export function ProductGallery({
   onZoom: (index: number) => void;
   /** The layout's own class family, so each layout keeps its styling. */
   classPrefix: "pdp" | "gpdp";
+  /** The template's gallery shape; thumbnails under the photo by default. */
+  mode?: ProductGalleryMode;
   sizes: string;
 }) {
   const track = useRef<HTMLDivElement>(null);
@@ -122,8 +130,12 @@ export function ProductGallery({
     );
   }
 
+  // Thumbnails switch the active photo; the shapes that show every photo
+  // at once have nothing for them to switch.
+  const thumbs = mode === "thumbs-bottom" || mode === "thumbs-left";
+
   return (
-    <div className={`${p}-gallery sm-gallery`}>
+    <div className={`${p}-gallery sm-gallery mode-${mode}`}>
       <div className="sm-gallery-frame">
         <div
           ref={track}
@@ -167,7 +179,7 @@ export function ProductGallery({
           </span>
         )}
       </div>
-      {multi && (
+      {multi && thumbs && (
         <div className={`${p}-thumbs`}>
           {images.map((url, index) => (
             <button

@@ -1432,6 +1432,142 @@ describe("theme generation pipeline", () => {
     );
   });
 
+  // Plan Phase 2e: the page templates under v32; v31 text is unchanged, and
+  // Stage A does not move at all.
+  it("prints the v32 templates only under v32 and keeps v31 text byte for byte", async () => {
+    const {
+      stageASystemPrompt,
+      stageBSystemPrompt,
+      stageBInitialSystemPrompt,
+      stageBVarietySystemPrompt,
+    } = await import("./prompts");
+    const bullet = '- Templates: write a top-level "templates" object';
+    const v32 = stageBSystemPrompt(
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(v32).toContain(bullet);
+    expect(v32).toContain('"thumbs-left"');
+    expect(v32).toContain('"sticky_bar"');
+    expect(v32).toContain('"top-bar"');
+    expect(v32).toContain('productDetail may also be "stacked"');
+    const v31 = stageBSystemPrompt(true, true, true, true, true, true, true);
+    expect(v31).not.toContain(bullet);
+    expect(v31).toBe(
+      stageBSystemPrompt(true, true, true, true, true, true, true, false),
+    );
+    expect(v31).toContain("- More layouts: hero variants stacked");
+    // Stage A takes no templates flag and prints nothing of them.
+    expect(
+      stageASystemPrompt(true, true, true, true, true, true, true),
+    ).not.toContain("templates.product");
+    const first = await run();
+    if (first.kind !== "version") throw new Error("fixture failed");
+    expect(
+      stageBInitialSystemPrompt(
+        first.intent,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+      ),
+    ).toContain(bullet);
+    expect(
+      stageBInitialSystemPrompt(
+        first.intent,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+      ),
+    ).not.toContain(bullet);
+    const variety32 = stageBVarietySystemPrompt(
+      first.intent,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety32).toContain(bullet);
+    const variety31 = stageBVarietySystemPrompt(
+      first.intent,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety31).not.toContain(bullet);
+    expect(variety31).toBe(
+      stageBVarietySystemPrompt(
+        first.intent,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+      ),
+    );
+    // The fixture runs under prompt v1, so its version carries no templates;
+    // a run under the current version does, completed and bounded by the
+    // renderer's normaliser (the closed schema's empty carriers gone), and
+    // the contract's strict report has nothing to say about them.
+    expect(first.package.definition.preset.templates).toBeUndefined();
+    const { templateIssues } = await import("@/lib/themes/templates");
+    const { THEME_STUDIO_PROMPT_VERSION } = await import("./prompt-features");
+    const current = await runThemeGeneration(
+      createFakeModelClient(base),
+      { ...input(), promptVersion: THEME_STUDIO_PROMPT_VERSION },
+      new AbortController().signal,
+    );
+    if (current.kind !== "version") throw new Error("fixture failed");
+    const templates = current.package.definition.preset.templates;
+    expect(templates?.product.gallery).toBe("thumbs-left");
+    expect(templates?.product.blocks.map((b) => b.type)).toEqual([
+      "price",
+      "variant_picker",
+      "buy_box",
+      "trust_row",
+      "description",
+      "accordion",
+      "reviews",
+      "recommendations",
+      "sticky_bar",
+    ]);
+    expect(templates?.product.blocks[0]).toEqual({ type: "price" });
+    expect(templates?.collection).toMatchObject({
+      filters: "top-bar",
+      pagination: "paged",
+    });
+    expect(templates?.collection.promoTiles[0]).toMatchObject({
+      afterIndex: 4,
+      heading: "The everyday edit",
+      href: "/shop",
+      background: "",
+    });
+    expect(templateIssues(templates)).toEqual([]);
+  });
+
   // Plan Phase 2c, first slice: five more sections under v30; v29 text is
   // unchanged.
   it("prints the v30 sections only under v30 and keeps v29 text byte for byte", async () => {
