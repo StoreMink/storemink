@@ -1252,6 +1252,30 @@ describe("theme generation pipeline", () => {
     expect(VISIBLE_SECTION_CHOICES.hero.variant).toContain("fullbleed");
     expect(VISIBLE_SECTION_CHOICES.hero.variant).toContain("stacked");
     expect(VISIBLE_SECTION_CHOICES.hero.variant).toContain("offset");
+    // v32 (plan Phase 2c's collection list): the third category display
+    // prints only from v32; earlier twins keep the two they were written
+    // with, and the hero list they had.
+    expect(VISIBLE_SECTION_CHOICES.shop_by_category.display).toEqual([
+      "circles",
+      "cards",
+      "list",
+    ]);
+    expect(
+      visibleSectionChoices(true, true, false).shop_by_category.display,
+    ).toEqual(["circles", "cards"]);
+    expect(visibleSectionChoices(true, true, false).hero.variant).toEqual(
+      VISIBLE_SECTION_CHOICES.hero.variant,
+    );
+    expect(visibleSectionChoices(true, true).shop_by_category.display).toEqual([
+      "circles",
+      "cards",
+      "list",
+    ]);
+    expect(visibleSectionChoices(false, false, false).hero.variant).toEqual([
+      "banner",
+      "split",
+      "minimal",
+    ]);
     const first = await run();
     if (first.kind !== "version") throw new Error("fixture failed");
     const v25 = stageBVarietySystemPrompt(first.intent, true, true, false);
@@ -1331,6 +1355,26 @@ describe("theme generation pipeline", () => {
       '"style":"CHOOSE ONE: [\\"table\\",\\"cards\\"]"',
     );
     expect(variety).toContain('"open_first":"CHOOSE ONE: [true,false]"');
+    // The v31 variety prompt prints two category displays, the v32 one
+    // three (plan Phase 2c's collection list).
+    expect(variety).toContain(
+      '"display":"CHOOSE ONE: [\\"circles\\",\\"cards\\"]"',
+    );
+    expect(
+      stageBVarietySystemPrompt(
+        first.intent,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+      ),
+    ).toContain(
+      '"display":"CHOOSE ONE: [\\"circles\\",\\"cards\\",\\"list\\"]"',
+    );
     expect(
       stageBVarietySystemPrompt(first.intent, true, true, true, true),
     ).not.toContain("\ncomparison:");
@@ -1457,8 +1501,13 @@ describe("theme generation pipeline", () => {
     expect(v32).toContain('"sticky_bar"');
     expect(v32).toContain('"top-bar"');
     expect(v32).toContain('productDetail may also be "stacked"');
+    expect(v32).toContain(
+      '- Announcement bar: write a top-level "announcement" object',
+    );
+    expect(v32).toContain('shop_by_category display may also be "list"');
     const v31 = stageBSystemPrompt(true, true, true, true, true, true, true);
     expect(v31).not.toContain(bullet);
+    expect(v31).not.toContain("Announcement bar");
     expect(v31).toBe(
       stageBSystemPrompt(true, true, true, true, true, true, true, false),
     );
@@ -1533,6 +1582,7 @@ describe("theme generation pipeline", () => {
     // renderer's normaliser (the closed schema's empty carriers gone), and
     // the contract's strict report has nothing to say about them.
     expect(first.package.definition.preset.templates).toBeUndefined();
+    expect(first.package.definition.preset.announcement).toBeUndefined();
     const { templateIssues } = await import("@/lib/themes/templates");
     const { THEME_STUDIO_PROMPT_VERSION } = await import("./prompt-features");
     const current = await runThemeGeneration(
@@ -1543,6 +1593,11 @@ describe("theme generation pipeline", () => {
     if (current.kind !== "version") throw new Error("fixture failed");
     const templates = current.package.definition.preset.templates;
     expect(templates?.product.gallery).toBe("thumbs-left");
+    // The announcement bar the draft wrote, normalised and contract-clean.
+    expect(current.package.definition.preset.announcement).toEqual({
+      text: "Free delivery on orders over ₹999, easy 14-day returns",
+      href: "/shop",
+    });
     expect(templates?.product.blocks.map((b) => b.type)).toEqual([
       "price",
       "variant_picker",

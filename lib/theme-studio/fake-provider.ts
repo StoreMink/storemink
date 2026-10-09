@@ -290,6 +290,11 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
       blog: { index: "featured", article: "sidebar" },
       account: { layout: "tabs", scheme: "soft" },
     },
+    // v32: the announcement bar above the header.
+    announcement: {
+      text: "Free delivery on orders over ₹999, easy 14-day returns",
+      href: "/shop",
+    },
     brand: {
       primaryColor: palette.ink,
       tagline: `${name} everyday essentials`,
@@ -824,14 +829,17 @@ export function createFakeModelClient(
             section.style.width ??= "contained";
           }
       }
-      // A pre-v32 request's schema has no templates; the answer must not.
+      // A pre-v32 request's schema has no templates and no announcement;
+      // the answer must not.
       if (
         !Object.hasOwn(
           (request.schema?.properties ?? {}) as object,
           "templates",
         )
-      )
+      ) {
         delete draft.templates;
+        delete draft.announcement;
+      }
       if (
         Object.hasOwn(
           (request.schema?.properties ?? {}) as object,

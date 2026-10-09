@@ -1,4 +1,5 @@
 import { templateIssues } from "@/lib/themes/templates";
+import { announcementIssues } from "@/lib/themes/announcement";
 import { THEME_RELEASE_OBJECT_ROOT } from "@/lib/storage/paths";
 import {
   HOMEPAGE_SECTION_TYPES,
@@ -353,32 +354,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-/** Key-order-independent JSON serialization. PostgreSQL `jsonb` stores object
- * keys sorted by length then bytes, so a package read back from the registry
- * never has the key order it was written with. Every structural comparison in
- * this module — and the registry's content digest — must go through this, or a
- * valid stored package is rejected purely for having been stored. Undefined
- * members are dropped exactly as JSON.stringify drops them. */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null";
-  }
-  if (Array.isArray(value)) {
-    return `[${value
-      .map((item) => (item === undefined ? "null" : canonicalJson(item)))
-      .join(",")}]`;
-  }
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .filter((key) => record[key] !== undefined)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    .join(",")}}`;
-}
-
-function sameJson(a: unknown, b: unknown): boolean {
-  return canonicalJson(a) === canonicalJson(b);
-}
+/** Key-order independent JSON (lib/themes/canonical-json.ts): jsonb reorders
+ * keys, so every comparison and digest over a stored package goes through it.
+ * Re-exported here because the registry, the Studio and Mink import it from
+ * the contract. */
+import { canonicalJson, sameJson } from "@/lib/themes/canonical-json";
+export { canonicalJson, sameJson };
 
 function rejectUnknownKeys(
   value: Record<string, unknown>,
@@ -1244,7 +1225,15 @@ function validateThemeDefinition(
     issues.push("definition.preset must be an object.");
   rejectUnknownKeys(
     preset,
-    ["brand", "design", "pages", "menus", "sampleData", "templates"],
+    [
+      "brand",
+      "design",
+      "pages",
+      "menus",
+      "sampleData",
+      "templates",
+      "announcement",
+    ],
     "definition.preset",
     issues,
   );
@@ -1252,6 +1241,9 @@ function validateThemeDefinition(
   // the way in, so a draft is repaired rather than silently trimmed).
   if (preset.templates !== undefined)
     issues.push(...templateIssues(preset.templates));
+  // The announcement bar (plan Phase 2c): optional, judged as written.
+  if (preset.announcement !== undefined)
+    issues.push(...announcementIssues(preset.announcement));
   const brand = isRecord(preset.brand) ? preset.brand : {};
   if (!isRecord(preset.brand))
     issues.push("definition.preset.brand must be an object.");

@@ -37,6 +37,7 @@ import {
 import type { ThemeStudioModelKey } from "./models";
 import { validateSectionStyle } from "@/lib/homepage/section-types";
 import { defaultTemplates, normalizeTemplates } from "@/lib/themes/templates";
+import { normalizeAnnouncement } from "@/lib/themes/announcement";
 import {
   isSectionScheme,
   SCHEMELESS_SECTION_TYPES,
@@ -47,12 +48,12 @@ import {
 import { PALETTE_KEYS, THEME_STUDIO_SECTION_TYPES } from "./schemas";
 import { resolveOptionRows, type ProductOption } from "@/lib/products/options";
 import {
-  validateThemeDesign,
   validateThemeHomepage,
   validateThemeLinks,
   validateThemePages,
   validateThemeSampleData,
   validateThemeCopy,
+  validateStudioDesign,
 } from "@/lib/themes/validation";
 
 // ---------------------------------------------------------------------------
@@ -848,6 +849,12 @@ export function prepareDraft(
   links.forEach((link, i) => {
     if (isRec(link)) checkLink(text(link.href), `menus link ${i + 1}`, issues);
   });
+  // v32: the announcement bar's link, held to the same rule as a menu link;
+  // its text is bounded by the renderer's normaliser at assembly.
+  if (isRec(draftInput.announcement)) {
+    const href = text(draftInput.announcement.href);
+    if (href) checkLink(href, "announcement.href", issues);
+  }
 
   return {
     parts: { draft: draftInput, design, pages, catalogue, productSlots },
@@ -971,6 +978,10 @@ export function assemblePackage(
             ),
           }
         : {}),
+      // v32: the announcement bar, or nothing when the draft wrote text "".
+      ...(normalizeAnnouncement(draft.announcement)
+        ? { announcement: normalizeAnnouncement(draft.announcement) }
+        : {}),
     },
   };
 
@@ -1013,7 +1024,7 @@ export function contentFloorIssues(pkg: ThemePackageV2): string[] {
     ...validateThemeHomepage(theme),
     ...validateThemeSampleData(theme),
     ...validateThemeLinks(theme),
-    ...validateThemeDesign(theme),
+    ...validateStudioDesign(theme),
     ...validateThemeCopy(theme),
   ].map((finding) => finding.message);
 }

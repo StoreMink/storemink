@@ -119,6 +119,47 @@ describe("normalizeChrome", () => {
   });
 });
 
+describe("the announcement bar", () => {
+  it("reads as enabled and empty on a row saved before the field, so the theme's bar shows", () => {
+    const c = normalizeChrome({ header: { showSearch: true } });
+    expect(c.header.announcement).toEqual({
+      enabled: true,
+      text: "",
+      href: "",
+    });
+  });
+
+  it("keeps an explicit off, bounds the text and holds the link to a site path", () => {
+    const c = normalizeChrome({
+      header: {
+        announcement: {
+          enabled: false,
+          text: `  ${"x".repeat(200)}  `,
+          href: "javascript:alert(1)",
+        },
+      },
+    });
+    expect(c.header.announcement.enabled).toBe(false);
+    expect(c.header.announcement.text).toHaveLength(160);
+    expect(c.header.announcement.href).toBe("");
+    expect(
+      normalizeChrome({
+        header: { announcement: { text: "Sale", href: " /collections/sale " } },
+      }).header.announcement,
+    ).toEqual({ enabled: true, text: "Sale", href: "/collections/sale" });
+    expect(
+      normalizeChrome({
+        header: { announcement: { href: "https://example.com" } },
+      }).header.announcement.href,
+    ).toBe("");
+    expect(
+      sanitizeChromeForSave({
+        header: { announcement: { enabled: true, text: "Hi", href: "//x" } },
+      }).header.announcement,
+    ).toEqual({ enabled: true, text: "Hi", href: "" });
+  });
+});
+
 describe("resolveStorefrontAppearance", () => {
   it("uses modern theme defaults while separating quick-add from card shape", () => {
     expect(

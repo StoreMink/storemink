@@ -205,10 +205,23 @@ function fixtures() {
       label: `countdown/${align}`,
       html: `<div class="home-countdown align-${align}"><p class="home-section-eyebrow">Limited release</p><h2 class="home-countdown-heading">${heading}</h2><p class="home-countdown-sub">${copy}</p><div class="home-countdown-tiles" role="timer">${["days", "hours", "minutes", "seconds"].map((unit) => `<div class="home-countdown-tile"><span class="home-countdown-value">12</span><span class="home-countdown-unit">${unit}</span></div>`).join("")}</div><a class="home-countdown-cta sm-btn-primary" href="/shop">Shop the drop</a></div>`,
     });
-  out.push({
-    label: "tiles/collage",
-    html: `<div class="home-tile-grid cols-4 size-md layout-collage">${["2x2", "", "", "2x1", "1x2", "", ""].map((span) => `<a href="/shop" class="home-tile theme-dark${span ? ` span-${span}` : ""}"><span class="home-tile-copy"><span class="home-tile-title">Everyday essentials</span><span class="home-tile-sub">${copy}</span></span></a>`).join("")}</div>`,
-  });
+  // The collection list (plan Phase 2c): each category a row with its
+  // picture, name and description, one link end to end; two columns from
+  // tablet width when the section's layout is grid.
+  for (const twoUp of [false, true])
+    out.push({
+      label: `categories/list${twoUp ? "/two-up" : ""}`,
+      html: `<div class="home-section-head"><h2 class="home-section-title">Shop by department</h2></div><ul class="home-cat-list${twoUp ? " is-two-up" : ""}">${["Fruits & Vegetables", "Staples", "Dairy & Eggs", "Snacks & Beverages", "Household"].map((name) => `<li class="home-cat-row"><a href="/collections/x" class="home-cat-row-link"><span class="home-cat-row-media">${fill("home-cat-img-el", "square")}</span><span class="home-cat-row-copy"><span class="home-cat-row-name">${name}</span><span class="home-cat-row-desc">${copy}</span></span><span class="home-cat-row-arrow" aria-hidden="true">→</span></a></li>`).join("")}</ul>`,
+    });
+  // Every collage cell carries a picture: a 2×1 or 1×2 span is a 2:1 band or
+  // a 1:2 column of the cell, so a square or 4:3 photograph keeps at least
+  // 35% of itself at every width (the bold-and-loud exemplar's 2×1 kept 17%
+  // under a fixed row height, 2026-10-10).
+  for (const ratio of ["square", "landscape"])
+    out.push({
+      label: `tiles/collage/${ratio}`,
+      html: `<div class="home-tile-grid cols-4 size-md layout-collage">${["2x2", "", "", "2x1", "1x2", "", ""].map((span) => `<a href="/shop" class="home-tile theme-dark${span ? ` span-${span}` : ""}">${fill("home-tile-img", ratio)}<span class="home-tile-copy"><span class="home-tile-title">Everyday essentials</span><span class="home-tile-sub">${copy}</span></span></a>`).join("")}</div>`,
+    });
   out.push({
     label: "faq/long-text",
     html: `<div class="home-faq-filters"><button class="home-faq-pill active">Delivery and returns</button><button class="home-faq-pill">Care and materials</button></div><div class="home-faq-list"><div class="home-faq-item open"><button class="home-faq-q">How do you select and care for thoughtfully crafted natural materials?</button><p class="home-faq-a">${copy.repeat(3)}</p></div></div>`,
@@ -905,7 +918,7 @@ try {
         `<details class="shop-filter-group"><summary><span>${title}</span></summary><div class="shop-filter-group-body"><ul class="shop-filter-list">${["Small", "Medium", "Large"].map((v) => `<li><label class="shop-filter-check"><input type="checkbox"><span>${v}</span><span class="shop-filter-muted">(3)</span></label></li>`).join("")}</ul></div></details>`;
       await page.setContent(
         documentHtmlShop(
-          `<div class="shop-listing"><div class="shop-layout"><div class="shop-results"><div class="shop-topbar-filters"><div class="shop-facets">${["Availability", "Size", "Colour", "Price"].map(group).join("")}</div></div><div class="shop-grid">${card(1)}${card(2)}<a class="shop-promo-tile theme-dark" href="/collections/summer" style="background:#2a211f"><div class="shop-promo-tile-copy"><h2>${heading}</h2><p>${copy}</p><span class="shop-promo-tile-cta">See the edit</span></div></a>${card(3)}${card(4)}${card(5)}</div><nav class="shop-pages" aria-label="Pages"><p class="shop-pages-count">Showing 1–24 of 160 products</p><button disabled>Previous</button><button aria-current="page" aria-label="Page 1">1</button><button aria-label="Page 2">2</button><button aria-label="Page 3">3</button><button aria-label="Page 4">4</button><span class="shop-pages-gap" aria-hidden="true">…</span><button aria-label="Page 7">7</button><button>Next</button></nav></div></div></div>`,
+          `<div class="shop-listing"><div class="shop-layout"><div class="shop-results"><div class="shop-topbar-filters"><div class="shop-facets">${["Availability", "Size", "Colour", "Price"].map(group).join("")}</div></div><div class="shop-grid">${card(1)}${card(2)}<a class="shop-promo-tile theme-light" href="/collections/summer" style="background:#2a211f"><div class="shop-promo-tile-copy"><h2>${heading}</h2><p>${copy}</p><span class="shop-promo-tile-cta">See the edit</span></div></a>${card(3)}${card(4)}${card(5)}</div><nav class="shop-pages" aria-label="Pages"><p class="shop-pages-count">Showing 1–24 of 160 products</p><button disabled>Previous</button><button aria-current="page" aria-label="Page 1">1</button><button aria-label="Page 2">2</button><button aria-label="Page 3">3</button><button aria-label="Page 4">4</button><span class="shop-pages-gap" aria-hidden="true">…</span><button aria-label="Page 7">7</button><button>Next</button></nav></div></div></div>`,
         ),
       );
       const measured = await measureNative(page);

@@ -105,8 +105,11 @@ export interface ShopByCategoryConfig {
   /** Horizontal scroll carousel (the default) vs wrapped grid. */
   layout: "grid" | "scroll";
   /** Tile shape: circular image chips (the historical look — absent on
-   *  pre-existing rows = "circles") or rounded-rect image cards. */
-  display?: "circles" | "cards";
+   *  pre-existing rows = "circles"), rounded-rect image cards, or a list
+   *  of rows with each category's description beside its picture (plan
+   *  Phase 2c: the collection list, for a store whose categories each need
+   *  a sentence — services, ranges, ingredients). */
+  display?: "circles" | "cards" | "list";
 }
 
 export type BannerAlignment = "left" | "center" | "right";
@@ -1099,7 +1102,7 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
     description: "Tiles linking to your categories.",
     icon: "categories",
     category: "commerce",
-    keywords: ["collections", "browse", "circles", "departments"],
+    keywords: ["collections", "browse", "circles", "departments", "list"],
   },
   promo_banner: {
     label: "Promo Banner",
@@ -2102,7 +2105,12 @@ export function validateConfig(
       source,
       category_ids: source === "selected" ? strArray(input.category_ids) : [],
       layout: input.layout === "grid" ? "grid" : "scroll",
-      display: input.display === "cards" ? "cards" : "circles",
+      display:
+        input.display === "cards"
+          ? "cards"
+          : input.display === "list"
+            ? "list"
+            : "circles",
     };
     return { config };
   }

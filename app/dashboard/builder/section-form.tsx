@@ -3813,6 +3813,7 @@ function CategoryFields({
         >
           <option value="circles">Circles</option>
           <option value="cards">Rounded cards</option>
+          <option value="list">List with descriptions</option>
         </select>
       </div>
 

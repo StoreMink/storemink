@@ -43,6 +43,11 @@ function hex(seed: string): string {
 
 function fixture(): { pkg: ThemePackageV2; rows: AcceptanceAssetRow[] } {
   let theme: ThemeDefinition = structuredClone(THEME_DEFINITIONS[0]);
+  // The Studio's package gate holds button labels to 4.5:1 on the accent
+  // (validateStudioDesign); Basket's white on #ef5a2a is 3.41:1, which a
+  // bundled theme may ship and a candidate may not.
+  theme.preset.brand.primaryColor = "#c2410c";
+  theme.preset.design.palette.accent = "#c2410c";
   const urls = [...collectThemeImageUrls(theme)];
   const slotFor = new Map(urls.map((url, i) => [url, `slot-${i}`]));
   const rewrite = (value: unknown): unknown => {

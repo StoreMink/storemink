@@ -31,6 +31,7 @@ import {
   type StorefrontDesignOverrides,
 } from "./design";
 import { cleanNavLinks, cleanNavTree, type NavLink } from "./nav";
+import { announcementHref } from "@/lib/themes/announcement";
 
 /** A header link may nest (children, grandchildren, a mega-menu image); a
  * footer link never does. See lib/chrome/nav.ts. */
@@ -51,6 +52,20 @@ export interface HeaderConfig {
   showCart: boolean;
   /** Keep the bar pinned when the visitor scrolls. */
   sticky: boolean;
+  /** The announcement bar: one line of copy above the header, the way
+   *  Shopify themes carry a delivery promise or a sale. Enabled with empty
+   *  text shows the pinned theme's announcement, when the theme has one
+   *  (lib/themes/announcement.ts); text here is the merchant's own; disabled
+   *  shows none. Every row saved before the field existed reads as enabled
+   *  and empty, so a store inherits its theme's bar rather than losing it. */
+  announcement: AnnouncementConfig;
+}
+
+export interface AnnouncementConfig {
+  enabled: boolean;
+  text: string;
+  /** "" or a site path the bar links to. */
+  href: string;
 }
 
 export interface FooterBlockToggle {
@@ -222,6 +237,7 @@ export const DEFAULT_CHROME: StoreChrome = {
     showAccount: true,
     showCart: true,
     sticky: true,
+    announcement: { enabled: true, text: "", href: "" },
   },
   footer: {
     groups: [
@@ -300,6 +316,21 @@ function cleanHeader(raw: unknown, d: HeaderConfig): HeaderConfig {
     showAccount: bool(r.showAccount, d.showAccount),
     showCart: bool(r.showCart, d.showCart),
     sticky: bool(r.sticky, d.sticky),
+    announcement: cleanAnnouncement(r.announcement, d.announcement),
+  };
+}
+
+/** The bar's copy is bounded like a footer line and its link is held to the
+ *  same site-path rule a theme link is (never a script, never off-site). */
+function cleanAnnouncement(
+  raw: unknown,
+  d: AnnouncementConfig,
+): AnnouncementConfig {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    enabled: bool(r.enabled, d.enabled),
+    text: str(r.text, MAX_TEXT),
+    href: announcementHref(r.href),
   };
 }
 

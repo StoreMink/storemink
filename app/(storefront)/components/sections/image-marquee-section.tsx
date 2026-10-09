@@ -14,13 +14,18 @@ import { SectionShell } from "./section-shell";
 function Frame({
   item,
   ratio,
+  hidden,
   children,
 }: {
   item: MarqueeImage;
   ratio: ImageMarqueeConfig["image_ratio"];
+  /** The looping copy is aria-hidden, so its links must leave the tab order
+   *  too (axe: aria-hidden-focus); a shopper tabs through each picture once. */
+  hidden?: boolean;
   children: React.ReactNode;
 }) {
   const className = `home-marquee-item ratio-${ratio}`;
+  const tabIndex = hidden ? -1 : undefined;
   if (item.href && /^https?:\/\//i.test(item.href)) {
     return (
       <a
@@ -28,6 +33,7 @@ function Frame({
         href={item.href}
         target="_blank"
         rel="noopener noreferrer"
+        tabIndex={tabIndex}
       >
         {children}
       </a>
@@ -35,7 +41,7 @@ function Frame({
   }
   if (item.href) {
     return (
-      <Link className={className} href={item.href}>
+      <Link className={className} href={item.href} tabIndex={tabIndex}>
         {children}
       </Link>
     );
@@ -63,7 +69,12 @@ export function ImageMarqueeSection({
   const seq = (ariaHidden?: boolean) => (
     <div className="home-marquee-seq" aria-hidden={ariaHidden || undefined}>
       {sequence.map((item, i) => (
-        <Frame item={item} ratio={config.image_ratio} key={i}>
+        <Frame
+          item={item}
+          ratio={config.image_ratio}
+          hidden={ariaHidden}
+          key={i}
+        >
           <Image
             src={item.image_url}
             alt={ariaHidden ? "" : item.image_alt}

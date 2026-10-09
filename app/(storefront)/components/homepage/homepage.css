@@ -41,14 +41,16 @@
   .home-sections:has(
     > .home-section:first-child > :is(.home-hero, .home-carousel)
   ) {
-  padding-top: 0;
+  /* The announcement bar is opaque, so the picture starts under it, not
+     behind it (0 when there is no bar). */
+  padding-top: var(--sm-announce-h, 0px);
 }
 .storefront-root.sm-header-transparent
   .home-sections
   > .home-section:first-child
   > :is(.home-hero, .home-carousel).height-screen {
-  min-height: 100vh;
-  min-height: 100svh;
+  min-height: calc(100vh - var(--sm-announce-h, 0px));
+  min-height: calc(100svh - var(--sm-announce-h, 0px));
 }
 
 .home-section {
@@ -974,7 +976,11 @@
   padding: 6px 14px;
   border-radius: var(--sm-radius-pill, 999px);
   background: var(--sm-surface);
-  color: var(--sm-accent, var(--brand-primary));
+  /* Ink, not the accent: at 13.6px the badge is small text and the design
+     contract holds the accent to 3:1 as a button fill, never 4.5:1 as copy
+     (the playful exemplar's #d6451d read 4.0:1, 2026-10-10). Ink on the
+     surface is a 4.5:1 pair the contract guarantees. */
+  color: var(--sm-ink);
   font-weight: 700;
   font-size: 0.85rem;
   box-shadow: 0 4px 14px rgba(var(--sm-shadow-rgb), 0.1);
@@ -1614,6 +1620,100 @@ a.home-tile:hover {
 .home-cat-scroll.is-cards .home-cat-img {
   border-radius: var(--sm-radius-card, 16px);
   aspect-ratio: 4 / 3;
+}
+
+/* ---- Shop by category — "list" display (plan Phase 2c) ----
+   Each category a row: a square picture, the name, its description and an
+   arrow, the whole row one link. One column; two from tablet width when the
+   section's layout is grid. Inside a scheme band the row takes the band's
+   card surface and text, which the scheme contract holds to 4.5:1, so the
+   description stays legible on a dark band. */
+.home-cat-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+@media (min-width: 768px) {
+  .home-cat-list.is-two-up {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+.home-cat-row {
+  min-width: 0;
+}
+.home-cat-row-link {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 88px;
+  padding: 12px;
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius-card, 16px);
+  background: var(--sm-surface);
+  color: var(--sm-ink);
+  text-decoration: none;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.home-cat-row-link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(var(--sm-shadow-rgb), 0.12);
+}
+.home-cat-row-media {
+  position: relative;
+  display: block;
+  width: 88px;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--sm-radius-sm, 10px);
+  overflow: hidden;
+  background: var(--sm-cream-deep);
+}
+.home-cat-row-media .home-cat-img-placeholder {
+  color: var(--sm-ink-soft);
+  font-size: 1.4rem;
+}
+.home-cat-row-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.home-cat-row-name {
+  font-family: var(--font-outfit), sans-serif;
+  font-weight: 600;
+  font-size: 1.02rem;
+  line-height: 1.3;
+  color: var(--sm-ink);
+}
+.home-cat-row-desc {
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--sm-ink-soft);
+}
+.home-cat-row-arrow {
+  color: var(--sm-ink-soft);
+  font-size: 1.1rem;
+  padding-right: 4px;
+  transition: transform 0.18s ease;
+}
+.home-cat-row-link:hover .home-cat-row-arrow {
+  transform: translateX(3px);
+}
+@media (max-width: 480px) {
+  .home-cat-row-link {
+    grid-template-columns: 72px minmax(0, 1fr) auto;
+    gap: 12px;
+    min-height: 80px;
+  }
+  .home-cat-row-media {
+    width: 72px;
+  }
 }
 
 /* ---- Phase 3 editorial sections ---- */
@@ -2417,23 +2517,32 @@ a.home-gallery-card:hover .home-gallery-image {
 
 /* ---- Tile grid: collage layout ----
    Tiles may span cells; dense packing fills the holes a 2×2 leaves. Each
-   span class carries the grid's two classes so it outranks the even grid. */
+   span class carries the grid's two classes so it outranks the even grid.
+   A cell is a SQUARE of the column width, so a 2×1 is a 2:1 band, a 1×2 a
+   1:2 column and a 2×2 a larger square, whatever the viewport: with the
+   fixed row height this had (120–170px), a 2×1 spanning both columns of a
+   tablet grid was a 736×120 letterbox that kept 17% of a square photograph
+   (the bold-and-loud exemplar, 2026-10-10), and no picture survives that. */
 .home-tile-grid.layout-collage {
   grid-auto-flow: dense;
-  grid-auto-rows: minmax(clamp(120px, 14vw, 170px), auto);
+  grid-auto-rows: auto;
 }
 .home-tile-grid.layout-collage .home-tile {
   min-height: 0;
+  aspect-ratio: 1 / 1;
 }
 .home-tile-grid.layout-collage .home-tile.span-2x1 {
   grid-column: span 2;
+  aspect-ratio: 2 / 1;
 }
 .home-tile-grid.layout-collage .home-tile.span-1x2 {
   grid-row: span 2;
+  aspect-ratio: 1 / 2;
 }
 .home-tile-grid.layout-collage .home-tile.span-2x2 {
   grid-column: span 2;
   grid-row: span 2;
+  aspect-ratio: 1 / 1;
 }
 
 /* ---- Multi-column (multicolumn-section.tsx) ---- */
@@ -3075,10 +3184,14 @@ a.home-gallery-card:hover .home-gallery-image {
   .home-tile-grid.layout-collage .home-tile.span-2x2,
   .home-tile-grid.layout-collage .home-tile.span-1x2 {
     grid-row: span 1;
+    /* One row each on a phone: a 1×2 is a square beside its neighbour and
+       a 2×2 a full-width 2:1 band, never a 1:2 tower stretching the row. */
+    aspect-ratio: 1 / 1;
   }
   .home-tile-grid.layout-collage .home-tile.span-2x2,
   .home-tile-grid.layout-collage .home-tile.span-2x1 {
     grid-column: span 2;
+    aspect-ratio: 2 / 1;
   }
 }
 

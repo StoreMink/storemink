@@ -12,7 +12,7 @@ import { buttonIssues, buttonsDrawColourAsText } from "./buttons";
 import { motionIssues } from "./motion";
 import { pageIssues } from "./page";
 import { typographyIssues } from "./typography";
-import { heroContrastIssues } from "./hero-contrast";
+import { heroContrastIssues, promoTileContrastIssues } from "./hero-contrast";
 import { normalizeMenus } from "@/lib/menus";
 import { flattenNav } from "@/lib/chrome/nav";
 import { STORE_POLICY_SLUGS } from "@/lib/legal/store-policies";
@@ -197,6 +197,9 @@ export function collectThemeHrefs(theme: ThemeDefinition): string[] {
     for (const link of group.links) hrefs.push(link.href);
   }
   for (const link of footerLegal) hrefs.push(link.href);
+  // The announcement bar is a link on every page when it carries one.
+  if (theme.preset.announcement?.href)
+    hrefs.push(theme.preset.announcement.href);
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) {
       for (const item of value) visit(item);
@@ -778,6 +781,8 @@ export function validateThemeDesign(theme: ThemeDefinition): ThemeFinding[] {
     out.push(finding("design", code, message));
   for (const message of heroContrastIssues(theme))
     issue("hero_contrast", message);
+  for (const message of promoTileContrastIssues(theme))
+    issue("promo_tile_contrast", message);
   const palette = design.palette as unknown as Record<string, unknown>;
   for (const key of REQUIRED_PALETTE_KEYS) {
     const value = palette[key];
@@ -1087,4 +1092,62 @@ export function validateThemeImage(
     }
   }
   return issues;
+}
+
+/** The Studio's design floor: everything `validateThemeDesign` holds, plus
+ *  button LABELS at text contrast. The shared contract holds on-accent to
+ *  3:1 on the accent, the non-text floor for a button's fill, and bundled
+ *  themes were published against it; but the storefront's button labels are
+ *  13–16px at normal or medium weight, which axe judges as small text at
+ *  4.5:1, so a candidate whose on-accent reads at 3–4.5:1 fails the browser
+ *  stage on every page that has a solid button (the playful exemplar's
+ *  white on #d6451d, 4.44:1, 2026-10-10). Compile-time for Studio output
+ *  and the acceptance package gate only; a bundled theme is never judged by
+ *  it. The brand colour is checked too, because the storefront paints the
+ *  accent from the store's brand primary, which a seeded store copies from
+ *  the preset. */
+export function validateStudioDesign(theme: ThemeDefinition): ThemeFinding[] {
+  const out = validateThemeDesign(theme);
+  const design = theme.preset.design;
+  const palette = design.palette as unknown as Record<string, unknown>;
+  const hex = (value: unknown): string | null =>
+    typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value)
+      ? value.toLowerCase()
+      : null;
+  const onAccent = hex(palette.onAccent);
+  const fields: [string, unknown][] = [
+    ["design.palette.accent", design.palette.accent],
+    ["brand.primaryColor", theme.preset.brand.primaryColor],
+  ];
+  const seen = new Set<string>();
+  for (const [name, value] of fields) {
+    const field = hex(value);
+    if (!onAccent || !field || seen.has(field)) continue;
+    seen.add(field);
+    const ratio = contrastRatio(onAccent, field);
+    if (ratio < THEME_TEXT_CONTRAST)
+      out.push(
+        finding(
+          "design",
+          "button_label_contrast",
+          `Button labels (onAccent ${onAccent}) on ${name} ${field} read at ${ratio.toFixed(2)}:1; a label is small text and needs ${THEME_TEXT_CONTRAST}:1, which the browser stage measures on every solid button. Deepen the accent or change onAccent.`,
+        ),
+      );
+  }
+  for (const [id, raw] of Object.entries(design.schemes ?? {})) {
+    const scheme = raw as Record<string, unknown> | null;
+    const accent = hex(scheme?.accent);
+    const label = hex(scheme?.onAccent);
+    if (!accent || !label) continue;
+    const ratio = contrastRatio(label, accent);
+    if (ratio < THEME_TEXT_CONTRAST)
+      out.push(
+        finding(
+          "design",
+          "button_label_contrast",
+          `schemes.${id}: button labels (onAccent ${label}) on its accent ${accent} read at ${ratio.toFixed(2)}:1; needs ${THEME_TEXT_CONTRAST}:1.`,
+        ),
+      );
+  }
+  return out;
 }

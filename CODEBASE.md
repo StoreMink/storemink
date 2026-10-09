@@ -4302,7 +4302,8 @@ wholesip/
 │                              # ONE ordered product is still refused (verified both
 │                              # ways against a copy of production). 0175 edits the
 │                              # branding guide's layout step in place for the page
-│                              # templates (plan Phase 2e). Next free: 0176.
+│                              # templates (plan Phase 2e) and the navigation guide's
+│                              # header step for the announcement bar. Next free: 0176.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -4473,6 +4474,14 @@ wholesip/
 │   ├── storefront-header-layout-check.mjs # Offline header/ticker clearance: four header
 │   │                          # variants, portrait/landscape, server/measured heights and
 │   │                          # both CSS load orders; local Chrome, no network or DB.
+│   ├── theme-studio-exemplar-check.ts # ★ The seven exemplar themes (lib/themes/
+│   │                          # exemplars/) through the acceptance gates without a
+│   │                          # Studio project: the real package gates over a slot-form
+│   │                          # package with a digested manifest (no DB, no network);
+│   │                          # --seed --origin=<local server> --browser adds the route,
+│   │                          # link and markup gates and the probe's deterministic rules
+│   │                          # in local Chrome (theme-studio-exemplar-probe.js is the
+│   │                          # in-page half). Plan Phase 2 exit evidence; §11.
 │   ├── theme-studio-model-check.mjs # ★ Manual ADC/Vertex availability probe for
 │   │                          # the two Theme Studio Gemini models. --dry-run makes no
 │   │                          # request; a live probe sends one FREE countTokens call per
@@ -5234,9 +5243,19 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `lib/themes/runtime-registry.ts` validates every JSON package and SHA-256
     digest before use and resolves an exact installed database version first.
     ★★ Contract comparisons and the digest are KEY-ORDER INDEPENDENT
-    (`canonicalJson` in `lib/theme-studio/contracts.ts`): `jsonb` returns keys
-    sorted by length then bytes, so a `JSON.stringify` comparison rejected
-    every stored package and the registry silently served only bundled themes.
+    (`canonicalJson` in `lib/themes/canonical-json.ts`, dependency-free so
+    the theme contracts share it without a cycle; the Studio contract
+    re-exports it): `jsonb` returns keys sorted by length then bytes, so a
+    `JSON.stringify` comparison rejected every stored package and the
+    registry silently served only bundled themes. ⚠ It happened AGAIN in
+    Phase 2e (2026-10-10): `templateIssues` compared a product block and a
+    promo tile to their normalised form with `JSON.stringify`, so any package
+    carrying `preset.templates` validated when written and was refused by
+    `parseRelease` on the way back out, and the store rendered un-themed with
+    nothing logged. Found by the exemplar seed, the first thing to store a
+    templated package; `exemplars.test.ts` now validates every exemplar's
+    package through a jsonb-shaped key re-order, which is the one check that
+    reaches every contract rule over the whole Phase 2 vocabulary.
     ★ Two resolvers: `resolveInstalledThemeDefinition` (render/design reads)
     returns NULL for an id in neither the registry nor this build, so a retired
     `template` value renders un-themed rather than as Basket;
@@ -6529,6 +6548,130 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     scheme, the size guide; 1,168 cases pass) grew with it. Out of 2e by
     the plan's own decision: cart templates (the cart stays a layout
     variant); the fingerprint axes for templates are Phase 3.
+    **Phase 2 closed offline (same day; still prompt v32, extended in place
+    because no run has used it).** The two 2c candidates still open landed.
+    (1) The **announcement bar**: one line above the header, the way Shopify
+    themes carry a delivery promise. `preset.announcement {text, href?}` is
+    an optional preset field (`lib/themes/announcement.ts`, judged by the
+    contract as written, its link held to the menu-link rule by
+    `validateThemeLinks`), and the merchant owns the bar from the Header row
+    (`HeaderConfig.announcement {enabled, text, href}`: enabled and empty
+    inherits the theme's, the layout composing it with
+    `withThemeAnnouncement` beside the newsletter merge; text of their own
+    wins; off is off; every row saved before the field reads as enabled and
+    empty). It renders INSIDE the fixed header
+    (`header/announcement-bar.tsx`), in a transparent top border the root's
+    `sm-announce` class gives the bar (the header's own padding is set
+    differently by every variant and never enters into it), so the measured
+    `--sm-header-h` includes it with no second measurement; the server
+    fallbacks add `--sm-announce-h` (36px, one line, ellipsised) and the
+    transparent header's hero-led page starts under it. Stage B writes a
+    top-level `announcement` object under v32 (the compiler checks its link
+    and drops an empty one; the pre-v32 twin loses it with `templates`), and
+    the header check gained 96 announcement cases (1,056 pass). (2) The
+    **collection list**: `shop_by_category.display: "list"`, each category
+    a row with its picture, name and description, one link end to end
+    (`CategoryTile.description`; `home-cat-list`, two columns from tablet
+    width under the grid layout); the third option in the builder's tile
+    shape, printed by the Stage B choices only from v32
+    (`visibleSectionChoices`' third flag). **And the Phase 2 exit evidence:
+    seven hand-authored exemplar themes, one per design direction**
+    (`lib/themes/exemplars/`, never bundled or selectable, hidden drafts
+    that borrow the bundled themes' photography and catalogues through
+    symbolic-link folders `public/themes/exemplar-*` → the bundled set, see
+    `public/themes/README.md`; the contract holds a theme's assets to its
+    own folder), each written with the whole vocabulary — stories, typed
+    accordion and comparison rows, every 2c section, the collage, the
+    list, the new heroes, the split carousel, all seven headers, six cards,
+    five footers, every gallery shape, filter placement and paging, the size
+    guide, every blog and account layout, the announcement bar — and every
+    section's band stated. `exemplars.test.ts` holds them to the content
+    floors, the Studio copy floors, the contract, the v27 opening rule, the
+    visible-choice vocabulary and a coverage map of that list.
+    `npm run theme-studio:exemplars` (`scripts/theme-studio-exemplar-check.ts`)
+    runs the real package gates over each one in the Studio's own form
+    (every picture a `theme-asset://` slot backed by a declared asset with
+    the file's digest and dimensions: 6/6 gates pass for all seven), and
+    with `--seed --origin=<local server> --browser` seeds them as demo
+    stores, runs the route, link and markup gates over the preview pages,
+    and in local Chrome at the five widths runs the probe's deterministic
+    rules (overflow, tap targets, image crops, broken images, axe WCAG 2.1
+    A/AA with contrast) on every page and the header's chrome states on the
+    home page. ★★ `--seed` ALSO STORES EACH EXEMPLAR IN THE LOCAL RUNTIME
+    REGISTRY, because the storefront renders an installed theme from the
+    registry (exact id and version), else a bundled definition, else nothing:
+    a store pinned to a definition that is neither renders UN-THEMED, and the
+    first browser run measured the bare storefront on every page (header
+    `classic`, no `sm-themed-type`) before anyone noticed. Only a published
+    row renders, so the seed stores a published copy with NO catalog pointer
+    (never the public catalogue or signup) under a patch version derived
+    from the package's content digest, since release rows are immutable and
+    an edited exemplar must become a new row rather than a stale one; the
+    in-repo definitions stay hidden drafts. A running dev server caches store
+    rows for 300s, so the route stage runs after a restart. ⚠ A mirror of
+    the probe, not the probe: LCP/CLS and the clipped-text scan need a
+    Studio preview store and are reported skipped; the deployed acceptance
+    run per exemplar and a live v32 batch are what remain, and both need a
+    deploy. Help: the pending migration 0175 also replaces the navigation
+    guide's header step in place for the bar.
+    **The exemplar browser run found nine shared-renderer defects and two
+    probe faults (2026-10-10), none of them a theme setting.** Over seven
+    themes, six pages and five widths: (1) the transparent header's
+    light-tone rule (`:has()` carries its argument's specificity) outranked
+    the drawer's page-ink rule, so on a dark palette the open menu's brand
+    name was on-ink on the drawer surface, 1.07:1; the rule now excludes
+    `.mobileDrawer *` and the contrast script renders a transparent header
+    over a `theme-light` opening with the drawer open. (2) The collage's
+    fixed row height (120–170px) made a 2×1 span a 736×120 letterbox at
+    tablet width, keeping 17% of a square photograph; collage cells are now
+    squares of the column width (`aspect-ratio`, 2:1 and 1:2 for the spans,
+    squares again on phones), and the renderer check's collage fixtures
+    carry square and 4:3 pictures for the crop rule. (3) The collection
+    page's promotional tile read `theme` as the FIELD ("dark" = ink field,
+    light copy), the opposite of the prompt, the builder and every other
+    tile, hero and slide, where it is the COPY's colour; so a tile authored
+    as dark copy on a pale field rendered pale on pale (1.1:1). shop.css
+    follows the copy now (the default field is the surface under dark copy,
+    the ink colour under light), the v32 bullet says so, and
+    `promoTileContrastIssues` (`hero-contrast.ts`, run by
+    `validateThemeDesign` as `promo_tile_contrast`) holds a solid tile's
+    heading to 3:1 and its body and link to 4.5:1 at compile time, which
+    caught the playful exemplar's 3.5:1 body in the same hour. (4) The
+    variant list's struck-through price and (5) the product page's category
+    eyebrow and (6) the hero's badge drew ink-faint or the ACCENT as small
+    text (2.9:1 and 4.0:1); readable labels use ink or ink-soft, the rule
+    the card's MRP and the delivery trigger already follow, because the
+    design contract holds the accent to 3:1 as a fill, never 4.5:1 as copy.
+    (7) The phone gallery's "2 / 5" counter was a pill tinted with the
+    theme's shadow RGB, which on a sage palette blended to 2.9:1 under its
+    white count; it is a black wash now. (8) The image marquee's and logo
+    strip's aria-hidden looping copies held focusable links (axe
+    `aria-hidden-focus`), so the clones' links carry `tabIndex={-1}`. (9) The
+    account menu's "Login/Sign Up" subtitle used ink-faint at 11.5px
+    (2.96:1); ink-soft, the sign-in dialog's rule. The two probe faults: the
+    rectangle scan counted the off-canvas drawer's descendants as page
+    overflow (any element inside a `position: fixed` ancestor is exempt
+    now, matching the probe), and the link crawl treated a dev server
+    dropping a socket mid-compile as a dead link (three retries on a refused
+    or reset connection). The route stage also showed every page of the
+    first run UN-THEMED before the registry seeding above existed. The
+    re-run under the fixes found two more: (10) every solid button on the
+    playful exemplar read 4.44:1 (white on #d6451d), which the shared design
+    contract ALLOWS, since it holds on-accent to the 3:1 non-text floor of a
+    button's fill, while axe judges the 13–16px label as small text; bundled
+    themes were published against the looser floor (Basket's white on
+    #ef5a2a is 3.41:1), so the stricter one is Studio-only:
+    `validateStudioDesign` (`validation.ts`) adds `button_label_contrast`,
+    4.5:1 for on-accent on the accent, on the brand colour and on each
+    declared scheme's accent, and both the compiler's content floors and the
+    acceptance `package.design` gate run it (the Studio test fixtures carry
+    a deeper brand colour for that reason); a candidate with a 3–4.5:1
+    accent is repaired at compile time instead of failing the browser stage
+    on every page. (11) A finding that was not one: the script measured
+    under `reducedMotion: "no-preference"`, so axe sampled a carousel's
+    second slide mid-fade and reported its CTA in blended colours
+    (4.33:1 where the settled button is 5.7:1); the script measures under
+    reduced motion now, as the capture job does.
     **The first live v26 run found four renderer defects, all shared chrome
     (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
     before artwork as `renderer_fix_required`, so every image stayed a

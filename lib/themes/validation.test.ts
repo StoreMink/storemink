@@ -16,6 +16,7 @@ import {
   validateThemeLinks,
   validateThemePages,
   validateThemeSampleData,
+  validateStudioDesign,
 } from "./validation";
 
 // The bundled themes are the positive cases (themes.test.ts asserts each
@@ -155,6 +156,15 @@ describe("theme validation", () => {
     } as never);
     expect(collectThemeHrefs(theme)).toContain("/shop/ghost");
     expect(codes(validateThemeLinks(theme))).toEqual(["product"]);
+  });
+
+  it("links: the announcement bar's link is checked like a menu link", () => {
+    const theme = clone();
+    theme.preset.announcement = { text: "Sale on now", href: "/shop/ghost" };
+    expect(collectThemeHrefs(theme)).toContain("/shop/ghost");
+    expect(codes(validateThemeLinks(theme))).toEqual(["product"]);
+    theme.preset.announcement = { text: "Sale on now" };
+    expect(codes(validateThemeLinks(theme))).toEqual([]);
   });
 
   it("links: a nested header link is checked, a heading without one is not", () => {
@@ -557,5 +567,39 @@ describe("theme copy floors", () => {
     expect(codes(found)).toEqual(["image_alt", "image_alt"]);
     expect(found[0].message).toContain("(before_after)");
     expect(found[1].message).toContain("(image_hotspots)");
+  });
+});
+
+// The Studio's stricter design floor (2026-10-10): a button label is small
+// text, so on-accent must read on the accent at 4.5:1, where the shared
+// contract (and the bundled themes) stop at the 3:1 fill floor.
+describe("validateStudioDesign", () => {
+  const codes = (theme: ThemeDefinition) =>
+    validateStudioDesign(theme).map((f) => `${f.code}: ${f.message}`);
+  it("refuses a brand colour whose label reads at 3:1 and accepts a deeper one", () => {
+    const theme = structuredClone(THEME_DEFINITIONS[0]);
+    expect(validateThemeDesign(theme)).toEqual([]);
+    const issues = codes(theme);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("button_label_contrast");
+    expect(issues[0]).toContain("brand.primaryColor #ef5a2a read at 3.41:1");
+    theme.preset.brand.primaryColor = "#c2410c";
+    expect(codes(theme)).toEqual([]);
+  });
+  it("judges a declared scheme's own accent pair the same way", () => {
+    const theme = structuredClone(THEME_DEFINITIONS[0]);
+    theme.preset.brand.primaryColor = "#c2410c";
+    theme.preset.design.schemes = {
+      accent: {
+        background: "#1f2937",
+        text: "#ffffff",
+        accent: "#ef5a2a",
+        onAccent: "#ffffff",
+      },
+    };
+    const issues = codes(theme);
+    expect(
+      issues.some((i) => i.includes("schemes.accent: button labels")),
+    ).toBe(true);
   });
 });

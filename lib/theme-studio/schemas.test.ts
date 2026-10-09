@@ -417,8 +417,18 @@ describe("the v32 templates in the Stage B schemas", () => {
       expect(stageBSchemaFor(schema, true, true, true, true, false)).toBe(v31);
       expect(v31.properties.templates).toBeUndefined();
       expect(v31.required).not.toContain("templates");
+      // The announcement bar (plan Phase 2c's last chrome candidate) rides
+      // the same flag: a closed {text, href} object at the top level.
+      expect(current.required).toContain("announcement");
+      expect(Object.keys(current.properties.announcement.properties!)).toEqual([
+        "text",
+        "href",
+      ]);
+      expect(v31.properties.announcement).toBeUndefined();
       expect(v31.required).toEqual(
-        current.required.filter((key) => key !== "templates"),
+        current.required.filter(
+          (key) => key !== "templates" && key !== "announcement",
+        ),
       );
       const legacyLists = productDetailEnums(v31);
       expect(legacyLists).toHaveLength(productDetailEnums(schema).length);

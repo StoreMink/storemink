@@ -34,7 +34,9 @@ export const VISIBLE_SECTION_CHOICES: Readonly<
     limit: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
   },
   shop_by_category: {
-    display: ["circles", "cards"],
+    // "list" (plan Phase 2c's collection list, each category a row with its
+    // description) prints from v32; the compiler accepts it at every version.
+    display: ["circles", "cards", "list"],
     layout: ["scroll", "grid"],
   },
   promo_banner: {
@@ -74,20 +76,37 @@ export const VISIBLE_SECTION_CHOICES: Readonly<
   rich_text: { width: ["contained", "full"] },
 };
 
+/** The two category displays prompts before v32 were written with. */
+export const LEGACY_CATEGORY_DISPLAYS = ["circles", "cards"] as const;
+
 /** The choices a Stage B prompt prints. Pre-v26 requests keep the three hero
  * variants they were written with, byte for byte, and v26 to v30 requests the
- * four; the compiler accepts the full list at every version, since a stored
- * answer never names a variant its prompt did not offer. */
+ * four; pre-v32 requests keep the two category displays. The compiler
+ * accepts the full lists at every version, since a stored answer never names
+ * a value its prompt did not offer. */
 export function visibleSectionChoices(
   fullBleedOpening: boolean,
   moreVariants = true,
+  templates = true,
 ): typeof VISIBLE_SECTION_CHOICES {
-  if (fullBleedOpening && moreVariants) return VISIBLE_SECTION_CHOICES;
+  if (fullBleedOpening && moreVariants && templates)
+    return VISIBLE_SECTION_CHOICES;
   return {
     ...VISIBLE_SECTION_CHOICES,
     hero: {
       ...VISIBLE_SECTION_CHOICES.hero,
-      variant: fullBleedOpening ? V26_HERO_VARIANTS : LEGACY_HERO_VARIANTS,
+      variant:
+        fullBleedOpening && moreVariants
+          ? VISIBLE_SECTION_CHOICES.hero.variant
+          : fullBleedOpening
+            ? V26_HERO_VARIANTS
+            : LEGACY_HERO_VARIANTS,
+    },
+    shop_by_category: {
+      ...VISIBLE_SECTION_CHOICES.shop_by_category,
+      display: templates
+        ? VISIBLE_SECTION_CHOICES.shop_by_category.display
+        : LEGACY_CATEGORY_DISPLAYS,
     },
   };
 }

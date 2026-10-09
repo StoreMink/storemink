@@ -107,6 +107,37 @@
 > Gemini; the 2e exit's hand-authored exemplar per direction is folded into
 > the Phase 2 exit. Out of 2e by decision: cart templates (the cart stays a
 > layout variant); the fingerprint axes for templates are Phase 3.
+> **Phase 2 closed offline (same day; v32 extended in place, unused by any
+> run).** The two 2c candidates left open landed: the announcement bar
+> (header chrome, `preset.announcement` + `HeaderConfig.announcement`,
+> rendered in the fixed header's top border so the reserved height includes
+> it) and the collection list (`shop_by_category.display: "list"`, rows with
+> descriptions). The exit evidence exists: seven hand-authored exemplar
+> themes, one per design direction (`lib/themes/exemplars/`, hidden drafts
+> borrowing the bundled themes' photography through linked folders), each
+> using every vocabulary item 2a–2e added, held by `exemplars.test.ts` to
+> the content floors, copy floors, contract, opening rule and visible-choice
+> vocabulary, and by `npm run theme-studio:exemplars` to the real package
+> gates (6/6 pass for all seven) and, against a local server, to the route,
+> link and markup gates and the probe's deterministic browser rules at the
+> five widths (see CODEBASE §11 for what that run found). Seeding them as
+> stores found a Phase 2e defect before any browser ran: `templateIssues`
+> compared with `JSON.stringify`, so a stored package with `templates` was
+> refused by the registry's parse and rendered un-themed; the comparison is
+> key-order independent now (`lib/themes/canonical-json.ts`) and every
+> exemplar's package is validated through a jsonb-shaped re-order. The
+> browser run itself found nine shared-renderer defects, none a theme
+> setting (CODEBASE §11 lists them: the transparent header's tone rule
+> reaching the drawer, the collage's fixed row height, the promotional
+> tile's inverted `theme`, four small-text labels on faint or accent
+> colours, two aria-hidden clones with focusable links), and one gap in
+> the contract: the 3:1 on-accent floor lets a candidate through whose
+> every button label fails axe at 4.5:1, so the Studio now holds
+> `button_label_contrast` at compile time and in the package gate. Still open, and
+> needing a deploy: the deployed acceptance run per exemplar (LCP/CLS, the
+> probe's clipped-text scan, the chrome states through the real probe) and
+> one live Gemini batch under v32, which is also where the 2a–2e prompt
+> bullets get their first live reading.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

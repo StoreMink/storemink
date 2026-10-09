@@ -465,6 +465,50 @@ export function HeaderForm({
         />
       </Group>
 
+      <Group
+        title="Announcement bar"
+        hint="One line above the header on every page: a delivery promise, a sale, a season's opening line. Leave the text empty to show your theme's own announcement, when it has one."
+      >
+        <Toggle
+          label="Show the announcement bar"
+          checked={h.announcement.enabled}
+          onChange={(enabled) =>
+            patch({ announcement: { ...h.announcement, enabled } })
+          }
+        />
+        {h.announcement.enabled && (
+          <>
+            <label className="sm-b-field">
+              <span>Text</span>
+              <input
+                className="sm-b-input"
+                value={h.announcement.text}
+                maxLength={160}
+                placeholder="Free delivery on orders over ₹999"
+                onChange={(e) =>
+                  patch({
+                    announcement: { ...h.announcement, text: e.target.value },
+                  })
+                }
+              />
+            </label>
+            <label className="sm-b-field">
+              <span>Link (optional)</span>
+              <input
+                className="sm-b-input"
+                value={h.announcement.href}
+                placeholder="/collections/sale"
+                onChange={(e) =>
+                  patch({
+                    announcement: { ...h.announcement, href: e.target.value },
+                  })
+                }
+              />
+            </label>
+          </>
+        )}
+      </Group>
+
       <Group title="Logo" defaultOpen={false}>
         <p className="sm-b-hint">
           Your logo and store name come from your brand, so they stay the same

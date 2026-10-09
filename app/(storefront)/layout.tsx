@@ -47,6 +47,10 @@ import { SESSION_COOKIE } from "@/lib/auth/constants";
 import { STOREMINK_ICONS } from "@/lib/brand-assets";
 import { buttonRootClasses } from "@/lib/themes/buttons";
 import { withThemeNewsletter } from "@/lib/themes/footer";
+import {
+  activeAnnouncement,
+  withThemeAnnouncement,
+} from "@/lib/themes/announcement";
 import { pageRootClasses } from "@/lib/themes/page";
 import { motionRootClasses, revealsOnScroll } from "@/lib/themes/motion";
 import { ScrollReveal } from "@/app/(storefront)/components/scroll-reveal";
@@ -175,7 +179,10 @@ export default async function StorefrontLayout({
   const themeSelection = readThemeSelection(store.settings);
   const theme = await resolveInstalledThemeDefinition(themeSelection);
   const design = theme?.preset.design ?? null;
-  const chrome = withThemeNewsletter(draftChrome ?? publishedChrome, theme);
+  const chrome = withThemeAnnouncement(
+    withThemeNewsletter(draftChrome ?? publishedChrome, theme),
+    theme,
+  );
   // ★★ THE PRESET'S OWN MAP, KEPT SEPARATE FROM THE MERGED ONE. The inline
   // style below wants the merchant's overrides ON TOP; ChromeProvider wants
   // the map WITHOUT them, because its job when an override is CLEARED in the
@@ -247,6 +254,11 @@ export default async function StorefrontLayout({
     `sm-pdp-${appearance.productDetail}`,
     `sm-cart-${appearance.cart}`,
     `sm-footer-${appearance.footer}`,
+    // The announcement bar above the header: the class is what the server
+    // paints the bar's height into --sm-announce-h with before the header
+    // hook measures (storefront-theme.css); the bar itself keeps it live in
+    // the builder (header/announcement-bar.jsx).
+    activeAnnouncement(chrome) ? "sm-announce" : "",
     appearance.card === "grocery" ||
     appearance.productDetail === "grocery" ||
     appearance.cart === "grocery"

@@ -1217,6 +1217,22 @@ describe("validateConfig", () => {
       const config = (out as { config: ShopByCategoryConfig }).config;
       expect(config.layout).toBe("grid");
     });
+
+    // Plan Phase 2c: the collection list (each category a row with its
+    // description) is the third display; anything else reads as circles.
+    it("keeps the list display and reads an unknown display as circles", () => {
+      const display = (value: unknown) =>
+        (
+          validateConfig("shop_by_category", {
+            source: "all",
+            display: value,
+          }) as { config: ShopByCategoryConfig }
+        ).config.display;
+      expect(display("list")).toBe("list");
+      expect(display("cards")).toBe("cards");
+      expect(display("tiles")).toBe("circles");
+      expect(display(undefined)).toBe("circles");
+    });
   });
 
   // --- latest_blogs --------------------------------------------------------

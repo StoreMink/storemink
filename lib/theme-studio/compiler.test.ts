@@ -273,14 +273,28 @@ describe("page templates in the offline draft (prompt v32)", () => {
       product: { gallery: "thumbs-left" },
       collection: { filters: "top-bar", pagination: "paged" },
     });
+    // The announcement bar rides the same flag.
+    expect(v32.announcement).toEqual({
+      text: "Free delivery on orders over ₹999, easy 14-day returns",
+      href: "/shop",
+    });
     const v31 = await draftFor(
       stageBSchemaFor(STAGE_B_DRAFT_SCHEMA, true, true, true, true, false),
     );
     expect(v31.templates).toBeUndefined();
+    expect(v31.announcement).toBeUndefined();
     // The draft still prepares the same way either side of the flag.
     const intent = runFakeProvider(input);
     if (!intent.ok) throw new Error("fake intent failed");
     expect(prepareDraft(v32, intent.value as ThemeIntent).issues).toEqual([]);
     expect(prepareDraft(v31, intent.value as ThemeIntent).issues).toEqual([]);
+    // An off-site announcement link is a repair issue, like a menu link.
+    const offsite = {
+      ...v32,
+      announcement: { text: "Sale on now", href: "https://example.com" },
+    };
+    expect(prepareDraft(offsite, intent.value as ThemeIntent).issues).toEqual([
+      'announcement.href must be a site path starting with "/".',
+    ]);
   });
 });

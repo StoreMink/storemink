@@ -13,12 +13,17 @@ import { SectionShell } from "./section-shell";
 
 function Mark({
   item,
+  hidden,
   children,
 }: {
   item: LogoItem;
+  /** The drifting copy is aria-hidden, so its links leave the tab order too
+   *  (axe: aria-hidden-focus); a shopper tabs through each mark once. */
+  hidden?: boolean;
   children: React.ReactNode;
 }) {
   const className = "home-logo";
+  const tabIndex = hidden ? -1 : undefined;
   if (item.href && /^https?:\/\//i.test(item.href)) {
     return (
       <a
@@ -26,6 +31,7 @@ function Mark({
         href={item.href}
         target="_blank"
         rel="noopener noreferrer"
+        tabIndex={tabIndex}
       >
         {children}
       </a>
@@ -33,7 +39,7 @@ function Mark({
   }
   if (item.href) {
     return (
-      <Link className={className} href={item.href}>
+      <Link className={className} href={item.href} tabIndex={tabIndex}>
         {children}
       </Link>
     );
@@ -55,7 +61,7 @@ export function LogoStripSection({
 
   const marks = (ariaHidden?: boolean) =>
     items.map((item, i) => (
-      <Mark item={item} key={i}>
+      <Mark item={item} hidden={ariaHidden} key={i}>
         <Image
           src={item.image_url}
           alt={ariaHidden ? "" : item.image_alt}

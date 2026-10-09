@@ -740,7 +740,10 @@
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--shop-accent);
+  /* A readable eyebrow label uses a text token, never the accent: the accent
+     is held to 3:1 as a fill, and at 12px this needs 4.5:1 (the playful
+     exemplar's accent read 4.0:1 on its cream, 2026-10-10). */
+  color: var(--shop-text-muted);
   font-weight: 600;
   margin-bottom: 10px;
 }
@@ -890,7 +893,10 @@
 .pdp-variant-was {
   font-size: 12px;
   font-weight: 500;
-  color: var(--shop-text-faint);
+  /* Readable copy, so ink-soft (held to 4.5:1 on the surface by the design
+     contract), never ink-faint: at 12px on the magazine exemplar's surface
+     it measured 2.9:1 (2026-10-10). The card's struck-through MRP rule. */
+  color: var(--shop-text-muted);
   text-decoration: line-through;
 }
 
@@ -1314,7 +1320,11 @@
     bottom: 12px;
     padding: 4px 10px;
     border-radius: 999px;
-    background: rgba(var(--sm-shadow-rgb), 0.62);
+    /* A black wash, not the theme's shadow tint: on a sage palette the
+       tinted pill blended to #717a71 under the white count (2.9:1, the
+       soft-and-natural exemplar, 2026-10-10). Black at this opacity over a
+       white photo is 6:1 and darker over any other. */
+    background: rgba(0, 0, 0, 0.62);
     color: #ffffff;
     font-size: 12px;
     font-weight: 600;
@@ -1407,7 +1417,7 @@
     bottom: 12px;
     padding: 4px 10px;
     border-radius: 999px;
-    background: rgba(var(--sm-shadow-rgb), 0.62);
+    background: rgba(0, 0, 0, 0.62);
     color: #ffffff;
     font-size: 12px;
     font-weight: 600;
@@ -1526,6 +1536,13 @@
   height: 1px;
 }
 
+/* A tile's `theme` is the COPY's colour, as it is on every other tile, hero
+   and slide: "dark" is the page ink, "light" the on-ink. The default field
+   follows the copy (the surface under dark copy, the ink colour under light),
+   and a `background` hex replaces the field, never the copy. Until 2026-10-10
+   this read "dark" as a dark FIELD with light copy, the opposite of the
+   prompt's and the builder's words, so a tile authored as dark copy on a
+   pale field rendered pale on pale (1.1:1, the magazine exemplar). */
 .shop-promo-tile {
   position: relative;
   display: flex;
@@ -1536,32 +1553,34 @@
   padding: 22px;
   overflow: hidden;
   border-radius: var(--sm-radius-card);
-  background: var(--sm-ink);
-  color: var(--sm-on-ink);
+  background: var(--sm-surface);
+  color: var(--sm-ink);
   text-decoration: none;
 }
 .shop-promo-tile.theme-light {
-  background: var(--sm-surface);
-  color: var(--sm-ink);
+  background: var(--sm-ink);
+  color: var(--sm-on-ink);
 }
 .shop-promo-tile-img {
   object-fit: cover;
 }
+/* Over a photograph the scrim sits behind the copy in the copy's opposite:
+   a pale wash under dark copy, a dark wash under light. */
 .shop-promo-tile.has-image::before {
   content: "";
   position: absolute;
   inset: 0;
   background: linear-gradient(
     to top,
-    rgba(0, 0, 0, 0.58),
-    rgba(0, 0, 0, 0) 60%
+    rgba(255, 255, 255, 0.72),
+    rgba(255, 255, 255, 0) 60%
   );
 }
 .shop-promo-tile.has-image.theme-light::before {
   background: linear-gradient(
     to top,
-    rgba(255, 255, 255, 0.72),
-    rgba(255, 255, 255, 0) 60%
+    rgba(0, 0, 0, 0.58),
+    rgba(0, 0, 0, 0) 60%
   );
 }
 .shop-promo-tile-copy {

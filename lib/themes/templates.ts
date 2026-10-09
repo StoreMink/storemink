@@ -28,6 +28,7 @@
 import type { ThemeLayout } from "./types";
 import { USP_ICONS, type UspIcon } from "@/lib/homepage/section-types";
 import { SECTION_SCHEMES, type SectionScheme } from "./schemes";
+import { sameJson } from "./canonical-json";
 
 export const PRODUCT_GALLERIES = [
   "thumbs-bottom",
@@ -503,7 +504,10 @@ export function templateIssues(
               `${where} repeats ${normalized.type}; each block appears once.`,
             );
           seen.add(normalized.type);
-          if (JSON.stringify(normalized) !== JSON.stringify(block))
+          // Structural, never JSON.stringify: a stored package comes back
+          // from jsonb with its keys reordered, and a block that normalises
+          // to itself must read as itself whatever order it arrived in.
+          if (!sameJson(normalized, block))
             issues.push(
               `${where} (${normalized.type}) has extra, over-long or invalid fields.`,
             );
@@ -547,7 +551,7 @@ export function templateIssues(
           const where = `${path}.collection.promoTiles[${index}]`;
           const normalized = normalizePromoTile(tile);
           if (!normalized) issues.push(`${where} needs a heading or an image.`);
-          else if (JSON.stringify(normalized) !== JSON.stringify(tile))
+          else if (!sameJson(normalized, tile))
             issues.push(
               `${where} has extra, over-long or invalid fields (afterIndex 1–${MAX_PROMO_AFTER}, a site path or https link, a hex background).`,
             );

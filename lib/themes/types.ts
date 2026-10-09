@@ -249,6 +249,10 @@ export interface ThemePreset {
    *  lib/themes/templates.ts). Absent = the composition the layout already
    *  implies, so every stored release renders as it did. */
   templates?: import("./templates").ThemeTemplates;
+  /** The announcement bar above the header (lib/themes/announcement.ts).
+   *  Absent = no bar, so every stored release renders as it did; a merchant
+   *  can write their own or switch it off in the Website Builder. */
+  announcement?: import("./announcement").ThemeAnnouncement;
 }
 
 /** One immutable preset release. Multiple releases with the same id may stay

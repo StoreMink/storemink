@@ -14,6 +14,64 @@
     box-shadow 0.3s ease;
 }
 
+/* ---- Announcement bar (lib/themes/announcement.ts) ----
+   One line above the header. The root's sm-announce class (painted by the
+   layout, kept live by the bar itself) gives the fixed header a transparent
+   top border the bar's height tall, and the bar sits in that border. The
+   border is part of the header's box, so the height useHeaderFit publishes
+   as --sm-header-h includes the bar, and the header's own padding, which
+   every variant sets differently, never enters into it. One line always:
+   the copy ellipsises rather than wrapping, so the bar's height is a
+   constant storefront-theme.css knows before hydration. */
+:global(.sm-announce) .header {
+  border-top: var(--sm-announce-h, 36px) solid transparent;
+}
+.announcement {
+  position: absolute;
+  top: calc(-1 * var(--sm-announce-h, 36px));
+  left: 0;
+  right: 0;
+  height: var(--sm-announce-h, 36px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  background: var(--sm-ink);
+  color: var(--sm-on-ink);
+  font-family: var(--font-outfit), sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  text-align: center;
+  z-index: 1;
+}
+.announcementText {
+  margin: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.announcementLink {
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+  height: 100%;
+  min-height: 24px;
+  color: inherit;
+  text-decoration: none;
+}
+.announcementLink:hover,
+.announcementLink:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.announcementLink:focus-visible {
+  outline: 2px solid var(--sm-on-ink);
+  outline-offset: -4px;
+}
+
 .headerScrolled {
   background-color: color-mix(in srgb, var(--sm-cream) 92%, transparent);
   backdrop-filter: blur(8px);
@@ -561,7 +619,10 @@
 .profileDropdownLoginSub {
   font-family: var(--font-outfit), sans-serif;
   font-size: 11.5px;
-  color: var(--sm-ink-faint);
+  /* Readable copy on the menu's surface: ink-soft, which the design contract
+     holds to 4.5:1 there; ink-faint (2.96:1 on the exemplar run) is for
+     placeholders. The sign-in dialog's rule. */
+  color: var(--sm-ink-soft);
 }
 
 .profileDropdownLoginBtn {
@@ -1221,7 +1282,12 @@
     [data-delivery-control] > button,
     [data-delivery-control] > button small,
     [data-delivery-control] > button strong
-  ) {
+  ):not(.mobileDrawer *) {
+  /* The drawer is excluded HERE, not only overridden below: :has() carries
+     the specificity of its most specific argument, so this rule outranked
+     the drawer's page-ink rule and painted the drawer's brand name on-ink,
+     which on a dark palette is near-black on a near-black surface (1.07:1,
+     the bold-and-loud exemplar, 2026-10-10). */
   color: var(--sm-on-ink);
 }
 :global(.sm-header-transparent):has(
@@ -1234,7 +1300,7 @@
       :global(.home-carousel-slide):global(.is-active):global(.theme-light)
   )
   .header:not(.headerScrolled)
-  [data-delivery-control]
+  [data-delivery-control]:not(.mobileDrawer *)
   > button {
   border-color: color-mix(in srgb, var(--sm-on-ink) 32%, transparent);
   background: color-mix(in srgb, var(--sm-on-ink) 12%, transparent);

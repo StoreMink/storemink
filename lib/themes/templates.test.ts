@@ -11,6 +11,22 @@ import {
 } from "./templates";
 
 // Plan Phase 2e: the product and collection pages composed from data.
+
+/** What PostgreSQL hands back for a jsonb value: object keys re-ordered by
+ * length, then bytes. A contract that only holds in the key order a value
+ * was written in is one that stops holding the moment it is stored. */
+function jsonbRoundTrip(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(jsonbRoundTrip);
+  if (!value || typeof value !== "object") return value;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, nested]) => nested !== undefined)
+    .sort(([a], [b]) =>
+      a.length !== b.length ? a.length - b.length : a < b ? -1 : a > b ? 1 : 0,
+    );
+  return Object.fromEntries(
+    entries.map(([key, nested]) => [key, jsonbRoundTrip(nested)]),
+  );
+}
 describe("default templates", () => {
   it("are today's pages exactly, with the sticky bar following the layout", () => {
     const plain = defaultTemplates(undefined);
@@ -159,6 +175,57 @@ describe("the contract's report", () => {
         },
       }),
     ).toEqual([]);
+  });
+
+  it("holds for a stored value whose keys jsonb has re-ordered", () => {
+    // Found by the exemplar seed (2026-10-09): the block and tile checks
+    // compared JSON.stringify output, so every package carrying templates
+    // was refused by the registry's parse on the way back out of
+    // theme_releases, and the store rendered un-themed.
+    const authored = {
+      product: {
+        gallery: "grid",
+        blocks: [
+          { type: "price" },
+          { type: "variant_picker" },
+          { type: "buy_box" },
+          {
+            type: "accordion",
+            rows: [{ heading: "Care", body: "Wipe clean." }],
+          },
+          {
+            type: "trust_row",
+            items: [{ icon: "truck", label: "Free delivery" }],
+          },
+          { type: "sticky_bar" },
+        ],
+      },
+      collection: {
+        filters: "top-bar",
+        pagination: "paged",
+        promoTiles: [
+          {
+            afterIndex: 4,
+            heading: "New season",
+            body: "Fresh arrivals.",
+            cta_label: "Shop",
+            href: "/shop",
+            image_url: "",
+            image_alt: "",
+            theme: "dark",
+            background: "#112233",
+          },
+        ],
+      },
+    };
+    expect(templateIssues(authored)).toEqual([]);
+    const stored = jsonbRoundTrip(authored);
+    expect(JSON.stringify(stored)).not.toBe(JSON.stringify(authored));
+    expect(templateIssues(stored)).toEqual([]);
+    const fallback = defaultTemplates(undefined);
+    expect(normalizeTemplates(stored, fallback)).toEqual(
+      normalizeTemplates(authored, fallback),
+    );
   });
 
   it("names what normalising would silently change", () => {

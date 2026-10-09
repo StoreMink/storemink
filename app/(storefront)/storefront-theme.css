@@ -17,9 +17,14 @@
   min-height: 100vh;
   background: var(--sm-cream);
   color: var(--sm-ink);
+  /* The announcement bar's height when the store shows one (the sm-announce
+     class below; lib/themes/announcement.ts), and nothing otherwise. The
+     header carries the bar in a transparent top border, so every fallback
+     below adds it and the measured height includes it. */
+  --sm-announce-h: 0px;
   /* Safe clearance before hydration; useHeaderFit publishes the bar's actual
      height after layout and on resize/font changes. */
-  --sm-header-h: 80px;
+  --sm-header-h: calc(80px + var(--sm-announce-h));
 
   /* Per-store theming: the brand's primary colour (injected as --brand-primary
      from the store's settings) drives the storefront accent / CTA / link
@@ -101,14 +106,17 @@
   min-width: 0;
 }
 
+.storefront-root.sm-announce {
+  --sm-announce-h: 36px;
+}
 @media (max-width: 1024px) {
   .storefront-root {
-    --sm-header-h: 88px;
+    --sm-header-h: calc(88px + var(--sm-announce-h));
   }
 }
 @media (max-width: 768px) {
   .storefront-root {
-    --sm-header-h: 68px;
+    --sm-header-h: calc(68px + var(--sm-announce-h));
   }
 }
 /* The two-row headers (plan Phase 2d) are taller than the 80px fallback
@@ -116,10 +124,10 @@
    what leading content clears before then. Desktop only, where they apply. */
 @media (min-width: 1025px) {
   .storefront-root.sm-header-stacked {
-    --sm-header-h: 112px; /* measured 108.5px */
+    --sm-header-h: calc(112px + var(--sm-announce-h)); /* measured 108.5px */
   }
   .storefront-root.sm-header-utility {
-    --sm-header-h: 138px; /* measured 135px */
+    --sm-header-h: calc(138px + var(--sm-announce-h)); /* measured 135px */
   }
 }
 

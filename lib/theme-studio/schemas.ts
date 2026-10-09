@@ -429,6 +429,10 @@ export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
   // not under design, so it is not offered as a repair target.
   fontPairing: nullable(enumOf(FONT_PAIRING_KEYS)),
   templates: TEMPLATES_SCHEMA,
+  // v32 (plan Phase 2c's last chrome candidate): the announcement bar above
+  // the header, one line and an optional site path; "" for text means none.
+  // Top level like `templates`, so it is never a repair target.
+  announcement: obj({ text: str, href: str }),
   features: { type: "array", items: enumOf(THEME_STUDIO_FEATURES) },
   brand: obj({ primaryColor: hex, tagline: str, blurb: str }),
   design: obj({
@@ -755,14 +759,15 @@ export function stageASchemaFor(
   return twin;
 }
 
-/** The pre-v32 shape of a Stage B schema: no top-level `templates`, and
- * design.layout.productDetail without "stacked". Matched by value like the
- * other twins; the initial schemas carry no layout enum and lose only the
- * object. */
+/** The pre-v32 shape of a Stage B schema: no top-level `templates` or
+ * `announcement`, and design.layout.productDetail without "stacked".
+ * Matched by value like the other twins; the initial schemas carry no layout
+ * enum and lose only the objects. */
 function withoutTemplates(schema: Schema): Schema {
   const twin = structuredClone(schema);
   const properties = twin.properties as Record<string, Schema>;
   delete properties.templates;
+  delete properties.announcement;
   twin.required = Object.keys(properties);
   const full = JSON.stringify(PRODUCT_DETAIL_ENUM);
   const walk = (node: unknown) => {

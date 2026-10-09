@@ -75,6 +75,7 @@ const headerFixture = (
   headerBar,
   drawerOpen,
   broken = "",
+  opening = "",
 ) => `<!doctype html><html lang="en"><head><style>
 *{box-sizing:border-box}body{margin:0;font:16px Arial;background:var(--sm-cream);color:var(--sm-ink)}
 :root{${PALETTES[palette]};${HEADER_BARS[headerBar]};--sm-shadow-rgb:0,0,0;--sm-radius-control:12px;--sm-radius-sm:8px;--sm-radius-pill:999px;--font-outfit:Arial}
@@ -95,7 +96,20 @@ ${broken}</style></head><body><main class="storefront-root sm-header-${variant}"
   <div class="drawerAuth"><button class="drawerAuthBtn">Sign in</button></div>
  </div>
  <div class="drawerOverlay ${drawerOpen ? "overlayVisible" : ""}"></div>
-</header></main></body></html>`;
+</header>${opening}</main></body></html>`;
+// A transparent header at the top of a page whose opening photograph reads
+// with the ON-INK: MediaTone settles `theme-light` on the first hero when
+// the palette's on-ink reads over its pixels (a dark photo on a light
+// palette, a pale one on a dark palette), and the header's :has() rule
+// paints the bar's controls on-ink. The fixture stands a field of that
+// kind under the bar, since axe judges text on a photograph as incomplete.
+// The drawer must stay on the page ink whatever the bar does.
+const lightOpening = (palette) =>
+  `<div class="home-sections"><section class="home-section"><div class="home-hero theme-light" style="height:420px;background:${palette === "dark" ? "#f0f0f0" : "#1c1c1c"}"></div></section></div>`;
+// The rule as it stood before 2026-10-10: the bar's on-ink reached the
+// drawer's brand name through the :has() rule's specificity.
+const transparentNegative =
+  ".sm-header-transparent .mobileDrawer .brandNameText{color:var(--sm-on-ink)}";
 try {
   const page = await browser.newPage();
   await page.route("**/*", (route) => route.abort());
@@ -234,6 +248,50 @@ try {
       }
     }
   }
+  // The transparent header over a light-copy opening, drawer open, on both
+  // palettes: on a dark palette on-ink is near-black, so the drawer's name
+  // on the drawer's surface was 1.07:1 (the bold-and-loud exemplar).
+  const badTransparent = await checkHtml(
+    390,
+    headerFixture(
+      "transparent",
+      "dark",
+      "light",
+      true,
+      transparentNegative,
+      lightOpening("dark"),
+    ),
+  );
+  if (!badTransparent.some((v) => v.target.includes("brandNameText")))
+    failures.push({
+      negativeControl:
+        "did not reproduce the transparent header's on-ink reaching the drawer",
+      badTransparent,
+    });
+  for (const width of [390, 768, 1440])
+    for (const palette of ["light", "dark"])
+      for (const drawerOpen of [false, true]) {
+        const violations = await checkHtml(
+          width,
+          headerFixture(
+            "transparent",
+            palette,
+            "light",
+            drawerOpen,
+            "",
+            lightOpening(palette),
+          ),
+        );
+        cases++;
+        if (violations.length)
+          failures.push({
+            width,
+            variant: "transparent/light-opening",
+            palette,
+            drawerOpen,
+            violations,
+          });
+      }
   // Chrome states (Phase 1 item 3 opens them): the sign-in dialog's copy on
   // the dialog surface, the search sheet's submit target, the account menu's
   // ARIA children. Each with the pre-2026-10-09 rule as a negative control.

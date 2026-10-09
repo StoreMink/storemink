@@ -14,3 +14,19 @@ SET body = replace(
     updated_at = now()
 WHERE slug = 'change-your-storefront-branding-and-layout'
   AND status = 'published';
+
+-- The header gained an announcement bar (one line above the header, with an
+-- optional link; empty text shows the theme's own). The navigation guide's
+-- one step that lists what the header row edits is replaced in place (0020
+-- published it; 0138 added the sentence AFTER it in the same list item, so
+-- the quote is the sentence alone, which 0138 left untouched).
+
+UPDATE public.help_articles
+SET body = replace(
+      body,
+      $old$<li>Edit the menu links, labels, logo treatment, layout, and available contact or social details.</li>$old$,
+      $new$<li>Edit the menu links, labels, logo treatment, layout, and available contact or social details. Under <strong>Announcement bar</strong>, switch on a one-line message above the header on every page, such as a delivery promise or a sale, with an optional link; leave the text empty to show your theme's own announcement, when it has one.</li>$new$
+    ),
+    updated_at = now()
+WHERE slug = 'edit-your-header-footer-and-navigation'
+  AND status = 'published';
