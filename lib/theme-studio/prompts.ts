@@ -3,14 +3,19 @@ import { RESERVED_PAGE_SLUGS } from "@/lib/sections/registry";
 import { THEME_ASSET_PREFIX, productSlotBrief } from "./compiler";
 import type { ThemeIndustry } from "@/lib/themes/meta";
 import type { ThemeIntent, ThemePackageV2 } from "./contracts";
+import { THEME_STUDIO_SECTION_TYPES } from "./schemas";
 import {
-  THEME_STUDIO_FONT_VALUES,
-  THEME_STUDIO_SECTION_TYPES,
-} from "./schemas";
+  DIRECTION_PAIRINGS,
+  LEGACY_DESIGN_FONT_VALUES,
+  describeFontCatalogue,
+  describeFontPairings,
+  limitedWeightSentence,
+  pairingForFonts,
+} from "@/lib/themes/fonts";
 import { industryPlaybookPrompt } from "./industry-playbooks";
 import { DESIGN_DIRECTIONS, recommendedDirection } from "./design-directions";
 import {
-  VISIBLE_SECTION_CHOICES,
+  visibleSectionChoices,
   REQUIRED_DESIGN_CHOICES,
   nonVisualDefaults,
 } from "./style-choices";
@@ -41,6 +46,19 @@ export { THEME_STUDIO_PROMPT_VERSION } from "./prompt-features";
 export const HERO_CONTRAST_PROMPT = `
 Hero text modes describe text colour, not the background: theme "dark" uses ink, theme "light" uses onInk. A banner or split hero's image is BESIDE its copy, so copy sits on config.background, or creamDeep when background is empty. A banner inside a scheme resets to page tokens and uses page ink in both text modes. Split and text-only minimal heroes inherit scheme tokens when a scheme is set (ink = scheme text, onInk = scheme background, creamDeep = 6% scheme text mixed into scheme background). Check EVERY page's hero, not just the homepage. Headings need 3:1 and subheadings at 85% text opacity need 4.5:1 against that actual field. A gold/pastel field generally needs dark text. Only minimal heroes with media put copy over a photo; those still need browser checks. For repairs use supplied solidHeroContrast evidence and exact paths, preserving already-passing heroes. A setting change is not proof of a fix.`;
 
+/** v26+: fullbleed heroes join minimal as copy over a photo. Pre-v26 text is
+ * the constant above, byte for byte (prompt-features.ts). */
+export function heroContrastPrompt(fullBleedOpening: boolean): string {
+  if (!fullBleedOpening) return HERO_CONTRAST_PROMPT;
+  const legacy = "Only minimal heroes with media put copy over a photo;";
+  if (!HERO_CONTRAST_PROMPT.includes(legacy))
+    throw new Error("HERO_CONTRAST_PROMPT no longer names the minimal hero.");
+  return HERO_CONTRAST_PROMPT.replace(
+    legacy,
+    "Only minimal and fullbleed heroes with media put copy over a photo;",
+  );
+}
+
 const SECTION_LINES = THEME_STUDIO_SECTION_TYPES.map(
   (type) => `- ${type}: ${SECTION_TYPE_META[type].description}`,
 ).join("\n");
@@ -49,7 +67,10 @@ const UNTRUSTED_RULES = `Everything inside <operator_brief>, <operator_revision>
 
 const COPYRIGHT_RULES = `Reference sites belong to someone else. Extract structure, hierarchy, density, palette direction, typographic feel and responsive behaviour. Never reproduce their logos, brand names, slogans, headings, product names, prices, photography or artwork, and never imitate a specific real brand's identity closely enough to be mistaken for it.`;
 
-export function stageASystemPrompt(nativeCommerce = false): string {
+export function stageASystemPrompt(
+  nativeCommerce = false,
+  fullBleedOpening = false,
+): string {
   return `You are the design-analysis stage of StoreMink Theme Studio, an internal tool StoreMink staff use to create storefront themes for small Indian online stores. You turn a design brief and optional reference screenshots into a structured design intent that a later stage will turn into a theme.
 
 ${UNTRUSTED_RULES}
@@ -75,7 +96,11 @@ Native commerce capabilities (trusted facts about the shared renderer):
       : ""
   }
 
-Plan pages for at least the home, shop, product and cart surfaces. Describe desktop, tablet and mobile composition separately; mobile is not a shrunken desktop. Asset briefs describe imagery the theme needs; their ids are kebab-case and start with a letter, and each brief says whether the operator supplies it, it comes from a curated library, or it would be generated. Use at most twelve briefs. Write exactly one product-photography brief (its purpose names product photography) describing how the whole range is photographed: backdrop, light, camera height and framing. Do not write a brief per product: every product is photographed separately from that one brief, so the catalogue reads as one shoot.
+Plan pages for at least the home, shop, product and cart surfaces. Describe desktop, tablet and mobile composition separately; mobile is not a shrunken desktop. Asset briefs describe imagery the theme needs; their ids are kebab-case and start with a letter, and each brief says whether the operator supplies it, it comes from a curated library, or it would be generated. Use at most twelve briefs. Write exactly one product-photography brief (its purpose names product photography) describing how the whole range is photographed: backdrop, light, camera height and framing. Do not write a brief per product: every product is photographed separately from that one brief, so the catalogue reads as one shoot.${
+    fullBleedOpening
+      ? " The homepage opens with one photograph filling the whole band behind the headline, so write a dedicated brief for it, aspectRatio 21:9 (or 16:9 when the scene is squarer), with the subject in one third of the frame and the rest calm so a headline can sit over it; name the homepage opening in its purpose."
+      : ""
+  }
 
 Every image in a theme is generated by a model that cannot show people: no models, faces, hands, bodies or silhouettes, and no mannequins with faces. A brief that asks for one is refused by the image model or comes back as the wrong picture, and its slot stays a placeholder. So never write a person into a brief, even when the references are full of models. Carry the reference's photography over in a people-free form instead: garments shot flat-lay, on a hanger, folded or draped over a chair; footwear and bags on plinths or steps; beauty products with their textures and ingredients; lifestyle heroes as empty, styled interiors, doorways, shelves and landscapes where the products are the subject. Say "no people" in the art direction of every hero, lookbook, editorial and category brief.
 
@@ -90,8 +115,34 @@ function configExamples(): string {
   ).join("\n");
 }
 
-export function stageBSystemPrompt(nativeFraming = false): string {
+/** v25+: the pairing library replaces "pick two faces from nine". */
+function fontPairingsBullet(): string {
+  return `- Fonts: choose fontPairing from the library below — a display face for headings and a body face that read together — and write design.fonts as exactly that pair's two values (the compiler applies the pairing, so the two must agree). Set fontPairing null only when the brief or a reference names a typeface, and then choose both faces from the catalogue, never a display-only face as the body. Pairings: ${describeFontPairings()}. Catalogue: ${describeFontCatalogue()}.`;
+}
+
+export function stageBSystemPrompt(
+  nativeFraming = false,
+  fontPairings = false,
+  fullBleedOpening = false,
+): string {
   const reserved = [...RESERVED_PAGE_SLUGS].sort().join(", ");
+  // v26+: the homepage opens with a photograph filling the band (opening.ts
+  // is the check). Placed before the section-style bullet, which the variety
+  // prompt rewrites; an empty string keeps pre-v26 text byte for byte.
+  const openingBullet = fullBleedOpening
+    ? `\n- The homepage opens the way Shopify themes do: a photograph fills the whole band and the copy sits over it. Its first enabled section must be hero_carousel (one to three slides, each with an image from the asset briefs, overlaid copy, and light or dark text that reads over that photo) or hero with variant "fullbleed" and an image (the picture covers the band behind the copy; alignment left or center). Give that opening section style width "full" and height "large" or "screen", use the wide (21:9 or 16:9) homepage brief for it, and add overlay_opacity 20–45 when light copy sits on a busy photo. A banner, split or minimal hero (image beside the copy, or a plain statement) may open another page or appear further down, never first on the homepage.`
+    : "";
+  // Pre-v25 text is kept byte for byte: a persisted paid request is keyed
+  // on it (prompt-features.ts).
+  const fontsBullet = fontPairings
+    ? fontPairingsBullet()
+    : `- Fonts must be exactly one of: ${LEGACY_DESIGN_FONT_VALUES.join(", ")}.`;
+  const headingWeightNote = fontPairings
+    ? `faces with limited weights are ${limitedWeightSentence()} — with one of them as the heading face choose a weight it has and set headingWeight explicitly`
+    : "Instrument Serif has only regular, and Jost only up to medium, so with either as the heading face use regular or medium — if you set headingFont to one of them you must set headingWeight too";
+  const buttonWeightNote = fontPairings
+    ? `with a limited-weight face (${limitedWeightSentence()}) as the body face choose a weight it has, and you must set weight`
+    : "with Jost or Instrument Serif as the body face use regular or medium, and you must set weight";
   return `You are the theme-synthesis stage of StoreMink Theme Studio. You turn an approved design intent into a complete theme draft: design tokens, pages built from registered sections, navigation, and a sample catalogue that shows the design off.
 
 ${UNTRUSTED_RULES}
@@ -100,12 +151,12 @@ ${COPYRIGHT_RULES}
 
 Design tokens
 - Every palette value is a hex colour. shadowRgb is three comma-separated integers such as "23, 23, 21". Body text (ink) and secondary text (inkSoft) must each reach WCAG AA contrast of 4.5:1 on the page (cream), cards (surface) and alternate/standard footer backgrounds (creamDeep). Grocery cards paint butter, so ink and inkSoft on butter must also reach 4.5:1. Original prices are readable text even when crossed out; inkFaint is decorative and must not be used to make important text disappear. onAccent must be readable on the accent colour and onInk on ink. The accent is a brand/CTA colour, not a guarantee of readable text on light backgrounds.
-- Fonts must be exactly one of: ${THEME_STUDIO_FONT_VALUES.join(", ")}.
+${fontsBullet}
 - Shape values are CSS lengths in px, for example "4px" or "999px".
 - Layout values may be null to keep the shared default. For a storefront that should feel like a premium theme, set stickyAddToCart to true (a phone add-to-cart bar once the page's own button scrolls away) and gridColumnsMobile to 2 (two products per row on phones); choose gridColumnsDesktop 3 for large editorial product photography, 5 for dense catalogues, otherwise leave it null. Set shopFilters to true (a sort menu, availability and price filters, and products 24 at a time with Load more) for any store with more than a handful of products, and collectionBanner to true so each category page opens with its image and description.
 - Colour schemes are named bands a section can wear, each setting the band's background, text, cards and buttons together: soft (a quiet neutral band), tint (a light wash of the brand colour), accent (the brand colour itself) and inverse (a dark band with light text). Every scheme left null is derived from the palette, which usually looks right, so set one only when the design wants that band in its own colours: then give background and text (text must reach 4.5:1 on the background, and so must a 76% mix of text into the background, which is how muted copy renders), and leave surface, accent and onAccent null unless the band needs its own card or button colours (accent and onAccent together).
-- Typography sets how headings look across the storefront; every key may be null to keep each heading's own default. headingFont "display" sets headings in the display font (use it whenever the display font is the design's signature face — otherwise it only appears in a few places) and "body" in the body font. headingScale is small, medium, large or xlarge. headingWeight is regular, medium, semibold, bold or heavy, and must be a weight the heading font really has: Instrument Serif has only regular, and Jost only up to medium, so with either as the heading face use regular or medium — if you set headingFont to one of them you must set headingWeight too. headingCase "uppercase" suits fashion and minimal themes; pair it with headingTracking "wide". headingTracking "tight" suits large sans or serif headlines.
-- Buttons set how buttons look across the storefront; every key may be null to keep each button's own default. Primary buttons are the one action a screen exists for (Shop now, Buy now, Checkout); secondary buttons sit beside them (Add to cart beside Buy now, Load more). shape is square, rounded or pill: square suits fashion and minimal themes, pill suits friendly and food themes. primary is solid or outline; outline draws the accent as text, so the accent must reach 4.5:1 on the page (cream) and on cards (surface) — use solid unless it does. secondary is solid, outline or text (an underlined label); outline and text carry the same contrast rule. case "uppercase" pairs with tracking "wide". weight is regular, medium, semibold or bold, and like headings must be a weight the body font really has: with Jost or Instrument Serif as the body face use regular or medium, and you must set weight. hover is darken, lift or invert.
+- Typography sets how headings look across the storefront; every key may be null to keep each heading's own default. headingFont "display" sets headings in the display font (use it whenever the display font is the design's signature face — otherwise it only appears in a few places) and "body" in the body font. headingScale is small, medium, large or xlarge. headingWeight is regular, medium, semibold, bold or heavy, and must be a weight the heading font really has: ${headingWeightNote}. headingCase "uppercase" suits fashion and minimal themes; pair it with headingTracking "wide". headingTracking "tight" suits large sans or serif headlines.
+- Buttons set how buttons look across the storefront; every key may be null to keep each button's own default. Primary buttons are the one action a screen exists for (Shop now, Buy now, Checkout); secondary buttons sit beside them (Add to cart beside Buy now, Load more). shape is square, rounded or pill: square suits fashion and minimal themes, pill suits friendly and food themes. primary is solid or outline; outline draws the accent as text, so the accent must reach 4.5:1 on the page (cream) and on cards (surface) — use solid unless it does. secondary is solid, outline or text (an underlined label); outline and text carry the same contrast rule. case "uppercase" pairs with tracking "wide". weight is regular, medium, semibold or bold, and like headings must be a weight the body font really has: ${buttonWeightNote}. hover is darken, lift or invert.
 - Page (design.page, not the pages list) sets the store's width and rhythm; every key may be null to keep today's layout. width is narrow (1080px, a focused editorial or single-product store), standard (1240px), wide (1440px, large photography or big catalogues) or full (edge to edge); it lines up the header, homepage sections, shop, product page, cart and footer. sectionGap is compact (dense catalogue and grocery stores), standard or airy (editorial, luxury and fashion). gridGap is the space between product cards: tight for dense grids, roomy for large editorial photography.
 - Motion (design.motion) is restrained: reveal is none, fade (sections fade in as they scroll into view) or rise (they fade in and lift a short way). Follow the intent's visual.motion: none means reveal none, restrained means fade, expressive means rise. It never hides the first screen and is switched off for visitors who ask for reduced motion.
 
@@ -116,7 +167,7 @@ Pages
 - Each section has a type from the schema and configJson: a JSON object, encoded as a string, with exactly the fields of that type's example below. Keep id-based fields (product_ids, category_ids, blog_ids) as empty arrays; featured_products must use source "featured" and shop_by_category must use source "all".
 - The examples below show each type's field names and value types with EMPTY defaults. Fill them: a gallery needs at least two images, testimonials and FAQs at least one item, a promo banner an image or heading, a tile grid at least one tile, and rich text real HTML paragraphs.
 - hero and hero_carousel (and each carousel slide) also accept these OPTIONAL fields, which you may add to that config only: height ("auto", "small", "medium", "large" or "screen" — ${nativeFraming ? 'match height to the image shape at phone, tablet and desktop widths; use "medium" for a landscape banner and reserve "large"/"screen" for framing that can keep at least 35% of the source image visible. Prefer split composition for portrait-led artwork. Never force a wide landscape photograph into a tall screen-height tablet frame' : 'use "large" or "screen" for an image-led homepage, never on a text-only hero'}), mobile_image_url (a separate portrait image slot for phones, when the desktop banner is wide and its subject would be cropped away), focal_x and focal_y (integers 0–100, the subject's position in the image, so phones crop around it), overlay_opacity (integer 0–80, a veil behind the copy; use 20–45 when light text sits over a busy photo) and content_position ("top", "middle" or "bottom"). Leave any of them out to keep the default.
-- Image fields (keys ending in _url) are either "" or "theme-asset://<asset-brief-id>" using an id from the intent's asset briefs. video_url must always be "". Never write an external URL. Links (keys ending in _href) are either "" or a site path starting with "/", such as "/shop" or "/about". Every link must reach something the store will have: one of your own page slugs, /shop, /collections/<a category slug you seed>, /shop/<a product slug you seed>, or a policy page such as /privacy-policy. The examples' own links (such as /our-story) are placeholders — replace them.
+- Image fields (keys ending in _url) are either "" or "theme-asset://<asset-brief-id>" using an id from the intent's asset briefs. video_url must always be "". Never write an external URL. Links (keys ending in _href) are either "" or a site path starting with "/", such as "/shop" or "/about". Every link must reach something the store will have: one of your own page slugs, /shop, /collections/<a category slug you seed>, /shop/<a product slug you seed>, or a policy page such as /privacy-policy. The examples' own links (such as /our-story) are placeholders — replace them.${openingBullet}
 - Each section has a style. Use it to give the homepage rhythm the way a premium theme does: put two or three sections in a scheme — for example the trust bar or ticker in accent or inverse, one story or media-and-text section in soft or tint, the newsletter in inverse — and leave the rest null so bands alternate with the page. Never give neighbouring sections the same scheme. hero_carousel and promo_banner sit on their own photo and take no scheme. padding ("sm", "md" or "lg") adds space inside the band — a banded section without it gets "md". width "full" runs the band edge to edge; use it for banded sections.
 - Write original copy in the store's voice. No lorem ipsum, no placeholder brand names such as "Brand Name".
 
@@ -132,7 +183,11 @@ Carry the intent's capability gaps forward and add any you discover. Respond wit
 }
 
 /** Preserve older prompts byte-for-byte for their paid checkpoint bindings. */
-export function stageBInitialSystemPrompt(intent: ThemeIntent): string {
+export function stageBInitialSystemPrompt(
+  intent: ThemeIntent,
+  fontPairings = false,
+  fullBleedOpening = false,
+): string {
   const planned = new Set(intent.pagePlans.flatMap((p) => p.sectionTypes));
   // Brand-story pages often add rich_text after planning. Keep its content
   // shape explicit even when it was not listed in the original section plan.
@@ -143,7 +198,7 @@ export function stageBInitialSystemPrompt(intent: ThemeIntent): string {
     .map((type) => `${type}: ${JSON.stringify(EMPTY_CONFIG[type])}`)
     .join("\n");
   return (
-    stageBSystemPrompt(true)
+    stageBSystemPrompt(true, fontPairings, fullBleedOpening)
       .replace(configExamples(), examples || configExamples())
       .replace(
         "with exactly the fields of that type's example below",
@@ -175,9 +230,9 @@ export interface BriefMessage {
 }
 
 /** v21 only: keep older paid request bindings byte-for-byte stable. */
-export function stageAVarietySystemPrompt(): string {
+export function stageAVarietySystemPrompt(fullBleedOpening = false): string {
   return (
-    stageASystemPrompt(true)
+    stageASystemPrompt(true, fullBleedOpening)
       .replace(
         /- Product cards can[\s\S]*?\n- Native shop/,
         "- Choose card styles deliberately: framed/overlay for image-led luxury and editorial stores, classic for balanced discovery, quick_add or grocery for utility and dense catalogues. These are alternatives, not a checklist of premium features. Quick add handles options safely when chosen; no native inline quantity stepper.\n- Native shop",
@@ -229,13 +284,22 @@ export function catalogueVarietyContext(
 export function stageBVarietySystemPrompt(
   intent: ThemeIntent,
   initial: boolean,
+  fontPairings = false,
+  fullBleedOpening = false,
 ): string {
+  // v25+: the pairings the chosen direction suits, as guidance; the brief
+  // and references still win, and any pairing stays allowed.
+  const pairingGuidance =
+    fontPairings && intent.designDirection
+      ? `\nPairings suited to ${intent.designDirection}: ${(DIRECTION_PAIRINGS[intent.designDirection] ?? []).join(", ")}. Another pairing is allowed when the brief or references call for it; choose it deliberately, and never the same pairing as the nearest existing theme.`
+      : "";
   const base = initial
-    ? stageBInitialSystemPrompt(intent).replace(
+    ? stageBInitialSystemPrompt(intent, fontPairings, fullBleedOpening).replace(
         /\nChoose a native commerce composition:[\s\S]*$/,
         "",
       )
-    : stageBSystemPrompt(true);
+    : stageBSystemPrompt(true, fontPairings, fullBleedOpening);
+  const choices = visibleSectionChoices(fullBleedOpening);
   return (
     "Author a FLAT configJson object for every section. All visible choice keys listed for that type are REQUIRED at the root of configJson, alongside its content keys. Never emit nested content or choices objects. CHOOSE ONE notation below means choose a single supported scalar value, never copy the notation or an array.\n\n" +
     base
@@ -269,14 +333,14 @@ export function stageBVarietySystemPrompt(
       )
       .replace(
         /Section config examples:\n[\s\S]*?\n\nNavigation:/,
-        `Section content fields (empty content must be authored) and required visible choices:\n${THEME_STUDIO_SECTION_TYPES.map((type) => `${type}: ${JSON.stringify({ ...nonVisualDefaults(type, EMPTY_CONFIG[type] as unknown as Record<string, unknown>), ...Object.fromEntries(Object.entries(VISIBLE_SECTION_CHOICES[type] ?? {}).map(([key, values]) => [key, `CHOOSE ONE: ${JSON.stringify(values)}`])) })}`).join("\n")}\n\nNavigation:`,
+        `Section content fields (empty content must be authored) and required visible choices:\n${THEME_STUDIO_SECTION_TYPES.map((type) => `${type}: ${JSON.stringify({ ...nonVisualDefaults(type, EMPTY_CONFIG[type] as unknown as Record<string, unknown>), ...Object.fromEntries(Object.entries(choices[type] ?? {}).map(([key, values]) => [key, `CHOOSE ONE: ${JSON.stringify(values)}`])) })}`).join("\n")}\n\nNavigation:`,
       ) +
     `
 
 This build uses explicit style choices, not composition presets. Emit design.layout in full, never layoutOverridesJson. ${initial ? "Choose composition classic, editorial or grocery as a summary only; navigation simple or collections; menus and variants are still derived." : ""}
 Required non-null choices: ${JSON.stringify(REQUIRED_DESIGN_CHOICES)}. Every section's visible choices above are required. Each carousel slide and tile chooses light or dark text. Null scheme explicitly uses page colours; schemeless sections omit it. No copy or offers are supplied by defaults.
 Realise designDirection ${intent.designDirection} and paletteFamily ${intent.paletteFamily}. Direction guidance (the brief and references win): ${intent.designDirection ? JSON.stringify(DESIGN_DIRECTIONS[intent.designDirection]) : "preserve the existing direction"}.
-Use the page-background hex planned in visual.palette. cream is the page background: it can be dark or saturated; colour-field means the page itself is coloured, not only its buttons. Tinted-neutral means a visibly tinted or neutral field, not a barely tinted white (which is light); the compiler refuses near-white tinted-neutral pages (relative luminance >0.8 with RGB spread <0.12). Preserve AA contrast across page, cards, bands and buttons; aim for 6:1 to leave margin for muted labels and derived bands rather than choosing borderline pairs. Circles and cards, scrolling and grid categories, light and dark newsletters, solid and outline primary buttons, none/fade/rise motion, one/two mobile columns and narrow/standard/wide/full widths are equally valid. Choose each for the intent and its assumptions; neither a preset nor its opposite is a universal recipe. Outline primary controls and text secondary actions suit quiet editorial designs when the accent is readable on the page and cards; solid secondary controls can serve utility shopping. Small ranges can deliberately disable filters, sticky purchase, hover images or collection banners. Honour references and preserve identity on revisions.`
+Use the page-background hex planned in visual.palette. cream is the page background: it can be dark or saturated; colour-field means the page itself is coloured, not only its buttons. Tinted-neutral means a visibly tinted or neutral field, not a barely tinted white (which is light); the compiler refuses near-white tinted-neutral pages (relative luminance >0.8 with RGB spread <0.12). Preserve AA contrast across page, cards, bands and buttons; aim for 6:1 to leave margin for muted labels and derived bands rather than choosing borderline pairs. Circles and cards, scrolling and grid categories, light and dark newsletters, solid and outline primary buttons, none/fade/rise motion, one/two mobile columns and narrow/standard/wide/full widths are equally valid. Choose each for the intent and its assumptions; neither a preset nor its opposite is a universal recipe. Outline primary controls and text secondary actions suit quiet editorial designs when the accent is readable on the page and cards; solid secondary controls can serve utility shopping. Small ranges can deliberately disable filters, sticky purchase, hover images or collection banners. Honour references and preserve identity on revisions.${pairingGuidance}`
   );
 }
 
@@ -385,6 +449,7 @@ export function stageARevisionUserText(
 export function currentThemeForRevision(
   pkg: ThemePackageV2,
   baseIntent?: ThemeIntent,
+  fontPairings = false,
 ): string {
   const { preset } = pkg.definition;
   const briefIds = baseIntent?.assetBriefs.map((b) => b.id) ?? [];
@@ -408,6 +473,11 @@ export function currentThemeForRevision(
   return JSON.stringify({
     description: pkg.definition.description,
     brand: preset.brand,
+    // v25+: the pairing the base theme's faces came from, so a revision can
+    // keep or deliberately change it; a free choice reads as null.
+    ...(fontPairings
+      ? { fontPairing: pairingForFonts(preset.design.fonts) }
+      : {}),
     design: preset.design,
     pages: preset.pages,
     menus: preset.menus,

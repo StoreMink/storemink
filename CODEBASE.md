@@ -808,7 +808,7 @@ headings" and had to guess the design back out of it.
 
 ★★ THE WALL STAYS; THE OUTPUT CHANGES. `lib/mink/design-from-image.ts` asks the
 same isolated reader for a STRUCTURED patch — exact `#rrggbb` per palette
-token, a typeface chosen from the nine-font allowlist, radii in whole pixels —
+token, a typeface chosen from the font catalogue (`lib/themes/fonts.ts`), radii in whole pixels —
 and `parseDesignReading` strips it to the design vocabulary before anything
 reaches the agent. The image is never added to the agent's multimodal context,
 so the worst a crafted screenshot can achieve is the wrong shade of beige,
@@ -2726,10 +2726,121 @@ wholesip/
 │   │                          # (e.g. blogs → blogs/settings — see convention #9)
 │   │
 │   ├── platform/              # ★ STOREMINK PLATFORM (served on storemink.com via rewrite)
-│   │   ├── page.tsx           # Marketing landing page — connected commerce
-│   │   │                      # story (storefront + operations + POS + growth),
-│   │   │                      # with scoped visuals in homepage.css; live plan
-│   │   │                      # prices still resolve from the canonical catalog
+│   │   ├── page.tsx           # Marketing landing page in shopify.com's shape
+│   │   │                      # AND design system (2026-10-09): black page,
+│   │   │                      # regular-weight loosely-tracked headlines with
+│   │   │                      # the grey-then-white emphasis pattern, dark-grey
+│   │   │                      # rounded cards, one white pill button,
+│   │   │                      # underlined links in copy. Beats: a rounded
+│   │   │                      # hero card (copy left, a PHONE running the
+│   │   │                      # Vitrine theme right, two product photos and
+│   │   │                      # an order chip floating by, a CSS-rotated
+│   │   │                      # promise line) → "sell everywhere" THEME RAIL
+│   │   │                      # (the newest ten selectable themes from
+│   │   │                      # getThemeCatalog, newest first, each with its
+│   │   │                      # own catalogue preview image, in one
+│   │   │                      # scroll-snap row of identical cards with
+│   │   │                      # arrow buttons; theme-rail.tsx is the client
+│   │   │                      # half) → text-only channel marquee →
+│   │   │                      # Mink banner → three product cards (the third
+│   │   │                      # is four scenes, one per channel: browsing on
+│   │   │                      # a phone, buying at a counter, taking an
+│   │   │                      # order by phone, checking cartons in a
+│   │   │                      # stockroom; the owner rejected product photos
+│   │   │                      # labelled by channel and then UI vignettes of
+│   │   │                      # one product, neither showed the channel) →
+│   │   │                      # Built for India (invoice art with two photos
+│   │   │                      # floating beside it) → three merchant-stage
+│   │   │                      # photo story cards → customise (builder art,
+│   │   │                      # a 2×2 of the four theme photos, a real custom
+│   │   │                      # section as a code block) → POS → trust tiles
+│   │   │                      # → pricing cards → three steps, each with a
+│   │   │                      # product/theme photo → FAQ → final CTA.
+│   │   │                      # ★★ EVERY PHOTOGRAPH IS GENERATED FOR THE
+│   │   │                      # MARKETING SITE (public/marketing/**, made by
+│   │   │                      # scripts/marketing-photos.mjs, provenance in
+│   │   │                      # docs/marketing-assets.md): a lookbook shot on
+│   │   │                      # the hero phone, product tiles floating by,
+│   │   │                      # merchant-stage scenes for the stories, one
+│   │   │                      # scene per setup step. The first cut used the
+│   │   │                      # themes' seed heroes and catalogue product
+│   │   │                      # photos; the owner ruled those out
+│   │   │                      # (2026-10-09) and asked for new pictures at
+│   │   │                      # shopify.com's standard. Never a stock photo,
+│   │   │                      # a theme/catalogue image, an invented merchant
+│   │   │                      # (the phone's store is the "yourbrand"
+│   │   │                      # placeholder) or an invented statistic.
+│   │   │                      # ★ NO DECORATIVE ICONS (owner, 2026-10-09: the
+│   │   │                      # purple icon chips "look AI generated"). The
+│   │   │                      # icon tiles on the Mink band, channel marquee,
+│   │   │                      # customise cards, steps and mega-menu rail are
+│   │   │                      # gone; what remains is photography, drawn UI,
+│   │   │                      # type and a few 16px inline check/arrow marks.
+│   │   │                      # ★ NO LONG DASHES in any public marketing copy
+│   │   │                      # or page title (owner's rule): titles use a
+│   │   │                      # colon or middle dot, sentences a full stop or
+│   │   │                      # comma. Still a server component; the only
+│   │   │                      # client JS is the pricing switch and the
+│   │   │                      # mobile menu — rotator, marquee and header mega
+│   │   │                      # menus are CSS. Scoped visuals in homepage.css
+│   │   │                      # (the drawn light-UI artwork is pinned to dark
+│   │   │                      # ink so it never inherits the page's white
+│   │   │                      # text); live plan prices still resolve from
+│   │   │                      # the canonical catalog
+│   │   ├── theme-rail.tsx     # The homepage's one-row theme carousel
+│   │   │                      # (client: arrows + native scroll-snap), fed
+│   │   │                      # by the live catalogue. Themes are always
+│   │   │                      # shown as themselves, never as generated or
+│   │   │                      # theme-seed photography (owner's rule)
+│   │   ├── homepage-art.tsx   # The drawn dashboard/orders/channels/growth/
+│   │   │                      # Mink artwork, shared by the homepage and
+│   │   │                      # the product pages (product-art.tsx holds the
+│   │   │                      # storefront/builder/register/invoice ones)
+│   │   ├── pricing-cards.tsx  # The plan cards (client: the yearly switch).
+│   │   │                      # shopify.com/pricing's card since 2026-10-09:
+│   │   │                      # a "Pay yearly" switch with the compare link
+│   │   │                      # on the same row (`aside`), then name and
+│   │   │                      # tagline left, price right, one outline
+│   │   │                      # button, short rows under hairlines, no check
+│   │   │                      # icons. The dark skin lives in homepage.css
+│   │   │                      # (`.smh-pricing-component .stq-*`)
+│   │   ├── pricing-content.tsx # PLANS copy, the feature matrix and FAQS —
+│   │   │                      # one source for the homepage and /pricing
+│   │   ├── marketing-routes.ts # ★ THE REGISTRY of marketing pages (Why
+│   │   │                      # StoreMink, Products + five product pages,
+│   │   │                      # Pricing). Pure. Read by the header, footer,
+│   │   │                      # mobile menu AND app/sitemap.ts, and pinned
+│   │   │                      # both ways by homepage.test.ts (every entry
+│   │   │                      # has a page.tsx, every page.tsx is an entry).
+│   │   ├── (marketing)/       # ★ The inner marketing site (2026-10-08) —
+│   │   │                      # storemink.com was one long page while
+│   │   │                      # shopify.com is a family of pages. layout.tsx
+│   │   │                      # = .smh + SiteHeader/SiteFooter; blocks.tsx =
+│   │   │                      # PageHero / FeatureRow(s) / PillarGrid /
+│   │   │                      # CtaBand / RelatedPages + marketingMetadata
+│   │   │                      # (canonical per page); marketing.css = the
+│   │   │                      # smm-* blocks on top of homepage.css, same
+│   │   │                      # dark system (feature rows are dark cards).
+│   │   │                      # A pillar carries a mono "01" index above its
+│   │   │                      # title, not an icon (the icon chips were
+│   │   │                      # dropped site-wide on 2026-10-09).
+│   │   │                      # why-storemink/, products/ (overview) +
+│   │   │                      # products/{online-store,orders-inventory,
+│   │   │                      # payments,marketing,mink-ai}/, pricing/ (cards
+│   │   │                      # + full matrix + FAQ; the homepage keeps the
+│   │   │                      # cards and links here for the comparison).
+│   │   │                      # Point of Sale and Themes stay on their own
+│   │   │                      # hosts and are linked, not duplicated.
+│   │   ├── site-header.tsx    # Shared dark header: Why StoreMink + Products
+│   │   │                      # (rail tiles are a two-line Mink chat and the
+│   │   │                      # POS photograph, not icons)
+│   │   │                      # are full-width hover/focus-within CSS mega
+│   │   │                      # menus (no JS) — photo cards / link columns
+│   │   │                      # plus a "Built into every store" rail (Mink,
+│   │   │                      # POS); images are lazy so an unopened menu
+│   │   │                      # fetches nothing; every item a real route
+│   │   ├── site-footer.tsx    # Shared dark footer: four columns, a static
+│   │   │                      # "India · English · ₹" region line, legal row
 │   │   ├── homepage-mobile-nav.tsx # Accessible, auto-closing mobile menu
 │   │   ├── signup/            # ★ Store creation wizard (see §19): Shopify-style
 │   │   │                      # step order — email → password (+ Continue with
@@ -3624,7 +3735,9 @@ wholesip/
 │   │                          # initial-draft.ts (legacy v20 presets; v21 explicit styles,
 │   │                          # catalogue-derived navigation and option combinations),
 │   │                          # design-directions.ts/style-choices.ts (seven directions,
-│   │                          # explicit visible choices), fingerprint.ts/variety-context.ts
+│   │                          # explicit visible choices), opening.ts (every new theme
+│   │                          # opens with a photograph filling the band: a carousel or a
+│   │                          # fullbleed hero at full width, v26), fingerprint.ts/variety-context.ts
 │   │                          # (bounded catalogue comparison + frozen run context),
 │   │                          # placeholders.ts (solid WebP per image slot), pipeline.ts
 │   │                          # (Stage A → B, ≤2 repairs each, pure over the client),
@@ -4802,7 +4915,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     The storefront itself is a per-store artifact, not hardcoded: - **Section registry**: `lib/homepage/section-types.ts` is the single typed
     section schema (config types, `EMPTY_CONFIG`, `META`, `validateConfig`),
     shared by the homepage AND custom pages. Seventeen block types: `hero`
-    (banner/split/minimal variants — first-class hero, replaces the old
+    (banner/split/minimal/fullbleed variants — first-class hero, replaces the old
     custom_code hero hack; optional `video_url` plays muted/looping in place
     of the image with the image as poster), `hero_carousel` (auto-playing
     photo/video slideshow — `slides[]` of HeroSlide, dot + arrow nav,
@@ -6009,6 +6122,85 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     The builder's draft preview (`lib/pages/preview.ts`) is untouched; it
     renders what the merchant is typing. Storefront-internal: no merchant
     workflow change, no Help Centre update.
+    **Fonts 9 → 31 with a pairing library (2026-10-09, plan Phase 2a).**
+    `lib/themes/fonts.ts` is the one catalogue: 31 faces (the nine originals
+    first, in their old order, then 22 added — editorial and didone serifs,
+    humanist and reading serifs, geometric, grotesk and rounded sans,
+    condensed and poster display faces, one monospace), each with family,
+    next/font export, CSS variable, category, loaded weight range, italic,
+    body-suitability and moods; and 26 display/body **pairings** with moods
+    and the design directions they suit. `DESIGN_FONTS` / `DESIGN_FONT_NAMES`
+    / `DesignFont` (the override allowlist, Mink's design reader, the
+    builder's Type panel — now grouped by category), `typography.ts`'s
+    faux-bold weights, the package contract (a stored face must be one the
+    catalogue loads) and the Stage B schema all derive from it.
+    ★ `app/layout.tsx` CANNOT derive — next/font/google needs one static call
+    per family — so `fonts.test.ts` reads that file and fails when the two
+    disagree, and cross-checks every family, weight, style and subset
+    against Next's own Google font data. All 22 are `preload: false`
+    (fetched only by a store whose theme names them); italic is loaded only
+    for the editorial serifs that trade on it. ★ Stage B chooses a PAIRING
+    (prompt `theme-studio-v25`, feature `fontPairings`): the draft gains a
+    top-level `fontPairing` — an enum, or null for a free choice when the
+    brief names a typeface, never a display-only face as body — which the
+    compiler resolves into `design.fonts`, the pairing winning over the two
+    faces the model also wrote. Top level, not under `design`, so it is never
+    a repair target; the package shape is unchanged. The prompt lists the
+    pairings and the catalogue and derives the limited-weight faces from it
+    instead of a hand-written sentence; the variety prompt adds the pairings
+    suited to the chosen direction. ★ Pre-v25 requests keep their bytes:
+    `stageBSchemaFor(schema, false)` returns a legacy twin (no `fontPairing`,
+    the nine faces) and the prompt keeps its old wording, because a persisted
+    paid request is keyed on its exact schema and text. Decision 5 (owner
+    taste) stays open: swap any face or pairing by editing the one file. Measured on a local production build (2026-10-09): the root layout's font CSS chunk is 193 `@font-face` rules, 69.8 KB raw / 8.3 KB gzipped, of which the 22 new families are 42.7 KB raw against the nine originals' 20.7 KB — roughly 5 KB gzipped more per page — and no font bytes until a theme uses a face (149 woff2 files, 5.3 MB in `static/media`, fetched on demand); the build took 59 s locally with no font fetch failure.
+    Storefront/operator-internal: no merchant workflow change, no Help Centre
+    update.
+    **Every generated theme opens with a photograph filling the band
+    (2026-10-09, owner's rule; a slice of plan Phase 2d).** The owner pointed
+    at the Vitrine demo and Shopify's Taiga: the homepage opens on a picture
+    that fills the whole hero band with the copy over it, while Luxe (a Studio
+    theme) opened with a split hero, image beside copy. Two parts. (1) The
+    renderer gains a fourth `hero` variant, **`fullbleed`**: the image is the
+    band's background (`home-hero-bgmedia`, the minimal variant's mechanism)
+    with the copy over it, alignment honoured (left or centre; minimal forces
+    centre), the carousel's copy padding, width and left-edge scrim, never a
+    rounded corner (it pairs with Style → full width to run edge to edge, and a
+    radius against the screen edge reads as a mistake), and `MediaTone`
+    measuring the pixels behind the words as it does for a slide. It is a
+    one-slide carousel without the controls. Builder: a "Full-bleed" option in
+    the hero Layout select, the wide image spec and the overlay controls;
+    `hero-contrast.ts` leaves a fullbleed hero with media to the browser and
+    vision stages like a minimal one; Mink's screenshot reader may name it.
+    `scripts/theme-studio-renderer-check.mjs` renders it at the five QA widths,
+    both alignments, light and dark copy, auto/large/screen, contained and
+    full (727 cases pass); the contrast script covers the photo-less field.
+    (2) Theme Studio prompt **`theme-studio-v26`** (feature
+    `fullBleedOpening`): Stage A writes a dedicated 21:9 (or 16:9) brief for
+    the opening; Stage B is told the first enabled homepage section must be a
+    `hero_carousel` whose slides each carry an image, or a `hero` with variant
+    `fullbleed` and an image, at height large or screen, and the variety
+    prompt prints the fourth variant. `lib/theme-studio/opening.ts` is the
+    check, run inside generation beside the claims check as a repair issue —
+    never a content floor or an acceptance gate, because bundled themes and
+    installed stores open however they were authored (Vitrine itself leads
+    with a ticker). `enforceHomepageOpening` sets the opening's width to full
+    rather than asking for it (mechanical, so no paid repair turn), and the
+    rule applies to new builds only: a revision keeps whatever opening its base
+    has. An automatic QA repair of a theme that opens this way is not offered
+    the opening's variant, height or width as settings and is re-checked
+    afterwards; the variety correction leaves those three paths alone, and the
+    hero axis left `CONVERGENCE_CHOICES` (a shared opening is now the rule, not
+    a repeated default; the weighted distance still counts it). ★ Pre-v26
+    requests keep their bytes: the prompt bullets, the Stage A sentence, the
+    hero-contrast note and the printed hero variants are all gated on the
+    feature flag (`visibleSectionChoices(false)`, `heroContrastPrompt(false)`),
+    while the compiler accepts the fourth variant at every version. The
+    offline provider's draft now opens with a fullbleed hero at full width.
+    ⚠ The header still sits above the opening with the page's breathing gap,
+    as it does over Vitrine's carousel; a transparent header floating over the
+    photo is the Phase 2d header work, not this. Not yet run against live
+    Gemini. Merchant-visible only as one more hero layout in the builder, and
+    no published guide names the hero layouts, so no Help Centre update.
     `automatic-qa-policy.ts` queues targeted exact-package revisions for theme
     failures, up to THREE repairs (iterations 0→1→2→3, the ceiling migration
     0145 allows; `MAX_AUTOMATIC_QA_REPAIRS`).
@@ -6656,10 +6848,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         `palette` (all 14 `--sm-*` colour tokens + `onAccent`/`onInk`/
         `shadowRgb`/`success`/`error`/`star`/`highlight` semantic tokens), `fonts`
         (`body`/`display`, pointing at next/font variables loaded in
-        `app/layout.tsx` — Inter/Fraunces/Space Grotesk/Plus Jakarta/Jost/Instrument
-        Serif (all `preload: false`; which one a page uses is decided per request
-        from the store's theme) alongside the
-        legacy Outfit/Roboto/Stick), and `shape` (`card`/`control`/`sm`/`pill`
+        `app/layout.tsx` — the 31 families of the catalogue in
+        `lib/themes/fonts.ts`, all but the platform's own three `preload: false`;
+        which one a page uses is decided per request from the store's theme), and `shape` (`card`/`control`/`sm`/`pill`
         radii). `designToCssVars(design, brandPrimary)` flattens it to a CSS-var map
         the `(storefront)` layout writes **inline on `.storefront-root`** — inline
         specificity beats the globals.css `:root` defaults, so the whole storefront

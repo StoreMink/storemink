@@ -19,7 +19,7 @@ export default function LegalIndexPage() {
       <div className={styles.doc}>
         <h1 className={styles.title}>Legal Policies</h1>
         <p className={styles.lede}>
-          The agreements that govern StoreMink. Each is versioned — the version
+          The agreements that govern StoreMink. Each is versioned: the version
           you agreed to is the one that binds you, and it stays available.
         </p>
 

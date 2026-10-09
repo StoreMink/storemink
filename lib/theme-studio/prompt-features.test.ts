@@ -15,6 +15,8 @@ it("preserves old paid request shapes and carries capabilities into future promp
     heroContrast: false,
     changeScope: false,
     convergence: false,
+    fontPairings: false,
+    fullBleedOpening: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -26,6 +28,8 @@ it("preserves old paid request shapes and carries capabilities into future promp
     heroContrast: false,
     changeScope: false,
     convergence: false,
+    fontPairings: false,
+    fullBleedOpening: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -37,8 +41,10 @@ it("preserves old paid request shapes and carries capabilities into future promp
     heroContrast: true,
     changeScope: true,
     convergence: true,
+    fontPairings: true,
+    fullBleedOpening: true,
   });
-  expect(themePromptFeatures("theme-studio-v25")).toEqual(
+  expect(themePromptFeatures("theme-studio-v27")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
   );
   expect(themePromptFeatures("invalid").compactInitial).toBe(false);
@@ -64,4 +70,14 @@ it("scopes operator revisions only from v24, so v23 revisions replay unchanged",
   expect(themePromptFeatures("theme-studio-v24").changeScope).toBe(true);
   expect(themePromptFeatures("theme-studio-v23").convergence).toBe(false);
   expect(themePromptFeatures("theme-studio-v24").convergence).toBe(true);
+});
+
+it("enables font pairings only for v25 and later", () => {
+  expect(themePromptFeatures("theme-studio-v24").fontPairings).toBe(false);
+  expect(themePromptFeatures("theme-studio-v25").fontPairings).toBe(true);
+});
+
+it("asks for a full-band photograph opening only from v26, so v25 requests replay unchanged", () => {
+  expect(themePromptFeatures("theme-studio-v25").fullBleedOpening).toBe(false);
+  expect(themePromptFeatures("theme-studio-v26").fullBleedOpening).toBe(true);
 });

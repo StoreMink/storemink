@@ -163,6 +163,10 @@ try {
       ["banner", "light", true, ""], // card reset forces page ink
       ["split", "dark", true, ""], // band text on its derived deep field
       ["minimal", "light", false, "#111111"],
+      // A fullbleed hero with no photo is a plain field like minimal.
+      ["fullbleed", "dark", false, ""],
+      ["fullbleed", "dark", true, ""],
+      ["fullbleed", "light", false, "#111111"],
     ]) {
       const violations = await checkHtml(
         width,

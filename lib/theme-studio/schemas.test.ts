@@ -60,3 +60,52 @@ describe("provider schemas", () => {
     expect(JSON.stringify(STAGE_B_DRAFT_SCHEMA)).not.toContain('"custom_code"');
   });
 });
+
+describe("font pairings in the Stage B schemas", () => {
+  it("every current schema offers fontPairing and the whole catalogue; the legacy twin neither", async () => {
+    const {
+      stageBSchemaFor,
+      STAGE_B_INITIAL_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_INITIAL_SCHEMA,
+    } = await import("./schemas");
+    const { FONT_PAIRING_KEYS, THEME_FONT_VALUES, LEGACY_DESIGN_FONT_VALUES } =
+      await import("@/lib/themes/fonts");
+    for (const schema of [
+      STAGE_B_DRAFT_SCHEMA,
+      STAGE_B_INITIAL_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_DRAFT_SCHEMA,
+      STAGE_B_VARIETY_INITIAL_SCHEMA,
+    ]) {
+      const current = stageBSchemaFor(schema, true) as {
+        required: string[];
+        properties: Record<
+          string,
+          {
+            anyOf?: { enum?: string[] }[];
+            properties?: Record<
+              string,
+              { properties: Record<string, { enum: string[] }> }
+            >;
+          }
+        >;
+      };
+      expect(current.required).toContain("fontPairing");
+      expect(current.properties.fontPairing.anyOf?.[0].enum).toEqual(
+        FONT_PAIRING_KEYS,
+      );
+      expect(
+        current.properties.design.properties!.fonts.properties.body.enum,
+      ).toEqual([...THEME_FONT_VALUES]);
+      const legacy = stageBSchemaFor(schema, false) as typeof current;
+      expect(legacy.required).not.toContain("fontPairing");
+      expect(legacy.properties.fontPairing).toBeUndefined();
+      expect(
+        legacy.properties.design.properties!.fonts.properties.display.enum,
+      ).toEqual([...LEGACY_DESIGN_FONT_VALUES]);
+      expect(
+        legacy.properties.design.properties!.fonts.properties.display.enum,
+      ).toHaveLength(9);
+    }
+  });
+});

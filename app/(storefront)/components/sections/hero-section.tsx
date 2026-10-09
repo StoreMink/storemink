@@ -5,12 +5,15 @@ import { SectionShell } from "./section-shell";
 import { HeroImage, HeroOverlay, heroClasses } from "./hero-media";
 import { MediaTone } from "./media-tone";
 
-// First-class hero block. Three variants:
-//   banner  — inset rounded card on a solid colour field, copy left / image
-//             right (grocery-market style);
-//   split   — half copy / half image band;
-//   minimal — centred statement; an image (if any) becomes a full cover
-//             background behind the copy.
+// First-class hero block. Four variants:
+//   banner    — inset rounded card on a solid colour field, copy left / image
+//               right (grocery-market style);
+//   split     — half copy / half image band;
+//   minimal   — centred statement; an image (if any) becomes a full cover
+//               background behind the copy;
+//   fullbleed — the photograph fills the whole band and the copy sits over
+//               it, left or centred: a one-slide carousel without the
+//               controls, and the opening every Studio theme uses.
 // `config.background` is validated as a strict colour (safeColor), so it is
 // safe in an inline style attribute — same contract as SectionStyle.background.
 export function HeroSection({
@@ -44,7 +47,8 @@ export function HeroSection({
   ) : null;
 
   const asBackground =
-    config.variant === "minimal" && !!(config.image_url || config.video_url);
+    (config.variant === "minimal" || config.variant === "fullbleed") &&
+    !!(config.image_url || config.video_url);
   // Video wins over the image; the image doubles as its poster frame.
   // YouTube/Vimeo links become a chrome-less background embed; direct files
   // play via <video>. Muted + playsInline are required for mobile autoplay.

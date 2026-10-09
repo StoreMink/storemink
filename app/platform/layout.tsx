@@ -32,7 +32,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const DESCRIPTION = `${BRAND_DESCRIPTION} Paid plans start at ₹${cheapestPaid.toLocaleString("en-IN")}/month with 0% StoreMink transaction fees.`;
 
   return {
-    title: `StoreMink — ${BRAND_TAGLINE}`,
+    title: `StoreMink: ${BRAND_TAGLINE}`,
     description: DESCRIPTION,
     applicationName: "StoreMink",
     // Self-canonical. Without this the apex emitted NO canonical at all, while
@@ -57,7 +57,7 @@ export async function generateMetadata(): Promise<Metadata> {
       "shopify alternative india",
     ],
     openGraph: {
-      title: `StoreMink — ${BRAND_TAGLINE}`,
+      title: `StoreMink: ${BRAND_TAGLINE}`,
       description: DESCRIPTION,
       url: "/",
       siteName: "StoreMink",
@@ -66,7 +66,7 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     twitter: {
       card: "summary_large_image",
-      title: `StoreMink — ${BRAND_TAGLINE}`,
+      title: `StoreMink: ${BRAND_TAGLINE}`,
       description: DESCRIPTION,
       images: [OG_IMAGE],
     },

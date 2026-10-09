@@ -143,3 +143,104 @@ describe("reserved catalog slot names", () => {
     expect(slotSpec("constructor", intent).aspectRatio).toBe("21:9");
   });
 });
+
+describe("font pairings (prompt v25)", () => {
+  const input = {
+    name: "Clay & Co",
+    brief: "A calm ceramics shop.",
+    industries: ["home" as const],
+    catalogSizes: ["small" as const],
+    requiredFeatures: [],
+    referenceCount: 0,
+  };
+  async function draftAndIntent() {
+    const intent = runFakeProvider(input);
+    if (!intent.ok) throw new Error("fake intent failed");
+    const result = await createFakeModelClient(input).generate(
+      { stage: "draft", content: [] } as never,
+      new AbortController().signal,
+    );
+    if (result.kind !== "ok") throw new Error("fake draft failed");
+    return {
+      intent: intent.value as ThemeIntent,
+      draft: structuredClone(result.value) as Record<string, unknown>,
+    };
+  }
+  const fontsOf = (parts: ReturnType<typeof prepareDraft>["parts"]) =>
+    parts?.design?.fonts;
+
+  it("the offline draft names the pairing its faces came from", async () => {
+    const { intent, draft } = await draftAndIntent();
+    expect(draft.fontPairing).toBe("editorial-fraunces");
+    const { issues, parts } = prepareDraft(draft, intent);
+    expect(issues).toEqual([]);
+    expect(fontsOf(parts)).toEqual({
+      body: "var(--font-inter)",
+      display: "var(--font-fraunces)",
+    });
+  });
+
+  it("a pairing wins over the two faces the model also wrote", async () => {
+    const { intent, draft } = await draftAndIntent();
+    draft.fontPairing = "quiet-serif";
+    const { issues, parts } = prepareDraft(draft, intent);
+    expect(issues).toEqual([]);
+    expect(fontsOf(parts)).toEqual({
+      body: "var(--font-jost)",
+      display: "var(--font-instrument-serif)",
+    });
+  });
+
+  it("an unknown pairing is a repair that names the choices; a null one is a free choice", async () => {
+    const { intent, draft } = await draftAndIntent();
+    draft.fontPairing = "comic-sans-forever";
+    expect(prepareDraft(draft, intent).issues).toEqual([
+      expect.stringContaining(
+        "fontPairing must be null or one of: editorial-fraunces",
+      ),
+    ]);
+    draft.fontPairing = null;
+    (draft.design as { fonts: Record<string, string> }).fonts = {
+      body: "var(--font-work-sans)",
+      display: "var(--font-bebas-neue)",
+    };
+    const free = prepareDraft(draft, intent);
+    expect(free.issues).toEqual([]);
+    expect(fontsOf(free.parts)).toEqual({
+      body: "var(--font-work-sans)",
+      display: "var(--font-bebas-neue)",
+    });
+  });
+
+  it("refuses a display-only face as the body face, and a face the catalogue lacks", async () => {
+    const { intent, draft } = await draftAndIntent();
+    draft.fontPairing = null;
+    (draft.design as { fonts: Record<string, string> }).fonts = {
+      body: "var(--font-bebas-neue)",
+      display: "var(--font-bebas-neue)",
+    };
+    expect(prepareDraft(draft, intent).issues).toEqual([
+      "design.fonts.body must be a face suited to body copy; Bebas Neue is display only.",
+    ]);
+    (draft.design as { fonts: Record<string, string> }).fonts = {
+      body: "var(--font-comic)",
+      display: "var(--font-fraunces)",
+    };
+    expect(prepareDraft(draft, intent).issues).toEqual([
+      expect.stringContaining(
+        "design.fonts.body must be one of the loaded font values: var(--font-inter)",
+      ),
+    ]);
+  });
+
+  it("a draft from before v25 carries no pairing and keeps its faces", async () => {
+    const { intent, draft } = await draftAndIntent();
+    delete draft.fontPairing;
+    const { issues, parts } = prepareDraft(draft, intent);
+    expect(issues).toEqual([]);
+    expect(fontsOf(parts)).toEqual({
+      body: "var(--font-inter)",
+      display: "var(--font-fraunces)",
+    });
+  });
+});

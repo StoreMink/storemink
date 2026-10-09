@@ -32,7 +32,18 @@
 > scroll-through, not the page. Phase 1 item 5 landed: `getPublishedPage`
 > validates `published_sections` on read (`salvageSections`, draft-mode rules
 > per section, each drop logged). Phase 0 items 1, 2 and 4 (deploy, route,
-> re-benchmark) are ops and still open.
+> re-benchmark) are ops and still open. Phase 2a landed: 31 fonts and a
+> 26-pairing library in `lib/themes/fonts.ts`, chosen by Stage B under prompt
+> v25 (measured: about 5 KB gzipped more font CSS per page, no font bytes
+> until used, build 59 s locally); the Phase 2 exit (every new vocabulary item on a hand-authored
+> exemplar) waits for 2b–2e. A slice of 2d landed on 2026-10-09 by owner's
+> rule ("a full picture on the homepage carousel just like Shopify"): the
+> `fullbleed` hero variant (photo fills the band, copy over it) and prompt v26,
+> under which every new theme opens with a `hero_carousel` or a fullbleed hero
+> at full width (`lib/theme-studio/opening.ts`, checked in generation only;
+> revisions keep their base's opening). The rest of 2d (stacked, offset-card,
+> collage, text-only, video, carousel-split heroes; the transparent-sticky
+> header that would float over this opening) is still open.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 
@@ -308,5 +319,5 @@ sections used/available · stylesheet rules/theme.
 2. Approve structured-stylesheet over raw CSS (recommended; see Phase 3 "why not").
 3. ~~Default daily spend ceiling value.~~ Decided 2026-10-08: none.
 4. Whether the manual-acceptance path keeps a human scorecard row or simply requires the model verdict.
-5. Font cap (proposed 32) and the first 25 pairings — owner taste matters here.
+5. Font cap (proposed 32) and the first 25 pairings — owner taste matters here. **Proposed 2026-10-09:** 31 families and 26 pairings in `lib/themes/fonts.ts`; swap any face or pairing by editing that one file (`fonts.test.ts` holds `app/layout.tsx` to it).
 6. Who runs the blind test in Phase 4.

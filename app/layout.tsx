@@ -9,6 +9,28 @@ import {
   Plus_Jakarta_Sans,
   Jost,
   Instrument_Serif,
+  Playfair_Display,
+  Lora,
+  Source_Serif_4,
+  Cormorant_Garamond,
+  EB_Garamond,
+  Newsreader,
+  Bodoni_Moda,
+  DM_Serif_Display,
+  Italiana,
+  Marcellus,
+  DM_Sans,
+  Manrope,
+  Sora,
+  Figtree,
+  Archivo,
+  Work_Sans,
+  Nunito,
+  Syne,
+  Bricolage_Grotesque,
+  Oswald,
+  Bebas_Neue,
+  JetBrains_Mono,
 } from "next/font/google";
 import NextTopLoader from "nextjs-toploader";
 import { PLATFORM_URL } from "@/lib/site";
@@ -89,6 +111,171 @@ const instrumentSerif = Instrument_Serif({
   preload: false,
 });
 
+// ── Phase 2a: the wider catalogue ───────────────────────────────────────
+// lib/themes/fonts.ts is the source of truth and lib/themes/fonts.test.ts
+// fails when this block and the catalogue disagree — next/font/google needs
+// one static call per family, so this list cannot be derived. Variable
+// families load one file per style; static families list their weights.
+// Italic is loaded only for the editorial serifs that trade on it. All are
+// preload: false, for the reason above.
+const playfairDisplay = Playfair_Display({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  variable: "--font-playfair-display",
+  preload: false,
+});
+const lora = Lora({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  variable: "--font-lora",
+  preload: false,
+});
+const sourceSerif = Source_Serif_4({
+  subsets: ["latin"],
+  variable: "--font-source-serif",
+  preload: false,
+});
+const cormorantGaramond = Cormorant_Garamond({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  variable: "--font-cormorant-garamond",
+  preload: false,
+});
+const ebGaramond = EB_Garamond({
+  subsets: ["latin"],
+  variable: "--font-eb-garamond",
+  preload: false,
+});
+const newsreader = Newsreader({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  variable: "--font-newsreader",
+  preload: false,
+});
+const bodoniModa = Bodoni_Moda({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  variable: "--font-bodoni-moda",
+  preload: false,
+});
+const dmSerifDisplay = DM_Serif_Display({
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+  variable: "--font-dm-serif-display",
+  preload: false,
+});
+const italiana = Italiana({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-italiana",
+  preload: false,
+});
+const marcellus = Marcellus({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-marcellus",
+  preload: false,
+});
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  variable: "--font-dm-sans",
+  preload: false,
+});
+const manrope = Manrope({
+  subsets: ["latin"],
+  variable: "--font-manrope",
+  preload: false,
+});
+const sora = Sora({
+  subsets: ["latin"],
+  variable: "--font-sora",
+  preload: false,
+});
+const figtree = Figtree({
+  subsets: ["latin"],
+  variable: "--font-figtree",
+  preload: false,
+});
+const archivo = Archivo({
+  subsets: ["latin"],
+  variable: "--font-archivo",
+  preload: false,
+});
+const workSans = Work_Sans({
+  subsets: ["latin"],
+  variable: "--font-work-sans",
+  preload: false,
+});
+const nunito = Nunito({
+  subsets: ["latin"],
+  variable: "--font-nunito",
+  preload: false,
+});
+const syne = Syne({
+  subsets: ["latin"],
+  variable: "--font-syne",
+  preload: false,
+});
+const bricolageGrotesque = Bricolage_Grotesque({
+  subsets: ["latin"],
+  variable: "--font-bricolage-grotesque",
+  preload: false,
+});
+const oswald = Oswald({
+  subsets: ["latin"],
+  variable: "--font-oswald",
+  preload: false,
+});
+const bebasNeue = Bebas_Neue({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-bebas-neue",
+  preload: false,
+});
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains-mono",
+  preload: false,
+});
+
+/** Every family's CSS variable, on <html> so any store's theme can name it. */
+const THEME_FONT_CLASSES = [
+  outfit,
+  roboto,
+  stickNoBills,
+  inter,
+  fraunces,
+  spaceGrotesk,
+  jakarta,
+  jost,
+  instrumentSerif,
+  playfairDisplay,
+  lora,
+  sourceSerif,
+  cormorantGaramond,
+  ebGaramond,
+  newsreader,
+  bodoniModa,
+  dmSerifDisplay,
+  italiana,
+  marcellus,
+  dmSans,
+  manrope,
+  sora,
+  figtree,
+  archivo,
+  workSans,
+  nunito,
+  syne,
+  bricolageGrotesque,
+  oswald,
+  bebasNeue,
+  jetbrainsMono,
+]
+  .map((font) => font.variable)
+  .join(" ");
+
 // Neutral platform-level fallback. The (storefront) layout overrides this per
 // store (brand name + canonical origin); the (platform) layout sets its own.
 export const metadata = {
@@ -110,10 +297,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html
-      lang="en"
-      className={`${outfit.variable} ${roboto.variable} ${stickNoBills.variable} ${inter.variable} ${fraunces.variable} ${spaceGrotesk.variable} ${jakarta.variable} ${jost.variable} ${instrumentSerif.variable}`}
-    >
+    <html lang="en" className={THEME_FONT_CLASSES}>
       <body className="antialiased">
         <NextTopLoader color="#1a1a1a" showSpinner={false} />
         {children}

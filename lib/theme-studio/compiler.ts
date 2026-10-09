@@ -1,4 +1,12 @@
 import { sanitizeMenusForSave } from "@/lib/menus";
+import {
+  FONT_PAIRING_KEYS,
+  THEME_FONT_VALUES,
+  fontFace,
+  isFontPairingKey,
+  isThemeFontValue,
+  pairingFonts,
+} from "@/lib/themes/fonts";
 import { explicitDraftStyleIssues } from "./style-choices";
 import { paletteFamilyIssues } from "./fingerprint";
 import type { PageSectionItem } from "@/lib/sections/registry";
@@ -287,7 +295,47 @@ function normalizeGaps(value: unknown): ThemeCapabilityGap[] {
   });
 }
 
-function buildDesign(raw: unknown, issues: string[]): ThemeDesign | null {
+/**
+ * The two stored faces. A pairing (prompt v25+) WINS over the draft's own
+ * fonts: it is the choice the model made deliberately, and the two faces it
+ * also wrote are the pairing spelled out. A null pairing is a free choice
+ * from the catalogue, for a brief that names a typeface; the package
+ * contract refuses anything the catalogue lacks.
+ */
+function chosenFonts(
+  raw: Record<string, unknown>,
+  fontPairing: unknown,
+  issues: string[],
+): { body: string; display: string } {
+  if (fontPairing !== undefined && fontPairing !== null) {
+    if (isFontPairingKey(fontPairing)) return pairingFonts(fontPairing);
+    issues.push(
+      `fontPairing must be null or one of: ${FONT_PAIRING_KEYS.join(", ")}.`,
+    );
+  }
+  const fonts = { body: text(raw.body), display: text(raw.display) };
+  for (const key of ["body", "display"] as const) {
+    if (!isThemeFontValue(fonts[key])) {
+      issues.push(
+        `design.fonts.${key} must be one of the loaded font values: ${THEME_FONT_VALUES.join(", ")}.`,
+      );
+    }
+  }
+  // A free choice may still not put a poster face on body copy.
+  const body = fontFace(fonts.body);
+  if (body && !body.body) {
+    issues.push(
+      `design.fonts.body must be a face suited to body copy; ${body.label} is display only.`,
+    );
+  }
+  return fonts;
+}
+
+function buildDesign(
+  raw: unknown,
+  issues: string[],
+  fontPairing?: unknown,
+): ThemeDesign | null {
   if (
     !isRec(raw) ||
     !isRec(raw.palette) ||
@@ -360,7 +408,7 @@ function buildDesign(raw: unknown, issues: string[]): ThemeDesign | null {
   }
   return {
     palette: palette as unknown as ThemeDesign["palette"],
-    fonts: { body: text(raw.fonts.body), display: text(raw.fonts.display) },
+    fonts: chosenFonts(raw.fonts, fontPairing, issues),
     shape: {
       card: text(raw.shape.card),
       control: text(raw.shape.control),
@@ -744,7 +792,7 @@ export function prepareDraft(
   const briefIds = new Set(intent.assetBriefs.map((b) => b.id));
   const used = new Set<string>(Object.keys(SYSTEM_SLOTS));
   const productSlots = new Map<string, ProductSlot>();
-  const design = buildDesign(draftInput.design, issues);
+  const design = buildDesign(draftInput.design, issues, draftInput.fontPairing);
   if (intent.schemaVersion === 2 && design)
     issues.push(
       ...paletteFamilyIssues(intent.paletteFamily, design.palette.cream),

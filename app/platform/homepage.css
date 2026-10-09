@@ -1,25 +1,34 @@
 /* --------------------------------------------------------------------------
-   StoreMink public homepage.
+   StoreMink public homepage + marketing pages.
 
    Scoped to .smh so the platform login, signup, POS and operator surfaces can
    continue sharing platform.css without inheriting this marketing system.
+
+   The design system is shopify.com's: black page, dark-grey cards with large
+   radii, regular-weight headlines set large and loosely tracked, a grey-then-
+   white emphasis pattern in long headlines, photography where it matters, one
+   white pill button, and underlined links in body copy. The accent stays
+   StoreMink purple, lifted for a dark page.
    -------------------------------------------------------------------------- */
 
 .smh {
-  --smh-ink: #101018;
-  --smh-muted: #5f6170;
-  --smh-purple: #573cf0;
-  --smh-purple-dark: #3f28ce;
-  --smh-lilac: #eeeaff;
-  --smh-mint: #c8f5db;
-  --smh-mint-strong: #20a464;
-  --smh-cream: #f7f5ef;
-  --smh-line: rgba(16, 16, 24, 0.12);
-  --smh-navy: #121326;
+  --smh-bg: #000;
+  --smh-card: #141416;
+  --smh-card-2: #1c1c20;
+  --smh-line: rgba(255, 255, 255, 0.1);
+  --smh-line-strong: rgba(255, 255, 255, 0.2);
+  --smh-ink: #fff;
+  --smh-muted: #a3a3ad;
+  --smh-dim: #6b6b75;
+  --smh-purple: #8b74ff;
+  --smh-purple-deep: #573cf0;
+  --smh-mint: #69e5a7;
+  --smh-radius: 22px;
   color: var(--smh-ink);
-  background: #fff;
+  background: var(--smh-bg);
   overflow: clip;
   font-family:
+    var(--font-inter),
     Inter,
     ui-sans-serif,
     system-ui,
@@ -28,6 +37,7 @@
     "Segoe UI",
     sans-serif;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 .smh *,
@@ -54,7 +64,7 @@
 }
 
 .smh-container {
-  width: min(1240px, calc(100% - 48px));
+  width: min(1320px, calc(100% - 48px));
   margin-inline: auto;
 }
 
@@ -66,9 +76,9 @@
   transform: translateY(-160%);
   padding: 10px 14px;
   border-radius: 8px;
-  background: var(--smh-ink);
-  color: #fff !important;
-  font-weight: 750;
+  background: #fff;
+  color: #000 !important;
+  font-weight: 650;
   text-decoration: none;
 }
 
@@ -77,8 +87,152 @@
 }
 
 .smh :focus-visible {
-  outline: 3px solid rgba(87, 60, 240, 0.48);
+  outline: 3px solid rgba(139, 116, 255, 0.7);
   outline-offset: 3px;
+}
+
+/* Type ------------------------------------------------------------------- */
+
+.smh h1,
+.smh h2 {
+  font-weight: 500;
+  line-height: 1.06;
+  letter-spacing: -0.02em;
+}
+
+.smh h3 {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.smh-section-label {
+  color: var(--smh-purple);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.smh-section-label.is-mint {
+  color: var(--smh-mint);
+}
+
+/* The shopify.com long-headline pattern: the setup in grey, the point in
+   white. <span> wraps the dim part. */
+.smh-dim {
+  color: var(--smh-dim);
+}
+
+.smh-lead {
+  color: var(--smh-muted);
+  font-size: clamp(17px, 1.5vw, 20px);
+  line-height: 1.5;
+}
+
+.smh-text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--smh-ink);
+  font-size: 16px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
+  text-decoration-color: rgba(255, 255, 255, 0.5);
+}
+
+.smh-text-link:hover {
+  text-decoration-color: #fff;
+}
+
+/* Inline links inside body copy, Shopify's underlined-in-sentence style. */
+.smh-inline-links a {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: rgba(255, 255, 255, 0.4);
+}
+
+.smh-inline-links a:hover {
+  text-decoration-color: #fff;
+}
+
+.smh-check-list {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.smh-check-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #cfd0d8;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.smh-check-list svg {
+  flex: none;
+  margin-top: 4px;
+  color: var(--smh-mint);
+}
+
+/* A product photograph in a rounded tile, with an optional caption chip.
+   The photographs are the bundled themes' own product shots, so every one
+   is a real product a merchant could sell today. */
+.smh-photo {
+  position: relative;
+  display: block;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #efebe6;
+}
+
+.smh-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.smh-photo em,
+.smh-theme-tiles em,
+.smh-step-photo em {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  max-width: calc(100% - 20px);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(8px);
+}
+
+/* The drawn artwork is a light UI and sets few colours of its own; on a
+   dark page it must not inherit white text. */
+.smh .sm-art,
+.smh .smh-command-window,
+.smh .smh-order-art,
+.smh .smh-channels-art {
+  color: #101018;
+}
+
+/* Cards ------------------------------------------------------------------ */
+
+.smh-card {
+  overflow: hidden;
+  border-radius: var(--smh-radius);
+  background: var(--smh-card);
 }
 
 /* Header ----------------------------------------------------------------- */
@@ -87,20 +241,19 @@
   position: sticky;
   top: 0;
   z-index: 50;
-  border-bottom: 1px solid rgba(16, 16, 24, 0.08);
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(0, 0, 0, 0.86);
   backdrop-filter: blur(18px);
 }
 
 .smh-nav {
-  width: min(1320px, calc(100% - 48px));
+  width: min(1760px, calc(100% - 48px));
   /* One header height across the public hosts (.posx-nav, .hc-topbar-inner). */
   min-height: 72px;
   margin-inline: auto;
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 42px;
+  gap: 28px;
 }
 
 .smh-logo {
@@ -108,7 +261,7 @@
   align-items: center;
   gap: 9px;
   width: max-content;
-  color: var(--smh-ink);
+  color: #fff;
   text-decoration: none;
 }
 
@@ -129,69 +282,286 @@
 .smh-nav-links {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: clamp(20px, 2.3vw, 34px);
+  justify-content: flex-start;
+  gap: 4px;
 }
 
-.smh-nav-links a,
+.smh-nav-links > a,
+.smh-nav-item > button,
 .smh-link-button {
-  position: relative;
-  color: #34343e;
-  font-size: 14px;
-  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 450;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.smh-nav-links > a:hover,
+.smh-nav-item:hover > button,
+.smh-nav-item:focus-within > button,
+.smh-link-button:hover {
+  color: #c9c9d2;
+}
+
+.smh-nav-item {
+  position: static;
+}
+
+.smh-nav-item > button svg {
+  transition: transform 150ms ease;
+}
+
+.smh-nav-item:hover > button svg,
+.smh-nav-item:focus-within > button svg {
+  transform: rotate(180deg);
+}
+
+/* Mega menus: full-width dark panels under the header, CSS-only (hover and
+   :focus-within). The panel is positioned against the header, not the item,
+   so both menus share one left edge like shopify.com's. */
+.smh-mega {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  display: none;
+  border-top: 1px solid var(--smh-line);
+  border-bottom: 1px solid var(--smh-line);
+  background: #000;
+}
+
+.smh-nav-item:hover > .smh-mega,
+.smh-nav-item:focus-within > .smh-mega {
+  display: block;
+}
+
+.smh-mega-inner {
+  width: min(1760px, calc(100% - 48px));
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 48px;
+  padding: 40px 0 44px;
+}
+
+.smh-mega-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.smh-mega-card {
+  display: block;
+  color: #fff;
   text-decoration: none;
 }
 
-.smh-nav-links a::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  bottom: -7px;
-  left: 0;
-  height: 2px;
-  transform: scaleX(0);
-  transform-origin: right;
-  background: var(--smh-purple);
-  transition: transform 180ms ease;
+.smh-mega-card > span:first-child {
+  position: relative;
+  display: block;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--smh-card);
 }
 
-.smh-nav-links a:hover::after {
-  transform: scaleX(1);
-  transform-origin: left;
+.smh-mega-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 500ms ease;
+}
+
+.smh-mega-card:hover img {
+  transform: scale(1.03);
+}
+
+.smh-mega-card b {
+  display: block;
+  margin-top: 16px;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.smh-mega-card small {
+  display: block;
+  margin-top: 4px;
+  color: var(--smh-muted);
+  font-size: 15px;
+}
+
+.smh-mega-side {
+  padding-left: 48px;
+  border-left: 1px solid var(--smh-line);
+}
+
+.smh-mega-side > small {
+  display: block;
+  margin-bottom: 22px;
+  color: var(--smh-mint);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.smh-mega-tile {
+  display: block;
+  color: #fff;
+  text-decoration: none;
+}
+
+.smh-mega-tile + .smh-mega-tile {
+  margin-top: 26px;
+}
+
+.smh-mega-tile > span:first-child {
+  position: relative;
+  display: block;
+  height: 110px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #2a1f7a, #573cf0);
+}
+
+.smh-mega-tile > span:first-child img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.smh-mega-tile.is-mint > span:first-child {
+  background: #0f1512;
+}
+
+/* The Mink tile is a two-line chat rather than an icon: a question and the
+   start of an answer, which is what the product is. */
+.smh-mega-tile-chat {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 16px;
+}
+
+.smh-mega-tile-chat span {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 7px 11px;
+  border-radius: 14px 14px 4px 14px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.smh-mega-tile-chat span + span {
+  align-self: flex-start;
+  border-radius: 14px 14px 14px 4px;
+  background: #fff;
+  color: #000;
+}
+
+.smh-mega-tile b {
+  display: block;
+  margin-top: 12px;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.smh-mega-tile small {
+  display: block;
+  margin-top: 3px;
+  color: var(--smh-muted);
+  font-size: 14px;
+}
+
+/* The Products menu: link columns. */
+.smh-mega-cols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.smh-mega-cols > div {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+}
+
+.smh-mega-cols small {
+  margin-bottom: 10px;
+  color: var(--smh-mint);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.smh-mega-cols a {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  margin-left: -12px;
+  border-radius: 10px;
+  text-decoration: none;
+}
+
+.smh-mega-cols a:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.smh-mega-cols a b {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.smh-mega-cols a span {
+  color: var(--smh-muted);
+  font-size: 14px;
 }
 
 .smh-nav-actions {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
 }
 
-.smh-link-button:hover {
-  color: var(--smh-purple);
-}
+/* Buttons ---------------------------------------------------------------- */
 
 .smh-button {
-  min-height: 48px;
+  min-height: 50px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 9px;
-  padding: 0 20px;
+  padding: 0 26px;
   border: 1px solid transparent;
   border-radius: 999px;
-  font-size: 15px;
-  font-weight: 760;
+  font-size: 16px;
+  font-weight: 500;
   line-height: 1;
   text-decoration: none;
   transition:
-    transform 180ms ease,
-    box-shadow 180ms ease,
     background 180ms ease,
-    border-color 180ms ease;
-}
-
-.smh-button:hover {
-  transform: translateY(-2px);
+    border-color 180ms ease,
+    color 180ms ease;
 }
 
 .smh-button svg {
@@ -202,49 +572,35 @@
   transform: translateX(3px);
 }
 
-.smh-button-dark {
-  min-height: 43px;
-  padding-inline: 18px;
-  background: var(--smh-ink);
-  color: #fff !important;
-  box-shadow: 0 8px 22px -12px rgba(16, 16, 24, 0.6);
-}
-
-.smh-button-dark:hover {
-  background: var(--smh-purple);
-}
-
+/* The one primary button: white on black, Shopify's. */
+.smh-button-light,
+.smh-button-dark,
 .smh-button-primary {
-  background: var(--smh-purple);
-  color: #fff !important;
-  box-shadow: 0 15px 30px -14px rgba(87, 60, 240, 0.65);
+  background: #fff;
+  color: #000 !important;
 }
 
+.smh-button-light:hover,
+.smh-button-dark:hover,
 .smh-button-primary:hover {
-  background: var(--smh-purple-dark);
-  box-shadow: 0 18px 34px -14px rgba(87, 60, 240, 0.8);
+  background: #e4e4ea;
 }
 
+.smh-nav-actions .smh-button {
+  min-height: 44px;
+  padding-inline: 22px;
+  font-size: 15px;
+}
+
+.smh-button-outline,
 .smh-button-soft {
-  border-color: var(--smh-line);
-  background: rgba(255, 255, 255, 0.7);
-  color: var(--smh-ink) !important;
-}
-
-.smh-button-soft:hover {
-  border-color: rgba(87, 60, 240, 0.3);
-  background: #fff;
-}
-
-.smh-button-light {
-  background: #fff;
-  color: var(--smh-navy) !important;
-  box-shadow: 0 14px 34px -18px rgba(0, 0, 0, 0.65);
-}
-
-.smh-button-outline {
-  border-color: rgba(255, 255, 255, 0.35);
+  border-color: var(--smh-line-strong);
   color: #fff !important;
+}
+
+.smh-button-outline:hover,
+.smh-button-soft:hover {
+  border-color: #fff;
 }
 
 .smh-mobile-menu {
@@ -254,73 +610,45 @@
 /* Hero ------------------------------------------------------------------- */
 
 .smh-hero {
+  padding: 20px 0 0;
+}
+
+/* shopify.com's hero is a rounded dark card inside the container: the copy
+   on the left, a phone showing a real store on the right. */
+.smh-hero-card {
   position: relative;
   isolation: isolate;
-  padding: 92px 0 90px;
-  background: linear-gradient(180deg, #fff 0%, #fbfaff 46%, #f4f1ff 100%);
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  align-items: center;
+  gap: 40px;
+  min-height: 660px;
+  overflow: hidden;
+  padding: 72px 72px 64px;
+  border-radius: 28px;
+  background: linear-gradient(135deg, #17122f 0%, #0b0a14 55%, #0b1410 100%);
 }
 
-.smh-hero::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: -1;
-  height: 1px;
-  background: rgba(87, 60, 240, 0.12);
-}
-
-.smh-hero-wash {
+.smh-hero-glow {
   position: absolute;
   inset: 0;
-  z-index: -2;
-  overflow: hidden;
-}
-
-.smh-hero-wash::before,
-.smh-hero-wash::after {
-  content: "";
-  position: absolute;
-  width: 620px;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  filter: blur(2px);
-  opacity: 0.72;
-}
-
-.smh-hero-wash::before {
-  top: -360px;
-  left: -180px;
-  background: radial-gradient(
-    circle,
-    rgba(200, 245, 219, 0.9),
-    transparent 69%
-  );
-}
-
-.smh-hero-wash::after {
-  top: -300px;
-  right: -120px;
-  background: radial-gradient(
-    circle,
-    rgba(211, 202, 255, 0.9),
-    transparent 70%
-  );
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse 50% 60% at 0% 0%,
+      rgba(87, 60, 240, 0.45),
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 45% 55% at 100% 100%,
+      rgba(16, 83, 58, 0.5),
+      transparent 70%
+    );
 }
 
 .smh-hero-copy {
-  max-width: 970px;
-  text-align: center;
-}
-
-.smh-eyebrow,
-.smh-section-label {
-  color: var(--smh-purple);
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  max-width: 640px;
 }
 
 .smh-eyebrow {
@@ -329,86 +657,260 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 auto 27px;
-  padding: 7px 13px 7px 8px;
-  border: 1px solid rgba(87, 60, 240, 0.14);
+  margin: 0 0 30px;
+  padding: 6px 14px 6px 6px;
+  border: 1px solid var(--smh-line);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.68);
-  box-shadow: 0 10px 30px -22px rgba(87, 60, 240, 0.75);
-  letter-spacing: 0.035em;
-  text-transform: none;
+  color: #cfd0d8;
+  font-size: 14px;
+  font-weight: 450;
 }
 
 .smh-eyebrow > span {
-  padding: 4px 8px;
+  padding: 4px 9px;
   border-radius: 999px;
-  background: var(--smh-mint);
-  color: #11653d;
-  font-size: 10px;
+  background: rgba(105, 229, 167, 0.14);
+  color: var(--smh-mint);
+  font-size: 11px;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .smh-hero h1 {
-  max-width: 940px;
-  margin-inline: auto;
-  font-size: clamp(56px, 7.35vw, 102px);
-  font-weight: 830;
-  line-height: 0.93;
-  letter-spacing: -0.07em;
+  font-size: clamp(46px, 5.4vw, 82px);
+  line-height: 1.02;
 }
 
-.smh-hero h1 em,
-.smh-intro h2 em {
-  background: linear-gradient(
-    100deg,
-    var(--smh-purple) 7%,
-    #845df5 52%,
-    #1b9d64 110%
-  );
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
+.smh-hero h1 em {
   font-style: normal;
+  color: #fff;
+}
+
+/* The rotating second line: a fixed-height box, five promises stacked, the
+   track slides one box every 3.2s. The static copy stays in the accessibility
+   tree; the track is aria-hidden. */
+.smh-rotator {
+  --smh-rot: 2.05em;
+  position: relative;
+  display: block;
+  height: var(--smh-rot);
+  margin-top: 0.08em;
+  overflow: hidden;
+  color: var(--smh-dim);
+  font-size: 0.6em;
+}
+
+.smh-rotator-static {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.smh-rotator-track {
+  display: block;
+}
+
+/* Lines sit at the top of the slot, so a one-line promise stays close to
+   the headline and a two-line one fills downward. */
+.smh-rotator-track > span {
+  display: flex;
+  align-items: flex-start;
+  height: var(--smh-rot);
+  line-height: 1.08;
 }
 
 .smh-hero-lead {
-  max-width: 760px;
-  margin: 30px auto 0 !important;
-  color: var(--smh-muted);
-  font-size: clamp(18px, 1.8vw, 22px);
-  line-height: 1.55;
-  letter-spacing: -0.018em;
+  max-width: 540px;
+  margin: 22px 0 0 !important;
 }
 
 .smh-hero-actions {
   display: flex;
-  justify-content: center;
-  gap: 11px;
-  margin-top: 31px;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.smh-hero-actions .smh-button {
+  min-height: 56px;
+  padding-inline: 32px;
+  font-size: 17px;
 }
 
 .smh-hero-proof {
+  margin-top: 18px !important;
+  color: var(--smh-dim);
+  font-size: 14px;
+}
+
+/* The phone: a dark bezel around a light storefront, with two product
+   photographs and an order chip floating around it. */
+.smh-hero-visual {
+  position: relative;
+  justify-self: center;
+  width: min(100%, 440px);
+  aspect-ratio: 0.78;
+}
+
+.smh-phone {
+  position: absolute;
+  top: 50%;
+  left: 55%;
+  width: 290px;
+  padding: 10px;
+  border-radius: 46px;
+  background: #0a0a0c;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 60px 100px -40px rgba(0, 0, 0, 0.95);
+  transform: translate(-50%, -50%);
+}
+
+.smh-phone-screen {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 36px;
+  background: #fbfaf8;
+  color: #2a211f;
+}
+
+.smh-phone-screen > img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  height: auto;
+  object-fit: cover;
+}
+
+.smh-phone-bar {
   display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 22px;
-  margin-top: 21px;
-  color: #696a77;
-  font-size: 13px;
-  font-weight: 620;
-}
-
-.smh-hero-proof span {
-  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  padding: 26px 18px 10px;
+  font-size: 12px;
 }
 
-.smh-hero-proof svg {
-  color: var(--smh-mint-strong);
+.smh-phone-bar b {
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
+.smh-phone-bar > span {
+  display: flex;
+  gap: 12px;
+  color: #6f6763;
+}
+
+.smh-phone-card {
+  display: block;
+  padding: 14px 18px 20px;
+}
+
+.smh-phone-card small {
+  display: block;
+  color: #8a8380;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.smh-phone-card b {
+  display: block;
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.smh-phone-card > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.smh-phone-card strong {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.smh-phone-card em {
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: #2a211f;
+  color: #fff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.smh-hero-float {
+  position: absolute;
+  width: 124px;
+}
+
+.smh-hero-float .smh-photo {
+  border-radius: 20px;
+  box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.95);
+}
+
+.smh-hero-float.is-a {
+  top: 15%;
+  left: -12px;
+}
+
+.smh-hero-float.is-b {
+  right: -16px;
+  bottom: 20%;
+  width: 150px;
+}
+
+.smh-hero-order {
+  position: absolute;
+  bottom: 4%;
+  left: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px 10px 10px;
+  border-radius: 999px;
+  background: #fff;
+  color: #000;
+  box-shadow: 0 30px 50px -30px rgba(0, 0, 0, 0.9);
+}
+
+.smh-hero-order i {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--smh-mint);
+  font-style: normal;
+}
+
+.smh-hero-order i::before {
+  content: "✓";
+  color: #000;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.smh-hero-order b {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.smh-hero-order small {
+  display: block;
+  color: var(--smh-dim);
+  font-size: 11px;
+}
 /* Product command centre ------------------------------------------------- */
 
 .smh-command-wrap {
@@ -881,223 +1383,451 @@
   font-weight: 750;
 }
 
-/* Outcome strip ---------------------------------------------------------- */
-
-.smh-outcomes {
-  border-bottom: 1px solid var(--smh-line);
-  background: #fff;
+/* The command centre sits on the dark hero now: glassy dark frame, the window
+   itself unchanged (white), and the bottom of the frame runs under the next
+   band so the screenshot appears to rise out of the hero. */
+.smh-hero .smh-command {
+  border-color: rgba(255, 255, 255, 0.14);
+  border-bottom: 0;
+  border-radius: 28px 28px 0 0;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 -30px 90px -40px rgba(87, 60, 240, 0.7);
+  backdrop-filter: none;
 }
 
-.smh-outcome-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  padding-block: 38px;
+.smh-hero .smh-command-window {
+  border-radius: 18px 18px 0 0;
+  border-bottom: 0;
 }
 
-.smh-outcome-grid > div {
-  min-height: 62px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  padding-left: 34px;
-  border-left: 1px solid var(--smh-line);
-}
-
-.smh-outcome-grid > div:first-child {
-  padding-left: 0;
-  border-left: 0;
-}
-.smh-outcome-grid b {
-  font-size: clamp(19px, 2vw, 27px);
-  letter-spacing: -0.04em;
-}
-.smh-outcome-grid span {
-  color: var(--smh-muted);
-  font-size: 13px;
-}
-
-/* Platform introduction + bento ----------------------------------------- */
-
-.smh-intro {
-  padding: 138px 0 70px;
-  text-align: center;
-}
-
-.smh-intro h2,
-.smh-pos h2,
-.smh-journey h2,
-.smh-tax h2,
-.smh-pricing-head h2,
-.smh-faq h2,
-.smh-final h2 {
-  font-size: clamp(39px, 5vw, 68px);
-  font-weight: 820;
-  line-height: 1.02;
-  letter-spacing: -0.055em;
-}
-
-.smh-intro h2 {
-  max-width: 970px;
-  margin: 18px auto 0;
-}
-
-.smh-section-lead {
-  max-width: 720px;
-  margin: 24px auto 0 !important;
-  color: var(--smh-muted);
-  font-size: 18px;
-  line-height: 1.6;
-}
-
-.smh-bento {
-  display: grid;
-  grid-template-columns: 1.08fr 0.92fr;
-  gap: 18px;
-  padding-bottom: 140px;
-}
-
-.smh-bento-card {
-  min-width: 0;
+.smh-hero .smh-command-body {
+  min-height: 460px;
+  max-height: 520px;
   overflow: hidden;
-  border: 1px solid rgba(16, 16, 24, 0.08);
-  border-radius: 30px;
 }
 
-.smh-bento-copy {
-  position: relative;
-  z-index: 2;
+.smh-hero .smh-float-order {
+  top: 36px;
 }
 
-.smh-icon-chip {
-  width: 43px;
-  height: 43px;
+/* The dashboard art on a dark page: the window is still white (it is a
+   screenshot of a light dashboard), the frame around it is dark glass. */
+.smh-command {
+  border-color: var(--smh-line);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 60px 120px -60px rgba(87, 60, 240, 0.6);
+  backdrop-filter: none;
+}
+
+.smh-command-window {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* The homepage card crops the dashboard to the top. */
+.smh-card .smh-command {
+  width: 118%;
+  margin: 0;
+  padding: 8px;
+  border-radius: 18px;
+}
+
+.smh-card .smh-command-body {
+  min-height: 0;
+  max-height: 420px;
+  overflow: hidden;
+}
+
+.smh-card .smh-float-store,
+.smh-card .smh-float-pos,
+.smh-card .smh-float-order {
+  display: none;
+}
+
+/* Theme rail: "Sell everywhere people shop" ------------------------------ */
+
+.smh-storefronts {
+  padding: 110px 0 80px;
+}
+
+.smh-storefronts h2 {
+  max-width: 1500px;
+  font-size: clamp(34px, 4.6vw, 72px);
+  line-height: 1.08;
+}
+
+.smh-theme-rail {
+  margin-top: 56px;
+}
+
+.smh-theme-rail-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  color: var(--smh-muted);
+  font-size: 15px;
+}
+
+.smh-theme-rail-bar strong {
+  color: #fff;
+  font-weight: 500;
+}
+
+.smh-theme-rail-controls {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.smh-theme-rail-controls button {
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
-  margin-bottom: 25px;
-  border: 1px solid rgba(16, 16, 24, 0.1);
-  border-radius: 13px;
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--smh-purple);
-  box-shadow: 0 10px 22px -18px rgba(17, 18, 38, 0.6);
+  border: 1px solid var(--smh-line-strong);
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
 }
 
-.smh-card-label {
-  margin-bottom: 12px !important;
-  color: var(--smh-purple);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.smh-theme-rail-controls button:hover {
+  border-color: #fff;
+  background: #fff;
+  color: #000;
 }
 
-.smh-bento h3 {
-  font-size: clamp(28px, 3.1vw, 44px);
-  font-weight: 800;
-  line-height: 1.05;
-  letter-spacing: -0.05em;
+/* One row that scrolls sideways at every width. The scrollbar is hidden;
+   the arrows, a swipe or a trackpad move it, and the last card is left
+   partly visible so the row reads as scrollable. */
+.smh-theme-track {
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 6px;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
-.smh-bento-copy > p:last-of-type {
-  margin-top: 17px !important;
-  color: #5f6170;
-  font-size: 16px;
-  line-height: 1.58;
+.smh-theme-track::-webkit-scrollbar {
+  display: none;
 }
 
-.smh-bento-copy > a {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 21px;
-  color: var(--smh-purple);
-  font-size: 14px;
-  font-weight: 760;
+.smh-theme-track:focus-visible {
+  outline-offset: 8px;
+}
+
+/* Every card is the same size: a fixed basis at each breakpoint, never a
+   share of the row, and a fixed 4:3 image box whatever the preview's
+   proportions. */
+.smh-theme-card {
+  flex: 0 0 360px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--smh-card);
+  color: inherit;
   text-decoration: none;
+  scroll-snap-align: start;
+  transition: background 180ms ease;
 }
 
-.smh-bento-store {
-  grid-column: 1 / -1;
-  min-height: 570px;
-  display: grid;
-  grid-template-columns: 0.74fr 1.26fr;
+.smh-theme-card:hover {
+  background: var(--smh-card-2);
+}
+
+.smh-theme-card-media {
+  display: block;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background: #efebe6;
+}
+
+.smh-theme-card-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+  transition: transform 700ms ease;
+}
+
+.smh-theme-card:hover img {
+  transform: scale(1.03);
+}
+
+/* Name, then industries, stacked: a long industry list wraps under the
+   name instead of beside it, so every card's caption reads the same way. */
+.smh-theme-card-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 16px 18px 18px;
+}
+
+.smh-theme-card-copy b {
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.smh-theme-card-copy small {
+  color: var(--smh-muted);
+  font-size: 13px;
+}
+
+.smh-storefronts-foot {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  padding: 66px 0 0 66px;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 28px;
+  color: var(--smh-muted);
+  font-size: 15px;
+}
+
+/* Channel marquee --------------------------------------------------------- */
+
+.smh-everywhere {
+  padding: 24px 0 110px;
+}
+
+.smh-marquee {
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 8%,
+    #000 92%,
+    transparent
+  );
+}
+
+.smh-marquee-track {
+  width: max-content;
+  display: flex;
+  gap: 14px;
+  padding-inline: 7px;
+}
+
+.smh-marquee-card {
+  position: relative;
+  min-width: 230px;
+  display: grid;
+  gap: 2px;
+  padding: 18px 22px 18px 40px;
+  border: 1px solid var(--smh-line);
+  border-radius: 18px;
+  background: var(--smh-card);
+}
+
+.smh-marquee-card::before {
+  content: "";
+  position: absolute;
+  top: 26px;
+  left: 20px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--smh-mint);
+}
+
+.smh-marquee-card b {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.smh-marquee-card small {
+  color: var(--smh-muted);
+  font-size: 13px;
+}
+
+/* The marquee is aria-hidden (it duplicates its content); this list is the
+   accessible copy of the same eight channels. */
+.smh-everywhere-list {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* Mink banner — the "your brand has entered the chat" slot ---------------- */
+
+.smh-minkband {
+  padding: 0 0 110px;
+}
+
+.smh-minkband-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  align-items: center;
+  gap: 60px;
+  min-height: 640px;
+  overflow: hidden;
+  padding: 72px;
+  border-radius: 24px;
   background:
     radial-gradient(
-      circle at 12% 12%,
-      rgba(255, 255, 255, 0.9),
-      transparent 36%
+      ellipse 60% 70% at 100% 50%,
+      rgba(87, 60, 240, 0.35),
+      transparent 70%
     ),
-    linear-gradient(125deg, #e4f9ec, #eef2ff 68%, #e5ddff);
+    radial-gradient(
+      ellipse 40% 50% at 0% 100%,
+      rgba(16, 83, 58, 0.5),
+      transparent 70%
+    ),
+    #0f1512;
 }
 
-.smh-store-art {
-  min-width: 0;
-  max-width: none;
-  align-self: end;
-  transform: translate(6%, 9%);
+.smh-minkband h2 {
+  margin-top: 16px;
+  font-size: clamp(38px, 4.6vw, 68px);
+}
+
+.smh-minkband .smh-lead {
+  max-width: 520px;
+  margin-top: 22px !important;
+}
+
+.smh-minkband-link {
+  margin-top: 20px !important;
+}
+
+.smh-minkband-art {
+  justify-self: end;
+  width: 100%;
+  max-width: 560px;
+}
+
+/* Three product cards ----------------------------------------------------- */
+
+.smh-cards-area {
+  padding: 0 0 110px;
+}
+
+.smh-cards-label {
+  margin-bottom: 24px !important;
+}
+
+.smh-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.smh-card-art {
+  position: relative;
+  height: 320px;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      ellipse 80% 60% at 50% 100%,
+      rgba(87, 60, 240, 0.28),
+      transparent 70%
+    ),
+    var(--smh-card-2);
+}
+
+.smh-card-copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 26px 28px 30px;
+}
+
+.smh-card-copy h2 {
+  font-size: 24px;
+  letter-spacing: -0.01em;
+}
+
+.smh-card-copy > p {
+  flex: 1;
+  margin-top: 10px !important;
+  color: var(--smh-muted);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.smh-card-copy > p a {
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: rgba(255, 255, 255, 0.45);
+}
+
+.smh-card-copy > p a:hover {
+  text-decoration-color: #fff;
+}
+
+/* Four photographs, one scene per channel: browsing on a phone, buying at
+   a counter, taking an order on the phone, checking cartons in a stockroom. */
+.smh-card-art-channels {
   padding: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  border-radius: 24px 0 0 0;
-  background: rgba(255, 255, 255, 0.38);
-  box-shadow: -25px -20px 70px -38px rgba(54, 40, 112, 0.55);
 }
 
-.smh-store-art .sm-art {
-  font-size: 13px;
-}
-.smh-store-art .art-site {
-  padding: 14px;
-}
-.smh-store-art .art-banner {
-  padding: 28px 22px;
-}
-.smh-store-art .art-banner b {
-  font-size: 17px;
-}
-.smh-store-art .art-banner > span {
-  font-size: 11px;
-}
-.smh-store-art .art-thumb {
-  height: 88px;
-}
-.smh-store-art .art-product b,
-.smh-store-art .art-price {
-  font-size: 11px;
+.smh-photo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  height: 100%;
 }
 
-.smh-bento-builder,
-.smh-bento-orders,
-.smh-bento-growth {
-  min-height: 610px;
-  padding: 48px;
+.smh-photo-grid .smh-photo {
+  aspect-ratio: auto;
+  height: 100%;
+  border-radius: 14px;
 }
 
-.smh-bento-builder {
-  background: var(--smh-cream);
+/* The storefront art, scaled to the card. */
+.smh-card-art-store .sm-art {
+  position: absolute;
+  top: 32px;
+  left: 32px;
+  width: 125%;
+  font-size: 12px;
 }
 
-.smh-bento-builder > .sm-art {
-  width: 112%;
-  margin: 64px -6% -55px;
-  font-size: 13px;
+.smh-card-art-store .art-browser {
+  border-radius: 14px;
+  box-shadow: 0 30px 55px -32px rgba(0, 0, 0, 0.9);
 }
 
-.smh-bento-builder .art-app-body {
-  min-height: 220px;
-}
-.smh-bento-builder .art-canvas-hero {
-  height: 92px;
-}
-.smh-bento-builder .art-canvas-row span {
-  height: 55px;
+.smh-card-art-store .art-site {
+  padding: 12px;
 }
 
-.smh-bento-orders {
-  background: linear-gradient(145deg, #f1edff, #e9e3ff);
+.smh-card-art-store .art-banner {
+  padding: 22px 18px;
 }
 
+.smh-card-art-store .art-thumb {
+  height: 70px;
+}
+
+.smh-card-art-command .smh-command {
+  position: absolute;
+  top: 32px;
+  left: 32px;
+}
+
+.smh-card-art-channels .smh-channels-art {
+  position: absolute;
+  top: 32px;
+  left: 32px;
+  right: -20px;
+}
 .smh-order-art {
   position: relative;
   width: 118%;
@@ -1201,36 +1931,262 @@
   box-shadow: 0 8px 15px -11px #176d42;
 }
 
-.smh-bento-growth {
-  grid-column: 1 / -1;
-  min-height: 500px;
-  display: grid;
-  grid-template-columns: 0.8fr 1.2fr;
+.smh-channels-art {
+  position: absolute;
+  top: 32px;
+  left: 32px;
+  right: -20px;
+  padding: 20px 22px;
+  border: 1px solid rgba(45, 34, 103, 0.12);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 30px 55px -32px rgba(29, 90, 60, 0.45);
+}
+
+.smh-channels-head {
+  display: flex;
   align-items: center;
-  gap: 70px;
-  background:
-    radial-gradient(
-      circle at 92% 0%,
-      rgba(100, 73, 233, 0.55),
-      transparent 36%
-    ),
-    var(--smh-navy);
+  justify-content: space-between;
+  margin-bottom: 14px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.smh-channels-head span {
+  padding: 5px 9px;
+  border: 1px solid #e5e5eb;
+  border-radius: 7px;
+  color: #7d7e8a;
+  font-size: 9px;
+  font-weight: 620;
+}
+
+.smh-channels-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 28px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 9px;
+  color: #5a5b68;
+  font-size: 10px;
+}
+
+.smh-channels-row i {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: #ddd;
+}
+
+.smh-channels-row i.is-purple {
+  background: linear-gradient(90deg, #7b63f3, var(--smh-purple));
+}
+
+.smh-channels-row i.is-green {
+  background: linear-gradient(90deg, #66dda0, #299a62);
+}
+
+.smh-channels-row i.is-amber {
+  background: linear-gradient(90deg, #f6cf6b, #d99a1e);
+}
+
+.smh-channels-row i.is-slate {
+  background: #b9bac7;
+}
+
+.smh-channels-row b {
+  color: #353540;
+  font-size: 11px;
+  text-align: right;
+}
+
+.smh-channels-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 16px;
+  padding: 7px 10px;
+  border: 1px solid #cdebd9;
+  border-radius: 999px;
+  background: #ecfbf2;
+  color: #23764c;
+  font-size: 9px;
+  font-weight: 720;
+}
+
+/* Built for India --------------------------------------------------------- */
+
+.smh-india {
+  padding: 0 0 110px;
+}
+
+.smh-india-card {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 60px;
+  overflow: hidden;
+  padding: 72px;
+  border-radius: 24px;
+  background: var(--smh-card);
+}
+
+.smh-india h2 {
+  margin-top: 16px;
+  font-size: clamp(34px, 4.2vw, 58px);
+}
+
+.smh-india-copy .smh-lead {
+  max-width: 500px;
+  margin-top: 20px !important;
+}
+
+.smh-india-copy .smh-check-list {
+  margin-top: 26px;
+}
+
+.smh-india-copy .smh-text-link {
+  margin-top: 28px;
+}
+
+.smh-india-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+/* Two of the products on the invoice, floating beside it. */
+.smh-india-float {
+  position: absolute;
+  width: 120px;
+}
+
+.smh-india-float .smh-photo {
+  border-radius: 20px;
+  box-shadow: 0 30px 50px -28px rgba(0, 0, 0, 0.95);
+}
+
+.smh-india-float.is-a {
+  top: 0;
+  right: -36px;
+}
+
+.smh-india-float.is-b {
+  bottom: -2%;
+  left: -34px;
+  width: 104px;
+}
+
+.smh-india-art .sm-art {
+  max-width: 400px;
+  font-size: 14px;
+  transform: rotate(-1.5deg);
+}
+
+.smh-india-art .art-sheet {
+  padding: 23px 25px;
+  border-radius: 15px;
+}
+
+.smh-india-art .art-inv-title,
+.smh-india-art .art-inv-meta,
+.smh-india-art .art-inv-table,
+.smh-india-art .art-inv-gst div {
+  font-size: 11px;
+}
+
+.smh-india-art .art-inv-total {
+  padding: 11px 13px;
+  font-size: 13px;
+}
+
+/* Stories — three tall photo cards ---------------------------------------- */
+
+.smh-stories {
+  padding: 0 0 110px;
+}
+
+.smh-stories h2 {
+  max-width: 1000px;
+  font-size: clamp(34px, 4.6vw, 72px);
+}
+
+.smh-story-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+  margin-top: 64px;
+}
+
+.smh-story {
+  display: block;
   color: #fff;
+  text-decoration: none;
 }
 
-.smh-bento-growth .smh-icon-chip {
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
-  color: #c9bdff;
+.smh-story-photo {
+  position: relative;
+  display: block;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 18px;
+  background: var(--smh-card);
 }
 
-.smh-bento-growth .smh-card-label {
-  color: #b9aaff;
-}
-.smh-bento-growth .smh-bento-copy > p:last-of-type {
-  color: #bdbed0;
+.smh-story-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 700ms ease;
 }
 
+.smh-story:hover .smh-story-photo img {
+  transform: scale(1.04);
+}
+
+.smh-story h3 {
+  margin-top: 26px;
+  font-size: 24px;
+  font-weight: 450;
+}
+
+.smh-story p {
+  margin-top: 8px !important;
+  color: var(--smh-muted);
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+.smh-story p b {
+  color: #fff;
+  font-weight: 600;
+}
+
+.smh-stories-cta {
+  display: flex;
+  justify-content: center;
+  margin-top: 56px;
+}
+.smh-growth-art {
+  position: absolute;
+  top: 0;
+  left: 30px;
+  right: -30px;
+}
+
+.smh-story.is-retail .sm-art {
+  position: absolute;
+  top: 0;
+  left: 30px;
+  width: 130%;
+  font-size: 11px;
+}
+
+.smh-stories-cta {
+  display: flex;
+  justify-content: center;
+  margin-top: 36px;
+}
 .smh-growth-art {
   position: relative;
   overflow: hidden;
@@ -1341,344 +2297,684 @@
   font-size: 14px;
 }
 
-/* POS -------------------------------------------------------------------- */
-
-.smh-pos {
+.smh-mink-art {
   position: relative;
-  padding: 132px 0;
+  max-width: 520px;
+  justify-self: end;
+  width: 100%;
   overflow: hidden;
-  background:
-    radial-gradient(
-      circle at 85% 30%,
-      rgba(102, 75, 239, 0.32),
-      transparent 38%
-    ),
-    radial-gradient(
-      circle at 14% 100%,
-      rgba(32, 164, 100, 0.17),
-      transparent 33%
-    ),
-    #111224;
-  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 50px 90px -50px rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(10px);
 }
 
-.smh-pos-grid {
-  display: grid;
-  grid-template-columns: 0.82fr 1.18fr;
+.smh-mink-bar {
+  display: flex;
   align-items: center;
-  gap: 74px;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.smh-pos .smh-section-label {
-  color: #aa9aff;
+.smh-mink-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
 }
-.smh-pos h2 {
-  margin-top: 18px;
-  font-size: clamp(42px, 5vw, 70px);
+
+.smh-mink-badge svg {
+  color: #c9bdff;
 }
-.smh-pos-copy > p:not(.smh-section-label) {
-  margin-top: 22px !important;
-  color: #bbbccd;
-  font-size: 17px;
-  line-height: 1.65;
+
+.smh-mink-bar em {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(201, 189, 255, 0.16);
+  color: #c9bdff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
-.smh-pos ul {
+
+.smh-mink-thread {
   display: grid;
-  gap: 15px;
-  margin: 30px 0 33px;
+  gap: 12px;
+  padding: 18px;
+}
+
+.smh-mink-thread .is-user {
+  justify-self: end;
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 16px 16px 4px 16px;
+  background: var(--smh-purple);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.smh-mink-thread .is-mink {
+  justify-self: start;
+  max-width: 92%;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px 16px 16px 4px;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.smh-mink-thread .is-mink b {
+  display: block;
+  font-weight: 700;
+}
+
+.smh-mink-thread .is-mink ul {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
   padding: 0;
   list-style: none;
 }
+
+.smh-mink-thread .is-mink li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d3d4e0;
+  font-size: 12px;
+}
+
+.smh-mink-thread .is-mink li strong {
+  color: #ffb4a8;
+  font-weight: 700;
+}
+
+.smh-mink-thread .is-mink small {
+  display: block;
+  margin-top: 8px;
+  color: #8f90a3;
+  font-size: 11px;
+}
+
+.smh-mink-draft {
+  display: block;
+  margin-top: 8px;
+  padding: 9px 11px;
+  border-left: 2px solid #c9bdff;
+  border-radius: 0 8px 8px 0;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d3d4e0;
+  font-size: 12px;
+}
+
+.smh-mink-input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 18px 18px;
+  padding: 10px 10px 10px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #8f90a3;
+  font-size: 13px;
+}
+
+.smh-mink-input i {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  color: #000;
+}
+
+/* Customise everything ---------------------------------------------------- */
+
+.smh-custom {
+  padding: 0 0 110px;
+}
+
+.smh-custom-head {
+  max-width: 820px;
+}
+
+.smh-custom-head h2 {
+  font-size: clamp(34px, 4.2vw, 58px);
+}
+
+.smh-custom-head .smh-lead {
+  margin-top: 18px !important;
+}
+
+.smh-custom-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+  margin-top: 48px;
+}
+
+.smh-custom-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 36px;
+  border-radius: var(--smh-radius);
+  background: var(--smh-card);
+}
+
+.smh-custom-card.is-wide {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  gap: 50px;
+  overflow: hidden;
+  padding: 0 0 0 48px;
+}
+
+.smh-custom-copy {
+  flex: 0 0 38%;
+  padding: 44px 0;
+}
+
+.smh-custom-card h3 {
+  font-size: 24px;
+}
+
+.smh-custom-card p {
+  flex: 1;
+  margin-top: 10px !important;
+  color: var(--smh-muted);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.smh-custom-card .smh-text-link {
+  margin-top: 22px;
+}
+
+.smh-custom-art {
+  flex: 1;
+  min-width: 0;
+  align-self: end;
+  transform: translate(0, 8%);
+}
+
+.smh-custom-art .sm-art {
+  width: 112%;
+  font-size: 13px;
+}
+
+.smh-custom-art .art-app {
+  box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.9);
+}
+
+.smh-custom-art .art-app-body {
+  min-height: 220px;
+}
+
+.smh-custom-art .art-canvas-hero {
+  height: 92px;
+}
+
+.smh-custom-art .art-canvas-row span {
+  height: 55px;
+}
+
+.smh-custom-card .smh-section-label {
+  flex: none;
+  margin: 0;
+  color: var(--smh-purple);
+  font-size: 13px;
+}
+
+.smh-custom-copy .smh-section-label + h3 {
+  margin-top: 14px;
+}
+
+/* The two small cards: artwork on top, copy at its natural height, and the
+   code block grows so the pair sit at one height. */
+.smh-custom-card:not(.is-wide) > p {
+  flex: none;
+}
+
+/* The four themes as a two-by-two of their own photographs. */
+.smh-theme-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 26px;
+}
+
+.smh-theme-tiles span {
+  position: relative;
+  display: block;
+  aspect-ratio: 3 / 2;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #efebe6;
+}
+
+.smh-theme-tiles img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.smh-theme-tiles em {
+  left: 8px;
+  bottom: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+/* A real custom section, the way it is typed into the builder. */
+.smh-code {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  margin: 0 0 26px;
+  padding: 22px 24px;
+  overflow: hidden;
+  border: 1px solid var(--smh-line);
+  border-radius: 14px;
+  background: #0b0b0d;
+  color: #d6d6de;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre;
+}
+
+.smh-code .is-c {
+  color: var(--smh-dim);
+}
+
+.smh-code .is-t {
+  color: var(--smh-purple);
+}
+
+.smh-code .is-a {
+  color: #f6cf6b;
+}
+
+.smh-code .is-s {
+  color: var(--smh-mint);
+}
+
+/* POS -------------------------------------------------------------------- */
+
+.smh-pos {
+  padding: 0 0 110px;
+}
+
+.smh-pos-card {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  align-items: center;
+  gap: 64px;
+  overflow: hidden;
+  padding: 72px;
+  border-radius: 24px;
+  background:
+    radial-gradient(
+      circle at 90% 20%,
+      rgba(102, 75, 239, 0.35),
+      transparent 40%
+    ),
+    var(--smh-card);
+}
+
+.smh-pos h2 {
+  margin-top: 16px;
+  font-size: clamp(34px, 4.2vw, 58px);
+}
+
+.smh-pos-copy .smh-lead {
+  margin-top: 20px !important;
+}
+
+.smh-pos ul {
+  display: grid;
+  gap: 12px;
+  margin: 28px 0 32px;
+  padding: 0;
+  list-style: none;
+}
+
 .smh-pos li {
   display: flex;
   gap: 11px;
-  color: #c9cada;
-  font-size: 14px;
+  color: #cfd0d8;
+  font-size: 16px;
   line-height: 1.5;
 }
+
 .smh-pos li svg {
   flex: none;
-  margin-top: 2px;
-  color: #55d796;
+  margin-top: 3px;
+  color: var(--smh-mint);
 }
+
 .smh-pos li b {
   color: #fff;
+  font-weight: 500;
 }
 
 .smh-pos-media {
   position: relative;
-  padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 25px;
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: 0 55px 90px -54px rgba(0, 0, 0, 0.9);
+  padding: 10px;
+  border: 1px solid var(--smh-line);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .smh-pos-media img {
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 16px;
+  border-radius: 14px;
 }
 
 .smh-pos-badge {
   position: absolute;
-  right: 28px;
-  bottom: 28px;
+  right: 26px;
+  bottom: 26px;
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 10px 13px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
-  background: rgba(15, 16, 32, 0.83);
+  background: rgba(0, 0, 0, 0.7);
   color: #fff;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 500;
   backdrop-filter: blur(12px);
 }
 
-/* Journey ---------------------------------------------------------------- */
+/* Trust ------------------------------------------------------------------- */
 
-.smh-journey {
-  padding: 140px 0;
-  background: #fff;
+.smh-trust {
+  padding: 0 0 110px;
 }
 
-.smh-journey-head {
+.smh-trust h2 {
+  max-width: 820px;
+  font-size: clamp(34px, 4.2vw, 58px);
+}
+
+.smh-trust-grid {
   display: grid;
-  grid-template-columns: 1.1fr 0.6fr;
-  align-items: end;
-  gap: 70px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 22px;
+  margin-top: 48px;
 }
 
-.smh-journey h2 {
-  margin-top: 15px;
-}
-.smh-journey-head > p {
-  max-width: 470px;
-  padding-bottom: 7px;
-  color: var(--smh-muted);
-  font-size: 17px;
-  line-height: 1.65;
-}
-
-.smh-journey-steps {
-  counter-reset: steps;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  margin-top: 65px !important;
-  padding: 0;
-  list-style: none;
-}
-
-.smh-journey-steps li {
-  min-height: 330px;
+.smh-trust-grid > div {
+  min-height: 210px;
   display: flex;
   flex-direction: column;
-  padding: 26px;
-  border: 1px solid var(--smh-line);
-  border-radius: 24px;
-  background: #fff;
-  transition:
-    transform 180ms ease,
-    box-shadow 180ms ease;
-}
-
-.smh-journey-steps li:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 28px 60px -40px rgba(17, 18, 38, 0.5);
-}
-
-.smh-journey-steps li > span {
-  align-self: flex-end;
-  color: #b5b5bd;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.smh-step-icon {
-  width: 55px;
-  height: 55px;
-  display: grid;
-  place-items: center;
-  margin-top: auto;
-  border-radius: 17px;
-  background: var(--smh-lilac);
-  color: var(--smh-purple);
-}
-
-.smh-journey-steps li:nth-child(2) .smh-step-icon {
-  background: #e5f8ed;
-  color: #218453;
-}
-.smh-journey-steps li:nth-child(3) .smh-step-icon {
-  background: #fff0d6;
-  color: #ad691d;
-}
-.smh-journey-steps h3 {
-  margin-top: 23px !important;
-  font-size: 23px;
-  line-height: 1.12;
-  letter-spacing: -0.035em;
-}
-.smh-journey-steps p {
-  margin-top: 12px !important;
-  color: var(--smh-muted);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-/* GST -------------------------------------------------------------------- */
-
-.smh-tax {
-  min-height: 490px;
-  display: grid;
-  grid-template-columns: 1fr 0.7fr;
-  align-items: center;
-  gap: 80px;
-  margin-bottom: 140px;
-  padding: 68px;
-  overflow: hidden;
-  border-radius: 32px;
-  background:
-    radial-gradient(
-      circle at 95% 0%,
-      rgba(107, 83, 239, 0.16),
-      transparent 39%
-    ),
-    var(--smh-cream);
-}
-
-.smh-tax h2 {
-  margin-top: 16px;
-}
-.smh-tax-copy > p:not(.smh-section-label) {
-  margin-top: 20px !important;
-  color: var(--smh-muted);
-  font-size: 16px;
-  line-height: 1.65;
-}
-.smh-tax-points {
-  display: flex;
-  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 10px;
-  margin-top: 26px;
+  padding: 28px;
+  border-radius: var(--smh-radius);
+  background: var(--smh-card);
 }
-.smh-tax-points span {
-  display: inline-flex;
+
+.smh-trust-grid b {
+  font-size: clamp(30px, 2.8vw, 44px);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.smh-trust-grid span {
+  color: var(--smh-muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.smh-trust-note {
+  display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 8px 11px;
-  border: 1px solid rgba(17, 18, 38, 0.09);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.68);
-  color: #52535f;
-  font-size: 11px;
-  font-weight: 650;
+  gap: 8px;
+  margin-top: 26px !important;
+  color: var(--smh-muted);
+  font-size: 15px;
 }
-.smh-tax-points svg {
-  color: var(--smh-mint-strong);
-}
-.smh-tax-art {
-  max-width: 390px;
-  justify-self: center;
-  transform: rotate(1.5deg);
-}
-.smh-tax-art .sm-art {
-  font-size: 14px;
-}
-.smh-tax-art .art-sheet {
-  padding: 23px 25px;
-  border-radius: 15px;
-}
-.smh-tax-art .art-inv-title {
-  font-size: 11px;
-}
-.smh-tax-art .art-inv-meta,
-.smh-tax-art .art-inv-table,
-.smh-tax-art .art-inv-gst div {
-  font-size: 11px;
-}
-.smh-tax-art .art-inv-total {
-  padding: 11px 13px;
-  font-size: 13px;
+
+.smh-trust-note svg {
+  flex: none;
+  color: var(--smh-mint);
 }
 
 /* Pricing ---------------------------------------------------------------- */
 
 .smh-pricing-area {
-  padding: 136px 0 130px;
-  background: #f5f2ff;
+  padding: 0 0 110px;
 }
 
 .smh-pricing-head {
-  max-width: 770px;
-  margin: 0 auto 50px;
+  max-width: 900px;
+  margin: 0 auto 40px;
   text-align: center;
 }
 
 .smh-pricing-head h2 {
   margin-top: 16px;
-}
-.smh-pricing-head > p:last-child {
-  margin-top: 20px !important;
-  color: var(--smh-muted);
-  font-size: 17px;
-  line-height: 1.6;
+  font-size: clamp(36px, 4.6vw, 64px);
 }
 
+.smh-pricing-head .smh-lead {
+  margin-top: 18px !important;
+}
+
+/* The billing switch and cards are a client component that ships with
+   platform.css's light `stq-*` styling; everything below re-skins it dark,
+   in the shopify.com/pricing shape: a switch and a compare link on one row,
+   then cards with the name and tagline on the left, the price on the right,
+   one outline button, and short rows separated by hairlines. */
 .smh-pricing-component {
+  display: block;
+}
+
+.smh-pricing-component .stq-pricing-bar {
   display: flex;
-  flex-direction: column;
   align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 26px;
 }
 
 .smh-pricing-component .stq-billing-switch {
-  margin-bottom: 30px;
-  border-color: rgba(87, 60, 240, 0.14);
-  background: rgba(255, 255, 255, 0.68);
-}
-
-.smh-pricing-component .stq-billing-switch button.is-on {
-  background: var(--smh-ink);
+  display: flex;
+  align-items: center;
+  align-self: auto;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
   color: #fff;
+  font-size: 15px;
+  font-weight: 500;
 }
 
-.smh-pricing-component .stq-billing-switch button.is-on span {
-  color: #bff0d2;
+.smh-pricing-component .stq-billing-switch small {
+  margin-left: 8px;
+  color: var(--smh-mint);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.smh-pricing-component .stq-switch {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #3a3a42;
+  cursor: pointer;
+  transition: background 180ms ease;
+}
+
+.smh-pricing-component .stq-switch span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 180ms ease;
+}
+
+.smh-pricing-component .stq-switch.is-on {
+  background: var(--smh-mint);
+}
+
+.smh-pricing-component .stq-switch.is-on span {
+  transform: translateX(22px);
 }
 
 .smh-pricing-component .stq-pricing {
   width: 100%;
-  gap: 14px;
+  gap: 18px;
 }
 
 .smh-pricing-component .stq-price-card {
   min-width: 0;
-  border-color: rgba(17, 18, 38, 0.1);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.88);
+  padding: 30px 28px 24px;
+  border-color: var(--smh-line);
+  border-radius: 22px;
+  background: var(--smh-card);
+  box-shadow: none;
+}
+
+.smh-pricing-component .stq-price-card:hover {
+  transform: none;
   box-shadow: none;
 }
 
 .smh-pricing-component .stq-price-card.popular {
-  border-color: var(--smh-purple);
-  background: #fff;
-  box-shadow: 0 30px 65px -44px rgba(87, 60, 240, 0.75);
+  border-color: var(--smh-line-strong);
+  background: var(--smh-card-2);
 }
 
-.smh-pricing-component .stq-price-flag {
-  background: var(--smh-purple);
+.smh-pricing-component .stq-price-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
-.smh-pricing-component .stq-price-card .stq-btn-primary {
-  border-radius: 999px;
-  background: var(--smh-purple);
+
+.smh-pricing-component .stq-price-card h3 {
+  margin: 0;
+  color: #fff;
+  font-size: 24px;
+  font-weight: 500;
 }
-.smh-pricing-component .stq-price-card .stq-btn-ghost {
+
+.smh-pricing-component .stq-price-card .who {
+  min-height: 0;
+  margin: 4px 0 0;
+  color: var(--smh-mint);
+  font-size: 14px;
+}
+
+.smh-pricing-component .stq-price {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  margin: 0;
+  color: #fff;
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.smh-pricing-component .stq-price s {
+  display: inline;
+  margin: 0 6px 0 0;
+  color: var(--smh-dim);
+  font-size: 15px;
+  font-weight: 500;
+  opacity: 1;
+}
+
+.smh-pricing-component .stq-price sub {
+  bottom: 0;
+  color: var(--smh-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.smh-pricing-component .stq-card-note {
+  margin: 16px 0 0;
+  color: var(--smh-dim);
+  font-size: 13px;
+}
+
+.smh-pricing-component .stq-price-card .stq-btn {
+  min-height: 52px;
+  margin-top: 20px;
+  border: 1px solid #fff;
   border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.smh-pricing-component .stq-price-card .stq-btn:hover {
+  background: #fff;
+  color: #000;
+}
+
+.smh-pricing-component .stq-price-card.popular .stq-btn {
+  background: #fff;
+  color: #000;
+}
+
+.smh-pricing-component .stq-price-card.popular .stq-btn:hover {
+  background: #e4e4ea;
+}
+
+.smh-pricing-component .stq-price-card ul {
+  gap: 0;
+  margin: 10px 0 0;
+}
+
+.smh-pricing-component .stq-price-card ul li {
+  display: block;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--smh-line);
+  color: #cfd0d8;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.smh-pricing-component .stq-price-card ul li:last-child {
+  border-bottom: 0;
 }
 
 .smh-pricing-foot {
@@ -1687,54 +2983,54 @@
   justify-content: center;
   gap: 7px;
   margin-top: 28px !important;
-  color: #686976;
-  font-size: 13px;
+  color: var(--smh-muted);
+  font-size: 14px;
 }
 
 .smh-pricing-foot svg {
-  color: var(--smh-mint-strong);
+  color: var(--smh-mint);
 }
 
 .smh-matrix-wrap {
-  margin-top: 48px;
+  margin-top: 64px;
 }
 
 .smh-matrix-wrap h3 {
-  margin: 0 0 16px;
-  color: #111827;
-  font-size: clamp(1.35rem, 2vw, 1.75rem);
+  margin: 0 0 20px;
+  font-size: clamp(26px, 3vw, 36px);
   text-align: center;
 }
 
 .smh-matrix-scroll {
   overflow-x: auto;
-  border: 1px solid rgba(17, 24, 39, 0.1);
-  border-radius: 16px;
-  background: #fff;
+  border: 1px solid var(--smh-line);
+  border-radius: 18px;
+  background: var(--smh-card);
 }
 
 .smh-matrix {
   width: 100%;
   min-width: 680px;
   border-collapse: collapse;
-  color: #344054;
-  font-size: 0.875rem;
+  color: #cfd0d8;
+  font-size: 15px;
 }
 
 .smh-matrix th,
 .smh-matrix td {
-  padding: 13px 16px;
-  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--smh-line);
 }
 
 .smh-matrix thead th {
-  color: #111827;
-  font-weight: 700;
+  color: #fff;
+  font-weight: 500;
   text-align: center;
 }
 
 .smh-matrix thead th:first-child,
 .smh-matrix tbody th {
+  font-weight: 450;
   text-align: left;
 }
 
@@ -1749,167 +3045,241 @@
 }
 
 .smh-matrix-section th {
-  background: #f8fafc;
-  color: #475467;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  background: var(--smh-card-2);
+  color: var(--smh-mint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .smh-matrix-yes {
   display: inline-flex;
-  color: #0f9f6e;
+  color: var(--smh-mint);
 }
 
 .smh-matrix-no {
-  color: #98a2b3;
+  color: var(--smh-dim);
 }
 
 .smh-matrix-note {
   max-width: 760px;
-  margin: 16px auto 0;
-  color: #667085;
-  font-size: 0.84rem;
+  margin: 18px auto 0;
+  color: var(--smh-muted);
+  font-size: 14px;
   line-height: 1.6;
   text-align: center;
+}
+
+/* Three steps ------------------------------------------------------------- */
+
+.smh-steps {
+  padding: 0 0 110px;
+}
+
+.smh-steps h2 {
+  font-size: clamp(34px, 4.6vw, 72px);
+}
+
+.smh-steps-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+  margin-top: 56px !important;
+  padding: 0;
+  list-style: none;
+}
+
+.smh-steps-list li {
+  display: flex;
+  flex-direction: column;
+  padding: 28px;
+  border-radius: var(--smh-radius);
+  background: var(--smh-card);
+}
+
+.smh-steps-list li > span {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--smh-line-strong);
+  border-radius: 50%;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.smh-step-photo {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  margin-top: 22px;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #efebe6;
+}
+
+.smh-step-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.smh-step-photo em {
+  left: 12px;
+  bottom: 12px;
+}
+
+.smh-steps-list h3 {
+  margin-top: 22px !important;
+  font-size: 22px;
+}
+
+.smh-steps-list p {
+  margin-top: 10px !important;
+  color: var(--smh-muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.smh-steps-cta {
+  display: flex;
+  justify-content: center;
+  margin-top: 44px;
 }
 
 /* FAQ -------------------------------------------------------------------- */
 
 .smh-faq {
-  padding: 140px 0;
+  padding: 0 0 110px;
 }
 
 .smh-faq-grid {
   display: grid;
-  grid-template-columns: 0.72fr 1fr;
+  grid-template-columns: 0.7fr 1fr;
   align-items: start;
   gap: 100px;
 }
 
 .smh-faq h2 {
   margin-top: 15px;
-  font-size: clamp(39px, 4.2vw, 60px);
+  font-size: clamp(32px, 3.8vw, 52px);
 }
-.smh-faq-copy > p:last-child {
-  max-width: 450px;
-  margin-top: 22px !important;
-  color: var(--smh-muted);
-  font-size: 15px;
-  line-height: 1.7;
+
+.smh-faq-copy .smh-lead {
+  max-width: 420px;
+  margin-top: 20px !important;
+  font-size: 16px;
 }
+
 .smh-faq-copy a {
-  color: var(--smh-purple);
-  font-weight: 680;
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
+
 .smh-faq-list {
   border-top: 1px solid var(--smh-line);
 }
+
 .smh-faq-list details {
   border-bottom: 1px solid var(--smh-line);
 }
+
 .smh-faq-list summary {
-  min-height: 74px;
+  min-height: 76px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  color: #2a2a34;
-  font-size: 17px;
-  font-weight: 720;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 450;
   cursor: pointer;
   list-style: none;
 }
+
 .smh-faq-list summary::-webkit-details-marker {
   display: none;
 }
+
 .smh-faq-list summary svg {
   flex: none;
-  color: #777884;
+  color: var(--smh-muted);
   transition: transform 180ms ease;
 }
+
 .smh-faq-list details[open] summary svg {
   transform: rotate(180deg);
 }
+
 .smh-faq-list details p {
-  max-width: 700px;
-  padding: 0 44px 23px 0;
+  max-width: 720px;
+  padding: 0 44px 24px 0;
   color: var(--smh-muted);
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: 16px;
+  line-height: 1.65;
 }
 
 /* Final CTA -------------------------------------------------------------- */
 
 .smh-final {
-  padding: 0 0 32px;
-}
-
-.smh-final-card {
   position: relative;
   isolation: isolate;
-  overflow: hidden;
-  padding: 96px 40px;
-  border-radius: 32px;
-  background:
-    radial-gradient(
-      circle at 82% 25%,
-      rgba(107, 83, 239, 0.65),
-      transparent 34%
-    ),
-    radial-gradient(
-      circle at 12% 110%,
-      rgba(32, 164, 100, 0.4),
-      transparent 35%
-    ),
-    var(--smh-navy);
-  color: #fff;
-  text-align: center;
+  padding: 120px 0 140px;
 }
 
-.smh-final-glow {
+.smh-final::before {
+  content: "";
   position: absolute;
-  inset: -40%;
+  inset: 0;
   z-index: -1;
-  background: repeating-radial-gradient(
-    circle at center,
-    transparent 0 58px,
-    rgba(255, 255, 255, 0.035) 59px 60px
+  background: radial-gradient(
+    ellipse 50% 60% at 50% 100%,
+    rgba(87, 60, 240, 0.4),
+    transparent 70%
   );
 }
 
-.smh-final .smh-section-label {
-  color: #aa9aff;
+.smh-final-inner {
+  max-width: 820px;
+  text-align: center;
 }
+
 .smh-final h2 {
-  margin-top: 17px;
-  font-size: clamp(45px, 6vw, 78px);
+  font-size: clamp(40px, 5.6vw, 84px);
 }
-.smh-final p:not(.smh-section-label) {
+
+.smh-final .smh-lead {
   margin-top: 20px !important;
-  color: #c2c3d2;
-  font-size: 17px;
 }
-.smh-final-card > div:last-child {
+
+.smh-final-inner > div {
   display: flex;
   justify-content: center;
-  gap: 10px;
-  margin-top: 31px;
+  gap: 12px;
+  margin-top: 36px;
+}
+
+.smh-final-inner .smh-button {
+  min-height: 56px;
+  padding-inline: 32px;
+  font-size: 17px;
 }
 
 /* Footer ----------------------------------------------------------------- */
 
 .smh-footer {
-  padding: 82px 0 0;
-  background: #fff;
+  padding: 72px 0 0;
+  border-top: 1px solid var(--smh-line);
 }
 
 .smh-footer-grid {
   display: grid;
   grid-template-columns: 1.5fr repeat(4, 0.7fr);
   gap: 55px;
-  padding-bottom: 67px;
+  padding-bottom: 60px;
 }
 
 .smh-footer-brand p {
@@ -1919,63 +3289,102 @@
   font-size: 14px;
   line-height: 1.65;
 }
+
 .smh-footer-brand > span {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-top: 20px;
-  color: #878893;
+  color: var(--smh-dim);
   font-size: 12px;
 }
+
 .smh-footer h3 {
   margin-bottom: 18px !important;
-  color: #31313b;
-  font-size: 12px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
 }
+
 .smh-footer nav {
   display: grid;
   align-content: start;
   gap: 12px;
 }
+
 .smh-footer nav a {
   width: max-content;
   max-width: 100%;
   display: flex;
   align-items: center;
   gap: 5px;
-  color: #666773;
-  font-size: 13px;
+  color: var(--smh-muted);
+  font-size: 14px;
   text-decoration: none;
 }
+
 .smh-footer nav a:hover {
-  color: var(--smh-purple);
+  color: #fff;
 }
 
 .smh-footer-base {
-  min-height: 70px;
+  min-height: 72px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 20px;
   border-top: 1px solid var(--smh-line);
-  color: #8b8c96;
-  font-size: 12px;
+  color: var(--smh-dim);
+  font-size: 13px;
+}
+
+.smh-footer-region {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--smh-line-strong);
+  border-radius: 999px;
+  color: #cfd0d8;
+  font-weight: 500;
+}
+
+/* Specific enough to beat the column `nav { display: grid }` above. */
+.smh-footer nav.smh-footer-legal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.smh-footer-legal a {
+  color: var(--smh-dim);
+  text-decoration: none;
+}
+
+.smh-footer-legal a:hover {
+  color: #fff;
 }
 
 /* Responsive ------------------------------------------------------------- */
 
-@media (max-width: 1120px) {
-  .smh-nav-links {
-    gap: 18px;
+@media (max-width: 1200px) {
+  .smh-nav-links > a,
+  .smh-nav-item > button {
+    padding-inline: 10px;
+    font-size: 15px;
   }
-  .smh-pos-grid {
-    gap: 45px;
+  .smh-mega-inner {
+    grid-template-columns: 1fr 300px;
+    gap: 32px;
   }
-  .smh-bento-builder,
-  .smh-bento-orders,
-  .smh-bento-growth {
-    padding: 40px;
+  .smh-mega-side {
+    padding-left: 32px;
+  }
+  .smh-minkband-card,
+  .smh-india-card,
+  .smh-pos-card {
+    padding: 48px;
+    gap: 40px;
   }
   .smh-float-store {
     left: -28px;
@@ -2005,10 +3414,10 @@
     height: 43px;
     display: grid;
     place-items: center;
-    border: 1px solid var(--smh-line);
+    border: 1px solid var(--smh-line-strong);
     border-radius: 12px;
-    background: #fff;
-    color: var(--smh-ink);
+    background: transparent;
+    color: #fff;
     cursor: pointer;
   }
   .smh-mobile-menu-panel {
@@ -2017,26 +3426,30 @@
     right: 0;
     width: min(320px, calc(100vw - 30px));
     display: grid;
-    gap: 5px;
+    gap: 4px;
     padding: 11px;
     border: 1px solid var(--smh-line);
     border-radius: 16px;
-    background: #fff;
-    box-shadow: 0 28px 65px -34px rgba(17, 18, 38, 0.5);
+    background: #121214;
+    box-shadow: 0 28px 65px -34px rgba(0, 0, 0, 0.9);
   }
   .smh-mobile-menu-panel a {
     padding: 10px 12px;
     border-radius: 9px;
-    font-size: 14px;
-    font-weight: 680;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 450;
     text-decoration: none;
   }
   .smh-mobile-menu-panel a:hover {
-    background: #f5f3ff;
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .smh-mobile-menu-panel a.is-sub {
+    padding-left: 24px;
+    color: var(--smh-muted);
   }
   .smh-mobile-menu-panel .smh-button {
     margin-top: 3px;
-    color: #fff;
   }
 
   .smh-command {
@@ -2052,66 +3465,101 @@
     display: none;
   }
 
-  .smh-bento {
-    grid-template-columns: 1fr;
-  }
-  .smh-bento-store,
-  .smh-bento-growth {
-    grid-column: auto;
-  }
-  .smh-bento-store {
-    min-height: auto;
-    grid-template-columns: 1fr;
-    gap: 55px;
-    padding: 48px 0 0 48px;
-  }
-  .smh-store-art {
-    transform: translate(5%, 5%);
-  }
-  .smh-bento-builder,
-  .smh-bento-orders {
-    min-height: 590px;
-  }
-  .smh-bento-growth {
-    grid-template-columns: 1fr;
-    gap: 45px;
+  .smh-theme-card {
+    flex-basis: 320px;
   }
 
-  .smh-pos-grid {
+  .smh-hero-card {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    min-height: 0;
+    padding: 48px 36px 40px;
+  }
+  /* Stacked under the copy, the visual is sized to the phone itself rather
+     than to a ratio, so the bezel is never clipped by the card. */
+  .smh-hero-visual {
+    width: min(100%, 380px);
+    height: 600px;
+    aspect-ratio: auto;
+    margin-top: 8px;
+  }
+  .smh-pricing-component .stq-pricing {
+    grid-template-columns: 1fr;
+  }
+  .smh-pricing-component .stq-price-card ul li {
+    padding: 13px 0;
+  }
+
+  .smh-minkband-card {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+  .smh-minkband-art {
+    justify-self: start;
+  }
+
+  .smh-cards {
+    grid-template-columns: 1fr;
+  }
+  .smh-card-art {
+    height: 280px;
+  }
+  .smh-card-art-store .sm-art,
+  .smh-card-art-command .smh-command,
+  .smh-card .smh-command {
+    width: min(125%, 640px);
+  }
+
+  .smh-india-card {
+    grid-template-columns: 1fr;
+  }
+
+  .smh-story-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .smh-custom-grid {
+    grid-template-columns: 1fr;
+  }
+  .smh-custom-card.is-wide {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: 0 0 0 36px;
+  }
+  .smh-custom-copy {
+    flex: none;
+    padding: 36px 36px 0 0;
+  }
+  .smh-custom-art {
+    /* In the stacked card the cross axis is horizontal, so `align-self: end`
+       would push the art to the right edge. */
+    align-self: stretch;
+    margin-top: 30px;
+    transform: translate(0, 6%);
+  }
+
+  .smh-pos-card {
     grid-template-columns: 1fr;
   }
   .smh-pos-copy {
     max-width: 700px;
   }
-  .smh-pos-media {
-    max-width: 820px;
+
+  .smh-trust-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .smh-journey-head {
-    grid-template-columns: 1fr;
-    gap: 22px;
-  }
-  .smh-journey-head > p {
-    padding-bottom: 0;
-  }
-  .smh-journey-steps {
+  .smh-steps-list {
     grid-template-columns: 1fr;
   }
-  .smh-journey-steps li {
-    min-height: 245px;
-  }
-
-  .smh-tax {
-    grid-template-columns: 1fr;
-    gap: 55px;
-  }
-  .smh-tax-art {
-    width: min(420px, 90%);
+  .smh-steps-list li {
+    min-height: 230px;
   }
 
   .smh-faq-grid {
     grid-template-columns: 1fr;
-    gap: 55px;
+    gap: 48px;
   }
   .smh-footer-grid {
     grid-template-columns: 1.4fr repeat(2, 1fr);
@@ -2123,7 +3571,7 @@
 
 @media (max-width: 680px) {
   .smh-container {
-    width: min(100% - 30px, 1240px);
+    width: min(100% - 30px, 1320px);
   }
   /* ★ ONE NARROW HEADER TREATMENT across the four public hosts, at ONE
      breakpoint. These were 620px (help), 640px (pos), 680px (platform,
@@ -2138,27 +3586,67 @@
   }
 
   .smh-hero {
-    padding: 62px 0 64px;
+    padding-top: 12px;
+  }
+  .smh-hero-card {
+    padding: 34px 22px 30px;
+    border-radius: 22px;
   }
   .smh-eyebrow {
     margin-bottom: 22px;
+    font-size: 12px;
   }
   .smh-hero h1 {
-    font-size: clamp(48px, 14.5vw, 70px);
-    line-height: 0.96;
+    font-size: clamp(40px, 12vw, 60px);
+  }
+  .smh-hero-visual {
+    width: min(100%, 320px);
+    height: 500px;
+  }
+  .smh-phone {
+    width: 230px;
+    padding: 8px;
+    border-radius: 38px;
+  }
+  .smh-phone-screen {
+    border-radius: 30px;
+  }
+  .smh-hero-float {
+    width: 92px;
+  }
+  /* Beside the photograph, never over the product name and price. */
+  .smh-hero-float.is-b {
+    right: -22px;
+    bottom: 34%;
+    width: 100px;
+  }
+  .smh-hero-order {
+    padding: 8px 12px 8px 8px;
+  }
+  .smh-pricing-component .stq-pricing-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .smh-india-float {
+    display: none;
+  }
+  /* Two lines on a phone: the box is sized for two and each promise is
+     centred in it, so a one-line promise sits in the middle and a two-line
+     one fills it without being clipped. */
+  .smh-rotator {
+    --smh-rot: 2.3em;
+    font-size: 0.7em;
   }
   .smh-hero-lead {
-    margin-top: 24px !important;
-    font-size: 17px;
+    margin-top: 22px !important;
+    font-size: 16px;
   }
   .smh-hero-actions {
     flex-direction: column;
   }
   .smh-hero-actions .smh-button {
     width: 100%;
-  }
-  .smh-hero-proof {
-    gap: 10px 16px;
   }
   .smh-command-wrap {
     width: calc(100% - 14px);
@@ -2258,155 +3746,136 @@
     display: none;
   }
 
-  .smh-outcome-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0;
-    padding-block: 15px;
+  .smh-storefronts {
+    padding: 72px 0 48px;
   }
-  .smh-outcome-grid > div {
-    min-height: 82px;
-    padding-left: 15px;
-    border-bottom: 1px solid var(--smh-line);
-  }
-  .smh-outcome-grid > div:nth-child(odd) {
-    padding-left: 0;
-    border-left: 0;
-  }
-  .smh-outcome-grid > div:nth-last-child(-n + 2) {
-    border-bottom: 0;
-  }
-  .smh-outcome-grid b {
-    font-size: 19px;
-  }
-  .smh-outcome-grid span {
-    font-size: 11px;
-  }
-
-  .smh-intro {
-    padding: 95px 0 50px;
-  }
-  .smh-intro h2,
-  .smh-pos h2,
-  .smh-journey h2,
-  .smh-tax h2,
-  .smh-pricing-head h2,
-  .smh-faq h2 {
-    font-size: 40px;
-  }
-  .smh-section-lead {
-    font-size: 16px;
-  }
-
-  .smh-bento {
-    width: calc(100% - 20px);
-    gap: 10px;
-    padding-bottom: 90px;
-  }
-  .smh-bento-card {
-    border-radius: 22px;
-  }
-  .smh-bento h3 {
+  .smh-storefronts h2 {
     font-size: 32px;
   }
-  .smh-bento-store {
-    grid-template-columns: minmax(0, 1fr);
-    padding: 31px 0 0 27px;
-    gap: 34px;
+  .smh-theme-rail {
+    margin-top: 32px;
   }
-  .smh-bento-store .smh-bento-copy {
-    min-width: 0;
-    padding-right: 27px;
+  .smh-theme-rail-bar {
+    font-size: 14px;
   }
-  .smh-store-art {
-    width: 110%;
-    transform: translate(2%, 5%);
-    padding: 8px;
+  .smh-theme-track {
+    gap: 12px;
   }
-  .smh-store-art .art-banner {
-    padding: 17px 14px;
+  .smh-theme-card {
+    flex-basis: min(78vw, 300px);
+    border-radius: 16px;
   }
-  .smh-store-art .art-thumb {
-    height: 54px;
+  .smh-theme-card-copy {
+    padding: 12px 14px 14px;
   }
-  .smh-bento-builder,
-  .smh-bento-orders,
-  .smh-bento-growth {
-    min-height: auto;
-    padding: 30px 27px;
-  }
-  .smh-bento-builder > .sm-art {
-    width: 115%;
-    margin: 45px -7.5% -42px;
-  }
-  .smh-bento-orders {
-    padding-bottom: 55px;
-  }
-  .smh-order-art {
-    width: 125%;
-    margin: 48px -6% -30px;
-  }
-  .smh-order-row {
-    grid-template-columns: 0.7fr 1.4fr 0.8fr;
-  }
-  .smh-order-row > span:nth-child(3) {
-    display: none;
-  }
-  .smh-sync-pill {
-    right: 8px;
-  }
-  .smh-bento-growth {
-    gap: 34px;
-  }
-  .smh-growth-art {
-    padding: 19px;
-  }
-  .smh-growth-stat b {
-    font-size: 38px;
+  .smh-everywhere {
+    padding-bottom: 72px;
   }
 
-  .smh-pos {
-    padding: 90px 0;
+  .smh-minkband,
+  .smh-cards-area,
+  .smh-india,
+  .smh-stories,
+  .smh-custom,
+  .smh-pos,
+  .smh-trust,
+  .smh-pricing-area,
+  .smh-steps,
+  .smh-faq {
+    padding-bottom: 72px;
   }
-  .smh-pos-grid {
-    gap: 42px;
+  .smh-minkband-card,
+  .smh-india-card,
+  .smh-pos-card {
+    padding: 30px 24px;
+    border-radius: 20px;
   }
+  .smh-minkband h2,
+  .smh-india h2,
+  .smh-stories h2,
+  .smh-custom-head h2,
+  .smh-pos h2,
+  .smh-trust h2,
+  .smh-pricing-head h2,
+  .smh-steps h2,
+  .smh-faq h2 {
+    font-size: 32px;
+  }
+  .smh-final h2 {
+    font-size: 40px;
+  }
+
+  .smh-card {
+    border-radius: 18px;
+  }
+  .smh-card-art {
+    height: 220px;
+  }
+  .smh-card-art-store .sm-art,
+  .smh-card-art-command .smh-command,
+  .smh-card .smh-command {
+    top: 22px;
+    left: 22px;
+    width: 135%;
+  }
+  .smh-card-art-channels .smh-channels-art {
+    top: 22px;
+    left: 22px;
+  }
+  .smh-card-copy {
+    padding: 22px;
+  }
+
+  .smh-india-art .sm-art {
+    max-width: 320px;
+  }
+
+  .smh-story-grid {
+    margin-top: 36px;
+  }
+  .smh-story h3 {
+    margin-top: 18px;
+    font-size: 21px;
+  }
+
+  .smh-custom-card {
+    padding: 26px 22px;
+    border-radius: 18px;
+  }
+  .smh-custom-card.is-wide {
+    padding-left: 22px;
+  }
+  .smh-custom-copy {
+    padding: 26px 22px 0 0;
+  }
+  .smh-custom-art .sm-art {
+    width: 118%;
+  }
+
   .smh-pos-media {
     width: calc(100% + 20px);
     margin-left: -10px;
     padding: 7px;
-    border-radius: 18px;
+    border-radius: 16px;
   }
   .smh-pos-badge {
     right: 15px;
     bottom: 15px;
   }
 
-  .smh-journey {
-    padding: 95px 0;
+  .smh-trust-grid {
+    grid-template-columns: 1fr;
   }
-  .smh-journey-steps {
-    margin-top: 40px !important;
+  .smh-trust-grid > div {
+    min-height: 0;
+    padding: 22px;
   }
-  .smh-journey-steps li {
-    min-height: 230px;
-  }
-
-  .smh-tax {
-    width: calc(100% - 20px);
-    margin-bottom: 95px;
-    padding: 42px 27px;
-    border-radius: 24px;
-  }
-  .smh-tax-points {
+  .smh-trust-note {
     align-items: flex-start;
-    flex-direction: column;
   }
 
-  .smh-pricing-area {
-    padding: 95px 0 90px;
-  }
   .smh-pricing-head {
-    margin-bottom: 38px;
+    margin-bottom: 30px;
   }
   .smh-pricing-component .stq-pricing {
     gap: 16px;
@@ -2419,38 +3888,28 @@
     flex: none;
   }
 
-  .smh-faq {
-    padding: 95px 0;
+  .smh-steps-list {
+    margin-top: 32px !important;
   }
-  .smh-faq-grid {
-    gap: 42px;
-  }
+
   .smh-faq-list summary {
-    min-height: 70px;
-    font-size: 15px;
+    min-height: 68px;
+    font-size: 16px;
   }
 
   .smh-final {
-    padding-bottom: 10px;
+    padding: 72px 0 96px;
   }
-  .smh-final-card {
-    width: calc(100% - 20px);
-    padding: 70px 24px;
-    border-radius: 24px;
-  }
-  .smh-final h2 {
-    font-size: 48px;
-  }
-  .smh-final-card > div:last-child {
+  .smh-final-inner > div {
     flex-direction: column;
   }
 
   .smh-footer {
-    padding-top: 65px;
+    padding-top: 56px;
   }
   .smh-footer-grid {
     grid-template-columns: repeat(2, 1fr);
-    gap: 42px 25px;
+    gap: 40px 25px;
   }
   .smh-footer-brand {
     grid-column: 1 / -1;
@@ -2460,29 +3919,37 @@
     align-items: flex-start;
     flex-direction: column;
     justify-content: center;
-    gap: 5px;
+    gap: 14px;
+    padding-block: 22px;
   }
 }
 
+/* Motion ----------------------------------------------------------------- */
+
 @media (prefers-reduced-motion: no-preference) {
-  .smh-hero-copy > *,
-  .smh-command-wrap {
-    animation: smh-rise 650ms both cubic-bezier(0.22, 1, 0.36, 1);
+  .smh-hero-copy > * {
+    animation: smh-rise 700ms both cubic-bezier(0.22, 1, 0.36, 1);
   }
   .smh-hero-copy > :nth-child(2) {
     animation-delay: 60ms;
   }
   .smh-hero-copy > :nth-child(3) {
-    animation-delay: 110ms;
+    animation-delay: 120ms;
   }
   .smh-hero-copy > :nth-child(4) {
-    animation-delay: 160ms;
+    animation-delay: 180ms;
   }
   .smh-hero-copy > :nth-child(5) {
-    animation-delay: 210ms;
+    animation-delay: 240ms;
   }
-  .smh-command-wrap {
-    animation-delay: 230ms;
+  .smh-hero-visual {
+    animation: smh-rise 900ms 180ms both cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .smh-hero-float.is-a {
+    animation: smh-float 6s 0.4s ease-in-out infinite;
+  }
+  .smh-hero-float.is-b {
+    animation: smh-float 6.6s 1s ease-in-out infinite;
   }
   .smh-float-store {
     animation: smh-float 5s ease-in-out infinite;
@@ -2492,6 +3959,25 @@
   }
   .smh-float-order {
     animation: smh-float 5.3s 0.3s ease-in-out infinite;
+  }
+  /* Five lines, 3.2s each: hold 2.5s, slide 0.7s. The sixth line is a copy
+     of the first so the loop returns to it with no visible jump. */
+  .smh-rotator-track {
+    animation: smh-rotate 16s infinite cubic-bezier(0.65, 0, 0.35, 1);
+  }
+  .smh-marquee-track {
+    animation: smh-marquee 42s linear infinite;
+  }
+  .smh-marquee:hover .smh-marquee-track {
+    animation-play-state: paused;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Without the slide the strip must still be browsable. */
+  .smh-marquee {
+    overflow-x: auto;
+    mask-image: none;
   }
 }
 
@@ -2513,5 +3999,40 @@
   }
   50% {
     transform: translateY(-8px);
+  }
+}
+
+@keyframes smh-rotate {
+  0%,
+  15.6% {
+    transform: translateY(0);
+  }
+  20%,
+  35.6% {
+    transform: translateY(calc(var(--smh-rot) * -1));
+  }
+  40%,
+  55.6% {
+    transform: translateY(calc(var(--smh-rot) * -2));
+  }
+  60%,
+  75.6% {
+    transform: translateY(calc(var(--smh-rot) * -3));
+  }
+  80%,
+  95.6% {
+    transform: translateY(calc(var(--smh-rot) * -4));
+  }
+  100% {
+    transform: translateY(calc(var(--smh-rot) * -5));
+  }
+}
+
+@keyframes smh-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
   }
 }
