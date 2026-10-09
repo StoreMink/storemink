@@ -6664,6 +6664,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261009_0174_nested_blocks_help",
+      "description": "Help: sections hold blocks; collapsible content and comparison table join the library",
+      "file": "sql/20261009_0174_nested_blocks_help.sql",
+      "transaction": true,
+      "requires": ["20261008_0173_owner_password_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Section guide lists collapsible content and the comparison table and explains blocks",
+            "sql": "select count(*)::text from public.help_articles where slug='add-and-arrange-storefront-sections' and status='published' and body like '%FAQ accordion, collapsible content, comparison table, latest blogs%' and body like '%built from blocks you add one at a time%' and body not like '%FAQ accordion, latest blogs%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

@@ -21,8 +21,12 @@ import { TestimonialsSection } from "../sections/testimonials-section";
 import { VideoSection } from "../sections/video-section";
 import { NewsletterSection } from "../sections/newsletter-section";
 import { FaqAccordionSection } from "../sections/faq-accordion-section";
+import { AccordionSection } from "../sections/accordion-section";
+import { ComparisonSection } from "../sections/comparison-section";
 import type {
+  AccordionConfig,
   AnySectionConfig,
+  ComparisonConfig,
   CustomCodeConfig,
   FaqAccordionConfig,
   FeaturedProductsConfig,
@@ -150,6 +154,20 @@ function SectionBody({
         <FaqAccordionSection
           {...shell}
           config={section.config as FaqAccordionConfig}
+        />
+      );
+    case "accordion":
+      return (
+        <AccordionSection
+          {...shell}
+          config={section.config as AccordionConfig}
+        />
+      );
+    case "comparison":
+      return (
+        <ComparisonSection
+          {...shell}
+          config={section.config as ComparisonConfig}
         />
       );
     case "featured_products":

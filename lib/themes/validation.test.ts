@@ -436,4 +436,75 @@ describe("theme copy floors", () => {
     expect(codes(found)).toEqual(["image_alt"]);
     expect(found[0].message).toContain("item 1");
   });
+
+  // Nested blocks: a media_text story and an accordion "image" row render
+  // their pictures as content too, so the same rule reaches them.
+  it("reaches a media_text story's image and an accordion image row", () => {
+    const theme = clone();
+    const home = homepage(theme);
+    home.sections.splice(
+      1,
+      0,
+      {
+        id: "story",
+        type: "media_text",
+        enabled: true,
+        config: {
+          eyebrow: "",
+          heading: "Made slowly",
+          body: "",
+          cta_label: "",
+          cta_href: "",
+          image_url: "",
+          image_alt: "",
+          media_position: "left",
+          media_ratio: "portrait",
+          alignment: "left",
+          stories: [
+            {
+              eyebrow: "",
+              heading: "Sourced",
+              body: "",
+              cta_label: "",
+              cta_href: "",
+              image_url: "/themes/x/valley.webp",
+              image_alt: "",
+              media_position: "right",
+            },
+          ],
+        },
+      } as unknown as (typeof home.sections)[number],
+      {
+        id: "rows",
+        type: "accordion",
+        enabled: true,
+        config: {
+          heading: "Good to know",
+          subheading: "",
+          items: [
+            {
+              type: "image",
+              heading: "Care",
+              body: "Wipe clean.",
+              image_url: "/themes/x/care.webp",
+              image_alt: "",
+            },
+            {
+              type: "text",
+              heading: "Shipping",
+              body: "A few days.",
+              image_url: "",
+              image_alt: "",
+            },
+          ],
+          open_first: true,
+          allow_multiple: false,
+        },
+      } as unknown as (typeof home.sections)[number],
+    );
+    const found = validateThemeCopy(theme);
+    expect(codes(found)).toEqual(["image_alt", "image_alt"]);
+    expect(found[0].message).toContain("(media_text) item 1");
+    expect(found[1].message).toContain("(accordion) item 1");
+  });
 });

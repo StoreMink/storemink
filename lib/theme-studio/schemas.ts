@@ -65,6 +65,20 @@ export const THEME_STUDIO_SECTION_TYPES = HOMEPAGE_SECTION_TYPES.filter(
     type !== "custom_code" && type !== "latest_blogs" && type !== "video",
 );
 
+/** The section types every request before prompt v29 was keyed on: the list
+ * above without the two sections that arrived with nested blocks. */
+export const LEGACY_THEME_STUDIO_SECTION_TYPES =
+  THEME_STUDIO_SECTION_TYPES.filter(
+    (type) => type !== "accordion" && type !== "comparison",
+  );
+
+/** The section vocabulary a prompt revision prints and its schemas admit. */
+export function themeStudioSectionTypes(nestedBlocks: boolean) {
+  return nestedBlocks
+    ? THEME_STUDIO_SECTION_TYPES
+    : LEGACY_THEME_STUDIO_SECTION_TYPES;
+}
+
 export const THEME_STUDIO_FONT_VALUES = Object.values(DESIGN_FONTS);
 
 const SURFACES = ["home", "shop", "product", "cart", "content", "not_found"];
@@ -490,14 +504,36 @@ function legacyFontSchema(schema: Schema): Schema {
   return legacy;
 }
 
-const LEGACY_STAGE_B_SCHEMAS = new Map<Schema, Schema>(
-  [
-    STAGE_B_DRAFT_SCHEMA,
-    STAGE_B_INITIAL_DRAFT_SCHEMA,
-    STAGE_B_VARIETY_DRAFT_SCHEMA,
-    STAGE_B_VARIETY_INITIAL_SCHEMA,
-  ].map((schema) => [schema, legacyFontSchema(schema)]),
-);
+/** The same schema with every section-type enum narrowed to the pre-v29
+ * list, wherever it appears (Stage A page plans, Stage B sections). Matched
+ * by value, so the enum helper's shape is not assumed. */
+function withoutNestedBlockSections(schema: Schema): Schema {
+  const legacy = structuredClone(schema);
+  const full = JSON.stringify(THEME_STUDIO_SECTION_TYPES);
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (Array.isArray(record.enum) && JSON.stringify(record.enum) === full)
+      record.enum = [...LEGACY_THEME_STUDIO_SECTION_TYPES];
+    Object.values(record).forEach(walk);
+  };
+  walk(legacy);
+  return legacy;
+}
+
+const STAGE_B_SCHEMAS = [
+  STAGE_B_DRAFT_SCHEMA,
+  STAGE_B_INITIAL_DRAFT_SCHEMA,
+  STAGE_B_VARIETY_DRAFT_SCHEMA,
+  STAGE_B_VARIETY_INITIAL_SCHEMA,
+];
+/** Twins keyed by schema and the two capabilities that reshape it, built
+ * once: a persisted paid request is keyed on the exact schema it was sent. */
+const STAGE_B_TWINS = new Map<string, Schema>();
 
 /** The Stage A schema without the brief's `people` field: the shape every
  * request before prompt v28 was keyed on. */
@@ -522,30 +558,49 @@ function withoutBriefPeople(schema: Schema): Schema {
   return legacy;
 }
 
-const LEGACY_STAGE_A_SCHEMAS = new Map<Schema, Schema>(
-  [STAGE_A_ENVELOPE_SCHEMA, STAGE_A_VARIETY_SCHEMA].map((schema) => [
-    schema,
-    withoutBriefPeople(schema),
-  ]),
-);
+const STAGE_A_SCHEMAS = [STAGE_A_ENVELOPE_SCHEMA, STAGE_A_VARIETY_SCHEMA];
+const STAGE_A_TWINS = new Map<string, Schema>();
 
 /** The Stage A schema a run of this prompt revision sends: the current one,
- * or its pre-v28 twin when the revision predates people in imagery. */
+ * or a twin without the brief's `people` field (pre-v28) and/or without the
+ * nested-block sections (pre-v29), whichever the revision predates. */
 export function stageASchemaFor(
   schema: Schema,
   peopleInImagery: boolean,
+  nestedBlocks = true,
 ): Schema {
-  if (peopleInImagery) return schema;
-  const legacy = LEGACY_STAGE_A_SCHEMAS.get(schema);
-  if (!legacy) throw new Error("Unknown Stage A schema.");
-  return legacy;
+  if (peopleInImagery && nestedBlocks) return schema;
+  const index = STAGE_A_SCHEMAS.indexOf(schema);
+  if (index < 0) throw new Error("Unknown Stage A schema.");
+  const key = `${index}:${peopleInImagery}:${nestedBlocks}`;
+  let twin = STAGE_A_TWINS.get(key);
+  if (!twin) {
+    twin = schema;
+    if (!nestedBlocks) twin = withoutNestedBlockSections(twin);
+    if (!peopleInImagery) twin = withoutBriefPeople(twin);
+    STAGE_A_TWINS.set(key, twin);
+  }
+  return twin;
 }
 
-/** The schema a run of this prompt revision sends: the current one, or its
- * pre-v25 twin when the revision predates font pairings. */
-export function stageBSchemaFor(schema: Schema, fontPairings: boolean): Schema {
-  if (fontPairings) return schema;
-  const legacy = LEGACY_STAGE_B_SCHEMAS.get(schema);
-  if (!legacy) throw new Error("Unknown Stage B schema.");
-  return legacy;
+/** The schema a run of this prompt revision sends: the current one, or a
+ * twin without font pairings (pre-v25) and/or without the nested-block
+ * sections (pre-v29), whichever the revision predates. */
+export function stageBSchemaFor(
+  schema: Schema,
+  fontPairings: boolean,
+  nestedBlocks = true,
+): Schema {
+  if (fontPairings && nestedBlocks) return schema;
+  const index = STAGE_B_SCHEMAS.indexOf(schema);
+  if (index < 0) throw new Error("Unknown Stage B schema.");
+  const key = `${index}:${fontPairings}:${nestedBlocks}`;
+  let twin = STAGE_B_TWINS.get(key);
+  if (!twin) {
+    twin = schema;
+    if (!nestedBlocks) twin = withoutNestedBlockSections(twin);
+    if (!fontPairings) twin = legacyFontSchema(twin);
+    STAGE_B_TWINS.set(key, twin);
+  }
+  return twin;
 }

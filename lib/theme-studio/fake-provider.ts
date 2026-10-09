@@ -352,6 +352,66 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
             cta_label: "Shop now",
             cta_href: "/shop",
           }),
+          // Nested blocks (plan Phase 2b): typed rows under a section. Copy
+          // carries no digits, so the brief-aware claims check has nothing
+          // to ask for.
+          section("accordion", {
+            ...EMPTY_CONFIG.accordion,
+            heading: "Good to know",
+            items: [
+              {
+                type: "text",
+                heading: "Shipping and returns",
+                body: "Orders leave the workshop within a few working days, and a return is welcome for a fortnight.",
+                image_url: "",
+                image_alt: "",
+              },
+              {
+                type: "image",
+                heading: "Care",
+                body: "Wipe with a damp cloth and keep away from direct heat.",
+                image_url: `theme-asset://${slot}`,
+                image_alt: "A finished piece on the workshop bench",
+              },
+            ],
+          }),
+          section("comparison", {
+            ...EMPTY_CONFIG.comparison,
+            heading: "Which size suits you",
+            columns: [
+              {
+                label: "Small",
+                caption: "For one",
+                cta_label: "",
+                cta_href: "",
+                highlight: false,
+              },
+              {
+                label: "Family",
+                caption: "For the table",
+                cta_label: "Shop the family size",
+                cta_href: "/shop",
+                highlight: true,
+              },
+            ],
+            rows: [
+              {
+                type: "text",
+                label: "Serves",
+                values: ["One or two", "Four to six"],
+              },
+              {
+                type: "check",
+                label: "Dishwasher safe",
+                values: ["yes", "yes"],
+              },
+              {
+                type: "check",
+                label: "Comes with a lid",
+                values: ["no", "yes"],
+              },
+            ],
+          }),
         ],
       },
       {

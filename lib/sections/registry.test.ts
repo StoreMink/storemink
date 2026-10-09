@@ -148,6 +148,8 @@ describe("draft vs publish validation modes", () => {
       ["testimonials", { items: [] }],
       ["video", { video_url: "" }],
       ["newsletter", { heading: "", subheading: "", consent_text: "" }],
+      ["accordion", { items: [] }],
+      ["comparison", { columns: [], rows: [] }],
     ];
     for (const [type, raw] of incomplete) {
       expect(

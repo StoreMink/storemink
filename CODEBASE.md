@@ -2518,7 +2518,8 @@ wholesip/
 │   │       │                  # page-section-renderer, custom-code-frame (sandboxed iframe),
 │   │       │                  # custom-code-section, rich-text-section, hero-section,
 │   │       │                  # usp-bar-section, ticker-section, tile-grid-section,
-│   │       │                  # faq-accordion-section, media-text-section,
+│   │       │                  # faq-accordion-section, accordion-section,
+│       │                  # comparison-section, media-text-section,
 │   │       │                  # gallery-section, testimonials-section, video-section/player,
 │   │       │                  # newsletter-section,
 │   │       │                  # preview-bridge, draft-canvas (client-side instant
@@ -2677,7 +2678,7 @@ wholesip/
 │   │   ├── builder/           # ★ Website Builder full-tab experience (see §11): pages list
 │   │   │                      # (incl. the pinned Home = slug "") + live preview iframe +
 │   │   │                      # per-section editing. builder-client, outline-panel,
-│   │   │                      # inspector-panel, section-form + field-group (shared editor
+│   │   │                      # inspector-panel, section-form + field-group + block-list (shared editor
 │   │   │                      # forms), section-library + section-thumbs (visual add-section
 │   │   │                      # picker), use-autosave, use-history (undo/redo),
 │   │   │                      # use-builder-shortcuts, code-editor(+-lazy) (CodeMirror),
@@ -4914,7 +4915,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
 11. **Website Builder — pages & custom code are per-store, dashboard-editable.**
     The storefront itself is a per-store artifact, not hardcoded: - **Section registry**: `lib/homepage/section-types.ts` is the single typed
     section schema (config types, `EMPTY_CONFIG`, `META`, `validateConfig`),
-    shared by the homepage AND custom pages. Seventeen block types: `hero`
+    shared by the homepage AND custom pages. Nineteen block types: `hero`
     (banner/split/minimal/fullbleed variants — first-class hero, replaces the old
     custom_code hero hack; optional `video_url` plays muted/looping in place
     of the image with the image as poster), `hero_carousel` (auto-playing
@@ -4935,11 +4936,17 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `ticker-section.tsx`, pauses on hover, static under reduced-motion),
     `faq_accordion`
     (expandable Q/A with optional category-filter pills; plain-text answers),
+    `accordion` (collapsible content: typed rows of copy, or copy with a
+    picture inside the open row; several rows may stay open), `comparison`
+    (products, sizes or plans side by side, feature by feature, as a table
+    that scrolls sideways on phones with the feature column pinned or as
+    stacking cards; rows are text per column or yes/no ticks that carry a
+    screen-reader word),
     `latest_blogs`, `rich_text` (inline sanitized HTML, SEO-friendly) and
     `custom_code` (merchant HTML/CSS/JS). Hero/tile/slide `background` fields
     are strict colours (`safeColor`) because they render into inline style
     attrs; media, logo, CTA and `video_url` fields are `safeHref`-validated.
-    All seventeen types have builder forms and section-library thumbnails;
+    All nineteen types have builder forms and section-library thumbnails;
     Phase 3's renderers live in `media-text-section.tsx`, `gallery-section.tsx`,
     `testimonials-section.tsx`, `video-section.tsx`, and
     `newsletter-section.tsx`.
@@ -6243,6 +6250,55 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     for the images not yet settled and redraws them. Not yet run against live
     Gemini; the first live adults brief should be checked by eye. Operator-
     only: no merchant-visible change, no Help Centre update.
+    **Nested blocks (2026-10-09, plan Phase 2b; prompt v29).** A section's
+    repeatable children — slides, tiles, items, stories, rows — are its
+    BLOCKS, and `SECTION_BLOCKS` in `lib/homepage/section-types.ts` is the
+    registry: per section type, the config key that holds them, the block
+    types it admits (the first is the default), whether each block carries a
+    `type` field, and how many a published section needs and may hold. The
+    eight list-shaped sections that predate it are registered as untyped (a
+    tile is a tile) and keep their stored shape; `sectionBlocks` and
+    `blockTypeOf` read through it, and every validator holds its list to one
+    count rule (`blockCountError`: over the cap is refused in every mode,
+    under the minimum only on publish). Three adopters: (1) `media_text`
+    gains `stories` — up to five further image-and-copy bands under the
+    first, each choosing its image side, sharing the section's ratio and
+    alignment, rendered inside `.home-media-stories` only when present and
+    omitted from storage when empty, so a row saved before stories existed
+    is stored and rendered byte for byte as it was. (2) `accordion`
+    (collapsible content) holds typed rows, `text` or `image` (a picture
+    inside the open panel), with `open_first` and `allow_multiple`; an
+    unknown stored type coerces to `text`, and a text row's image is cleared
+    rather than carried as an orphan. (3) `comparison` holds two to four
+    columns (label, caption, optional CTA, at most one `highlight`, the first
+    wins) and typed rows, `text` or `check`; every row's `values` is realigned
+    to the columns on save (padded or cut), ticks normalise to `yes`/`no`/"",
+    and the renderer gives every tick a screen-reader word so a row never
+    says anything by shape alone. The table's scroller is positioned so it
+    contains those words (the product-carousel overflow lesson), and the
+    feature column is sticky. ★ The builder gets ONE block list
+    (`block-list.tsx`): blocks start collapsed under a title drawn from their
+    own content, a block just added opens, open state follows a block that
+    moves and is dropped with one removed; `usp_bar`, `tile_grid` and
+    `testimonials` moved onto it, and the two new sections and media-text
+    stories use it. Theme Studio: feature `nestedBlocks` (v29). The Stage A
+    section list and sentence, the Stage B blocks bullet and config examples
+    (a pre-v29 media_text example prints without `stories`), the variety
+    prompt's choice list (`accordion.open_first`/`allow_multiple`,
+    `comparison.style`) and both schemas' section enums are gated:
+    `themeStudioSectionTypes(nestedBlocks)` and
+    `LEGACY_THEME_STUDIO_SECTION_TYPES` give the pre-v29 list, and
+    `stageASchemaFor`/`stageBSchemaFor` take a third flag and build each twin
+    once from the two capabilities a request may predate. The compiler
+    accepts the full list at every version. `validateThemeCopy`'s alt-text
+    pairs cover stories and accordion images; the generic `*_url`/`*_href`
+    walkers already reach them. The offline draft carries one of each new
+    section; `scripts/theme-studio-renderer-check.mjs` renders the table at
+    two to four columns (scrolling inside its container at phone widths,
+    never the page), the cards, an open image row and a three-band story.
+    Merchant-visible (two section types and stories in the library):
+    migration `20261009_0174_nested_blocks_help` edits the section guide's
+    list sentence in place and adds one paragraph on blocks.
     **The first live v26 run found four renderer defects, all shared chrome
     (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
     before artwork as `renderer_fix_required`, so every image stayed a

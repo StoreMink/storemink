@@ -527,6 +527,7 @@ async function generate(
   const peopleInImagery = themePromptFeatures(
     input.promptVersion,
   ).peopleInImagery;
+  const nestedBlocks = themePromptFeatures(input.promptVersion).nestedBlocks;
   // Explicit styles (intent schema 2) apply to new builds and to revisions of
   // themes that already carry a design direction. A revision of an older
   // schema-1 theme keeps its original contract: forcing a new direction and
@@ -715,17 +716,20 @@ async function generate(
               fullBleedOpening,
               carouselOpening,
               peopleInImagery,
+              nestedBlocks,
             )
           : stageASystemPrompt(
               themePromptFeatures(input.promptVersion).nativeCommerce,
               false,
               false,
               peopleInImagery,
+              nestedBlocks,
             ),
         content: [{ type: "text", text: userText }, ...images],
         schema: stageASchemaFor(
           explicitStyles ? STAGE_A_VARIETY_SCHEMA : STAGE_A_ENVELOPE_SCHEMA,
           peopleInImagery,
+          nestedBlocks,
         ),
         effort: "high",
       },
@@ -864,6 +868,7 @@ async function generate(
                 fontPairings,
                 fullBleedOpening,
                 carouselOpening,
+                nestedBlocks,
               )
             : compactInitial
               ? stageBInitialSystemPrompt(
@@ -871,12 +876,14 @@ async function generate(
                   fontPairings,
                   fullBleedOpening,
                   carouselOpening,
+                  nestedBlocks,
                 )
               : stageBSystemPrompt(
                   themePromptFeatures(input.promptVersion).nativeFraming,
                   fontPairings,
                   fullBleedOpening,
                   carouselOpening,
+                  nestedBlocks,
                 )) + (heroContrast ? heroContrastPrompt(fullBleedOpening) : ""),
         content: [{ type: "text", text: userText }],
         schema: stageBSchemaFor(
@@ -888,6 +895,7 @@ async function generate(
               ? STAGE_B_INITIAL_DRAFT_SCHEMA
               : STAGE_B_DRAFT_SCHEMA,
           fontPairings,
+          nestedBlocks,
         ),
         effort: "high",
       },

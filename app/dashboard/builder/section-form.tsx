@@ -8,8 +8,15 @@ import { NumberField } from "@/components/ui/number-field";
 import { CustomCodeFrame } from "@/app/(storefront)/components/sections/custom-code-frame";
 import CodeEditor from "./code-editor-lazy";
 import { FieldGroup } from "./field-group";
+import { BlockList } from "./block-list";
 import {
+  ACCORDION_BLOCK_TYPES,
+  COMPARISON_ROW_TYPES,
+  MAX_ACCORDION_ITEMS,
+  MAX_COMPARISON_COLUMNS,
+  MAX_COMPARISON_ROWS,
   MAX_FAQ_ITEMS,
+  MAX_MEDIA_TEXT_STORIES,
   MAX_GALLERY_ITEMS,
   MAX_HERO_SLIDES,
   MAX_TESTIMONIAL_ITEMS,
@@ -17,7 +24,12 @@ import {
   MAX_TILES,
   MAX_USP_ITEMS,
   USP_ICONS,
+  type AccordionConfig,
+  type AccordionItem,
   type AnySectionConfig,
+  type ComparisonColumn,
+  type ComparisonConfig,
+  type ComparisonRow,
   type CustomCodeConfig,
   type FaqAccordionConfig,
   type FaqItem,
@@ -32,6 +44,7 @@ import {
   type HomepageSectionType,
   type LatestBlogsConfig,
   type MediaTextConfig,
+  type MediaTextStory,
   type NewsletterSectionConfig,
   type PromoBannerConfig,
   type RichTextConfig,
@@ -152,6 +165,20 @@ export function SectionForm({
       return (
         <FaqFields
           config={config as FaqAccordionConfig}
+          setConfig={setConfig}
+        />
+      );
+    case "accordion":
+      return (
+        <AccordionFields
+          config={config as AccordionConfig}
+          setConfig={setConfig}
+        />
+      );
+    case "comparison":
+      return (
+        <ComparisonFields
+          config={config as ComparisonConfig}
           setConfig={setConfig}
         />
       );
@@ -948,15 +975,6 @@ function UspBarFields({
   setConfig: (c: AnySectionConfig) => void;
 }) {
   const setItems = (items: UspItem[]) => setConfig({ ...config, items });
-  const setItem = (i: number, patch: Partial<UspItem>) =>
-    setItems(config.items.map((it, j) => (j === i ? { ...it, ...patch } : it)));
-  const move = (i: number, dir: -1 | 1) => {
-    const target = i + dir;
-    if (target < 0 || target >= config.items.length) return;
-    const next = [...config.items];
-    [next[i], next[target]] = [next[target], next[i]];
-    setItems(next);
-  };
 
   return (
     <>
@@ -981,89 +999,47 @@ function UspBarFields({
         </p>
       </div>
 
-      <div className="space-y-2">
-        <label className={labelClass}>Items</label>
-        {config.items.map((item, i) => (
-          <div
-            key={i}
-            className="bg-background space-y-2 rounded-md border p-2"
-          >
-            <div className="flex items-center gap-2">
-              <select
-                className={`${fieldClass} max-w-[180px]`}
-                value={item.icon}
-                onChange={(e) =>
-                  setItem(i, { icon: e.target.value as UspItem["icon"] })
-                }
-              >
-                {USP_ICONS.map((icon) => (
-                  <option key={icon} value={icon}>
-                    {USP_ICON_LABELS[icon]}
-                  </option>
-                ))}
-              </select>
-              <div className="ml-auto flex items-center">
-                <button
-                  type="button"
-                  onClick={() => move(i, -1)}
-                  disabled={i === 0}
-                  title="Move up"
-                  className="text-muted-foreground hover:bg-muted flex h-7 w-6 items-center justify-center rounded disabled:opacity-30"
-                >
-                  <ChevronUp className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => move(i, 1)}
-                  disabled={i === config.items.length - 1}
-                  title="Move down"
-                  className="text-muted-foreground hover:bg-muted flex h-7 w-6 items-center justify-center rounded disabled:opacity-30"
-                >
-                  <ChevronDown className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setItems(config.items.filter((_, j) => j !== i))
-                  }
-                  title="Remove"
-                  className="text-muted-foreground hover:text-[var(--dash-red)] flex h-7 w-6 items-center justify-center rounded hover:bg-[var(--dash-red-soft)]"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
+      <BlockList
+        label="Items"
+        itemLabel="Item"
+        items={config.items}
+        max={MAX_USP_ITEMS}
+        newItem={(): UspItem => ({ icon: "star", title: "", subtitle: "" })}
+        onChange={setItems}
+        title={(item) => item.title || USP_ICON_LABELS[item.icon]}
+      >
+        {(item, _index, setItem) => (
+          <>
+            <select
+              className={`${fieldClass} max-w-[180px]`}
+              value={item.icon}
+              onChange={(e) =>
+                setItem({ icon: e.target.value as UspItem["icon"] })
+              }
+            >
+              {USP_ICONS.map((icon) => (
+                <option key={icon} value={icon}>
+                  {USP_ICON_LABELS[icon]}
+                </option>
+              ))}
+            </select>
             <div className="grid grid-cols-2 gap-2">
               <input
                 className={fieldClass}
                 value={item.title}
-                onChange={(e) => setItem(i, { title: e.target.value })}
+                onChange={(e) => setItem({ title: e.target.value })}
                 placeholder="Free delivery"
               />
               <input
                 className={fieldClass}
                 value={item.subtitle}
-                onChange={(e) => setItem(i, { subtitle: e.target.value })}
+                onChange={(e) => setItem({ subtitle: e.target.value })}
                 placeholder="On orders over ₹499 (optional)"
               />
             </div>
-          </div>
-        ))}
-        {config.items.length < MAX_USP_ITEMS && (
-          <button
-            type="button"
-            onClick={() =>
-              setItems([
-                ...config.items,
-                { icon: "star", title: "", subtitle: "" },
-              ])
-            }
-            className="text-muted-foreground hover:bg-muted flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
-          >
-            <Plus className="h-3.5 w-3.5" /> Add item
-          </button>
+          </>
         )}
-      </div>
+      </BlockList>
     </>
   );
 }
@@ -1197,18 +1173,6 @@ function TileGridFields({
     key: K,
     value: TileGridConfig[K],
   ) => setConfig({ ...config, [key]: value });
-  const setTile = (i: number, patch: Partial<TileItem>) =>
-    set(
-      "tiles",
-      config.tiles.map((t, j) => (j === i ? { ...t, ...patch } : t)),
-    );
-  const move = (i: number, dir: -1 | 1) => {
-    const target = i + dir;
-    if (target < 0 || target >= config.tiles.length) return;
-    const next = [...config.tiles];
-    [next[i], next[target]] = [next[target], next[i]];
-    set("tiles", next);
-  };
 
   return (
     <>
@@ -1269,62 +1233,35 @@ function TileGridFields({
         </div>
       </FieldGroup>
 
-      <div className="space-y-2">
-        <label className={labelClass}>Tiles</label>
-        {config.tiles.map((tile, i) => (
-          <div
-            key={i}
-            className="bg-background space-y-2 rounded-md border p-2"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground text-xs font-medium">
-                Tile {i + 1}
-              </span>
-              <div className="ml-auto flex items-center">
-                <button
-                  type="button"
-                  onClick={() => move(i, -1)}
-                  disabled={i === 0}
-                  title="Move up"
-                  className="text-muted-foreground hover:bg-muted flex h-7 w-6 items-center justify-center rounded disabled:opacity-30"
-                >
-                  <ChevronUp className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => move(i, 1)}
-                  disabled={i === config.tiles.length - 1}
-                  title="Move down"
-                  className="text-muted-foreground hover:bg-muted flex h-7 w-6 items-center justify-center rounded disabled:opacity-30"
-                >
-                  <ChevronDown className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    set(
-                      "tiles",
-                      config.tiles.filter((_, j) => j !== i),
-                    )
-                  }
-                  title="Remove"
-                  className="text-muted-foreground hover:text-[var(--dash-red)] flex h-7 w-6 items-center justify-center rounded hover:bg-[var(--dash-red-soft)]"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
+      <BlockList
+        label="Tiles"
+        itemLabel="Tile"
+        items={config.tiles}
+        max={MAX_TILES}
+        newItem={(): TileItem => ({
+          title: "",
+          subtitle: "",
+          href: "",
+          image_url: "",
+          background: "",
+          theme: "dark",
+        })}
+        onChange={(tiles) => set("tiles", tiles)}
+        title={(tile) => tile.title}
+      >
+        {(tile, _index, setTile) => (
+          <>
             <div className="grid grid-cols-2 gap-2">
               <input
                 className={fieldClass}
                 value={tile.title}
-                onChange={(e) => setTile(i, { title: e.target.value })}
+                onChange={(e) => setTile({ title: e.target.value })}
                 placeholder="Fresh produce"
               />
               <input
                 className={fieldClass}
                 value={tile.subtitle}
-                onChange={(e) => setTile(i, { subtitle: e.target.value })}
+                onChange={(e) => setTile({ subtitle: e.target.value })}
                 placeholder="from ₹19 (optional)"
               />
             </div>
@@ -1332,14 +1269,14 @@ function TileGridFields({
               <input
                 className={fieldClass}
                 value={tile.href}
-                onChange={(e) => setTile(i, { href: e.target.value })}
+                onChange={(e) => setTile({ href: e.target.value })}
                 placeholder="/collections/fruits"
               />
               <select
                 className={fieldClass}
                 value={tile.theme}
                 onChange={(e) =>
-                  setTile(i, { theme: e.target.value as TileItem["theme"] })
+                  setTile({ theme: e.target.value as TileItem["theme"] })
                 }
               >
                 <option value="dark">Dark text</option>
@@ -1348,38 +1285,17 @@ function TileGridFields({
             </div>
             <ColorField
               value={tile.background}
-              onChange={(v) => setTile(i, { background: v })}
+              onChange={(v) => setTile({ background: v })}
             />
             <ImageUpload
               folder="homepage"
               spec="landscape"
               defaultImage={tile.image_url || undefined}
-              onUploadSuccess={(url) => setTile(i, { image_url: url })}
+              onUploadSuccess={(url) => setTile({ image_url: url })}
             />
-          </div>
-        ))}
-        {config.tiles.length < MAX_TILES && (
-          <button
-            type="button"
-            onClick={() =>
-              set("tiles", [
-                ...config.tiles,
-                {
-                  title: "",
-                  subtitle: "",
-                  href: "",
-                  image_url: "",
-                  background: "",
-                  theme: "dark",
-                },
-              ])
-            }
-            className="text-muted-foreground hover:bg-muted flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
-          >
-            <Plus className="h-3.5 w-3.5" /> Add tile
-          </button>
+          </>
         )}
-      </div>
+      </BlockList>
     </>
   );
 }
@@ -1539,6 +1455,14 @@ function MediaTextFields({
     key: K,
     value: MediaTextConfig[K],
   ) => setConfig({ ...config, [key]: value });
+  const stories = config.stories ?? [];
+  // Omitted when empty, so a section saved before stories existed keeps its
+  // stored shape (the validator does the same on save).
+  const setStories = (next: MediaTextStory[]) => {
+    const rest: MediaTextConfig = { ...config };
+    delete rest.stories;
+    setConfig(next.length ? { ...rest, stories: next } : rest);
+  };
 
   return (
     <>
@@ -1663,6 +1587,452 @@ function MediaTextFields({
           </div>
         </div>
       </FieldGroup>
+
+      <FieldGroup title="More stories" defaultOpen={stories.length > 0}>
+        <p className="text-muted-foreground text-[11px]">
+          Further image-and-copy bands under this one — a process told in three
+          beats, an ingredient per band. Each story chooses its own image side;
+          the shape and alignment above apply to all of them.
+        </p>
+        <BlockList
+          label="Stories"
+          itemLabel="Story"
+          items={stories}
+          max={MAX_MEDIA_TEXT_STORIES}
+          newItem={(): MediaTextStory => ({
+            ...EMPTY_STORY,
+            // Alternate sides by default, the way an editorial page reads.
+            media_position:
+              (stories.length ? stories[stories.length - 1] : config)
+                .media_position === "left"
+                ? "right"
+                : "left",
+          })}
+          onChange={setStories}
+          title={(story) => story.heading}
+        >
+          {(story, _index, setStory) => (
+            <>
+              <input
+                className={fieldClass}
+                value={story.eyebrow}
+                onChange={(e) => setStory({ eyebrow: e.target.value })}
+                placeholder="Eyebrow (optional)"
+              />
+              <input
+                className={fieldClass}
+                value={story.heading}
+                onChange={(e) => setStory({ heading: e.target.value })}
+                placeholder="Heading"
+              />
+              <textarea
+                className={`${fieldClass} min-h-[88px] resize-y`}
+                value={story.body}
+                onChange={(e) => setStory({ body: e.target.value })}
+                placeholder="The story behind this step."
+              />
+              <ImageUpload
+                folder="homepage"
+                spec={specForRatio(config.media_ratio)}
+                defaultImage={story.image_url || undefined}
+                onUploadSuccess={(url) => setStory({ image_url: url })}
+              />
+              <input
+                className={fieldClass}
+                value={story.image_alt}
+                onChange={(e) => setStory({ image_alt: e.target.value })}
+                placeholder="Describe the image for screen readers"
+              />
+              <div className="grid grid-cols-3 gap-2">
+                <select
+                  className={fieldClass}
+                  value={story.media_position}
+                  onChange={(e) =>
+                    setStory({
+                      media_position: e.target
+                        .value as MediaTextStory["media_position"],
+                    })
+                  }
+                >
+                  <option value="left">Image left</option>
+                  <option value="right">Image right</option>
+                </select>
+                <input
+                  className={fieldClass}
+                  value={story.cta_label}
+                  onChange={(e) => setStory({ cta_label: e.target.value })}
+                  placeholder="Button label"
+                />
+                <input
+                  className={fieldClass}
+                  value={story.cta_href}
+                  onChange={(e) => setStory({ cta_href: e.target.value })}
+                  placeholder="/shop"
+                />
+              </div>
+            </>
+          )}
+        </BlockList>
+      </FieldGroup>
+    </>
+  );
+}
+
+const EMPTY_STORY: MediaTextStory = {
+  eyebrow: "",
+  heading: "",
+  body: "",
+  cta_label: "",
+  cta_href: "",
+  image_url: "",
+  image_alt: "",
+  media_position: "right",
+};
+
+const EMPTY_ACCORDION_ITEM: AccordionItem = {
+  type: "text",
+  heading: "",
+  body: "",
+  image_url: "",
+  image_alt: "",
+};
+
+const ACCORDION_BLOCK_LABELS: Record<
+  (typeof ACCORDION_BLOCK_TYPES)[number],
+  string
+> = {
+  text: "Text",
+  image: "Text with image",
+};
+
+function AccordionFields({
+  config,
+  setConfig,
+}: {
+  config: AccordionConfig;
+  setConfig: (c: AnySectionConfig) => void;
+}) {
+  const set = <K extends keyof AccordionConfig>(
+    key: K,
+    value: AccordionConfig[K],
+  ) => setConfig({ ...config, [key]: value });
+
+  return (
+    <>
+      <FieldGroup title="Header">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className={labelClass}>Heading</label>
+            <input
+              className={fieldClass}
+              value={config.heading}
+              onChange={(e) => set("heading", e.target.value)}
+              placeholder="Good to know"
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Subheading</label>
+            <input
+              className={fieldClass}
+              value={config.subheading}
+              onChange={(e) => set("subheading", e.target.value)}
+              placeholder="(optional)"
+            />
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={config.open_first}
+            onChange={(e) => set("open_first", e.target.checked)}
+          />
+          Start with the first row open
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={config.allow_multiple}
+            onChange={(e) => set("allow_multiple", e.target.checked)}
+          />
+          Let several rows stay open at once
+        </label>
+      </FieldGroup>
+
+      <BlockList
+        label="Rows"
+        itemLabel="Row"
+        items={config.items}
+        max={MAX_ACCORDION_ITEMS}
+        newItem={() => ({ ...EMPTY_ACCORDION_ITEM })}
+        onChange={(items) => set("items", items)}
+        title={(item) => item.heading}
+      >
+        {(item, _index, setItem) => (
+          <>
+            <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-2">
+              <select
+                className={fieldClass}
+                value={item.type}
+                onChange={(e) =>
+                  setItem({ type: e.target.value as AccordionItem["type"] })
+                }
+              >
+                {ACCORDION_BLOCK_TYPES.map((blockType) => (
+                  <option key={blockType} value={blockType}>
+                    {ACCORDION_BLOCK_LABELS[blockType]}
+                  </option>
+                ))}
+              </select>
+              <input
+                className={fieldClass}
+                value={item.heading}
+                onChange={(e) => setItem({ heading: e.target.value })}
+                placeholder="Shipping and returns"
+              />
+            </div>
+            <textarea
+              className={`${fieldClass} min-h-[70px] resize-y`}
+              value={item.body}
+              onChange={(e) => setItem({ body: e.target.value })}
+              placeholder="What a shopper finds when they open this row."
+            />
+            {item.type === "image" && (
+              <div>
+                <label className={labelClass}>Picture in the open row</label>
+                <ImageUpload
+                  folder="homepage"
+                  spec="landscape"
+                  defaultImage={item.image_url || undefined}
+                  onUploadSuccess={(url) => setItem({ image_url: url })}
+                />
+                <input
+                  className={`${fieldClass} mt-2`}
+                  value={item.image_alt}
+                  onChange={(e) => setItem({ image_alt: e.target.value })}
+                  placeholder="Describe the image for screen readers"
+                />
+              </div>
+            )}
+          </>
+        )}
+      </BlockList>
+    </>
+  );
+}
+
+const EMPTY_COLUMN: ComparisonColumn = {
+  label: "",
+  caption: "",
+  cta_label: "",
+  cta_href: "",
+  highlight: false,
+};
+
+const COMPARISON_ROW_LABELS: Record<
+  (typeof COMPARISON_ROW_TYPES)[number],
+  string
+> = {
+  text: "Text per column",
+  check: "Yes / no per column",
+};
+
+function ComparisonFields({
+  config,
+  setConfig,
+}: {
+  config: ComparisonConfig;
+  setConfig: (c: AnySectionConfig) => void;
+}) {
+  const set = <K extends keyof ComparisonConfig>(
+    key: K,
+    value: ComparisonConfig[K],
+  ) => setConfig({ ...config, [key]: value });
+  const setValue = (
+    row: ComparisonRow,
+    setRow: (patch: Partial<ComparisonRow>) => void,
+    column: number,
+    value: string,
+  ) =>
+    setRow({
+      values: config.columns.map((_, j) =>
+        j === column ? value : (row.values[j] ?? ""),
+      ),
+    });
+
+  return (
+    <>
+      <FieldGroup title="Header & layout">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className={labelClass}>Heading</label>
+            <input
+              className={fieldClass}
+              value={config.heading}
+              onChange={(e) => set("heading", e.target.value)}
+              placeholder="Which one is for you?"
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Subheading</label>
+            <input
+              className={fieldClass}
+              value={config.subheading}
+              onChange={(e) => set("subheading", e.target.value)}
+              placeholder="(optional)"
+            />
+          </div>
+        </div>
+        <div>
+          <label className={labelClass}>Style</label>
+          <select
+            className={fieldClass}
+            value={config.style}
+            onChange={(e) =>
+              set("style", e.target.value as ComparisonConfig["style"])
+            }
+          >
+            <option value="table">Table — rows and columns</option>
+            <option value="cards">Cards — one card per column</option>
+          </select>
+        </div>
+      </FieldGroup>
+
+      <BlockList
+        label="Columns"
+        itemLabel="Column"
+        items={config.columns}
+        max={MAX_COMPARISON_COLUMNS}
+        newItem={() => ({ ...EMPTY_COLUMN })}
+        onChange={(columns) => set("columns", columns)}
+        title={(column) => column.label}
+      >
+        {(column, index, setColumn) => (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                className={fieldClass}
+                value={column.label}
+                onChange={(e) => setColumn({ label: e.target.value })}
+                placeholder="Starter"
+              />
+              <input
+                className={fieldClass}
+                value={column.caption}
+                onChange={(e) => setColumn({ caption: e.target.value })}
+                placeholder="For one (optional)"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                className={fieldClass}
+                value={column.cta_label}
+                onChange={(e) => setColumn({ cta_label: e.target.value })}
+                placeholder="Button label (optional)"
+              />
+              <input
+                className={fieldClass}
+                value={column.cta_href}
+                onChange={(e) => setColumn({ cta_href: e.target.value })}
+                placeholder="/shop/starter-set"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={column.highlight}
+                onChange={(e) =>
+                  set(
+                    "columns",
+                    config.columns.map((c, j) => ({
+                      ...c,
+                      // At most one recommended column.
+                      highlight: j === index ? e.target.checked : false,
+                    })),
+                  )
+                }
+              />
+              Recommended column
+            </label>
+          </>
+        )}
+      </BlockList>
+
+      <BlockList
+        label="Rows"
+        itemLabel="Row"
+        items={config.rows}
+        max={MAX_COMPARISON_ROWS}
+        newItem={(): ComparisonRow => ({
+          type: "text",
+          label: "",
+          values: config.columns.map(() => ""),
+        })}
+        onChange={(rows) => set("rows", rows)}
+        title={(row) => row.label}
+      >
+        {(row, _index, setRow) => (
+          <>
+            <div className="grid grid-cols-[170px_minmax(0,1fr)] gap-2">
+              <select
+                className={fieldClass}
+                value={row.type}
+                onChange={(e) =>
+                  setRow({ type: e.target.value as ComparisonRow["type"] })
+                }
+              >
+                {COMPARISON_ROW_TYPES.map((rowType) => (
+                  <option key={rowType} value={rowType}>
+                    {COMPARISON_ROW_LABELS[rowType]}
+                  </option>
+                ))}
+              </select>
+              <input
+                className={fieldClass}
+                value={row.label}
+                onChange={(e) => setRow({ label: e.target.value })}
+                placeholder="Feature"
+              />
+            </div>
+            {config.columns.length === 0 ? (
+              <p className="text-muted-foreground text-[11px]">
+                Add columns above to fill in this row.
+              </p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {config.columns.map((column, j) => (
+                  <label key={j} className="block">
+                    <span className="text-muted-foreground mb-1 block text-[11px]">
+                      {column.label || `Column ${j + 1}`}
+                    </span>
+                    {row.type === "check" ? (
+                      <select
+                        className={fieldClass}
+                        value={row.values[j] ?? ""}
+                        onChange={(e) =>
+                          setValue(row, setRow, j, e.target.value)
+                        }
+                      >
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                        <option value="">Not applicable</option>
+                      </select>
+                    ) : (
+                      <input
+                        className={fieldClass}
+                        value={row.values[j] ?? ""}
+                        onChange={(e) =>
+                          setValue(row, setRow, j, e.target.value)
+                        }
+                        placeholder="Value"
+                      />
+                    )}
+                  </label>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </BlockList>
     </>
   );
 }
@@ -1885,20 +2255,6 @@ function TestimonialsFields({
     key: K,
     value: TestimonialsConfig[K],
   ) => setConfig({ ...config, [key]: value });
-  const setItem = (index: number, patch: Partial<TestimonialItem>) =>
-    set(
-      "items",
-      config.items.map((item, i) =>
-        i === index ? { ...item, ...patch } : item,
-      ),
-    );
-  const move = (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= config.items.length) return;
-    const items = [...config.items];
-    [items[index], items[target]] = [items[target], items[index]];
-    set("items", items);
-  };
 
   return (
     <>
@@ -1968,68 +2324,34 @@ function TestimonialsFields({
         </div>
       </FieldGroup>
 
-      <div className="space-y-2">
-        <label className={labelClass}>Quotes and mentions</label>
-        {config.items.map((item, index) => (
-          <div
-            key={index}
-            className="bg-background space-y-2 rounded-md border p-2"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground text-xs font-medium">
-                Item {index + 1}
-              </span>
-              <div className="ml-auto flex items-center">
-                <button
-                  type="button"
-                  onClick={() => move(index, -1)}
-                  disabled={index === 0}
-                  title="Move up"
-                  className="text-muted-foreground hover:bg-muted flex h-7 w-6 items-center justify-center rounded disabled:opacity-30"
-                >
-                  <ChevronUp className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => move(index, 1)}
-                  disabled={index === config.items.length - 1}
-                  title="Move down"
-                  className="text-muted-foreground hover:bg-muted flex h-7 w-6 items-center justify-center rounded disabled:opacity-30"
-                >
-                  <ChevronDown className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    set(
-                      "items",
-                      config.items.filter((_, i) => i !== index),
-                    )
-                  }
-                  title="Remove"
-                  className="text-muted-foreground hover:text-[var(--dash-red)] flex h-7 w-6 items-center justify-center rounded hover:bg-[var(--dash-red-soft)]"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
+      <BlockList
+        label="Quotes and mentions"
+        itemLabel="Item"
+        items={config.items}
+        max={MAX_TESTIMONIAL_ITEMS}
+        newItem={() => ({ ...EMPTY_TESTIMONIAL })}
+        onChange={(items) => set("items", items)}
+        title={(item) => item.author || item.quote}
+      >
+        {(item, _index, setItem) => (
+          <>
             <textarea
               className={`${fieldClass} min-h-[88px] resize-y`}
               value={item.quote}
-              onChange={(e) => setItem(index, { quote: e.target.value })}
+              onChange={(e) => setItem({ quote: e.target.value })}
               placeholder="The product changed our daily ritual…"
             />
             <div className="grid grid-cols-2 gap-2">
               <input
                 className={fieldClass}
                 value={item.author}
-                onChange={(e) => setItem(index, { author: e.target.value })}
+                onChange={(e) => setItem({ author: e.target.value })}
                 placeholder="Name or publication"
               />
               <input
                 className={fieldClass}
                 value={item.detail}
-                onChange={(e) => setItem(index, { detail: e.target.value })}
+                onChange={(e) => setItem({ detail: e.target.value })}
                 placeholder="Customer, city or award"
               />
             </div>
@@ -2039,29 +2361,18 @@ function TestimonialsFields({
                 folder="homepage"
                 spec="logo"
                 defaultImage={item.logo_url || undefined}
-                onUploadSuccess={(url) => setItem(index, { logo_url: url })}
+                onUploadSuccess={(url) => setItem({ logo_url: url })}
               />
               <input
                 className={`${fieldClass} mt-2`}
                 value={item.logo_alt}
-                onChange={(e) => setItem(index, { logo_alt: e.target.value })}
+                onChange={(e) => setItem({ logo_alt: e.target.value })}
                 placeholder="Logo description"
               />
             </div>
-          </div>
-        ))}
-        {config.items.length < MAX_TESTIMONIAL_ITEMS && (
-          <button
-            type="button"
-            onClick={() =>
-              set("items", [...config.items, { ...EMPTY_TESTIMONIAL }])
-            }
-            className="text-muted-foreground hover:bg-muted flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
-          >
-            <Plus className="h-3.5 w-3.5" /> Add item
-          </button>
+          </>
         )}
-      </div>
+      </BlockList>
     </>
   );
 }

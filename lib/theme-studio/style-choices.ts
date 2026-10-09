@@ -51,6 +51,8 @@ export const VISIBLE_SECTION_CHOICES: Readonly<
   usp_bar: { theme: ["dark", "light"] },
   ticker: { speed: ["slow", "medium", "fast"], theme: ["dark", "light"] },
   faq_accordion: { show_filters: [true, false] },
+  accordion: { open_first: [true, false], allow_multiple: [true, false] },
+  comparison: { style: ["table", "cards"] },
   rich_text: { width: ["contained", "full"] },
 };
 

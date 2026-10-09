@@ -51,7 +51,14 @@
 > v28 (owner's decisions, same day): a Stage A brief may allow adults where
 > the picture is about the product being worn or used, with the provider,
 > prompt and reviewer following that one choice; wide slots are stored at
-> 2400px and up to 1000 KiB.
+> 2400px and up to 1000 KiB. Phase 2b landed (same day, prompt v29): a block
+> registry (`SECTION_BLOCKS`) over every list-shaped section, media_text
+> stories, the new `accordion` and `comparison` sections with typed rows, one
+> shared builder block list (adopted by usp_bar, tile_grid, testimonials and
+> the new sections), the Studio vocabulary gated so pre-v29 requests replay
+> byte for byte, and renderer fixtures for the new markup at the five widths.
+> Not yet run against live Gemini; the 2b exit (every new item on an
+> exemplar theme per direction) is folded into the Phase 2 exit.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

@@ -37,6 +37,7 @@ function image(width, height) {
 
 const documentHtml = (html) => `<!doctype html><html><head><style>
   *{box-sizing:border-box}body{margin:0;font:16px Arial}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0}
   :root{--sm-ink:#211c25;--sm-ink-soft:#554d59;--sm-ink-faint:#675c6b;--sm-cream:#faf8f5;--sm-cream-deep:#efece9;--sm-border:#ccc;--sm-surface:#fff;--sm-on-ink:#fff;--sm-accent:#45243c;--sm-on-accent:#fff;--brand-primary:#45243c;--sm-shadow-rgb:30,20,30;--sm-page-width:1320px;--sm-page-cream:#faf8f5;--sm-page-cream-deep:#efece9;--sm-page-surface:#fff;--sm-page-sand:#efece9;--sm-page-tile:#efece9;--sm-page-ink:#211c25;--sm-page-ink-soft:#554d59;--sm-page-ink-faint:#675c6b;--sm-page-border:#ccc;--sm-page-on-ink:#fff;--sm-page-accent:#45243c;--sm-page-on-accent:#fff;--sm-scheme-soft-bg:#faf8f5;--sm-scheme-soft-fg:#211c25;--sm-scheme-soft-surface:#fff;--sm-scheme-soft-accent:#45243c;--sm-scheme-soft-on-accent:#fff;--sm-scheme-inverse-bg:#211c25;--sm-scheme-inverse-fg:#faf8f5;--sm-scheme-inverse-surface:#211c25;--sm-scheme-inverse-accent:#faf8f5;--sm-scheme-inverse-on-accent:#211c25}
   ${css}
   </style></head><body><main class="storefront-root sm-page-width"><div class="home-sections">${html}</div></main></body></html>`;
@@ -82,6 +83,54 @@ function fixtures() {
         label: `newsletter/${theme}/${align}`,
         html: `<div class="home-newsletter theme-${theme} align-${align}"><div><h2 class="home-newsletter-heading">${heading}</h2><p class="home-newsletter-sub">${copy}</p></div><form class="home-newsletter-form"><div class="home-newsletter-fields"><input class="home-newsletter-input" type="email" aria-label="Email"><button class="home-newsletter-button">Subscribe</button></div><label class="home-newsletter-consent"><input type="checkbox"><span>Send me occasional collection news and offers. I agree to the privacy policy and can unsubscribe at any time.</span></label></form></div>`,
       });
+  // Nested blocks (2026-10-09): the comparison table scrolls sideways inside
+  // its own container at phone widths (never the page), its cards stack, the
+  // accordion's image row keeps its picture beside the copy down to 700px and
+  // under it, and media-and-text stories alternate sides.
+  for (const cols of [2, 3, 4]) {
+    const columns = Array.from({ length: cols }, (_, j) => ({
+      label: ["Starter", "Family", "Studio", "Trade"][j],
+      caption: ["For one", "For the table", "For a shop", "For a kitchen"][j],
+      highlight: j === 1,
+    }));
+    const rows = [
+      {
+        type: "text",
+        label: "Serves",
+        values: ["One or two", "Four to six", "Eight", "Twelve or more"],
+      },
+      {
+        type: "check",
+        label: "Dishwasher safe",
+        values: ["yes", "yes", "no", ""],
+      },
+      {
+        type: "check",
+        label: "Comes with a thoughtfully made lid",
+        values: ["no", "yes", "yes", "yes"],
+      },
+    ];
+    const mark = (v) =>
+      `<span class="home-comparison-mark ${v === "yes" ? "is-yes" : v === "no" ? "is-no" : "is-na"}"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5"/></svg><span class="sr-only">${v === "yes" ? "Yes" : v === "no" ? "No" : "Not applicable"}</span></span>`;
+    const cell = (row, j) =>
+      row.type === "check" ? mark(row.values[j]) : row.values[j];
+    out.push({
+      label: `comparison/table/${cols}`,
+      html: `<div class="home-comparison-scroll"><table class="home-comparison cols-${cols}"><thead><tr><th scope="col" class="home-comparison-feature"><span class="sr-only">Feature</span></th>${columns.map((c) => `<th scope="col" class="home-comparison-col${c.highlight ? " is-highlight" : ""}"><span class="home-comparison-col-label">${c.label}</span><span class="home-comparison-col-caption">${c.caption}</span></th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr><th scope="row" class="home-comparison-feature">${row.label}</th>${columns.map((c, j) => `<td class="home-comparison-cell${c.highlight ? " is-highlight" : ""}">${cell(row, j)}</td>`).join("")}</tr>`).join("")}</tbody><tfoot><tr><td class="home-comparison-feature"></td>${columns.map((c) => `<td class="home-comparison-cell${c.highlight ? " is-highlight" : ""}"><a href="/shop" class="home-comparison-cta ${c.highlight ? "sm-btn-primary" : "sm-btn-secondary"}">Shop ${c.label}</a></td>`).join("")}</tr></tfoot></table></div>`,
+    });
+    out.push({
+      label: `comparison/cards/${cols}`,
+      html: `<div class="home-comparison-cards cols-${cols}">${columns.map((c, j) => `<div class="home-comparison-card${c.highlight ? " is-highlight" : ""}"><h3 class="home-comparison-card-title">${c.label}</h3><p class="home-comparison-card-caption">${c.caption}</p><ul class="home-comparison-card-rows">${rows.map((row) => `<li class="home-comparison-card-row"><span class="home-comparison-card-label">${row.label}</span><span class="home-comparison-card-value">${cell(row, j)}</span></li>`).join("")}</ul><a href="/shop" class="home-comparison-cta ${c.highlight ? "sm-btn-primary" : "sm-btn-secondary"}">Shop ${c.label}</a></div>`).join("")}</div>`,
+    });
+  }
+  out.push({
+    label: "accordion/open-image",
+    html: `<div class="home-section-head"><h2 class="home-section-title">${heading}</h2></div><div class="home-accordion-list"><div class="home-accordion-item open"><button class="home-accordion-q" aria-expanded="true"><span>How do you care for thoughtfully crafted natural materials over many years?</span></button><div class="home-accordion-panel has-media"><p class="home-accordion-a">${copy.repeat(2)}</p><div class="home-accordion-media">${fill("home-accordion-image", "landscape")}</div></div></div><div class="home-accordion-item"><button class="home-accordion-q" aria-expanded="false"><span>Shipping and returns</span></button></div></div>`,
+  });
+  out.push({
+    label: "media-text/stories",
+    html: `<div class="home-media-stories">${["left", "right", "left"].map((position, i) => `<div class="home-media-text media-${position} align-left"><div class="home-media-text-media ratio-portrait">${fill("home-media-text-image", "portrait")}</div><div class="home-media-text-copy"><p class="home-section-eyebrow">Step ${i + 1}</p>${i === 0 ? `<h2 class="home-media-text-heading">${heading}</h2>` : `<h3 class="home-media-text-heading">${heading}</h3>`}<p class="home-media-text-body">${copy}</p><a href="/shop" class="home-media-text-cta sm-btn-primary">Explore the collection</a></div></div>`).join("")}</div>`,
+  });
   out.push({
     label: "faq/long-text",
     html: `<div class="home-faq-filters"><button class="home-faq-pill active">Delivery and returns</button><button class="home-faq-pill">Care and materials</button></div><div class="home-faq-list"><div class="home-faq-item open"><button class="home-faq-q">How do you select and care for thoughtfully crafted natural materials?</button><p class="home-faq-a">${copy.repeat(3)}</p></div></div>`,
@@ -114,10 +163,14 @@ async function measureNative(page) {
       const retained = Math.min(s / f, f / s);
       return retained < 0.35 ? [{ target: e.className, retained }] : [];
     });
+    // A screen-reader-only label (Tailwind's sr-only: a 1px box clipped by
+    // `clip`) is deliberately wider than its box; the acceptance probe
+    // exempts CSS-clipped accessible labels and so does this fixture.
     const clipped = [
       ...document.querySelectorAll("h1,h2,h3,p,blockquote,span"),
     ].flatMap((e) => {
       const b = e.getBoundingClientRect();
+      if (getComputedStyle(e).clip !== "auto") return [];
       return e.scrollWidth > e.clientWidth + 2 && b.width > 0
         ? [e.className]
         : [];

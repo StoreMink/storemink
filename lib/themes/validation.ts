@@ -408,13 +408,18 @@ const AUTHORING_NOTE_RE = /\b(?:TODO|TBD|FIXME)\b/;
 
 /** `<thing>_url` → `<thing>_alt` pairs an author must fill. Hero, promo and
  * tile images carry their headline as the accessible text, so they are not
- * listed; these four render the image as content in its own right. */
+ * listed; these sections render the image as content in its own right
+ * (a media_text story and an accordion "image" row included). */
 const ALT_TEXT_PAIRS: Readonly<
   Record<string, readonly { url: string; alt: string; items?: string }[]>
 > = {
-  media_text: [{ url: "image_url", alt: "image_alt" }],
+  media_text: [
+    { url: "image_url", alt: "image_alt" },
+    { url: "image_url", alt: "image_alt", items: "stories" },
+  ],
   gallery: [{ url: "image_url", alt: "image_alt", items: "items" }],
   testimonials: [{ url: "logo_url", alt: "logo_alt", items: "items" }],
+  accordion: [{ url: "image_url", alt: "image_alt", items: "items" }],
   video: [{ url: "poster_url", alt: "poster_alt" }],
 };
 

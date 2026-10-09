@@ -1265,6 +1265,66 @@ describe("theme generation pipeline", () => {
     ).toContain(slideshow);
   });
 
+  // Plan Phase 2b: sections hold blocks. The vocabulary grows under v29 and
+  // every earlier prompt keeps its bytes.
+  it("prints the nested-block vocabulary only under v29 and keeps v28 text byte for byte", async () => {
+    const {
+      stageASystemPrompt,
+      stageBSystemPrompt,
+      stageBInitialSystemPrompt,
+      stageBVarietySystemPrompt,
+    } = await import("./prompts");
+    const blocks = "- Blocks: list-shaped sections hold blocks";
+    expect(stageBSystemPrompt(true, true, true, true, true)).toContain(blocks);
+    expect(stageBSystemPrompt(true, true, true, true, true)).toContain(
+      "\ncomparison: {",
+    );
+    expect(stageBSystemPrompt(true, true, true, true, true)).toContain(
+      "\naccordion: {",
+    );
+    expect(stageBSystemPrompt(true, true, true, true, true)).toContain(
+      '"stories":[]',
+    );
+    const v28 = stageBSystemPrompt(true, true, true, true);
+    expect(v28).not.toContain(blocks);
+    expect(v28).not.toContain("\ncomparison: {");
+    expect(v28).not.toContain("\naccordion: {");
+    expect(v28).not.toContain('"stories"');
+    expect(v28).toBe(stageBSystemPrompt(true, true, true, true, false));
+    expect(stageASystemPrompt(true, true, true, true, true)).toContain(
+      "Sections hold blocks",
+    );
+    expect(stageASystemPrompt(true, true, true, true, true)).toContain(
+      "- comparison:",
+    );
+    expect(stageASystemPrompt(true, true, true, true)).not.toContain(
+      "Sections hold blocks",
+    );
+    expect(stageASystemPrompt(true, true, true, true)).not.toContain(
+      "- comparison:",
+    );
+    const first = await run();
+    if (first.kind !== "version") throw new Error("fixture failed");
+    const variety = stageBVarietySystemPrompt(
+      first.intent,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety).toContain(
+      '"style":"CHOOSE ONE: [\\"table\\",\\"cards\\"]"',
+    );
+    expect(variety).toContain('"open_first":"CHOOSE ONE: [true,false]"');
+    expect(
+      stageBVarietySystemPrompt(first.intent, true, true, true, true),
+    ).not.toContain("\ncomparison:");
+    expect(
+      stageBInitialSystemPrompt(first.intent, true, true, true, true),
+    ).toContain(blocks);
+  });
+
   it("keeps the system prompts deterministic so they cache", async () => {
     const { stageASystemPrompt, stageBSystemPrompt } =
       await import("./prompts");

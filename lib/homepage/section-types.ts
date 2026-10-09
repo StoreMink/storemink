@@ -35,6 +35,8 @@ export type HomepageSectionType =
   | "usp_bar"
   | "ticker"
   | "faq_accordion"
+  | "accordion"
+  | "comparison"
   | "latest_blogs"
   | "rich_text"
   | "custom_code";
@@ -54,6 +56,8 @@ export const HOMEPAGE_SECTION_TYPES: HomepageSectionType[] = [
   "usp_bar",
   "ticker",
   "faq_accordion",
+  "accordion",
+  "comparison",
   "latest_blogs",
   "rich_text",
   "custom_code",
@@ -302,6 +306,24 @@ export interface MediaTextConfig {
   media_position: "left" | "right";
   media_ratio: "portrait" | "square" | "landscape";
   alignment: "left" | "center";
+  /** Further image-and-copy bands under the first (the section's BLOCKS,
+   *  see SECTION_BLOCKS): a craft story told in three beats, an ingredient
+   *  per band. Each chooses its own image side; the ratio and alignment are
+   *  the section's. Absent on rows saved before stories existed and omitted
+   *  again when empty, so untouched content is stored exactly as before. */
+  stories?: MediaTextStory[];
+}
+
+/** One extra band of a media_text section. */
+export interface MediaTextStory {
+  eyebrow: string;
+  heading: string;
+  body: string;
+  cta_label: string;
+  cta_href: string;
+  image_url: string;
+  image_alt: string;
+  media_position: "left" | "right";
 }
 
 export interface GalleryItem {
@@ -384,6 +406,77 @@ export interface FaqAccordionConfig {
   show_filters: boolean;
 }
 
+/** The block types a collapsible-content row may be: plain copy, or copy
+ *  with a picture inside the open panel (care instructions beside a photo of
+ *  the garment, an ingredient beside its source). */
+export const ACCORDION_BLOCK_TYPES = ["text", "image"] as const;
+export type AccordionBlockType = (typeof ACCORDION_BLOCK_TYPES)[number];
+
+/** One collapsible row. `image_url`/`image_alt` matter only for the "image"
+ *  block type; a text row keeps them "" (the compiler never sees an orphan
+ *  image on a text row because the validator clears it). */
+export interface AccordionItem {
+  type: AccordionBlockType;
+  heading: string;
+  body: string;
+  image_url: string;
+  image_alt: string;
+}
+
+/**
+ * Collapsible content (Shopify's "Collapsible content" section): shipping,
+ * care, materials, sizing — rows a shopper opens as needed. Unlike
+ * faq_accordion it has typed blocks (a row may carry a picture), may hold
+ * several rows open at once, and has no category filter.
+ */
+export interface AccordionConfig {
+  heading: string;
+  subheading: string;
+  items: AccordionItem[];
+  /** The first row starts open (the FAQ's behaviour) or every row starts closed. */
+  open_first: boolean;
+  /** Opening a row keeps the others open, or closes them. */
+  allow_multiple: boolean;
+}
+
+/** The block types a comparison row may be: a free-text cell per column
+ *  ("Weight: 240 g / 310 g") or a yes/no tick per column. */
+export const COMPARISON_ROW_TYPES = ["text", "check"] as const;
+export type ComparisonRowType = (typeof COMPARISON_ROW_TYPES)[number];
+
+/** A column of the comparison: one product, plan or option. */
+export interface ComparisonColumn {
+  label: string;
+  caption: string;
+  cta_label: string;
+  cta_href: string;
+  /** The recommended column, drawn in the brand tint. At most one. */
+  highlight: boolean;
+}
+
+/** A comparison row. `values` is aligned with `columns`, one entry each: free
+ *  text for a "text" row; "yes", "no" or "" (not applicable) for a "check"
+ *  row. */
+export interface ComparisonRow {
+  type: ComparisonRowType;
+  label: string;
+  values: string[];
+}
+
+/**
+ * Comparison table: products, plans or options side by side, feature by
+ * feature. "table" renders rows × columns (scrolling sideways on phones with
+ * the feature labels pinned); "cards" renders one card per column, each
+ * listing its own values, which stack on phones.
+ */
+export interface ComparisonConfig {
+  heading: string;
+  subheading: string;
+  columns: ComparisonColumn[];
+  rows: ComparisonRow[];
+  style: "table" | "cards";
+}
+
 export type BlogSource = "latest" | "manual" | "featured";
 
 export interface LatestBlogsConfig {
@@ -442,6 +535,8 @@ export type AnySectionConfig =
   | UspBarConfig
   | TickerConfig
   | FaqAccordionConfig
+  | AccordionConfig
+  | ComparisonConfig
   | LatestBlogsConfig
   | RichTextConfig
   | CustomCodeConfig
@@ -463,6 +558,8 @@ export type HomepageSectionConfig =
   | { type: "usp_bar"; config: UspBarConfig }
   | { type: "ticker"; config: TickerConfig }
   | { type: "faq_accordion"; config: FaqAccordionConfig }
+  | { type: "accordion"; config: AccordionConfig }
+  | { type: "comparison"; config: ComparisonConfig }
   | { type: "latest_blogs"; config: LatestBlogsConfig }
   | { type: "rich_text"; config: RichTextConfig }
   | { type: "custom_code"; config: CustomCodeConfig };
@@ -495,6 +592,8 @@ export const EMPTY_CONFIG: {
   usp_bar: UspBarConfig;
   ticker: TickerConfig;
   faq_accordion: FaqAccordionConfig;
+  accordion: AccordionConfig;
+  comparison: ComparisonConfig;
   latest_blogs: LatestBlogsConfig;
   rich_text: RichTextConfig;
   custom_code: CustomCodeConfig;
@@ -571,6 +670,7 @@ export const EMPTY_CONFIG: {
     media_position: "left",
     media_ratio: "portrait",
     alignment: "left",
+    stories: [],
   },
   gallery: {
     heading: "The edit",
@@ -635,6 +735,20 @@ export const EMPTY_CONFIG: {
     subheading: "",
     items: [],
     show_filters: false,
+  },
+  accordion: {
+    heading: "Good to know",
+    subheading: "",
+    items: [],
+    open_first: true,
+    allow_multiple: false,
+  },
+  comparison: {
+    heading: "Compare",
+    subheading: "",
+    columns: [],
+    rows: [],
+    style: "table",
   },
   latest_blogs: {
     heading: "From the Journal",
@@ -807,6 +921,30 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
     category: "content",
     keywords: ["questions", "answers", "help", "support", "collapse"],
   },
+  accordion: {
+    label: "Collapsible Content",
+    description:
+      "Rows a shopper opens as needed — shipping, care, materials — with an optional picture in each.",
+    icon: "accordion",
+    category: "content",
+    keywords: [
+      "collapsible",
+      "details",
+      "care",
+      "shipping",
+      "materials",
+      "sizing",
+      "expand",
+    ],
+  },
+  comparison: {
+    label: "Comparison Table",
+    description:
+      "Products, plans or options side by side, feature by feature, with ticks or text per column.",
+    icon: "comparison",
+    category: "content",
+    keywords: ["compare", "table", "versus", "plans", "features", "specs"],
+  },
   latest_blogs: {
     label: "Blog Posts",
     description: "Latest or hand-picked blog posts.",
@@ -844,6 +982,162 @@ export const MAX_TESTIMONIAL_ITEMS = 8;
 export const MAX_HERO_SLIDES = 8;
 export const MAX_FAQ_ITEMS = 30;
 export const FAQ_ANSWER_MAX_CHARS = 2000;
+export const MAX_MEDIA_TEXT_STORIES = 5;
+export const MAX_ACCORDION_ITEMS = 20;
+export const ACCORDION_BODY_MAX_CHARS = 2000;
+export const MIN_COMPARISON_COLUMNS = 2;
+export const MAX_COMPARISON_COLUMNS = 4;
+export const MAX_COMPARISON_ROWS = 12;
+
+// --- Nested blocks (Shopify's block model, as a registry) -------------------
+//
+// A section's repeatable children — slides, tiles, items, stories, rows — are
+// its BLOCKS. The registry says, per section type, which config key holds
+// them, which block types it admits and how many it takes, so the builder
+// renders one block list under every section and every validator holds its
+// list to one rule. Sections written before the registry keep their untyped
+// items (a tile is a tile); a `typed` section stores a `type` on each block,
+// and an unknown stored type coerces to the first — the rule every other
+// enum in this file follows, so merchant content is never dropped.
+
+export interface SectionBlockSpec {
+  /** The config key holding the block array. */
+  key: string;
+  /** Singular label the builder uses ("Slide", "Story", "Row"). */
+  label: string;
+  /** The block types this section admits; the first is the default. */
+  types: readonly string[];
+  /** Whether each block carries a `type` field. */
+  typed: boolean;
+  /** Blocks a published section needs, and the most it may hold. */
+  min: number;
+  max: number;
+}
+
+export const SECTION_BLOCKS: Readonly<
+  Partial<Record<HomepageSectionType, SectionBlockSpec>>
+> = {
+  hero_carousel: {
+    key: "slides",
+    label: "Slide",
+    types: ["slide"],
+    typed: false,
+    min: 1,
+    max: MAX_HERO_SLIDES,
+  },
+  usp_bar: {
+    key: "items",
+    label: "Item",
+    types: ["item"],
+    typed: false,
+    min: 1,
+    max: MAX_USP_ITEMS,
+  },
+  ticker: {
+    key: "messages",
+    label: "Message",
+    types: ["message"],
+    typed: false,
+    min: 1,
+    max: MAX_TICKER_MESSAGES,
+  },
+  tile_grid: {
+    key: "tiles",
+    label: "Tile",
+    types: ["tile"],
+    typed: false,
+    min: 1,
+    max: MAX_TILES,
+  },
+  media_text: {
+    key: "stories",
+    label: "Story",
+    types: ["story"],
+    typed: false,
+    min: 0,
+    max: MAX_MEDIA_TEXT_STORIES,
+  },
+  gallery: {
+    key: "items",
+    label: "Image",
+    types: ["image"],
+    typed: false,
+    min: 2,
+    max: MAX_GALLERY_ITEMS,
+  },
+  testimonials: {
+    key: "items",
+    label: "Quote",
+    types: ["quote"],
+    typed: false,
+    min: 1,
+    max: MAX_TESTIMONIAL_ITEMS,
+  },
+  faq_accordion: {
+    key: "items",
+    label: "Question",
+    types: ["question"],
+    typed: false,
+    min: 1,
+    max: MAX_FAQ_ITEMS,
+  },
+  accordion: {
+    key: "items",
+    label: "Row",
+    types: ACCORDION_BLOCK_TYPES,
+    typed: true,
+    min: 1,
+    max: MAX_ACCORDION_ITEMS,
+  },
+  comparison: {
+    key: "rows",
+    label: "Row",
+    types: COMPARISON_ROW_TYPES,
+    typed: true,
+    min: 1,
+    max: MAX_COMPARISON_ROWS,
+  },
+};
+
+/** A section's blocks as stored (an empty list for a section without any). */
+export function sectionBlocks(
+  type: HomepageSectionType,
+  config: unknown,
+): unknown[] {
+  const spec = SECTION_BLOCKS[type];
+  if (!spec || !config || typeof config !== "object") return [];
+  const value = (config as Record<string, unknown>)[spec.key];
+  return Array.isArray(value) ? value : [];
+}
+
+/** The block type a stored block renders as: its own when the section admits
+ *  it, otherwise the section's default. Untyped sections always answer their
+ *  one type. */
+export function blockTypeOf(spec: SectionBlockSpec, block: unknown): string {
+  if (!spec.typed) return spec.types[0];
+  const own =
+    block && typeof block === "object"
+      ? (block as Record<string, unknown>).type
+      : undefined;
+  return typeof own === "string" && spec.types.includes(own)
+    ? own
+    : spec.types[0];
+}
+
+/** The one count rule every block list obeys: over the cap is refused in
+ *  every mode (a cap is a safety rule), under the minimum only on publish. */
+function blockCountError(
+  spec: SectionBlockSpec,
+  rawCount: number,
+  keptCount: number,
+  strict: boolean,
+  noun: string,
+): string | null {
+  if (rawCount > spec.max) return `At most ${spec.max} ${noun}.`;
+  if (strict && keptCount < spec.min)
+    return `Add at least ${spec.min === 1 ? "one" : spec.min} ${spec.min === 1 ? noun.replace(/s$/, "") : noun}.`;
+  return null;
+}
 
 // Size caps for merchant-authored content (per field, in characters).
 export const CODE_MAX_CHARS = 64 * 1024; // custom_code html/css/js each
@@ -1189,6 +1483,33 @@ export function validateConfig(
     if (strict && !heading && !body && !image_url) {
       return { error: "Add a heading, story or image." };
     }
+    const rawStories = Array.isArray(input.stories) ? input.stories : [];
+    const stories: MediaTextStory[] = [];
+    for (const rawStory of rawStories) {
+      const it = (rawStory ?? {}) as Record<string, unknown>;
+      const storyHeading = str(it.heading).slice(0, 160);
+      const storyBody = str(it.body).slice(0, 2400);
+      const storyImage = safeHref(it.image_url);
+      if (!storyHeading && !storyBody && !storyImage) continue; // drop empty rows
+      stories.push({
+        eyebrow: str(it.eyebrow).slice(0, 80),
+        heading: storyHeading,
+        body: storyBody,
+        cta_label: str(it.cta_label).slice(0, 60),
+        cta_href: safeHref(it.cta_href),
+        image_url: storyImage,
+        image_alt: str(it.image_alt).slice(0, 180),
+        media_position: it.media_position === "right" ? "right" : "left",
+      });
+    }
+    const storyCount = blockCountError(
+      SECTION_BLOCKS.media_text!,
+      rawStories.length,
+      stories.length,
+      strict,
+      "stories",
+    );
+    if (storyCount) return { error: storyCount };
     const config: MediaTextConfig = {
       eyebrow: str(input.eyebrow).slice(0, 80),
       heading,
@@ -1203,6 +1524,9 @@ export function validateConfig(
           ? input.media_ratio
           : "portrait",
       alignment: input.alignment === "center" ? "center" : "left",
+      // Omitted when empty, so a section saved before stories existed is
+      // stored byte for byte as it was (the hero image-control rule).
+      ...(stories.length ? { stories } : {}),
     };
     return { config };
   }
@@ -1400,6 +1724,113 @@ export function validateConfig(
     return { config };
   }
 
+  if (type === "accordion") {
+    const spec = SECTION_BLOCKS.accordion!;
+    const rawItems = Array.isArray(input.items) ? input.items : [];
+    const items: AccordionItem[] = [];
+    for (const rawItem of rawItems) {
+      const it = (rawItem ?? {}) as Record<string, unknown>;
+      const blockType = blockTypeOf(spec, it) as AccordionBlockType;
+      const heading = str(it.heading).slice(0, 200);
+      const body = str(it.body).slice(0, ACCORDION_BODY_MAX_CHARS);
+      const image_url = blockType === "image" ? safeHref(it.image_url) : "";
+      if (!heading && !body && !image_url) continue; // drop empty rows
+      items.push({
+        type: blockType,
+        heading,
+        body,
+        image_url,
+        image_alt: image_url ? str(it.image_alt).slice(0, 180) : "",
+      });
+    }
+    const count = blockCountError(
+      spec,
+      rawItems.length,
+      items.length,
+      strict,
+      "rows",
+    );
+    if (count) return { error: count };
+    const config: AccordionConfig = {
+      heading: str(input.heading).slice(0, 160),
+      subheading: str(input.subheading).slice(0, 300),
+      items,
+      open_first: input.open_first !== false,
+      allow_multiple: input.allow_multiple === true,
+    };
+    return { config };
+  }
+
+  if (type === "comparison") {
+    const spec = SECTION_BLOCKS.comparison!;
+    const rawColumns = Array.isArray(input.columns) ? input.columns : [];
+    if (rawColumns.length > MAX_COMPARISON_COLUMNS) {
+      return { error: `At most ${MAX_COMPARISON_COLUMNS} columns.` };
+    }
+    const columns: ComparisonColumn[] = [];
+    // The raw position of each kept column: a row's values are aligned to
+    // the columns as sent, so dropping a column drops its values with it.
+    const kept: number[] = [];
+    let highlighted = false;
+    rawColumns.forEach((rawColumn, index) => {
+      const it = (rawColumn ?? {}) as Record<string, unknown>;
+      const label = str(it.label).slice(0, 80);
+      if (!label) return; // a column is its heading
+      kept.push(index);
+      // At most one recommended column: the first wins.
+      const highlight = it.highlight === true && !highlighted;
+      if (highlight) highlighted = true;
+      columns.push({
+        label,
+        caption: str(it.caption).slice(0, 120),
+        cta_label: str(it.cta_label).slice(0, 60),
+        cta_href: safeHref(it.cta_href),
+        highlight,
+      });
+    });
+    if (strict && columns.length < MIN_COMPARISON_COLUMNS) {
+      return { error: `Add at least ${MIN_COMPARISON_COLUMNS} columns.` };
+    }
+    const rawRows = Array.isArray(input.rows) ? input.rows : [];
+    const rows: ComparisonRow[] = [];
+    for (const rawRow of rawRows) {
+      const it = (rawRow ?? {}) as Record<string, unknown>;
+      const rowType = blockTypeOf(spec, it) as ComparisonRowType;
+      const label = str(it.label).slice(0, 120);
+      const rawValues = Array.isArray(it.values) ? it.values : [];
+      // One value per column, whatever the row sent: a shorter list pads
+      // with "" and a longer one is cut, so the table never skews.
+      const values = kept.map((i) => {
+        const v = str(rawValues[i]).slice(0, 160);
+        if (rowType !== "check") return v;
+        const lower = v.toLowerCase();
+        return lower === "yes" || lower === "true" || lower === "1"
+          ? "yes"
+          : lower === "no" || lower === "false" || lower === "0"
+            ? "no"
+            : "";
+      });
+      if (!label && values.every((v) => !v)) continue; // drop empty rows
+      rows.push({ type: rowType, label, values });
+    }
+    const count = blockCountError(
+      spec,
+      rawRows.length,
+      rows.length,
+      strict,
+      "rows",
+    );
+    if (count) return { error: count };
+    const config: ComparisonConfig = {
+      heading: str(input.heading).slice(0, 160),
+      subheading: str(input.subheading).slice(0, 300),
+      columns,
+      rows,
+      style: input.style === "cards" ? "cards" : "table",
+    };
+    return { config };
+  }
+
   if (type === "latest_blogs") {
     const source =
       input.source === "manual" || input.source === "featured"
@@ -1521,7 +1952,8 @@ export function summarizeSection(section: {
     }
     case "media_text": {
       const m = c as MediaTextConfig;
-      return `Media + text · ${m.heading?.trim() || "(no heading)"} · image ${m.media_position}`;
+      const stories = m.stories?.length ?? 0;
+      return `Media + text · ${m.heading?.trim() || "(no heading)"} · image ${m.media_position}${stories ? ` · +${stories} stor${stories === 1 ? "y" : "ies"}` : ""}`;
     }
     case "gallery": {
       const g = c as GalleryConfig;
@@ -1542,6 +1974,14 @@ export function summarizeSection(section: {
     case "faq_accordion": {
       const f = c as FaqAccordionConfig;
       return `FAQ · ${f.items.length} question${f.items.length === 1 ? "" : "s"}`;
+    }
+    case "accordion": {
+      const a = c as AccordionConfig;
+      return `Collapsible content · ${a.items.length} row${a.items.length === 1 ? "" : "s"}${a.heading?.trim() ? ` · ${a.heading.trim()}` : ""}`;
+    }
+    case "comparison": {
+      const t = c as ComparisonConfig;
+      return `Comparison · ${t.columns.length} column${t.columns.length === 1 ? "" : "s"} · ${t.rows.length} row${t.rows.length === 1 ? "" : "s"} · ${t.style}`;
     }
     case "featured_products": {
       const f = c as FeaturedProductsConfig;

@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v28";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v29";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -31,5 +31,10 @@ export function themePromptFeatures(version: string) {
      * product is worn or used (owner, 2026-10-09); the image model then
      * allows adults for that image only. Most briefs stay people-free. */
     peopleInImagery: revision >= 28,
+    /** Sections carry nested blocks (plan Phase 2b): media_text stories, and
+     * the accordion and comparison sections with typed rows. The vocabulary
+     * a prompt prints and a schema admits grows with it; earlier requests
+     * keep the shorter list byte for byte. */
+    nestedBlocks: revision >= 29,
   };
 }

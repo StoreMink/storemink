@@ -172,20 +172,18 @@ describe("operator edit targets", () => {
 
   it("will not hide a section the theme's content floors still need", async () => {
     const { package: pkg, intent } = await baseVersion();
-    // The offline homepage has six sections; two hidden is below the floor.
+    // The homepage floor is five sections; hide every other one of the
+    // offline homepage's eight so four are left, whatever else it grows.
+    const sections = pkg.definition.preset.pages[0].sections.length;
     const decision = parseChangeDecision({
       scope: "edit",
-      summary: "Hid two sections.",
-      edits: [
-        {
-          path: "/definition/preset/pages/0/sections/1/enabled",
+      summary: "Hid half the sections.",
+      edits: Array.from({ length: sections }, (_, i) => i)
+        .filter((i) => i % 2 === 1)
+        .map((i) => ({
+          path: `/definition/preset/pages/0/sections/${i}/enabled`,
           valueJson: "false",
-        },
-        {
-          path: "/definition/preset/pages/0/sections/3/enabled",
-          valueJson: "false",
-        },
-      ],
+        })),
       imageChanges: [],
     });
     if (!decision.ok) throw new Error("parse");
