@@ -3,6 +3,7 @@ import { getPublishedBlogCards } from "@/lib/storefront/queries";
 import { requireStorefrontStoreId } from "@/lib/store/resolve";
 import { getStoreBrand } from "@/lib/store/brand";
 import { getStoreSetting } from "@/lib/settings/resolve";
+import { getStorefrontLayout } from "@/lib/store/storefront-layout";
 import BlogListingClient from "./blog-listing-client";
 import "./blogs.css";
 
@@ -36,7 +37,10 @@ export default async function BlogsPage() {
 
   // Store feature setting: hides the "Post your own blog" / "My Submissions"
   // CTAs when this store has customer submissions switched off.
-  const allowSubmissions = await getStoreSetting("blogs.customerSubmissions");
+  const [allowSubmissions, layout] = await Promise.all([
+    getStoreSetting("blogs.customerSubmissions"),
+    getStorefrontLayout(),
+  ]);
 
   // Extract unique categories
   const categories = Array.from(
@@ -68,6 +72,7 @@ export default async function BlogsPage() {
         categories={categories}
         allTags={allTags}
         allowSubmissions={Boolean(allowSubmissions)}
+        index={layout.templates.blog.index}
       />
     </main>
   );

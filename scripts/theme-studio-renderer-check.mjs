@@ -42,13 +42,26 @@ const shopCss = readFileSync(
   new URL("../app/(storefront)/(pages)/shop/shop.css", import.meta.url),
   "utf8",
 );
-const documentHtmlShop = (html, rootClass = "") =>
+const blogCss = readFileSync(
+  new URL("../app/(storefront)/(pages)/blogs/blogs.css", import.meta.url),
+  "utf8",
+);
+const accountCss = readFileSync(
+  new URL(
+    "../app/(storefront)/components/account/account.css",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const documentHtmlWith = (extraCss, html, rootClass = "") =>
   documentHtml(html)
-    .replace("/* shop-css */", shopCss)
+    .replace("/* shop-css */", extraCss)
     .replace(
       'class="storefront-root sm-page-width"',
       `class="storefront-root sm-page-width ${rootClass}"`,
     );
+const documentHtmlShop = (html, rootClass = "") =>
+  documentHtmlWith(shopCss, html, rootClass);
 const documentHtml = (html) => `<!doctype html><html><head><style>
   *{box-sizing:border-box}body{margin:0;font:16px Arial}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0}
@@ -588,7 +601,7 @@ try {
           documentHtmlShop(
             `<main class="shop-main pdp-page"><div class="pdp-grid">
             <div class="pdp-gallery sm-gallery mode-${mode}"><div class="sm-gallery-frame"><div class="sm-gallery-track is-multi">${[0, 1, 2].map((i) => `<button class="pdp-main-img sm-gallery-slide" data-active="${i === 0}" aria-label="Zoom photo ${i + 1} of 3"><img class="pdp-main-img-el" alt="" src="${image(1280, 1600)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain"></button>`).join("")}</div><span class="sm-gallery-count">1 / 3</span></div>${thumbs ? `<div class="pdp-thumbs">${[0, 1, 2].map((i) => `<button class="pdp-thumb${i === 0 ? " active" : ""}" aria-label="Show photo ${i + 1} of 3"><img class="pdp-thumb-el" alt="" src="${image(400, 400)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"></button>`).join("")}</div>` : ""}</div>
-            <div class="pdp-info"><h1 class="pdp-name">${heading}</h1><div class="pdp-price"><span class="pdp-price-sell">₹1,800</span></div><ul class="pdp-trust"><li><span style="display:inline-block;width:18px;height:18px"></span><span>Free delivery</span></li><li><span style="display:inline-block;width:18px;height:18px"></span><span>Easy returns</span></li></ul><div class="pdp-accordion"><details class="pdp-accordion-row" open><summary>Care</summary><div class="pdp-accordion-body"><p>${copy}</p></div></details><details class="pdp-accordion-row"><summary>Shipping</summary><div class="pdp-accordion-body"><p>${copy}</p></div></details></div><div class="pdp-rich"><p>${copy}</p></div><div class="pdp-actions"><button class="pdp-btn pdp-btn-cart sm-btn-secondary">Add to Cart</button><button class="pdp-btn pdp-btn-buy sm-btn-primary">Buy Now</button></div></div>
+            <div class="pdp-info"><h1 class="pdp-name">${heading}</h1><div class="pdp-price"><span class="pdp-price-sell">₹1,800</span></div><ul class="pdp-trust"><li><span style="display:inline-block;width:18px;height:18px"></span><span>Free delivery</span></li><li><span style="display:inline-block;width:18px;height:18px"></span><span>Easy returns</span></li></ul><div class="pdp-accordion"><details class="pdp-accordion-row" open><summary>Care</summary><div class="pdp-accordion-body"><p>${copy}</p></div></details><details class="pdp-accordion-row"><summary>Shipping</summary><div class="pdp-accordion-body"><p>${copy}</p></div></details></div><details class="pdp-size-guide" open><summary>Size guide</summary><div class="pdp-size-guide-scroll"><table><thead><tr><th scope="col"><span class="pdp-sr-only">Size</span></th>${["Chest", "Waist", "Hip", "Length", "Sleeve", "Shoulder", "Neck", "Inseam"].map((c) => `<th scope="col">${c}</th>`).join("")}</tr></thead><tbody>${["XS", "S", "M", "L", "XL"].map((size) => `<tr><th scope="row">${size}</th>${Array.from({ length: 8 }, (_, i) => `<td>${80 + i * 4}</td>`).join("")}</tr>`).join("")}</tbody></table></div></details><div class="pdp-rich"><p>${copy}</p></div><div class="pdp-actions"><button class="pdp-btn pdp-btn-cart sm-btn-secondary">Add to Cart</button><button class="pdp-btn pdp-btn-buy sm-btn-primary">Buy Now</button></div></div>
             </div></main>`,
             stacked ? "sm-pdp-stacked" : "",
           ),
@@ -640,8 +653,16 @@ try {
             infoTop: info.top,
             infoWidth: info.width,
             summaries: [
-              ...document.querySelectorAll(".pdp-accordion-row > summary"),
+              ...document.querySelectorAll(
+                ".pdp-accordion-row > summary, .pdp-size-guide > summary",
+              ),
             ].map((s) => rect(s).height),
+            // The size guide scrolls inside its own box; the page never does.
+            sizeGuideContained: (() => {
+              const scroller = document.querySelector(".pdp-size-guide-scroll");
+              const box = rect(scroller);
+              return box.right <= innerWidth + 1 && box.left >= 0;
+            })(),
           };
         });
         const measured = await measureNative(page);
@@ -698,6 +719,9 @@ try {
           }
           if (m.summaries.some((h) => h < 44))
             problems.push("accordion summary under 44px");
+        }
+        if (!m.sizeGuideContained) problems.push("size guide escapes the page");
+        if (desktop) {
           if (stacked) {
             if (m.galleryBottom > m.infoTop + 1)
               problems.push("stacked layout: info beside the gallery");
@@ -708,6 +732,165 @@ try {
         if (problems.length)
           failures.push({ label, problems, ...m, ...measured });
       }
+    }
+    // The blog template (plan Phase 2e): the index as a grid, a list of rows
+    // or a featured first post, and the article narrow, wide or with an aside
+    // of related posts beside the reading column from 1024px.
+    for (const index of ["grid", "list", "featured"]) {
+      const label = `${width}px blog/index/${index}`;
+      const card = (i) =>
+        `<a href="/blogs/p${i}" class="blog-card"><div class="blog-card-image-wrapper"><img alt="" src="${image(1600, 900)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"></div><div class="blog-card-body"><h3 class="blog-card-title">${heading} ${i}</h3><p class="blog-card-excerpt">${copy}</p><div class="blog-card-meta"><span class="blog-card-author">Alex Morgan</span></div></div></a>`;
+      await page.setContent(
+        documentHtmlWith(
+          blogCss,
+          `<section class="blog-grid-section"><div class="blog-layout-container" data-has-sidebar="false"><div class="blog-main"><div class="blog-grid layout-${index}" id="blog-grid">${[1, 2, 3, 4, 5, 6].map(card).join("")}</div></div></div></section>`,
+        ),
+      );
+      const measured = await measureNative(page);
+      const m = await page.evaluate(() => {
+        const rect = (el) => el.getBoundingClientRect();
+        const cards = [...document.querySelectorAll(".blog-card")].map(
+          (card) => {
+            const box = rect(card);
+            const img = rect(card.querySelector(".blog-card-image-wrapper"));
+            const body = rect(card.querySelector(".blog-card-body"));
+            return {
+              top: box.top,
+              width: box.width,
+              imageBeside: img.right <= body.left + 1 && img.height > 0,
+            };
+          },
+        );
+        return {
+          cards,
+          gridWidth: rect(document.querySelector(".blog-grid")).width,
+        };
+      });
+      cases++;
+      const problems = [];
+      if (measured.overflow) problems.push("overflow");
+      if (measured.clipped.length) problems.push("clipped text");
+      if (width >= 640) {
+        if (index === "list" && !m.cards.every((c) => c.imageBeside))
+          problems.push("list rows do not put the picture beside the copy");
+        if (index === "featured") {
+          if (!m.cards[0].imageBeside || m.cards[0].width < m.gridWidth - 1)
+            problems.push("featured post is not a full-width band");
+          if (m.cards[1].imageBeside)
+            problems.push("the posts after the featured one are not cards");
+        }
+        if (index === "grid" && width >= 1024) {
+          const tops = m.cards.slice(0, 3).map((c) => c.top);
+          if (Math.max(...tops) - Math.min(...tops) > 1)
+            problems.push("the grid is not three across");
+        }
+      } else if (m.cards.some((c) => c.imageBeside)) {
+        problems.push("a phone card is not stacked");
+      }
+      if (problems.length)
+        failures.push({ label, problems, ...m, ...measured });
+    }
+    for (const article of ["narrow", "wide", "sidebar"]) {
+      const label = `${width}px blog/article/${article}`;
+      await page.setContent(
+        documentHtmlWith(
+          blogCss,
+          `<section class="blog-detail-page-section article-${article}"><div class="blog-detail-content-container">${article === "sidebar" ? `<aside class="blog-article-aside" aria-label="Keep reading"><p class="blog-article-aside-kicker">Keep reading</p><ul class="blog-article-aside-list">${[1, 2, 3].map((i) => `<li><a href="/blogs/p${i}">${heading} ${i}</a></li>`).join("")}</ul></aside>` : ""}<div class="blog-detail-cover"><img alt="" src="${image(1600, 900)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"></div><div class="blog-detail-header"><h1 class="blog-detail-title">${heading}</h1></div><article class="blog-prose"><p>${copy.repeat(6)}</p><h2>${heading}</h2><p>${copy.repeat(4)}</p></article></div></section>`,
+        ),
+      );
+      const measured = await measureNative(page);
+      const m = await page.evaluate(() => {
+        const rect = (el) => el.getBoundingClientRect();
+        const container = rect(
+          document.querySelector(".blog-detail-content-container"),
+        );
+        const prose = rect(document.querySelector(".blog-prose"));
+        const aside = document.querySelector(".blog-article-aside");
+        return {
+          containerWidth: container.width,
+          proseWidth: prose.width,
+          asideBeside: aside ? rect(aside).left >= prose.right - 1 : null,
+          asideAbove: aside ? rect(aside).bottom <= prose.top + 1 : null,
+          asideLinks: aside
+            ? [...aside.querySelectorAll("a")].map((a) => rect(a).height)
+            : [],
+        };
+      });
+      cases++;
+      const problems = [];
+      if (measured.overflow) problems.push("overflow");
+      if (measured.clipped.length) problems.push("clipped text");
+      const cap = article === "narrow" ? 720 : article === "wide" ? 960 : 1060;
+      if (m.containerWidth > cap + 1)
+        problems.push("container wider than its cap");
+      if (article === "narrow" && width >= 1024 && m.proseWidth > 721)
+        problems.push("narrow column wider than 720px");
+      if (article === "wide" && width >= 1024 && m.proseWidth < 900)
+        problems.push("wide column not wider than the reading column");
+      if (article === "sidebar") {
+        if (m.asideLinks.some((h) => h < 40))
+          problems.push("aside links under 40px");
+        if (width >= 1024 ? !m.asideBeside : !m.asideAbove)
+          problems.push(
+            width >= 1024
+              ? "aside not beside the column"
+              : "aside not above the column",
+          );
+      }
+      if (problems.length)
+        failures.push({ label, problems, ...m, ...measured });
+    }
+    // The account template: tabs above a page, or a navigation column beside
+    // it from 1024px, and a scheme over the whole page.
+    for (const layout of ["tabs", "sidebar"]) {
+      const label = `${width}px account/${layout}/inverse`;
+      await page.setContent(
+        documentHtmlWith(
+          accountCss +
+            "\n.sm-account-page{padding:140px 24px 80px;background:var(--sm-cream);color:var(--sm-ink)}",
+          `<div class="sm-account layout-${layout} sm-scheme sm-scheme-inverse"><nav class="sm-account-nav" aria-label="Account"><a href="/profile">Profile</a><a href="/orders" aria-current="page">Orders</a><a href="/notifications">Notifications</a></nav><div class="sm-account-page"><h1>My orders</h1><p>${copy}</p></div></div>`,
+        ),
+      );
+      const measured = await measureNative(page);
+      const m = await page.evaluate(() => {
+        const rect = (el) => el.getBoundingClientRect();
+        const shell = document.querySelector(".sm-account");
+        const nav = rect(document.querySelector(".sm-account-nav"));
+        const pageBox = rect(document.querySelector(".sm-account-page"));
+        const heading = rect(document.querySelector("h1"));
+        return {
+          links: [...document.querySelectorAll(".sm-account-nav a")].map(
+            (a) => rect(a).height,
+          ),
+          navBeside: nav.right <= pageBox.left + 1,
+          navAbove: nav.bottom <= heading.top + 1,
+          gapUnderNav: heading.top - nav.bottom,
+          background: getComputedStyle(shell).backgroundColor,
+          color: getComputedStyle(document.querySelector("h1")).color,
+        };
+      });
+      cases++;
+      const problems = [];
+      if (measured.overflow) problems.push("overflow");
+      if (measured.clipped.length) problems.push("clipped text");
+      if (m.links.some((h) => h < 40))
+        problems.push("account links under 40px");
+      if (m.background !== "rgb(33, 28, 37)")
+        problems.push(`scheme background not applied: ${m.background}`);
+      if (m.color !== "rgb(250, 248, 245)")
+        problems.push(`scheme ink not applied: ${m.color}`);
+      if (layout === "sidebar" && width >= 1024) {
+        if (!m.navBeside)
+          problems.push("sidebar navigation not beside the page");
+      } else {
+        if (!m.navAbove) problems.push("tabs not above the page");
+        if (m.gapUnderNav > 60)
+          problems.push(
+            `page keeps its full offset under the tabs (${m.gapUnderNav}px)`,
+          );
+      }
+      if (problems.length)
+        failures.push({ label, problems, ...m, ...measured });
     }
     // The collection template: a row of filter popovers above the grid on
     // desktop (hidden under 1024px, where the Filter button's drawer serves),

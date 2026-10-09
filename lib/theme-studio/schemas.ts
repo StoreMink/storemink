@@ -1,5 +1,8 @@
 import { USP_ICONS } from "@/lib/homepage/section-types";
 import {
+  ACCOUNT_LAYOUTS,
+  BLOG_ARTICLE_LAYOUTS,
+  BLOG_INDEX_LAYOUTS,
   COLLECTION_FILTERS,
   COLLECTION_PAGINATIONS,
   PRODUCT_BLOCK_TYPES,
@@ -385,6 +388,8 @@ const TEMPLATES_SCHEMA: Schema = obj({
           items: obj({ icon: enumOf(USP_ICONS), label: str }),
         },
         rows: { type: "array", items: obj({ heading: str, body: str }) },
+        columns: strList,
+        sizes: { type: "array", items: obj({ label: str, values: strList }) },
         html: str,
       }),
     },
@@ -404,6 +409,14 @@ const TEMPLATES_SCHEMA: Schema = obj({
         background: nullable(hex),
       }),
     },
+  }),
+  blog: obj({
+    index: enumOf(BLOG_INDEX_LAYOUTS),
+    article: enumOf(BLOG_ARTICLE_LAYOUTS),
+  }),
+  account: obj({
+    layout: enumOf(ACCOUNT_LAYOUTS),
+    scheme: nullable(enumOf(SECTION_SCHEMES)),
   }),
 });
 

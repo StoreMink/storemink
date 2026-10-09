@@ -232,35 +232,45 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
       product: {
         gallery: "thumbs-left",
         blocks: [
-          { type: "price", items: [], rows: [], html: "" },
-          { type: "variant_picker", items: [], rows: [], html: "" },
-          { type: "buy_box", items: [], rows: [], html: "" },
-          {
-            type: "trust_row",
-            items: [
-              { icon: "truck", label: "Free delivery over ₹999" },
-              { icon: "refresh", label: "Easy 14-day returns" },
-            ],
-            rows: [],
-            html: "",
-          },
-          { type: "description", items: [], rows: [], html: "" },
-          {
-            type: "accordion",
-            items: [],
-            rows: [
-              { heading: "Care", body: "Wipe clean with a soft cloth." },
-              {
-                heading: "Shipping",
-                body: "Dispatched within two working days.",
-              },
-            ],
-            html: "",
-          },
-          { type: "reviews", items: [], rows: [], html: "" },
-          { type: "recommendations", items: [], rows: [], html: "" },
-          { type: "sticky_bar", items: [], rows: [], html: "" },
-        ],
+          "price",
+          "variant_picker",
+          "buy_box",
+          "trust_row",
+          "description",
+          "accordion",
+          "size_guide",
+          "reviews",
+          "recommendations",
+          "sticky_bar",
+        ].map((type) => ({
+          type,
+          items:
+            type === "trust_row"
+              ? [
+                  { icon: "truck", label: "Free delivery over ₹999" },
+                  { icon: "refresh", label: "Easy 14-day returns" },
+                ]
+              : [],
+          rows:
+            type === "accordion"
+              ? [
+                  { heading: "Care", body: "Wipe clean with a soft cloth." },
+                  {
+                    heading: "Shipping",
+                    body: "Dispatched within two working days.",
+                  },
+                ]
+              : [],
+          columns: type === "size_guide" ? ["Height", "Width"] : [],
+          sizes:
+            type === "size_guide"
+              ? [
+                  { label: "Small", values: ["12", "9"] },
+                  { label: "Large", values: ["18", "14"] },
+                ]
+              : [],
+          html: "",
+        })),
       },
       collection: {
         filters: "top-bar",
@@ -277,6 +287,8 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
           },
         ],
       },
+      blog: { index: "featured", article: "sidebar" },
+      account: { layout: "tabs", scheme: "soft" },
     },
     brand: {
       primaryColor: palette.ink,

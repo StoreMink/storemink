@@ -390,6 +390,18 @@ describe("the v32 templates in the Stage B schemas", () => {
       expect(product.properties.blocks.items.properties.type.enum).toEqual([
         ...PRODUCT_BLOCK_TYPES,
       ]);
+      // Second slice: the blog and account pages, every block carrying its
+      // size-guide columns and sizes beside its items, rows and html.
+      const templatesProps = current.properties.templates.properties!;
+      expect(Object.keys(templatesProps)).toEqual([
+        "product",
+        "collection",
+        "blog",
+        "account",
+      ]);
+      expect(
+        Object.keys(product.properties.blocks.items.properties as object),
+      ).toEqual(["type", "items", "rows", "columns", "sizes", "html"]);
       for (const list of productDetailEnums(schema))
         expect(list).toEqual([...PRODUCT_DETAIL_ENUM]);
       // The pre-v32 twin has no templates and no stacked product page, and

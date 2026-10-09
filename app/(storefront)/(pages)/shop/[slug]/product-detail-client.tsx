@@ -553,6 +553,38 @@ export default function ProductDetailClient({
             ))}
           </div>
         );
+      case "size_guide":
+        return (
+          <details className="pdp-size-guide" key="size-guide">
+            <summary>Size guide</summary>
+            <div className="pdp-size-guide-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">
+                      <span className="pdp-sr-only">Size</span>
+                    </th>
+                    {block.columns.map((column, i) => (
+                      <th scope="col" key={`${column}-${i}`}>
+                        {column}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.sizes.map((row, i) => (
+                    <tr key={`${row.label}-${i}`}>
+                      <th scope="row">{row.label}</th>
+                      {row.values.map((value, j) => (
+                        <td key={j}>{value}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        );
       case "rich_text":
         // The page (a server component) sanitised this at the render
         // boundary, the rich-text section's rule; the sanitiser is not a

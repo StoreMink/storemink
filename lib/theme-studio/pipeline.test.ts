@@ -1550,11 +1550,22 @@ describe("theme generation pipeline", () => {
       "trust_row",
       "description",
       "accordion",
+      "size_guide",
       "reviews",
       "recommendations",
       "sticky_bar",
     ]);
     expect(templates?.product.blocks[0]).toEqual({ type: "price" });
+    expect(templates?.product.blocks[6]).toEqual({
+      type: "size_guide",
+      columns: ["Height", "Width"],
+      sizes: [
+        { label: "Small", values: ["12", "9"] },
+        { label: "Large", values: ["18", "14"] },
+      ],
+    });
+    expect(templates?.blog).toEqual({ index: "featured", article: "sidebar" });
+    expect(templates?.account).toEqual({ layout: "tabs", scheme: "soft" });
     expect(templates?.collection).toMatchObject({
       filters: "top-bar",
       pagination: "paged",

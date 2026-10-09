@@ -96,10 +96,17 @@
 > collection page — rendered by the block renderers in
 > `product-detail-client.tsx` and `shop-client.tsx`, overridable per store
 > in the Brand row, written by Stage B under v32 and normalised by the
-> compiler; `productDetail` gains `stacked`. Not yet run against live
-> Gemini. Still open from 2e: blog and account templates, cart templates
-> (the cart stays a layout variant), and the fingerprint axes for templates
-> (Phase 3).
+> compiler; `productDetail` gains `stacked`. The second slice (same day,
+> same prompt version) closed the field: the `size_guide` block, the blog
+> template (index grid / list / featured; article narrow / wide / sidebar),
+> the account template (plain / tabs / sidebar, plus a scheme) and
+> `renderer.minVersion` enforced in the runtime registry. Schema v3 was
+> not needed: `templates` is an optional field and `defaultTemplates`
+> reproduces today's pages, so the "v2→v3 migration" is a pure function and
+> every published release round-trips unchanged. Not yet run against live
+> Gemini; the 2e exit's hand-authored exemplar per direction is folded into
+> the Phase 2 exit. Out of 2e by decision: cart templates (the cart stays a
+> layout variant); the fingerprint axes for templates are Phase 3.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

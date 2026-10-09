@@ -20,6 +20,10 @@ import {
   type CollectionTemplate,
   type ProductTemplate,
   type ThemeTemplates,
+  normalizeBlogTemplate,
+  normalizeAccountTemplate,
+  type BlogTemplate,
+  type AccountTemplate,
 } from "@/lib/themes/templates";
 import {
   EMPTY_DESIGN_OVERRIDES,
@@ -114,6 +118,8 @@ export interface StorefrontAppearance {
   templates: {
     product: "theme" | ProductTemplate;
     collection: "theme" | CollectionTemplate;
+    blog: "theme" | BlogTemplate;
+    account: "theme" | AccountTemplate;
   };
 }
 
@@ -199,7 +205,12 @@ export const DEFAULT_CHROME: StoreChrome = {
     footer: "theme",
     cardPhoto: "portrait",
     productCards: "product",
-    templates: { product: "theme", collection: "theme" },
+    templates: {
+      product: "theme",
+      collection: "theme",
+      blog: "theme",
+      account: "theme",
+    },
   },
   header: {
     links: [
@@ -403,6 +414,14 @@ function cleanTemplateOverrides(
       r.collection && typeof r.collection === "object"
         ? normalizeCollectionTemplate(r.collection, neutral.collection)
         : "theme",
+    blog:
+      r.blog && typeof r.blog === "object"
+        ? normalizeBlogTemplate(r.blog, neutral.blog)
+        : "theme",
+    account:
+      r.account && typeof r.account === "object"
+        ? normalizeAccountTemplate(r.account, neutral.account)
+        : "theme",
   };
 }
 
@@ -469,6 +488,12 @@ export function resolveStorefrontAppearance(
     product: chosen.product === "theme" ? base.product : chosen.product,
     collection:
       chosen.collection === "theme" ? base.collection : chosen.collection,
+    // Rows saved between the first two templates and these carry no key.
+    blog: !chosen.blog || chosen.blog === "theme" ? base.blog : chosen.blog,
+    account:
+      !chosen.account || chosen.account === "theme"
+        ? base.account
+        : chosen.account,
   };
   const legacyGrocery = theme?.storefront === "grocery";
   const themeCard = legacyGrocery ? "grocery" : (theme?.card ?? "classic");

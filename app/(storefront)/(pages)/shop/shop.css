@@ -1822,6 +1822,90 @@
   color: var(--shop-text-muted);
   white-space: pre-wrap;
 }
+.pdp-size-guide {
+  margin-top: 24px;
+  border-top: 1px solid var(--shop-border);
+  border-bottom: 1px solid var(--shop-border);
+}
+.pdp-size-guide > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  list-style: none;
+  cursor: pointer;
+}
+.pdp-size-guide > summary::-webkit-details-marker {
+  display: none;
+}
+.pdp-size-guide > summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s ease;
+}
+.pdp-size-guide[open] > summary::after {
+  transform: translateY(2px) rotate(-135deg);
+}
+.pdp-size-guide > summary:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 2px;
+}
+/* The table scrolls inside its own box on a phone, never the page; the
+   scroller is positioned so it contains its sr-only header. */
+.pdp-size-guide-scroll {
+  position: relative;
+  overflow-x: auto;
+  padding: 0 0 16px;
+  -webkit-overflow-scrolling: touch;
+}
+.pdp-size-guide table {
+  width: 100%;
+  min-width: 320px;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+.pdp-size-guide th,
+.pdp-size-guide td {
+  padding: 8px 12px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--shop-border);
+}
+.pdp-size-guide thead th {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--shop-text-muted);
+}
+.pdp-size-guide tbody th {
+  font-weight: 700;
+}
+.pdp-size-guide tbody tr:last-child th,
+.pdp-size-guide tbody tr:last-child td {
+  border-bottom: 0;
+}
+.pdp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .pdp-rich {
   margin-top: 24px;
   font-size: 0.95rem;

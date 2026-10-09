@@ -185,3 +185,39 @@ describe("ProductDetailClient as a block renderer", () => {
     expect(screen.queryByTestId("sticky")).toBeNull();
   });
 });
+
+// Plan Phase 2e, second slice: the size guide block.
+it("renders a size guide block as a table with one column per measurement", () => {
+  const { container } = render(
+    <ProductDetailClient
+      product={product}
+      related={[]}
+      reviews={[]}
+      template={template([
+        { type: "price" },
+        {
+          type: "size_guide",
+          columns: ["Chest", "Waist"],
+          sizes: [
+            { label: "S", values: ["86", "70"] },
+            { label: "M", values: ["90", "74"] },
+          ],
+        },
+        { type: "buy_box" },
+      ])}
+    />,
+  );
+  const guide = container.querySelector(".pdp-size-guide")!;
+  expect(guide.querySelector("summary")?.textContent).toBe("Size guide");
+  expect(
+    Array.from(guide.querySelectorAll("thead th")).map((th) => th.textContent),
+  ).toEqual(["Size", "Chest", "Waist"]);
+  expect(
+    Array.from(guide.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.children).map((cell) => cell.textContent),
+    ),
+  ).toEqual([
+    ["S", "86", "70"],
+    ["M", "90", "74"],
+  ]);
+});

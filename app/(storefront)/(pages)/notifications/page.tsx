@@ -3,6 +3,7 @@ import { getServerUser } from "@/lib/auth/server-user";
 import { requireStorefrontStoreId } from "@/lib/store/resolve";
 import { getMyCustomerNotifications } from "@/app/actions/customer-notification-actions";
 import { CustomerNotificationsView } from "./notifications-view";
+import { AccountShell } from "@/app/(storefront)/components/account/account-shell";
 
 export const dynamic = "force-dynamic";
 
@@ -17,10 +18,12 @@ export default async function CustomerNotificationsPage() {
 
   const { notifications, unread, error } = await getMyCustomerNotifications();
   return (
-    <CustomerNotificationsView
-      notifications={notifications}
-      unread={unread}
-      error={error}
-    />
+    <AccountShell>
+      <CustomerNotificationsView
+        notifications={notifications}
+        unread={unread}
+        error={error}
+      />
+    </AccountShell>
   );
 }

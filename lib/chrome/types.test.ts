@@ -287,6 +287,8 @@ describe("resolveStorefrontAppearance", () => {
       templates: {
         product: "theme",
         collection: { filters: "top-bar", pagination: "paged", promoTiles: [] },
+        blog: "theme",
+        account: "theme",
       },
     });
     expect(overridden.templates.product).toEqual(
@@ -304,7 +306,37 @@ describe("resolveStorefrontAppearance", () => {
       normalizeChrome({
         appearance: { templates: { product: 7, collection: "x" } },
       }).appearance.templates,
-    ).toEqual({ product: "theme", collection: "theme" });
+    ).toEqual({
+      product: "theme",
+      collection: "theme",
+      blog: "theme",
+      account: "theme",
+    });
+    // The blog and account templates (second slice) override the same way,
+    // and a row saved between the two slices carries neither key.
+    const pages = resolveStorefrontAppearance(theme, {
+      ...DEFAULT_CHROME.appearance,
+      templates: {
+        product: "theme",
+        collection: "theme",
+        blog: { index: "featured", article: "wide" },
+        account: { layout: "sidebar", scheme: "soft" },
+      },
+    });
+    expect(pages.templates.blog).toEqual({
+      index: "featured",
+      article: "wide",
+    });
+    expect(pages.templates.account).toEqual({
+      layout: "sidebar",
+      scheme: "soft",
+    });
+    const between = resolveStorefrontAppearance(theme, {
+      ...DEFAULT_CHROME.appearance,
+      templates: { product: "theme", collection: "theme" } as never,
+    });
+    expect(between.templates.blog).toEqual(defaultTemplates(theme).blog);
+    expect(between.templates.account).toEqual(defaultTemplates(theme).account);
   });
 
   it("normalises invalid stored appearance values back to theme inheritance", () => {

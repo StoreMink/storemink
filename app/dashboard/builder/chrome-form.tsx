@@ -14,15 +14,27 @@ import { BlockList } from "./block-list";
 import { USP_ICON_LABELS } from "./section-form";
 import { USP_ICONS, type UspIcon } from "@/lib/homepage/section-types";
 import {
+  ACCOUNT_LAYOUTS,
+  ACCOUNT_SCHEMES,
+  BLOG_ARTICLE_LAYOUTS,
+  BLOG_INDEX_LAYOUTS,
   COLLECTION_FILTERS,
   COLLECTION_PAGINATIONS,
   MAX_ACCORDION_ROWS,
   MAX_PROMO_AFTER,
   MAX_PROMO_TILES,
+  MAX_SIZE_GUIDE_COLUMNS,
+  MAX_SIZE_GUIDE_ROWS,
   MAX_TRUST_ROW_ITEMS,
   PRODUCT_BLOCK_TYPES,
   PRODUCT_GALLERIES,
   type AccordionRow,
+  type AccountLayout,
+  type AccountScheme,
+  type AccountTemplate,
+  type BlogArticleLayout,
+  type BlogIndexLayout,
+  type BlogTemplate,
   type CollectionFilters,
   type CollectionPagination,
   type CollectionTemplate,
@@ -31,6 +43,7 @@ import {
   type ProductGalleryMode,
   type ProductTemplate,
   type PromoTile,
+  type SizeGuideRow,
   type TrustRowItem,
 } from "@/lib/themes/templates";
 import {
@@ -843,6 +856,7 @@ const PRODUCT_BLOCK_LABELS: Record<ProductBlockType, string> = {
   share: "Share buttons",
   trust_row: "Trust row",
   accordion: "Collapsible rows",
+  size_guide: "Size guide",
   rich_text: "Rich text",
   reviews: "Reviews",
   recommendations: "You may also like",
@@ -858,6 +872,28 @@ const PAGINATION_LABELS: Record<CollectionPagination, string> = {
   paged: "Numbered pages",
   infinite: "Load as the shopper scrolls",
 };
+const BLOG_INDEX_LABELS: Record<BlogIndexLayout, string> = {
+  grid: "Grid of cards",
+  list: "List, picture beside the copy",
+  featured: "Featured post above the grid",
+};
+const BLOG_ARTICLE_LABELS: Record<BlogArticleLayout, string> = {
+  narrow: "Reading column",
+  wide: "Wide column",
+  sidebar: "Column with related posts beside it",
+};
+const ACCOUNT_LAYOUT_LABELS: Record<AccountLayout, string> = {
+  plain: "Pages as they are",
+  tabs: "Tabs above each page",
+  sidebar: "Navigation beside each page",
+};
+const ACCOUNT_SCHEME_LABELS: Record<AccountScheme, string> = {
+  "": "Page colours",
+  soft: "Soft",
+  tint: "Tinted",
+  accent: "Brand",
+  inverse: "Dark",
+};
 
 function freshBlock(type: ProductBlockType): ProductBlock {
   switch (type) {
@@ -865,6 +901,12 @@ function freshBlock(type: ProductBlockType): ProductBlock {
       return { type, items: [{ icon: "truck", label: "Free delivery" }] };
     case "accordion":
       return { type, rows: [{ heading: "Care", body: "" }] };
+    case "size_guide":
+      return {
+        type,
+        columns: ["Chest", "Waist"],
+        sizes: [{ label: "S", values: ["", ""] }],
+      };
     case "rich_text":
       return { type, html: "" };
     default:
@@ -883,10 +925,17 @@ function TemplatesForm({
 }) {
   const product = templates.product;
   const collection = templates.collection;
+  // Rows saved before the blog and account templates carry no key.
+  const blog = templates.blog ?? "theme";
+  const account = templates.account ?? "theme";
   const setProduct = (next: "theme" | ProductTemplate) =>
     onChange({ ...templates, product: next });
   const setCollection = (next: "theme" | CollectionTemplate) =>
     onChange({ ...templates, collection: next });
+  const setBlog = (next: "theme" | BlogTemplate) =>
+    onChange({ ...templates, blog: next });
+  const setAccount = (next: "theme" | AccountTemplate) =>
+    onChange({ ...templates, account: next });
   const used = new Set<ProductBlockType>(
     product === "theme" ? [] : product.blocks.map((b) => b.type),
   );
@@ -1054,6 +1103,86 @@ function TemplatesForm({
                         </div>
                       )}
                     </BlockList>
+                  )}
+                  {block.type === "size_guide" && (
+                    <>
+                      <label className="sm-b-field">
+                        <span>Measurements (comma-separated)</span>
+                        <input
+                          className="sm-b-input"
+                          value={block.columns.join(", ")}
+                          onChange={(e) => {
+                            const columns = e.target.value
+                              .split(",")
+                              .map((c) => c.trim())
+                              .filter(Boolean)
+                              .slice(0, MAX_SIZE_GUIDE_COLUMNS);
+                            setItem({
+                              columns,
+                              sizes: block.sizes.map((row) => ({
+                                ...row,
+                                values: columns.map(
+                                  (_, i) => row.values[i] ?? "",
+                                ),
+                              })),
+                            });
+                          }}
+                        />
+                        <span className="sm-b-hint">
+                          Chest, Waist, Length. Up to {MAX_SIZE_GUIDE_COLUMNS}.
+                        </span>
+                      </label>
+                      <BlockList<SizeGuideRow>
+                        label="Sizes"
+                        itemLabel="Size"
+                        items={block.sizes}
+                        max={MAX_SIZE_GUIDE_ROWS}
+                        newItem={() => ({
+                          label: "",
+                          values: block.columns.map(() => ""),
+                        })}
+                        onChange={(sizes) => setItem({ sizes })}
+                        title={(row) => row.label}
+                      >
+                        {(row, _i, setRow) => (
+                          <div className="space-y-2">
+                            <label className="sm-b-field">
+                              <span>Size</span>
+                              <input
+                                className="sm-b-input"
+                                value={row.label}
+                                maxLength={40}
+                                onChange={(e) =>
+                                  setRow({ label: e.target.value })
+                                }
+                              />
+                            </label>
+                            {block.columns.map((column, c) => (
+                              <label
+                                className="sm-b-field"
+                                key={`${column}-${c}`}
+                              >
+                                <span>{column}</span>
+                                <input
+                                  className="sm-b-input"
+                                  value={row.values[c] ?? ""}
+                                  maxLength={40}
+                                  onChange={(e) =>
+                                    setRow({
+                                      values: block.columns.map((_, i) =>
+                                        i === c
+                                          ? e.target.value
+                                          : (row.values[i] ?? ""),
+                                      ),
+                                    })
+                                  }
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </BlockList>
+                    </>
                   )}
                   {block.type === "rich_text" && (
                     <label className="sm-b-field">
@@ -1292,6 +1421,135 @@ function TemplatesForm({
                 </div>
               )}
             </BlockList>
+          </>
+        )}
+      </Group>
+
+      <Group
+        title="Blog"
+        hint="How the journal lists its posts and how wide an article reads."
+        defaultOpen={false}
+      >
+        <label className="sm-b-field">
+          <span>Layouts</span>
+          <select
+            className="sm-b-input"
+            value={blog === "theme" ? "theme" : "custom"}
+            onChange={(e) =>
+              setBlog(
+                e.target.value === "theme"
+                  ? "theme"
+                  : structuredClone(themeDefaults.templates.blog),
+              )
+            }
+          >
+            <option value="theme">Theme default</option>
+            <option value="custom">Customise</option>
+          </select>
+        </label>
+        {blog !== "theme" && (
+          <>
+            <label className="sm-b-field">
+              <span>Post list</span>
+              <select
+                className="sm-b-input"
+                value={blog.index}
+                onChange={(e) =>
+                  setBlog({ ...blog, index: e.target.value as BlogIndexLayout })
+                }
+              >
+                {BLOG_INDEX_LAYOUTS.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {BLOG_INDEX_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="sm-b-field">
+              <span>Article</span>
+              <select
+                className="sm-b-input"
+                value={blog.article}
+                onChange={(e) =>
+                  setBlog({
+                    ...blog,
+                    article: e.target.value as BlogArticleLayout,
+                  })
+                }
+              >
+                {BLOG_ARTICLE_LAYOUTS.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {BLOG_ARTICLE_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
+      </Group>
+
+      <Group
+        title="Account pages"
+        hint="The profile, orders and notifications pages: a shared navigation and a colour scheme."
+        defaultOpen={false}
+      >
+        <label className="sm-b-field">
+          <span>Layout and colours</span>
+          <select
+            className="sm-b-input"
+            value={account === "theme" ? "theme" : "custom"}
+            onChange={(e) =>
+              setAccount(
+                e.target.value === "theme"
+                  ? "theme"
+                  : structuredClone(themeDefaults.templates.account),
+              )
+            }
+          >
+            <option value="theme">Theme default</option>
+            <option value="custom">Customise</option>
+          </select>
+        </label>
+        {account !== "theme" && (
+          <>
+            <label className="sm-b-field">
+              <span>Navigation</span>
+              <select
+                className="sm-b-input"
+                value={account.layout}
+                onChange={(e) =>
+                  setAccount({
+                    ...account,
+                    layout: e.target.value as AccountLayout,
+                  })
+                }
+              >
+                {ACCOUNT_LAYOUTS.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {ACCOUNT_LAYOUT_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="sm-b-field">
+              <span>Colour scheme</span>
+              <select
+                className="sm-b-input"
+                value={account.scheme}
+                onChange={(e) =>
+                  setAccount({
+                    ...account,
+                    scheme: e.target.value as AccountScheme,
+                  })
+                }
+              >
+                {ACCOUNT_SCHEMES.map((scheme) => (
+                  <option key={scheme || "page"} value={scheme}>
+                    {ACCOUNT_SCHEME_LABELS[scheme]}
+                  </option>
+                ))}
+              </select>
+            </label>
           </>
         )}
       </Group>

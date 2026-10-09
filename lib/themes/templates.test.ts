@@ -185,11 +185,11 @@ describe("the contract's report", () => {
         ],
         other: true,
       },
-      blog: {},
+      wishlist: {},
     });
     expect(issues).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("blog is not a template"),
+        expect.stringContaining("wishlist is not a template"),
         expect.stringContaining("product.gallery must be one of"),
         expect.stringContaining("blocks[1] repeats buy_box"),
         expect.stringContaining("blocks[2] (accordion) is empty"),
@@ -200,6 +200,112 @@ describe("the contract's report", () => {
         expect.stringContaining("collection.filters must be one of"),
         expect.stringContaining("promoTiles[0] needs a heading"),
         expect.stringContaining("promoTiles[1] has extra"),
+      ]),
+    );
+  });
+});
+
+// Plan Phase 2e, second slice: the size guide block, and the blog and
+// account templates.
+describe("the size guide, blog and account templates", () => {
+  it("defaults to today's pages: a grid of posts, a reading column, plain account pages", () => {
+    const plain = defaultTemplates(undefined);
+    expect(plain.blog).toEqual({ index: "grid", article: "narrow" });
+    expect(plain.account).toEqual({ layout: "plain", scheme: "" });
+  });
+
+  it("normalises a size guide to one cell per column and drops an empty one", () => {
+    const [guide] = normalizeProductBlocks(
+      [
+        {
+          type: "size_guide",
+          columns: ["Chest", " Waist ", "", "Hip"],
+          sizes: [
+            { label: "S", values: ["86", "70"] },
+            { label: "M", values: ["90", "74", "96", "extra"] },
+            { label: "", values: ["1"] },
+          ],
+        },
+      ],
+      [],
+    );
+    expect(guide).toEqual({
+      type: "size_guide",
+      columns: ["Chest", "Waist", "Hip"],
+      sizes: [
+        { label: "S", values: ["86", "70", ""] },
+        { label: "M", values: ["90", "74", "96"] },
+      ],
+    });
+    expect(
+      normalizeProductBlocks(
+        [
+          {
+            type: "size_guide",
+            columns: [],
+            sizes: [{ label: "S", values: [] }],
+          },
+        ],
+        [],
+      ).map((b) => b.type),
+    ).toEqual(["price", "buy_box"]);
+  });
+
+  it("coerces the blog and account templates, reading a null scheme as the page's colours", () => {
+    const fallback = defaultTemplates(undefined);
+    const out = normalizeTemplates(
+      {
+        blog: { index: "featured", article: "nope" },
+        account: { layout: "sidebar", scheme: null },
+      },
+      fallback,
+    );
+    expect(out.blog).toEqual({ index: "featured", article: "narrow" });
+    expect(out.account).toEqual({ layout: "sidebar", scheme: "" });
+    expect(
+      normalizeTemplates({ account: { scheme: "inverse" } }, fallback).account,
+    ).toEqual({ layout: "plain", scheme: "inverse" });
+    expect(normalizeTemplates({}, fallback)).toEqual(fallback);
+  });
+
+  it("the contract names an empty size guide, a bad layout and a bad scheme", () => {
+    expect(
+      templateIssues({
+        product: {
+          gallery: "grid",
+          blocks: [
+            { type: "price" },
+            { type: "buy_box" },
+            {
+              type: "size_guide",
+              columns: ["Chest"],
+              sizes: [{ label: "S", values: ["86"] }],
+            },
+          ],
+        },
+        blog: { index: "list", article: "sidebar" },
+        account: { layout: "tabs", scheme: "tint" },
+      }),
+    ).toEqual([]);
+    expect(
+      templateIssues({
+        product: {
+          gallery: "grid",
+          blocks: [
+            { type: "price" },
+            { type: "buy_box" },
+            { type: "size_guide", columns: [], sizes: [] },
+          ],
+        },
+        blog: { index: "masonry", article: "narrow", foo: 1 },
+        account: { layout: "plain", scheme: "neon" },
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("blocks[2] (size_guide) is empty"),
+        expect.stringContaining("blog.index must be one of"),
+        expect.stringContaining("blog.foo is not"),
+        expect.stringContaining('account.scheme must be "" or one of'),
       ]),
     );
   });

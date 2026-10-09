@@ -2510,6 +2510,8 @@ wholesip/
 │   │       │                  # `sm_session` exists, so returning shoppers restore
 │   │       │                  # immediately while anonymous visitors dynamically
 │   │       │                  # import the Web SDK only when account UI opens.
+│   │       ├── account/       # ★ AccountShell + AccountNav: the account template
+│   │       │                  # (plan Phase 2e) over profile, orders, notifications
 │   │       ├── cart/          # CartProvider, CartDrawer, CouponField
 │   │       ├── delivery/      # ★ remembered/default/current delivery location UI +
 │   │       │                  # server-priced PDP PIN availability/charge/ETA (§35)
@@ -6490,10 +6492,43 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     gallery shapes at five widths, the stacked layout, the filter bar's
     popover floating over the grid, the tile, the page buttons; 1,128 cases
     pass). Help: `20261009_0175_page_templates_help` replaces the branding
-    guide's layout step in place. Not yet run against live Gemini. Not in
-    this slice: blog and account templates, cart templates (the cart stays a
-    layout variant), and theme-authored tile pictures (a tile's picture is
-    the merchant's; a Studio tile is a colour field).
+    guide's layout step in place. Not yet run against live Gemini. A tile's
+    picture is the merchant's; a Studio tile is a colour field.
+    **Phase 2e, second slice (same day; still prompt v32, unused by any
+    run).** The rest of the plan's `templates` field. A `size_guide` product
+    block (two to eight measurement columns, up to twelve sizes with one
+    value per column; normalised to one cell per column, rendered as a
+    `<details>` table that scrolls inside its own box). `templates.blog`:
+    `index` as a `grid` of cards (today), a `list` of rows with the picture
+    beside the copy, or a `featured` first post spanning the first row; and
+    `article` `narrow` (today's 720px reading column), `wide` (960px) or
+    `sidebar` (the column with a sticky aside of related posts from 1024px,
+    above it below that). Both are classes on the existing markup
+    (`blog-grid.layout-*`, `blog-detail-page-section.article-*`) read by
+    blogs.css; the index and article pages read the resolved layout.
+    `templates.account`: `layout` `plain` (the three account pages as they
+    are), `tabs` (a row of Profile / Orders / Notifications links where each
+    page's top offset was, within its width) or `sidebar` (the same links in a
+    column beside the page from 1024px), and `scheme` ("" or a section scheme
+    over the whole page, the token re-pointing `homepage.css` gives a band).
+    `components/account/account-shell.tsx` (server, reads the layout) wraps
+    the profile layout, the orders page and the notifications page and
+    renders nothing around them for the default template; `account-nav.tsx`
+    marks the current page; `account-shell-class.ts` is the pure class rule.
+    ★ `renderer.minVersion` is enforced at last: `rendererSupports` in
+    `runtime-registry.ts` compares a stored package's minimum against
+    `RENDERER_ENGINE_VERSIONS` (the engine versions the bundled definitions
+    declare, which is what this build renders) and `parseRelease` refuses a
+    package asking for more the way it refuses a bad digest, logging
+    `theme_registry.renderer_too_old`; an engine this build does not bundle
+    is left to the package's own say-so, so no existing release moves. The
+    Stage B templates schema, the v32 prompt bullet, the offline draft, the
+    builder (a Size guide block, **Blog** and **Account pages** groups), the
+    pending Help migration 0175 and the renderer check (blog index and
+    article at five widths, the account shell under both layouts and a
+    scheme, the size guide; 1,168 cases pass) grew with it. Out of 2e by
+    the plan's own decision: cart templates (the cart stays a layout
+    variant); the fingerprint axes for templates are Phase 3.
     **The first live v26 run found four renderer defects, all shared chrome
     (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
     before artwork as `renderer_fix_required`, so every image stayed a

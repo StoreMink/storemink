@@ -27,6 +27,7 @@
 
 import type { ThemeLayout } from "./types";
 import { USP_ICONS, type UspIcon } from "@/lib/homepage/section-types";
+import { SECTION_SCHEMES, type SectionScheme } from "./schemes";
 
 export const PRODUCT_GALLERIES = [
   "thumbs-bottom",
@@ -46,6 +47,7 @@ export const PRODUCT_BLOCK_TYPES = [
   "share",
   "trust_row",
   "accordion",
+  "size_guide",
   "rich_text",
   "reviews",
   "recommendations",
@@ -67,6 +69,7 @@ export const PRODUCT_INFO_BLOCKS: readonly ProductBlockType[] = [
   "share",
   "trust_row",
   "accordion",
+  "size_guide",
   "rich_text",
 ];
 export const PRODUCT_PAGE_BLOCKS: readonly ProductBlockType[] = [
@@ -76,6 +79,8 @@ export const PRODUCT_PAGE_BLOCKS: readonly ProductBlockType[] = [
 
 export const MAX_TRUST_ROW_ITEMS = 6;
 export const MAX_ACCORDION_ROWS = 8;
+export const MAX_SIZE_GUIDE_COLUMNS = 8;
+export const MAX_SIZE_GUIDE_ROWS = 12;
 export const ACCORDION_BODY_MAX = 2000;
 export const RICH_TEXT_MAX = 4000;
 export const MAX_PROMO_TILES = 4;
@@ -89,6 +94,11 @@ export interface TrustRowItem {
 export interface AccordionRow {
   heading: string;
   body: string;
+}
+/** One size's measurements, in the guide's column order. */
+export interface SizeGuideRow {
+  label: string;
+  values: string[];
 }
 export type ProductBlock =
   | {
@@ -105,6 +115,7 @@ export type ProductBlock =
     }
   | { type: "trust_row"; items: TrustRowItem[] }
   | { type: "accordion"; rows: AccordionRow[] }
+  | { type: "size_guide"; columns: string[]; sizes: SizeGuideRow[] }
   | { type: "rich_text"; html: string };
 
 export interface ProductTemplate {
@@ -142,9 +153,36 @@ export interface CollectionTemplate {
   promoTiles: PromoTile[];
 }
 
+/** The blog index as a grid of cards, a list of rows (picture beside the
+ *  copy), or a featured first post above the grid; the article narrow (a
+ *  reading column), wide, or with an aside of related posts. */
+export const BLOG_INDEX_LAYOUTS = ["grid", "list", "featured"] as const;
+export type BlogIndexLayout = (typeof BLOG_INDEX_LAYOUTS)[number];
+export const BLOG_ARTICLE_LAYOUTS = ["narrow", "wide", "sidebar"] as const;
+export type BlogArticleLayout = (typeof BLOG_ARTICLE_LAYOUTS)[number];
+export interface BlogTemplate {
+  index: BlogIndexLayout;
+  article: BlogArticleLayout;
+}
+
+/** The account pages (profile, orders, notifications): as they are, with a
+ *  row of tabs above each page, or with a navigation column beside it; and
+ *  an optional colour scheme over the three pages. */
+export const ACCOUNT_LAYOUTS = ["plain", "tabs", "sidebar"] as const;
+export type AccountLayout = (typeof ACCOUNT_LAYOUTS)[number];
+/** "" is the page's own colours. */
+export const ACCOUNT_SCHEMES = ["", ...SECTION_SCHEMES] as const;
+export type AccountScheme = "" | SectionScheme;
+export interface AccountTemplate {
+  layout: AccountLayout;
+  scheme: AccountScheme;
+}
+
 export interface ThemeTemplates {
   product: ProductTemplate;
   collection: CollectionTemplate;
+  blog: BlogTemplate;
+  account: AccountTemplate;
 }
 
 // ── defaults ────────────────────────────────────────────────────────────────
@@ -173,6 +211,8 @@ export function defaultTemplates(layout?: ThemeLayout | null): ThemeTemplates {
   return {
     product: { gallery: "thumbs-bottom", blocks: defaultProductBlocks(layout) },
     collection: { filters: "sidebar", pagination: "load-more", promoTiles: [] },
+    blog: { index: "grid", article: "narrow" },
+    account: { layout: "plain", scheme: "" },
   };
 }
 
@@ -229,6 +269,28 @@ function normalizeBlock(raw: unknown): ProductBlock | null {
         .slice(0, MAX_ACCORDION_ROWS);
       return rows.length ? { type: "accordion", rows } : null;
     }
+    case "size_guide": {
+      const columns = (Array.isArray(raw.columns) ? raw.columns : [])
+        .map((column) => text(column, 40))
+        .filter(Boolean)
+        .slice(0, MAX_SIZE_GUIDE_COLUMNS);
+      const sizes = (Array.isArray(raw.sizes) ? raw.sizes : [])
+        .map((row): SizeGuideRow | null => {
+          if (!isRecord(row)) return null;
+          const label = text(row.label, 40);
+          if (!label) return null;
+          // One cell per column, in column order; missing cells are "".
+          const values = columns.map((_, i) =>
+            Array.isArray(row.values) ? text(row.values[i], 40) : "",
+          );
+          return { label, values };
+        })
+        .filter((row): row is SizeGuideRow => row !== null)
+        .slice(0, MAX_SIZE_GUIDE_ROWS);
+      return columns.length && sizes.length
+        ? { type: "size_guide", columns, sizes }
+        : null;
+    }
     case "rich_text": {
       const html = text(raw.html, RICH_TEXT_MAX);
       return html ? { type: "rich_text", html } : null;
@@ -237,7 +299,7 @@ function normalizeBlock(raw: unknown): ProductBlock | null {
       return {
         type: type as Exclude<
           ProductBlockType,
-          "trust_row" | "accordion" | "rich_text"
+          "trust_row" | "accordion" | "size_guide" | "rich_text"
         >,
       };
   }
@@ -318,6 +380,32 @@ export function normalizeCollectionTemplate(
   };
 }
 
+export function normalizeBlogTemplate(
+  raw: unknown,
+  fallback: BlogTemplate,
+): BlogTemplate {
+  const r = isRecord(raw) ? raw : {};
+  return {
+    index: oneOf(r.index, BLOG_INDEX_LAYOUTS, fallback.index),
+    article: oneOf(r.article, BLOG_ARTICLE_LAYOUTS, fallback.article),
+  };
+}
+
+export function normalizeAccountTemplate(
+  raw: unknown,
+  fallback: AccountTemplate,
+): AccountTemplate {
+  const r = isRecord(raw) ? raw : {};
+  return {
+    layout: oneOf(r.layout, ACCOUNT_LAYOUTS, fallback.layout),
+    // null from a closed schema reads as the page's own colours.
+    scheme:
+      r.scheme === null || r.scheme === undefined
+        ? fallback.scheme
+        : oneOf(r.scheme, ACCOUNT_SCHEMES, fallback.scheme),
+  };
+}
+
 /** A complete templates value: the stored one coerced, or the fallback. */
 export function normalizeTemplates(
   raw: unknown,
@@ -327,6 +415,8 @@ export function normalizeTemplates(
   return {
     product: normalizeProductTemplate(r.product, fallback.product),
     collection: normalizeCollectionTemplate(r.collection, fallback.collection),
+    blog: normalizeBlogTemplate(r.blog, fallback.blog),
+    account: normalizeAccountTemplate(r.account, fallback.account),
   };
 }
 
@@ -377,7 +467,7 @@ export function templateIssues(
   const issues: string[] = [];
   if (!isRecord(raw)) return [`${path} must be an object.`];
   for (const key of Object.keys(raw))
-    if (!["product", "collection"].includes(key))
+    if (!["product", "collection", "blog", "account"].includes(key))
       issues.push(`${path}.${key} is not a template.`);
   const product = raw.product;
   if (product !== undefined) {
@@ -403,7 +493,7 @@ export function templateIssues(
           if (!normalized) {
             issues.push(
               PRODUCT_BLOCK_TYPES.includes(type as ProductBlockType)
-                ? `${where} (${type}) is empty: give it its items, rows or html.`
+                ? `${where} (${type}) is empty: give it its items, rows, columns and sizes, or html.`
                 : `${where} must be one of ${PRODUCT_BLOCK_TYPES.join(", ")}.`,
             );
             return;
@@ -463,6 +553,42 @@ export function templateIssues(
             );
         });
       }
+    }
+  }
+  const blog = raw.blog;
+  if (blog !== undefined) {
+    if (!isRecord(blog)) issues.push(`${path}.blog must be an object.`);
+    else {
+      for (const key of Object.keys(blog))
+        if (!["index", "article"].includes(key))
+          issues.push(`${path}.blog.${key} is not a blog template field.`);
+      if (!BLOG_INDEX_LAYOUTS.includes(blog.index as BlogIndexLayout))
+        issues.push(
+          `${path}.blog.index must be one of ${BLOG_INDEX_LAYOUTS.join(", ")}.`,
+        );
+      if (!BLOG_ARTICLE_LAYOUTS.includes(blog.article as BlogArticleLayout))
+        issues.push(
+          `${path}.blog.article must be one of ${BLOG_ARTICLE_LAYOUTS.join(", ")}.`,
+        );
+    }
+  }
+  const account = raw.account;
+  if (account !== undefined) {
+    if (!isRecord(account)) issues.push(`${path}.account must be an object.`);
+    else {
+      for (const key of Object.keys(account))
+        if (!["layout", "scheme"].includes(key))
+          issues.push(
+            `${path}.account.${key} is not an account template field.`,
+          );
+      if (!ACCOUNT_LAYOUTS.includes(account.layout as AccountLayout))
+        issues.push(
+          `${path}.account.layout must be one of ${ACCOUNT_LAYOUTS.join(", ")}.`,
+        );
+      if (!ACCOUNT_SCHEMES.includes(account.scheme as AccountScheme))
+        issues.push(
+          `${path}.account.scheme must be "" or one of ${SECTION_SCHEMES.join(", ")}.`,
+        );
     }
   }
   return issues;
