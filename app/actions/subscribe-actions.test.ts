@@ -17,7 +17,9 @@ vi.mock("@/lib/observability/logger", () => ({
 vi.mock("next/cache", () => ({
   revalidateTag: vi.fn(),
   revalidatePath: vi.fn(),
+  updateTag: vi.fn(),
 }));
+vi.mock("@/lib/auth/server-user", () => ({ getServerUser: vi.fn() }));
 // The action imports STORE_TAG from resolve.ts, which builds an unstable_cache
 // at module scope. Stub the module rather than widening the next/cache mock —
 // the constant is all this file needs.
@@ -57,11 +59,15 @@ vi.mock("@/lib/billing/manual-pay", () => manual);
 
 import {
   confirmPayInvoice,
+  confirmSignupSubscribe,
   confirmSubscribe,
   getPayableInvoices,
   startPayInvoice,
+  startSignupSubscribe,
   startSubscribe,
 } from "./subscribe-actions";
+import { getServerUser } from "@/lib/auth/server-user";
+import { updateTag } from "next/cache";
 
 const STORE = "store-1";
 
@@ -120,6 +126,70 @@ beforeEach(() => {
     data: { invoiceId: "inv-9", planRestored: true },
   });
   manual.listPayableInvoices.mockResolvedValue([{ id: "inv-9" }]);
+});
+
+describe("signup subscription (the Plan step on the platform host)", () => {
+  beforeEach(() => {
+    vi.mocked(getServerUser).mockResolvedValue({ id: "owner-1" } as any);
+    // The owner's own admins row: superadmin of their one store.
+    seed([[{ storeId: "own-store", role: "superadmin" }], []]);
+  });
+
+  it("★★ bills the SIGNED-IN OWNER's store and takes no store id at all", async () => {
+    const res = await startSignupSubscribe("pro", "monthly", "upi");
+    expect(res.ok).toBe(true);
+    expect(enrol.startEnrolment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        storeId: "own-store",
+        plan: "pro",
+        period: "monthly",
+        mandateMethod: "upi",
+      }),
+    );
+    // Never the host's store: on the platform host that is the fallback.
+    expect(access.getActingStoreId).not.toHaveBeenCalled();
+  });
+
+  it("★ refuses anyone who is not a store owner", async () => {
+    vi.mocked(getServerUser).mockResolvedValue(null);
+    expect((await startSignupSubscribe("pro", "monthly")).ok).toBe(false);
+
+    vi.mocked(getServerUser).mockResolvedValue({ id: "staff-1" } as any);
+    seed([[{ storeId: "own-store", role: "manager" }]]);
+    expect((await startSignupSubscribe("pro", "monthly")).ok).toBe(false);
+    expect((await confirmSignupSubscribe("inv-1", "pay_1", "sig")).ok).toBe(
+      false,
+    );
+
+    // A failed read refuses rather than authorises.
+    dbHolder.current.db.select = vi.fn(() => {
+      throw new Error("db down");
+    });
+    expect((await startSignupSubscribe("pro", "monthly")).ok).toBe(false);
+    expect(enrol.startEnrolment).not.toHaveBeenCalled();
+    expect(enrol.confirmEnrolment).not.toHaveBeenCalled();
+  });
+
+  it("confirms against the owner's store and makes the plan visible on the next request", async () => {
+    const res = await confirmSignupSubscribe("inv-1", "pay_1", "sig");
+    expect(res).toMatchObject({ ok: true, plan: "pro" });
+    expect(enrol.confirmEnrolment).toHaveBeenCalledWith({
+      storeId: "own-store",
+      invoiceId: "inv-1",
+      providerPaymentId: "pay_1",
+      signature: "sig",
+    });
+    expect(updateTag).toHaveBeenCalledWith("stores");
+  });
+
+  it("does not refresh the store when the payment did not confirm", async () => {
+    enrol.confirmEnrolment.mockResolvedValue({ ok: false, error: "bad sig" });
+    expect(await confirmSignupSubscribe("inv-1", "pay_1", "sig")).toEqual({
+      ok: false,
+      error: "bad sig",
+    });
+    expect(updateTag).not.toHaveBeenCalled();
+  });
 });
 
 describe("manual payment actions", () => {

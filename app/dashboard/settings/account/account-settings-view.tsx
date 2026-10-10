@@ -1,14 +1,10 @@
 "use client";
 
-import { useState, useTransition, useRef, type FormEvent } from "react";
+import { useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  PhoneAuthProvider,
-  RecaptchaVerifier,
-  updatePhoneNumber,
-} from "firebase/auth";
-import {
+  AlertCircle,
   Check,
   KeyRound,
   Mail,
@@ -17,23 +13,15 @@ import {
   Smartphone,
   UserRound,
 } from "lucide-react";
+import { formatPhoneNumberIntl } from "react-phone-number-input";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  getFirebaseAuth,
-  establishSession,
-  firebaseAuthErrorMessage,
-} from "@/lib/auth/firebase-client";
-import {
   changePassword,
-  setVerifiedPhone,
   updateProfileName,
 } from "@/app/actions/account-settings";
-import PhoneInput from "react-phone-number-input";
-import "react-phone-number-input/style.css";
-import { customPhoneLabels } from "@/lib/phone-labels";
-import { CountrySelect } from "@/components/ui/phone-country-select";
+import { VerifyPhoneForm } from "@/app/dashboard/components/verify-phone-form";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
 
 type Tab = "profile" | "security";
@@ -60,6 +48,7 @@ export function AccountSettingsView({
   firstName,
   lastName,
   phone,
+  phoneVerified,
   initialTab,
   initialFocus,
 }: {
@@ -68,6 +57,8 @@ export function AccountSettingsView({
   firstName: string;
   lastName: string;
   phone: string;
+  /** The number was proven with a texted code (admins.phone_verified_at). */
+  phoneVerified: boolean;
   initialTab: Tab;
   initialFocus: "phone" | "password" | null;
 }) {
@@ -111,6 +102,7 @@ export function AccountSettingsView({
       ) : (
         <SecurityTab
           phone={phone}
+          phoneVerified={phoneVerified}
           initialFocus={initialFocus}
           onPhoneSaved={() => router.refresh()}
         />
@@ -234,10 +226,12 @@ function ProfileTab({
 
 function SecurityTab({
   phone,
+  phoneVerified,
   initialFocus,
   onPhoneSaved,
 }: {
   phone: string;
+  phoneVerified: boolean;
   initialFocus: "phone" | "password" | null;
   onPhoneSaved: () => void;
 }) {
@@ -246,6 +240,7 @@ function SecurityTab({
       <PasswordCard autoFocus={initialFocus === "password"} />
       <PhoneCard
         phone={phone}
+        verified={phoneVerified}
         startEditing={initialFocus === "phone"}
         onSaved={onPhoneSaved}
       />
@@ -369,124 +364,33 @@ function PasswordCard({ autoFocus }: { autoFocus: boolean }) {
 
 function PhoneCard({
   phone,
+  verified,
   startEditing,
   onSaved,
 }: {
   phone: string;
+  verified: boolean;
   startEditing: boolean;
   onSaved: () => void;
 }) {
   const [savedPhone, setSavedPhone] = useState(phone);
-  const [editing, setEditing] = useState(
-    startEditing && !phone ? true : startEditing,
-  );
-  const [newPhone, setNewPhone] = useState<string | undefined>("");
-  const [otp, setOtp] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [isPending, startTransition] = useTransition();
-
-  // Firebase phone linking: invisible reCAPTCHA + verificationId.
-  const recaptchaRef = useRef<HTMLDivElement | null>(null);
-  const verifierRef = useRef<RecaptchaVerifier | null>(null);
-  const verificationIdRef = useRef<string | null>(null);
-
-  const fullPhone = newPhone || "";
-
-  const getVerifier = (): RecaptchaVerifier => {
-    if (!verifierRef.current) {
-      verifierRef.current = new RecaptchaVerifier(
-        getFirebaseAuth(),
-        recaptchaRef.current!,
-        { size: "invisible" },
-      );
-    }
-    return verifierRef.current;
-  };
-
-  const reset = () => {
-    setEditing(false);
-    setOtpSent(false);
-    setOtp("");
-    setNewPhone("");
-    setErr("");
-  };
-
-  const sendOtp = async () => {
-    if (!newPhone || newPhone.length < 10) {
-      setErr("Enter a valid phone number.");
-      return;
-    }
-    setErr("");
-    setBusy(true);
-    try {
-      const provider = new PhoneAuthProvider(getFirebaseAuth());
-      verificationIdRef.current = await provider.verifyPhoneNumber(
-        fullPhone,
-        getVerifier(),
-      );
-      setOtpSent(true);
-    } catch (e) {
-      setErr(firebaseAuthErrorMessage(e));
-    }
-    setBusy(false);
-  };
-
-  const verifyOtp = async () => {
-    if (otp.length < 6) {
-      setErr("Enter the 6-digit code.");
-      return;
-    }
-    if (!verificationIdRef.current) {
-      setErr("Please request a code first.");
-      return;
-    }
-    setErr("");
-    setBusy(true);
-    try {
-      const credential = PhoneAuthProvider.credential(
-        verificationIdRef.current,
-        otp,
-      );
-      const user = getFirebaseAuth().currentUser;
-      if (!user) throw new Error("Not signed in.");
-      await updatePhoneNumber(user, credential);
-      // Re-mint the session cookie so getServerUser sees the new verified phone
-      // (setVerifiedPhone only accepts a number auth has actually recorded).
-      await establishSession(true);
-    } catch (e) {
-      setErr(firebaseAuthErrorMessage(e));
-      setBusy(false);
-      return;
-    }
-    startTransition(async () => {
-      const res = await setVerifiedPhone(fullPhone);
-      setBusy(false);
-      if (res.error) {
-        setErr(res.error);
-        return;
-      }
-      setSavedPhone(fullPhone);
-      reset();
-      toast.success("Phone number updated");
-      onSaved();
-    });
-  };
+  const [isVerified, setIsVerified] = useState(verified && !!phone);
+  const [editing, setEditing] = useState(startEditing);
+  const shown = savedPhone
+    ? formatPhoneNumberIntl(savedPhone) || savedPhone
+    : "";
 
   return (
     <div className="dash-card">
-      {/* Invisible reCAPTCHA anchor for Identity Platform phone verification. */}
-      <div ref={recaptchaRef} />
       <div className="dash-card-header">
         <div className="flex items-center gap-2.5">
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--dash-accent-soft)] text-[var(--dash-accent)]">
             <Smartphone className="h-4 w-4" />
           </span>
           <div>
-            <div className="dash-card-title">Phone number</div>
+            <div className="dash-card-title">Mobile number</div>
             <div className="dash-card-sub">
-              Used for account verification via OTP
+              Confirmed with a code we text to it
             </div>
           </div>
         </div>
@@ -497,98 +401,45 @@ function PhoneCard({
             onClick={() => setEditing(true)}
           >
             <Pencil className="h-3.5 w-3.5" />
-            {savedPhone ? "Update" : "Add phone"}
+            {!savedPhone ? "Add number" : isVerified ? "Change" : "Verify"}
           </button>
         )}
       </div>
 
       <div className="p-6">
-        {!editing ? (
-          savedPhone ? (
-            <div className="flex items-center gap-3">
-              <span className="font-mono-dash text-[15px] text-[var(--dash-text)]">
-                {savedPhone}
-              </span>
+        {editing ? (
+          <VerifyPhoneForm
+            autoFocus
+            onCancel={() => setEditing(false)}
+            onVerified={(verifiedPhone) => {
+              setSavedPhone(verifiedPhone);
+              setIsVerified(true);
+              setEditing(false);
+              toast.success("Mobile number verified");
+              onSaved();
+            }}
+          />
+        ) : savedPhone ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-mono-dash text-[15px] text-[var(--dash-text)]">
+              {shown}
+            </span>
+            {isVerified ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-[var(--dash-green-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--dash-green)]">
                 <Check className="h-3 w-3" />
                 Verified
               </span>
-            </div>
-          ) : (
-            <p className="text-sm text-[var(--dash-text-3)]">
-              No phone number added yet.
-            </p>
-          )
-        ) : (
-          <div className="flex max-w-md flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label>New phone number</Label>
-              <PhoneInput
-                defaultCountry="IN"
-                countrySelectComponent={CountrySelect}
-                labels={customPhoneLabels}
-                placeholder="Mobile number"
-                value={newPhone}
-                onChange={setNewPhone}
-                disabled={otpSent}
-                inputComponent={Input}
-                className="flex gap-2 [&>.PhoneInputCountry]:h-10 [&>.PhoneInputCountry]:rounded-md [&>.PhoneInputCountry]:border [&>.PhoneInputCountry]:border-input [&>.PhoneInputCountry]:bg-background [&>.PhoneInputCountry]:p-0"
-              />
-            </div>
-
-            {otpSent && (
-              <div className="flex flex-col gap-1.5">
-                <Label>
-                  Enter the code sent to {fullPhone}{" "}
-                  <button
-                    type="button"
-                    className="text-[var(--dash-accent)] underline"
-                    onClick={() => {
-                      setOtpSent(false);
-                      setOtp("");
-                    }}
-                  >
-                    Edit
-                  </button>
-                </Label>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="6-digit code"
-                  value={otp}
-                  maxLength={6}
-                  onChange={(e) =>
-                    setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
-                  }
-                />
-              </div>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--dash-amber-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--dash-amber)]">
+                <AlertCircle className="h-3 w-3" />
+                Not verified
+              </span>
             )}
-
-            {err && <p className="text-sm text-[var(--dash-red)]">{err}</p>}
-
-            <div className="flex gap-2">
-              {!otpSent ? (
-                <Button
-                  type="button"
-                  onClick={sendOtp}
-                  disabled={busy || !newPhone || newPhone.length < 10}
-                >
-                  {busy ? "Sending..." : "Send code"}
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  onClick={verifyOtp}
-                  disabled={busy || isPending || otp.length < 6}
-                >
-                  {busy || isPending ? "Verifying..." : "Verify & save"}
-                </Button>
-              )}
-              <Button type="button" variant="outline" onClick={reset}>
-                Cancel
-              </Button>
-            </div>
           </div>
+        ) : (
+          <p className="text-sm text-[var(--dash-text-3)]">
+            No mobile number added yet.
+          </p>
         )}
       </div>
     </div>

@@ -213,7 +213,7 @@ export function PillarGrid({
 
 export function CtaBand({
   title = "Start selling with StoreMink today",
-  lead = "Free plan forever. No credit card. Bring your products, your brand and your ambition.",
+  lead = "No credit card needed to start. Bring your products, your brand and your ambition.",
   secondary = { href: "/pricing", text: "See plans" },
 }: {
   title?: ReactNode;

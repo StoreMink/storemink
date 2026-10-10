@@ -242,6 +242,19 @@ export const SECTIONS: DashboardSection[] = [
 
   // --- Storefront: everything a visitor sees --------------------------------
   {
+    // Choosing the store's theme moved here from signup (2026-10-10), the way
+    // Shopify starts every store on one theme and offers the rest from Online
+    // Store → Themes. Its own key, not `builder`'s: switching re-skins the
+    // whole storefront and may replace the homepage, a different grant from
+    // editing a page.
+    key: "themes",
+    label: "Themes",
+    href: "/dashboard/themes",
+    icon: "themes",
+    group: "Storefront",
+    actions: ["view", "manage"],
+  },
+  {
     key: "builder",
     label: "Website Builder",
     href: "/dashboard/builder",

@@ -3,6 +3,8 @@
 
    Scoped to .smh so the platform login, signup, POS and operator surfaces can
    continue sharing platform.css without inheriting this marketing system.
+   Signup deliberately does NOT load this file: it is the first screen of the
+   product, styled calm and light by signup/signup.css.
 
    The design system is shopify.com's: black page, dark-grey cards with large
    radii, regular-weight headlines set large and loosely tracked, a grey-then-

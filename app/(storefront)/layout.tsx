@@ -309,8 +309,10 @@ export default async function StorefrontLayout({
                   <StudioAcceptanceProbe />
                 ) : null}
               </ChromeProvider>
+              {/* Inside the brand context: outside it the sign-in dialog read
+                  the default brand and greeted shoppers "Welcome to Store". */}
+              <AuthModalLoader demoStore={isDemoStore(store)} />
             </BrandProvider>
-            <AuthModalLoader demoStore={isDemoStore(store)} />
             <CartDrawer />
             <Toaster richColors />
           </CartProvider>

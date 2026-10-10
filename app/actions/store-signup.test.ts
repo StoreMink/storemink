@@ -24,7 +24,11 @@ vi.mock("@/lib/themes/runtime-registry", async () => {
   const { THEME_META } = await import("@/lib/themes/meta");
   return { getThemeCatalog: vi.fn(async () => [...THEME_META]) };
 });
-const firebaseAuth = vi.hoisted(() => ({ getUserByEmail: null as any }));
+const firebaseAuth = vi.hoisted(() => ({
+  getUserByEmail: null as any,
+  // The account record behind a session; null means unreadable.
+  getUser: null as any,
+}));
 vi.mock("@/lib/auth/firebase-admin", () => ({
   getFirebaseAdminAuth: vi.fn(() => firebaseAuth),
 }));
@@ -155,10 +159,27 @@ describe("getSignupResumeInfo", () => {
     expect(await getSignupResumeInfo()).toEqual({
       authenticated: false,
       hasStore: false,
-      phoneConfirmed: false,
       emailConfirmed: false,
     });
     expect(dbHolder.current.calls.select).toHaveLength(0);
+  });
+
+  it("★ resumes at the store step when the account was verified after the session was minted", async () => {
+    vi.mocked(getServerUser).mockResolvedValue({
+      ...USER,
+      emailConfirmed: false,
+    });
+    firebaseAuth.getUser = vi.fn(async () => ({ emailVerified: true }));
+    try {
+      dbHolder.current = makeDbMock({ selectQueue: [[]] });
+      expect(await getSignupResumeInfo()).toMatchObject({
+        authenticated: true,
+        emailConfirmed: true,
+      });
+      expect(firebaseAuth.getUser).toHaveBeenCalledWith(USER.id);
+    } finally {
+      firebaseAuth.getUser = null;
+    }
   });
 
   it("resumes a verified account without a store", async () => {
@@ -166,7 +187,6 @@ describe("getSignupResumeInfo", () => {
     expect(await getSignupResumeInfo()).toMatchObject({
       authenticated: true,
       hasStore: false,
-      phoneConfirmed: true,
       emailConfirmed: true,
       email: "owner@example.com",
     });
@@ -186,6 +206,29 @@ describe("getSignupResumeInfo", () => {
       firstName: "Asha",
       lastName: "Devi Shah",
     });
+  });
+
+  it("says whether an existing store's owner has a verified mobile", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [{ store_id: "store-1", phone_verified_at: "2026-10-10T08:00:00Z" }],
+        [{ slug: "acme" }],
+      ],
+    });
+    expect(await getSignupResumeInfo()).toMatchObject({
+      hasStore: true,
+      phoneVerified: true,
+    });
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [{ store_id: "store-1", phone_verified_at: null }],
+        [{ slug: "acme" }],
+      ],
+    });
+    expect((await getSignupResumeInfo()).phoneVerified).toBe(false);
+    // No store, no claim either way.
+    dbHolder.current = makeDbMock({ selectQueue: [[]] });
+    expect(await getSignupResumeInfo()).not.toHaveProperty("phoneVerified");
   });
 
   it("prefers provider given and family names", async () => {
@@ -211,7 +254,6 @@ describe("getSignupResumeInfo", () => {
     expect(await getSignupResumeInfo()).toMatchObject({
       authenticated: true,
       hasStore: false,
-      phoneConfirmed: true,
       emailConfirmed: true,
     });
   });
@@ -225,7 +267,7 @@ describe("createStore gates", () => {
     expect(getServerUser).not.toHaveBeenCalled();
   });
 
-  it("requires an authenticated, email-confirmed and phone-confirmed owner", async () => {
+  it("requires an authenticated, email-confirmed owner", async () => {
     vi.mocked(getServerUser).mockResolvedValue(null);
     expect((await createStore(INPUT)).error).toMatch(/sign in/i);
 
@@ -234,13 +276,37 @@ describe("createStore gates", () => {
       emailConfirmed: false,
     });
     expect((await createStore(INPUT)).error).toMatch(/verify your email/i);
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+  });
 
+  it("★ trusts the account record when the session still says unverified", async () => {
     vi.mocked(getServerUser).mockResolvedValue({
       ...USER,
+      emailConfirmed: false,
+    });
+    firebaseAuth.getUser = vi.fn(async () => ({ emailVerified: true }));
+    try {
+      const result = await createStore(INPUT);
+      expect(result.error).toBeUndefined();
+      expect(result.storeId).toBeTruthy();
+    } finally {
+      firebaseAuth.getUser = null;
+    }
+  });
+
+  it("★ creates the store without a phone; the go-live checklist asks for it", async () => {
+    vi.mocked(getServerUser).mockResolvedValue({
+      ...USER,
+      phone: null,
       phoneConfirmed: false,
     });
-    expect((await createStore(INPUT)).error).toMatch(/verify your phone/i);
-    expect(dbHolder.current.calls.insert).toHaveLength(0);
+    const result = await createStore(INPUT);
+    expect(result.error).toBeUndefined();
+    expect(dbHolder.current.calls.insert[1]).toBe(admins);
+    expect(dbHolder.current.calls.values[1]).toMatchObject({
+      phone: null,
+      phoneVerifiedAt: null,
+    });
   });
 
   it("re-checks slug ownership and one-store-per-owner on the server", async () => {
@@ -266,7 +332,11 @@ describe("createStore gates", () => {
       firstName: "Asha",
       country: "in",
     });
-    expect(result).toEqual({ slug: "acme-foods", storeId: "store-1" });
+    expect(result).toEqual({
+      slug: "acme-foods",
+      storeId: "store-1",
+      phoneVerified: true,
+    });
     expect(dbHolder.current.calls.values[0].settings.business).toEqual({
       country: "IN",
     });
@@ -278,6 +348,29 @@ describe("createStore gates", () => {
       contactEmail: "owner@example.com",
       contactPhone: "+919876543210",
     });
+  });
+
+  it("★ opens on the default theme when signup names none (themes live in the dashboard)", async () => {
+    const result = await createStore({ name: "Acme Foods", firstName: "Asha" });
+    expect(result.error).toBeUndefined();
+    expect(applyTheme).toHaveBeenCalledWith(
+      "store-1",
+      DEFAULT_THEME_ID,
+      expect.objectContaining({ publish: true }),
+    );
+    expect(dbHolder.current.calls.values[0].settings.template).toBe(
+      DEFAULT_THEME_ID,
+    );
+  });
+
+  it("reports whether the owner's mobile is verified, for a paid plan at signup", async () => {
+    expect((await createStore(INPUT)).phoneVerified).toBe(true);
+    vi.mocked(getServerUser).mockResolvedValue({ ...USER, phone: null });
+    dbHolder.current = makeDbMock({
+      selectQueue: [[], []],
+      returning: [{ id: "store-1", slug: "acme-foods" }],
+    });
+    expect((await createStore(INPUT)).phoneVerified).toBe(false);
   });
 
   it("falls back to the platform's home country for a missing or unknown code", async () => {
@@ -300,7 +393,11 @@ describe("createStore provisioning", () => {
   it("writes a non-indexable free store with normalized business location", async () => {
     const result = await createStore(INPUT);
 
-    expect(result).toEqual({ slug: "acme-foods", storeId: "store-1" });
+    expect(result).toEqual({
+      slug: "acme-foods",
+      storeId: "store-1",
+      phoneVerified: true,
+    });
     expect(dbHolder.current.calls.insert[0]).toBe(stores);
     expect(dbHolder.current.calls.values[0]).toEqual({
       slug: "acme-foods",
@@ -371,7 +468,7 @@ describe("createStore provisioning", () => {
     });
   });
 
-  it("★★ records the OTP-verified phone on the owner row, not only the invoice profile", async () => {
+  it("★★ records a login's verified phone on the owner row, not only the invoice profile", async () => {
     // `admins.phone` is where `resolveBillingEmail` — and therefore
     // `startEnrolment` — looks for a billing contact. Writing it to
     // store_billing_settings alone left every wizard-created store unable to
@@ -380,6 +477,9 @@ describe("createStore provisioning", () => {
     expect(dbHolder.current.calls.values[1]).toMatchObject({
       phone: "+919876543210",
     });
+    // A number already on the login is Firebase-verified, so it is recorded
+    // as verified and the checklist does not ask for it again.
+    expect(dbHolder.current.calls.values[1].phoneVerifiedAt).toBeTruthy();
   });
 
   it("falls back to the email local-part when the owner name is blank", async () => {
@@ -441,6 +541,7 @@ describe("createStore provisioning", () => {
     expect(await createStore(INPUT)).toEqual({
       slug: "acme-foods",
       storeId: "store-1",
+      phoneVerified: true,
     });
     expect(updateTag).toHaveBeenCalledWith("stores");
   });

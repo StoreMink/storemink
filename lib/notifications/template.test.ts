@@ -508,6 +508,7 @@ describe("the welcome email (store.created)", () => {
   it("links every REQUIRED go-live item, at its real route, and nothing else", () => {
     const rules = evaluateLaunchChecklist({
       plan: "free",
+      ownerPhoneVerified: false,
       publishedProducts: 0,
       sampleProducts: 0,
       business: { name: false, address: false, email: false, phone: false },

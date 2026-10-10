@@ -295,8 +295,8 @@ export default async function StoreminkLanding() {
                     </Link>
                   </div>
                   <p className="smh-hero-proof">
-                    Free plan forever · No credit card · 0% StoreMink
-                    transaction fee
+                    Free to start · No credit card · 0% StoreMink transaction
+                    fee
                   </p>
                 </div>
 
@@ -959,8 +959,8 @@ export default async function StoreminkLanding() {
             <div className="smh-container smh-final-inner">
               <h2>Start selling with StoreMink today</h2>
               <p className="smh-lead">
-                Free plan forever. No credit card. Bring your products, your
-                brand and your ambition.
+                No credit card needed to start. Bring your products, your brand
+                and your ambition.
               </p>
               <div>
                 <Link href="/signup" className="smh-button smh-button-light">

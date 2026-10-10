@@ -93,6 +93,6 @@ export function upgradeUnlocks(from: Plan, to: Plan): string[] {
 
 export function planPriceLine(plan: Plan): string {
   const meta = PLAN_META[plan];
-  if (meta.monthlyInr === 0) return "Free forever";
+  if (meta.monthlyInr === 0) return "₹0/month";
   return `₹${meta.monthlyInr.toLocaleString("en-IN")}/month`;
 }

@@ -16,6 +16,7 @@ import {
   loadManifest,
   migrationPlan,
   parseCli,
+  toleratesUnknownMigrations,
   sha256,
   validateEnvironment,
 } from "./db-migrations-core.mjs";
@@ -291,10 +292,22 @@ async function runDrift(client, environment, rows, fingerprint, update) {
   console.log("No schema drift.");
 }
 
+// Set once from the command line (`--allow-unknown local`); see
+// toleratesUnknownMigrations for why only a local database may use it.
+let tolerateUnknown = false;
+let warnedUnknown = false;
+
 function assertHealthyPlan(plan, allowPending = false) {
-  if (plan.unknown.length) {
+  if (plan.unknown.length && !tolerateUnknown) {
     throw new Error(
-      `Ledger contains unknown migrations: ${plan.unknown.map((row) => row.id).join(", ")}`,
+      `Ledger contains unknown migrations: ${plan.unknown.map((row) => row.id).join(", ")}` +
+        "\nIf this is your local database and those rows come from another branch, re-run with --allow-unknown local.",
+    );
+  }
+  if (plan.unknown.length && !warnedUnknown) {
+    warnedUnknown = true;
+    console.warn(
+      `Ignoring ${plan.unknown.length} ledger row(s) from another branch: ${plan.unknown.map((row) => row.id).join(", ")}`,
     );
   }
   if (plan.drifted.length) {
@@ -507,6 +520,7 @@ function printStatus(database, environment, manifest, rows, plan, fingerprint) {
 
 async function main() {
   const options = parseCli(process.argv.slice(2));
+  tolerateUnknown = toleratesUnknownMigrations(options);
   const manifest = await loadManifest(options.manifest);
   const mutating =
     options.command === "baseline" ||

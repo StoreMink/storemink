@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const { runQa } = vi.hoisted(() => ({ runQa: vi.fn() }));
+const { runQa, startCaptureJob } = vi.hoisted(() => ({
+  runQa: vi.fn(),
+  startCaptureJob: vi.fn(),
+}));
 vi.mock("@/lib/theme-studio/visual-qa", () => ({
   runThemeStudioVisualQaWorker: runQa,
+}));
+vi.mock("@/lib/theme-studio/capture-start", () => ({
+  startCaptureJobIfWaiting: startCaptureJob,
 }));
 vi.mock("@/lib/observability/logger", () => ({ logError: vi.fn() }));
 import { POST } from "./route";
@@ -27,6 +33,16 @@ describe("independent QA worker", () => {
   it("drains two lanes without waiting on a generation request", async () => {
     expect((await POST(request("secret"))).status).toBe(200);
     expect(runQa).toHaveBeenCalledTimes(2);
+  });
+  // ★ This per-minute call is what starts the capture job now; the job's own
+  // every-minute schedule billed a full minute per start (capture-start.ts).
+  it("starts the capture job from an authorized call only", async () => {
+    startCaptureJob.mockResolvedValue("started");
+    expect((await POST(request("wrong"))).status).toBe(401);
+    expect(startCaptureJob).not.toHaveBeenCalled();
+    const response = await POST(request("secret"));
+    expect(startCaptureJob).toHaveBeenCalledOnce();
+    expect((await response.json()).captureJob).toBe("started");
   });
   it("runs one QA lane per isolated request and refuses the other role", async () => {
     vi.stubEnv("THEME_STUDIO_WORKER_ONLY", "true");

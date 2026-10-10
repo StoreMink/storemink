@@ -125,7 +125,7 @@ export function PricingCards({
               {/* What they are actually charged, and when. */}
               <p className="stq-card-note">
                 {free
-                  ? "Free forever. No card needed."
+                  ? "No card needed"
                   : yearly
                     ? `${inr(p.yearlyInr)} billed once a year`
                     : `${inr(p.monthlyInr)} billed every month`}

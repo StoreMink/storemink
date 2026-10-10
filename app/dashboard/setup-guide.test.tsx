@@ -4,10 +4,27 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { SetupGuide } from "./setup-guide";
 import type { LaunchChecklistItem } from "@/lib/store/launch-checklist-rules";
 
+const refresh = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The mobile task's form loads through next/dynamic; a synchronous stand-in
+// keeps these tests about the guide, not about Firebase.
+vi.mock("next/dynamic", () => ({
+  default: () =>
+    function VerifyPhoneFormStub({
+      onVerified,
+    }: {
+      onVerified: (phone: string) => void;
+    }) {
+      return (
+        <button type="button" onClick={() => onVerified("+919876543210")}>
+          Stub verify
+        </button>
+      );
+    },
+}));
 vi.mock("@/app/actions/launch-actions", () => ({
   launchStore: vi.fn(async () => ({ success: true })),
   regenerateStorefrontPassword: vi.fn(async () => ({ password: "newpass22" })),
@@ -99,5 +116,34 @@ describe("SetupGuide", () => {
         .disabled,
     ).toBe(true);
     expect(screen.queryByRole("button", { name: /New/ })).toBeNull();
+  });
+
+  it("★ the owner verifies the mobile task in place, then the next task opens", () => {
+    renderGuide([item("phone", true, false), item("b", true, false)], {
+      ownerCanVerifyPhone: true,
+    });
+    // Inline form, not a link away to another page.
+    expect(screen.queryByRole("link", { name: "Go phone" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stub verify" }));
+    expect(refresh).toHaveBeenCalled();
+    expect(screen.getByText("Do b")).toBeTruthy();
+  });
+
+  it("tells anyone but the owner who verifies the mobile, and offers no form", () => {
+    renderGuide([item("phone", true, false)], { ownerCanVerifyPhone: false });
+    expect(screen.queryByRole("button", { name: "Stub verify" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Go phone" })).toBeNull();
+    expect(
+      screen.getByText(/store owner verifies their own mobile number/),
+    ).toBeTruthy();
+  });
+
+  it("a verified mobile task offers Review, like any finished task", () => {
+    renderGuide([item("phone", true, true), item("b", true, false)], {
+      ownerCanVerifyPhone: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Task phone/ }));
+    expect(screen.getByRole("link", { name: "Review" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Stub verify" })).toBeNull();
   });
 });

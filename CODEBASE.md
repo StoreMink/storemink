@@ -2483,6 +2483,10 @@ wholesip/
 │   │   │                      #   stay in code + RESERVED (registry.ts + drift test).
 │   │   └── components/
 │   │       ├── auth/          # AuthModal + AuthProvider (customer auth context).
+│   │       │                  # ★ AuthModalLoader renders INSIDE BrandProvider (the
+│   │       │                  # dialog reads the store's name and logo from it); placed
+│   │       │                  # after it, every store's sign-in said "Welcome to Store".
+│   │       │                  # Pinned by auth-modal-loader.test.tsx.
 │   │       │                  # ★ `loading` means "we don't yet know who this
 │   │       │                  # is", so it clears only once the customer row has
 │   │       │                  # LANDED — not when Firebase answers. Clearing it
@@ -2703,6 +2707,9 @@ wholesip/
 │   │   ├── enquiries/         # enquiry inbox + @modal detail
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
 │   │   ├── admins/ roles/     # staff invites + role management
+│   │   ├── themes/            # ★ Themes (§11): current theme + Customize, the
+│   │   │                      # public library with Preview on demo stores, and
+│   │   │                      # a confirm dialog built from switch-rules.ts
 │   │   ├── branding/          # per-store branding editor (logo, colors)
 │   │   ├── billing/           # ★ Invoices & Billing (§17): tax config + tax-class
 │   │   │                      # manager + invoice-template editor (billing.css)
@@ -2851,13 +2858,31 @@ wholesip/
 │   │   ├── site-footer.tsx    # Shared dark footer: four columns, a static
 │   │   │                      # "India · English · ₹" region line, legal row
 │   │   ├── homepage-mobile-nav.tsx # Accessible, auto-closing mobile menu
-│   │   ├── signup/            # ★ Store creation wizard (see §19): Shopify-style
-│   │   │                      # step order — email → password (+ Continue with
-│   │   │                      # Google) → email OTP → phone OTP → name → store →
-│   │   │                      # location → theme → plan (Razorpay autopay).
+│   │   ├── signup/            # ★ Store creation wizard (see §19): email +
+│   │   │                      # password on ONE screen → email code (or Continue
+│   │   │                      # with Google) → you + store → plan. The store is
+│   │   │                      # always created on Free first; the Plan step
+│   │   │                      # (plan-picker.tsx, live prices from
+│   │   │                      # /api/plans/pricing) can then take the first
+│   │   │                      # payment for Basic or Pro, with Skip beside it.
+│   │   │                      # No theme step (the default theme; Themes in the
+│   │   │                      # dashboard) and no phone step, except just
+│   │   │                      # before paying (phone-verify.tsx, next/dynamic,
+│   │   │                      # on lib/auth/use-phone-verification.ts). The
+│   │   │                      # owner otherwise verifies their mobile from the
+│   │   │                      # go-live checklist, §7.
+│   │   │                      # ★ CALM AND LIGHT ON PURPOSE (owner, 2026-10-10):
+│   │   │                      # the black marketing look with photography read
+│   │   │                      # as dramatic. Signup is the product's first
+│   │   │                      # screen, so it is a soft grey page, one white
+│   │   │                      # card, the BrandMark + Store/Mink lockup and one
+│   │   │                      # ink pill button (Shopify's pattern: black site,
+│   │   │                      # light signup). signup.css is self-contained and
+│   │   │                      # does NOT load homepage.css. Signup loads the
+│   │   │                      # phone library only on the paid-plan path.
 │   │   │                      # Firebase: Google via signInWithPopup (no callback
-│   │   │                      # route), phone via signInWithPhoneNumber; password
-│   │   │                      # email ownership via signup-email-otp action.
+│   │   │                      # route); password email ownership via the
+│   │   │                      # signup-email-otp action.
 │   │   ├── login/             # Platform-operator login — six-digit email OTP
 │   │   └── dashboard/         # ★ THE OPERATOR CONSOLE (§38 — docs/operator-console.md).
 │   │                          # Every panel used to live on the HOME page: the store
@@ -2900,17 +2925,24 @@ wholesip/
 │   │   │                      # account-settings/set-password/invite-user/user-management/
 │   │   │                      # user-group/role actions  (homepage-actions RETIRED — §11)
 │   │   ├── store-signup.ts    # Store onboarding (§19): checkStoreSlugAvailability,
-│   │   │                      # createStore({name,template,firstName,lastName,
-│   │   │                      # country, optional address}) — ONE transaction for
+│   │   │                      # createStore({name,template?,firstName,lastName,
+│   │   │                      # country, optional address}) — no template means
+│   │   │                      # the platform default; ONE transaction for
 │   │   │                      # the store, its owner and its invoice profile; the
 │   │   │                      # store starts launched:false — getSignupResumeInfo
 │   │   │                      # (resume wizard after Google redirect / refreshed
 │   │   │                      # tab). Tested across slug, identity, transaction
 │   │   │                      # failure and consent gates.
 │   │   ├── launch-actions.ts  # ★ Go live (§7): getLaunchState (checklist + password
-│   │   │                      # + preview URL), launchStore (superadmin; re-runs the
-│   │   │                      # checklist, sets launched, emits store.launched, then
-│   │   │                      # indexes), regenerateStorefrontPassword
+│   │   │                      # + preview URL + ownerCanVerifyPhone), launchStore
+│   │   │                      # (superadmin; re-runs the checklist, sets launched,
+│   │   │                      # emits store.launched, then indexes),
+│   │   │                      # regenerateStorefrontPassword
+│   │   ├── account-settings.ts # The signed-in admin's own row: name, password,
+│   │   │                      # and confirmVerifiedPhone — records a mobile proven
+│   │   │                      # by an ISOLATED code sign-in (never linked to the
+│   │   │                      # login) as admins.phone + phone_verified_at; an
+│   │   │                      # owner's empty invoice phone is filled too. Tested.
 │   │   ├── storefront-access-actions.ts # ★ unlockStorefront: the /password page's
 │   │   │                      # host-derived, rate-limited action that mints the grant
 │   │   ├── signup-email-otp.ts # Authenticated, rate-limited 6-digit email proof;
@@ -2920,11 +2952,17 @@ wholesip/
 │   │   ├── store-settings.ts  # Read/save per-store feature settings (see lib/settings)
 │   │   ├── merchant-analytics-settings.ts # Pro/platform-gated GA4 + Meta settings
 │   │   ├── blog-taxonomy-actions.ts  # Per-store blog categories/tags CRUD (+ propagation into blogs)
-│   │   ├── subscribe-actions.ts # ★ §34 dashboard-only subscription path:
+│   │   ├── subscribe-actions.ts # ★ §34 subscription path:
 │   │                      # startSubscribe / confirmSubscribe plus manual
-│   │                      # invoices, plan/location changes and cancellation.
-│   │                      # Signup creates Free stores and cannot call a
-│   │                      # billing action. ⚠ NOT billing-actions.ts (§17).
+│   │                      # invoices, plan/location changes and cancellation;
+│   │                      # startSignupSubscribe / confirmSignupSubscribe for
+│   │                      # signup's Plan step, which resolve the store from
+│   │                      # the signed-in owner's admins row (never the
+│   │                      # request) and share the same enrolment cores.
+│   │                      # ⚠ NOT billing-actions.ts (§17).
+│   ├── theme-actions.ts   # ★ switchStoreTheme for /dashboard/themes (§11):
+│   │                      # `themes` manage gate, selectable catalogue ids only;
+│   │                      # the rules live in lib/themes/switch-rules.ts.
 │   ├── billing-actions.ts # ★ Invoices & tax (§17): tax-class CRUD + save billing/
 │   │   │                      # invoice settings. Gated on `billing`, revalidates TAGS.billing.
 │   │   ├── store-domain.ts    # Custom domain connect (§30) — the GATE only; the
@@ -3115,6 +3153,9 @@ wholesip/
 │       │                      # due-blog publisher; exact-version conflict detection + SKIP LOCKED.
 │       ├── internal/theme-studio/captures/ # ★ Track 3.6: claim + [captureId] finish
 │       │                      # for the headless-Chromium capture job (CRON_SECRET).
+│       │                      # The job is STARTED by the per-minute runs/QA routes
+│       │                      # only when a capture waits (lib/theme-studio/
+│       │                      # capture-start.ts), not by its own schedule.
 │       ├── internal/theme-studio/runs/ # ★ Theme Studio Phase 3 MODEL worker: CRON_SECRET
 │       │                      # bearer, maxDuration 1200, TWO run lanes + an independent visual-QA lane.
 │       │                      # Needs its own Scheduler job (1200s deadline, no retries) and a
@@ -3166,6 +3207,9 @@ wholesip/
 │       ├── dashboard/analytics/reports/[report]/ # ★ §20 formula-safe CSV for
 │       │                      # the four analytics drill-downs. Re-derives tenant,
 │       │                      # analytics.view and location scope; rate-limited
+│       ├── plans/pricing/     # ★ GET live plan prices + whether the platform can
+│       │                      # take a card ({ plans, paidCheckout }, no-store),
+│       │                      # for signup's Plan step; never returns keys
 │       ├── storefront/search/ # ★ Predictive header search (§11, 1.7): GET, store
 │       │                      # from the Host, cached catalogue, shared matching rule
 │       ├── og-image/          # OG image proxy (compresses Supabase images only)
@@ -3247,7 +3291,10 @@ wholesip/
 │   │                          # ingestion/order synchronization. Pure boundaries tested.
 │   ├── plans/                 # ★ §15 server entitlement boundary: resolves effective
 │   │                          # plans and transaction-locks product/staff/active-coupon
-│   │                          # creation caps; soft downgrades never mutate existing data
+│   │                          # creation caps; soft downgrades never mutate existing data.
+│   │                          # signup-quote.ts (pure, client-safe): parses the live
+│   │                          # /api/plans/pricing quote, charge per period, the yearly
+│   │                          # saving label; never quotes compiled-in prices
 │   ├── shipping/              # ★ §35 checkout policy/types + pure rate translation +
 │   │                          # server-only origin-aware Shiprocket quotation
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
@@ -3503,15 +3550,41 @@ wholesip/
 │   │                          # (role/force_password_reset custom claims — replaces the
 │   │                          # custom_access_token_hook), firebase-users.ts (admin
 │   │                          # create/delete/update + REST password reverify + reset link),
-│   │                          # firebase-client.ts (Web SDK: establishSession → POST
+│   │                          # firebase-client.ts (Web SDK: getCurrentFirebaseUser awaits
+│   │                          # authStateReady, since currentUser is null until the saved
+│   │                          # sign-in is restored; establishSession → POST
 │   │                          # /api/auth/session, endSession, secondary app for phone-only
-│   │                          # verify). Delete an auth user does NOT cascade to the Cloud
+│   │                          # verify: POS customers AND merchants' own mobiles, see
+│   │                          # app/dashboard/components/verify-phone-form.tsx). Delete an auth user does NOT cascade to the Cloud
 │   │                          # SQL admins/users row — callers delete BOTH.
 │   │                          # identity-usage.ts — authIdsInUse(): which logins still hold
 │   │                          # a StoreMink role (admin, customer, POS operator, platform
 │   │                          # operator by email). Shared by deleteStore and the signup
 │   │                          # reclaim, so "in use" cannot drift between them; throws on
 │   │                          # a failed read so callers treat unknown as in use.
+│   │                          # email-verified.ts — emailVerifiedNow(): the account record
+│   │                          # when the session cookie's email_verified snapshot still says
+│   │                          # false (signup gates ask it, never the claim alone, §19).
+│   │                          # use-phone-verification.ts — the mobile-code LOGIC (isolated
+│   │                          # sign-in, fresh reCAPTCHA per send, proof kept for a retried
+│   │                          # save), shared by VerifyPhoneForm (dashboard look) and
+│   │                          # signup's phone-verify.tsx; the component owns the refs.
+│   │                          # recaptcha.ts — freshInvisibleVerifier(): a new invisible
+│   │                          # verifier per send, in a NEW element. ★★ An invisible
+│   │                          # widget stays in the element it rendered into (the SDK's
+│   │                          # clear() removes only a visible one), so a second verifier
+│   │                          # on the same element threw "reCAPTCHA has already been
+│   │                          # rendered in this element": every Continue/Resend after a
+│   │                          # first failed send showed "Something went wrong" and never
+│   │                          # reached Firebase (storefront sign-in, POS customer check,
+│   │                          # this hook; 2026-10-10). Reusing ONE verifier also works
+│   │                          # (the SDK resets it after each send); never recreate on the
+│   │                          # same element. Phone sends log the Firebase code with
+│   │                          # console.warn (firebaseAuthErrorCode), since the shopper's
+│   │                          # message deliberately hides it. ⚠ Production's first send
+│   │                          # failing with INVALID_APP_CREDENTIAL is the server rejecting
+│   │                          # the reCAPTCHA token: a console setting (authorized domains /
+│   │                          # reCAPTCHA settings of the storemink-prod project), not code.
 │   ├── storefront/            # queries.ts (cached storefront reads — getPublishedPage/
 │   │                          # getPublishedPageSlugs, named columns only; getPublishedPage validates
 │   │                          # published_sections on read and logs each dropped section), tags.ts
@@ -4305,10 +4378,27 @@ wholesip/
 │                              # `set constraints all deferred` in its transaction;
 │                              # everywhere else the checks stay immediate, so deleting
 │                              # ONE ordered product is still refused (verified both
-│                              # ways against a copy of production). 0175 edits the
-│                              # branding guide's layout step in place for the page
-│                              # templates (plan Phase 2e) and the navigation guide's
-│                              # header step for the announcement bar. Next free: 0176.
+│                              # ways against a copy of production). 0179 edits the
+│                              # section guide for nested blocks and the new sections;
+│                              # 0180 edits the branding guide's layout step in place
+│                              # for the page templates (plan Phase 2e) and the
+│                              # navigation guide's header step for the announcement
+│                              # bar. 0181 adds admins.phone_verified_at (backfilled
+│                              # only for signup-created owners, whose phone store
+│                              # creation had OTP-proven) and 0182 edits the signup,
+│                              # setup, account and plans guides for the three-step
+│                              # signup (account, store, plan), the owner's mobile
+│                              # verified from the go-live checklist, and publishes
+│                              # "Change your storefront theme".
+│                              # ★★ 0174-0178 BELONG TO THE `whatsapp` BRANCH. This
+│                              # branch's four pending entries were renumbered from
+│                              # 0174/0175/0179/0180 to 0179-0182 (2026-10-10) because
+│                              # the whatsapp branch had already taken 0174-0178. Safe
+│                              # only because no shared database had recorded them.
+│                              # ⚠ When both branches merge, manifest.json conflicts:
+│                              # whichever lands second must append its entries AFTER
+│                              # every applied one and fix `requires`, or the runner's
+│                              # out-of-order check refuses. Next free: 0183.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -4593,7 +4683,11 @@ wholesip/
 │   │                          # ordinary additive DDL is one somebody disables).
 │   ├── db-migrate.mjs         # ★ status/baseline/apply/verify + recovery-only audit/adopt
 │   │                          # runner: physical DB guard, advisory lock, one transaction
-│   │                          # per migration, checksum drift/unknown-row refusal, and
+│   │                          # per migration, checksum drift/unknown-row refusal (★ a
+│   │                          # LOCAL database alone may pass `--allow-unknown local` to
+│   │                          # tolerate ledger rows from another branch; any other
+│   │                          # environment, or a value that does not name the local
+│   │                          # database, is refused by parseCli), and
 │   │                          # durable `verify`, immediate `applyVerify`, and evolved-schema
 │   │                          # `adoptVerify` postconditions, all checksummed. Recovery audit
 │   │                          # is database-enforced read-only; adoption never executes SQL
@@ -5144,8 +5238,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     reference template with real Unsplash photography, per
     docs/vertical-templates-plan.md §9.1, and the default theme; **studio** and
     **ritual** are published `0.1.0` editorial home-design and botanical-wellness
-    themes with generated, provenance-logged imagery, available in signup and
-    the public catalog after their 2026-08-12 production/demo audits — the
+    themes with generated, provenance-logged imagery, available from the
+    dashboard's Themes page and the public catalog after their 2026-08-12
+    production/demo audits — the
     Arcade/Fresko placeholders were retired 2026-07-04),
     `definitions/vitrine.ts` (a
     monochrome fashion preset for footwear/bags/accessories: Jost +
@@ -5155,7 +5250,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     passed. Its ten `public/themes/vitrine/*.webp` assets are bundled, and the
     healthy `demo-vitrine` store is seeded on staging and production.
     `visibility: public` and `status: published` expose it in both the public
-    catalog and signup picker.
+    catalog and the dashboard's Themes page.
     ★ Its product crops are SQUARE (1000×1000), not the 4:3 Studio/Ritual use,
     because this theme renders cards at 1:1 and a 4:3 source would be
     centre-cropped through the toe of the shoe. Imagery is rebuilt from three
@@ -5172,8 +5267,37 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     store-scoped DB content rather than theme-package state. Rendering reads
     the pin first and falls back to legacy `template`, so existing stores need
     no migration; old immutable releases stay in `THEME_DEFINITIONS` when a
-    preset advances. `createStore` (signup) calls it with the picked template
-    (published immediately; brand NAME preserved). v1 constraints are
+    preset advances. `createStore` (signup) calls it with the platform default
+    theme (published immediately; brand NAME preserved); signup no longer asks.
+    `settings.theme.homepageSeededAt` records when the theme last wrote the
+    homepage, which `homepageEditedSinceSeed` reads.
+    **★★ SWITCHING THEMES FROM THE DASHBOARD (2026-10-10).** `/dashboard/themes`
+    (permission section `themes`, view/manage, Storefront group; its own key,
+    not `builder`'s) shows the current theme with Customize (Website Builder)
+    and the public library newest first, with industry filters, Preview on a
+    healthy demo store, a plan lock with an Upgrade link, and **Use this
+    theme**. `switchStoreTheme` (app/actions/theme-actions.ts, gated on
+    `getManagerIdentity("themes")`) accepts only a selectable catalogue id
+    (the createStore rule) and refuses when the registry would substitute
+    another theme. `lib/themes/switch.ts` reads the facts and writes;
+    `lib/themes/switch-rules.ts` (pure, also used by the confirm dialog, so
+    the dialog cannot promise one thing while the server does another)
+    decides what may change: the design pin ALWAYS; the homepage only while
+    it is still the seed, or on an explicit opt-in that first saves the
+    edited one as a draft page "Homepage before {theme}" in the SAME
+    transaction as the replacement; the theme's missing pages only alongside
+    a replaced homepage, never over an existing one; the sample catalogue
+    only while every product is an untouched "(Sample)" draft of the CURRENT
+    theme, every category is an untouched sample, and the store has never
+    taken an order (an emptied catalogue is not re-seeded); `store_menus`
+    only together with the catalogue and never when a `store_chrome` row
+    exists; the brand colour only while it is still the old theme's. Products,
+    categories, pages, menus and Builder design choices the merchant made are
+    never touched. The design write is the one that must land; the rest is
+    best-effort and reported as warnings. Demo and Theme Studio preview
+    stores are refused, as are themes above the store's plan and the theme
+    already in use. `seedSampleCatalogue`, `seedMenus`, `prepareSections` and
+    `revalidateThemeSeed` are exported from apply.ts for it. v1 constraints are
     production functions in `lib/themes/validation.ts` (Theme Studio's
     acceptance gates run them too), asserted for every bundled theme by
     `lib/themes/themes.test.ts`:
@@ -5188,12 +5312,12 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     **Demo stores**: one per theme
     (`demo-{id}` — the namespace is blocked at signup), seeded/reseeded via
     `seedDemoStore` (platform superadmin action) from the Themes panel on the
-    platform stores console; the signup picker's Preview opens
+    platform stores console; the dashboard Themes page's Preview opens
     `https://demo-{id}.{ROOT_DOMAIN}` only when manifest demo health is
     `healthy`; an unavailable demo renders a disabled, explanatory control
     instead of opening a known 404. `createStore` repeats catalog visibility
     validation server-side, so posting a hidden/draft/unknown id around the
-    signup UI cannot install it.
+    UI cannot install it; `switchStoreTheme` applies the same rule.
     ★ **A DEMO CARRIES THE THEME'S OWN NAME** (2026-10-03). Every seeder —
     `seedDemoStore`, Theme Studio publication's `seedDemo` and
     `scripts/seed-demo-store.ts` — writes the row through ONE helper,
@@ -5996,6 +6120,24 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     queue/project state can change. As of 2026-09-29, dev and production each
     have a deployed Cloud Run capture job and five-minute schedule; both passed
     empty-queue executions before Cloud Build's durable flag was enabled.
+    ★★ THE JOB IS STARTED ON DEMAND NOW (2026-10-10), because a Cloud Run JOB
+    execution is billed for at least one minute. The schedules ran every minute
+    in both environments (since 2026-10-01), so 2,880 executions of 2 vCPU /
+    2 GiB a day found nothing to do: "Jobs CPU" + "Jobs Memory" were ₹5,819 of
+    Cloud Run's ₹5,972 for 1–10 October, while every web request cost ₹152.
+    `lib/theme-studio/capture-start.ts` lets the per-minute Theme Studio QA and
+    runs routes (cheap request-billed calls) ask one question first, whether a
+    capture is claimable (the claim's own predicate: queued, or running on a
+    lapsed lease, created or lapsed within 6 hours), and only then POST
+    `run.googleapis.com/v2/…/jobs/{job}:run`. One start per 90 s per job through
+    the shared rate limiter; never throws into the worker. The job name is
+    derived from `K_SERVICE` exactly as cloudbuild's capture-deploy step derives
+    it from `_SERVICE` (`-prod` → `storemink-theme-studio-capture`, `-dev` →
+    `…-capture-dev`), with `THEME_STUDIO_CAPTURE_JOB` / `_REGION` overrides.
+    ⚠ Needs `roles/run.invoker` on each job for the runtime service account,
+    and the jobs' own schedules paused only after that grant and this deploy
+    (docs/theme-studio-capture-job.md); a refused start logs
+    `theme_studio.capture_job_start_failed` with the HTTP status.
     `docs/theme-studio-capture-job.md` is the build, deploy and schedule runbook,
     and `npm run theme-studio:capture`
     runs it locally against the installed Chrome. ★ Preview storefronts now show the theme's
@@ -6342,7 +6484,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     two to four columns (scrolling inside its container at phone widths,
     never the page), the cards, an open image row and a three-band story.
     Merchant-visible (two section types and stories in the library):
-    migration `20261009_0174_nested_blocks_help` edits the section guide's
+    migration `20261009_0179_nested_blocks_help` edits the section guide's
     list sentence in place and adds one paragraph on blocks.
     **Phase 2c, first slice (2026-10-09; prompt v30).** Seven sections and
     one layout, chosen for what Shopify themes ship everywhere and what the
@@ -6379,7 +6521,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     check renders every new section at the five widths (marquee and strip
     drifting inside their band, the hotspot card opening inwards, the
     spotlight stacking, the collage spanning). Merchant-visible: the pending
-    migration 0174 (never applied) was widened in place to name the seven
+    migration 0179 (then 0174; never applied) was widened in place to name the seven
     new sections, rather than chaining a second `replace()` on it.
     **Phase 2d, first slice (2026-10-09; prompt v31).** Nine more layout
     variants, each a CSS treatment of markup that already exists, so no
@@ -6515,7 +6657,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     check loads shop.css for its product and collection fixtures (the five
     gallery shapes at five widths, the stacked layout, the filter bar's
     popover floating over the grid, the tile, the page buttons; 1,128 cases
-    pass). Help: `20261009_0175_page_templates_help` replaces the branding
+    pass). Help: `20261009_0180_page_templates_help` replaces the branding
     guide's layout step in place. Not yet run against live Gemini. A tile's
     picture is the merchant's; a Studio tile is a colour field.
     **Phase 2e, second slice (same day; still prompt v32, unused by any
@@ -6548,7 +6690,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     is left to the package's own say-so, so no existing release moves. The
     Stage B templates schema, the v32 prompt bullet, the offline draft, the
     builder (a Size guide block, **Blog** and **Account pages** groups), the
-    pending Help migration 0175 and the renderer check (blog index and
+    pending Help migration 0180 and the renderer check (blog index and
     article at five widths, the account shell under both layouts and a
     scheme, the size guide; 1,168 cases pass) grew with it. Out of 2e by
     the plan's own decision: cart templates (the cart stays a layout
@@ -6617,7 +6759,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     the probe, not the probe: LCP/CLS and the clipped-text scan need a
     Studio preview store and are reported skipped; the deployed acceptance
     run per exemplar and a live v32 batch are what remain, and both need a
-    deploy. Help: the pending migration 0175 also replaces the navigation
+    deploy. Help: the pending migration 0180 also replaces the navigation
     guide's header step in place for the bar.
     **The exemplar browser run found nine shared-renderer defects and two
     probe faults (2026-10-10), none of them a theme setting.** Over seven
@@ -8772,28 +8914,65 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
 
 19. **Signup wizard (Shopify-style, `app/platform/signup/page.tsx`).** One
     client wizard, one focused screen per step, with a progress stepper.
-    **Six screens since 2026-10-07 (was nine): email → password + email OTP
-    (one screen; the code field appears under the password once the account
-    exists) → phone OTP → you + your store (name, store name, the country you
-    sell from) → theme (pre-selected; confirm or change) → dashboard.** There
-    is no plan or payment step: every store is created on Free and paid
-    upgrades happen later from the store-host `/dashboard/plans` surface. This
-    keeps store creation independent of gateway availability and removes the
-    paid-but-not-onboarded failure mode.
+    **Since 2026-10-10: email + password on ONE screen (Google beside it) →
+    email OTP → you + your store (name, store name, the country you sell
+    from) → plan → dashboard. Stages Account → Store → Plan.** The wizard
+    used to ask for the password on a second screen, verify a phone on a
+    third and choose a theme on a fourth.
+    **★★ NO THEME STEP.** Every store opens on the platform default
+    (`DEFAULT_THEME_ID`, else the first selectable theme): `createStore`'s
+    `template` is optional and the wizard never sends one. The owner chooses
+    a theme from the dashboard's Themes page (`/dashboard/themes`, §11), the
+    way Shopify starts every store on one theme. The layout no longer reads
+    the theme catalogue at all.
+    **★★ THE PLAN STEP** (`plan-picker.tsx` + the page): Free / Basic / Pro
+    cards with a Monthly/Yearly switch, priced from the LIVE quote at
+    `GET /api/plans/pricing` (`{ plans, paidCheckout }`; a GET, not a Server
+    Action, so it never queues in front of a tap; `lib/plans/signup-quote.ts`
+    parses it and refuses anything incomplete). Basic is preselected when the
+    platform can take a card (`paidCheckout`, i.e. its own Razorpay keys
+    exist); otherwise paid cards are shown locked and Free is the choice. A
+    quote that cannot be read offers Free and a retry, never a compiled-in
+    price. **Skip, start on Free** sits under the button whenever a paid plan
+    is chosen.
+    ★ **EVERY PATH CREATES THE STORE FIRST, ON FREE** (`ensureStore`, once per
+    signup, with the existing lost-reply recovery through
+    `getSignupResumeInfo`). A paid plan then: re-reads the price and stops
+    with a notice if an operator repriced while the page was open; verifies
+    the owner's mobile if it is not yet (`phone-verify.tsx`, loaded with
+    next/dynamic, on the shared `usePhoneVerification` hook; Razorpay needs a
+    verified mobile on the billing account, and doing it here also ticks the
+    checklist's mobile task); then `startSignupSubscribe` → Razorpay Checkout
+    (the recurring customer is sent only when the order carries a mandate) →
+    `confirmSignupSubscribe` → the dashboard. A dismissed window leaves the
+    store on Free with Try again / Continue on Free and never creates a
+    second store; a payment that cannot be confirmed shows the server's own
+    message and an Open your dashboard button, never a second payment. Back
+    and Start over disappear once the store exists.
     **★ THE BUSINESS ADDRESS IS NO LONGER COLLECTED AT SIGNUP.** It prints on
     invoices and decides GST place of supply, and a new store has no invoice —
     so it was the one screen with six required fields and the one everybody
     stalled on. It is now a REQUIRED item on the dashboard's go-live checklist
     (lib/store/launch-checklist-rules.ts, § "A new store opens by Go live"),
     edited under Taxes & invoices, where it is first needed. Only the country
-    is captured at signup (`settings.business.country`), pre-filled from the
-    verified phone's dial code and editable; an unknown code falls back to
-    `DEFAULT_COUNTRY`. `createStore` still accepts the full address for any
-    caller that has one and stores it exactly as before.
+    is captured at signup (`settings.business.country`), defaulting to
+    `DEFAULT_COUNTRY` and editable. `createStore` still accepts the full
+    address for any caller that has one and stores it exactly as before.
+    **★★ NOR IS THE PHONE (2026-10-10).** Signup verified it by LINKING it to
+    the merchant's Firebase login (`updatePhoneNumber`). Shoppers sign in to
+    storefronts by phone in the same Firebase project, so any merchant whose
+    mobile had ever been used to shop got "That mobile number is already
+    linked to another StoreMink account", with no way past it. The owner's
+    verified mobile is now a REQUIRED go-live checklist item (§7), proven by
+    an isolated code sign-in that never touches the login
+    (`VerifyPhoneForm` → `confirmVerifiedPhone` → `admins.phone_verified_at`).
+    `createStore` requires only a verified email; a login that already
+    carries a phone (an older half-finished signup) is recorded as verified.
     Data model: names go to `admins.first_name`/`last_name`;
-    `store_billing_settings` is seeded with the store name, verified email and
-    phone, and a NULL address until the merchant adds one — the honest value
-    the checklist reads. Country list in `lib/countries.ts` (pure,
+    `store_billing_settings` is seeded with the store name, verified email,
+    the login's phone when it has one (usually NULL now; verifying the mobile
+    later fills an empty invoice phone), and a NULL address until the merchant
+    adds one — the honest value the checklist reads. Country list in `lib/countries.ts` (pure,
     client-safe, India-first). `location-picker.tsx` (the Google-Maps-assisted
     address form) remains in the directory, unused by the wizard, for the day
     the address editor wants it.
@@ -8818,10 +8997,10 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     a real registrable domain, so `cookieDomainForHost` returns
     `.localtest.me` and the signup → dashboard session handoff works locally
     the way it does on `.storemink.com` — the "flaky on localhost" handoff
-    was browsers refusing to set a `Domain=.localhost` cookie. The phone step
-    shows a localhost-only note linking to the same page on that host, the
-    dev runner prints it at startup, and the catch logs the raw Firebase
-    error. The staging project's fictional test numbers (Identity Platform →
+    was browsers refusing to set a `Domain=.localhost` cookie. The dashboard's
+    mobile verification form (`VerifyPhoneForm`) shows a localhost-only note
+    linking to the same page on that host, and the dev runner prints it at
+    startup. The staging project's fictional test numbers (Identity Platform →
     Authentication → Sign-in method → Phone, e.g. +91 99999 99999 / 999999)
     still work on either host. Deployed hosts are unaffected. ⚠ Verified by
     DNS and server routing; the real-number SMS on `localtest.me` was not
@@ -8847,13 +9026,30 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     session, rate-limits account + IP, stores only a peppered hash in a signed
     httpOnly cookie, caps wrong attempts, expires it after 10 minutes, and marks
     Firebase `emailVerified` after a constant-time match. Google already supplies
-    a verified email claim and skips only that step. Phone uses
-    `PhoneAuthProvider.verifyPhoneNumber`
-    (invisible reCAPTCHA) + `updatePhoneNumber`. After each sign-in / phone link
-    the client `establishSession()`s (POST the ID token → httpOnly cookie);
-    `createStore` enforces **both** `emailConfirmed` and `phoneConfirmed`
-    server-side via `getServerUser`, so the wizard re-mints the cookie
-    (`establishSession(forceRefresh)`) after each verification. Every signup OTP
+    a verified email claim and skips only that step. After each sign-in the
+    client `establishSession()`s (POST the ID token → httpOnly cookie);
+    `createStore` enforces a verified email server-side, and the wizard
+    re-mints the cookie (`establishSession(forceRefresh)`) after the email
+    code so the session carries the new claim.
+    **★★ A RELOADED TAB COULD NOT FINISH VERIFYING (fixed 2026-10-10).** The
+    wizard resumes a reloaded tab from the server session, so the browser's
+    Firebase Auth was created only at verification, and Firebase restores its
+    saved sign-in ASYNCHRONOUSLY: `currentUser` was still null, so after the
+    server had accepted the code `establishSession` answered "You're not
+    signed in. Please try again." Worse, the cookie's `email_verified` is a
+    SNAPSHOT from when it was minted, and every check read only that, so the
+    retry mailed a NEW code for an address the account record already had
+    verified, in a loop. Reproduced in headless Chrome (account, reload,
+    code) on the old code and passing on the new. Two layers:
+    (1) `getCurrentFirebaseUser()` (lib/auth/firebase-client.ts) awaits
+    `auth.authStateReady()`, and `establishSession` reads the user through it;
+    (2) `emailVerifiedNow()` (lib/auth/email-verified.ts) checks the account
+    record whenever the cookie still says unverified (one Admin read, only
+    during signup; an unreadable record answers false), and
+    `requestSignupEmailOtp`, `verifySignupEmailOtp`, `getSignupResumeInfo`
+    and `createStore` all ask it. So the post-verification session refresh
+    is best-effort: an accepted code always moves on to the store step.
+    Every signup OTP
     is platform mail and lands in the operator email log with its credential
     redacted; RFC-reserved example domains and `.test`/`.invalid`/`.localhost`
     dummy domains skip Resend and put the code in that operator-gated log under
@@ -8864,6 +9060,29 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     wizard screen keeps **Start over** in the header. Starting over clears both
     Firebase client auth and the shared-domain server session before returning
     to the account step.
+    **★★ RECOVERY RULES (2026-10-10), each one a bug that shipped:**
+    (1) **An error that must survive a step change is set AFTER `setStep`**,
+    which clears the banner. `finalize` set its error first, so a failed store
+    creation returned to the theme step in silence. (2) **A server action that
+    THROWS is caught** in every handler; a network failure used to leave `busy`
+    set for ever (a spinner, and a disabled Start over), and a lost
+    `createStore` reply left the merchant on "Creating…" indefinitely.
+    (3) **A failed create asks the server where the account stands**
+    (`getSignupResumeInfo`) before offering a retry: a store that was created
+    (lost reply, or "This account already has a store") opens its dashboard,
+    and a verification the server no longer sees returns to the step that
+    fixes it. (4) **A password that opens an EXISTING account is routed, not
+    walked through the steps again**: an owner who used signup instead of login
+    re-verified their contact details, named a store and picked a theme before
+    `createStore` refused them. (5) **A session with no email is ignored**: the
+    `sm_session` cookie spans `.storemink.com`, so a shopper's phone-OTP
+    storefront session reached signup and was "resumed" onto an email-code
+    screen for an address they never gave. (6) Codes keep only their digits
+    (a `maxLength` cut a pasted "123 456" to five digits) and submit
+    themselves at six, and the slug check cannot hang on "Checking
+    availability…". (7) **The resume on load changes the step in the reply's
+    callback** (`useEffectEvent`), never synchronously inside the effect, so
+    React's hook rules hold.
     **★ WITH NO `RESEND_API_KEY` THE STEP WAS AN UNPASSABLE DEAD END.**
     `sendEmail` skips when the key is absent, so the delivery reported
     `sent: false` and the action refused — and the code cookie is only set on a
@@ -8891,13 +9110,17 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     from the session cookie. **Google users have NO password**, so the store-host
     login (`app/auth/login/login-form.tsx`) ALSO offers "Continue with Google"
     (signInWithPopup); a Google owner can set a password via "Forgot password?".
-    - **Free-first handoff**: the Theme screen ends with **Create my free store**.
-      `createStore` is the only mutation; it already persists `plan = 'free'`, and
-      success redirects straight to the new store's dashboard. Signup imports no
-      pricing reader, Razorpay client or subscription action. The former
-      platform-host `startSignupSubscribe` / `confirmSignupSubscribe` public
-      actions were removed with the plan step; all paid enrolment now begins only
-      after tenant resolution on `/dashboard/plans`.
+    - **Signup billing derives the store from the OWNER, never the request.**
+      The wizard runs on the platform host, where `getActingStoreId()` resolves
+      the fallback store, so `startSignupSubscribe` / `confirmSignupSubscribe`
+      (app/actions/subscribe-actions.ts) read the store from the signed-in
+      user's own `admins` row (`admins.id` IS the auth uid, one store per owner)
+      and accept only a `superadmin` row; an unreadable row refuses. No store id
+      crosses the wire. Both delegate to the SAME cores as the dashboard's
+      `startSubscribe` / `confirmSubscribe`, so a merchant is billed identically
+      whichever screen they subscribed from, and confirmation calls
+      `updateTag(STORE_TAG)` so the dashboard on the store host sees the new
+      plan on its very next request.
       **The post-payment handoff is read-your-own-writes.** `createStore` uses
       Next 16 `updateTag(STORE_TAG)`, not stale-while-revalidate, and tenant
       resolution never caches a missing store host. This prevents a successful
@@ -14262,12 +14485,16 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         announce a grace window a rollback then un-started.
       - **★ BEST-EFFORT, NEVER THROWS.** A mail outage must not fail a
         collection, block a cycle advance, or abort a downgrade.
-    - **★ SIGNUP NEVER TAKES PAYMENT.** Every new store starts on Free and goes
-      directly to its dashboard. `startSubscribe` / `confirmSubscribe` are
-      store-host dashboard actions, so tenant identity comes from the resolved
-      host/session rather than a newly created store id supplied by the browser.
-      Besides smoothing onboarding, this removes two public signup-context money
-      actions and the entire class of platform-host/fallback-tenant mistakes.
+    - **★ SIGNUP MAY TAKE THE FIRST PAYMENT (2026-10-10), BUT THE STORE COMES
+      FROM THE OWNER.** Every store is still created on Free first; the Plan
+      step then offers a paid plan (§19). `startSignupSubscribe` /
+      `confirmSignupSubscribe` resolve the store from the signed-in user's own
+      superadmin `admins` row, never from the request and never from
+      `getActingStoreId()` (which resolves the FALLBACK store on the platform
+      host). The removed 2026-08-17 version took a store id from the browser and
+      made a superadmin proof the whole boundary; this one has no id to forge.
+      Both share the enrolment cores with the dashboard's `startSubscribe` /
+      `confirmSubscribe`.
     - **★★ AN ENROLMENT IS AN OFFER; A RENEWAL IS AN OBLIGATION.**
       `startEnrolment` deliberately does NOT finalize its invoice —
       `confirmEnrolment` does, once the payment verifies. Finalizing up front did
@@ -16459,7 +16686,9 @@ npm run db:drift:prod   #   and production. Exit 0 = clean, 1 = drift or stale b
                     #   same change, or the detector cannot tell the next manual DDL
                     #   from the migration you just applied.
 npm run db:migrate:local # ledger status/apply against --environment local (ENV_DATABASES.local
-                    #   is null, so there is no database-name guard)
+                    #   is null, so there is no database-name guard). A local database that
+                    #   also carries another branch's migrations needs
+                    #   `-- apply --allow-unknown local` (local only; staging/prod refuse)
                     #   ★ With .env.local present the app uses the LOCAL database and you run
                     #   `npm run dev`, NOT `dev:all` — there is no proxy to start. Warm renders
                     #   drop from ~1.2 s of application-code to ~1-3 ms per query. Rationale,
@@ -16820,7 +17049,9 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   behind the password redirect and robots/sitemap already say `noindex`.
   ★ **The checklist is predicates over real rows, never tick boxes**
   (`lib/store/launch-checklist-rules.ts` pure + `launch-checklist.ts` reads).
-  REQUIRED: one published non-sample product (samples are named "… (Sample)"
+  REQUIRED: the owner's verified mobile (first; a superadmin admins row
+  with `phone_verified_at`, never bare `phone`, which invited staff type
+  unchecked); one published non-sample product (samples are named "… (Sample)"
   and seed as drafts); business name, address, email and phone in
   `store_billing_settings`; Terms, Refund & Cancellation, Shipping and Privacy
   policies published (the Settings → Policies registry, pinned equal by test);
@@ -16883,11 +17114,37 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   required task is done, and folds** (collapsed by default with a count).
   Mink's prompt, the six setup tiles and "All caught up" return once the store
   is open. `setup-guide.test.tsx` pins the open-first-unfinished, hidden-then-
-  folded and owner-only rules. The `store.created` welcome says the store is
-  READY, not live, and points at the checklist. Help:
+  folded and owner-only rules. **The mobile task is done IN the card**: for a
+  viewer who is one of the store's real owners (`ownerCanVerifyPhone`, an
+  admins row with role superadmin, which a platform operator's synthetic
+  superadmin profile is not) it renders `VerifyPhoneForm` (next/dynamic, so
+  the phone library and Firebase phone sign-in load only when the task is
+  opened), then refreshes and opens the next task. Anyone else is told the
+  owner verifies their own number, because verifying THEIR number would not
+  complete the task. ★★ `VerifyPhoneForm`
+  (`app/dashboard/components/verify-phone-form.tsx`, shared with Account
+  settings) proves the number on the SECONDARY in-memory Firebase app, the
+  POS customer-verification pattern: a fresh reCAPTCHA per send, the code
+  confirmed there, the ID token handed to `confirmVerifiedPhone`, which
+  requires a phone sign-in under five minutes old, stores the token's E.164
+  number (never the browser's) with `phone_verified_at = now()`, and deletes
+  only a just-created, phone-only identity that holds no StoreMink role. The
+  merchant's own login and session are never touched, which is what lets a
+  number that is also a shopper's identity verify. A save that fails after
+  Firebase accepted the code keeps the proof, so **Try again** needs no new
+  code (pinned and mutation-checked in `verify-phone-form.test.tsx`). The `store.created` welcome says the store is READY, not live, and
+  lists the required tasks (the mobile first) at their real routes. Help:
   `20261007_0171_launch_checklist_help` edits the signup and setup guides in
   place; `20261008_0173_owner_password_help` corrects the setup guide to say
-  the owner enters the password too. Full audit of the SEO half:
+  the owner enters the password too; `20261010_0182_signup_plan_and_themes_help`
+  edits the signup, setup, account and plans guides for the three-step
+  signup, the checklist's mobile task and themes chosen from the dashboard,
+  and publishes "Change your storefront theme". ★ "Personalise your
+  homepage" is measured from when the THEME last wrote the homepage
+  (`settings.theme.homepageSeededAt`, falling back to the row's creation),
+  through `homepageEditedSinceSeed` in lib/themes/switch-rules.ts, so a
+  theme switch that replaces the homepage does not tick the task for the
+  merchant. Full audit of the SEO half:
   `docs/seo-action-plan.md`.
 - **StoreMink's own brand identity for schema lives in
   `lib/seo/brand-identity.ts`** — one Organization node (`sameAs` for the

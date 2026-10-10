@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
@@ -33,5 +35,21 @@ describe("AuthModalLoader", () => {
     ).toBeTruthy();
     screen.getByRole("button", { name: "Keep browsing" }).click();
     expect(auth.close).toHaveBeenCalled();
+  });
+
+  // ★ The dialog reads the store's name and logo from the brand context. The
+  // layout rendered it just after </BrandProvider>, so every store's sign-in
+  // said "Welcome to Store". jsdom renders no layout, so this reads the source.
+  it("is mounted inside the storefront's brand context", () => {
+    const layout = readFileSync(
+      join(process.cwd(), "app/(storefront)/layout.tsx"),
+      "utf8",
+    );
+    const loader = layout.indexOf("<AuthModalLoader");
+    const open = layout.lastIndexOf("<BrandProvider", loader);
+    const close = layout.indexOf("</BrandProvider>", open);
+    expect(loader).toBeGreaterThan(-1);
+    expect(open).toBeGreaterThan(-1);
+    expect(close).toBeGreaterThan(loader);
   });
 });

@@ -4,6 +4,7 @@ import "server-only";
 import { createHash, createHmac, randomInt, timingSafeEqual } from "crypto";
 import { cookies, headers } from "next/headers";
 import { getServerUser } from "@/lib/auth/server-user";
+import { emailVerifiedNow } from "@/lib/auth/email-verified";
 import { authErrorCode, updateAuthUser } from "@/lib/auth/firebase-users";
 import { sendSignupOtpEmail } from "@/lib/email/signup-otp";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
@@ -97,7 +98,9 @@ export async function requestSignupEmailOtp(): Promise<{
   const user = await getServerUser();
   if (!user?.email)
     return { ok: false, error: "Sign in to verify your email." };
-  if (user.emailConfirmed) return { ok: true, alreadyVerified: true };
+  // The record, not just the cookie's snapshot: a code that already worked
+  // must not be followed by another one (lib/auth/email-verified.ts).
+  if (await emailVerifiedNow(user)) return { ok: true, alreadyVerified: true };
 
   const email = user.email.trim().toLowerCase();
   const ip = clientIp(await headers());
@@ -167,7 +170,7 @@ export async function verifySignupEmailOtp(rawCode: string): Promise<{
   if (!user?.email)
     return { ok: false, error: "Sign in to verify your email." };
   const jar = await cookies();
-  if (user.emailConfirmed) {
+  if (await emailVerifiedNow(user)) {
     jar.delete(OTP_COOKIE);
     return { ok: true };
   }

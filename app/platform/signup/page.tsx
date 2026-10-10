@@ -1,66 +1,75 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithPopup,
-  PhoneAuthProvider,
-  RecaptchaVerifier,
-  updatePhoneNumber,
 } from "firebase/auth";
 import {
   getFirebaseAuth,
+  getCurrentFirebaseUser,
   establishSession,
   endSession,
   firebaseAuthErrorMessage,
-  phoneLinkErrorMessage,
 } from "@/lib/auth/firebase-client";
 import {
   checkStoreSlugAvailability,
   createStore,
   getSignupResumeInfo,
   reclaimUnusedSignupEmail,
+  type CreateStoreResult,
+  type SignupResume,
   type SlugCheck,
 } from "@/app/actions/store-signup";
 import {
-  CheckCircle2,
-  ChevronRight,
-  ChevronLeft,
-  ExternalLink,
-  Loader2,
-  Eye,
-  EyeOff,
-  Lock,
-  RotateCcw,
-} from "lucide-react";
-import {
-  DEFAULT_THEME_ID,
-  canPreviewTheme,
-  isThemeSelectable,
-  themeCategoriesFor,
-  type ThemeIndustry,
-} from "@/lib/themes/meta";
+  confirmSignupSubscribe,
+  startSignupSubscribe,
+  type SubscribeConfirm,
+  type SubscribeStart,
+} from "@/app/actions/subscribe-actions";
+import { ChevronLeft, Loader2, Eye, EyeOff, RotateCcw } from "lucide-react";
 import { COUNTRIES, DEFAULT_COUNTRY } from "@/lib/countries";
-import PhoneInput, {
-  isValidPhoneNumber,
-  parsePhoneNumber,
-} from "react-phone-number-input";
-import "react-phone-number-input/style.css";
-import { customPhoneLabels } from "@/lib/phone-labels";
-import { CountrySelect } from "@/components/ui/phone-country-select";
-import { useSignupThemeCatalog } from "./theme-catalog-context";
+import { PLAN_META, type Plan } from "@/lib/plans";
+import {
+  chargeFor,
+  formatInr,
+  parseSignupPlanQuote,
+  type BillingPeriod,
+  type SignupPlanQuote,
+} from "@/lib/plans/signup-quote";
+import type { MandateMethod } from "@/lib/billing/mandate-types";
+import {
+  openRazorpayModal,
+  type RazorpaySuccess,
+} from "@/lib/payments/razorpay-client";
+import { BrandMark } from "../brand-mark";
+import { PlanPicker, periodWord } from "./plan-picker";
 import { acceptPlatformPolicies } from "@/app/actions/legal-actions";
-import { signupRequiredDocs } from "@/lib/legal/documents";
+import { getLegalDoc, signupRequiredDocs } from "@/lib/legal/documents";
 import {
   requestSignupEmailOtp,
   verifySignupEmailOtp,
 } from "@/app/actions/signup-email-otp";
 
+// Loaded only when a paid plan needs the owner's mobile: the phone library and
+// Firebase's phone sign-in have no business in the bundle of a signup that
+// starts on Free.
+const SignupPhoneVerify = dynamic(() => import("./phone-verify"), {
+  ssr: false,
+  loading: () => (
+    <p className="sgn-help" role="status">
+      Loading…
+    </p>
+  ),
+});
+
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "storemink.com";
 const LOCAL_DEV_ROOT = process.env.NEXT_PUBLIC_LOCAL_DEV_ROOT ?? "localtest.me";
+const HELP_URL = `https://help.${ROOT_DOMAIN}`;
 
 /** The local root this page is being served from, if any — `localhost` or
  *  the loopback dev root (lib/store/host.ts → LOCAL_DEV_ROOT). Store hosts
@@ -76,34 +85,46 @@ function localDevRoot(hostname: string): string | null {
 }
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Steps in flow order. "password" and "email-code" are ONE screen (the code
-// field appears under the password once the account exists); "store" asks for
-// the owner's name and the store name together. Six screens, down from nine:
-// the business address moved to the dashboard's go-live checklist, where it is
-// first needed (it prints on invoices, and a new store has none yet).
-type Step =
-  | "email"
-  | "password"
-  | "email-code"
-  | "phone"
-  | "store"
-  | "theme"
-  | "creating";
+// Said whenever a server action or network call THROWS rather than answering.
+// Before this, a thrown action left `busy` set for ever: a spinner nobody
+// could clear, and with it a disabled Start over.
+const NETWORK_ERROR =
+  "We couldn't reach StoreMink. Check your connection and try again.";
 
-// Progress stages shown in the stepper (Account folds email+password+code).
-const STAGES = ["Account", "Phone", "Store", "Theme"] as const;
+/** Keep the digits of a pasted or typed code, at most six. A `maxLength` on
+ *  the input cut "123 456" to "123 45" BEFORE the digits were kept, so a code
+ *  pasted from an email with a space in it could never be entered. */
+function sixDigits(value: string): string {
+  return value.replace(/\D/g, "").slice(0, 6);
+}
+
+// Steps in flow order. "email" asks for the email AND the password on one
+// screen, the way Shopify's signup does; "email-code" proves the address; the
+// two are one stage (Account). "store" asks for the owner's name and the store
+// name together. "plan" is where the merchant starts on Free or pays for a
+// plan.
+//
+// ★ NO PHONE, NO ADDRESS AND NO THEME HERE (2026-10-10). The address and the
+// mobile are needed before a store can take an order, not before it exists:
+// the store opens closed, and the dashboard's go-live checklist asks for each
+// where it is first needed. Every store starts on the platform's default theme
+// and its owner picks another from the dashboard's Themes page, as Shopify
+// does. The one exception is a PAID plan chosen on the Plan step: Razorpay
+// needs a verified mobile before it can take the payment, so that path asks
+// for it there, just before paying.
+type Step = "email" | "email-code" | "store" | "plan" | "creating";
+
+// Progress stages shown in the stepper (Account folds email + code).
+const STAGES = ["Account", "Store", "Plan"] as const;
 function stageOf(step: Step): number {
   switch (step) {
     case "email":
-    case "password":
     case "email-code":
       return 0;
-    case "phone":
-      return 1;
     case "store":
-      return 2;
+      return 1;
     default:
-      return 3; // theme / creating
+      return 2; // plan / creating
   }
 }
 
@@ -112,12 +133,37 @@ type CheckState =
   | { status: "checking" }
   | { status: "done"; result: SlugCheck };
 
-function demoUrl(demoSlug: string): string {
-  const { hostname, protocol, port } = window.location;
-  const root = localDevRoot(hostname);
-  return root
-    ? `${protocol}//${demoSlug}.${root}${port ? ":" + port : ""}`
-    : `https://${demoSlug}.${ROOT_DOMAIN}`;
+/** Where the Plan step is. "phone" verifies the owner's mobile before a paid
+ *  plan's payment; "confirm-failed" is a payment that went to Razorpay but
+ *  could not be confirmed here, which must never offer to take it again. */
+type PlanPhase = "choose" | "phone" | "confirm-failed";
+
+type QuoteState =
+  | { status: "idle" | "loading" }
+  | { status: "ready"; quote: SignupPlanQuote }
+  | { status: "failed" };
+
+/** The store this signup created. Known once, then reused: a paid plan whose
+ *  payment is dismissed must not try to create a second store. */
+interface CreatedStore {
+  slug: string;
+  phoneVerified: boolean;
+}
+
+type EnsureStoreResult =
+  | { ok: true; store: CreatedStore }
+  | { ok: false; back: Step; error: string };
+
+/** The live plan prices. A GET, not a Server Action, so it never queues in
+ *  front of a signup tap (app/api/plans/pricing). Null means unavailable. */
+async function fetchSignupQuote(): Promise<SignupPlanQuote | null> {
+  try {
+    const res = await fetch("/api/plans/pricing", { cache: "no-store" });
+    if (!res.ok) return null;
+    return parseSignupPlanQuote(await res.json());
+  } catch {
+    return null;
+  }
 }
 
 function dashboardUrl(slug: string): string {
@@ -139,47 +185,11 @@ const CONSENT_DOC_NAMES = CONSENT_DOCS.map((d, i) =>
     ? `the ${d.title}`
     : `${i === CONSENT_DOCS.length - 1 ? " and " : ", "}${d.title}`,
 ).join("");
+const TERMS_SLUG = getLegalDoc("terms")?.slug ?? "terms";
+const PRIVACY_SLUG = getLegalDoc("privacy")?.slug ?? "privacy";
 
 export default function SignupPage() {
-  const themeCatalog = useSignupThemeCatalog();
-  const themeCategories = themeCategoriesFor(themeCatalog);
-  const defaultThemeId =
-    themeCatalog.find(
-      (theme) => theme.id === DEFAULT_THEME_ID && isThemeSelectable(theme),
-    )?.id ??
-    themeCatalog.find(isThemeSelectable)?.id ??
-    DEFAULT_THEME_ID;
-  // Firebase phone linking: invisible reCAPTCHA + the verificationId from
-  // PhoneAuthProvider, held across the send → verify steps.
-  const recaptchaRef = useRef<HTMLDivElement | null>(null);
-  const verifierRef = useRef<RecaptchaVerifier | null>(null);
-  const verificationIdRef = useRef<string | null>(null);
-
-  const getVerifier = useCallback((): RecaptchaVerifier => {
-    if (!verifierRef.current) {
-      verifierRef.current = new RecaptchaVerifier(
-        getFirebaseAuth(),
-        recaptchaRef.current!,
-        { size: "invisible" },
-      );
-    }
-    return verifierRef.current;
-  }, []);
-
   const [step, setStepRaw] = useState<Step>("email");
-  // Firebase's Auth service stopped accepting verifyPhoneNumber from the
-  // hostname `localhost` for REAL numbers in July 2024 (firebase-js-sdk#8387).
-  // The error it returns, auth/invalid-app-credential, says nothing about
-  // that, so the phone step says it instead — only on localhost, where it is
-  // true — and names the loopback dev root that Firebase does accept
-  // (lib/store/host.ts → LOCAL_DEV_ROOT).
-  const [onLocalhost, setOnLocalhost] = useState(false);
-  const [devPort, setDevPort] = useState("");
-  useEffect(() => {
-    const h = window.location.hostname;
-    setOnLocalhost(h === "localhost" || h.endsWith(".localhost"));
-    setDevPort(window.location.port);
-  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [recoveryRequired, setRecoveryRequired] = useState(false);
@@ -188,19 +198,29 @@ export default function SignupPage() {
   //
   // There is ONE `error` state and ONE banner, rendered above whichever step is
   // showing — so any transition that forgets to clear it carries the last
-  // step's failure onto the next one, where it describes nothing. Two of the
-  // fourteen transitions forgot: `resumeWizard` (which jumps straight to
-  // phone/name from the session cookie) and the theme step's Continue.
-  //
-  // Clearing at each call site is what produced the bug; the fifteenth site
-  // would have forgotten too. Going through here makes it structural — a step
-  // change cannot leave a stale error behind. Where an error must SURVIVE a
-  // transition (nothing does today), set it after the call.
-  const setStep = useCallback((next: Step) => {
+  // step's failure onto the next one, where it describes nothing. Going through
+  // here makes it structural — a step change cannot leave a stale error
+  // behind. ⚠ The flip side: an error that must SURVIVE a transition is set
+  // AFTER the call. Store creation once set its error and THEN called setStep,
+  // which erased it, so a failed store creation returned in silence.
+  function setStep(next: Step) {
     setError("");
     setRecoveryRequired(false);
     setStepRaw(next);
-  }, []);
+  }
+
+  // The banner sits above the step, and the plan step is long enough that the
+  // button which failed is a screen below it. Bring it into view, or a refusal
+  // reads as a button that did nothing.
+  const errorRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (error) {
+      errorRef.current?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
+    }
+  }, [error]);
 
   // Account
   const [email, setEmail] = useState("");
@@ -212,18 +232,13 @@ export default function SignupPage() {
   const [operatorLogOnly, setOperatorLogOnly] = useState(false);
   const [devConsoleOnly, setDevConsoleOnly] = useState(false);
 
-  // Phone
-  const [phone, setPhone] = useState<string | undefined>("");
-  const [phoneCode, setPhoneCode] = useState("");
-  const [phoneSent, setPhoneSent] = useState(false);
-
   // You
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
 
-  // Store. The country defaults from the verified phone's dial code (see
-  // handleVerifyPhoneOtp) and stays editable; the full address is collected
-  // later on the dashboard, where the go-live checklist requires it.
+  // Store. The country defaults to the platform's home country and stays
+  // editable; the full address is collected later on the dashboard, where the
+  // go-live checklist requires it.
   const [name, setName] = useState("");
   const [country, setCountry] = useState(DEFAULT_COUNTRY);
   // Consent. `agreed` gates BOTH signup paths (email and Google) because both
@@ -235,9 +250,35 @@ export default function SignupPage() {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const seq = useRef(0);
 
-  // Theme
-  const [template, setTemplate] = useState<string>(defaultThemeId);
-  const [themeFilter, setThemeFilter] = useState<ThemeIndustry | "all">("all");
+  // Plan. Prices are server state (lib/plans/signup-quote.ts): the step shows
+  // the live quote or, when it cannot be read, Free only.
+  const [quoteState, setQuoteState] = useState<QuoteState>({ status: "idle" });
+  const quoteSeq = useRef(0);
+  const [plan, setPlan] = useState<Plan>("basic");
+  const planTouched = useRef(false);
+  const [period, setPeriod] = useState<BillingPeriod>("monthly");
+  // ★ Only ever a REQUEST, and only ever the sideways move to card: the server
+  // derives the rail from the charge, and "upi" here means "no override".
+  const [mandateMethod, setMandateMethod] = useState<MandateMethod>("upi");
+  const [planPhase, setPlanPhaseRaw] = useState<PlanPhase>("choose");
+  // A non-error message on the Plan step: a dismissed payment window, or a
+  // price that changed while the page was open.
+  const [planNotice, setPlanNotice] = useState<string | null>(null);
+  const [paymentIssue, setPaymentIssue] = useState("");
+  // What the spinner on the Plan step's button is waiting for.
+  const [progress, setProgress] = useState<string | null>(null);
+  const [store, setStore] = useState<CreatedStore | null>(null);
+  const [verifiedPhone, setVerifiedPhone] = useState<string | null>(null);
+  const [creating, setCreating] = useState({
+    title: "Creating your store…",
+    detail: "Setting up your store and dashboard.",
+  });
+
+  function setPlanPhase(next: PlanPhase) {
+    setError("");
+    setPlanNotice(null);
+    setPlanPhaseRaw(next);
+  }
 
   async function restartSignup() {
     setBusy(true);
@@ -247,38 +288,55 @@ export default function SignupPage() {
     window.location.assign("/signup");
   }
 
+  /** Prefill what the account already knows (Google supplies names). */
+  function applyResume(info: SignupResume) {
+    if (info.email) setEmail(info.email);
+    if (info.firstName) setFirstName(info.firstName);
+    if (info.lastName) setLastName(info.lastName);
+  }
+
   // Place the wizard at the right step for the current session: an account that
   // already owns a store goes to its dashboard; one with a session but no store
-  // jumps to phone (or name, if phone is already verified). Used both on mount
-  // (refreshed tab) and right after Google sign-in. Returns true if a session
-  // was found.
-  const resumeWizard = useCallback(async (): Promise<boolean> => {
-    const info = await getSignupResumeInfo();
+  // jumps to the first step it has not finished. Returns true if a session was
+  // found.
+  function routeFromResume(info: SignupResume): boolean {
     if (!info.authenticated) return false;
     if (info.hasStore && info.slug) {
       window.location.href = dashboardUrl(info.slug);
       return true;
     }
-    if (info.email) setEmail(info.email);
-    if (info.firstName) setFirstName(info.firstName);
-    if (info.lastName) setLastName(info.lastName);
-    setStep(
-      !info.emailConfirmed
-        ? "email-code"
-        : info.phoneConfirmed
-          ? "store"
-          : "phone",
-    );
+    // A session with no email is not a signup in progress: merchant signup
+    // always begins with an email, typed or Google's. It is a SHOPPER's
+    // phone-OTP session from a storefront (the cookie spans .storemink.com),
+    // and resuming it put them on an email-code screen for an address they
+    // never gave. Treat it as signed out; creating the account replaces it.
+    if (!info.email) return false;
+    applyResume(info);
+    setStep(info.emailConfirmed ? "store" : "email-code");
     return true;
-  }, [setStep]);
+  }
 
-  // On mount: resume a refreshed tab from the existing session cookie.
+  /** Ask the server where this session stands and go there. Used right after
+   *  Google sign-in. */
+  async function resumeWizard(): Promise<boolean> {
+    return routeFromResume(await getSignupResumeInfo());
+  }
+
+  // On mount: resume a refreshed tab from the existing session cookie. The step
+  // changes when the reply arrives, never during the effect itself. A failure
+  // only means the wizard starts at the email step, as it would for a first
+  // visit.
+  const onResumeInfo = useEffectEvent((info: SignupResume) => {
+    routeFromResume(info);
+  });
   const resumed = useRef(false);
   useEffect(() => {
     if (resumed.current) return;
     resumed.current = true;
-    void resumeWizard();
-  }, [resumeWizard]);
+    getSignupResumeInfo()
+      .then((info) => onResumeInfo(info))
+      .catch(() => {});
+  }, []);
 
   // ── Slug availability (store step) ───────────────────────────────────────
   function onNameChange(value: string) {
@@ -291,17 +349,22 @@ export default function SignupPage() {
     setCheck({ status: "checking" });
     const mySeq = ++seq.current;
     timer.current = setTimeout(async () => {
-      const result = await checkStoreSlugAvailability(value);
+      let result: SlugCheck;
+      try {
+        result = await checkStoreSlugAvailability(value);
+      } catch {
+        // Without this the hint read "Checking availability…" for ever and
+        // Continue never enabled.
+        result = {
+          slug: value.trim().toLowerCase().replace(/\s+/g, "-"),
+          available: false,
+          reason: "We couldn't check that name. Try again in a moment.",
+        };
+      }
       if (mySeq === seq.current) setCheck({ status: "done", result });
     }, 400);
   }
   const isNameAvailable = check.status === "done" && check.result.available;
-  const currentSlug =
-    check.status === "done"
-      ? check.result.slug
-      : name.trim()
-        ? name.trim().toLowerCase().replace(/\s+/g, "-")
-        : "your-store";
   function slugHint() {
     if (check.status === "idle")
       return { cls: "neutral", text: `your-store.${ROOT_DOMAIN}` };
@@ -309,27 +372,11 @@ export default function SignupPage() {
       return { cls: "neutral", text: "Checking availability…" };
     const r = check.result;
     return r.available
-      ? { cls: "ok", text: `${r.slug}.${ROOT_DOMAIN} is available ✓` }
+      ? { cls: "ok", text: `${r.slug}.${ROOT_DOMAIN} is available` }
       : { cls: "bad", text: r.reason ?? "Not available" };
   }
 
   // ── Account ──────────────────────────────────────────────────────────────
-  function continueFromEmail() {
-    if (!EMAIL_RE.test(email.trim())) {
-      setError("Enter a valid email address.");
-      return;
-    }
-    // Checked here as well as via the disabled button: `disabled` is a UI
-    // affordance, and this is the only client-side gate before an account is
-    // created. (The real guarantee is the server-side acceptance write.)
-    if (!agreed) {
-      setError(`Please accept ${CONSENT_DOC_NAMES} to continue.`);
-      return;
-    }
-    setError("");
-    setStep("password");
-  }
-
   async function handleGoogle() {
     if (!agreed) {
       setError(`Please accept ${CONSENT_DOC_NAMES} to continue.`);
@@ -359,22 +406,55 @@ export default function SignupPage() {
     }
   }
 
+  /** Send (or resend) the email code and show its screen. Returns whether a
+   *  code went out; throws on a network failure. */
+  async function sendEmailCode(): Promise<boolean> {
+    const otp = await requestSignupEmailOtp();
+    if (otp.alreadyVerified) {
+      setStep("store");
+      return false;
+    }
+    setEmailCodeSent((sent) => sent || otp.ok);
+    setOperatorLogOnly(otp.operatorLogOnly === true);
+    setDevConsoleOnly(otp.devConsoleOnly === true);
+    setEmailCode("");
+    setStep("email-code");
+    // After the transition: setStep clears the banner.
+    if (!otp.ok) {
+      setError(otp.error ?? "We couldn't send a verification code.");
+    }
+    return otp.ok;
+  }
+
   async function handleCreateAccount() {
+    if (!EMAIL_RE.test(email.trim())) {
+      setError("Enter a valid email address.");
+      return;
+    }
     if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+      setError("Use a password of at least 8 characters.");
+      return;
+    }
+    // The only client-side gate before an account is created. The real
+    // guarantee is the server-side acceptance write.
+    if (!agreed) {
+      setError(`Please accept ${CONSENT_DOC_NAMES} to continue.`);
       return;
     }
     setBusy(true);
     setError("");
     const auth = getFirebaseAuth();
+    // True when the email already had a login and this password opened it.
+    let existingAccount = false;
     try {
       await createUserWithEmailAndPassword(auth, email.trim(), password);
     } catch (err) {
       // The email may already have an account — try signing in with the same
-      // credentials to recover a returning owner and resume at the phone step.
+      // credentials to recover a returning owner.
       if ((err as { code?: string })?.code === "auth/email-already-in-use") {
         try {
           await signInWithEmailAndPassword(auth, email.trim(), password);
+          existingAccount = true;
         } catch {
           // A different password. If that login holds no StoreMink role — a
           // deleted store's owner, or an abandoned signup — the server frees
@@ -412,271 +492,490 @@ export default function SignupPage() {
         return;
       }
     }
-    // Exchange the fresh ID token for the session cookie the server reads.
-    const sessErr = await establishSession();
-    if (sessErr) {
+
+    try {
+      // Exchange the fresh ID token for the session cookie the server reads.
+      const sessErr = await establishSession();
+      if (sessErr) {
+        setBusy(false);
+        setError(sessErr);
+        return;
+      }
+      // Same as the Google path: consent is recorded server-side the moment
+      // there is an identity to attach it to.
+      await acceptPlatformPolicies({ marketingOptIn: marketing });
+
+      // ★ A password that opened an EXISTING account must not walk its owner
+      // back through steps they already finished. It used to: an owner who
+      // came to the signup page instead of the login page re-verified their
+      // contact details, named a store, picked a theme, and was then refused
+      // with "This account already has a store". An owner goes to their
+      // dashboard; a half-finished signup resumes where it stopped.
+      if (existingAccount) {
+        const info = await getSignupResumeInfo();
+        if (info.hasStore && info.slug) {
+          window.location.href = dashboardUrl(info.slug);
+          return; // stays busy while the dashboard loads
+        }
+        applyResume(info);
+        if (info.emailConfirmed) {
+          setBusy(false);
+          setStep("store");
+          return;
+        }
+      }
+
+      await sendEmailCode();
       setBusy(false);
-      setError(sessErr);
-      return;
+    } catch {
+      setBusy(false);
+      setError(NETWORK_ERROR);
     }
-    // Same as the Google path: consent is recorded server-side the moment
-    // there is an identity to attach it to.
-    await acceptPlatformPolicies({ marketingOptIn: marketing });
-    const otp = await requestSignupEmailOtp();
-    setBusy(false);
-    if (otp.alreadyVerified) {
-      setStep("phone");
-      return;
-    }
-    setEmailCodeSent(otp.ok);
-    setOperatorLogOnly(otp.operatorLogOnly === true);
-    setDevConsoleOnly(otp.devConsoleOnly === true);
-    setStep("email-code");
-    if (otp.error) setError(otp.error);
   }
 
   async function handleSendEmailOtp() {
     setBusy(true);
     setError("");
-    const result = await requestSignupEmailOtp();
+    try {
+      await sendEmailCode();
+    } catch {
+      setError(NETWORK_ERROR);
+    }
     setBusy(false);
-    if (!result.ok) {
-      setError(result.error ?? "We couldn't send a verification code.");
-      return;
-    }
-    if (result.alreadyVerified) {
-      setStep("phone");
-      return;
-    }
-    setEmailCodeSent(true);
-    setOperatorLogOnly(result.operatorLogOnly === true);
-    setDevConsoleOnly(result.devConsoleOnly === true);
   }
 
-  async function handleVerifyEmailOtp() {
+  async function handleVerifyEmailOtp(code: string = emailCode) {
+    if (busy || code.length !== 6) return;
     setBusy(true);
     setError("");
     setRecoveryRequired(false);
-    const result = await verifySignupEmailOtp(emailCode);
-    if (!result.ok) {
-      if (result.staleSession) {
-        // A deleted Firebase user can leave a signature-valid 14-day server
-        // cookie behind. Re-exchange the browser's current user; the session
-        // route also evicts any legacy host-only cookie shadowing the fresh
-        // shared-domain cookie. The old OTP was UID-bound, so issue a new one.
-        const sessionError = await establishSession(true);
-        if (sessionError) {
-          setBusy(false);
-          setRecoveryRequired(true);
-          setError(
-            "Your session expired. Start again with this email, or log in if you already finished creating the account.",
-          );
-          return;
-        }
-        const otp = await requestSignupEmailOtp();
-        setBusy(false);
-        if (!otp.ok) {
-          setError(otp.error ?? "We couldn't send a new verification code.");
-          return;
-        }
-        if (otp.alreadyVerified) {
-          setStep("phone");
-          return;
-        }
-        setEmailCode("");
-        setEmailCodeSent(true);
-        setOperatorLogOnly(otp.operatorLogOnly === true);
-        setDevConsoleOnly(otp.devConsoleOnly === true);
-        setError("Your session was refreshed. Enter the new code we sent.");
-        return;
-      }
-      setBusy(false);
-      setError(result.error ?? "That code couldn't be verified.");
-      return;
-    }
-
-    // The Admin SDK changed the server record. Reload the browser user, then
-    // mint a session cookie carrying the new email_verified claim.
     try {
-      await getFirebaseAuth().currentUser?.reload();
-      const sessionError = await establishSession(true);
-      if (sessionError) {
+      const result = await verifySignupEmailOtp(code);
+      if (!result.ok) {
+        if (result.staleSession) {
+          // A deleted Firebase user can leave a signature-valid 14-day server
+          // cookie behind. Re-exchange the browser's current user; the session
+          // route also evicts any legacy host-only cookie shadowing the fresh
+          // shared-domain cookie. The old OTP was UID-bound, so issue a new one.
+          const sessionError = await establishSession(true);
+          if (sessionError) {
+            setBusy(false);
+            setRecoveryRequired(true);
+            setError(
+              "Your session expired. Start again with this email, or log in if you already finished creating the account.",
+            );
+            return;
+          }
+          const sent = await sendEmailCode();
+          setBusy(false);
+          if (sent) {
+            setError("Your session was refreshed. Enter the new code we sent.");
+          }
+          return;
+        }
         setBusy(false);
-        setError(sessionError);
+        setError(result.error ?? "That code couldn't be verified.");
         return;
       }
+
+      // The Admin SDK changed the server record. Reload the browser user, then
+      // mint a session cookie carrying the new email_verified claim.
+      //
+      // ★★ BOTH ARE BEST-EFFORT. The code was right, and the account record
+      // now says verified, which the server reads whenever the cookie still
+      // says otherwise (lib/auth/email-verified.ts). This used to stop on
+      // "You're not signed in" whenever the browser could not refresh its
+      // session (a reloaded tab, where Firebase had not finished restoring the
+      // sign-in), after the code had already worked, and every retry then
+      // asked for a new code.
+      const browserUser = await getCurrentFirebaseUser().catch(() => null);
+      await browserUser?.reload().catch(() => undefined);
+      await establishSession(true).catch(() => null);
     } catch {
       setBusy(false);
-      setError(
-        "Email verified, but the session couldn't refresh. Please reload.",
-      );
+      setError(NETWORK_ERROR);
       return;
     }
     setBusy(false);
-    setStep("phone");
+    setStep("store");
   }
 
-  // ── Phone ────────────────────────────────────────────────────────────────
-  async function handleSendPhoneOtp() {
-    if (!phone || !isValidPhoneNumber(phone)) {
-      setError("Enter a valid phone number.");
+  // ── Plan ─────────────────────────────────────────────────────────────────
+  /** Load the live prices for the Plan step. A newer request wins, so going
+   *  Back and Continue again cannot let an older answer land last. */
+  async function loadQuote() {
+    const mySeq = ++quoteSeq.current;
+    setQuoteState({ status: "loading" });
+    const quote = await fetchSignupQuote();
+    if (mySeq !== quoteSeq.current) return;
+    if (!quote) {
+      setQuoteState({ status: "failed" });
       return;
     }
-    setBusy(true);
-    setError("");
-    try {
-      const provider = new PhoneAuthProvider(getFirebaseAuth());
-      verificationIdRef.current = await provider.verifyPhoneNumber(
-        phone,
-        getVerifier(),
-      );
-      setPhoneSent(true);
-    } catch (err) {
-      // The merchant-facing sentence deliberately hides the provider's code;
-      // the console keeps it, because "the security check didn't complete"
-      // covers three different Firebase failures with three different fixes.
-      console.error("signup: phone verification failed", err);
-      setError(phoneLinkErrorMessage(err));
-    }
-    setBusy(false);
+    setQuoteState({ status: "ready", quote });
+    // Basic is preselected because it is the plan most new brands need; Skip
+    // sits right under the button. Without the platform's own gateway no paid
+    // plan can be bought here, so Free is the only real choice.
+    if (!quote.paidCheckout) setPlan("free");
+    else if (!planTouched.current) setPlan("basic");
   }
 
-  async function handleVerifyPhoneOtp() {
-    if (!phone || !verificationIdRef.current) return;
-    setBusy(true);
-    setError("");
-    try {
-      const credential = PhoneAuthProvider.credential(
-        verificationIdRef.current,
-        phoneCode.trim(),
-      );
-      const user = getFirebaseAuth().currentUser;
-      if (!user) throw new Error("Not signed in.");
-      await updatePhoneNumber(user, credential);
-      // Re-mint the session cookie so it carries the verified phone —
-      // createStore enforces phone_confirmed server-side.
-      await establishSession(true);
-      // The country they sell from is almost always the country of the phone
-      // they just verified. A default, not a lock: the store step shows it.
-      const dial = parsePhoneNumber(phone)?.country;
-      if (dial && COUNTRIES.some((c) => c.code === dial)) setCountry(dial);
-      setBusy(false);
-      setStep("store");
-    } catch (err) {
-      setBusy(false);
-      setError(phoneLinkErrorMessage(err));
-    }
+  function goToPlan() {
+    setPlanPhaseRaw("choose");
+    setPlanNotice(null);
+    setStep("plan");
+    if (quoteState.status !== "ready") void loadQuote();
   }
 
-  // ── Finalize ───────────────────────────────────────────────────────────────
-  // Signup never asks for money. Every store starts on Free, reaches a working
-  // dashboard immediately, and can authorise a paid subscription later from
-  // Plans & Billing where payment recovery has a dedicated surface.
-  async function finalize() {
-    setBusy(true);
+  function choosePlan(next: Plan) {
+    planTouched.current = true;
+    setPlan(next);
+    setPlanNotice(null);
     setError("");
+  }
+
+  function choosePeriod(next: BillingPeriod) {
+    setPeriod(next);
+    setPlanNotice(null);
+    setError("");
+  }
+
+  /**
+   * Create the store, once.
+   *
+   * ★ EVERY PATH THROUGH THE PLAN STEP CREATES THE STORE FIRST, ON FREE.
+   * Payment comes after, so a merchant who closes the payment window still has
+   * a store, and nothing about a paid plan can leave them with none.
+   *
+   * Before offering a retry it asks the server where the account stands.
+   * "This account already has a store" and a lost reply to a request that
+   * succeeded both mean the store exists, and a retry could only be refused as
+   * a duplicate. A verification the server no longer sees (an expired session,
+   * say) sends the merchant back to the step that fixes it, rather than to a
+   * button that will refuse again.
+   */
+  async function ensureStore(): Promise<EnsureStoreResult> {
+    if (store) return { ok: true, store };
+    let res: CreateStoreResult;
+    try {
+      res = await createStore({ name, firstName, lastName, country });
+    } catch {
+      // The request failed in transit, which says nothing about whether the
+      // store exists: the server may have created it and lost only the reply.
+      res = { error: NETWORK_ERROR };
+    }
+    if (!res.error && res.storeId && res.slug) {
+      const made = {
+        slug: res.slug,
+        phoneVerified: res.phoneVerified === true,
+      };
+      setStore(made);
+      return { ok: true, store: made };
+    }
+
+    let back: Step = "plan";
+    try {
+      const info = await getSignupResumeInfo();
+      if (info.hasStore && info.slug) {
+        const made = {
+          slug: info.slug,
+          phoneVerified: info.phoneVerified === true,
+        };
+        setStore(made);
+        return { ok: true, store: made };
+      }
+      if (info.authenticated && !info.emailConfirmed) back = "email-code";
+    } catch {
+      // Fall through to the error below.
+    }
+    return {
+      ok: false,
+      back,
+      error: res.error ?? "We couldn't create your store. Please try again.",
+    };
+  }
+
+  /** Free, or Skip: create the store if this signup hasn't yet, then open its
+   *  dashboard. */
+  async function startOnFree() {
+    setBusy(true);
+    setProgress(null);
+    setCreating(
+      store
+        ? {
+            title: "Opening your dashboard…",
+            detail: "Your store is ready on the Free plan.",
+          }
+        : {
+            title: `Creating ${name.trim() || "your store"}…`,
+            detail: "Setting up your store and dashboard.",
+          },
+    );
     setStep("creating");
+    const made = await ensureStore();
+    if (made.ok) {
+      window.location.href = dashboardUrl(made.store.slug);
+      return; // stays busy while the dashboard loads
+    }
+    setBusy(false);
+    setPlanPhaseRaw("choose");
+    setStep(made.back);
+    // After the transition: setStep clears the banner.
+    setError(made.error);
+  }
 
-    const res = await createStore({
-      name,
-      template,
-      firstName,
-      lastName,
-      country,
-    });
-    if (res.error || !res.storeId || !res.slug) {
-      setError(res.error ?? "Could not create your store.");
-      setBusy(false);
-      setStep("theme");
+  /** A paid plan: confirm the price, create the store, verify the owner's
+   *  mobile if it isn't yet, then take the payment. */
+  async function continueWithPlan() {
+    if (
+      quoteState.status !== "ready" ||
+      !quoteState.quote.paidCheckout ||
+      plan === "free"
+    ) {
+      await startOnFree();
       return;
     }
-    window.location.href = dashboardUrl(res.slug);
+    const shown = chargeFor(quoteState.quote.plans[plan], period);
+    setBusy(true);
+    setError("");
+    setPlanNotice(null);
+    setProgress("Checking the price…");
+
+    // ★ A PRICE CAN CHANGE WHILE THE PAGE IS OPEN. An operator reprice reaches
+    // the server at once, and a card that shows one amount while Razorpay asks
+    // for another is how a signup ends in a dispute. If the price cannot be
+    // re-read, carry on: the server computes the charge and Razorpay shows it
+    // before anything is paid.
+    const mySeq = ++quoteSeq.current;
+    const fresh = await fetchSignupQuote();
+    if (fresh && mySeq === quoteSeq.current) {
+      setQuoteState({ status: "ready", quote: fresh });
+      if (!fresh.paidCheckout) {
+        setPlan("free");
+        setBusy(false);
+        setProgress(null);
+        setPlanNotice(
+          "Paying for a plan isn't available right now. Start on Free and upgrade from your dashboard when you're ready.",
+        );
+        return;
+      }
+      const now = chargeFor(fresh.plans[plan], period);
+      if (now !== shown) {
+        setBusy(false);
+        setProgress(null);
+        setPlanNotice(
+          `The ${PLAN_META[plan].name} price has just changed to ${formatInr(now)} a ${periodWord(period)}. Check it, then continue.`,
+        );
+        return;
+      }
+    }
+
+    setProgress(store ? null : "Creating your store…");
+    const made = await ensureStore();
+    if (!made.ok) {
+      setBusy(false);
+      setProgress(null);
+      if (made.back !== "plan") setStep(made.back);
+      setError(made.error);
+      return;
+    }
+
+    // Razorpay needs a verified mobile on the billing account before it can
+    // take any payment (lib/billing/enrol.ts → ensureRzpCustomer).
+    if (!made.store.phoneVerified) {
+      setBusy(false);
+      setProgress(null);
+      setPlanPhase("phone");
+      return;
+    }
+    await pay(made.store, verifiedPhone ?? undefined);
+  }
+
+  /** The mobile is verified: carry straight on to the payment. */
+  function onPhoneVerified(phone: string) {
+    setVerifiedPhone(phone);
+    if (!store) return;
+    const made = { ...store, phoneVerified: true };
+    setStore(made);
+    setPlanPhase("choose");
+    void pay(made, phone);
+  }
+
+  async function pay(made: CreatedStore, contact?: string) {
+    const chosen = plan;
+    const chosenPeriod = period;
+    setBusy(true);
+    setError("");
+    setPlanNotice(null);
+    setProgress("Opening payment…");
+
+    let start: SubscribeStart;
+    try {
+      start = await startSignupSubscribe(chosen, chosenPeriod, mandateMethod);
+    } catch {
+      start = { ok: false, error: NETWORK_ERROR };
+    }
+    if (!start.ok) {
+      setBusy(false);
+      setProgress(null);
+      setError(start.error);
+      return;
+    }
+
+    const invoiceId = start.invoiceId;
+    const ownerName = `${firstName} ${lastName}`.trim();
+    const opened = await openRazorpayModal({
+      keyId: start.keyId,
+      rzpOrderId: start.providerOrderId,
+      amountPaise: start.amountPaise,
+      // ★★ OMITTED WHEN THERE IS NO MANDATE. `openRazorpayModal` sends
+      // `recurring: true` alongside a customer id, and asking Checkout to treat
+      // a plain one-time order as recurring is the mismatch that once showed a
+      // Cards-only screen.
+      customerId: start.autopay ? start.providerCustomerId : undefined,
+      name: "StoreMink",
+      description: `${PLAN_META[chosen].name} plan, first ${periodWord(chosenPeriod)}`,
+      prefill: {
+        name: ownerName || undefined,
+        email: email.trim() || undefined,
+        contact,
+      },
+      themeColor: "#573cf0",
+      onSuccess: (response) =>
+        void confirmPayment(made, chosen, invoiceId, response),
+      onDismiss: () => {
+        setBusy(false);
+        setProgress(null);
+        // ★ Not "nothing was charged": a UPI request can still be approved in
+        // the app after the window closes, and reconciliation then settles it.
+        setPlanNotice(
+          "Payment wasn't completed. Your store is ready on the Free plan, so you can try again, choose another plan, or continue on Free.",
+        );
+      },
+    });
+    if (!opened) {
+      setBusy(false);
+      setProgress(null);
+      setError(
+        "We couldn't open the payment window. Check your connection and try again.",
+      );
+    }
+  }
+
+  async function confirmPayment(
+    made: CreatedStore,
+    chosen: Plan,
+    invoiceId: string,
+    response: RazorpaySuccess,
+  ) {
+    setCreating({
+      title: "Confirming your payment…",
+      detail: `Then your store moves to the ${PLAN_META[chosen].name} plan.`,
+    });
+    setStep("creating");
+    let confirmed: SubscribeConfirm;
+    try {
+      confirmed = await confirmSignupSubscribe(
+        invoiceId,
+        response.razorpay_payment_id,
+        response.razorpay_signature,
+      );
+    } catch {
+      confirmed = {
+        ok: false,
+        error:
+          "We couldn't confirm your payment just now. If it went through, it is matched to your store automatically.",
+      };
+    }
+    if (confirmed.ok) {
+      window.location.href = dashboardUrl(made.slug);
+      return; // stays busy while the dashboard loads
+    }
+    // ★ NEVER OFFER TO PAY AGAIN FROM HERE. The money may well have moved, and
+    // the server's message says what happened; the dashboard is where the
+    // outcome becomes visible.
+    setBusy(false);
+    setProgress(null);
+    setPaymentIssue(confirmed.error);
+    setPlanPhaseRaw("confirm-failed");
+    setStep("plan");
   }
 
   const h = slugHint();
   const stage = stageOf(step);
-
-  // Which steps show a Back control (and where it goes).
-  const BACK: Partial<Record<Step, Step>> = {
-    password: "email",
-    theme: "store",
-  };
-
-  const width = step === "theme" ? "max-w-5xl" : "max-w-md";
+  const quote = quoteState.status === "ready" ? quoteState.quote : null;
+  const paidSelected = !!quote && quote.paidCheckout && plan !== "free";
+  const planCta = paidSelected
+    ? `Continue with ${PLAN_META[plan].name} · ${formatInr(chargeFor(quote.plans[plan], period))}/${periodWord(period)}`
+    : store
+      ? "Continue on Free"
+      : "Start on Free";
+  const wideCard = step === "plan" && planPhase === "choose";
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* Invisible reCAPTCHA anchor for Identity Platform phone verification. */}
-      <div ref={recaptchaRef} />
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-        <Link
-          href="/"
-          className="font-bold text-xl text-gray-900 tracking-tight flex items-center"
-        >
-          Store<span className="text-primary">Mink</span>
+    <div className="sgn">
+      <header className="sgn-header">
+        <Link href="/" className="sgn-logo" aria-label="StoreMink home">
+          <BrandMark size={26} priority />
+          <span aria-hidden="true">
+            Store<em>Mink</em>
+          </span>
         </Link>
-        <div className="flex items-center gap-4 text-sm font-medium">
-          {step !== "email" && step !== "password" && step !== "creating" && (
+        <div className="sgn-header-actions">
+          {/* Once the store exists there is nothing to start over: signing
+              out would only send the owner back to the dashboard they have. */}
+          {step !== "email" && step !== "creating" && !store && (
             <button
               type="button"
               onClick={restartSignup}
               disabled={busy}
-              className="inline-flex items-center gap-1.5 text-gray-500 hover:text-gray-900 disabled:opacity-50"
+              className="sgn-restart"
             >
-              <RotateCcw className="h-3.5 w-3.5" /> Start over
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /> Start
+              over
             </button>
           )}
-          <p className="text-gray-500">
+          <p>
             {/* The question is decoration on a phone: with Start over beside
                 it the header runs out of width at 375px. The link is the
                 part that matters. */}
-            <span className="hidden sm:inline">Already selling? </span>
-            <Link
-              href="/platform/login"
-              className="text-primary hover:underline"
-            >
-              Log in
-            </Link>
+            <span className="sgn-header-ask">Already have an account? </span>
+            <Link href="/login">Log in</Link>
           </p>
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col items-center px-4 pt-8 pb-20">
-        {/* Progress stepper */}
-        {step !== "creating" && (
-          <div className="w-full max-w-md mb-8">
-            <div className="flex items-center gap-1.5">
-              {STAGES.map((label, i) => (
-                <div key={label} className="flex-1">
-                  <div
-                    className={`h-1.5 rounded-full transition-colors ${
-                      i <= stage ? "bg-primary" : "bg-gray-200"
-                    }`}
-                  />
-                </div>
-              ))}
+      <main className="sgn-main">
+        <div className={`sgn-card${wideCard ? " is-wide" : ""}`}>
+          {/* Progress stepper */}
+          {step !== "creating" && (
+            <div className="sgn-progress">
+              <div className="sgn-progress-bar" aria-hidden="true">
+                {STAGES.map((label, i) => (
+                  <span key={label} className={i <= stage ? "is-done" : ""} />
+                ))}
+              </div>
+              <p>
+                Step {stage + 1} of {STAGES.length} · {STAGES[stage]}
+              </p>
             </div>
-            <p className="mt-2 text-xs font-medium text-gray-500">
-              Step {stage + 1} of {STAGES.length} · {STAGES[stage]}
-            </p>
-          </div>
-        )}
+          )}
 
-        <div className={`w-full ${width}`}>
           {error && (
             <div
+              ref={errorRef}
               role="alert"
               aria-live="assertive"
-              className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700"
+              className="sgn-note is-error"
             >
               <p>{error}</p>
               {recoveryRequired && (
-                <div className="mt-4 flex flex-wrap gap-3">
+                <div className="sgn-note-actions">
                   <button
                     type="button"
                     onClick={restartSignup}
                     disabled={busy}
-                    className="stq-btn stq-btn-primary inline-flex h-10 items-center gap-2 px-4"
+                    className="sgn-btn sgn-btn-primary is-auto"
                   >
                     {busy ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -686,8 +985,8 @@ export default function SignupPage() {
                     Start signup again
                   </button>
                   <Link
-                    href="/platform/login"
-                    className="stq-btn stq-btn-ghost inline-flex h-10 items-center px-4"
+                    href="/login"
+                    className="sgn-btn sgn-btn-outline is-auto"
                   >
                     Go to login
                   </Link>
@@ -698,48 +997,43 @@ export default function SignupPage() {
 
           {/* ── Email ─────────────────────────────────────────────── */}
           {step === "email" && (
-            <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                Start your free store
-              </h1>
-              <p className="text-gray-500 mb-8">
-                Enter your email to create your StoreMink account.
-              </p>
+            <div className="sgn-step">
+              <h1 className="sgn-title">Create your StoreMink account</h1>
+              <p className="sgn-sub">Start free. No credit card needed.</p>
 
               <button
                 type="button"
                 onClick={handleGoogle}
                 disabled={googleLoading}
                 aria-describedby="signup-consent-help"
-                className="w-full h-12 flex items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white font-semibold text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60"
+                className="sgn-btn sgn-btn-outline"
               >
                 {googleLoading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <Loader2 className="h-5 w-5 animate-spin" />
                 ) : (
                   <GoogleIcon />
                 )}
                 Continue with Google
               </button>
 
-              <div className="my-6 flex items-center gap-3">
-                <div className="h-px flex-1 bg-gray-200" />
-                <span className="text-xs font-medium text-gray-400">OR</span>
-                <div className="h-px flex-1 bg-gray-200" />
-              </div>
+              <div className="sgn-or">or</div>
 
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  continueFromEmail();
+                  void handleCreateAccount();
                 }}
+                className="sgn-stack"
               >
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-semibold text-gray-700">
+                <div className="sgn-field">
+                  <label className="sgn-label" htmlFor="signup-email">
                     Email address
                   </label>
                   <input
+                    id="signup-email"
+                    name="email"
                     type="email"
-                    className="stq-input h-12"
+                    className="sgn-input"
                     placeholder="you@example.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -747,32 +1041,59 @@ export default function SignupPage() {
                     autoComplete="email"
                   />
                 </div>
+                <div className="sgn-field">
+                  <label className="sgn-label" htmlFor="signup-password">
+                    Password
+                  </label>
+                  <div className="sgn-password">
+                    <input
+                      id="signup-password"
+                      name="password"
+                      type={showPassword ? "text" : "password"}
+                      className="sgn-input"
+                      placeholder="At least 8 characters"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((s) => !s)}
+                      aria-label={
+                        showPassword ? "Hide password" : "Show password"
+                      }
+                    >
+                      {showPassword ? (
+                        <EyeOff className="h-5 w-5" />
+                      ) : (
+                        <Eye className="h-5 w-5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
                 <button
                   type="submit"
+                  disabled={busy}
                   aria-describedby="signup-consent-help"
-                  className="stq-btn stq-btn-primary w-full h-12 mt-6 flex items-center justify-center gap-2 disabled:opacity-60"
+                  className="sgn-btn sgn-btn-primary"
                 >
-                  Continue <ChevronRight className="w-5 h-5" />
+                  {busy ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    "Create account"
+                  )}
                 </button>
               </form>
 
               {/* Consent remains mandatory for both paths, but an enabled
                   button can explain WHY it cannot continue. A silently greyed
                   Google button looked like an OAuth outage. */}
-              <div
-                id="signup-consent-help"
-                className={`mt-7 flex flex-col gap-3 rounded-xl border p-4 transition-colors ${
-                  agreed
-                    ? "border-emerald-200 bg-emerald-50/50"
-                    : "border-amber-200 bg-amber-50/60"
-                }`}
-              >
-                <label className="flex cursor-pointer items-start gap-3">
+              <div id="signup-consent-help" className="sgn-consent">
+                <label className="sgn-check">
                   <input
                     type="checkbox"
                     checked={agreed}
                     onChange={(e) => setAgreed(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-indigo-600"
                   />
                   {/* Driven by the REGISTRY, not hardcoded: the same list
                       (signupRequiredDocs) decides what this sentence names,
@@ -780,10 +1101,7 @@ export default function SignupPage() {
                       re-acceptance gate checks. Hardcoding it here is how a
                       merchant ends up ticking a box for two documents while
                       the server records three. */}
-                  <span className="text-[13px] leading-relaxed text-gray-700">
-                    <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber-700">
-                      Required to create an account
-                    </span>
+                  <span>
                     I agree to StoreMink&apos;s{" "}
                     {CONSENT_DOCS.map((doc, i) => (
                       <span key={doc.kind}>
@@ -793,7 +1111,6 @@ export default function SignupPage() {
                           href={`/legal/${doc.slug}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="font-semibold text-indigo-600 underline"
                         >
                           {doc.title}
                         </a>
@@ -805,292 +1122,131 @@ export default function SignupPage() {
 
                 {/* Optional, and visibly so: unticked by default, gating
                     nothing. A pre-ticked marketing box is not consent either. */}
-                <label className="flex cursor-pointer items-start gap-3">
+                <label className="sgn-check is-quiet">
                   <input
                     type="checkbox"
                     checked={marketing}
                     onChange={(e) => setMarketing(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-indigo-600"
                   />
-                  <span className="text-[13px] leading-relaxed text-gray-500">
-                    Send me product updates and selling tips.{" "}
-                    <span className="text-gray-400">(Optional)</span>
+                  <span>
+                    Send me product updates and selling tips (optional).
                   </span>
                 </label>
               </div>
             </div>
           )}
 
-          {/* ── Password + email code — ONE screen ─────────────────
-              Continue creates the account and emails the code; the code field
-              then appears under the (now fixed) password rather than on a new
-              screen. Two steps internally, because the account exists only
-              after the first, but one screen to the merchant. */}
-          {(step === "password" || step === "email-code") && (
-            <div className="animate-in fade-in slide-in-from-right-2 duration-300">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                {step === "password" ? "Create a password" : "Check your email"}
-              </h1>
-              <p className="text-gray-500 mb-8">
-                {step === "password" ? (
+          {/* ── Email code ────────────────────────────────────────── */}
+          {step === "email-code" && (
+            <div className="sgn-step">
+              <h1 className="sgn-title">Check your email</h1>
+              <p className="sgn-sub">
+                {/* A refreshed tab lands here from the session alone, without
+                    this browser having sent anything, so the sentence must
+                    not claim a code was just sent. */}
+                {emailCodeSent ? (
                   <>
-                    Securing the account for{" "}
-                    <span className="font-medium text-gray-700">{email}</span>.
-                    We&apos;ll email you a six-digit code next.
+                    Enter the six-digit code we sent to <strong>{email}</strong>
+                    .
                   </>
                 ) : (
                   <>
-                    We sent a six-digit code to{" "}
-                    <span className="font-medium text-gray-700">{email}</span>.
-                    Enter it below to confirm the address.
+                    Enter the six-digit code emailed to <strong>{email}</strong>
+                    , or send a new one.
                   </>
                 )}
               </p>
 
-              {step === "password" && (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    handleCreateAccount();
-                  }}
-                >
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-semibold text-gray-700">
-                      Password
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? "text" : "password"}
-                        className="stq-input h-12 pr-11"
-                        placeholder="At least 8 characters"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        autoFocus
-                        autoComplete="new-password"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword((s) => !s)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                        tabIndex={-1}
-                        aria-label={
-                          showPassword ? "Hide password" : "Show password"
-                        }
-                      >
-                        {showPassword ? (
-                          <EyeOff className="w-5 h-5" />
-                        ) : (
-                          <Eye className="w-5 h-5" />
-                        )}
-                      </button>
-                    </div>
-                    <p className="text-xs text-gray-400 mt-1">
-                      Use 8 or more characters.
-                    </p>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={busy || password.length < 8}
-                    className="stq-btn stq-btn-primary w-full h-12 mt-6 flex items-center justify-center gap-2"
-                  >
-                    {busy ? (
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    ) : (
-                      <>
-                        Continue <ChevronRight className="w-5 h-5" />
-                      </>
-                    )}
-                  </button>
-                </form>
+              {operatorLogOnly && (
+                <div className="sgn-note is-info">
+                  This is a reserved test address, so no email was sent. The
+                  code is available in Operator dashboard → Email logs.
+                </div>
               )}
 
-              {step === "email-code" && (
-                <>
-                  {operatorLogOnly && (
-                    <div className="mb-5 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-800">
-                      This is a reserved test address, so no email was sent. The
-                      code is available in Operator dashboard → Email logs.
-                    </div>
-                  )}
+              {devConsoleOnly && (
+                <div className="sgn-note is-warn">
+                  Email isn&apos;t configured in this environment, so nothing
+                  was sent. The code is printed in your dev server terminal.
+                </div>
+              )}
 
-                  {devConsoleOnly && (
-                    <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                      Email isn&apos;t configured in this environment, so
-                      nothing was sent. The code is printed in your dev server
-                      terminal.
-                    </div>
-                  )}
-
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void handleVerifyEmailOtp();
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleVerifyEmailOtp();
+                }}
+                className="sgn-stack"
+              >
+                <div className="sgn-field">
+                  <label className="sgn-label" htmlFor="signup-email-code">
+                    Verification code
+                  </label>
+                  <input
+                    id="signup-email-code"
+                    type="text"
+                    className="sgn-input is-code"
+                    placeholder="000000"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    autoFocus
+                    value={emailCode}
+                    onChange={(event) => {
+                      const next = sixDigits(event.target.value);
+                      setEmailCode(next);
+                      // Six digits is the whole answer; asking for a second
+                      // tap adds nothing.
+                      if (next.length === 6) void handleVerifyEmailOtp(next);
                     }}
-                    className="flex flex-col gap-4"
-                  >
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-semibold text-gray-700">
-                        Verification code
-                      </label>
-                      <input
-                        type="text"
-                        className="stq-input h-12 text-center font-mono text-xl tracking-[0.35em]"
-                        placeholder="000000"
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        maxLength={6}
-                        autoFocus
-                        value={emailCode}
-                        onChange={(event) =>
-                          setEmailCode(event.target.value.replace(/\D/g, ""))
-                        }
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={busy || emailCode.length !== 6}
-                      className="stq-btn stq-btn-primary flex h-12 w-full items-center justify-center gap-2"
-                    >
-                      {busy ? (
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                      ) : (
-                        <>
-                          Verify email <ChevronRight className="h-5 w-5" />
-                        </>
-                      )}
-                    </button>
-                  </form>
-
-                  <button
-                    type="button"
-                    onClick={() => void handleSendEmailOtp()}
-                    disabled={busy}
-                    className="mt-4 text-sm font-medium text-gray-500 hover:text-primary disabled:opacity-50"
-                  >
-                    {emailCodeSent ? "Resend code" : "Send verification code"}
-                  </button>
-                  <p className="mt-2 text-xs text-gray-400">
-                    Codes expire after 10 minutes and can only be used in this
-                    browser.
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* ── Phone ─────────────────────────────────────────────── */}
-          {step === "phone" && (
-            <div className="animate-in fade-in slide-in-from-right-2 duration-300">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                Verify your phone
-              </h1>
-              <p className="text-gray-500 mb-8">
-                We&apos;ll text a one-time code to confirm it&apos;s you.
-              </p>
-
-              {onLocalhost && (
-                <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                  You&apos;re on <code>localhost</code>, where Firebase refuses
-                  real numbers for phone verification. Open this page on{" "}
-                  <a
-                    className="font-semibold underline"
-                    href={`http://${LOCAL_DEV_ROOT}${devPort ? ":" + devPort : ""}/signup`}
-                  >
-                    {LOCAL_DEV_ROOT}
-                    {devPort ? ":" + devPort : ""}
-                  </a>{" "}
-                  instead (same server, it resolves to this machine), or use a
-                  fictional test number from the Identity Platform console.
-                </div>
-              )}
-
-              <div className="flex flex-col gap-3">
-                <label className="text-sm font-semibold text-gray-700">
-                  Mobile number
-                </label>
-                <div className="flex gap-2">
-                  <PhoneInput
-                    defaultCountry="IN"
-                    countrySelectComponent={CountrySelect}
-                    labels={customPhoneLabels}
-                    placeholder="Mobile number"
-                    value={phone}
-                    onChange={setPhone}
-                    disabled={phoneSent}
-                    numberInputProps={{ autoComplete: "tel-national" }}
-                    className="stq-phone"
                   />
-                  <button
-                    type="button"
-                    onClick={handleSendPhoneOtp}
-                    disabled={busy || phoneSent || !phone}
-                    className="stq-btn stq-btn-primary whitespace-nowrap text-sm px-4"
-                  >
-                    {phoneSent ? "Sent" : busy ? "…" : "Send OTP"}
-                  </button>
                 </div>
 
-                {phoneSent && (
-                  <div className="flex flex-col gap-2 pt-2 animate-in fade-in slide-in-from-top-2">
-                    <label className="text-sm font-semibold text-gray-700">
-                      Enter the 6-digit code
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        className="stq-input flex-1 h-12"
-                        placeholder="6-digit code"
-                        inputMode="numeric"
-                        maxLength={6}
-                        autoFocus
-                        value={phoneCode}
-                        onChange={(e) =>
-                          setPhoneCode(e.target.value.replace(/\D/g, ""))
-                        }
-                      />
-                      <button
-                        type="button"
-                        onClick={handleVerifyPhoneOtp}
-                        disabled={busy || phoneCode.length < 6}
-                        className="stq-btn stq-btn-primary whitespace-nowrap px-5"
-                      >
-                        {busy ? "…" : "Verify"}
-                      </button>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPhoneSent(false);
-                        setPhoneCode("");
-                        setError("");
-                      }}
-                      className="text-xs text-gray-500 hover:text-primary text-left mt-1"
-                    >
-                      ← Wrong number? Edit and resend
-                    </button>
-                  </div>
-                )}
+                <button
+                  type="submit"
+                  disabled={busy || emailCode.length !== 6}
+                  className="sgn-btn sgn-btn-primary"
+                >
+                  {busy ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    "Verify email"
+                  )}
+                </button>
+              </form>
+
+              <div className="sgn-links">
+                <button
+                  type="button"
+                  onClick={() => void handleSendEmailOtp()}
+                  disabled={busy}
+                  className="sgn-link"
+                >
+                  {emailCodeSent ? "Resend code" : "Send a code"}
+                </button>
+                <button
+                  type="button"
+                  onClick={restartSignup}
+                  disabled={busy}
+                  className="sgn-link"
+                >
+                  Use a different email
+                </button>
               </div>
+              <p className="sgn-help sgn-gap">
+                Codes expire after 10 minutes and work only in this browser.
+              </p>
             </div>
           )}
 
           {/* ── You + your store — ONE screen ──────────────────────
               Name and store name were two screens; Google users arrive with
               their name prefilled, so for them this is one field plus the
-              address chip. The country is pre-filled from the verified phone.
-              The business ADDRESS is deliberately not here: it prints on
-              invoices and a new store has none, so the go-live checklist
-              collects it where it is first needed. */}
+              country. */}
           {step === "store" && (
-            <div className="animate-in fade-in slide-in-from-right-2 duration-300">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                About you and your store
-              </h1>
-              <p className="text-gray-500 mb-8">
-                You can change the store name later — the address is yours to
-                keep.
+            <div className="sgn-step">
+              <h1 className="sgn-title">About you and your store</h1>
+              <p className="sgn-sub">
+                You can rename your store any time. Its web address stays yours.
               </p>
 
               <form
@@ -1105,34 +1261,31 @@ export default function SignupPage() {
                     return;
                   }
                   setError("");
-                  setStep("theme");
+                  goToPlan();
                 }}
-                className="flex flex-col gap-5"
+                className="sgn-stack"
               >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-semibold text-gray-700">
+                <div className="sgn-row">
+                  <div className="sgn-field">
+                    <label className="sgn-label" htmlFor="signup-first-name">
                       First name
                     </label>
                     <input
-                      className="stq-input h-12"
-                      placeholder="First name"
+                      id="signup-first-name"
+                      className="sgn-input"
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
                       autoFocus={!firstName}
                       autoComplete="given-name"
                     />
                   </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-semibold text-gray-700">
-                      Last name{" "}
-                      <span className="font-normal text-gray-400">
-                        (optional)
-                      </span>
+                  <div className="sgn-field">
+                    <label className="sgn-label" htmlFor="signup-last-name">
+                      Last name <span className="sgn-optional">(optional)</span>
                     </label>
                     <input
-                      className="stq-input h-12"
-                      placeholder="Last name"
+                      id="signup-last-name"
+                      className="sgn-input"
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
                       autoComplete="family-name"
@@ -1140,37 +1293,32 @@ export default function SignupPage() {
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-semibold text-gray-700">
+                <div className="sgn-field">
+                  <label className="sgn-label" htmlFor="signup-store-name">
                     Store name
                   </label>
                   <input
-                    className="stq-input h-12 text-lg"
-                    placeholder="E.g., My Awesome Store"
+                    id="signup-store-name"
+                    className="sgn-input"
+                    placeholder="For example, Saffron Studio"
                     value={name}
                     onChange={(e) => onNameChange(e.target.value)}
                     autoFocus={!!firstName}
+                    autoComplete="organization"
                     maxLength={50}
                   />
-                  <div className={`stq-hint !mt-1 ${h.cls}`}>{h.text}</div>
+                  <p className={`sgn-hint ${h.cls}`} aria-live="polite">
+                    {h.text}
+                  </p>
                 </div>
 
-                {/* Live subdomain chip */}
-                <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-500 font-mono">
-                  <Lock className="w-3.5 h-3.5 text-emerald-600" />
-                  https://{currentSlug}.{ROOT_DOMAIN}
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label
-                    htmlFor="business-country"
-                    className="text-sm font-semibold text-gray-700"
-                  >
+                <div className="sgn-field">
+                  <label className="sgn-label" htmlFor="business-country">
                     Country you sell from
                   </label>
                   <select
                     id="business-country"
-                    className="stq-input h-12 bg-white"
+                    className="sgn-input"
                     value={country}
                     onChange={(e) => setCountry(e.target.value)}
                     autoComplete="country"
@@ -1181,164 +1329,198 @@ export default function SignupPage() {
                       </option>
                     ))}
                   </select>
-                  <p className="text-xs text-gray-400">
-                    Your full business address is added from the dashboard
-                    before your store opens.
+                  <p className="sgn-help">
+                    Your store starts on a ready-made theme you can change any
+                    time. Before it opens, the dashboard walks you through your
+                    business address and mobile.
                   </p>
-                </div>
-
-                <div className="mt-1 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50/80 p-3 shadow-sm">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-indigo-100 bg-white text-xl shadow-sm">
-                    🎉
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-indigo-900">
-                      Free lifetime domain
-                    </h4>
-                    <p className="mt-0.5 text-xs font-medium text-indigo-700">
-                      Your .storemink.com address is free forever.
-                    </p>
-                  </div>
                 </div>
 
                 <button
                   type="submit"
                   disabled={!isNameAvailable || !firstName.trim()}
-                  className="stq-btn stq-btn-primary w-full h-12 flex items-center justify-center gap-2"
+                  className="sgn-btn sgn-btn-primary"
                 >
-                  Continue <ChevronRight className="w-5 h-5" />
+                  Continue
                 </button>
               </form>
             </div>
           )}
 
-          {/* ── Theme ─────────────────────────────────────────────── */}
-          {step === "theme" && (
-            <div className="animate-in fade-in slide-in-from-right-2 duration-300">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                Pick a starting look
-              </h1>
-              <p className="text-gray-500 mb-6">
-                We&apos;ve selected a theme for{" "}
-                {name.trim() ? name : "your store"} — keep it, or pick another.
-                Every colour, page and photo is editable later.
+          {/* ── Plan ──────────────────────────────────────────────── */}
+          {step === "plan" && planPhase === "choose" && (
+            <div className="sgn-step">
+              <h1 className="sgn-title">Choose your plan</h1>
+              <p className="sgn-sub">
+                Start on Free, or choose a paid plan to unlock more from day
+                one. You can change plans any time.
               </p>
 
-              <div className="mb-6 flex flex-wrap gap-2">
-                {themeCategories.map((c) => (
+              {planNotice && (
+                <div role="status" className="sgn-note is-warn">
+                  <p>{planNotice}</p>
+                </div>
+              )}
+
+              {(quoteState.status === "idle" ||
+                quoteState.status === "loading") && (
+                <div className="sgn-loading" role="status">
+                  <Loader2
+                    className="h-5 w-5 animate-spin"
+                    aria-hidden="true"
+                  />
+                  Loading plans…
+                </div>
+              )}
+
+              {quoteState.status === "failed" && (
+                <div className="sgn-note is-warn">
+                  <p>
+                    We couldn&apos;t load plan prices right now. You can start
+                    on Free and choose a plan later from your dashboard.
+                  </p>
+                  <div className="sgn-note-actions">
+                    <button
+                      type="button"
+                      onClick={() => void loadQuote()}
+                      disabled={busy}
+                      className="sgn-btn sgn-btn-outline is-auto"
+                    >
+                      <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                      Try again
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {quote && (
+                <PlanPicker
+                  quote={quote}
+                  plan={plan}
+                  period={period}
+                  mandateMethod={mandateMethod}
+                  disabled={busy}
+                  onPlanChange={choosePlan}
+                  onPeriodChange={choosePeriod}
+                  onMandateMethodChange={setMandateMethod}
+                />
+              )}
+
+              {quote && !quote.paidCheckout && (
+                <p className="sgn-help sgn-plan-help">
+                  Paid plans can&apos;t be bought during signup right now. Your
+                  store starts on Free, and you can upgrade from Plans &amp;
+                  billing in your dashboard.
+                </p>
+              )}
+
+              <div className="sgn-plan-actions">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void (paidSelected ? continueWithPlan() : startOnFree())
+                  }
+                  disabled={
+                    busy ||
+                    quoteState.status === "idle" ||
+                    quoteState.status === "loading"
+                  }
+                  className="sgn-btn sgn-btn-primary"
+                >
+                  {busy ? (
+                    <>
+                      <Loader2
+                        className="h-5 w-5 animate-spin"
+                        aria-hidden="true"
+                      />
+                      {progress}
+                    </>
+                  ) : (
+                    planCta
+                  )}
+                </button>
+                {/* Skip is always one tap away while a paid plan is chosen:
+                    the store starts on Free and can upgrade from Plans &
+                    billing at any time. */}
+                {paidSelected && (
                   <button
-                    key={c.id}
                     type="button"
-                    onClick={() => setThemeFilter(c.id)}
-                    className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
-                      themeFilter === c.id
-                        ? "border-primary bg-primary text-white"
-                        : "border-gray-200 bg-white text-gray-600 hover:border-primary/50"
-                    }`}
+                    onClick={() => void startOnFree()}
+                    disabled={busy}
+                    className="sgn-link"
                   >
-                    {c.label}
+                    {store ? "Continue on Free" : "Skip, start on Free"}
                   </button>
-                ))}
+                )}
               </div>
+            </div>
+          )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-                {themeCatalog
-                  .filter(isThemeSelectable)
-                  .filter(
-                    (t) =>
-                      themeFilter === "all" ||
-                      t.catalog.industries.includes(themeFilter),
-                  )
-                  .map((t) => {
-                    const selected = template === t.id;
-                    const locked = !!t.catalog.minPlan; // signup provisions "free"
-                    const previewable = canPreviewTheme(t);
-                    return (
-                      <div
-                        key={t.id}
-                        onClick={() => !locked && setTemplate(t.id)}
-                        className={`group relative overflow-hidden rounded-xl border-2 bg-white shadow-sm transition-all ${
-                          locked
-                            ? "cursor-not-allowed opacity-70"
-                            : "cursor-pointer"
-                        } ${
-                          selected
-                            ? "border-primary ring-2 ring-primary ring-offset-2"
-                            : "border-gray-200 hover:border-primary/50 hover:shadow-md"
-                        }`}
-                      >
-                        <div className="relative aspect-[4/3] w-full overflow-hidden border-b bg-gray-100">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={t.catalog.previewImage}
-                            alt={t.name}
-                            className="h-full w-full object-cover"
-                          />
-                          {selected && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-primary/10">
-                              <div className="rounded-full bg-white p-1 shadow-md">
-                                <CheckCircle2 className="h-6 w-6 text-primary" />
-                              </div>
-                            </div>
-                          )}
-                          {locked && (
-                            <span className="absolute right-2 top-2 rounded-full bg-gray-900/80 px-2.5 py-1 text-[11px] font-bold text-white">
-                              {t.catalog.minPlan!.toUpperCase()}+ plan
-                            </span>
-                          )}
-                        </div>
-                        <div className="p-4">
-                          <div className="mb-1 flex items-center justify-between gap-2">
-                            <h3 className="text-lg font-bold text-gray-900">
-                              {t.name}
-                            </h3>
-                            <button
-                              type="button"
-                              disabled={!previewable}
-                              title={
-                                previewable
-                                  ? `Preview ${t.name}`
-                                  : t.demo.unavailableReason ||
-                                    "Preview is temporarily unavailable"
-                              }
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!previewable) return;
-                                window.open(
-                                  demoUrl(t.demo.slug),
-                                  "_blank",
-                                  "noopener,noreferrer",
-                                );
-                              }}
-                              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 hover:border-primary/50 hover:text-primary disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400 disabled:hover:border-gray-200"
-                            >
-                              {previewable ? "Preview" : "Preview unavailable"}
-                              {previewable && (
-                                <ExternalLink className="h-3 w-3" />
-                              )}
-                            </button>
-                          </div>
-                          <p className="line-clamp-2 h-8 text-xs text-gray-500">
-                            {t.description}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
+          {/* ── Plan: the owner's mobile, before a paid plan's payment ── */}
+          {step === "plan" && planPhase === "phone" && (
+            <div className="sgn-step">
+              <h1 className="sgn-title">Verify your mobile</h1>
+              <p className="sgn-sub">
+                Your store is ready. Razorpay needs a verified mobile for the{" "}
+                {PLAN_META[plan].name} plan&apos;s payment and renewal notices.
+              </p>
+
+              <SignupPhoneVerify onVerified={onPhoneVerified} />
+
+              <div className="sgn-links">
+                <button
+                  type="button"
+                  onClick={() => setPlanPhase("choose")}
+                  disabled={busy}
+                  className="sgn-link"
+                >
+                  Choose a different plan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void startOnFree()}
+                  disabled={busy}
+                  className="sgn-link"
+                >
+                  Continue on Free
+                </button>
               </div>
+              <p className="sgn-help sgn-gap">
+                This also completes the mobile task on your go-live checklist.
+              </p>
+            </div>
+          )}
 
+          {/* ── Plan: a payment we could not confirm ─────────────── */}
+          {step === "plan" && planPhase === "confirm-failed" && (
+            <div className="sgn-step">
+              <h1 className="sgn-title">
+                We couldn&apos;t confirm your payment
+              </h1>
+              <div role="status" className="sgn-note is-info">
+                <p>{paymentIssue}</p>
+              </div>
+              <p className="sgn-sub">
+                Your store is ready. Please don&apos;t pay again from here:
+                Plans &amp; billing in your dashboard shows what happened.
+              </p>
               <button
                 type="button"
-                onClick={finalize}
-                disabled={busy}
-                className="stq-btn stq-btn-primary w-full h-12 max-w-md flex items-center justify-center gap-2"
+                onClick={() => {
+                  if (!store) return;
+                  setBusy(true);
+                  window.location.href = dashboardUrl(store.slug);
+                }}
+                disabled={busy || !store}
+                className="sgn-btn sgn-btn-primary"
               >
                 {busy ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <Loader2
+                    className="h-5 w-5 animate-spin"
+                    aria-hidden="true"
+                  />
                 ) : (
-                  <>
-                    Create my free store <ChevronRight className="h-5 w-5" />
-                  </>
+                  "Open your dashboard"
                 )}
               </button>
             </div>
@@ -1346,32 +1528,33 @@ export default function SignupPage() {
 
           {/* ── Creating ──────────────────────────────────────────── */}
           {step === "creating" && (
-            <div className="mt-16 flex flex-col items-center text-center">
-              <Loader2 className="mb-6 h-12 w-12 animate-spin text-primary" />
-              <h1 className="mb-2 text-2xl font-bold tracking-tight text-gray-900">
-                Creating {name || "your store"}…
-              </h1>
-              <p className="text-gray-500">
-                Applying your theme and setting up your dashboard. Hang tight!
-              </p>
+            <div className="sgn-creating" role="status">
+              <Loader2 className="h-10 w-10 animate-spin" aria-hidden="true" />
+              <h1>{creating.title}</h1>
+              <p>{creating.detail}</p>
             </div>
           )}
 
-          {/* Back control */}
-          {BACK[step] && step !== "creating" && (
+          {/* Back control: only until the store exists. After that the name
+              and address it was created with cannot change from here. */}
+          {step === "plan" && planPhase === "choose" && !store && (
             <button
               type="button"
-              onClick={() => {
-                setError("");
-                setStep(BACK[step]!);
-              }}
-              className="stq-btn stq-btn-ghost mt-6 flex items-center gap-1 font-medium"
+              onClick={() => setStep("store")}
+              disabled={busy}
+              className="sgn-link sgn-back"
             >
-              <ChevronLeft className="h-4 w-4" /> Back
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Back
             </button>
           )}
         </div>
       </main>
+
+      <footer className="sgn-footer">
+        <a href={HELP_URL}>Help</a>
+        <a href={`/legal/${PRIVACY_SLUG}`}>Privacy</a>
+        <a href={`/legal/${TERMS_SLUG}`}>Terms</a>
+      </footer>
     </div>
   );
 }

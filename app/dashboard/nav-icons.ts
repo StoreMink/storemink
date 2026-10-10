@@ -57,6 +57,7 @@ import {
   Store,
   MapPin,
   Truck,
+  SwatchBook,
   type LucideIcon,
   Mail,
 } from "lucide-react";
@@ -65,6 +66,7 @@ export const navIcons = {
   dashboard: LayoutGrid,
   home: House,
   homepage: LayoutTemplate,
+  themes: SwatchBook,
   orders: Package,
   products: ShoppingBag,
   categories: Tags,

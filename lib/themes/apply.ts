@@ -138,6 +138,10 @@ export async function applyThemeDefinition(
     engineVersion: theme.engine.version,
     appliedAt: new Date().toISOString(),
   };
+  // This call seeds the pages below, homepage included, in the same moment.
+  // A theme switch reads this to tell the theme's homepage from the
+  // merchant's (lib/themes/switch-rules.ts → homepageEditedSinceSeed).
+  installation.homepageSeededAt = installation.appliedAt;
   const mergedSettings = {
     ...settings,
     // `template` remains for old readers and old stores. `theme` is the new
@@ -186,192 +190,14 @@ export async function applyThemeDefinition(
   }
 
   // --- sample categories + products ------------------------------------------
-  const categoryIdBySlug = new Map<string, string>();
-  if (preset.sampleData) {
-    for (const c of preset.sampleData.categories) {
-      try {
-        const [row] = await withService((db) =>
-          db
-            .insert(categories)
-            .values({
-              storeId,
-              name: c.name,
-              slug: c.slug,
-              description: c.description ?? null,
-              imageUrl: c.image_url ?? null,
-              sortOrder: c.sort_order ?? 0,
-              status: "active",
-            })
-            .onConflictDoUpdate({
-              target: [categories.storeId, categories.slug],
-              set: {
-                name: c.name,
-                description: c.description ?? null,
-                imageUrl: c.image_url ?? null,
-                sortOrder: c.sort_order ?? 0,
-                status: "active",
-              },
-            })
-            .returning({ id: categories.id, slug: categories.slug }),
-        );
-        if (!row) {
-          fail(`category ${c.slug}`, "no row");
-          continue;
-        }
-        categoryIdBySlug.set(row.slug, row.id);
-      } catch (err) {
-        fail(`category ${c.slug}`, dbErrorMessage(err, "upsert failed"));
-      }
-    }
-
-    for (const p of preset.sampleData.products) {
-      // Option axes seed exactly as the product editor saves them. A seed
-      // whose combinations do not add up keeps its variants as a flat list
-      // (and says so) rather than writing options the storefront would
-      // refuse to render as pickers.
-      const optionRows = resolveOptionRows(p.options, p.variants ?? []);
-      if ("error" in optionRows) fail(`options ${p.slug}`, optionRows.error);
-      const seedOptions = "error" in optionRows ? [] : optionRows.options;
-      const seedVariants =
-        "error" in optionRows
-          ? (p.variants ?? []).map((v) => ({ ...v, option_values: [] }))
-          : optionRows.variants;
-      let productId: string;
-      try {
-        const [row] = await withService((db) =>
-          db
-            .insert(products)
-            // sku / sku_no are NOT NULL but owned by the BEFORE-INSERT trigger
-            // (identifiers_04_triggers.sql) — the app never sends them, so the
-            // insert type is asserted past those two columns.
-            .values({
-              storeId,
-              name: p.name,
-              slug: p.slug,
-              description: p.description,
-              categoryId: categoryIdBySlug.get(p.category_slug) ?? null,
-              basePrice: p.base_price,
-              sellingPrice: p.selling_price,
-              imageUrl: p.image_url,
-              images: p.images ?? [],
-              status: publishSampleProducts ? "published" : "draft",
-              featured: p.featured ?? false,
-              sortOrder: p.sort_order ?? 0,
-              cardColor: p.card_color ?? null,
-              options: seedOptions,
-              publishedAt: publishSampleProducts
-                ? new Date().toISOString()
-                : null,
-              createdBy: actorUserId,
-              updatedBy: actorUserId,
-            } as typeof products.$inferInsert)
-            .onConflictDoUpdate({
-              target: [products.storeId, products.slug],
-              set: {
-                name: p.name,
-                description: p.description,
-                categoryId: categoryIdBySlug.get(p.category_slug) ?? null,
-                basePrice: p.base_price,
-                sellingPrice: p.selling_price,
-                imageUrl: p.image_url,
-                images: p.images ?? [],
-                // Re-applying keeps the same publish rule as the first apply:
-                // an unconditional "published" here would put a merchant's
-                // draft sample products live on any re-seed.
-                status: publishSampleProducts ? "published" : "draft",
-                featured: p.featured ?? false,
-                sortOrder: p.sort_order ?? 0,
-                cardColor: p.card_color ?? null,
-                options: seedOptions,
-                publishedAt: publishSampleProducts
-                  ? new Date().toISOString()
-                  : null,
-                updatedBy: actorUserId,
-              },
-            })
-            .returning({ id: products.id }),
-        );
-        if (!row) {
-          fail(`product ${p.slug}`, "no row");
-          continue;
-        }
-        productId = row.id;
-      } catch (err) {
-        fail(`product ${p.slug}`, dbErrorMessage(err, "upsert failed"));
-        continue;
-      }
-
-      // Replace variants (mirrors product-actions' replaceVariants). Clear and
-      // insert are separate transactions so a clear failure still lets the
-      // insert run, matching the original per-request best-effort behaviour.
-      try {
-        await withService((db) =>
-          db
-            .delete(productVariants)
-            .where(
-              and(
-                eq(productVariants.storeId, storeId),
-                eq(productVariants.productId, productId),
-              ),
-            ),
-        );
-      } catch (err) {
-        fail(`variants(clear) ${p.slug}`, dbErrorMessage(err, "delete failed"));
-      }
-
-      const variants = seedVariants.map((v, i) => ({
-        storeId,
-        productId,
-        name: v.name,
-        basePrice: v.base_price,
-        sellingPrice: v.selling_price,
-        specialPrice: v.special_price ?? null,
-        stock: v.stock,
-        // sku / variant_no are trigger-owned; a null sku lets the trigger fill it.
-        sku: v.sku ?? null,
-        sortOrder: v.sort_order ?? i,
-        images: v.images ?? [],
-        optionValues: v.option_values,
-      }));
-      if (variants.length > 0) {
-        try {
-          await withService((db) =>
-            db
-              .insert(productVariants)
-              .values(variants as (typeof productVariants.$inferInsert)[]),
-          );
-        } catch (err) {
-          fail(`variants ${p.slug}`, dbErrorMessage(err, "insert failed"));
-        }
-      }
-    }
-  }
+  await seedSampleCatalogue(storeId, theme, {
+    actorUserId,
+    publishSampleProducts,
+    fail,
+  });
 
   // --- menus -------------------------------------------------------------------
-  try {
-    await withService((db) =>
-      db
-        .insert(storeMenus)
-        .values({
-          storeId,
-          header: preset.menus.header,
-          footerGroups: preset.menus.footerGroups,
-          footerLegal: preset.menus.footerLegal,
-          updatedBy: actorUserId,
-        })
-        .onConflictDoUpdate({
-          target: storeMenus.storeId,
-          set: {
-            header: preset.menus.header,
-            footerGroups: preset.menus.footerGroups,
-            footerLegal: preset.menus.footerLegal,
-            updatedBy: actorUserId,
-          },
-        }),
-    );
-  } catch (err) {
-    fail("menus", dbErrorMessage(err, "upsert failed"));
-  }
+  await seedMenus(storeId, theme, actorUserId, fail);
 
   // --- pages ---------------------------------------------------------------------
   for (const page of preset.pages) {
@@ -427,14 +253,236 @@ export async function applyThemeDefinition(
   }
 
   // --- cache busting -----------------------------------------------------------
+  revalidateThemeSeed();
+
+  return { success: errors.length === 0, errors };
+}
+
+type FailFn = (step: string, message: string) => void;
+
+/**
+ * Seed (or re-seed) a theme's sample categories and products, upserted on
+ * (store_id, slug). Shared by applyThemeDefinition and the dashboard's theme
+ * switch, which swaps one theme's samples for another's while a store has
+ * nothing else (lib/themes/switch.ts).
+ */
+export async function seedSampleCatalogue(
+  storeId: string,
+  theme: ThemeDefinition,
+  {
+    actorUserId,
+    publishSampleProducts,
+    fail,
+  }: {
+    actorUserId: string | null;
+    publishSampleProducts: boolean;
+    fail: FailFn;
+  },
+): Promise<void> {
+  const { preset } = theme;
+  const categoryIdBySlug = new Map<string, string>();
+  if (!preset.sampleData) return;
+  for (const c of preset.sampleData.categories) {
+    try {
+      const [row] = await withService((db) =>
+        db
+          .insert(categories)
+          .values({
+            storeId,
+            name: c.name,
+            slug: c.slug,
+            description: c.description ?? null,
+            imageUrl: c.image_url ?? null,
+            sortOrder: c.sort_order ?? 0,
+            status: "active",
+          })
+          .onConflictDoUpdate({
+            target: [categories.storeId, categories.slug],
+            set: {
+              name: c.name,
+              description: c.description ?? null,
+              imageUrl: c.image_url ?? null,
+              sortOrder: c.sort_order ?? 0,
+              status: "active",
+            },
+          })
+          .returning({ id: categories.id, slug: categories.slug }),
+      );
+      if (!row) {
+        fail(`category ${c.slug}`, "no row");
+        continue;
+      }
+      categoryIdBySlug.set(row.slug, row.id);
+    } catch (err) {
+      fail(`category ${c.slug}`, dbErrorMessage(err, "upsert failed"));
+    }
+  }
+
+  for (const p of preset.sampleData.products) {
+    // Option axes seed exactly as the product editor saves them. A seed
+    // whose combinations do not add up keeps its variants as a flat list
+    // (and says so) rather than writing options the storefront would
+    // refuse to render as pickers.
+    const optionRows = resolveOptionRows(p.options, p.variants ?? []);
+    if ("error" in optionRows) fail(`options ${p.slug}`, optionRows.error);
+    const seedOptions = "error" in optionRows ? [] : optionRows.options;
+    const seedVariants =
+      "error" in optionRows
+        ? (p.variants ?? []).map((v) => ({ ...v, option_values: [] }))
+        : optionRows.variants;
+    let productId: string;
+    try {
+      const [row] = await withService((db) =>
+        db
+          .insert(products)
+          // sku / sku_no are NOT NULL but owned by the BEFORE-INSERT trigger
+          // (identifiers_04_triggers.sql) — the app never sends them, so the
+          // insert type is asserted past those two columns.
+          .values({
+            storeId,
+            name: p.name,
+            slug: p.slug,
+            description: p.description,
+            categoryId: categoryIdBySlug.get(p.category_slug) ?? null,
+            basePrice: p.base_price,
+            sellingPrice: p.selling_price,
+            imageUrl: p.image_url,
+            images: p.images ?? [],
+            status: publishSampleProducts ? "published" : "draft",
+            featured: p.featured ?? false,
+            sortOrder: p.sort_order ?? 0,
+            cardColor: p.card_color ?? null,
+            options: seedOptions,
+            publishedAt: publishSampleProducts
+              ? new Date().toISOString()
+              : null,
+            createdBy: actorUserId,
+            updatedBy: actorUserId,
+          } as typeof products.$inferInsert)
+          .onConflictDoUpdate({
+            target: [products.storeId, products.slug],
+            set: {
+              name: p.name,
+              description: p.description,
+              categoryId: categoryIdBySlug.get(p.category_slug) ?? null,
+              basePrice: p.base_price,
+              sellingPrice: p.selling_price,
+              imageUrl: p.image_url,
+              images: p.images ?? [],
+              // Re-applying keeps the same publish rule as the first apply:
+              // an unconditional "published" here would put a merchant's
+              // draft sample products live on any re-seed.
+              status: publishSampleProducts ? "published" : "draft",
+              featured: p.featured ?? false,
+              sortOrder: p.sort_order ?? 0,
+              cardColor: p.card_color ?? null,
+              options: seedOptions,
+              publishedAt: publishSampleProducts
+                ? new Date().toISOString()
+                : null,
+              updatedBy: actorUserId,
+            },
+          })
+          .returning({ id: products.id }),
+      );
+      if (!row) {
+        fail(`product ${p.slug}`, "no row");
+        continue;
+      }
+      productId = row.id;
+    } catch (err) {
+      fail(`product ${p.slug}`, dbErrorMessage(err, "upsert failed"));
+      continue;
+    }
+
+    // Replace variants (mirrors product-actions' replaceVariants). Clear and
+    // insert are separate transactions so a clear failure still lets the
+    // insert run, matching the original per-request best-effort behaviour.
+    try {
+      await withService((db) =>
+        db
+          .delete(productVariants)
+          .where(
+            and(
+              eq(productVariants.storeId, storeId),
+              eq(productVariants.productId, productId),
+            ),
+          ),
+      );
+    } catch (err) {
+      fail(`variants(clear) ${p.slug}`, dbErrorMessage(err, "delete failed"));
+    }
+
+    const variants = seedVariants.map((v, i) => ({
+      storeId,
+      productId,
+      name: v.name,
+      basePrice: v.base_price,
+      sellingPrice: v.selling_price,
+      specialPrice: v.special_price ?? null,
+      stock: v.stock,
+      // sku / variant_no are trigger-owned; a null sku lets the trigger fill it.
+      sku: v.sku ?? null,
+      sortOrder: v.sort_order ?? i,
+      images: v.images ?? [],
+      optionValues: v.option_values,
+    }));
+    if (variants.length > 0) {
+      try {
+        await withService((db) =>
+          db
+            .insert(productVariants)
+            .values(variants as (typeof productVariants.$inferInsert)[]),
+        );
+      } catch (err) {
+        fail(`variants ${p.slug}`, dbErrorMessage(err, "insert failed"));
+      }
+    }
+  }
+}
+
+/** Upsert the theme's header and footer menus (store_menus). */
+export async function seedMenus(
+  storeId: string,
+  theme: ThemeDefinition,
+  actorUserId: string | null,
+  fail: FailFn,
+): Promise<void> {
+  const { preset } = theme;
+  try {
+    await withService((db) =>
+      db
+        .insert(storeMenus)
+        .values({
+          storeId,
+          header: preset.menus.header,
+          footerGroups: preset.menus.footerGroups,
+          footerLegal: preset.menus.footerLegal,
+          updatedBy: actorUserId,
+        })
+        .onConflictDoUpdate({
+          target: storeMenus.storeId,
+          set: {
+            header: preset.menus.header,
+            footerGroups: preset.menus.footerGroups,
+            footerLegal: preset.menus.footerLegal,
+            updatedBy: actorUserId,
+          },
+        }),
+    );
+  } catch (err) {
+    fail("menus", dbErrorMessage(err, "upsert failed"));
+  }
+}
+
+/** Every storefront cache a theme's seed touches. */
+export function revalidateThemeSeed(): void {
   revalidateTag(STORE_TAG, "max");
   revalidateTag(TAGS.pages, "max");
   revalidateTag(TAGS.products, "max");
   revalidateTag(TAGS.categories, "max");
   revalidateTag(TAGS.menus, "max");
   revalidatePath("/");
-
-  return { success: errors.length === 0, errors };
 }
 
 /**
@@ -442,7 +490,7 @@ export async function applyThemeDefinition(
  * real UUIDs, and sanitize rich_text HTML — the same server rules every other
  * write path applies.
  */
-function prepareSections(
+export function prepareSections(
   theme: ThemeDefinition,
   pageSlug: string,
 ): { sections: PageSectionItem[] } | { error: string } {

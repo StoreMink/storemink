@@ -2,7 +2,7 @@
 
 import { updateTag } from "next/cache";
 import { headers } from "next/headers";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getFirebaseAdminAuth } from "@/lib/auth/firebase-admin";
 import { authErrorCode, deleteAuthUser } from "@/lib/auth/firebase-users";
 import { authIdsInUse } from "@/lib/auth/identity-usage";
@@ -12,6 +12,7 @@ import { withService } from "@/lib/db/client";
 import { isUniqueViolation } from "@/lib/db/errors";
 import { admins, storeBillingSettings, stores } from "@/drizzle/schema";
 import { getServerUser } from "@/lib/auth/server-user";
+import { emailVerifiedNow } from "@/lib/auth/email-verified";
 import { STORE_TAG } from "@/lib/store/resolve";
 import { ROOT_DOMAIN } from "@/lib/store/host";
 import { slugify } from "@/lib/slug";
@@ -120,8 +121,9 @@ export interface SignupResume {
   hasStore: boolean;
   /** The owned store's slug, when hasStore. */
   slug?: string;
-  /** Whether the account's phone is OTP-verified already. */
-  phoneConfirmed: boolean;
+  /** The owner's mobile is verified (admins.phone_verified_at), when
+   *  hasStore — a paid plan needs it before payment. */
+  phoneVerified?: boolean;
   /** Google verifies this itself; password signup verifies it with our OTP. */
   emailConfirmed: boolean;
   email?: string;
@@ -133,7 +135,7 @@ export interface SignupResume {
 /**
  * What the signup wizard needs on load to resume: after a Google redirect (or a
  * refreshed tab), an account may already have a session — and possibly a store.
- * Lets the client jump straight to the phone/name step (prefilling the Google
+ * Lets the client jump straight to the store step (prefilling the Google
  * name), or bounce a finished account to its dashboard.
  */
 export async function getSignupResumeInfo(): Promise<SignupResume> {
@@ -142,22 +144,26 @@ export async function getSignupResumeInfo(): Promise<SignupResume> {
     return {
       authenticated: false,
       hasStore: false,
-      phoneConfirmed: false,
       emailConfirmed: false,
     };
   }
 
   let storeIdOwned: string | undefined;
   let slug: string | undefined;
+  let phoneVerified = false;
   try {
     const existing = await withService((db) =>
       db
-        .select({ store_id: admins.storeId })
+        .select({
+          store_id: admins.storeId,
+          phone_verified_at: admins.phoneVerifiedAt,
+        })
         .from(admins)
         .where(eq(admins.id, user.id))
         .limit(1),
     );
     storeIdOwned = existing[0]?.store_id ?? undefined;
+    phoneVerified = Boolean(existing[0]?.phone_verified_at);
 
     if (storeIdOwned) {
       const storeRows = await withService((db) =>
@@ -186,8 +192,10 @@ export async function getSignupResumeInfo(): Promise<SignupResume> {
     authenticated: true,
     hasStore: !!storeIdOwned,
     slug,
-    phoneConfirmed: user.phoneConfirmed,
-    emailConfirmed: user.emailConfirmed,
+    ...(storeIdOwned ? { phoneVerified } : {}),
+    // The record when the cookie still says unverified: a resumed tab whose
+    // code was accepted goes on to the store step, never back to a new code.
+    emailConfirmed: await emailVerifiedNow(user),
     email: user.email ?? undefined,
     firstName,
     lastName,
@@ -265,15 +273,19 @@ export async function reclaimUnusedSignupEmail(
 export interface CreateStoreInput {
   /** Store display name (also seeds the subdomain slug). */
   name: string;
-  /** Chosen theme/template id (see lib/themes/meta). */
+  /**
+   * A theme/template id (see lib/themes/meta). Signup no longer asks: the
+   * store opens on the platform default and the owner picks a theme from the
+   * dashboard's Themes page, the way Shopify starts every store on one.
+   */
   template?: string;
   /** Owner's first name (written to admins.first_name). */
   firstName?: string;
   /** Owner's last name (admins.last_name; optional). */
   lastName?: string;
   /** ISO country code the merchant sells from (settings.business.country).
-   *  Defaults to the platform's home country when absent — the wizard
-   *  pre-fills it from the verified phone's dial code. */
+   *  Defaults to the platform's home country when absent; the wizard offers
+   *  the same default and lets the merchant change it. */
   country?: string;
   /**
    * The business address. ★ OPTIONAL AT SIGNUP since 2026-10-07: it prints on
@@ -296,11 +308,14 @@ export interface CreateStoreInput {
 export interface CreateStoreResult {
   slug?: string;
   storeId?: string;
+  /** The owner's mobile is already verified, so a paid plan chosen during
+   *  signup can go straight to payment (Razorpay autopay needs a mobile). */
+  phoneVerified?: boolean;
   error?: string;
 }
 
 /**
- * Provision a new store. Called AFTER the owner has phone-OTP-verified (so
+ * Provision a new store. Called AFTER the owner has verified their email (so
  * there's an authenticated session — see the signup wizard). Creates the store,
  * makes the caller its superadmin (recording their name + selling country),
  * seeds the invoice profile, and returns the slug + id. Runs the writes via the
@@ -319,10 +334,15 @@ export async function createStore(
   input: CreateStoreInput,
 ): Promise<CreateStoreResult> {
   const rawName = input.name;
-  const requestedTheme = input.template || DEFAULT_THEME_ID;
-  const themeMeta = (await getThemeCatalog()).find(
-    (theme) => theme.id === requestedTheme,
-  );
+  // An explicitly requested theme must be selectable. With none requested the
+  // store opens on the platform default, falling back to the first selectable
+  // theme so a hidden default can never stop a signup.
+  const catalog = await getThemeCatalog();
+  const themeMeta = input.template
+    ? catalog.find((theme) => theme.id === input.template)
+    : (catalog.find(
+        (theme) => theme.id === DEFAULT_THEME_ID && isThemeSelectable(theme),
+      ) ?? catalog.find(isThemeSelectable));
   if (!themeMeta || !isThemeSelectable(themeMeta)) {
     return { error: "That store theme is not available." };
   }
@@ -332,17 +352,22 @@ export async function createStore(
   if (!user) {
     return { error: "Please sign in before creating a store." };
   }
-  // Client steps are an affordance, never the security boundary. Both contact
-  // channels are authoritative server-side requirements: Google supplies a
-  // verified email claim; password signup earns it through signup-email-otp.
-  if (!user.emailConfirmed) {
+  // Client steps are an affordance, never the security boundary. A verified
+  // email is an authoritative server-side requirement: Google supplies the
+  // claim; password signup earns it through signup-email-otp.
+  //
+  // ★ THE PHONE IS NOT. It moved to the go-live checklist (2026-10-10): the
+  // store opens closed, and Go live refuses until the owner has proven their
+  // mobile with a code (lib/store/launch-checklist-rules.ts). Asking at signup
+  // put a second code in front of a store that cannot take an order yet, and
+  // linking the number to the login refused every merchant who had ever
+  // shopped on a StoreMink store with that mobile.
+  // ★ The account record, not only the cookie: the code may have been
+  // accepted in a tab that could not re-mint its session afterwards
+  // (lib/auth/email-verified.ts).
+  if (!(await emailVerifiedNow(user))) {
     return {
       error: "Please verify your email address before creating a store.",
-    };
-  }
-  if (!user.phoneConfirmed) {
-    return {
-      error: "Please verify your phone number before creating a store.",
     };
   }
 
@@ -463,16 +488,16 @@ export async function createStore(
         storeId: created.id,
         firstName: firstName.slice(0, 80),
         lastName: lastName ? lastName.slice(0, 80) : null,
-        // ★★ THE VERIFIED NUMBER MUST LAND HERE, NOT ONLY ON THE INVOICE
-        // PROFILE. `createStore` runs only after phone OTP (see the
-        // phoneConfirmed gate above), and `admins.phone` is where every server
-        // reader looks for a billing contact — `resolveBillingEmail`, and
-        // therefore `startEnrolment`, which needs BOTH an email and a phone to
-        // register a Razorpay mandate. Writing it to store_billing_settings
-        // alone left `admins.phone` NULL on every wizard-created store, so
-        // Subscribe answered "We couldn't prepare autopay" before a single
-        // gateway call. Same value setVerifiedPhone stores.
+        // ★★ A VERIFIED NUMBER MUST LAND HERE, NOT ONLY ON THE INVOICE
+        // PROFILE. `admins.phone` is where every server reader looks for a
+        // billing contact — `resolveBillingEmail`, and therefore
+        // `startEnrolment`, which needs BOTH an email and a phone to register
+        // a Razorpay mandate. Signup no longer asks for a phone, so this is
+        // usually null now and the owner adds it from the go-live checklist
+        // (`confirmVerifiedPhone`). A login that already carries one (an older
+        // half-finished signup linked it) is Firebase-verified, so it counts.
         phone: user.phone ?? null,
+        phoneVerifiedAt: user.phone ? sql`now()` : null,
         // The owner set their own password during signup — the admins column
         // defaults force_password_reset=true (that's for INVITED staff who get
         // a temporary password), so override it here or the owner is bounced to
@@ -580,5 +605,9 @@ export async function createStore(
     payload: { slug: store.slug, template },
   });
 
-  return { slug: store.slug, storeId: store.id };
+  return {
+    slug: store.slug,
+    storeId: store.id,
+    phoneVerified: Boolean(user.phone),
+  };
 }
