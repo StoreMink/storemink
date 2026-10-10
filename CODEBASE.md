@@ -3601,6 +3601,48 @@ wholesip/
 │   │                          # failing with INVALID_APP_CREDENTIAL is the server rejecting
 │   │                          # the reCAPTCHA token: a console setting (authorized domains /
 │   │                          # reCAPTCHA settings of the storemink-prod project), not code.
+│   │                          # ⚠ MEASURED 2026-10-10: storemink-prod has phone reCAPTCHA
+│   │                          # Enterprise in AUDIT with SMS toll-fraud BLOCK at risk ≥ 0.5,
+│   │                          # and EVERY Enterprise verdict on sendVerificationCode is
+│   │                          # `failed_in_audit` (token_state invalid/missing) although
+│   │                          # reCAPTCHA scores those same tokens valid at ~0.97 — so no
+│   │                          # toll-fraud score has ever been computed, and each send costs
+│   │                          # TWO backend requests (Enterprise, then the SDK's v2
+│   │                          # fallback). Diagnose with the identitytoolkit.googleapis.com
+│   │                          # /recaptcha/verdict_count + token_count metrics; staging has
+│   │                          # no Enterprise config at all. Ruled out: the Identity Toolkit
+│   │                          # service agent and its role exist, the key allows all
+│   │                          # domains. Both projects are plain FIREBASE_AUTH (not upgraded
+│   │                          # to Identity Platform), so request logging is refused
+│   │                          # ("activity logging can only be enabled in GCIP"). ⚠ Do NOT
+│   │                          # switch phone enforcement to ENFORCE while verdicts fail —
+│   │                          # with no v2 fallback every code request would be refused.
+│   │                          # phone-send-guard.ts — the client-side rules EVERY phone-code
+│   │                          # send applies before calling Firebase (storefront sign-in,
+│   │                          # enquiries, POS customer check, POS staff registration,
+│   │                          # set-password, this hook): one send in flight, a 25 s
+│   │                          # cooldown and 5 codes/hour per number, and a 30-minute
+│   │                          # lockout once Firebase answers auth/too-many-requests, whose
+│   │                          # message names the time to try again. ★★ Firebase's
+│   │                          # TOO_MANY_ATTEMPTS_TRY_LATER block is per number/device, of
+│   │                          # undisclosed length, and every refused tap is more "unusual
+│   │                          # activity" — before this, Edit/Back/close reset the resend
+│   │                          # count, the first send was never counted, Enter could start a
+│   │                          # second send mid-flight, and the screen said "wait a moment"
+│   │                          # (echoss checkout, 2026-10-10). Module scope keyed by number,
+│   │                          # so it survives a closed modal or remount; NOT localStorage,
+│   │                          # because a POS till is shared. Not a security boundary.
+│   │                          # ★ Within the cooldown a flow still holding the live code for
+│   │                          # the SAME number returns to its code step instead of sending
+│   │                          # (Edit/Back/close no longer throw the code away), so the
+│   │                          # cooldown is reported FIRST even when the hourly limit or a
+│   │                          # lockout also applies — otherwise the 5th code of the hour
+│   │                          # could not be typed after Back. `retryAt` on a cooldown is
+│   │                          # always last send + cooldown (flows derive the send time from
+│   │                          # it). The POS customer check keeps its live code outside the
+│   │                          # dialog in app/pos/pending-customer-codes.ts (keyed by purpose
+│   │                          # + order, so a pickup code never resumes a return) and makes a
+│   │                          # reopened dialog wait for its closed copy's in-flight send.
 │   ├── storefront/            # queries.ts (cached storefront reads — getPublishedPage/
 │   │                          # getPublishedPageSlugs, named columns only; getPublishedPage validates
 │   │                          # published_sections on read and logs each dropped section), tags.ts

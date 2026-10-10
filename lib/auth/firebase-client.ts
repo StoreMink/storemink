@@ -132,7 +132,7 @@ export function firebaseAuthErrorMessage(err: unknown): string {
     case "auth/invalid-email":
       return "Please enter a valid email address.";
     case "auth/too-many-requests":
-      return "Too many attempts. Please wait a moment and try again.";
+      return "Too many attempts. Please wait a few minutes and try again.";
     case "auth/user-disabled":
       return "This account has been disabled.";
     case "auth/email-already-in-use":
