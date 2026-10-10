@@ -1,7 +1,13 @@
 "use server";
 
 import { updateTag } from "next/cache";
+import { headers } from "next/headers";
 import { eq } from "drizzle-orm";
+import { getFirebaseAdminAuth } from "@/lib/auth/firebase-admin";
+import { authErrorCode, deleteAuthUser } from "@/lib/auth/firebase-users";
+import { authIdsInUse } from "@/lib/auth/identity-usage";
+import { logError, logInfo } from "@/lib/observability/logger";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { withService } from "@/lib/db/client";
 import { isUniqueViolation } from "@/lib/db/errors";
 import { admins, storeBillingSettings, stores } from "@/drizzle/schema";
@@ -186,6 +192,74 @@ export async function getSignupResumeInfo(): Promise<SignupResume> {
     firstName,
     lastName,
   };
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Free an email whose login holds no StoreMink role, so signup can create the
+ * account afresh. Called by the wizard only after Firebase answered
+ * `auth/email-already-in-use` AND the typed password did not sign in.
+ *
+ * Two things leave such a login behind: a deleted store whose owner login
+ * `deleteStore` could not remove, and an abandoned signup — the password step
+ * creates the Firebase account before the email is verified, so a half-finished
+ * attempt (or somebody typing another person's address) holds the email with a
+ * password its real owner does not know. Either way signup dead-ended on
+ * "An account with this email already exists", and the platform login asks for
+ * a store address this person does not have.
+ *
+ * ★ A login that still holds a role anywhere — store admin, storefront
+ * customer, POS operator, platform operator — is never touched: that is a real
+ * account, and its owner signs in with its own password. Deleting a role-less
+ * login loses nothing, and the new account must still prove the address with
+ * the emailed code before it can create a store.
+ */
+export async function reclaimUnusedSignupEmail(
+  email: string,
+): Promise<{ reclaimed: boolean }> {
+  const address = String(email ?? "")
+    .trim()
+    .toLowerCase();
+  if (!EMAIL_RE.test(address)) return { reclaimed: false };
+
+  // A deletion endpoint anyone can call: bounded per IP, generous enough for
+  // a shared office connection.
+  const { allowed } = await rateLimit(
+    `signup-reclaim:${clientIp(await headers())}`,
+    { max: 10, windowSeconds: 3600 },
+  );
+  if (!allowed) return { reclaimed: false };
+
+  const auth = getFirebaseAdminAuth();
+  if (!auth) return { reclaimed: false };
+
+  let uid: string;
+  const emails = new Set([address]);
+  try {
+    const record = await auth.getUserByEmail(address);
+    uid = record.uid;
+    if (record.email) emails.add(record.email.trim().toLowerCase());
+  } catch (err) {
+    // Already gone (deleted between the client's attempt and now): the email
+    // is free, so the wizard may simply try again.
+    if (authErrorCode(err) === "auth/user-not-found")
+      return { reclaimed: true };
+    logError("reclaimUnusedSignupEmail (lookup)", err);
+    return { reclaimed: false };
+  }
+
+  try {
+    // Fails closed: an unanswerable check throws, and "unknown" is "in use".
+    const inUse = await authIdsInUse(new Map([[uid, emails]]));
+    if (inUse.has(uid)) return { reclaimed: false };
+    await deleteAuthUser(uid);
+  } catch (err) {
+    logError("reclaimUnusedSignupEmail", err, { uid });
+    return { reclaimed: false };
+  }
+  logInfo("signup: removed a login with no StoreMink role", { uid });
+  return { reclaimed: true };
 }
 
 export interface CreateStoreInput {

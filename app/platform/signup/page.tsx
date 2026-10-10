@@ -22,6 +22,7 @@ import {
   checkStoreSlugAvailability,
   createStore,
   getSignupResumeInfo,
+  reclaimUnusedSignupEmail,
   type SlugCheck,
 } from "@/app/actions/store-signup";
 import {
@@ -375,11 +376,35 @@ export default function SignupPage() {
         try {
           await signInWithEmailAndPassword(auth, email.trim(), password);
         } catch {
-          setBusy(false);
-          setError(
-            "An account with this email already exists. Log in, or use a different email.",
-          );
-          return;
+          // A different password. If that login holds no StoreMink role — a
+          // deleted store's owner, or an abandoned signup — the server frees
+          // the email and the account is created afresh; a login still in use
+          // is left alone.
+          const { reclaimed } = await reclaimUnusedSignupEmail(
+            email.trim(),
+          ).catch(() => ({ reclaimed: false }));
+          let created = false;
+          if (reclaimed) {
+            try {
+              await createUserWithEmailAndPassword(
+                auth,
+                email.trim(),
+                password,
+              );
+              created = true;
+            } catch (retryErr) {
+              setBusy(false);
+              setError(firebaseAuthErrorMessage(retryErr));
+              return;
+            }
+          }
+          if (!created) {
+            setBusy(false);
+            setError(
+              "An account with this email already exists and that password doesn't match it. Enter the password you used before, continue with Google, or use a different email.",
+            );
+            return;
+          }
         }
       } else {
         setBusy(false);

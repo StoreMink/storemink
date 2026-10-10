@@ -3507,6 +3507,11 @@ wholesip/
 │   │                          # /api/auth/session, endSession, secondary app for phone-only
 │   │                          # verify). Delete an auth user does NOT cascade to the Cloud
 │   │                          # SQL admins/users row — callers delete BOTH.
+│   │                          # identity-usage.ts — authIdsInUse(): which logins still hold
+│   │                          # a StoreMink role (admin, customer, POS operator, platform
+│   │                          # operator by email). Shared by deleteStore and the signup
+│   │                          # reclaim, so "in use" cannot drift between them; throws on
+│   │                          # a failed read so callers treat unknown as in use.
 │   ├── storefront/            # queries.ts (cached storefront reads — getPublishedPage/
 │   │                          # getPublishedPageSlugs, named columns only; getPublishedPage validates
 │   │                          # published_sections on read and logs each dropped section), tags.ts
@@ -8829,7 +8834,15 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     transaction cannot leave that behind; a unique-violation on the slug still
     maps to "that name was just taken". Pinned by `store-signup.test.ts`. - **Auth (Identity Platform, Phase 6)**: email/password via
     `createUserWithEmailAndPassword` (falls back to `signInWithEmailAndPassword`
-    on `auth/email-already-in-use`). Password users then pass a six-digit email
+    on `auth/email-already-in-use`). ★ If that sign-in fails too, the wizard
+    calls `reclaimUnusedSignupEmail` (store-signup.ts): when the existing login
+    holds NO StoreMink role (`authIdsInUse` — a deleted store's owner login, or
+    a signup abandoned after the password step, which creates the Firebase
+    account before the email is verified), the server deletes it and the wizard
+    creates the account afresh. A login still in use anywhere is never touched,
+    the role check fails closed, and the call is rate-limited per IP. Before
+    this, such an email dead-ended on "account already exists", and the
+    platform login asks for a store address the person does not have. Password users then pass a six-digit email
     OTP (`app/actions/signup-email-otp.ts`): the server derives identity from the
     session, rate-limits account + IP, stores only a peppered hash in a signed
     httpOnly cookie, caps wrong attempts, expires it after 10 minutes, and marks
@@ -16296,7 +16309,10 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       customer, POS or platform-operator role. That last reference check is
       load-bearing: deleting one tenant must not break a person who still works
       in another. Partial external cleanup is returned as an operator-visible
-      warning, never silently reported as a complete purge.
+      warning, never silently reported as a complete purge. A login kept
+      because it is still in use is NAMED in that warning too, since its email
+      will not sign up as new; the role check is `authIdsInUse`
+      (`lib/auth/identity-usage.ts`), the same one the signup reclaim uses.
     - **★★ `LogsRail` TAKES ITS REGISTRY AS A PROP, AND THAT IS LOAD-BEARING.**
       Both consoles share `DashboardSidebar`, and their logs are NOT the same
       set: an operator has no import/export jobs and no per-store activity feed

@@ -342,7 +342,13 @@ describe("deleteStore", () => {
 
     const res = await deleteStore("s1");
 
-    expect(res).toEqual({ success: true });
+    expect(res.success).toBe(true);
+    // A kept login is named, so the operator knows its email will not sign
+    // up as new — the deletion otherwise reads as a complete purge.
+    expect(res.warning).toBe(
+      `Kept 2 logins that another store or the operator console still uses (owner@example.com, ${OPERATOR_EMAIL}). Signing up with those emails reuses the existing account.`,
+    );
+    expect(res.warning).not.toMatch(/cleanup still needs attention/);
     expect(vi.mocked(deleteAuthUser).mock.calls.map(([uid]) => uid)).toEqual([
       "orphan-pos",
     ]);

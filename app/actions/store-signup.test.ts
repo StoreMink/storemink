@@ -24,6 +24,22 @@ vi.mock("@/lib/themes/runtime-registry", async () => {
   const { THEME_META } = await import("@/lib/themes/meta");
   return { getThemeCatalog: vi.fn(async () => [...THEME_META]) };
 });
+const firebaseAuth = vi.hoisted(() => ({ getUserByEmail: null as any }));
+vi.mock("@/lib/auth/firebase-admin", () => ({
+  getFirebaseAdminAuth: vi.fn(() => firebaseAuth),
+}));
+vi.mock("@/lib/auth/firebase-users", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/firebase-users")>()),
+  deleteAuthUser: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/auth/identity-usage", () => ({
+  authIdsInUse: vi.fn(async () => new Set<string>()),
+}));
+vi.mock("@/lib/rate-limit", () => ({
+  rateLimit: vi.fn(async () => ({ allowed: true })),
+  clientIp: vi.fn(() => "203.0.113.7"),
+}));
+vi.mock("next/headers", () => ({ headers: vi.fn(async () => new Headers()) }));
 
 import { updateTag } from "next/cache";
 import { isUniqueViolation } from "@/lib/db/errors";
@@ -33,10 +49,15 @@ import { recordSignupConsent } from "@/lib/legal/store";
 import { applyTheme } from "@/lib/themes/apply";
 import { DEFAULT_THEME_ID } from "@/lib/themes/meta";
 import { admins, storeBillingSettings, stores } from "@/drizzle/schema";
+import { getFirebaseAdminAuth } from "@/lib/auth/firebase-admin";
+import { deleteAuthUser } from "@/lib/auth/firebase-users";
+import { authIdsInUse } from "@/lib/auth/identity-usage";
+import { rateLimit } from "@/lib/rate-limit";
 import {
   checkStoreSlugAvailability,
   createStore,
   getSignupResumeInfo,
+  reclaimUnusedSignupEmail,
 } from "./store-signup";
 
 const USER = {
@@ -457,5 +478,86 @@ describe("createStore provisioning", () => {
         payload: { slug: "acme-foods", template: DEFAULT_THEME_ID },
       }),
     );
+  });
+});
+
+describe("reclaimUnusedSignupEmail", () => {
+  const notFound = Object.assign(new Error("no user"), {
+    code: "auth/user-not-found",
+  });
+
+  beforeEach(() => {
+    firebaseAuth.getUserByEmail = vi.fn(async () => ({
+      uid: "orphan-uid",
+      email: "Iamvansh@Gmail.com",
+    }));
+    vi.mocked(getFirebaseAdminAuth).mockReturnValue(firebaseAuth as any);
+    vi.mocked(authIdsInUse).mockResolvedValue(new Set());
+    vi.mocked(rateLimit).mockResolvedValue({ allowed: true });
+  });
+
+  it("removes a login that holds no StoreMink role so the email signs up as new", async () => {
+    const res = await reclaimUnusedSignupEmail("  iamvansh@gmail.com ");
+
+    expect(res).toEqual({ reclaimed: true });
+    expect(firebaseAuth.getUserByEmail).toHaveBeenCalledWith(
+      "iamvansh@gmail.com",
+    );
+    // The role check sees the login's own email as well as the typed one, so
+    // a platform operator is recognised whichever spelling they signed up with.
+    expect(vi.mocked(authIdsInUse).mock.calls[0][0]).toEqual(
+      new Map([["orphan-uid", new Set(["iamvansh@gmail.com"])]]),
+    );
+    expect(deleteAuthUser).toHaveBeenCalledWith("orphan-uid");
+  });
+
+  it("never deletes a login that another store, a customer account or the console still uses", async () => {
+    vi.mocked(authIdsInUse).mockResolvedValue(new Set(["orphan-uid"]));
+
+    expect(await reclaimUnusedSignupEmail("iamvansh@gmail.com")).toEqual({
+      reclaimed: false,
+    });
+    expect(deleteAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the role check cannot answer", async () => {
+    vi.mocked(authIdsInUse).mockRejectedValue(new Error("db down"));
+
+    expect(await reclaimUnusedSignupEmail("iamvansh@gmail.com")).toEqual({
+      reclaimed: false,
+    });
+    expect(deleteAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("reports the email free when the login is already gone", async () => {
+    firebaseAuth.getUserByEmail = vi.fn(async () => {
+      throw notFound;
+    });
+
+    expect(await reclaimUnusedSignupEmail("iamvansh@gmail.com")).toEqual({
+      reclaimed: true,
+    });
+    expect(authIdsInUse).not.toHaveBeenCalled();
+    expect(deleteAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed email, a rate-limited caller and an unconfigured auth backend", async () => {
+    expect(await reclaimUnusedSignupEmail("not-an-email")).toEqual({
+      reclaimed: false,
+    });
+    expect(rateLimit).not.toHaveBeenCalled();
+
+    vi.mocked(rateLimit).mockResolvedValueOnce({ allowed: false });
+    expect(await reclaimUnusedSignupEmail("iamvansh@gmail.com")).toEqual({
+      reclaimed: false,
+    });
+
+    vi.mocked(getFirebaseAdminAuth).mockReturnValueOnce(null);
+    expect(await reclaimUnusedSignupEmail("iamvansh@gmail.com")).toEqual({
+      reclaimed: false,
+    });
+
+    expect(firebaseAuth.getUserByEmail).not.toHaveBeenCalled();
+    expect(deleteAuthUser).not.toHaveBeenCalled();
   });
 });
