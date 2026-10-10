@@ -1,0 +1,168 @@
+/* ── The account shell (plan Phase 2e, the account template) ──────────────
+   The three account pages keep their own markup and stylesheets; this wraps
+   them. "tabs" puts a row of links where the page's top padding was, within
+   the page's width; "sidebar" puts the same links in a column beside the page
+   from 1024px (a row above it below that). A scheme re-points the page tokens
+   the way a section band does (homepage.css), so each page's own
+   `var(--sm-cream)` background and ink follow it. */
+.sm-account {
+  min-width: 0;
+}
+.sm-account-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.sm-account-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--sm-radius-pill, 999px);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sm-ink-soft);
+  text-decoration: none;
+}
+.sm-account-nav a:hover {
+  color: var(--sm-ink);
+  border-color: var(--sm-border);
+}
+.sm-account-nav a[aria-current="page"] {
+  background: var(--sm-ink);
+  color: var(--sm-on-ink);
+}
+.sm-account-nav a:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 2px;
+}
+
+/* The row sits where the page's own top padding was (140px under a floating
+   header; the market header reserves its height on the root, so 32/48px),
+   and the page beneath keeps a short gap instead of its full offset. */
+.sm-account.layout-tabs > .sm-account-nav,
+.sm-account.layout-sidebar > .sm-account-nav {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 140px 24px 0;
+}
+.sm-header-market.storefront-root .sm-account.layout-tabs > .sm-account-nav,
+.sm-header-market.storefront-root .sm-account.layout-sidebar > .sm-account-nav {
+  padding-top: 32px;
+}
+.storefront-root .sm-account.layout-tabs > .sm-account-nav + *,
+.storefront-root .sm-account.layout-sidebar > .sm-account-nav + * {
+  padding-top: 24px;
+  min-height: 0;
+}
+@media (min-width: 768px) {
+  .sm-header-market.storefront-root .sm-account.layout-tabs > .sm-account-nav,
+  .sm-header-market.storefront-root
+    .sm-account.layout-sidebar
+    > .sm-account-nav {
+    padding-top: 48px;
+  }
+}
+@media (min-width: 1024px) {
+  .sm-account.layout-sidebar {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    column-gap: 32px;
+    max-width: 1340px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+  .sm-account.layout-sidebar > .sm-account-nav {
+    flex-direction: column;
+    align-items: stretch;
+    max-width: none;
+    margin: 0;
+    padding: 140px 0 80px;
+  }
+  .sm-header-market.storefront-root
+    .sm-account.layout-sidebar
+    > .sm-account-nav {
+    padding-top: 48px;
+  }
+  .sm-account.layout-sidebar > .sm-account-nav a {
+    justify-content: flex-start;
+    border-radius: var(--sm-radius-control, 10px);
+  }
+  .storefront-root .sm-account.layout-sidebar > .sm-account-nav + * {
+    padding: 140px 0 80px;
+  }
+  .sm-header-market.storefront-root
+    .sm-account.layout-sidebar
+    > .sm-account-nav
+    + * {
+    padding-top: 48px;
+  }
+}
+
+/* A scheme over the account pages: the same token re-pointing a section band
+   gets (homepage.css), on this wrapper. */
+.sm-account.sm-scheme {
+  --sm-cream: var(--sm-scheme-bg);
+  --sm-cream-deep: color-mix(
+    in srgb,
+    var(--sm-scheme-fg) 6%,
+    var(--sm-scheme-bg)
+  );
+  --sm-sand: var(--sm-cream-deep);
+  --sm-taupe: var(--sm-cream-deep);
+  --sm-tile: var(--sm-cream-deep);
+  --sm-surface: var(--sm-scheme-surface);
+  --sm-ink: var(--sm-scheme-fg);
+  --sm-ink-soft: color-mix(
+    in srgb,
+    var(--sm-scheme-fg) 76%,
+    var(--sm-scheme-bg)
+  );
+  --sm-ink-faint: color-mix(
+    in srgb,
+    var(--sm-scheme-fg) 56%,
+    var(--sm-scheme-bg)
+  );
+  --sm-border: color-mix(in srgb, var(--sm-scheme-fg) 16%, var(--sm-scheme-bg));
+  --sm-on-ink: var(--sm-scheme-bg);
+  --brand-primary: var(--sm-scheme-accent);
+  --sm-accent: var(--sm-scheme-accent);
+  --sm-accent-deep: color-mix(
+    in srgb,
+    var(--sm-scheme-accent) 86%,
+    var(--sm-scheme-fg)
+  );
+  --sm-on-accent: var(--sm-scheme-on-accent);
+  background: var(--sm-scheme-bg);
+  color: var(--sm-scheme-fg);
+}
+.sm-account.sm-scheme-soft {
+  --sm-scheme-bg: var(--sm-scheme-soft-bg);
+  --sm-scheme-fg: var(--sm-scheme-soft-fg);
+  --sm-scheme-surface: var(--sm-scheme-soft-surface);
+  --sm-scheme-accent: var(--sm-scheme-soft-accent);
+  --sm-scheme-on-accent: var(--sm-scheme-soft-on-accent);
+}
+.sm-account.sm-scheme-tint {
+  --sm-scheme-bg: var(--sm-scheme-tint-bg);
+  --sm-scheme-fg: var(--sm-scheme-tint-fg);
+  --sm-scheme-surface: var(--sm-scheme-tint-surface);
+  --sm-scheme-accent: var(--sm-scheme-tint-accent);
+  --sm-scheme-on-accent: var(--sm-scheme-tint-on-accent);
+}
+.sm-account.sm-scheme-accent {
+  --sm-scheme-bg: var(--sm-scheme-accent-bg);
+  --sm-scheme-fg: var(--sm-scheme-accent-fg);
+  --sm-scheme-surface: var(--sm-scheme-accent-surface);
+  --sm-scheme-accent: var(--sm-scheme-accent-accent);
+  --sm-scheme-on-accent: var(--sm-scheme-accent-on-accent);
+}
+.sm-account.sm-scheme-inverse {
+  --sm-scheme-bg: var(--sm-scheme-inverse-bg);
+  --sm-scheme-fg: var(--sm-scheme-inverse-fg);
+  --sm-scheme-surface: var(--sm-scheme-inverse-surface);
+  --sm-scheme-accent: var(--sm-scheme-inverse-accent);
+  --sm-scheme-on-accent: var(--sm-scheme-inverse-on-accent);
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  firebaseAuthErrorCode,
   firebaseAuthErrorMessage,
   phoneLinkErrorMessage,
 } from "./firebase-client";
@@ -53,6 +54,40 @@ describe("firebaseAuthErrorMessage", () => {
     for (const input of [undefined, null, {}, "boom", new Error("x")]) {
       expect(firebaseAuthErrorMessage(input)).toMatch(/something went wrong/i);
     }
+  });
+
+  // A rejected security check can be retried in place now (lib/auth/recaptcha.ts),
+  // so the message no longer sends people to close the dialog first.
+  it("asks for a plain retry after a failed security check", () => {
+    const message = firebaseAuthErrorMessage(
+      err("auth/invalid-app-credential"),
+    );
+    expect(message).toMatch(/security check/i);
+    expect(message).not.toMatch(/close/i);
+  });
+
+  it("names a network failure instead of falling through", () => {
+    expect(
+      firebaseAuthErrorMessage(err("auth/network-request-failed")),
+    ).toMatch(/connection/i);
+  });
+});
+
+describe("firebaseAuthErrorCode", () => {
+  it("prefers the Firebase code, then the message, then the value", () => {
+    expect(
+      firebaseAuthErrorCode({
+        code: "auth/invalid-app-credential",
+        message: "x",
+      }),
+    ).toBe("auth/invalid-app-credential");
+    expect(
+      firebaseAuthErrorCode(
+        new Error("reCAPTCHA has already been rendered in this element"),
+      ),
+    ).toBe("reCAPTCHA has already been rendered in this element");
+    expect(firebaseAuthErrorCode("boom")).toBe("boom");
+    expect(firebaseAuthErrorCode(undefined)).toBe("undefined");
   });
 });
 

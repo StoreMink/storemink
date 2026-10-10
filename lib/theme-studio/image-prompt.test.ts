@@ -12,6 +12,7 @@ import {
   renderThemeImagePrompt,
   type ThemeImageBrief,
   type ThemeImageDirection,
+  peopleRule,
 } from "./image-prompt";
 import {
   THEME_IMAGE_LIMITS,
@@ -63,12 +64,17 @@ describe("the Theme Studio image prompt document", () => {
     }
     for (const rule of [
       "No text of any kind",
-      "No people",
       "Never depict a real brand",
       "Return exactly one image.",
     ]) {
       expect(template).toContain(rule);
     }
+    // The people rule is a placeholder since v28: people-free by default,
+    // adults only where the brief allows them, never children.
+    expect(template).not.toContain("No people");
+    expect(peopleRule()).toContain("No people, faces, hands");
+    expect(peopleRule("adults")).toContain("Adults only, never a child");
+    expect(peopleRule("adults")).toContain("No real, famous or recognisable");
   });
 
   it("keeps the checked-in document parseable, and refuses malformed ones", () => {
@@ -98,10 +104,13 @@ describe("the Theme Studio image prompt document", () => {
         asset_brief: "BRIEF",
         composition: "COMPOSITION",
         reference_guidance: "REFS",
+        people: "PEOPLE",
       },
-      "{{theme_direction}}|{{asset_brief}}|{{composition}}|{{reference_guidance}}",
+      "{{theme_direction}}|{{asset_brief}}|{{composition}}|{{reference_guidance}}|{{people}}",
     );
-    expect(rendered).toBe("THEME {{composition}}|BRIEF|COMPOSITION|REFS");
+    expect(rendered).toBe(
+      "THEME {{composition}}|BRIEF|COMPOSITION|REFS|PEOPLE",
+    );
   });
 });
 
@@ -245,6 +254,38 @@ describe("the operator's reference photography", () => {
     // No line at all when there were no screenshots.
     expect(buildAnchorRequest(DIRECTION).prompt).not.toContain(
       "Reference photography",
+    );
+  });
+});
+
+describe("people in imagery (prompt v28)", () => {
+  it("renders the people-free rule by default and the adults rule only for a non-product brief that allows them", () => {
+    const direction = DIRECTION;
+    const still = buildAssetRequest(direction, "hero", PRODUCT, []);
+    expect(still.prompt).toContain("No people, faces, hands");
+    expect(still.people).toBeUndefined();
+    const worn = buildAssetRequest(
+      direction,
+      "hero",
+      { ...PRODUCT, people: "adults" },
+      [],
+    );
+    expect(worn.prompt).toContain("Adults only, never a child");
+    expect(worn.prompt).not.toContain("No people, faces, hands");
+    expect(worn.people).toBe("adults");
+    // A pack shot never shows a person, whatever its range brief says.
+    const pack = buildAssetRequest(
+      direction,
+      "product",
+      { ...PRODUCT, people: "adults" },
+      [],
+    );
+    expect(pack.prompt).toContain("No people, faces, hands");
+    expect(pack.people).toBeUndefined();
+    // The anchor is a still life whatever the hero it follows asks for.
+    expect(buildAnchorRequest(direction).people).toBeUndefined();
+    expect(buildAnchorRequest(direction).prompt).toContain(
+      "No people, faces, hands",
     );
   });
 });

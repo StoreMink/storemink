@@ -36,6 +36,11 @@ export type SlotImageSource = (typeof SLOT_IMAGE_SOURCES)[number];
 
 /** Output sizing for an uploaded slot image. */
 export const SLOT_IMAGE_LONG_EDGE = 1600;
+/** Wide slots (heroes, banners, slides) are stored at 2400px across: they
+ *  fill a desktop screen, where 1600px reads soft on a retina display, and
+ *  the image model draws them wider still (3168px for 21:9 at 2K). Never
+ *  upscaled: a narrower upload or draw keeps its own width. */
+export const SLOT_IMAGE_WIDE_LONG_EDGE = 2400;
 export const SLOT_IMAGE_MIN_WIDTH = THEME_IMAGE_RULES.minWidth;
 /** Relative tolerance when comparing a stored image's ratio to its slot's. */
 const ASPECT_TOLERANCE = 0.01;
@@ -146,9 +151,13 @@ export function slotTargetSize(slot: {
   if (!slot.width || !slot.height) return null;
   const aspect = slot.width / slot.height;
   if (aspect >= 1) {
+    const longEdge =
+      aspect >= THEME_IMAGE_RULES.wideAspect
+        ? SLOT_IMAGE_WIDE_LONG_EDGE
+        : SLOT_IMAGE_LONG_EDGE;
     return {
-      width: SLOT_IMAGE_LONG_EDGE,
-      height: Math.round(SLOT_IMAGE_LONG_EDGE / aspect),
+      width: longEdge,
+      height: Math.round(longEdge / aspect),
       aspect,
     };
   }
@@ -159,10 +168,17 @@ export function slotTargetSize(slot: {
   return { width: Math.round(height * aspect), height, aspect };
 }
 
-/** The byte ceiling for a slot's image (TA-2.6). */
-export function slotByteLimit(slot: { catalogPreview: boolean }): number {
-  return slot.catalogPreview
-    ? THEME_IMAGE_RULES.maxPreviewBytes
+/** The byte ceiling for a slot's image (TA-2.6; wide slots get the larger
+ *  ceiling the validator allows them). */
+export function slotByteLimit(slot: {
+  catalogPreview: boolean;
+  width?: number | null;
+  height?: number | null;
+}): number {
+  if (slot.catalogPreview) return THEME_IMAGE_RULES.maxPreviewBytes;
+  const aspect = slot.width && slot.height ? slot.width / slot.height : 0;
+  return aspect >= THEME_IMAGE_RULES.wideAspect
+    ? THEME_IMAGE_RULES.maxWideBytes
     : THEME_IMAGE_RULES.maxBytes;
 }
 

@@ -6,6 +6,7 @@ import {
   resolveStorefrontAppearance,
   type ResolvedStorefrontAppearance,
 } from "@/lib/chrome/types";
+import { themeTemplates } from "@/lib/themes/templates";
 
 // Resolve the current host store's pinned theme defaults plus its published
 // builder overrides. Server components use this when a variant changes markup
@@ -18,10 +19,13 @@ import {
 export async function getStorefrontLayout(): Promise<ResolvedStorefrontAppearance> {
   const store = await getCurrentStoreOrNull();
   const selection = readThemeSelection(store?.settings);
-  const themeLayout = (await resolveInstalledThemeDefinition(selection))?.preset
-    .design.layout;
+  const preset = (await resolveInstalledThemeDefinition(selection))?.preset;
   const appearance = store
     ? (await getStoreChrome(store.id)).appearance
     : undefined;
-  return resolveStorefrontAppearance(themeLayout, appearance);
+  return resolveStorefrontAppearance(
+    preset?.design.layout,
+    appearance,
+    preset ? themeTemplates(preset) : undefined,
+  );
 }

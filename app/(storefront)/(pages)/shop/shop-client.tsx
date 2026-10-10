@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -12,6 +12,7 @@ import {
   applyShopQuery,
   clearedShopQuery,
   DEFAULT_SHOP_QUERY,
+  pageNumbers,
   SHOP_PAGE_SIZE,
   SHOP_SORT_LABELS,
   SHOP_SORTS,
@@ -27,10 +28,15 @@ import { buildShopFacets, facetValueLabel } from "@/lib/storefront/shop-facets";
 import { shopFactsFor } from "@/lib/storefront/shop-product-facts";
 import { colourCards, type ColourCard } from "@/lib/storefront/colour-cards";
 import { formatPrice } from "@/lib/pricing";
+import {
+  defaultTemplates,
+  type CollectionTemplate,
+  type PromoTile,
+} from "@/lib/themes/templates";
 import { ShopCard } from "@/app/(storefront)/components/shop-card";
 import { useBrand } from "@/app/(storefront)/components/brand-provider";
 import { ShopFilterPanel } from "./shop-filter-panel";
-import { ShopFilterControls } from "./shop-filter-controls";
+import { ShopFilterBar, ShopFilterControls } from "./shop-filter-controls";
 
 export interface ShopProduct {
   id: string;
@@ -113,7 +119,64 @@ type Props = {
   offerBadges?: Record<string, { label: string }>;
   /** Website Builder: one card per product, or one per colour. */
   productCards?: "product" | "colour";
+  /**
+   * The collection page's composition (plan Phase 2e, lib/themes/templates.ts):
+   * where the filters live (the sidebar, the drawer alone, or a row of
+   * popovers above the grid), how the grid pages (Load more, numbered pages,
+   * or revealing as the shopper scrolls) and the promotional tiles placed
+   * among the cards. Resolved by the page from the theme and the merchant's
+   * override; the default is the page exactly as it was.
+   */
+  collectionTemplate?: CollectionTemplate;
 };
+
+const DEFAULT_COLLECTION_TEMPLATE = defaultTemplates(undefined).collection;
+
+/** Only an image the optimiser is configured for goes through it; a
+ *  merchant's pasted link elsewhere is served as it is. */
+const optimisable = (url: string) =>
+  url.startsWith("/") ||
+  url.startsWith("https://storage.googleapis.com/") ||
+  url.startsWith("https://images.unsplash.com/");
+
+/** A theme's promotional tile among the cards: a colour field or a picture
+ *  with the copy over its lower edge, the whole tile the link. */
+function PromoTileCard({ tile }: { tile: PromoTile }) {
+  const className = `shop-promo-tile theme-${tile.theme}${
+    tile.image_url ? " has-image" : ""
+  }`;
+  const style = tile.background ? { background: tile.background } : undefined;
+  const inner = (
+    <>
+      {tile.image_url && (
+        <Image
+          src={tile.image_url}
+          alt={tile.image_alt}
+          fill
+          sizes="(max-width: 640px) 100vw, 33vw"
+          className="shop-promo-tile-img"
+          unoptimized={!optimisable(tile.image_url)}
+        />
+      )}
+      <div className="shop-promo-tile-copy">
+        {tile.heading && <h2>{tile.heading}</h2>}
+        {tile.body && <p>{tile.body}</p>}
+        {tile.cta_label && tile.href && (
+          <span className="shop-promo-tile-cta">{tile.cta_label}</span>
+        )}
+      </div>
+    </>
+  );
+  return tile.href ? (
+    <Link href={tile.href} className={className} style={style}>
+      {inner}
+    </Link>
+  ) : (
+    <div className={className} style={style}>
+      {inner}
+    </div>
+  );
+}
 
 const plural = (n: number) => `${n} ${n === 1 ? "product" : "products"}`;
 
@@ -130,8 +193,11 @@ export default function ShopClient({
   storeLowStockThreshold = 0,
   offerBadges,
   productCards = "product",
+  collectionTemplate = DEFAULT_COLLECTION_TEMPLATE,
 }: Props) {
   const [query, setQuery] = useState<string>(initialQuery ?? "");
+  const filtersMode = collectionTemplate.filters;
+  const paging = collectionTemplate.pagination;
   const [shop, setShop] = useState<ShopQuery>(
     shopFilters ? initialShop : DEFAULT_SHOP_QUERY,
   );
@@ -228,9 +294,43 @@ export default function ShopClient({
         : scoped,
     [scoped, shop, shopFilters, factsByCard],
   );
+  // Numbered pages show one page; Load more and the scrolling reveal show
+  // every page up to the current one. A page past the end (filters narrowed
+  // the list under a shared link) shows the last page rather than nothing.
+  const pageCount = Math.max(1, Math.ceil(filtered.length / SHOP_PAGE_SIZE));
+  const page =
+    paging === "paged" ? Math.min(shop.pages, pageCount) : shop.pages;
+  const offset = paging === "paged" ? (page - 1) * SHOP_PAGE_SIZE : 0;
   const shown = shopFilters
-    ? filtered.slice(0, shop.pages * SHOP_PAGE_SIZE)
+    ? paging === "paged"
+      ? filtered.slice(offset, offset + SHOP_PAGE_SIZE)
+      : filtered.slice(0, shop.pages * SHOP_PAGE_SIZE)
     : filtered;
+  const more =
+    shopFilters && paging !== "paged" && shown.length < filtered.length;
+  // The theme's tiles sit after the Nth card of the whole list, so one lands
+  // on whichever page holds that card and nowhere else.
+  const gridItems = useMemo(() => {
+    const items: (
+      | { kind: "card"; card: (typeof shown)[number] }
+      | {
+          kind: "tile";
+          tile: PromoTile;
+          key: string;
+        }
+    )[] = shown.map((card) => ({ kind: "card", card }));
+    const tiles = [...collectionTemplate.promoTiles]
+      .map((tile, index) => ({ tile, key: `tile-${index}` }))
+      .filter(
+        ({ tile }) =>
+          tile.afterIndex > offset && tile.afterIndex <= offset + shown.length,
+      )
+      .sort((a, b) => b.tile.afterIndex - a.tile.afterIndex);
+    for (const { tile, key } of tiles) {
+      items.splice(tile.afterIndex - offset, 0, { kind: "tile", tile, key });
+    }
+    return items;
+  }, [shown, collectionTemplate.promoTiles, offset]);
   const facetsFor = (q: ShopQuery) =>
     buildShopFacets(scoped, q, factsOf, categoryChoices);
   const facetView = useMemo(
@@ -243,8 +343,43 @@ export default function ShopClient({
       ),
     [scoped, shop, factsByCard, categoryChoices],
   );
-  const sidebar = shopFilters && scoped.length > 0;
+  const sidebar = shopFilters && scoped.length > 0 && filtersMode === "sidebar";
+  const topBar = shopFilters && scoped.length > 0 && filtersMode === "top-bar";
   const filterCount = activeFilterCount(shop);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const goToPage = (next: number) => {
+    updateShop({ ...shop, pages: next });
+    // Back to the top of the grid, as turning a page does; jsdom has no
+    // scrollIntoView, hence the optional call.
+    gridRef.current?.scrollIntoView?.({ block: "start" });
+  };
+
+  // Infinite reveal: a sentinel under the grid asks for the next page as it
+  // comes into view. The Load more button stays beneath it, so a browser
+  // without IntersectionObserver, a keyboard and a screen reader keep a way
+  // to the rest.
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const shopRef = useRef(shop);
+  // Kept current from an effect, never during render (react-hooks/refs);
+  // it runs before the observer effect below on every commit.
+  useEffect(() => {
+    shopRef.current = shop;
+  }, [shop]);
+  useEffect(() => {
+    if (paging !== "infinite" || !more) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        const current = shopRef.current;
+        updateShop({ ...current, pages: current.pages + 1 });
+      }
+    });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+    // The deps that change the answer are the mode and whether there is
+    // more to reveal; the query itself is read through the ref.
+  }, [paging, more, shown.length]);
 
   const clearQuery = () => {
     setQuery("");
@@ -379,7 +514,7 @@ export default function ShopClient({
                     <button
                       ref={filterButtonRef}
                       type="button"
-                      className={`shop-filter-btn${sidebar ? " has-sidebar" : ""}`}
+                      className={`shop-filter-btn${sidebar ? " has-sidebar" : ""}${topBar ? " has-topbar" : ""}`}
                       aria-haspopup="dialog"
                       aria-expanded={filtersOpen}
                       onClick={() => setFiltersOpen(true)}
@@ -509,6 +644,13 @@ export default function ShopClient({
                   </aside>
                 )}
                 <div className="shop-results">
+                  {topBar && (
+                    <ShopFilterBar
+                      query={shop}
+                      view={facetView}
+                      onChange={(next) => updateShop({ ...next, pages: 1 })}
+                    />
+                  )}
                   {/* Product grid */}
                   {filtered.length === 0 ? (
                     <div className="shop-empty">
@@ -536,25 +678,85 @@ export default function ShopClient({
                           Showing {filtered.length} of {plural(products.length)}
                         </p>
                       )}
-                      <div className="shop-grid">
-                        {shown.map((card) => (
-                          <ShopCard
-                            key={card.key}
-                            product={card.product}
-                            href={card.href}
-                            colour={card.colour}
-                            storeLowStockThreshold={storeLowStockThreshold}
-                            headingLevel={2}
-                            offerBadge={offerBadges?.[card.product.id]}
-                          />
-                        ))}
+                      <div className="shop-grid" ref={gridRef}>
+                        {gridItems.map((item) =>
+                          item.kind === "tile" ? (
+                            <PromoTileCard key={item.key} tile={item.tile} />
+                          ) : (
+                            <ShopCard
+                              key={item.card.key}
+                              product={item.card.product}
+                              href={item.card.href}
+                              colour={item.card.colour}
+                              storeLowStockThreshold={storeLowStockThreshold}
+                              headingLevel={2}
+                              offerBadge={offerBadges?.[item.card.product.id]}
+                            />
+                          ),
+                        )}
                       </div>
-                      {shopFilters && (
+                      {shopFilters && paging === "paged" && (
+                        <nav className="shop-pages" aria-label="Pages">
+                          <p className="shop-pages-count" aria-live="polite">
+                            Showing {offset + 1}–{offset + shown.length} of{" "}
+                            {plural(filtered.length)}
+                          </p>
+                          {pageCount > 1 && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={page <= 1}
+                                onClick={() => goToPage(page - 1)}
+                              >
+                                Previous
+                              </button>
+                              {pageNumbers(page, pageCount).map((n, i) =>
+                                n === null ? (
+                                  <span
+                                    key={`gap-${i}`}
+                                    className="shop-pages-gap"
+                                    aria-hidden
+                                  >
+                                    …
+                                  </span>
+                                ) : (
+                                  <button
+                                    key={n}
+                                    type="button"
+                                    aria-current={
+                                      n === page ? "page" : undefined
+                                    }
+                                    aria-label={`Page ${n}`}
+                                    onClick={() => n !== page && goToPage(n)}
+                                  >
+                                    {n}
+                                  </button>
+                                ),
+                              )}
+                              <button
+                                type="button"
+                                disabled={page >= pageCount}
+                                onClick={() => goToPage(page + 1)}
+                              >
+                                Next
+                              </button>
+                            </>
+                          )}
+                        </nav>
+                      )}
+                      {shopFilters && paging !== "paged" && (
                         <div className="shop-more">
+                          {paging === "infinite" && more && (
+                            <div
+                              ref={sentinelRef}
+                              className="shop-more-sentinel"
+                              aria-hidden
+                            />
+                          )}
                           <p className="shop-more-count" aria-live="polite">
                             Showing {shown.length} of {plural(filtered.length)}
                           </p>
-                          {shown.length < filtered.length && (
+                          {more && (
                             <>
                               <div className="shop-more-bar" aria-hidden>
                                 <span

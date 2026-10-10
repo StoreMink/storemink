@@ -150,3 +150,54 @@ describe("ProductLightbox", () => {
     expect(screen.queryByLabelText("Next photo")).toBeNull();
   });
 });
+
+// Plan Phase 2e: the gallery's shape is the template's, as a class the CSS
+// reads; the shapes that show every photo at once offer no thumbnails.
+describe("ProductGallery modes", () => {
+  const renderMode = (
+    mode: "thumbs-bottom" | "thumbs-left" | "stacked" | "carousel" | "grid",
+  ) =>
+    render(
+      <ProductGallery
+        images={IMAGES}
+        alt="Linen shirt"
+        activeIndex={0}
+        onActiveIndexChange={vi.fn()}
+        onZoom={vi.fn()}
+        classPrefix="pdp"
+        mode={mode}
+        sizes="100vw"
+      />,
+    ).container;
+
+  it("defaults to thumbnails under the photo", () => {
+    const { container } = render(
+      <ProductGallery
+        images={IMAGES}
+        alt="Linen shirt"
+        activeIndex={0}
+        onActiveIndexChange={vi.fn()}
+        onZoom={vi.fn()}
+        classPrefix="pdp"
+        sizes="100vw"
+      />,
+    );
+    expect(
+      container.querySelector(".sm-gallery.mode-thumbs-bottom"),
+    ).toBeTruthy();
+    expect(container.querySelector(".pdp-thumbs")).toBeTruthy();
+  });
+
+  it("keeps thumbnails for the two thumbnail shapes and drops them for the rest", () => {
+    expect(
+      renderMode("thumbs-left").querySelector(".mode-thumbs-left .pdp-thumbs"),
+    ).toBeTruthy();
+    for (const mode of ["stacked", "carousel", "grid"] as const) {
+      const container = renderMode(mode);
+      expect(container.querySelector(`.sm-gallery.mode-${mode}`)).toBeTruthy();
+      expect(container.querySelector(".pdp-thumbs")).toBeNull();
+      // Every photo is still a slide, so the lightbox and the phone strip work.
+      expect(container.querySelectorAll(".sm-gallery-slide")).toHaveLength(3);
+    }
+  });
+});

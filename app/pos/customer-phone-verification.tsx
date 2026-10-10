@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getAdditionalUserInfo,
-  RecaptchaVerifier,
   signInWithPhoneNumber,
   type ConfirmationResult,
+  type RecaptchaVerifier,
   type User,
 } from "firebase/auth";
 import { CheckCircle2, Loader2, MessageSquareText, X } from "lucide-react";
@@ -14,9 +14,11 @@ import {
   confirmCustomerPhoneVerification,
 } from "@/app/actions/pos-customer-verification-actions";
 import {
+  firebaseAuthErrorCode,
   firebaseAuthErrorMessage,
   getSecondaryFirebaseAuth,
 } from "@/lib/auth/firebase-client";
+import { freshInvisibleVerifier } from "@/lib/auth/recaptcha";
 import type { PosCustomerVerificationPurpose } from "@/lib/pos/customer-verification";
 import { useOtpThrottle } from "@/lib/use-otp-throttle";
 
@@ -86,13 +88,12 @@ export function CustomerPhoneVerification({
   );
 
   const getVerifier = useCallback(() => {
-    // Firebase consumes a reCAPTCHA verifier on every send attempt. Reusing it
-    // makes the first failed send or the first resend a permanent dead end.
-    verifier.current?.clear();
-    verifier.current = new RecaptchaVerifier(
+    // A fresh verifier per send, in a fresh element: a second one on the same
+    // element failed every resend (lib/auth/recaptcha.ts).
+    verifier.current = freshInvisibleVerifier(
       getSecondaryFirebaseAuth(),
       recaptchaNode.current!,
-      { size: "invisible" },
+      verifier.current,
     );
     return verifier.current;
   }, []);
@@ -149,6 +150,7 @@ export function CustomerPhoneVerification({
         setResendIn(RESEND_SECONDS);
         setTimeout(() => otpInput.current?.focus(), 50);
       } catch (err) {
+        console.warn("Customer code not sent:", firebaseAuthErrorCode(err));
         setError(
           firebaseAuthErrorMessage(err) ||
             "Couldn't send the code. Please try again.",

@@ -2,29 +2,73 @@ import Image from "next/image";
 import Link from "next/link";
 import type {
   MediaTextConfig,
+  MediaTextStory,
   SectionStyle,
 } from "@/lib/homepage/section-types";
 import { SectionShell } from "./section-shell";
 
-function Cta({ config }: { config: MediaTextConfig }) {
-  if (!config.cta_label || !config.cta_href) return null;
+function Cta({ label, href }: { label: string; href: string }) {
+  if (!label || !href) return null;
   const className = "home-media-text-cta sm-btn-primary";
-  if (/^https?:\/\//i.test(config.cta_href)) {
+  if (/^https?:\/\//i.test(href)) {
     return (
       <a
         className={className}
-        href={config.cta_href}
+        href={href}
         target="_blank"
         rel="noopener noreferrer"
       >
-        {config.cta_label}
+        {label}
       </a>
     );
   }
   return (
-    <Link className={className} href={config.cta_href}>
-      {config.cta_label}
+    <Link className={className} href={href}>
+      {label}
     </Link>
+  );
+}
+
+/** One image-and-copy band: the section's own content, or one of its
+ *  stories. The ratio and alignment are the section's; each band chooses
+ *  which side its picture sits on. The first band's heading is the h2 the
+ *  section is known by; a story's heading is an h3 under it. */
+function Band({
+  band,
+  ratio,
+  alignment,
+  level,
+}: {
+  band: MediaTextStory;
+  ratio: MediaTextConfig["media_ratio"];
+  alignment: MediaTextConfig["alignment"];
+  level: "h2" | "h3";
+}) {
+  const Heading = level;
+  return (
+    <div
+      className={`home-media-text media-${band.media_position} align-${alignment}${band.image_url ? "" : " no-media"}`}
+    >
+      {band.image_url && (
+        <div className={`home-media-text-media ratio-${ratio}`}>
+          <Image
+            src={band.image_url}
+            alt={band.image_alt || band.heading}
+            fill
+            sizes="(max-width: 760px) 100vw, 50vw"
+            className="home-media-text-image"
+          />
+        </div>
+      )}
+      <div className="home-media-text-copy">
+        {band.eyebrow && <p className="home-section-eyebrow">{band.eyebrow}</p>}
+        {band.heading && (
+          <Heading className="home-media-text-heading">{band.heading}</Heading>
+        )}
+        {band.body && <p className="home-media-text-body">{band.body}</p>}
+        <Cta label={band.cta_label} href={band.cta_href} />
+      </div>
+    </div>
   );
 }
 
@@ -37,34 +81,47 @@ export function MediaTextSection({
   style?: SectionStyle;
   config: MediaTextConfig;
 }) {
-  if (!config.heading && !config.body && !config.image_url) return null;
+  const stories = config.stories ?? [];
+  if (
+    !config.heading &&
+    !config.body &&
+    !config.image_url &&
+    stories.length === 0
+  )
+    return null;
+
+  const first = (
+    <Band
+      band={config}
+      ratio={config.media_ratio}
+      alignment={config.alignment}
+      level="h2"
+    />
+  );
+
+  // Without stories the markup is exactly what it was before stories
+  // existed: one band directly under the section.
+  if (stories.length === 0) {
+    return (
+      <SectionShell sectionId={sectionId} style={style}>
+        {first}
+      </SectionShell>
+    );
+  }
 
   return (
     <SectionShell sectionId={sectionId} style={style}>
-      <div
-        className={`home-media-text media-${config.media_position} align-${config.alignment}${config.image_url ? "" : " no-media"}`}
-      >
-        {config.image_url && (
-          <div className={`home-media-text-media ratio-${config.media_ratio}`}>
-            <Image
-              src={config.image_url}
-              alt={config.image_alt || config.heading}
-              fill
-              sizes="(max-width: 760px) 100vw, 50vw"
-              className="home-media-text-image"
-            />
-          </div>
-        )}
-        <div className="home-media-text-copy">
-          {config.eyebrow && (
-            <p className="home-section-eyebrow">{config.eyebrow}</p>
-          )}
-          {config.heading && (
-            <h2 className="home-media-text-heading">{config.heading}</h2>
-          )}
-          {config.body && <p className="home-media-text-body">{config.body}</p>}
-          <Cta config={config} />
-        </div>
+      <div className="home-media-stories">
+        {first}
+        {stories.map((story, index) => (
+          <Band
+            key={`${story.heading}-${index}`}
+            band={story}
+            ratio={config.media_ratio}
+            alignment={config.alignment}
+            level="h3"
+          />
+        ))}
       </div>
     </SectionShell>
   );

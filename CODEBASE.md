@@ -808,7 +808,7 @@ headings" and had to guess the design back out of it.
 
 ★★ THE WALL STAYS; THE OUTPUT CHANGES. `lib/mink/design-from-image.ts` asks the
 same isolated reader for a STRUCTURED patch — exact `#rrggbb` per palette
-token, a typeface chosen from the nine-font allowlist, radii in whole pixels —
+token, a typeface chosen from the font catalogue (`lib/themes/fonts.ts`), radii in whole pixels —
 and `parseDesignReading` strips it to the design vocabulary before anything
 reaches the agent. The image is never added to the agent's multimodal context,
 so the worst a crafted screenshot can achieve is the wrong shade of beige,
@@ -2445,7 +2445,9 @@ wholesip/
 │   │   ├── storefront-theme.css
 │   │   ├── (pages)/           # Customer-facing pages:
 │   │   │   ├── shop/          #   product listing + [slug] product detail (reviews, related);
-│   │   │   │                  #   shop-filter-controls.tsx = the filter groups (sidebar + drawer)
+│   │   │   │                  #   shop-filter-controls.tsx = the filter groups (sidebar, drawer,
+│   │   │   │                  #   and ShopFilterBar's top-bar popovers); the product and collection
+│   │   │   │                  #   pages compose from lib/themes/templates.ts (§11, Phase 2e)
 │   │   │   │                  #   shop-view.ts (shared loader) + shop-filter-panel.tsx
 │   │   │   ├── collections/[slug]/ # ★ a category's own page (1.8); /shop?category= 308s here
 │   │   │   ├── cart/          #   cart page (CartProvider-driven)
@@ -2481,6 +2483,10 @@ wholesip/
 │   │   │                      #   stay in code + RESERVED (registry.ts + drift test).
 │   │   └── components/
 │   │       ├── auth/          # AuthModal + AuthProvider (customer auth context).
+│   │       │                  # ★ AuthModalLoader renders INSIDE BrandProvider (the
+│   │       │                  # dialog reads the store's name and logo from it); placed
+│   │       │                  # after it, every store's sign-in said "Welcome to Store".
+│   │       │                  # Pinned by auth-modal-loader.test.tsx.
 │   │       │                  # ★ `loading` means "we don't yet know who this
 │   │       │                  # is", so it clears only once the customer row has
 │   │       │                  # LANDED — not when Firebase answers. Clearing it
@@ -2508,6 +2514,8 @@ wholesip/
 │   │       │                  # `sm_session` exists, so returning shoppers restore
 │   │       │                  # immediately while anonymous visitors dynamically
 │   │       │                  # import the Web SDK only when account UI opens.
+│   │       ├── account/       # ★ AccountShell + AccountNav: the account template
+│   │       │                  # (plan Phase 2e) over profile, orders, notifications
 │   │       ├── cart/          # CartProvider, CartDrawer, CouponField
 │   │       ├── delivery/      # ★ remembered/default/current delivery location UI +
 │   │       │                  # server-priced PDP PIN availability/charge/ETA (§35)
@@ -2518,7 +2526,12 @@ wholesip/
 │   │       │                  # page-section-renderer, custom-code-frame (sandboxed iframe),
 │   │       │                  # custom-code-section, rich-text-section, hero-section,
 │   │       │                  # usp-bar-section, ticker-section, tile-grid-section,
-│   │       │                  # faq-accordion-section, media-text-section,
+│   │       │                  # faq-accordion-section, accordion-section,
+│       │                  # comparison-section, multicolumn-section,
+│       │                  # image-marquee-section, image-hotspots-section,
+│       │                  # before-after-section, product-spotlight-section,
+│       │                  # logo-strip-section, countdown-section (usp-icons
+│       │                  # is the shared trust-bar icon map), media-text-section,
 │   │       │                  # gallery-section, testimonials-section, video-section/player,
 │   │       │                  # newsletter-section,
 │   │       │                  # preview-bridge, draft-canvas (client-side instant
@@ -2677,7 +2690,7 @@ wholesip/
 │   │   ├── builder/           # ★ Website Builder full-tab experience (see §11): pages list
 │   │   │                      # (incl. the pinned Home = slug "") + live preview iframe +
 │   │   │                      # per-section editing. builder-client, outline-panel,
-│   │   │                      # inspector-panel, section-form + field-group (shared editor
+│   │   │                      # inspector-panel, section-form + field-group + block-list (shared editor
 │   │   │                      # forms), section-library + section-thumbs (visual add-section
 │   │   │                      # picker), use-autosave, use-history (undo/redo),
 │   │   │                      # use-builder-shortcuts, code-editor(+-lazy) (CodeMirror),
@@ -2694,6 +2707,9 @@ wholesip/
 │   │   ├── enquiries/         # enquiry inbox + @modal detail
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
 │   │   ├── admins/ roles/     # staff invites + role management
+│   │   ├── themes/            # ★ Themes (§11): current theme + Customize, the
+│   │   │                      # public library with Preview on demo stores, and
+│   │   │                      # a confirm dialog built from switch-rules.ts
 │   │   ├── branding/          # per-store branding editor (logo, colors)
 │   │   ├── billing/           # ★ Invoices & Billing (§17): tax config + tax-class
 │   │   │                      # manager + invoice-template editor (billing.css)
@@ -2726,18 +2742,147 @@ wholesip/
 │   │                          # (e.g. blogs → blogs/settings — see convention #9)
 │   │
 │   ├── platform/              # ★ STOREMINK PLATFORM (served on storemink.com via rewrite)
-│   │   ├── page.tsx           # Marketing landing page — connected commerce
-│   │   │                      # story (storefront + operations + POS + growth),
-│   │   │                      # with scoped visuals in homepage.css; live plan
-│   │   │                      # prices still resolve from the canonical catalog
+│   │   ├── page.tsx           # Marketing landing page in shopify.com's shape
+│   │   │                      # AND design system (2026-10-09): black page,
+│   │   │                      # regular-weight loosely-tracked headlines with
+│   │   │                      # the grey-then-white emphasis pattern, dark-grey
+│   │   │                      # rounded cards, one white pill button,
+│   │   │                      # underlined links in copy. Beats: a rounded
+│   │   │                      # hero card (copy left, a PHONE running the
+│   │   │                      # Vitrine theme right, two product photos and
+│   │   │                      # an order chip floating by, a CSS-rotated
+│   │   │                      # promise line) → "sell everywhere" THEME RAIL
+│   │   │                      # (the newest ten selectable themes from
+│   │   │                      # getThemeCatalog, newest first, each with its
+│   │   │                      # own catalogue preview image, in one
+│   │   │                      # scroll-snap row of identical cards with
+│   │   │                      # arrow buttons; theme-rail.tsx is the client
+│   │   │                      # half) → text-only channel marquee →
+│   │   │                      # Mink banner → three product cards (the third
+│   │   │                      # is four scenes, one per channel: browsing on
+│   │   │                      # a phone, buying at a counter, taking an
+│   │   │                      # order by phone, checking cartons in a
+│   │   │                      # stockroom; the owner rejected product photos
+│   │   │                      # labelled by channel and then UI vignettes of
+│   │   │                      # one product, neither showed the channel) →
+│   │   │                      # Built for India (invoice art with two photos
+│   │   │                      # floating beside it) → three merchant-stage
+│   │   │                      # photo story cards → customise (builder art,
+│   │   │                      # a 2×2 of the four theme photos, a real custom
+│   │   │                      # section as a code block) → POS → trust tiles
+│   │   │                      # → pricing cards → three steps, each with a
+│   │   │                      # product/theme photo → FAQ → final CTA.
+│   │   │                      # ★★ EVERY PHOTOGRAPH IS GENERATED FOR THE
+│   │   │                      # MARKETING SITE (public/marketing/**, made by
+│   │   │                      # scripts/marketing-photos.mjs, provenance in
+│   │   │                      # docs/marketing-assets.md): a lookbook shot on
+│   │   │                      # the hero phone, product tiles floating by,
+│   │   │                      # merchant-stage scenes for the stories, one
+│   │   │                      # scene per setup step. The first cut used the
+│   │   │                      # themes' seed heroes and catalogue product
+│   │   │                      # photos; the owner ruled those out
+│   │   │                      # (2026-10-09) and asked for new pictures at
+│   │   │                      # shopify.com's standard. Never a stock photo,
+│   │   │                      # a theme/catalogue image, an invented merchant
+│   │   │                      # (the phone's store is the "yourbrand"
+│   │   │                      # placeholder) or an invented statistic.
+│   │   │                      # ★ NO DECORATIVE ICONS (owner, 2026-10-09: the
+│   │   │                      # purple icon chips "look AI generated"). The
+│   │   │                      # icon tiles on the Mink band, channel marquee,
+│   │   │                      # customise cards, steps and mega-menu rail are
+│   │   │                      # gone; what remains is photography, drawn UI,
+│   │   │                      # type and a few 16px inline check/arrow marks.
+│   │   │                      # ★ NO LONG DASHES in any public marketing copy
+│   │   │                      # or page title (owner's rule): titles use a
+│   │   │                      # colon or middle dot, sentences a full stop or
+│   │   │                      # comma. Still a server component; the only
+│   │   │                      # client JS is the pricing switch and the
+│   │   │                      # mobile menu — rotator, marquee and header mega
+│   │   │                      # menus are CSS. Scoped visuals in homepage.css
+│   │   │                      # (the drawn light-UI artwork is pinned to dark
+│   │   │                      # ink so it never inherits the page's white
+│   │   │                      # text); live plan prices still resolve from
+│   │   │                      # the canonical catalog
+│   │   ├── theme-rail.tsx     # The homepage's one-row theme carousel
+│   │   │                      # (client: arrows + native scroll-snap), fed
+│   │   │                      # by the live catalogue. Themes are always
+│   │   │                      # shown as themselves, never as generated or
+│   │   │                      # theme-seed photography (owner's rule)
+│   │   ├── homepage-art.tsx   # The drawn dashboard/orders/channels/growth/
+│   │   │                      # Mink artwork, shared by the homepage and
+│   │   │                      # the product pages (product-art.tsx holds the
+│   │   │                      # storefront/builder/register/invoice ones)
+│   │   ├── pricing-cards.tsx  # The plan cards (client: the yearly switch).
+│   │   │                      # shopify.com/pricing's card since 2026-10-09:
+│   │   │                      # a "Pay yearly" switch with the compare link
+│   │   │                      # on the same row (`aside`), then name and
+│   │   │                      # tagline left, price right, one outline
+│   │   │                      # button, short rows under hairlines, no check
+│   │   │                      # icons. The dark skin lives in homepage.css
+│   │   │                      # (`.smh-pricing-component .stq-*`)
+│   │   ├── pricing-content.tsx # PLANS copy, the feature matrix and FAQS —
+│   │   │                      # one source for the homepage and /pricing
+│   │   ├── marketing-routes.ts # ★ THE REGISTRY of marketing pages (Why
+│   │   │                      # StoreMink, Products + five product pages,
+│   │   │                      # Pricing). Pure. Read by the header, footer,
+│   │   │                      # mobile menu AND app/sitemap.ts, and pinned
+│   │   │                      # both ways by homepage.test.ts (every entry
+│   │   │                      # has a page.tsx, every page.tsx is an entry).
+│   │   ├── (marketing)/       # ★ The inner marketing site (2026-10-08) —
+│   │   │                      # storemink.com was one long page while
+│   │   │                      # shopify.com is a family of pages. layout.tsx
+│   │   │                      # = .smh + SiteHeader/SiteFooter; blocks.tsx =
+│   │   │                      # PageHero / FeatureRow(s) / PillarGrid /
+│   │   │                      # CtaBand / RelatedPages + marketingMetadata
+│   │   │                      # (canonical per page); marketing.css = the
+│   │   │                      # smm-* blocks on top of homepage.css, same
+│   │   │                      # dark system (feature rows are dark cards).
+│   │   │                      # A pillar carries a mono "01" index above its
+│   │   │                      # title, not an icon (the icon chips were
+│   │   │                      # dropped site-wide on 2026-10-09).
+│   │   │                      # why-storemink/, products/ (overview) +
+│   │   │                      # products/{online-store,orders-inventory,
+│   │   │                      # payments,marketing,mink-ai}/, pricing/ (cards
+│   │   │                      # + full matrix + FAQ; the homepage keeps the
+│   │   │                      # cards and links here for the comparison).
+│   │   │                      # Point of Sale and Themes stay on their own
+│   │   │                      # hosts and are linked, not duplicated.
+│   │   ├── site-header.tsx    # Shared dark header: Why StoreMink + Products
+│   │   │                      # (rail tiles are a two-line Mink chat and the
+│   │   │                      # POS photograph, not icons)
+│   │   │                      # are full-width hover/focus-within CSS mega
+│   │   │                      # menus (no JS) — photo cards / link columns
+│   │   │                      # plus a "Built into every store" rail (Mink,
+│   │   │                      # POS); images are lazy so an unopened menu
+│   │   │                      # fetches nothing; every item a real route
+│   │   ├── site-footer.tsx    # Shared dark footer: four columns, a static
+│   │   │                      # "India · English · ₹" region line, legal row
 │   │   ├── homepage-mobile-nav.tsx # Accessible, auto-closing mobile menu
-│   │   ├── signup/            # ★ Store creation wizard (see §19): Shopify-style
-│   │   │                      # step order — email → password (+ Continue with
-│   │   │                      # Google) → email OTP → phone OTP → name → store →
-│   │   │                      # location → theme → plan (Razorpay autopay).
+│   │   ├── signup/            # ★ Store creation wizard (see §19): email +
+│   │   │                      # password on ONE screen → email code (or Continue
+│   │   │                      # with Google) → you + store → plan. The store is
+│   │   │                      # always created on Free first; the Plan step
+│   │   │                      # (plan-picker.tsx, live prices from
+│   │   │                      # /api/plans/pricing) can then take the first
+│   │   │                      # payment for Basic or Pro, with Skip beside it.
+│   │   │                      # No theme step (the default theme; Themes in the
+│   │   │                      # dashboard) and no phone step, except just
+│   │   │                      # before paying (phone-verify.tsx, next/dynamic,
+│   │   │                      # on lib/auth/use-phone-verification.ts). The
+│   │   │                      # owner otherwise verifies their mobile from the
+│   │   │                      # go-live checklist, §7.
+│   │   │                      # ★ CALM AND LIGHT ON PURPOSE (owner, 2026-10-10):
+│   │   │                      # the black marketing look with photography read
+│   │   │                      # as dramatic. Signup is the product's first
+│   │   │                      # screen, so it is a soft grey page, one white
+│   │   │                      # card, the BrandMark + Store/Mink lockup and one
+│   │   │                      # ink pill button (Shopify's pattern: black site,
+│   │   │                      # light signup). signup.css is self-contained and
+│   │   │                      # does NOT load homepage.css. Signup loads the
+│   │   │                      # phone library only on the paid-plan path.
 │   │   │                      # Firebase: Google via signInWithPopup (no callback
-│   │   │                      # route), phone via signInWithPhoneNumber; password
-│   │   │                      # email ownership via signup-email-otp action.
+│   │   │                      # route); password email ownership via the
+│   │   │                      # signup-email-otp action.
 │   │   ├── login/             # Platform-operator login — six-digit email OTP
 │   │   └── dashboard/         # ★ THE OPERATOR CONSOLE (§38 — docs/operator-console.md).
 │   │                          # Every panel used to live on the HOME page: the store
@@ -2780,17 +2925,24 @@ wholesip/
 │   │   │                      # account-settings/set-password/invite-user/user-management/
 │   │   │                      # user-group/role actions  (homepage-actions RETIRED — §11)
 │   │   ├── store-signup.ts    # Store onboarding (§19): checkStoreSlugAvailability,
-│   │   │                      # createStore({name,template,firstName,lastName,
-│   │   │                      # country, optional address}) — ONE transaction for
+│   │   │                      # createStore({name,template?,firstName,lastName,
+│   │   │                      # country, optional address}) — no template means
+│   │   │                      # the platform default; ONE transaction for
 │   │   │                      # the store, its owner and its invoice profile; the
 │   │   │                      # store starts launched:false — getSignupResumeInfo
 │   │   │                      # (resume wizard after Google redirect / refreshed
 │   │   │                      # tab). Tested across slug, identity, transaction
 │   │   │                      # failure and consent gates.
 │   │   ├── launch-actions.ts  # ★ Go live (§7): getLaunchState (checklist + password
-│   │   │                      # + preview URL), launchStore (superadmin; re-runs the
-│   │   │                      # checklist, sets launched, emits store.launched, then
-│   │   │                      # indexes), regenerateStorefrontPassword
+│   │   │                      # + preview URL + ownerCanVerifyPhone), launchStore
+│   │   │                      # (superadmin; re-runs the checklist, sets launched,
+│   │   │                      # emits store.launched, then indexes),
+│   │   │                      # regenerateStorefrontPassword
+│   │   ├── account-settings.ts # The signed-in admin's own row: name, password,
+│   │   │                      # and confirmVerifiedPhone — records a mobile proven
+│   │   │                      # by an ISOLATED code sign-in (never linked to the
+│   │   │                      # login) as admins.phone + phone_verified_at; an
+│   │   │                      # owner's empty invoice phone is filled too. Tested.
 │   │   ├── storefront-access-actions.ts # ★ unlockStorefront: the /password page's
 │   │   │                      # host-derived, rate-limited action that mints the grant
 │   │   ├── signup-email-otp.ts # Authenticated, rate-limited 6-digit email proof;
@@ -2800,11 +2952,17 @@ wholesip/
 │   │   ├── store-settings.ts  # Read/save per-store feature settings (see lib/settings)
 │   │   ├── merchant-analytics-settings.ts # Pro/platform-gated GA4 + Meta settings
 │   │   ├── blog-taxonomy-actions.ts  # Per-store blog categories/tags CRUD (+ propagation into blogs)
-│   │   ├── subscribe-actions.ts # ★ §34 dashboard-only subscription path:
+│   │   ├── subscribe-actions.ts # ★ §34 subscription path:
 │   │                      # startSubscribe / confirmSubscribe plus manual
-│   │                      # invoices, plan/location changes and cancellation.
-│   │                      # Signup creates Free stores and cannot call a
-│   │                      # billing action. ⚠ NOT billing-actions.ts (§17).
+│   │                      # invoices, plan/location changes and cancellation;
+│   │                      # startSignupSubscribe / confirmSignupSubscribe for
+│   │                      # signup's Plan step, which resolve the store from
+│   │                      # the signed-in owner's admins row (never the
+│   │                      # request) and share the same enrolment cores.
+│   │                      # ⚠ NOT billing-actions.ts (§17).
+│   ├── theme-actions.ts   # ★ switchStoreTheme for /dashboard/themes (§11):
+│   │                      # `themes` manage gate, selectable catalogue ids only;
+│   │                      # the rules live in lib/themes/switch-rules.ts.
 │   ├── billing-actions.ts # ★ Invoices & tax (§17): tax-class CRUD + save billing/
 │   │   │                      # invoice settings. Gated on `billing`, revalidates TAGS.billing.
 │   │   ├── store-domain.ts    # Custom domain connect (§30) — the GATE only; the
@@ -3004,6 +3162,9 @@ wholesip/
 │       │                      # due-blog publisher; exact-version conflict detection + SKIP LOCKED.
 │       ├── internal/theme-studio/captures/ # ★ Track 3.6: claim + [captureId] finish
 │       │                      # for the headless-Chromium capture job (CRON_SECRET).
+│       │                      # The job is STARTED by the per-minute runs/QA routes
+│       │                      # only when a capture waits (lib/theme-studio/
+│       │                      # capture-start.ts), not by its own schedule.
 │       ├── internal/theme-studio/runs/ # ★ Theme Studio Phase 3 MODEL worker: CRON_SECRET
 │       │                      # bearer, maxDuration 1200, TWO run lanes + an independent visual-QA lane.
 │       │                      # Needs its own Scheduler job (1200s deadline, no retries) and a
@@ -3055,6 +3216,9 @@ wholesip/
 │       ├── dashboard/analytics/reports/[report]/ # ★ §20 formula-safe CSV for
 │       │                      # the four analytics drill-downs. Re-derives tenant,
 │       │                      # analytics.view and location scope; rate-limited
+│       ├── plans/pricing/     # ★ GET live plan prices + whether the platform can
+│       │                      # take a card ({ plans, paidCheckout }, no-store),
+│       │                      # for signup's Plan step; never returns keys
 │       ├── storefront/search/ # ★ Predictive header search (§11, 1.7): GET, store
 │       │                      # from the Host, cached catalogue, shared matching rule
 │       ├── og-image/          # OG image proxy (compresses Supabase images only)
@@ -3136,7 +3300,10 @@ wholesip/
 │   │                          # ingestion/order synchronization. Pure boundaries tested.
 │   ├── plans/                 # ★ §15 server entitlement boundary: resolves effective
 │   │                          # plans and transaction-locks product/staff/active-coupon
-│   │                          # creation caps; soft downgrades never mutate existing data
+│   │                          # creation caps; soft downgrades never mutate existing data.
+│   │                          # signup-quote.ts (pure, client-safe): parses the live
+│   │                          # /api/plans/pricing quote, charge per period, the yearly
+│   │                          # saving label; never quotes compiled-in prices
 │   ├── shipping/              # ★ §35 checkout policy/types + pure rate translation +
 │   │                          # server-only origin-aware Shiprocket quotation
 │   ├── whatsapp/              # ★ WhatsApp Commerce (docs/whatsapp-commerce-plan.md),
@@ -3399,10 +3566,41 @@ wholesip/
 │   │                          # (role/force_password_reset custom claims — replaces the
 │   │                          # custom_access_token_hook), firebase-users.ts (admin
 │   │                          # create/delete/update + REST password reverify + reset link),
-│   │                          # firebase-client.ts (Web SDK: establishSession → POST
+│   │                          # firebase-client.ts (Web SDK: getCurrentFirebaseUser awaits
+│   │                          # authStateReady, since currentUser is null until the saved
+│   │                          # sign-in is restored; establishSession → POST
 │   │                          # /api/auth/session, endSession, secondary app for phone-only
-│   │                          # verify). Delete an auth user does NOT cascade to the Cloud
+│   │                          # verify: POS customers AND merchants' own mobiles, see
+│   │                          # app/dashboard/components/verify-phone-form.tsx). Delete an auth user does NOT cascade to the Cloud
 │   │                          # SQL admins/users row — callers delete BOTH.
+│   │                          # identity-usage.ts — authIdsInUse(): which logins still hold
+│   │                          # a StoreMink role (admin, customer, POS operator, platform
+│   │                          # operator by email). Shared by deleteStore and the signup
+│   │                          # reclaim, so "in use" cannot drift between them; throws on
+│   │                          # a failed read so callers treat unknown as in use.
+│   │                          # email-verified.ts — emailVerifiedNow(): the account record
+│   │                          # when the session cookie's email_verified snapshot still says
+│   │                          # false (signup gates ask it, never the claim alone, §19).
+│   │                          # use-phone-verification.ts — the mobile-code LOGIC (isolated
+│   │                          # sign-in, fresh reCAPTCHA per send, proof kept for a retried
+│   │                          # save), shared by VerifyPhoneForm (dashboard look) and
+│   │                          # signup's phone-verify.tsx; the component owns the refs.
+│   │                          # recaptcha.ts — freshInvisibleVerifier(): a new invisible
+│   │                          # verifier per send, in a NEW element. ★★ An invisible
+│   │                          # widget stays in the element it rendered into (the SDK's
+│   │                          # clear() removes only a visible one), so a second verifier
+│   │                          # on the same element threw "reCAPTCHA has already been
+│   │                          # rendered in this element": every Continue/Resend after a
+│   │                          # first failed send showed "Something went wrong" and never
+│   │                          # reached Firebase (storefront sign-in, POS customer check,
+│   │                          # this hook; 2026-10-10). Reusing ONE verifier also works
+│   │                          # (the SDK resets it after each send); never recreate on the
+│   │                          # same element. Phone sends log the Firebase code with
+│   │                          # console.warn (firebaseAuthErrorCode), since the shopper's
+│   │                          # message deliberately hides it. ⚠ Production's first send
+│   │                          # failing with INVALID_APP_CREDENTIAL is the server rejecting
+│   │                          # the reCAPTCHA token: a console setting (authorized domains /
+│   │                          # reCAPTCHA settings of the storemink-prod project), not code.
 │   ├── storefront/            # queries.ts (cached storefront reads — getPublishedPage/
 │   │                          # getPublishedPageSlugs, named columns only; getPublishedPage validates
 │   │                          # published_sections on read and logs each dropped section), tags.ts
@@ -3640,7 +3838,9 @@ wholesip/
 │   │                          # initial-draft.ts (legacy v20 presets; v21 explicit styles,
 │   │                          # catalogue-derived navigation and option combinations),
 │   │                          # design-directions.ts/style-choices.ts (seven directions,
-│   │                          # explicit visible choices), fingerprint.ts/variety-context.ts
+│   │                          # explicit visible choices), opening.ts (every new theme
+│   │                          # opens with a photograph filling the band: a carousel or a
+│   │                          # fullbleed hero at full width, v26), fingerprint.ts/variety-context.ts
 │   │                          # (bounded catalogue comparison + frozen run context),
 │   │                          # placeholders.ts (solid WebP per image slot), pipeline.ts
 │   │                          # (Stage A → B, ≤2 repairs each, pure over the client),
@@ -4194,7 +4394,27 @@ wholesip/
 │                              # `set constraints all deferred` in its transaction;
 │                              # everywhere else the checks stay immediate, so deleting
 │                              # ONE ordered product is still refused (verified both
-│                              # ways against a copy of production). Next free: 0174.
+│                              # ways against a copy of production). 0179 edits the
+│                              # section guide for nested blocks and the new sections;
+│                              # 0180 edits the branding guide's layout step in place
+│                              # for the page templates (plan Phase 2e) and the
+│                              # navigation guide's header step for the announcement
+│                              # bar. 0181 adds admins.phone_verified_at (backfilled
+│                              # only for signup-created owners, whose phone store
+│                              # creation had OTP-proven) and 0182 edits the signup,
+│                              # setup, account and plans guides for the three-step
+│                              # signup (account, store, plan), the owner's mobile
+│                              # verified from the go-live checklist, and publishes
+│                              # "Change your storefront theme".
+│                              # ★★ 0174-0178 BELONG TO THE `whatsapp` BRANCH. This
+│                              # branch's four pending entries were renumbered from
+│                              # 0174/0175/0179/0180 to 0179-0182 (2026-10-10) because
+│                              # the whatsapp branch had already taken 0174-0178. Safe
+│                              # only because no shared database had recorded them.
+│                              # ⚠ When both branches merge, manifest.json conflicts:
+│                              # whichever lands second must append its entries AFTER
+│                              # every applied one and fix `requires`, or the runner's
+│                              # out-of-order check refuses. Next free: 0183.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -4365,6 +4585,14 @@ wholesip/
 │   ├── storefront-header-layout-check.mjs # Offline header/ticker clearance: four header
 │   │                          # variants, portrait/landscape, server/measured heights and
 │   │                          # both CSS load orders; local Chrome, no network or DB.
+│   ├── theme-studio-exemplar-check.ts # ★ The seven exemplar themes (lib/themes/
+│   │                          # exemplars/) through the acceptance gates without a
+│   │                          # Studio project: the real package gates over a slot-form
+│   │                          # package with a digested manifest (no DB, no network);
+│   │                          # --seed --origin=<local server> --browser adds the route,
+│   │                          # link and markup gates and the probe's deterministic rules
+│   │                          # in local Chrome (theme-studio-exemplar-probe.js is the
+│   │                          # in-page half). Plan Phase 2 exit evidence; §11.
 │   ├── theme-studio-model-check.mjs # ★ Manual ADC/Vertex availability probe for
 │   │                          # the two Theme Studio Gemini models. --dry-run makes no
 │   │                          # request; a live probe sends one FREE countTokens call per
@@ -4471,7 +4699,11 @@ wholesip/
 │   │                          # ordinary additive DDL is one somebody disables).
 │   ├── db-migrate.mjs         # ★ status/baseline/apply/verify + recovery-only audit/adopt
 │   │                          # runner: physical DB guard, advisory lock, one transaction
-│   │                          # per migration, checksum drift/unknown-row refusal, and
+│   │                          # per migration, checksum drift/unknown-row refusal (★ a
+│   │                          # LOCAL database alone may pass `--allow-unknown local` to
+│   │                          # tolerate ledger rows from another branch; any other
+│   │                          # environment, or a value that does not name the local
+│   │                          # database, is refused by parseCli), and
 │   │                          # durable `verify`, immediate `applyVerify`, and evolved-schema
 │   │                          # `adoptVerify` postconditions, all checksummed. Recovery audit
 │   │                          # is database-enforced read-only; adoption never executes SQL
@@ -4817,8 +5049,8 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
 11. **Website Builder — pages & custom code are per-store, dashboard-editable.**
     The storefront itself is a per-store artifact, not hardcoded: - **Section registry**: `lib/homepage/section-types.ts` is the single typed
     section schema (config types, `EMPTY_CONFIG`, `META`, `validateConfig`),
-    shared by the homepage AND custom pages. Seventeen block types: `hero`
-    (banner/split/minimal variants — first-class hero, replaces the old
+    shared by the homepage AND custom pages. Twenty-six block types: `hero`
+    (banner/split/minimal/fullbleed/stacked/offset variants — first-class hero, replaces the old
     custom_code hero hack; optional `video_url` plays muted/looping in place
     of the image with the image as poster), `hero_carousel` (auto-playing
     photo/video slideshow — `slides[]` of HeroSlide, dot + arrow nav,
@@ -4838,11 +5070,28 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `ticker-section.tsx`, pauses on hover, static under reduced-motion),
     `faq_accordion`
     (expandable Q/A with optional category-filter pills; plain-text answers),
+    `accordion` (collapsible content: typed rows of copy, or copy with a
+    picture inside the open row; several rows may stay open), `comparison`
+    (products, sizes or plans side by side, feature by feature, as a table
+    that scrolls sideways on phones with the feature column pinned or as
+    stacking cards; rows are text per column or yes/no ticks that carry a
+    screen-reader word), `multicolumn` (two to four columns of trust-bar
+    icon or picture, heading, copy and a link), `image_marquee` (pictures
+    drifting sideways on the ticker's track), `image_hotspots` (a shoppable
+    picture: dots at percentage positions open a card with copy and a link,
+    one at a time, opening inwards near the far edges), `before_after` (two
+    pictures in one frame; a native range input laid over the frame moves
+    the clip, so it drags, steps by keyboard and reads as a slider),
+    `product_spotlight` (one product large, resolved like featured products:
+    the chosen id, else the first featured product, else the first product),
+    `logo_strip` (press or stockist marks, still or drifting, optionally one
+    tone; builder-only), `countdown` (a live countdown to an ISO instant,
+    ticking only in the browser; builder-only),
     `latest_blogs`, `rich_text` (inline sanitized HTML, SEO-friendly) and
     `custom_code` (merchant HTML/CSS/JS). Hero/tile/slide `background` fields
     are strict colours (`safeColor`) because they render into inline style
     attrs; media, logo, CTA and `video_url` fields are `safeHref`-validated.
-    All seventeen types have builder forms and section-library thumbnails;
+    All twenty-six types have builder forms and section-library thumbnails;
     Phase 3's renderers live in `media-text-section.tsx`, `gallery-section.tsx`,
     `testimonials-section.tsx`, `video-section.tsx`, and
     `newsletter-section.tsx`.
@@ -5005,8 +5254,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     reference template with real Unsplash photography, per
     docs/vertical-templates-plan.md §9.1, and the default theme; **studio** and
     **ritual** are published `0.1.0` editorial home-design and botanical-wellness
-    themes with generated, provenance-logged imagery, available in signup and
-    the public catalog after their 2026-08-12 production/demo audits — the
+    themes with generated, provenance-logged imagery, available from the
+    dashboard's Themes page and the public catalog after their 2026-08-12
+    production/demo audits — the
     Arcade/Fresko placeholders were retired 2026-07-04),
     `definitions/vitrine.ts` (a
     monochrome fashion preset for footwear/bags/accessories: Jost +
@@ -5016,7 +5266,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     passed. Its ten `public/themes/vitrine/*.webp` assets are bundled, and the
     healthy `demo-vitrine` store is seeded on staging and production.
     `visibility: public` and `status: published` expose it in both the public
-    catalog and signup picker.
+    catalog and the dashboard's Themes page.
     ★ Its product crops are SQUARE (1000×1000), not the 4:3 Studio/Ritual use,
     because this theme renders cards at 1:1 and a 4:3 source would be
     centre-cropped through the toe of the shoe. Imagery is rebuilt from three
@@ -5033,8 +5283,37 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     store-scoped DB content rather than theme-package state. Rendering reads
     the pin first and falls back to legacy `template`, so existing stores need
     no migration; old immutable releases stay in `THEME_DEFINITIONS` when a
-    preset advances. `createStore` (signup) calls it with the picked template
-    (published immediately; brand NAME preserved). v1 constraints are
+    preset advances. `createStore` (signup) calls it with the platform default
+    theme (published immediately; brand NAME preserved); signup no longer asks.
+    `settings.theme.homepageSeededAt` records when the theme last wrote the
+    homepage, which `homepageEditedSinceSeed` reads.
+    **★★ SWITCHING THEMES FROM THE DASHBOARD (2026-10-10).** `/dashboard/themes`
+    (permission section `themes`, view/manage, Storefront group; its own key,
+    not `builder`'s) shows the current theme with Customize (Website Builder)
+    and the public library newest first, with industry filters, Preview on a
+    healthy demo store, a plan lock with an Upgrade link, and **Use this
+    theme**. `switchStoreTheme` (app/actions/theme-actions.ts, gated on
+    `getManagerIdentity("themes")`) accepts only a selectable catalogue id
+    (the createStore rule) and refuses when the registry would substitute
+    another theme. `lib/themes/switch.ts` reads the facts and writes;
+    `lib/themes/switch-rules.ts` (pure, also used by the confirm dialog, so
+    the dialog cannot promise one thing while the server does another)
+    decides what may change: the design pin ALWAYS; the homepage only while
+    it is still the seed, or on an explicit opt-in that first saves the
+    edited one as a draft page "Homepage before {theme}" in the SAME
+    transaction as the replacement; the theme's missing pages only alongside
+    a replaced homepage, never over an existing one; the sample catalogue
+    only while every product is an untouched "(Sample)" draft of the CURRENT
+    theme, every category is an untouched sample, and the store has never
+    taken an order (an emptied catalogue is not re-seeded); `store_menus`
+    only together with the catalogue and never when a `store_chrome` row
+    exists; the brand colour only while it is still the old theme's. Products,
+    categories, pages, menus and Builder design choices the merchant made are
+    never touched. The design write is the one that must land; the rest is
+    best-effort and reported as warnings. Demo and Theme Studio preview
+    stores are refused, as are themes above the store's plan and the theme
+    already in use. `seedSampleCatalogue`, `seedMenus`, `prepareSections` and
+    `revalidateThemeSeed` are exported from apply.ts for it. v1 constraints are
     production functions in `lib/themes/validation.ts` (Theme Studio's
     acceptance gates run them too), asserted for every bundled theme by
     `lib/themes/themes.test.ts`:
@@ -5049,12 +5328,12 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     **Demo stores**: one per theme
     (`demo-{id}` — the namespace is blocked at signup), seeded/reseeded via
     `seedDemoStore` (platform superadmin action) from the Themes panel on the
-    platform stores console; the signup picker's Preview opens
+    platform stores console; the dashboard Themes page's Preview opens
     `https://demo-{id}.{ROOT_DOMAIN}` only when manifest demo health is
     `healthy`; an unavailable demo renders a disabled, explanatory control
     instead of opening a known 404. `createStore` repeats catalog visibility
     validation server-side, so posting a hidden/draft/unknown id around the
-    signup UI cannot install it.
+    UI cannot install it; `switchStoreTheme` applies the same rule.
     ★ **A DEMO CARRIES THE THEME'S OWN NAME** (2026-10-03). Every seeder —
     `seedDemoStore`, Theme Studio publication's `seedDemo` and
     `scripts/seed-demo-store.ts` — writes the row through ONE helper,
@@ -5109,9 +5388,19 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `lib/themes/runtime-registry.ts` validates every JSON package and SHA-256
     digest before use and resolves an exact installed database version first.
     ★★ Contract comparisons and the digest are KEY-ORDER INDEPENDENT
-    (`canonicalJson` in `lib/theme-studio/contracts.ts`): `jsonb` returns keys
-    sorted by length then bytes, so a `JSON.stringify` comparison rejected
-    every stored package and the registry silently served only bundled themes.
+    (`canonicalJson` in `lib/themes/canonical-json.ts`, dependency-free so
+    the theme contracts share it without a cycle; the Studio contract
+    re-exports it): `jsonb` returns keys sorted by length then bytes, so a
+    `JSON.stringify` comparison rejected every stored package and the
+    registry silently served only bundled themes. ⚠ It happened AGAIN in
+    Phase 2e (2026-10-10): `templateIssues` compared a product block and a
+    promo tile to their normalised form with `JSON.stringify`, so any package
+    carrying `preset.templates` validated when written and was refused by
+    `parseRelease` on the way back out, and the store rendered un-themed with
+    nothing logged. Found by the exemplar seed, the first thing to store a
+    templated package; `exemplars.test.ts` now validates every exemplar's
+    package through a jsonb-shaped key re-order, which is the one check that
+    reaches every contract rule over the whole Phase 2 vocabulary.
     ★ Two resolvers: `resolveInstalledThemeDefinition` (render/design reads)
     returns NULL for an id in neither the registry nor this build, so a retired
     `template` value renders un-themed rather than as Basket;
@@ -5847,6 +6136,24 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     queue/project state can change. As of 2026-09-29, dev and production each
     have a deployed Cloud Run capture job and five-minute schedule; both passed
     empty-queue executions before Cloud Build's durable flag was enabled.
+    ★★ THE JOB IS STARTED ON DEMAND NOW (2026-10-10), because a Cloud Run JOB
+    execution is billed for at least one minute. The schedules ran every minute
+    in both environments (since 2026-10-01), so 2,880 executions of 2 vCPU /
+    2 GiB a day found nothing to do: "Jobs CPU" + "Jobs Memory" were ₹5,819 of
+    Cloud Run's ₹5,972 for 1–10 October, while every web request cost ₹152.
+    `lib/theme-studio/capture-start.ts` lets the per-minute Theme Studio QA and
+    runs routes (cheap request-billed calls) ask one question first, whether a
+    capture is claimable (the claim's own predicate: queued, or running on a
+    lapsed lease, created or lapsed within 6 hours), and only then POST
+    `run.googleapis.com/v2/…/jobs/{job}:run`. One start per 90 s per job through
+    the shared rate limiter; never throws into the worker. The job name is
+    derived from `K_SERVICE` exactly as cloudbuild's capture-deploy step derives
+    it from `_SERVICE` (`-prod` → `storemink-theme-studio-capture`, `-dev` →
+    `…-capture-dev`), with `THEME_STUDIO_CAPTURE_JOB` / `_REGION` overrides.
+    ⚠ Needs `roles/run.invoker` on each job for the runtime service account,
+    and the jobs' own schedules paused only after that grant and this deploy
+    (docs/theme-studio-capture-job.md); a refused start logs
+    `theme_studio.capture_job_start_failed` with the HTTP status.
     `docs/theme-studio-capture-job.md` is the build, deploy and schedule runbook,
     and `npm run theme-studio:capture`
     runs it locally against the installed Chrome. ★ Preview storefronts now show the theme's
@@ -6025,6 +6332,557 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     The builder's draft preview (`lib/pages/preview.ts`) is untouched; it
     renders what the merchant is typing. Storefront-internal: no merchant
     workflow change, no Help Centre update.
+    **Fonts 9 → 31 with a pairing library (2026-10-09, plan Phase 2a).**
+    `lib/themes/fonts.ts` is the one catalogue: 31 faces (the nine originals
+    first, in their old order, then 22 added — editorial and didone serifs,
+    humanist and reading serifs, geometric, grotesk and rounded sans,
+    condensed and poster display faces, one monospace), each with family,
+    next/font export, CSS variable, category, loaded weight range, italic,
+    body-suitability and moods; and 26 display/body **pairings** with moods
+    and the design directions they suit. `DESIGN_FONTS` / `DESIGN_FONT_NAMES`
+    / `DesignFont` (the override allowlist, Mink's design reader, the
+    builder's Type panel — now grouped by category), `typography.ts`'s
+    faux-bold weights, the package contract (a stored face must be one the
+    catalogue loads) and the Stage B schema all derive from it.
+    ★ `app/layout.tsx` CANNOT derive — next/font/google needs one static call
+    per family — so `fonts.test.ts` reads that file and fails when the two
+    disagree, and cross-checks every family, weight, style and subset
+    against Next's own Google font data. All 22 are `preload: false`
+    (fetched only by a store whose theme names them); italic is loaded only
+    for the editorial serifs that trade on it. ★ Stage B chooses a PAIRING
+    (prompt `theme-studio-v25`, feature `fontPairings`): the draft gains a
+    top-level `fontPairing` — an enum, or null for a free choice when the
+    brief names a typeface, never a display-only face as body — which the
+    compiler resolves into `design.fonts`, the pairing winning over the two
+    faces the model also wrote. Top level, not under `design`, so it is never
+    a repair target; the package shape is unchanged. The prompt lists the
+    pairings and the catalogue and derives the limited-weight faces from it
+    instead of a hand-written sentence; the variety prompt adds the pairings
+    suited to the chosen direction. ★ Pre-v25 requests keep their bytes:
+    `stageBSchemaFor(schema, false)` returns a legacy twin (no `fontPairing`,
+    the nine faces) and the prompt keeps its old wording, because a persisted
+    paid request is keyed on its exact schema and text. Decision 5 (owner
+    taste) stays open: swap any face or pairing by editing the one file. Measured on a local production build (2026-10-09): the root layout's font CSS chunk is 193 `@font-face` rules, 69.8 KB raw / 8.3 KB gzipped, of which the 22 new families are 42.7 KB raw against the nine originals' 20.7 KB — roughly 5 KB gzipped more per page — and no font bytes until a theme uses a face (149 woff2 files, 5.3 MB in `static/media`, fetched on demand); the build took 59 s locally with no font fetch failure.
+    Storefront/operator-internal: no merchant workflow change, no Help Centre
+    update.
+    **Every generated theme opens with a photograph filling the band
+    (2026-10-09, owner's rule; a slice of plan Phase 2d).** The owner pointed
+    at the Vitrine demo and Shopify's Taiga: the homepage opens on a picture
+    that fills the whole hero band with the copy over it, while Luxe (a Studio
+    theme) opened with a split hero, image beside copy. Two parts. (1) The
+    renderer gains a fourth `hero` variant, **`fullbleed`**: the image is the
+    band's background (`home-hero-bgmedia`, the minimal variant's mechanism)
+    with the copy over it, alignment honoured (left or centre; minimal forces
+    centre), the carousel's copy padding, width and left-edge scrim, never a
+    rounded corner (it pairs with Style → full width to run edge to edge, and a
+    radius against the screen edge reads as a mistake), and `MediaTone`
+    measuring the pixels behind the words as it does for a slide. It is a
+    one-slide carousel without the controls. Builder: a "Full-bleed" option in
+    the hero Layout select, the wide image spec and the overlay controls;
+    `hero-contrast.ts` leaves a fullbleed hero with media to the browser and
+    vision stages like a minimal one; Mink's screenshot reader may name it.
+    `scripts/theme-studio-renderer-check.mjs` renders it at the five QA widths,
+    both alignments, light and dark copy, auto/large/screen, contained and
+    full (727 cases pass); the contrast script covers the photo-less field.
+    (2) Theme Studio prompt **`theme-studio-v26`** (feature
+    `fullBleedOpening`): Stage A writes a dedicated 21:9 (or 16:9) brief for
+    the opening; Stage B is told the first enabled homepage section must be a
+    `hero_carousel` whose slides each carry an image, or a `hero` with variant
+    `fullbleed` and an image, at height large or screen, and the variety
+    prompt prints the fourth variant. `lib/theme-studio/opening.ts` is the
+    check, run inside generation beside the claims check as a repair issue —
+    never a content floor or an acceptance gate, because bundled themes and
+    installed stores open however they were authored (Vitrine itself leads
+    with a ticker). `enforceHomepageOpening` sets the opening's width to full
+    rather than asking for it (mechanical, so no paid repair turn), and the
+    rule applies to new builds only: a revision keeps whatever opening its base
+    has. An automatic QA repair of a theme that opens this way is not offered
+    the opening's variant, height or width as settings and is re-checked
+    afterwards; the variety correction leaves those three paths alone, and the
+    hero axis left `CONVERGENCE_CHOICES` (a shared opening is now the rule, not
+    a repeated default; the weighted distance still counts it). ★ Pre-v26
+    requests keep their bytes: the prompt bullets, the Stage A sentence, the
+    hero-contrast note and the printed hero variants are all gated on the
+    feature flag (`visibleSectionChoices(false)`, `heroContrastPrompt(false)`),
+    while the compiler accepts the fourth variant at every version. The
+    **v27: the opening is a slideshow (2026-10-09, owner: "carousel designs
+    with < > buttons to move around").** Feature `carouselOpening`: a new
+    theme's first enabled homepage section must be a `hero_carousel` of two
+    or three slides, each with its own image brief (a different scene of the
+    same shoot, never the same brief twice), at height large or screen and
+    full width, so the storefront renders its previous/next arrows and dots
+    (arrows hide on touch phones under 640px, where shoppers swipe). Stage A
+    writes one 21:9 brief per slide; Stage B is told the slideshow is the
+    opening and a single hero of any variant may open another page, never the
+    homepage. `homepageOpeningIssues(pkg, { carousel })` holds both rules:
+    v26 bytes and the v26 hero-or-carousel rule are unchanged, and an
+    automatic repair keeps whichever full-band opening its base has. The
+    offline provider's homepage opens with a two-slide carousel and keeps a
+    fullbleed hero further down for the solid-hero fixtures. Not yet run
+    against live Gemini.
+    **v28: a brief may allow adults, and wide images are stored larger
+    (2026-10-09, owner's decisions).** (1) People. Stage A decides per brief
+    whether a person belongs in the picture and sets `people: "adults"` only
+    where the photograph is about the product being worn, used or enjoyed (a
+    garment on a model, a hand holding a cup, a lifestyle hero); pack shots,
+    still lifes, category tiles and interiors stay `"none"`, which most
+    briefs in most themes are. The field is optional in the intent contract
+    (absent means none, so stored intents load), required in the v28 Stage A
+    schema, and `stageASchemaFor(schema, false)` is the pre-v28 twin a
+    persisted request is keyed on. The image prompt (`theme-studio-image-v4`)
+    turned its people line into the fifth placeholder `{{people}}`,
+    rendered by `peopleRule`: the people-free rule byte for byte unless the
+    brief allows adults, when the picture may include one or two adults with
+    the product as the subject, never a child, never a real or famous person,
+    no nudity. The provider sets `personGeneration` per request
+    (`ALLOW_ADULT` only for such a brief, otherwise `ALLOW_NONE`) and keeps
+    prominent people blocked and the harm filters unchanged. A product pack
+    shot never allows a person whatever its range brief says, and the anchor
+    is always a still life. The reviewer (`theme-studio-image-review-v7`) is
+    told which rule the brief carries: under "none" any person is the
+    blocking `person` problem; under "adults" only a child, a recognisable
+    real person or nudity is. A people-filter refusal is redrawn with the
+    rule its brief has. (2) Size. Wide slots (16:9 and wider: heroes,
+    banners, slides) are stored at 2400px across instead of 1600 and may be
+    1000 KiB instead of 500 (`THEME_IMAGE_RULES.maxWideBytes`,
+    `SLOT_IMAGE_WIDE_LONG_EDGE`): they fill a desktop screen, where 1600px
+    read soft on a retina display, and the model already draws them wider
+    (3168px for 21:9 at 2K). Never upscaled; every other slot keeps 1600px and
+    500 KiB, and the catalog card its 250 KiB. ⚠ The image prompt version
+    moved, so a run interrupted across the deploy misses its checkpoint cache
+    for the images not yet settled and redraws them. Not yet run against live
+    Gemini; the first live adults brief should be checked by eye. Operator-
+    only: no merchant-visible change, no Help Centre update.
+    **Nested blocks (2026-10-09, plan Phase 2b; prompt v29).** A section's
+    repeatable children — slides, tiles, items, stories, rows — are its
+    BLOCKS, and `SECTION_BLOCKS` in `lib/homepage/section-types.ts` is the
+    registry: per section type, the config key that holds them, the block
+    types it admits (the first is the default), whether each block carries a
+    `type` field, and how many a published section needs and may hold. The
+    eight list-shaped sections that predate it are registered as untyped (a
+    tile is a tile) and keep their stored shape; `sectionBlocks` and
+    `blockTypeOf` read through it, and every validator holds its list to one
+    count rule (`blockCountError`: over the cap is refused in every mode,
+    under the minimum only on publish). Three adopters: (1) `media_text`
+    gains `stories` — up to five further image-and-copy bands under the
+    first, each choosing its image side, sharing the section's ratio and
+    alignment, rendered inside `.home-media-stories` only when present and
+    omitted from storage when empty, so a row saved before stories existed
+    is stored and rendered byte for byte as it was. (2) `accordion`
+    (collapsible content) holds typed rows, `text` or `image` (a picture
+    inside the open panel), with `open_first` and `allow_multiple`; an
+    unknown stored type coerces to `text`, and a text row's image is cleared
+    rather than carried as an orphan. (3) `comparison` holds two to four
+    columns (label, caption, optional CTA, at most one `highlight`, the first
+    wins) and typed rows, `text` or `check`; every row's `values` is realigned
+    to the columns on save (padded or cut), ticks normalise to `yes`/`no`/"",
+    and the renderer gives every tick a screen-reader word so a row never
+    says anything by shape alone. The table's scroller is positioned so it
+    contains those words (the product-carousel overflow lesson), and the
+    feature column is sticky. ★ The builder gets ONE block list
+    (`block-list.tsx`): blocks start collapsed under a title drawn from their
+    own content, a block just added opens, open state follows a block that
+    moves and is dropped with one removed; `usp_bar`, `tile_grid` and
+    `testimonials` moved onto it, and the two new sections and media-text
+    stories use it. Theme Studio: feature `nestedBlocks` (v29). The Stage A
+    section list and sentence, the Stage B blocks bullet and config examples
+    (a pre-v29 media_text example prints without `stories`), the variety
+    prompt's choice list (`accordion.open_first`/`allow_multiple`,
+    `comparison.style`) and both schemas' section enums are gated:
+    `themeStudioSectionTypes(nestedBlocks)` and
+    `LEGACY_THEME_STUDIO_SECTION_TYPES` give the pre-v29 list, and
+    `stageASchemaFor`/`stageBSchemaFor` take a third flag and build each twin
+    once from the two capabilities a request may predate. The compiler
+    accepts the full list at every version. `validateThemeCopy`'s alt-text
+    pairs cover stories and accordion images; the generic `*_url`/`*_href`
+    walkers already reach them. The offline draft carries one of each new
+    section; `scripts/theme-studio-renderer-check.mjs` renders the table at
+    two to four columns (scrolling inside its container at phone widths,
+    never the page), the cards, an open image row and a three-band story.
+    Merchant-visible (two section types and stories in the library):
+    migration `20261009_0179_nested_blocks_help` edits the section guide's
+    list sentence in place and adds one paragraph on blocks.
+    **Phase 2c, first slice (2026-10-09; prompt v30).** Seven sections and
+    one layout, chosen for what Shopify themes ship everywhere and what the
+    Studio can author (there is no capability-gap report yet to rank the
+    plan's candidate pool): `multicolumn`, `image_marquee`, `image_hotspots`
+    (Bubble's gap), `before_after`, `product_spotlight`, and the builder-only
+    `logo_strip` and `countdown` — the image model draws no real press marks
+    (and a mark is somebody's brand), and a model cannot know a real end
+    date, so `THEME_STUDIO_SECTION_TYPES` excludes both the way it excludes
+    video. `tile_grid` gains `layout: "collage"` with per-tile `span`
+    (`2x1`, `1x2`, `2x2`; one cell stored as absence), packed with
+    `grid-auto-flow: dense`. ★ `tile_grid.layout` is deliberately NOT a
+    required visible choice: `sectionChoiceIssues` runs at every compile, so
+    a v29 draft replayed from its paid checkpoint, which has no such key,
+    would otherwise fail a check its prompt never set; the compiler's
+    defaults make it grid. The spotlight needs product data: `map-data.ts`
+    resolves the chosen id, else the first featured product, else the first,
+    and `fetchSectionDatasets` fetches products for it; the compiler requires
+    `source "featured"` with `product_id null` (ids are assigned at install),
+    the `featured_products` rule. Every tick, dot and handle is a 24px+
+    target; the before/after control is a native range input covering the
+    frame with an invisible thumb and a drawn grip, so it drags anywhere,
+    steps by keyboard and is a slider to a screen reader; the countdown
+    renders blank tiles on the server and ticks only after mount, so there
+    is nothing a hydration could disagree with. Theme Studio: feature
+    `moreSections` (v30). The vocabulary is now `SECTIONS_BY_REVISION` in
+    `schemas.ts`: `themeStudioSectionTypes(nestedBlocks, moreSections)` gives
+    each revision its list, the twins take a fourth flag, and the prompts a
+    sixth parameter; a v30 Stage B bullet describes each section's fields
+    and the collage. `validateThemeCopy`'s alt-text pairs cover every new
+    picture, including the two nested before/after sides (a pair's `items`
+    may now name one nested object). The offline draft carries a
+    multicolumn on the homepage and a before/after on About; the renderer
+    check renders every new section at the five widths (marquee and strip
+    drifting inside their band, the hotspot card opening inwards, the
+    spotlight stacking, the collage spanning). Merchant-visible: the pending
+    migration 0179 (then 0174; never applied) was widened in place to name the seven
+    new sections, rather than chaining a second `replace()` on it.
+    **Phase 2d, first slice (2026-10-09; prompt v31).** Nine more layout
+    variants, each a CSS treatment of markup that already exists, so no
+    section or chrome component changed shape. Hero: `stacked` (the copy
+    above a full-width picture in a 21:9 frame, 4:3 stacked on phones; the
+    height presets grow the picture, never the copy) and `offset` (the
+    picture fills the band and the copy sits in an opaque surface card over
+    its lower edge, or the top under content_position "top"; the card paints
+    its own ink, so `MediaTone`, the overlay and the scrims stay off it, and
+    `hero-contrast.ts` leaves it to the design contract's ink-on-surface
+    pair while a stacked hero is measured like a split one). Header:
+    `transparent`, the owner-flagged gap (the Shopify transparent header:
+    nothing behind the bar at the top of the page and the opening photograph
+    runs under it — homepage.css drops the `.home-sections` reserve for a
+    hero- or carousel-led page and a screen-height opening fills the whole
+    viewport — with the controls in the colour that reads over the picture,
+    which `Header.module.css` reads with `:has()` from the `theme-light`
+    class `MediaTone` settles on the first hero or the carousel's active
+    slide, and solid cream with ink controls once scrolled; every class
+    inside that `:has()` is wrapped in its own `:global()`, because the
+    offline header checks strip `:global(...)` with a regex that cannot see
+    past nested parentheses) and `hamburger` (every link behind the menu
+    button at every width, so the drawer is the navigation, with the logo
+    page-centred between two equal grid columns above phone width). Cards:
+    `centered` (a 4:5 photograph, name and price centred beneath it in the
+    display face), `soft` (the photograph contained on a padded, tinted,
+    rounded tile) and `wide` (a 4:3 photograph, name and price on one line
+    under a hairline); all three share classic's no-chrome rule, hide the
+    "% off" pill and the category label and keep the one flag on the photo.
+    Footer: `centered` (everything stacked and centred, each link column one
+    wrapping row, the newsletter centred) and `compact` (one slim wrapping
+    band, contact lines in a row, a thin newsletter bar); every merchant
+    block still renders. The lists widened together in `ThemeLayout`,
+    `lib/chrome/types.ts`, `lib/themes/validation.ts`, the package contract,
+    Mink's builder reader and the builder's selects; `HERO_VARIANTS` and
+    Mink's screenshot reader carry the two hero shapes. Theme Studio:
+    feature `moreVariants` (v31). Stage A names the new chrome and cards,
+    Stage B gains a "More layouts" bullet and prints the six hero variants
+    in its choice list (three hero variants before v26, four to v30, six
+    from v31, from `visibleSectionChoices(fullBleedOpening, moreVariants)`),
+    and the Stage B layout enums live in `LAYOUT_VARIANT_ENUMS`, with
+    `stageBSchemaFor`'s fifth flag narrowing every earlier twin back to
+    `LEGACY_LAYOUT_VARIANT_ENUMS`; a targeted repair derives its choices
+    from whichever schema the run's revision sends, so a v30 repair is never
+    offered a v31 value. The opening rule is unchanged: a stacked or offset
+    hero may not open the homepage. Checks: the header layout and contrast
+    scripts loop six variants (a transparent header puts a hero or carousel
+    opening at the top of the page), the card script eight skins, and the
+    renderer check renders the stacked hero at every width and preset and
+    the offset card at both alignments, both text modes and both positions.
+    Not yet run against live Gemini. Merchant-visible only as more options
+    in selects that no published guide enumerates, so no Help Centre update.
+    **Phase 2d, second slice (2026-10-09; still prompt v31, which no run
+    has used).** The rest of the plan's list. `hero_carousel.layout`
+    `"split"` (stored only when chosen, so every saved carousel is
+    byte-identical): each slide is copy on a colour field beside its
+    photograph instead of over it, slides in flow so the band takes the
+    active slide's height and long copy never clips, a short fade on the
+    swap, photo first on phones, and no scrim, overlay or tone probe (the
+    copy sits on the field). The media now lives in a `.home-carousel-figure`
+    that is `display: contents` in the full layout, so the absolutely placed
+    photo still fills the slide, and the photo's column in the split one.
+    `homepageOpeningIssues` refuses a split opening (the homepage's
+    photographs fill the band); a split carousel may open any other page.
+    Headers `stacked` (the logo centred on one row with the controls to its
+    right, the menu centred on a row beneath) and `utility` (a slim bar of
+    delivery, search, account and cart under a hairline, then the brand row
+    of logo and menu), desktop only like centered and minimal, with a taller
+    pre-hydration `--sm-header-h` fallback in `storefront-theme.css`. ★ They
+    needed `headerFits` to judge ROWS: it sorted every item by its left edge
+    and demanded clear space between neighbours, so a menu directly under a
+    logo read as an overlap and the fit would have folded the very menu the
+    layout exists to show. `FitBox` gained `top`/`bottom`, `headerRows`
+    groups items by vertical overlap, and the gap rule runs within each
+    row; a box with no extent is one row, as before (`use-header-fit.ts`
+    now reads the extents). The header, contrast and renderer checks cover
+    the two headers and the split carousel. Of the plan's 2d list, that
+    leaves nothing open: collage is the tile grid's collage layout,
+    text-only is a minimal hero without media, video is `hero.video_url`.
+    **Phase 2e, first slice (2026-10-09; prompt v32).** The product and
+    collection pages are composed from a template (`lib/themes/templates.ts`),
+    the way Shopify's are, instead of two hard-coded compositions.
+    `ThemeTemplates` is an optional `preset.templates` field (no schema
+    bump; the `people` precedent): `product` is a gallery shape
+    (`thumbs-bottom`, `thumbs-left`, `stacked`, `carousel`, `grid`) and the
+    ordered blocks of the information column — `price`, `variant_picker`,
+    `buy_box`, `description`, `delivery_estimate`, `share`, a `trust_row` of
+    icon-and-label items, an `accordion` of heading-and-body rows,
+    `rich_text` — plus `reviews` and `recommendations` under the grid and
+    `sticky_bar` for the phone's sticky add-to-cart; `collection` is where
+    the filters live (`sidebar`, `drawer`, or `top-bar`: a row of filter
+    popovers above the grid), how the grid pages (`load-more`, `paged`,
+    `infinite`) and up to four promotional tiles placed after the Nth card.
+    `defaultTemplates(layout)` is today's pages exactly (the sticky bar iff
+    `layout.stickyAddToCart`), so a theme without the field and a store
+    without an override render byte for byte as before; `normalizeTemplates`
+    keeps order, drops unknown or empty blocks, dedupes (the first wins),
+    appends the two required commerce blocks and bounds every list, and
+    `templateIssues` is the contract's strict report of what normalising
+    would change. ★ Merchant overrides ride in
+    `StorefrontAppearance.templates` (`"theme"` or a complete template per
+    page, the other layout fields' pattern; a row saved before the key
+    inherits), resolved by the three-argument `resolveStorefrontAppearance`
+    into `ResolvedStorefrontAppearance.templates`, and `stickyAddToCart` is
+    now derived from the blocks.
+    `product-detail-client.tsx` renders the information column from
+    `splitProductBlocks` (the title area stays fixed), the page blocks in
+    order, and the sticky bar only when the template carries it; the grocery
+    layout honours the page blocks, the gallery shape and the sticky bar.
+    ★ The page sanitises a `rich_text` block on the server before the
+    template reaches the client bundle (sanitize-html is not a browser-sized
+    dependency). `ProductGallery` takes `mode`, a class the CSS reads: the
+    two thumbnail shapes keep thumbnails, the three that show every photo
+    have none, and under 860px every shape is the phone strip. A fourth
+    `productDetail` layout, `stacked` (`sm-pdp-stacked`: the gallery above a
+    centred information column), joined the list. `shop-client.tsx` takes
+    `collectionTemplate`: `ShopFilterBar` is the top-bar (closed `<details>`
+    popovers that close each other, on a press outside and on Escape; the
+    Filter button's drawer serves under 1024px), numbered pages show one page
+    (`pageNumbers` windows the control to seven slots, and a page past the
+    end shows the last), the infinite reveal watches a sentinel under the
+    grid with Load more kept beneath it for keyboards and browsers without
+    `IntersectionObserver`, and a promo tile lands on whichever page holds
+    its Nth card. Builder: the Brand row gains **Product page** (gallery,
+    the block list with per-type fields, starting from a copy of the theme's
+    template) and **Collection page** (filters, paging, promotional tiles
+    with a picture) groups; the preview shows them after a reload. Theme
+    Studio: feature `templates` (v32). Stage B writes a top-level
+    `templates` object (every block with every field, a closed schema) the
+    compiler normalises into `preset.templates`, the Stage B layout enum
+    admits `stacked`, and `stageBSchemaFor`'s sixth flag gives every earlier
+    revision a twin without either; Stage A text does not move. The renderer
+    check loads shop.css for its product and collection fixtures (the five
+    gallery shapes at five widths, the stacked layout, the filter bar's
+    popover floating over the grid, the tile, the page buttons; 1,128 cases
+    pass). Help: `20261009_0180_page_templates_help` replaces the branding
+    guide's layout step in place. Not yet run against live Gemini. A tile's
+    picture is the merchant's; a Studio tile is a colour field.
+    **Phase 2e, second slice (same day; still prompt v32, unused by any
+    run).** The rest of the plan's `templates` field. A `size_guide` product
+    block (two to eight measurement columns, up to twelve sizes with one
+    value per column; normalised to one cell per column, rendered as a
+    `<details>` table that scrolls inside its own box). `templates.blog`:
+    `index` as a `grid` of cards (today), a `list` of rows with the picture
+    beside the copy, or a `featured` first post spanning the first row; and
+    `article` `narrow` (today's 720px reading column), `wide` (960px) or
+    `sidebar` (the column with a sticky aside of related posts from 1024px,
+    above it below that). Both are classes on the existing markup
+    (`blog-grid.layout-*`, `blog-detail-page-section.article-*`) read by
+    blogs.css; the index and article pages read the resolved layout.
+    `templates.account`: `layout` `plain` (the three account pages as they
+    are), `tabs` (a row of Profile / Orders / Notifications links where each
+    page's top offset was, within its width) or `sidebar` (the same links in a
+    column beside the page from 1024px), and `scheme` ("" or a section scheme
+    over the whole page, the token re-pointing `homepage.css` gives a band).
+    `components/account/account-shell.tsx` (server, reads the layout) wraps
+    the profile layout, the orders page and the notifications page and
+    renders nothing around them for the default template; `account-nav.tsx`
+    marks the current page; `account-shell-class.ts` is the pure class rule.
+    ★ `renderer.minVersion` is enforced at last: `rendererSupports` in
+    `runtime-registry.ts` compares a stored package's minimum against
+    `RENDERER_ENGINE_VERSIONS` (the engine versions the bundled definitions
+    declare, which is what this build renders) and `parseRelease` refuses a
+    package asking for more the way it refuses a bad digest, logging
+    `theme_registry.renderer_too_old`; an engine this build does not bundle
+    is left to the package's own say-so, so no existing release moves. The
+    Stage B templates schema, the v32 prompt bullet, the offline draft, the
+    builder (a Size guide block, **Blog** and **Account pages** groups), the
+    pending Help migration 0180 and the renderer check (blog index and
+    article at five widths, the account shell under both layouts and a
+    scheme, the size guide; 1,168 cases pass) grew with it. Out of 2e by
+    the plan's own decision: cart templates (the cart stays a layout
+    variant); the fingerprint axes for templates are Phase 3.
+    **Phase 2 closed offline (same day; still prompt v32, extended in place
+    because no run has used it).** The two 2c candidates still open landed.
+    (1) The **announcement bar**: one line above the header, the way Shopify
+    themes carry a delivery promise. `preset.announcement {text, href?}` is
+    an optional preset field (`lib/themes/announcement.ts`, judged by the
+    contract as written, its link held to the menu-link rule by
+    `validateThemeLinks`), and the merchant owns the bar from the Header row
+    (`HeaderConfig.announcement {enabled, text, href}`: enabled and empty
+    inherits the theme's, the layout composing it with
+    `withThemeAnnouncement` beside the newsletter merge; text of their own
+    wins; off is off; every row saved before the field reads as enabled and
+    empty). It renders INSIDE the fixed header
+    (`header/announcement-bar.tsx`), in a transparent top border the root's
+    `sm-announce` class gives the bar (the header's own padding is set
+    differently by every variant and never enters into it), so the measured
+    `--sm-header-h` includes it with no second measurement; the server
+    fallbacks add `--sm-announce-h` (36px, one line, ellipsised) and the
+    transparent header's hero-led page starts under it. Stage B writes a
+    top-level `announcement` object under v32 (the compiler checks its link
+    and drops an empty one; the pre-v32 twin loses it with `templates`), and
+    the header check gained 96 announcement cases (1,056 pass). (2) The
+    **collection list**: `shop_by_category.display: "list"`, each category
+    a row with its picture, name and description, one link end to end
+    (`CategoryTile.description`; `home-cat-list`, two columns from tablet
+    width under the grid layout); the third option in the builder's tile
+    shape, printed by the Stage B choices only from v32
+    (`visibleSectionChoices`' third flag). **And the Phase 2 exit evidence:
+    seven hand-authored exemplar themes, one per design direction**
+    (`lib/themes/exemplars/`, never bundled or selectable, hidden drafts
+    that borrow the bundled themes' photography and catalogues through
+    symbolic-link folders `public/themes/exemplar-*` → the bundled set, see
+    `public/themes/README.md`; the contract holds a theme's assets to its
+    own folder), each written with the whole vocabulary — stories, typed
+    accordion and comparison rows, every 2c section, the collage, the
+    list, the new heroes, the split carousel, all seven headers, six cards,
+    five footers, every gallery shape, filter placement and paging, the size
+    guide, every blog and account layout, the announcement bar — and every
+    section's band stated. `exemplars.test.ts` holds them to the content
+    floors, the Studio copy floors, the contract, the v27 opening rule, the
+    visible-choice vocabulary and a coverage map of that list.
+    `npm run theme-studio:exemplars` (`scripts/theme-studio-exemplar-check.ts`)
+    runs the real package gates over each one in the Studio's own form
+    (every picture a `theme-asset://` slot backed by a declared asset with
+    the file's digest and dimensions: 6/6 gates pass for all seven), and
+    with `--seed --origin=<local server> --browser` seeds them as demo
+    stores, runs the route, link and markup gates over the preview pages,
+    and in local Chrome at the five widths runs the probe's deterministic
+    rules (overflow, tap targets, image crops, broken images, axe WCAG 2.1
+    A/AA with contrast) on every page and the header's chrome states on the
+    home page. ★★ `--seed` ALSO STORES EACH EXEMPLAR IN THE LOCAL RUNTIME
+    REGISTRY, because the storefront renders an installed theme from the
+    registry (exact id and version), else a bundled definition, else nothing:
+    a store pinned to a definition that is neither renders UN-THEMED, and the
+    first browser run measured the bare storefront on every page (header
+    `classic`, no `sm-themed-type`) before anyone noticed. Only a published
+    row renders, so the seed stores a published copy with NO catalog pointer
+    (never the public catalogue or signup) under a patch version derived
+    from the package's content digest, since release rows are immutable and
+    an edited exemplar must become a new row rather than a stale one; the
+    in-repo definitions stay hidden drafts. A running dev server caches store
+    rows for 300s, so the route stage runs after a restart. ⚠ A mirror of
+    the probe, not the probe: LCP/CLS and the clipped-text scan need a
+    Studio preview store and are reported skipped; the deployed acceptance
+    run per exemplar and a live v32 batch are what remain, and both need a
+    deploy. Help: the pending migration 0180 also replaces the navigation
+    guide's header step in place for the bar.
+    **The exemplar browser run found nine shared-renderer defects and two
+    probe faults (2026-10-10), none of them a theme setting.** Over seven
+    themes, six pages and five widths: (1) the transparent header's
+    light-tone rule (`:has()` carries its argument's specificity) outranked
+    the drawer's page-ink rule, so on a dark palette the open menu's brand
+    name was on-ink on the drawer surface, 1.07:1; the rule now excludes
+    `.mobileDrawer *` and the contrast script renders a transparent header
+    over a `theme-light` opening with the drawer open. (2) The collage's
+    fixed row height (120–170px) made a 2×1 span a 736×120 letterbox at
+    tablet width, keeping 17% of a square photograph; collage cells are now
+    squares of the column width (`aspect-ratio`, 2:1 and 1:2 for the spans,
+    squares again on phones), and the renderer check's collage fixtures
+    carry square and 4:3 pictures for the crop rule. (3) The collection
+    page's promotional tile read `theme` as the FIELD ("dark" = ink field,
+    light copy), the opposite of the prompt, the builder and every other
+    tile, hero and slide, where it is the COPY's colour; so a tile authored
+    as dark copy on a pale field rendered pale on pale (1.1:1). shop.css
+    follows the copy now (the default field is the surface under dark copy,
+    the ink colour under light), the v32 bullet says so, and
+    `promoTileContrastIssues` (`hero-contrast.ts`, run by
+    `validateThemeDesign` as `promo_tile_contrast`) holds a solid tile's
+    heading to 3:1 and its body and link to 4.5:1 at compile time, which
+    caught the playful exemplar's 3.5:1 body in the same hour. (4) The
+    variant list's struck-through price and (5) the product page's category
+    eyebrow and (6) the hero's badge drew ink-faint or the ACCENT as small
+    text (2.9:1 and 4.0:1); readable labels use ink or ink-soft, the rule
+    the card's MRP and the delivery trigger already follow, because the
+    design contract holds the accent to 3:1 as a fill, never 4.5:1 as copy.
+    (7) The phone gallery's "2 / 5" counter was a pill tinted with the
+    theme's shadow RGB, which on a sage palette blended to 2.9:1 under its
+    white count; it is a black wash now. (8) The image marquee's and logo
+    strip's aria-hidden looping copies held focusable links (axe
+    `aria-hidden-focus`), so the clones' links carry `tabIndex={-1}`. (9) The
+    account menu's "Login/Sign Up" subtitle used ink-faint at 11.5px
+    (2.96:1); ink-soft, the sign-in dialog's rule. The two probe faults: the
+    rectangle scan counted the off-canvas drawer's descendants as page
+    overflow (any element inside a `position: fixed` ancestor is exempt
+    now, matching the probe), and the link crawl treated a dev server
+    dropping a socket mid-compile as a dead link (three retries on a refused
+    or reset connection). The route stage also showed every page of the
+    first run UN-THEMED before the registry seeding above existed. The
+    re-run under the fixes found two more: (10) every solid button on the
+    playful exemplar read 4.44:1 (white on #d6451d), which the shared design
+    contract ALLOWS, since it holds on-accent to the 3:1 non-text floor of a
+    button's fill, while axe judges the 13–16px label as small text; bundled
+    themes were published against the looser floor (Basket's white on
+    #ef5a2a is 3.41:1), so the stricter one is Studio-only:
+    `validateStudioDesign` (`validation.ts`) adds `button_label_contrast`,
+    4.5:1 for on-accent on the accent, on the brand colour and on each
+    declared scheme's accent, and both the compiler's content floors and the
+    acceptance `package.design` gate run it (the Studio test fixtures carry
+    a deeper brand colour for that reason); a candidate with a 3–4.5:1
+    accent is repaired at compile time instead of failing the browser stage
+    on every page. (11) A finding that was not one: the script measured
+    under `reducedMotion: "no-preference"`, so axe sampled a carousel's
+    second slide mid-fade and reported its CTA in blended colours
+    (4.33:1 where the settled button is 5.7:1); the script measures under
+    reduced motion now, as the capture job does. With all of it in, every
+    one of the seven exemplars passes every package, route and browser gate
+    the script runs (2026-10-10; `browser.clipped_text` and
+    `browser.performance` skipped, as only the deployed probe measures them).
+    **The first live v26 run found four renderer defects, all shared chrome
+    (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
+    before artwork as `renderer_fix_required`, so every image stayed a
+    placeholder and the preview looked like flat colour blocks; the findings
+    were the deployed probe seeing shared storefront defects for the first
+    time, not the theme. (1) **"The page is 274px wider than the viewport"
+    with no offender named.** Reproduced on demo-ritual and demo-vitrine
+    locally at 360/390/768: `body.scrollWidth` was 960 on a 360px page with
+    nothing visibly overflowing. The product carousel's `sr-only` price labels
+    are absolutely positioned, the scroll track and the card were static, so
+    their containing block was the carousel wrapper OUTSIDE the track: each
+    label sat where its off-screen card had scrolled to and the page's layout
+    overflow grew by the whole hidden track, while the probe's rectangle scan
+    (walking parents) exempted them as "inside a fitting scroll container" and
+    named nothing. `.home-product-scroll`, `.home-cat-scroll` and
+    `.home-blog-scroll` are `position: relative` now, so they contain what
+    they clip (the dashboard tables' sr-only gotcha, again), measured back to
+    360/390/768 on both demos. The probe's `exemptFromOverflow` applies the
+    containing-block rule: an absolutely positioned box is clipped only by its
+    `offsetParent` and that block's ancestors, so the same page now reports
+    `span.sr-only` as the offender (verified in Chrome with the fix reverted;
+    pinned in jsdom). ★ Both `body.scrollWidth` and the rectangles are kept:
+    the first saw this overflow the rectangles missed, the rectangles see the
+    clipped overflow `scrollWidth` misses. (2) The phone search sheet's submit
+    button was its 18px glyph (`.searchIcon`, `padding: 0`); it is a 36px
+    round hit area inside the 44px bar. (3) The account menu is `role="menu"`
+    and its "Login/Sign Up" button had no role, axe's critical
+    `aria-required-children`, so it is a `menuitem` like the links. (4) The
+    sign-in dialog's subtitle, resend line, back link and "or" divider used
+    `--sm-ink-faint` on the dialog surface (2.96:1 on Bubble); readable copy
+    there uses `--sm-ink-soft`, which the design contract holds to 4.5:1 on
+    surface, and ink-faint stays for placeholders. The offline contrast
+    script (`scripts/theme-studio-contrast-check.mjs`) gained the three
+    chrome-state fixtures with negative controls (122 cases). None of the
+    four is a theme setting, which is why the repair loop could not clear
+    them. After deploying, **Images → Retry automatic QA** on Bubble
+    re-captures the same version; artwork then runs. Storefront presentation
+    and accessibility only: no merchant workflow change, no Help Centre
+    update.
+    offline provider's draft now opens with a fullbleed hero at full width.
+    ⚠ The header still sits above the opening with the page's breathing gap,
+    as it does over Vitrine's carousel; a transparent header floating over the
+    photo is the Phase 2d header work, not this. Not yet run against live
+    Gemini. Merchant-visible only as one more hero layout in the builder, and
+    no published guide names the hero layouts, so no Help Centre update.
     `automatic-qa-policy.ts` queues targeted exact-package revisions for theme
     failures, up to THREE repairs (iterations 0→1→2→3, the ceiling migration
     0145 allows; `MAX_AUTOMATIC_QA_REPAIRS`).
@@ -6672,10 +7530,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         `palette` (all 14 `--sm-*` colour tokens + `onAccent`/`onInk`/
         `shadowRgb`/`success`/`error`/`star`/`highlight` semantic tokens), `fonts`
         (`body`/`display`, pointing at next/font variables loaded in
-        `app/layout.tsx` — Inter/Fraunces/Space Grotesk/Plus Jakarta/Jost/Instrument
-        Serif (all `preload: false`; which one a page uses is decided per request
-        from the store's theme) alongside the
-        legacy Outfit/Roboto/Stick), and `shape` (`card`/`control`/`sm`/`pill`
+        `app/layout.tsx` — the 31 families of the catalogue in
+        `lib/themes/fonts.ts`, all but the platform's own three `preload: false`;
+        which one a page uses is decided per request from the store's theme), and `shape` (`card`/`control`/`sm`/`pill`
         radii). `designToCssVars(design, brandPrimary)` flattens it to a CSS-var map
         the `(storefront)` layout writes **inline on `.storefront-root`** — inline
         specificity beats the globals.css `:root` defaults, so the whole storefront
@@ -6709,11 +7566,16 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         profile/enquiry forms, blog + write-blog editor). CI-guards in
         `themes.test.ts` assert each theme ships a complete, injectable design.
         **Layout variants** (`ThemeDesign.layout`, all optional — absent = classic
-        WholeSip chrome): header supports `classic`, `market`, `centered`, and
-        `minimal`; cards support `classic`, `quick_add`, `overlay`, `framed`, and
-        `grocery`; product detail supports `classic`, `grocery`, and `editorial`;
+        WholeSip chrome): header supports `classic`, `market`, `centered`,
+        `minimal`, `transparent`, `hamburger`, `stacked` and `utility`; cards
+        support `classic`,
+        `quick_add`, `overlay`, `framed`, `grocery`, `centered`, `soft` and
+        `wide`; product detail supports `classic`, `grocery`, `editorial` and
+        `stacked` (plan Phase 2e, 2026-10-09);
         cart supports `classic`, `grocery`, and `compact`; footer supports `rich`,
-        `minimal`, and `editorial`. `resolveStorefrontAppearance` in
+        `minimal`, `editorial`, `centered` and `compact` (the last two of each
+        list landed with plan Phase 2d, 2026-10-09, §11 below).
+        `resolveStorefrontAppearance` in
         `lib/chrome/types.ts` is the single pure resolver for theme defaults plus
         published merchant overrides; it also preserves the pinned legacy
         `storefront:"grocery"` shorthand. Root `sm-*` classes drive CSS variants,
@@ -8068,28 +8930,65 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
 
 19. **Signup wizard (Shopify-style, `app/platform/signup/page.tsx`).** One
     client wizard, one focused screen per step, with a progress stepper.
-    **Six screens since 2026-10-07 (was nine): email → password + email OTP
-    (one screen; the code field appears under the password once the account
-    exists) → phone OTP → you + your store (name, store name, the country you
-    sell from) → theme (pre-selected; confirm or change) → dashboard.** There
-    is no plan or payment step: every store is created on Free and paid
-    upgrades happen later from the store-host `/dashboard/plans` surface. This
-    keeps store creation independent of gateway availability and removes the
-    paid-but-not-onboarded failure mode.
+    **Since 2026-10-10: email + password on ONE screen (Google beside it) →
+    email OTP → you + your store (name, store name, the country you sell
+    from) → plan → dashboard. Stages Account → Store → Plan.** The wizard
+    used to ask for the password on a second screen, verify a phone on a
+    third and choose a theme on a fourth.
+    **★★ NO THEME STEP.** Every store opens on the platform default
+    (`DEFAULT_THEME_ID`, else the first selectable theme): `createStore`'s
+    `template` is optional and the wizard never sends one. The owner chooses
+    a theme from the dashboard's Themes page (`/dashboard/themes`, §11), the
+    way Shopify starts every store on one theme. The layout no longer reads
+    the theme catalogue at all.
+    **★★ THE PLAN STEP** (`plan-picker.tsx` + the page): Free / Basic / Pro
+    cards with a Monthly/Yearly switch, priced from the LIVE quote at
+    `GET /api/plans/pricing` (`{ plans, paidCheckout }`; a GET, not a Server
+    Action, so it never queues in front of a tap; `lib/plans/signup-quote.ts`
+    parses it and refuses anything incomplete). Basic is preselected when the
+    platform can take a card (`paidCheckout`, i.e. its own Razorpay keys
+    exist); otherwise paid cards are shown locked and Free is the choice. A
+    quote that cannot be read offers Free and a retry, never a compiled-in
+    price. **Skip, start on Free** sits under the button whenever a paid plan
+    is chosen.
+    ★ **EVERY PATH CREATES THE STORE FIRST, ON FREE** (`ensureStore`, once per
+    signup, with the existing lost-reply recovery through
+    `getSignupResumeInfo`). A paid plan then: re-reads the price and stops
+    with a notice if an operator repriced while the page was open; verifies
+    the owner's mobile if it is not yet (`phone-verify.tsx`, loaded with
+    next/dynamic, on the shared `usePhoneVerification` hook; Razorpay needs a
+    verified mobile on the billing account, and doing it here also ticks the
+    checklist's mobile task); then `startSignupSubscribe` → Razorpay Checkout
+    (the recurring customer is sent only when the order carries a mandate) →
+    `confirmSignupSubscribe` → the dashboard. A dismissed window leaves the
+    store on Free with Try again / Continue on Free and never creates a
+    second store; a payment that cannot be confirmed shows the server's own
+    message and an Open your dashboard button, never a second payment. Back
+    and Start over disappear once the store exists.
     **★ THE BUSINESS ADDRESS IS NO LONGER COLLECTED AT SIGNUP.** It prints on
     invoices and decides GST place of supply, and a new store has no invoice —
     so it was the one screen with six required fields and the one everybody
     stalled on. It is now a REQUIRED item on the dashboard's go-live checklist
     (lib/store/launch-checklist-rules.ts, § "A new store opens by Go live"),
     edited under Taxes & invoices, where it is first needed. Only the country
-    is captured at signup (`settings.business.country`), pre-filled from the
-    verified phone's dial code and editable; an unknown code falls back to
-    `DEFAULT_COUNTRY`. `createStore` still accepts the full address for any
-    caller that has one and stores it exactly as before.
+    is captured at signup (`settings.business.country`), defaulting to
+    `DEFAULT_COUNTRY` and editable. `createStore` still accepts the full
+    address for any caller that has one and stores it exactly as before.
+    **★★ NOR IS THE PHONE (2026-10-10).** Signup verified it by LINKING it to
+    the merchant's Firebase login (`updatePhoneNumber`). Shoppers sign in to
+    storefronts by phone in the same Firebase project, so any merchant whose
+    mobile had ever been used to shop got "That mobile number is already
+    linked to another StoreMink account", with no way past it. The owner's
+    verified mobile is now a REQUIRED go-live checklist item (§7), proven by
+    an isolated code sign-in that never touches the login
+    (`VerifyPhoneForm` → `confirmVerifiedPhone` → `admins.phone_verified_at`).
+    `createStore` requires only a verified email; a login that already
+    carries a phone (an older half-finished signup) is recorded as verified.
     Data model: names go to `admins.first_name`/`last_name`;
-    `store_billing_settings` is seeded with the store name, verified email and
-    phone, and a NULL address until the merchant adds one — the honest value
-    the checklist reads. Country list in `lib/countries.ts` (pure,
+    `store_billing_settings` is seeded with the store name, verified email,
+    the login's phone when it has one (usually NULL now; verifying the mobile
+    later fills an empty invoice phone), and a NULL address until the merchant
+    adds one — the honest value the checklist reads. Country list in `lib/countries.ts` (pure,
     client-safe, India-first). `location-picker.tsx` (the Google-Maps-assisted
     address form) remains in the directory, unused by the wizard, for the day
     the address editor wants it.
@@ -8114,10 +9013,10 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     a real registrable domain, so `cookieDomainForHost` returns
     `.localtest.me` and the signup → dashboard session handoff works locally
     the way it does on `.storemink.com` — the "flaky on localhost" handoff
-    was browsers refusing to set a `Domain=.localhost` cookie. The phone step
-    shows a localhost-only note linking to the same page on that host, the
-    dev runner prints it at startup, and the catch logs the raw Firebase
-    error. The staging project's fictional test numbers (Identity Platform →
+    was browsers refusing to set a `Domain=.localhost` cookie. The dashboard's
+    mobile verification form (`VerifyPhoneForm`) shows a localhost-only note
+    linking to the same page on that host, and the dev runner prints it at
+    startup. The staging project's fictional test numbers (Identity Platform →
     Authentication → Sign-in method → Phone, e.g. +91 99999 99999 / 999999)
     still work on either host. Deployed hosts are unaffected. ⚠ Verified by
     DNS and server routing; the real-number SMS on `localtest.me` was not
@@ -8130,18 +9029,43 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     transaction cannot leave that behind; a unique-violation on the slug still
     maps to "that name was just taken". Pinned by `store-signup.test.ts`. - **Auth (Identity Platform, Phase 6)**: email/password via
     `createUserWithEmailAndPassword` (falls back to `signInWithEmailAndPassword`
-    on `auth/email-already-in-use`). Password users then pass a six-digit email
+    on `auth/email-already-in-use`). ★ If that sign-in fails too, the wizard
+    calls `reclaimUnusedSignupEmail` (store-signup.ts): when the existing login
+    holds NO StoreMink role (`authIdsInUse` — a deleted store's owner login, or
+    a signup abandoned after the password step, which creates the Firebase
+    account before the email is verified), the server deletes it and the wizard
+    creates the account afresh. A login still in use anywhere is never touched,
+    the role check fails closed, and the call is rate-limited per IP. Before
+    this, such an email dead-ended on "account already exists", and the
+    platform login asks for a store address the person does not have. Password users then pass a six-digit email
     OTP (`app/actions/signup-email-otp.ts`): the server derives identity from the
     session, rate-limits account + IP, stores only a peppered hash in a signed
     httpOnly cookie, caps wrong attempts, expires it after 10 minutes, and marks
     Firebase `emailVerified` after a constant-time match. Google already supplies
-    a verified email claim and skips only that step. Phone uses
-    `PhoneAuthProvider.verifyPhoneNumber`
-    (invisible reCAPTCHA) + `updatePhoneNumber`. After each sign-in / phone link
-    the client `establishSession()`s (POST the ID token → httpOnly cookie);
-    `createStore` enforces **both** `emailConfirmed` and `phoneConfirmed`
-    server-side via `getServerUser`, so the wizard re-mints the cookie
-    (`establishSession(forceRefresh)`) after each verification. Every signup OTP
+    a verified email claim and skips only that step. After each sign-in the
+    client `establishSession()`s (POST the ID token → httpOnly cookie);
+    `createStore` enforces a verified email server-side, and the wizard
+    re-mints the cookie (`establishSession(forceRefresh)`) after the email
+    code so the session carries the new claim.
+    **★★ A RELOADED TAB COULD NOT FINISH VERIFYING (fixed 2026-10-10).** The
+    wizard resumes a reloaded tab from the server session, so the browser's
+    Firebase Auth was created only at verification, and Firebase restores its
+    saved sign-in ASYNCHRONOUSLY: `currentUser` was still null, so after the
+    server had accepted the code `establishSession` answered "You're not
+    signed in. Please try again." Worse, the cookie's `email_verified` is a
+    SNAPSHOT from when it was minted, and every check read only that, so the
+    retry mailed a NEW code for an address the account record already had
+    verified, in a loop. Reproduced in headless Chrome (account, reload,
+    code) on the old code and passing on the new. Two layers:
+    (1) `getCurrentFirebaseUser()` (lib/auth/firebase-client.ts) awaits
+    `auth.authStateReady()`, and `establishSession` reads the user through it;
+    (2) `emailVerifiedNow()` (lib/auth/email-verified.ts) checks the account
+    record whenever the cookie still says unverified (one Admin read, only
+    during signup; an unreadable record answers false), and
+    `requestSignupEmailOtp`, `verifySignupEmailOtp`, `getSignupResumeInfo`
+    and `createStore` all ask it. So the post-verification session refresh
+    is best-effort: an accepted code always moves on to the store step.
+    Every signup OTP
     is platform mail and lands in the operator email log with its credential
     redacted; RFC-reserved example domains and `.test`/`.invalid`/`.localhost`
     dummy domains skip Resend and put the code in that operator-gated log under
@@ -8152,6 +9076,29 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     wizard screen keeps **Start over** in the header. Starting over clears both
     Firebase client auth and the shared-domain server session before returning
     to the account step.
+    **★★ RECOVERY RULES (2026-10-10), each one a bug that shipped:**
+    (1) **An error that must survive a step change is set AFTER `setStep`**,
+    which clears the banner. `finalize` set its error first, so a failed store
+    creation returned to the theme step in silence. (2) **A server action that
+    THROWS is caught** in every handler; a network failure used to leave `busy`
+    set for ever (a spinner, and a disabled Start over), and a lost
+    `createStore` reply left the merchant on "Creating…" indefinitely.
+    (3) **A failed create asks the server where the account stands**
+    (`getSignupResumeInfo`) before offering a retry: a store that was created
+    (lost reply, or "This account already has a store") opens its dashboard,
+    and a verification the server no longer sees returns to the step that
+    fixes it. (4) **A password that opens an EXISTING account is routed, not
+    walked through the steps again**: an owner who used signup instead of login
+    re-verified their contact details, named a store and picked a theme before
+    `createStore` refused them. (5) **A session with no email is ignored**: the
+    `sm_session` cookie spans `.storemink.com`, so a shopper's phone-OTP
+    storefront session reached signup and was "resumed" onto an email-code
+    screen for an address they never gave. (6) Codes keep only their digits
+    (a `maxLength` cut a pasted "123 456" to five digits) and submit
+    themselves at six, and the slug check cannot hang on "Checking
+    availability…". (7) **The resume on load changes the step in the reply's
+    callback** (`useEffectEvent`), never synchronously inside the effect, so
+    React's hook rules hold.
     **★ WITH NO `RESEND_API_KEY` THE STEP WAS AN UNPASSABLE DEAD END.**
     `sendEmail` skips when the key is absent, so the delivery reported
     `sent: false` and the action refused — and the code cookie is only set on a
@@ -8179,13 +9126,17 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     from the session cookie. **Google users have NO password**, so the store-host
     login (`app/auth/login/login-form.tsx`) ALSO offers "Continue with Google"
     (signInWithPopup); a Google owner can set a password via "Forgot password?".
-    - **Free-first handoff**: the Theme screen ends with **Create my free store**.
-      `createStore` is the only mutation; it already persists `plan = 'free'`, and
-      success redirects straight to the new store's dashboard. Signup imports no
-      pricing reader, Razorpay client or subscription action. The former
-      platform-host `startSignupSubscribe` / `confirmSignupSubscribe` public
-      actions were removed with the plan step; all paid enrolment now begins only
-      after tenant resolution on `/dashboard/plans`.
+    - **Signup billing derives the store from the OWNER, never the request.**
+      The wizard runs on the platform host, where `getActingStoreId()` resolves
+      the fallback store, so `startSignupSubscribe` / `confirmSignupSubscribe`
+      (app/actions/subscribe-actions.ts) read the store from the signed-in
+      user's own `admins` row (`admins.id` IS the auth uid, one store per owner)
+      and accept only a `superadmin` row; an unreadable row refuses. No store id
+      crosses the wire. Both delegate to the SAME cores as the dashboard's
+      `startSubscribe` / `confirmSubscribe`, so a merchant is billed identically
+      whichever screen they subscribed from, and confirmation calls
+      `updateTag(STORE_TAG)` so the dashboard on the store host sees the new
+      plan on its very next request.
       **The post-payment handoff is read-your-own-writes.** `createStore` uses
       Next 16 `updateTag(STORE_TAG)`, not stale-while-revalidate, and tenant
       resolution never caches a missing store host. This prevents a successful
@@ -13550,12 +14501,16 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         announce a grace window a rollback then un-started.
       - **★ BEST-EFFORT, NEVER THROWS.** A mail outage must not fail a
         collection, block a cycle advance, or abort a downgrade.
-    - **★ SIGNUP NEVER TAKES PAYMENT.** Every new store starts on Free and goes
-      directly to its dashboard. `startSubscribe` / `confirmSubscribe` are
-      store-host dashboard actions, so tenant identity comes from the resolved
-      host/session rather than a newly created store id supplied by the browser.
-      Besides smoothing onboarding, this removes two public signup-context money
-      actions and the entire class of platform-host/fallback-tenant mistakes.
+    - **★ SIGNUP MAY TAKE THE FIRST PAYMENT (2026-10-10), BUT THE STORE COMES
+      FROM THE OWNER.** Every store is still created on Free first; the Plan
+      step then offers a paid plan (§19). `startSignupSubscribe` /
+      `confirmSignupSubscribe` resolve the store from the signed-in user's own
+      superadmin `admins` row, never from the request and never from
+      `getActingStoreId()` (which resolves the FALLBACK store on the platform
+      host). The removed 2026-08-17 version took a store id from the browser and
+      made a superadmin proof the whole boundary; this one has no id to forge.
+      Both share the enrolment cores with the dashboard's `startSubscribe` /
+      `confirmSubscribe`.
     - **★★ AN ENROLMENT IS AN OFFER; A RENEWAL IS AN OBLIGATION.**
       `startEnrolment` deliberately does NOT finalize its invoice —
       `confirmEnrolment` does, once the payment verifies. Finalizing up front did
@@ -15597,7 +16552,10 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       customer, POS or platform-operator role. That last reference check is
       load-bearing: deleting one tenant must not break a person who still works
       in another. Partial external cleanup is returned as an operator-visible
-      warning, never silently reported as a complete purge.
+      warning, never silently reported as a complete purge. A login kept
+      because it is still in use is NAMED in that warning too, since its email
+      will not sign up as new; the role check is `authIdsInUse`
+      (`lib/auth/identity-usage.ts`), the same one the signup reclaim uses.
     - **★★ `LogsRail` TAKES ITS REGISTRY AS A PROP, AND THAT IS LOAD-BEARING.**
       Both consoles share `DashboardSidebar`, and their logs are NOT the same
       set: an operator has no import/export jobs and no per-store activity feed
@@ -15744,7 +16702,9 @@ npm run db:drift:prod   #   and production. Exit 0 = clean, 1 = drift or stale b
                     #   same change, or the detector cannot tell the next manual DDL
                     #   from the migration you just applied.
 npm run db:migrate:local # ledger status/apply against --environment local (ENV_DATABASES.local
-                    #   is null, so there is no database-name guard)
+                    #   is null, so there is no database-name guard). A local database that
+                    #   also carries another branch's migrations needs
+                    #   `-- apply --allow-unknown local` (local only; staging/prod refuse)
                     #   ★ With .env.local present the app uses the LOCAL database and you run
                     #   `npm run dev`, NOT `dev:all` — there is no proxy to start. Warm renders
                     #   drop from ~1.2 s of application-code to ~1-3 ms per query. Rationale,
@@ -16125,7 +17085,9 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   behind the password redirect and robots/sitemap already say `noindex`.
   ★ **The checklist is predicates over real rows, never tick boxes**
   (`lib/store/launch-checklist-rules.ts` pure + `launch-checklist.ts` reads).
-  REQUIRED: one published non-sample product (samples are named "… (Sample)"
+  REQUIRED: the owner's verified mobile (first; a superadmin admins row
+  with `phone_verified_at`, never bare `phone`, which invited staff type
+  unchecked); one published non-sample product (samples are named "… (Sample)"
   and seed as drafts); business name, address, email and phone in
   `store_billing_settings`; Terms, Refund & Cancellation, Shipping and Privacy
   policies published (the Settings → Policies registry, pinned equal by test);
@@ -16188,11 +17150,37 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   required task is done, and folds** (collapsed by default with a count).
   Mink's prompt, the six setup tiles and "All caught up" return once the store
   is open. `setup-guide.test.tsx` pins the open-first-unfinished, hidden-then-
-  folded and owner-only rules. The `store.created` welcome says the store is
-  READY, not live, and points at the checklist. Help:
+  folded and owner-only rules. **The mobile task is done IN the card**: for a
+  viewer who is one of the store's real owners (`ownerCanVerifyPhone`, an
+  admins row with role superadmin, which a platform operator's synthetic
+  superadmin profile is not) it renders `VerifyPhoneForm` (next/dynamic, so
+  the phone library and Firebase phone sign-in load only when the task is
+  opened), then refreshes and opens the next task. Anyone else is told the
+  owner verifies their own number, because verifying THEIR number would not
+  complete the task. ★★ `VerifyPhoneForm`
+  (`app/dashboard/components/verify-phone-form.tsx`, shared with Account
+  settings) proves the number on the SECONDARY in-memory Firebase app, the
+  POS customer-verification pattern: a fresh reCAPTCHA per send, the code
+  confirmed there, the ID token handed to `confirmVerifiedPhone`, which
+  requires a phone sign-in under five minutes old, stores the token's E.164
+  number (never the browser's) with `phone_verified_at = now()`, and deletes
+  only a just-created, phone-only identity that holds no StoreMink role. The
+  merchant's own login and session are never touched, which is what lets a
+  number that is also a shopper's identity verify. A save that fails after
+  Firebase accepted the code keeps the proof, so **Try again** needs no new
+  code (pinned and mutation-checked in `verify-phone-form.test.tsx`). The `store.created` welcome says the store is READY, not live, and
+  lists the required tasks (the mobile first) at their real routes. Help:
   `20261007_0171_launch_checklist_help` edits the signup and setup guides in
   place; `20261008_0173_owner_password_help` corrects the setup guide to say
-  the owner enters the password too. Full audit of the SEO half:
+  the owner enters the password too; `20261010_0182_signup_plan_and_themes_help`
+  edits the signup, setup, account and plans guides for the three-step
+  signup, the checklist's mobile task and themes chosen from the dashboard,
+  and publishes "Change your storefront theme". ★ "Personalise your
+  homepage" is measured from when the THEME last wrote the homepage
+  (`settings.theme.homepageSeededAt`, falling back to the row's creation),
+  through `homepageEditedSinceSeed` in lib/themes/switch-rules.ts, so a
+  theme switch that replaces the homepage does not tick the task for the
+  merchant. Full audit of the SEO half:
   `docs/seo-action-plan.md`.
 - **StoreMink's own brand identity for schema lives in
   `lib/seo/brand-identity.ts`** — one Organization node (`sameAs` for the

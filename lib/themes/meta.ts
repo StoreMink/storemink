@@ -373,6 +373,13 @@ export interface StoredThemeInstallation {
   engineId: string;
   engineVersion: number;
   appliedAt: string;
+  /**
+   * When the theme last wrote the homepage (ISO). A theme switch that keeps
+   * the merchant's homepage carries the previous value; one that replaces it
+   * records the moment. Read by `homepageEditedSinceSeed` (switch-rules.ts):
+   * without it, a replaced homepage reads as the merchant's own edit.
+   */
+  homepageSeededAt?: string;
 }
 
 export interface ThemeSelection {

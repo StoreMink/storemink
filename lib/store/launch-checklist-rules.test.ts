@@ -8,6 +8,7 @@ import {
 
 const READY: LaunchFacts = {
   plan: "free",
+  ownerPhoneVerified: true,
   publishedProducts: 1,
   sampleProducts: 0,
   business: { name: true, address: true, email: true, phone: true },
@@ -39,6 +40,7 @@ describe("evaluateLaunchChecklist", () => {
 
   it("every required fact blocks on its own and is named in `missing`", () => {
     const cases: [string, Partial<LaunchFacts>][] = [
+      ["Verify your mobile number", { ownerPhoneVerified: false }],
       ["Add your first product", { publishedProducts: 0 }],
       [
         "Complete your business details",
@@ -63,6 +65,16 @@ describe("evaluateLaunchChecklist", () => {
       expect(c.ready, title).toBe(false);
       expect(c.missing, title).toContain(title);
     }
+  });
+
+  it("★ the owner's mobile is the first required task and links to its form", () => {
+    const c = evaluateLaunchChecklist({ ...READY, ownerPhoneVerified: false });
+    const first = c.items.find((i) => i.required);
+    expect(first?.key).toBe("phone");
+    expect(first?.done).toBe(false);
+    // `focus=phone` opens the Security tab and the number form directly.
+    expect(first?.href).toBe("/dashboard/settings/account?focus=phone");
+    expect(c.missing).toEqual(["Verify your mobile number"]);
   });
 
   it("theme samples never count as a published product", () => {

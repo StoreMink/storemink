@@ -11,6 +11,7 @@ import { useAuth } from "@/app/(storefront)/components/auth/AuthProvider";
 import { useCart } from "@/app/(storefront)/components/cart/CartProvider";
 import { DeliveryLocationControl } from "@/app/(storefront)/components/delivery/delivery-location-control";
 import { DesktopNav } from "./desktop-nav";
+import { AnnouncementBar } from "./announcement-bar";
 import { DrawerNav } from "./drawer-nav";
 import { PredictiveSearch } from "./predictive-search";
 import { PhoneSearch } from "./phone-search";
@@ -149,6 +150,8 @@ export default function Header() {
       ref={headerRef}
       className={`${styles.header} ${isScrolled ? styles.headerScrolled : ""}`}
     >
+      {/* The announcement bar, in the header's top border (see the CSS). */}
+      <AnnouncementBar announcement={headerCfg.announcement} />
       <div className={styles.headerLeft}>
         <Link href="/" className={styles.logo}>
           {brand.logoUrl && (
@@ -253,6 +256,11 @@ export default function Header() {
                     </div>
                     <button
                       className={styles.profileDropdownLoginBtn}
+                      // The panel is role="menu", whose children must be menu
+                      // items: a bare button inside it is an axe critical
+                      // (aria-required-children) the acceptance probe reports
+                      // on every theme's account menu.
+                      role="menuitem"
                       onClick={() => {
                         setIsProfileOpen(false);
                         openAuthModal();

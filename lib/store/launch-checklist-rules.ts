@@ -26,6 +26,9 @@ import { PLAN_LIMITS } from "@/lib/plans";
 
 export interface LaunchFacts {
   plan: Plan;
+  /** A store owner (superadmin) has proven their mobile with a texted code
+   *  (admins.phone_verified_at). Signup no longer asks for it. */
+  ownerPhoneVerified: boolean;
   /** Published products that are not theme samples. */
   publishedProducts: number;
   /** Theme sample products still in the catalogue (drafts or published). */
@@ -111,6 +114,16 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
 
   const items: LaunchChecklistItem[] = [
     {
+      key: "phone",
+      title: "Verify your mobile number",
+      description:
+        "We text a six-digit code to confirm a real person runs this store and that we can reach you about it. It takes a few seconds.",
+      href: "/dashboard/settings/account?focus=phone",
+      action: "Verify mobile",
+      required: true,
+      done: facts.ownerPhoneVerified,
+    },
+    {
       key: "products",
       title: "Add your first product",
       description:
@@ -153,7 +166,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       key: "homepage",
       title: "Personalise your homepage",
       description:
-        "Your homepage still shows the theme's starting copy and pictures. Make it yours in the Website Builder.",
+        "Your homepage still shows the theme's starting copy and pictures. Pick the look you want under Themes, then make it yours in the Website Builder.",
       href: "/dashboard/builder",
       action: "Open Website Builder",
       required: false,

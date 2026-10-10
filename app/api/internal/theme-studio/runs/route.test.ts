@@ -9,6 +9,10 @@ vi.mock("@/lib/theme-studio/worker", () => ({
   runThemeStudioWorker: runStudio,
 }));
 vi.mock("@/lib/observability/logger", () => ({ logError: vi.fn() }));
+const startCaptureJob = vi.fn();
+vi.mock("@/lib/theme-studio/capture-start", () => ({
+  startCaptureJobIfWaiting: startCaptureJob,
+}));
 
 const URL = "https://storemink.com/api/internal/theme-studio/runs";
 
@@ -56,6 +60,20 @@ describe("Theme Studio model worker route", () => {
     );
     expect(unset.status).toBe(401);
     expect(runStudio).not.toHaveBeenCalled();
+  });
+
+  // The capture job no longer starts on its own schedule: these per-minute
+  // calls start it when a capture is waiting (lib/theme-studio/capture-start).
+  it("starts the capture job from an authorized call only", async () => {
+    startCaptureJob.mockResolvedValue("started");
+    const { GET } = await import("./route");
+    expect((await GET(new Request(URL))).status).toBe(401);
+    expect(startCaptureJob).not.toHaveBeenCalled();
+    const response = await GET(
+      new Request(URL, { headers: { authorization: "Bearer cron-secret" } }),
+    );
+    expect(startCaptureJob).toHaveBeenCalledOnce();
+    expect((await response.json()).captureJob).toBe("started");
   });
 
   it("starts two run lanes and visual QA concurrently", async () => {

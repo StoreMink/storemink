@@ -8,6 +8,7 @@ import {
 } from "firebase/auth";
 import {
   getSecondaryFirebaseAuth,
+  firebaseAuthErrorCode,
   firebaseAuthErrorMessage,
 } from "@/lib/auth/firebase-client";
 import { useAuth } from "../../components/auth/AuthProvider";
@@ -164,6 +165,7 @@ export default function EnquiriesForm({
       setSendingOtp(false);
       setTimeout(() => otpRefs.current[0]?.focus(), 100);
     } catch (err) {
+      console.warn("Enquiry code not sent:", firebaseAuthErrorCode(err));
       setError(
         firebaseAuthErrorMessage(err) ||
           "Something went wrong sending the code. Please try again.",

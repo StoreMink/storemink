@@ -276,3 +276,79 @@ it("keeps the contrast nodes axe could not judge, and opens the chrome states on
   expect((await again).states).toEqual([]);
   window.history.pushState({}, "", "/");
 });
+
+// Measured on demo-ritual at 360px (2026-10-09): the product carousel's
+// screen-reader-only labels are absolutely positioned, their containing block
+// was the carousel wrapper OUTSIDE the scroll track, so they sat where their
+// off-screen cards had scrolled to and widened the page by the whole hidden
+// track — and the rectangle scan, walking parents, exempted them as "inside a
+// fitting scroll container" and named nothing. An absolutely positioned box
+// is clipped only by its containing block and that block's ancestors.
+it("names an absolutely positioned box that escapes a fitting scroll container", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  Object.defineProperty(document.documentElement, "clientWidth", {
+    configurable: true,
+    value: 360,
+  });
+  const { container } = render(
+    <>
+      <StudioAcceptanceProbe />
+      <div id="wrap" style={{ position: "relative" }}>
+        <div id="track" style={{ overflowX: "auto" }}>
+          <div id="card">
+            Tea
+            <span className="sr-only" style={{ position: "absolute" }}>
+              Was
+            </span>
+          </div>
+          <div id="inside">
+            Cup
+            <span className="price" style={{ position: "absolute" }}>
+              Now
+            </span>
+          </div>
+        </div>
+      </div>
+    </>,
+  );
+  const rect = (right: number, width = right) => ({
+    width,
+    height: 20,
+    top: 0,
+    left: right - width,
+    right,
+    bottom: 20,
+    x: right - width,
+    y: 0,
+    toJSON() {},
+  });
+  const wrap = container.querySelector("#wrap")!;
+  const track = container.querySelector("#track")!;
+  const card = container.querySelector("#card")!;
+  const inside = container.querySelector("#inside")!;
+  const escaping = container.querySelector(".sr-only")!;
+  const contained = container.querySelector(".price")!;
+  for (const [element, right, width] of [
+    [wrap, 360, 360],
+    [track, 360, 360],
+    [card, 900, 155], // scrolled off-screen inside the track: deliberate
+    [inside, 1100, 155],
+    [escaping, 900, 1],
+    [contained, 1100, 40],
+  ] as const) {
+    vi.spyOn(element, "getBoundingClientRect").mockReturnValue(
+      rect(right, width),
+    );
+  }
+  // jsdom lays nothing out, so the containing blocks are stated: the label's
+  // nearest positioned ancestor is the wrapper outside the track; the price's
+  // is its own card (as it would be once the track is positioned).
+  Object.defineProperty(escaping, "offsetParent", { value: wrap });
+  Object.defineProperty(contained, "offsetParent", { value: inside });
+  const pending = window.__smThemeStudioMeasure!();
+  await vi.runAllTimersAsync();
+  const evidence = await pending;
+  expect(evidence.overflowPx).toBe(540);
+  expect(evidence.overflowOffenders).toEqual(["span.sr-only"]);
+});

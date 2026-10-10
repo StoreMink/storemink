@@ -29,6 +29,21 @@ import {
   type TestimonialsConfig,
   type VideoConfig,
   type UspBarConfig,
+  MAX_MEDIA_TEXT_STORIES,
+  MAX_ACCORDION_ITEMS,
+  MAX_COMPARISON_COLUMNS,
+  MAX_COMPARISON_ROWS,
+  SECTION_BLOCKS,
+  sectionBlocks,
+  blockTypeOf,
+  type HomepageSectionType,
+  MAX_MARQUEE_IMAGES,
+  type ImageMarqueeConfig,
+  type ImageHotspotsConfig,
+  type BeforeAfterConfig,
+  type ProductSpotlightConfig,
+  type LogoStripConfig,
+  type CountdownConfig,
 } from "./section-types";
 
 // clampLimit() pins the "max products/blogs to show" knob into 1..12, falling
@@ -190,6 +205,39 @@ describe("validateConfig", () => {
       expect(config.cta_href).toBe("");
       expect(config.background).toBe("");
       expect(config.badge_text).toBe("51% off");
+    });
+
+    it("stores a carousel's split layout only when chosen", () => {
+      const slides = [{ heading: "One", image_url: "/a.webp" }];
+      const full = validateConfig("hero_carousel", { slides });
+      expect("layout" in (full as { config: HeroCarouselConfig }).config).toBe(
+        false,
+      );
+      const split = validateConfig("hero_carousel", {
+        slides,
+        layout: "split",
+      });
+      expect((split as { config: HeroCarouselConfig }).config.layout).toBe(
+        "split",
+      );
+      const junk = validateConfig("hero_carousel", { slides, layout: "wide" });
+      expect("layout" in (junk as { config: HeroCarouselConfig }).config).toBe(
+        false,
+      );
+    });
+
+    it("keeps every hero variant, including the full-bleed opening and the Phase 2d pair", () => {
+      for (const variant of [
+        "banner",
+        "split",
+        "minimal",
+        "fullbleed",
+        "stacked",
+        "offset",
+      ]) {
+        const out = validateConfig("hero", { heading: "Hi", variant });
+        expect((out as { config: HeroConfig }).config.variant).toBe(variant);
+      }
     });
 
     it("keeps a strict colour background", () => {
@@ -654,6 +702,478 @@ describe("validateConfig", () => {
   });
 
   // --- shop_by_category ----------------------------------------------------
+  describe("media_text stories (nested blocks)", () => {
+    it("keeps stories, drops empty ones and omits the key when there are none", () => {
+      const out = validateConfig("media_text", {
+        heading: "Made slowly",
+        stories: [
+          {
+            heading: "  Sourced  ",
+            body: "From one valley.",
+            cta_href: "javascript:alert(1)",
+            image_url: "https://cdn.example.com/valley.webp",
+            image_alt: "The valley",
+            media_position: "right",
+          },
+          { heading: "", body: "", image_url: "" },
+        ],
+      });
+      const config = (out as { config: MediaTextConfig }).config;
+      expect(config.stories).toEqual([
+        {
+          eyebrow: "",
+          heading: "Sourced",
+          body: "From one valley.",
+          cta_label: "",
+          cta_href: "",
+          image_url: "https://cdn.example.com/valley.webp",
+          image_alt: "The valley",
+          media_position: "right",
+        },
+      ]);
+      const bare = validateConfig("media_text", {
+        heading: "Made slowly",
+        stories: [],
+      });
+      expect("stories" in (bare as { config: MediaTextConfig }).config).toBe(
+        false,
+      );
+    });
+
+    it("caps stories at the registry's maximum in every mode", () => {
+      const stories = Array.from(
+        { length: MAX_MEDIA_TEXT_STORIES + 1 },
+        (_, i) => ({ heading: `Story ${i}` }),
+      );
+      expect(
+        validateConfig("media_text", { heading: "x", stories }, "draft"),
+      ).toEqual({ error: `At most ${MAX_MEDIA_TEXT_STORIES} stories.` });
+    });
+  });
+
+  describe("accordion", () => {
+    it("normalises typed rows and clears an image off a text row", () => {
+      const out = validateConfig("accordion", {
+        heading: "  Good to know ",
+        items: [
+          {
+            type: "image",
+            heading: "Care",
+            body: "Wipe clean.",
+            image_url: "https://cdn.example.com/care.webp",
+            image_alt: "A cloth",
+          },
+          {
+            type: "text",
+            heading: "Shipping",
+            body: "Two days.",
+            image_url: "https://cdn.example.com/ignored.webp",
+            image_alt: "ignored",
+          },
+          { type: "nonsense", heading: "Sizing", body: "" },
+          { heading: "", body: "" },
+        ],
+        open_first: false,
+        allow_multiple: true,
+      });
+      expect(out).toEqual({
+        config: {
+          heading: "Good to know",
+          subheading: "",
+          items: [
+            {
+              type: "image",
+              heading: "Care",
+              body: "Wipe clean.",
+              image_url: "https://cdn.example.com/care.webp",
+              image_alt: "A cloth",
+            },
+            {
+              type: "text",
+              heading: "Shipping",
+              body: "Two days.",
+              image_url: "",
+              image_alt: "",
+            },
+            {
+              type: "text",
+              heading: "Sizing",
+              body: "",
+              image_url: "",
+              image_alt: "",
+            },
+          ],
+          open_first: false,
+          allow_multiple: true,
+        },
+      });
+    });
+
+    it("requires a row to publish, keeps an empty draft and caps the list", () => {
+      expect(validateConfig("accordion", {})).toEqual({
+        error: "Add at least one row.",
+      });
+      expect("config" in validateConfig("accordion", {}, "draft")).toBe(true);
+      const items = Array.from({ length: MAX_ACCORDION_ITEMS + 1 }, () => ({
+        heading: "x",
+      }));
+      expect(validateConfig("accordion", { items }, "draft")).toEqual({
+        error: `At most ${MAX_ACCORDION_ITEMS} rows.`,
+      });
+    });
+  });
+
+  describe("comparison", () => {
+    it("aligns every row with the columns, keeps one highlight and normalises ticks", () => {
+      const out = validateConfig("comparison", {
+        heading: "Compare",
+        style: "cards",
+        columns: [
+          {
+            label: "Small",
+            highlight: true,
+            cta_label: "Go",
+            cta_href: "/shop",
+          },
+          { label: "" },
+          { label: "Large", highlight: true, cta_href: "javascript:x" },
+        ],
+        rows: [
+          {
+            type: "check",
+            label: "Lid",
+            values: ["YES", "nope", "no", "extra"],
+          },
+          { type: "text", label: "Serves", values: ["One"] },
+          { label: "", values: ["", ""] },
+        ],
+      });
+      expect(out).toEqual({
+        config: {
+          heading: "Compare",
+          subheading: "",
+          columns: [
+            {
+              label: "Small",
+              caption: "",
+              cta_label: "Go",
+              cta_href: "/shop",
+              highlight: true,
+            },
+            {
+              label: "Large",
+              caption: "",
+              cta_label: "",
+              cta_href: "",
+              highlight: false,
+            },
+          ],
+          rows: [
+            { type: "check", label: "Lid", values: ["yes", "no"] },
+            { type: "text", label: "Serves", values: ["One", ""] },
+          ],
+          style: "cards",
+        },
+      });
+    });
+
+    it("needs two columns and a row to publish, and caps both lists in every mode", () => {
+      expect(
+        validateConfig("comparison", { columns: [{ label: "Only" }] }),
+      ).toEqual({ error: "Add at least 2 columns." });
+      expect(
+        validateConfig("comparison", {
+          columns: [{ label: "A" }, { label: "B" }],
+          rows: [],
+        }),
+      ).toEqual({ error: "Add at least one row." });
+      expect("config" in validateConfig("comparison", {}, "draft")).toBe(true);
+      expect(
+        validateConfig(
+          "comparison",
+          {
+            columns: Array.from({ length: MAX_COMPARISON_COLUMNS + 1 }, () => ({
+              label: "c",
+            })),
+          },
+          "draft",
+        ),
+      ).toEqual({ error: `At most ${MAX_COMPARISON_COLUMNS} columns.` });
+      expect(
+        validateConfig(
+          "comparison",
+          {
+            columns: [{ label: "A" }, { label: "B" }],
+            rows: Array.from({ length: MAX_COMPARISON_ROWS + 1 }, () => ({
+              label: "r",
+            })),
+          },
+          "draft",
+        ),
+      ).toEqual({ error: `At most ${MAX_COMPARISON_ROWS} rows.` });
+    });
+  });
+
+  describe("tile_grid collage (v30)", () => {
+    it("stores the collage layout and spans only when chosen", () => {
+      const grid = validateConfig("tile_grid", {
+        tiles: [
+          { title: "A", span: "1x1" },
+          { title: "B", span: "2x2" },
+        ],
+      });
+      const config = (grid as { config: TileGridConfig }).config;
+      expect("layout" in config).toBe(false);
+      expect(config.tiles[0]).not.toHaveProperty("span");
+      expect(config.tiles[1].span).toBe("2x2");
+      const collage = validateConfig("tile_grid", {
+        layout: "collage",
+        tiles: [{ title: "A", span: "bogus" }],
+      });
+      expect((collage as { config: TileGridConfig }).config.layout).toBe(
+        "collage",
+      );
+      expect(
+        (collage as { config: TileGridConfig }).config.tiles[0],
+      ).not.toHaveProperty("span");
+    });
+  });
+
+  describe("multicolumn", () => {
+    it("normalises columns, keeps catalogue icons only and drops empty columns", () => {
+      const out = validateConfig("multicolumn", {
+        heading: " Why us ",
+        columns: "4",
+        alignment: "left",
+        items: [
+          {
+            icon: "leaf",
+            heading: "Made to last",
+            body: "",
+            cta_href: "/shop",
+          },
+          { icon: "rocket", heading: "", body: "Packed by hand." },
+          { heading: "", body: "", image_url: "" },
+        ],
+      });
+      expect(out).toEqual({
+        config: {
+          eyebrow: "",
+          heading: "Why us",
+          subheading: "",
+          items: [
+            {
+              icon: "leaf",
+              image_url: "",
+              image_alt: "",
+              heading: "Made to last",
+              body: "",
+              cta_label: "",
+              cta_href: "/shop",
+            },
+            {
+              icon: "",
+              image_url: "",
+              image_alt: "",
+              heading: "",
+              body: "Packed by hand.",
+              cta_label: "",
+              cta_href: "",
+            },
+          ],
+          columns: 4,
+          alignment: "left",
+          image_ratio: "landscape",
+        },
+      });
+      expect(validateConfig("multicolumn", {})).toEqual({
+        error: "Add at least one column.",
+      });
+    });
+  });
+
+  describe("image_marquee", () => {
+    it("needs two pictures to publish, keeps imageless drafts and caps the list", () => {
+      expect(
+        validateConfig("image_marquee", {
+          items: [{ image_url: "https://cdn.example.com/a.webp" }],
+        }),
+      ).toEqual({ error: "Add at least 2 images." });
+      const draft = validateConfig(
+        "image_marquee",
+        { items: [{ image_url: "" }], speed: "fast", size: "lg" },
+        "draft",
+      );
+      expect((draft as { config: ImageMarqueeConfig }).config).toEqual({
+        items: [{ image_url: "", image_alt: "", href: "" }],
+        speed: "fast",
+        size: "lg",
+        image_ratio: "square",
+      });
+      expect(
+        validateConfig(
+          "image_marquee",
+          {
+            items: Array.from({ length: MAX_MARQUEE_IMAGES + 1 }, () => ({
+              image_url: "x",
+            })),
+          },
+          "draft",
+        ),
+      ).toEqual({ error: `At most ${MAX_MARQUEE_IMAGES} images.` });
+    });
+  });
+
+  describe("image_hotspots", () => {
+    it("clamps dot positions, defaults a missing one to the centre and needs the picture", () => {
+      const out = validateConfig("image_hotspots", {
+        image_url: "https://cdn.example.com/scene.webp",
+        image_alt: "A set table",
+        image_ratio: "square",
+        hotspots: [
+          { x: 120, y: -5, title: "Jug", href: "/shop/jug" },
+          { title: "Bowl" },
+          { title: "", body: "", href: "" },
+        ],
+      });
+      const config = (out as { config: ImageHotspotsConfig }).config;
+      expect(config.hotspots).toEqual([
+        {
+          x: 100,
+          y: 0,
+          title: "Jug",
+          body: "",
+          href: "/shop/jug",
+          cta_label: "",
+        },
+        { x: 50, y: 50, title: "Bowl", body: "", href: "", cta_label: "" },
+      ]);
+      expect(config.image_ratio).toBe("square");
+      expect(
+        validateConfig("image_hotspots", { hotspots: [{ title: "x" }] }),
+      ).toEqual({ error: "Add the picture the hotspots sit on." });
+      expect(
+        validateConfig("image_hotspots", {
+          image_url: "https://cdn.example.com/scene.webp",
+        }),
+      ).toEqual({ error: "Add at least one hotspot." });
+    });
+  });
+
+  describe("before_after", () => {
+    it("fills side labels, clamps the start and needs both pictures to publish", () => {
+      const out = validateConfig("before_after", {
+        before: { image_url: "https://cdn.example.com/b.webp", label: "" },
+        after: { image_url: "https://cdn.example.com/a.webp", label: "Now" },
+        start: 2,
+      });
+      const config = (out as { config: BeforeAfterConfig }).config;
+      expect(config.before.label).toBe("Before");
+      expect(config.after.label).toBe("Now");
+      expect(config.start).toBe(5);
+      expect(
+        validateConfig("before_after", {
+          before: { image_url: "https://cdn.example.com/b.webp" },
+        }),
+      ).toEqual({ error: "Add both the before and the after picture." });
+      expect("config" in validateConfig("before_after", {}, "draft")).toBe(
+        true,
+      );
+    });
+  });
+
+  describe("product_spotlight", () => {
+    it("keeps a chosen id only in manual mode and requires one to publish", () => {
+      expect(
+        validateConfig("product_spotlight", {
+          source: "featured",
+          product_id: "p1",
+          show_price: false,
+        }),
+      ).toEqual({
+        config: {
+          eyebrow: "",
+          heading: "",
+          body: "",
+          source: "featured",
+          product_id: null,
+          media_position: "left",
+          cta_label: "",
+          show_price: false,
+        },
+      });
+      expect(validateConfig("product_spotlight", { source: "manual" })).toEqual(
+        { error: "Pick the product to spotlight." },
+      );
+      expect(
+        (
+          validateConfig("product_spotlight", {
+            source: "manual",
+            product_id: " p9 ",
+            media_position: "right",
+          }) as { config: ProductSpotlightConfig }
+        ).config.product_id,
+      ).toBe("p9");
+    });
+  });
+
+  describe("logo_strip", () => {
+    it("needs two marks to publish and normalises the layout", () => {
+      expect(validateConfig("logo_strip", { items: [] })).toEqual({
+        error: "Add at least 2 logos.",
+      });
+      const out = validateConfig("logo_strip", {
+        heading: "Stockists",
+        layout: "scroll",
+        monochrome: false,
+        items: [
+          { image_url: "https://cdn.example.com/a.svg", image_alt: "A" },
+          { image_url: "https://cdn.example.com/b.svg", href: "javascript:x" },
+        ],
+      });
+      expect((out as { config: LogoStripConfig }).config).toEqual({
+        heading: "Stockists",
+        items: [
+          {
+            image_url: "https://cdn.example.com/a.svg",
+            image_alt: "A",
+            href: "",
+          },
+          {
+            image_url: "https://cdn.example.com/b.svg",
+            image_alt: "",
+            href: "",
+          },
+        ],
+        layout: "scroll",
+        monochrome: false,
+      });
+    });
+  });
+
+  describe("countdown", () => {
+    it("stores the end as an ISO instant and refuses a missing one on publish", () => {
+      const out = validateConfig("countdown", {
+        heading: "Ends soon",
+        ends_at: "2026-12-31T18:30:00+05:30",
+        cta_href: "/shop",
+      });
+      expect((out as { config: CountdownConfig }).config.ends_at).toBe(
+        "2026-12-31T13:00:00.000Z",
+      );
+      expect(validateConfig("countdown", { ends_at: "not a date" })).toEqual({
+        error: "Set the date and time the countdown ends.",
+      });
+      expect(
+        (
+          validateConfig("countdown", { ends_at: "soon" }, "draft") as {
+            config: CountdownConfig;
+          }
+        ).config.ends_at,
+      ).toBe("");
+    });
+  });
+
   describe("shop_by_category", () => {
     it("defaults source to 'all' and layout to 'scroll'", () => {
       const out = validateConfig("shop_by_category", {
@@ -696,6 +1216,22 @@ describe("validateConfig", () => {
       });
       const config = (out as { config: ShopByCategoryConfig }).config;
       expect(config.layout).toBe("grid");
+    });
+
+    // Plan Phase 2c: the collection list (each category a row with its
+    // description) is the third display; anything else reads as circles.
+    it("keeps the list display and reads an unknown display as circles", () => {
+      const display = (value: unknown) =>
+        (
+          validateConfig("shop_by_category", {
+            source: "all",
+            display: value,
+          }) as { config: ShopByCategoryConfig }
+        ).config.display;
+      expect(display("list")).toBe("list");
+      expect(display("cards")).toBe("cards");
+      expect(display("tiles")).toBe("circles");
+      expect(display(undefined)).toBe("circles");
     });
   });
 
@@ -1089,5 +1625,55 @@ describe("summarizeSection", () => {
     expect(summarizeSection({ type: "latest_blogs", config: featured })).toBe(
       "Blog posts · featured · up to 4",
     );
+  });
+});
+
+describe("SECTION_BLOCKS (the block registry)", () => {
+  it("names the array every list-shaped section keeps its blocks in, with its caps", () => {
+    for (const [type, spec] of Object.entries(SECTION_BLOCKS)) {
+      const empty = EMPTY_CONFIG[
+        type as keyof typeof EMPTY_CONFIG
+      ] as unknown as Record<string, unknown>;
+      expect(Array.isArray(empty[spec.key]), `${type}.${spec.key}`).toBe(true);
+      expect(spec.max, type).toBeGreaterThanOrEqual(spec.min);
+      expect(spec.types.length, type).toBeGreaterThan(0);
+    }
+    expect(SECTION_BLOCKS.hero_carousel?.max).toBe(MAX_HERO_SLIDES);
+    expect(SECTION_BLOCKS.gallery?.min).toBe(2);
+    expect(SECTION_BLOCKS.media_text?.min).toBe(0);
+    expect(SECTION_BLOCKS.accordion?.typed).toBe(true);
+    expect(SECTION_BLOCKS.tile_grid?.typed).toBe(false);
+  });
+
+  it("reads a section's blocks and resolves a block's type per section", () => {
+    expect(sectionBlocks("tile_grid", { tiles: [{ title: "a" }] })).toEqual([
+      { title: "a" },
+    ]);
+    expect(sectionBlocks("tile_grid", { tiles: "nope" })).toEqual([]);
+    expect(sectionBlocks("hero", EMPTY_CONFIG.hero)).toEqual([]);
+    const accordion = SECTION_BLOCKS.accordion!;
+    expect(blockTypeOf(accordion, { type: "image" })).toBe("image");
+    expect(blockTypeOf(accordion, { type: "video" })).toBe("text");
+    expect(blockTypeOf(accordion, null)).toBe("text");
+    expect(blockTypeOf(SECTION_BLOCKS.tile_grid!, { type: "image" })).toBe(
+      "tile",
+    );
+  });
+
+  it("every block list is held to its cap by validateConfig in draft mode", () => {
+    for (const [type, spec] of Object.entries(SECTION_BLOCKS)) {
+      const over = Array.from({ length: spec.max + 1 }, () =>
+        spec.key === "messages" ? "m" : { heading: "x", title: "x" },
+      );
+      const out = validateConfig(
+        type as HomepageSectionType,
+        {
+          ...EMPTY_CONFIG[type as keyof typeof EMPTY_CONFIG],
+          [spec.key]: over,
+        },
+        "draft",
+      );
+      expect("error" in out, type).toBe(true);
+    }
   });
 });

@@ -14,6 +14,12 @@
 //   the same search). Everything folded away stays one tap away.
 // ★ The phone layout (≤768px) is still plain CSS, so a phone never waits on
 //   this; the check only ever removes more than CSS already did.
+// ★ ROWS, NOT ONE LINE (plan Phase 2d). The stacked and utility headers put
+//   the menu, or the whole control cluster, on a second row, where it sits
+//   right under the logo. Judged as one line that is an overlap, and the fit
+//   would fold the menu the layout exists to show. Items are grouped into
+//   rows by vertical overlap and the gap rule runs within each row; a box
+//   with no vertical extent (older callers, the tests) is one row, as before.
 // ---------------------------------------------------------------------------
 
 export const COMPACT_STEPS = ["nav", "delivery", "search"] as const;
@@ -25,9 +31,32 @@ export const MIN_ITEM_GAP = 12;
 export interface FitBox {
   left: number;
   right: number;
+  /** Vertical extent, so a two-row header is judged row by row. Absent on
+   *  both: every item shares one row. */
+  top?: number;
+  bottom?: number;
   /** Narrower than this is "squeezed", not "fits" (a search box can shrink
    *  to a sliver without ever overlapping anything). */
   minWidth?: number;
+}
+
+/** Items grouped into rows: two items share a row when their vertical
+ *  extents overlap by more than a pixel (a logo and a menu of different
+ *  heights still do); an item with no extent joins the first row. */
+export function headerRows(items: readonly FitBox[]): FitBox[][] {
+  const rows: { top: number; bottom: number; items: FitBox[] }[] = [];
+  const sorted = [...items].sort((a, b) => (a.top ?? 0) - (b.top ?? 0));
+  for (const item of sorted) {
+    const top = item.top ?? Number.NEGATIVE_INFINITY;
+    const bottom = item.bottom ?? Number.POSITIVE_INFINITY;
+    const row = rows.find((r) => top < r.bottom - 1 && bottom > r.top + 1);
+    if (row) {
+      row.items.push(item);
+      row.top = Math.min(row.top, top);
+      row.bottom = Math.max(row.bottom, bottom);
+    } else rows.push({ top, bottom, items: [item] });
+  }
+  return rows.map((r) => r.items);
 }
 
 export interface HeaderLayout {
@@ -43,13 +72,15 @@ export function headerFits(
 ): boolean {
   // Something is pushing the header wider than the screen.
   if (layout.scrollWidth > layout.clientWidth + 1) return false;
-  const items = [...layout.items].sort((a, b) => a.left - b.left);
-  for (const item of items) {
+  for (const item of layout.items) {
     if (item.minWidth && item.right - item.left < item.minWidth - 0.5)
       return false;
   }
-  for (let i = 1; i < items.length; i++) {
-    if (items[i].left < items[i - 1].right + gap) return false;
+  for (const row of headerRows(layout.items)) {
+    const items = [...row].sort((a, b) => a.left - b.left);
+    for (let i = 1; i < items.length; i++) {
+      if (items[i].left < items[i - 1].right + gap) return false;
+    }
   }
   return true;
 }

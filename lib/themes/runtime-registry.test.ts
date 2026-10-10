@@ -52,6 +52,8 @@ import {
   getThemeCatalog,
   insertThemeRelease,
   jsonbTextBytes,
+  rendererSupports,
+  RENDERER_ENGINE_VERSIONS,
   resolveInstalledThemeDefinition,
   resolveThemeCandidateDefinition,
   resolveThemeDefinition,
@@ -156,6 +158,39 @@ describe("runtime theme registry", () => {
       releaseRow(runtime, { manifestDigest: "0".repeat(64) }),
     ];
 
+    const resolved = await resolveThemeDefinition("basket");
+    expect(resolved.release.version).toBe("1.0.0");
+    expect(resolved.name).toBe("Basket");
+  });
+
+  // Plan Phase 2e: renderer.minVersion is enforced. A package that needs a
+  // newer renderer than this build carries for its engine is refused the way
+  // a bad digest is, so the bundled or previous release keeps serving.
+  it("refuses a package whose renderer.minVersion exceeds what this build renders", async () => {
+    const runtime = basketRelease("2.0.0");
+    const pkg = themeDefinitionToPackageV2(runtime);
+    expect(RENDERER_ENGINE_VERSIONS[pkg.definition.engine.id]).toBe(
+      pkg.definition.engine.version,
+    );
+    expect(rendererSupports(pkg)).toBe(true);
+    const needy = {
+      ...pkg,
+      renderer: { ...pkg.renderer, minVersion: pkg.renderer.minVersion + 1 },
+    };
+    expect(rendererSupports(needy)).toBe(false);
+    // An engine this build does not bundle is left to its own say-so.
+    expect(
+      rendererSupports({
+        definition: { engine: { id: "future-engine" } },
+        renderer: { minVersion: 9 },
+      }),
+    ).toBe(true);
+    state.catalogRows = [
+      releaseRow(runtime, {
+        packageJson: jsonbRoundTrip(needy),
+        manifestDigest: digestThemePackage(needy),
+      }),
+    ];
     const resolved = await resolveThemeDefinition("basket");
     expect(resolved.release.version).toBe("1.0.0");
     expect(resolved.name).toBe("Basket");

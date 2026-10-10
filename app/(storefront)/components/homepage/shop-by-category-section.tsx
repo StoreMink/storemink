@@ -15,6 +15,8 @@ export interface CategoryTile {
   name: string;
   slug: string;
   image_url: string | null;
+  /** Shown by the list display only (plan Phase 2c's collection list). */
+  description?: string | null;
 }
 
 // Presentational: receives the resolved, ordered categories. Tiles link to
@@ -31,6 +33,64 @@ export function ShopByCategorySection({
   categories: CategoryTile[];
 }) {
   if (categories.length === 0) return null;
+
+  // The list display: each category a row with its picture, name and
+  // description, the way Shopify's collection list shows them; one column
+  // on a phone, two from tablet width under the grid layout. Its own markup
+  // rather than a class on the tiles, because a row has copy a tile never
+  // carries and must stay one tap target end to end.
+  if (config.display === "list") {
+    return (
+      <SectionShell sectionId={sectionId} style={style}>
+        {(config.heading || config.subheading) && (
+          <div className="home-section-head">
+            {config.heading && (
+              <h2 className="home-section-title">{config.heading}</h2>
+            )}
+            {config.subheading && (
+              <p className="home-section-sub">{config.subheading}</p>
+            )}
+          </div>
+        )}
+        <ul
+          className={`home-cat-list${config.layout === "grid" ? " is-two-up" : ""}`}
+        >
+          {categories.map((c) => (
+            <li key={c.id} className="home-cat-row">
+              <Link href={collectionPath(c.slug)} className="home-cat-row-link">
+                <span className="home-cat-row-media">
+                  {c.image_url ? (
+                    <Image
+                      src={c.image_url}
+                      alt=""
+                      fill
+                      sizes="120px"
+                      className="home-cat-img-el"
+                    />
+                  ) : (
+                    <span className="home-cat-img-placeholder">
+                      <ImageIcon size={24} strokeWidth={1.5} aria-hidden />
+                    </span>
+                  )}
+                </span>
+                <span className="home-cat-row-copy">
+                  <span className="home-cat-row-name">{c.name}</span>
+                  {c.description?.trim() ? (
+                    <span className="home-cat-row-desc">
+                      {c.description.trim()}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="home-cat-row-arrow" aria-hidden>
+                  →
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </SectionShell>
+    );
+  }
 
   const content = categories.map((c) => (
     <Link key={c.id} href={collectionPath(c.slug)} className="home-cat-tile">

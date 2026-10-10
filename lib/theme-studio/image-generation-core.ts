@@ -256,6 +256,9 @@ export function generatableSlots(
             subject: brief?.subject || slot.alt,
             artDirection: brief?.artDirection ?? "",
             aspectRatio: ratio,
+            ...(brief?.people === "adults"
+              ? { people: "adults" as const }
+              : {}),
           },
       target,
       byteLimit: slotByteLimit(slot),

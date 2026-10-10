@@ -668,9 +668,12 @@ describe("the image run", { timeout: IMAGE_RUN_TIMEOUT_MS }, () => {
 
   // Production: a fashion hero and lookbook asked for models and were refused
   // by the people filter. A refusal is not billed, so it is redrawn people-free.
-  it("redraws a people-filter refusal without people, and keeps the redraw", async () => {
+  it("redraws a people-filter refusal with the brief's own people rule, and keeps the redraw", async () => {
     const { pkg, intent } = await fixture();
-    const [first] = generatableSlots(pkg, intent);
+    // The offline hero brief allows adults (v28); the second slide does not.
+    const [first, second] = generatableSlots(pkg, intent);
+    expect(first.brief.people).toBe("adults");
+    expect(second.brief.people).toBeUndefined();
     const fake = createFakeImageClient();
     const seen: ThemeImageRequest[] = [];
     const client: ThemeStudioImageClient = {
@@ -678,7 +681,8 @@ describe("the image run", { timeout: IMAGE_RUN_TIMEOUT_MS }, () => {
       async generateImage(request, signal) {
         seen.push(request);
         if (
-          request.briefId === first.slotId &&
+          (request.briefId === first.slotId ||
+            request.briefId === second.slotId) &&
           !request.prompt.includes("Redraw:")
         ) {
           return {
@@ -697,9 +701,18 @@ describe("the image run", { timeout: IMAGE_RUN_TIMEOUT_MS }, () => {
     );
     const drawn = seen.filter((r) => r.briefId === first.slotId);
     expect(drawn).toHaveLength(2);
-    expect(drawn[1].prompt).toContain("blocked because it showed a person");
+    expect(drawn[0].people).toBe("adults");
+    expect(drawn[1].prompt).toContain("blocked over the person it showed");
+    expect(drawn[1].prompt).toContain("never a child");
     expect(
       result.outcomes.find((o) => o.slotId === first.slotId),
+    ).toMatchObject({ status: "generated", attempts: 2 });
+    const plain = seen.filter((r) => r.briefId === second.slotId);
+    expect(plain).toHaveLength(2);
+    expect(plain[0].people).toBeUndefined();
+    expect(plain[1].prompt).toContain("blocked because it showed a person");
+    expect(
+      result.outcomes.find((o) => o.slotId === second.slotId),
     ).toMatchObject({ status: "generated", attempts: 2 });
   });
 
@@ -1131,7 +1144,7 @@ describe("reviewing each image", { timeout: IMAGE_RUN_TIMEOUT_MS }, () => {
       imageCost + result.telemetry.reviewCostMicroUsd,
     );
     expect(result.telemetry.reviewPromptVersion).toBe(
-      "theme-studio-image-review-v6",
+      "theme-studio-image-review-v7",
     );
   });
 

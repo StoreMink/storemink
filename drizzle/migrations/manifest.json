@@ -6664,6 +6664,111 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261009_0179_nested_blocks_help",
+      "description": "Help: sections hold blocks; nine sections join the library",
+      "file": "sql/20261009_0179_nested_blocks_help.sql",
+      "transaction": true,
+      "requires": ["20261008_0173_owner_password_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Section guide lists the nine new sections and explains blocks",
+            "sql": "select count(*)::text from public.help_articles where slug='add-and-arrange-storefront-sections' and status='published' and body like '%comparison table, multi-column, image marquee, image with hotspots, before and after, product spotlight, logo strip, countdown, latest blogs%' and body like '%built from blocks you add one at a time%' and body not like '%FAQ accordion, latest blogs%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261009_0180_page_templates_help",
+      "description": "Help: page templates in the Brand row and the announcement bar in the header row",
+      "file": "sql/20261009_0180_page_templates_help.sql",
+      "transaction": true,
+      "requires": ["20261009_0179_nested_blocks_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Branding guide describes the product and collection page templates",
+            "sql": "select count(*)::text from public.help_articles where slug='change-your-storefront-branding-and-layout' and status='published' and body like '%pick the gallery style and the order of the blocks under the product name%' and body like '%whether the grid loads more, turns pages or keeps scrolling%' and body not like '%Choose the available header, product-card, product-detail, cart, and footer layout options.%'",
+            "equals": "1"
+          },
+          {
+            "name": "Navigation guide describes the announcement bar",
+            "sql": "select count(*)::text from public.help_articles where slug='edit-your-header-footer-and-navigation' and status='published' and body like '%switch on a one-line message above the header on every page%' and body like '%leave the text empty to show your theme''s own announcement%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261010_0181_admin_phone_verified_at",
+      "description": "Record when an admin's mobile number was verified; the go-live checklist requires the owner's",
+      "file": "sql/20261010_0181_admin_phone_verified_at.sql",
+      "transaction": true,
+      "requires": ["20261009_0180_page_templates_help"],
+      "verify": {
+        "columns": ["admins.phone_verified_at"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "No admin is marked verified without a phone number",
+            "sql": "select count(*)::text from public.admins where phone_verified_at is not null and (phone is null or btrim(phone) = '')",
+            "equals": "0"
+          },
+          {
+            "name": "Invited staff are never backfilled as verified",
+            "sql": "select count(*)::text from public.admins where phone_verified_at is not null and invited_by is not null",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261010_0182_signup_plan_and_themes_help",
+      "description": "Help: three-step signup with a Plan step, the owner's mobile verified from the go-live checklist, and themes chosen from the dashboard",
+      "file": "sql/20261010_0182_signup_plan_and_themes_help.sql",
+      "transaction": true,
+      "requires": ["20261010_0181_admin_phone_verified_at"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Signup guide describes the one-screen account, the Plan step and paying for a plan",
+            "sql": "select count(*)::text from public.help_articles where slug='create-your-storemink-store' and status='published' and body like '%You can then choose a paid plan and pay for it straight away%' and body like '%Use an email address that you can verify now.%' and body like '%you verify your mobile just before paying%' and body like '%then select <strong>Create account</strong>%' and body like '%skips the email-code step. Never share a verification code%' and body like '%check the suggested StoreMink address, then select <strong>Continue</strong>%' and body like '%select <strong>Skip, start on Free</strong>%' and body like '%then pay in the secure payment window%' and body like '%see <a href=\"/help/storefront/change-your-storefront-theme\">%' and body like '%<li>Allow pop-ups for Google sign-in.</li>%' and body like '%If you close the payment window, your store is still created on the Free plan%'",
+            "equals": "1"
+          },
+          {
+            "name": "Signup guide no longer asks for a phone code or a theme",
+            "sql": "select count(*)::text from public.help_articles where slug='create-your-storemink-store' and status='published' and (body like '%Verify your phone number with the SMS code%' or body like '%complete the phone reCAPTCHA when asked%' or body like '%Choose a starting theme%' or body like '%Create my free store%')",
+            "equals": "0"
+          },
+          {
+            "name": "Setup guide lists the owner's verified mobile as required",
+            "sql": "select count(*)::text from public.help_articles where slug='complete-your-store-setup' and status='published' and body like '%The required items are: the store owner''s mobile number, verified with a code%' and body like '%The store owner verifies their mobile right in the checklist%'",
+            "equals": "1"
+          },
+          {
+            "name": "Account guide saves a verified mobile without linking it to the login",
+            "sql": "select count(*)::text from public.help_articles where slug='update-your-account-profile-and-security' and status='published' and body like '%saves the number to your profile as verified%' and body not like '%Enter the code to link the number to the account.%'",
+            "equals": "1"
+          },
+          {
+            "name": "Plans guide offers a plan at signup and says where the mobile comes from",
+            "sql": "select count(*)::text from public.help_articles where slug='manage-your-storemink-plan-and-subscription' and status='published' and body like '%pay for it as the last step of signup%' and body like '%The mobile number is saved when you verify it%' and body not like '%Both are saved during signup%'",
+            "equals": "1"
+          },
+          {
+            "name": "Theme guide is published under Storefront",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id=a.category_id where a.slug='change-your-storefront-theme' and a.status='published' and c.slug='storefront' and a.body like '%Also replace my edited homepage%' and a.body like '%Products and categories you added are never changed.%' and length(a.body)<25000 and a.seo_title is not null and a.seo_description is not null",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

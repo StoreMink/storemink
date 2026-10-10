@@ -8,8 +8,10 @@ import {
 } from "@/lib/seo/brand-identity";
 import { POS_URL, THEMES_URL } from "@/lib/site";
 import { BrandMark } from "./brand-mark";
+import { PRODUCT_PAGES } from "./marketing-routes";
 
-// The one platform footer, shared by the apex homepage and /legal/*.
+// The one platform footer, shared by the apex homepage, the marketing pages
+// and /legal/*.
 //
 // ★ IT WAS INLINE IN page.tsx, so the policy pages had neither a header nor a
 // footer — the only public pages in the estate with no chrome at all, and the
@@ -17,9 +19,11 @@ import { BrandMark } from "./brand-mark";
 // the reason `SiteHeader` was: a second hand-written copy is how four hosts
 // ended up with four different headers.
 //
-// `anchorBase` matches SiteHeader: the homepage's section links are same-page
-// fragments, while a policy page has to send them back to the homepage.
-export function SiteFooter({ anchorBase = "" }: { anchorBase?: string }) {
+// Dark, four link columns, a region line and the legal row — the shopify.com
+// footer shape. The region line is a plain statement (India · English · ₹),
+// not a selector: StoreMink serves one region today and a dropdown with one
+// entry is a control that promises a choice it does not have.
+export function SiteFooter() {
   return (
     <footer className="smh-footer">
       <div className="smh-container smh-footer-grid">
@@ -39,26 +43,40 @@ export function SiteFooter({ anchorBase = "" }: { anchorBase?: string }) {
           </span>
         </div>
         <div>
-          <h3>Platform</h3>
+          <h3>StoreMink</h3>
           <nav>
-            <a href={`${anchorBase}#platform`}>Overview</a>
+            <Link href="/why-storemink">Why StoreMink</Link>
+            <Link href="/products">Products</Link>
+            <Link href="/pricing">Pricing</Link>
+            <Link href="/signup">Create your store</Link>
+          </nav>
+        </div>
+        <div>
+          <h3>Products</h3>
+          <nav>
+            {PRODUCT_PAGES.map((page) => (
+              <Link key={page.path} href={page.path}>
+                {page.label}
+              </Link>
+            ))}
             <Link href={POS_URL}>Point of Sale</Link>
             <a href={THEMES_URL}>Themes</a>
-            <a href={`${anchorBase}#pricing`}>Pricing</a>
           </nav>
         </div>
         <div>
-          <h3>Get started</h3>
+          <h3>Resources</h3>
           <nav>
-            <Link href="/signup">Create your store</Link>
-            <Link href="/login">Log in</Link>
             <a href="https://help.storemink.com">Help Centre</a>
-            <a href={`mailto:${SUPPORT_EMAIL}`}>Contact support</a>
+            <Link href="/pricing#faq">FAQ</Link>
+            <Link href="/login">Log in</Link>
           </nav>
         </div>
         <div>
-          <h3>Company</h3>
+          <h3>Support</h3>
           <nav>
+            <a href={`mailto:${SUPPORT_EMAIL}`}>
+              <Mail size={13} /> {SUPPORT_EMAIL}
+            </a>
             {BRAND_SOCIAL_LINKS.map((social) => (
               <a
                 key={social.href}
@@ -69,25 +87,21 @@ export function SiteFooter({ anchorBase = "" }: { anchorBase?: string }) {
                 {social.label}
               </a>
             ))}
-            <a href={`mailto:${SUPPORT_EMAIL}`}>
-              <Mail size={13} /> {SUPPORT_EMAIL}
-            </a>
-          </nav>
-        </div>
-        <div>
-          <h3>Legal</h3>
-          <nav>
-            {LEGAL_DOCS.map((document) => (
-              <Link key={document.slug} href={`/legal/${document.slug}`}>
-                {document.title}
-              </Link>
-            ))}
           </nav>
         </div>
       </div>
       <div className="smh-container smh-footer-base">
+        <span className="smh-footer-region">
+          <Globe2 size={14} /> India · English · ₹ INR
+        </span>
+        <nav className="smh-footer-legal" aria-label="Legal">
+          {LEGAL_DOCS.map((document) => (
+            <Link key={document.slug} href={`/legal/${document.slug}`}>
+              {document.title}
+            </Link>
+          ))}
+        </nav>
         <span>© {new Date().getFullYear()} StoreMink</span>
-        <span>Your brand. Your customers. Your growth.</span>
       </div>
     </footer>
   );

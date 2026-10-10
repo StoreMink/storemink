@@ -13,11 +13,13 @@
  * plan (which is the call that never worked on UPI or e-mandate).
  */
 
-import { revalidateTag } from "next/cache";
+import { revalidateTag, updateTag } from "next/cache";
 import { eq } from "drizzle-orm";
 import { getActingStoreId, getManagerUserId } from "@/app/dashboard/lib/access";
+import { getServerUser } from "@/lib/auth/server-user";
 import { withService } from "@/lib/db/client";
-import { stores } from "@/drizzle/schema";
+import { admins, stores } from "@/drizzle/schema";
+import { logError } from "@/lib/observability/logger";
 import { getCurrentStore, STORE_TAG } from "@/lib/store/resolve";
 import {
   getExtraLocationPricingLive,
@@ -128,9 +130,10 @@ export async function startSubscribe(
 }
 
 /**
- * Core dashboard enrolment after access and tenant resolution. Signup always
- * creates Free stores and never reaches billing; upgrades begin from the
- * store-host Plans & Billing page.
+ * ★ THE CORE, shared by the dashboard and by signup. The two differ only in
+ * how the store is resolved; everything after that must stay in one place,
+ * or a merchant is billed differently depending on which screen they
+ * subscribed from.
  */
 async function startSubscribeForStore(
   storeId: string,
@@ -181,7 +184,8 @@ export async function confirmSubscribe(
   );
 }
 
-/** ★ THE CORE — the payment result is verified before entitlement changes. */
+/** ★ THE CORE, shared with signup — the payment result is verified before
+ *  entitlement changes. */
 async function confirmSubscribeForStore(
   storeId: string,
   invoiceId: unknown,
@@ -242,6 +246,76 @@ async function confirmSubscribeForStore(
     periodEnd: confirmed.data.periodEnd,
     autopay: confirmed.data.mandateActivated,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Signup — a paid plan chosen on the signup wizard's Plan step (2026-10-10).
+//
+// The wizard runs on the PLATFORM host, where `getActingStoreId()` resolves
+// the fallback store rather than the one created seconds earlier, so these
+// cannot use the dashboard gate.
+//
+// ★★ THE STORE COMES FROM THE SIGNED-IN OWNER, NEVER FROM THE REQUEST. The
+// version removed on 2026-08-17 took a store id from the browser and proved
+// the caller was its superadmin, which made that proof the whole security
+// boundary. A store owner has exactly one admins row (`admins.id` IS the auth
+// uid), so the store is read from it and no id crosses the wire at all. Only
+// a superadmin row counts — buying a plan is the owner's decision, the same
+// rule the old gate applied — and an unreadable row refuses rather than
+// authorises.
+// ---------------------------------------------------------------------------
+
+async function signupOwnerStoreId(): Promise<string | null> {
+  const user = await getServerUser();
+  if (!user) return null;
+  try {
+    const rows = await withService((db) =>
+      db
+        .select({ storeId: admins.storeId, role: admins.role })
+        .from(admins)
+        .where(eq(admins.id, user.id))
+        .limit(1),
+    );
+    return rows[0]?.role === "superadmin" ? rows[0].storeId : null;
+  } catch (err) {
+    logError("billing.signup_owner_store", err, { uid: user.id });
+    return null;
+  }
+}
+
+/** Begin the first subscription from the signup wizard's Plan step. */
+export async function startSignupSubscribe(
+  plan: unknown,
+  period: unknown,
+  mandateMethod?: unknown,
+): Promise<SubscribeStart> {
+  const storeId = await signupOwnerStoreId();
+  if (!storeId)
+    return { ok: false, error: "You don't have permission to do this." };
+  return startSubscribeForStore(storeId, plan, period, mandateMethod);
+}
+
+/** Settle it. */
+export async function confirmSignupSubscribe(
+  invoiceId: unknown,
+  providerPaymentId: unknown,
+  signature: unknown,
+): Promise<SubscribeConfirm> {
+  const storeId = await signupOwnerStoreId();
+  if (!storeId)
+    return { ok: false, error: "You don't have permission to do this." };
+  const result = await confirmSubscribeForStore(
+    storeId,
+    invoiceId,
+    providerPaymentId,
+    signature,
+  );
+  // The wizard sends the owner straight to their dashboard on another host,
+  // so the new plan has to be visible on that very next request rather than
+  // after a stale-while-revalidate round (createStore's reason for the same
+  // read-your-own-writes call).
+  if (result.ok) updateTag(STORE_TAG);
+  return result;
 }
 
 // ---------------------------------------------------------------------------

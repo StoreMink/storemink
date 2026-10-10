@@ -740,7 +740,10 @@
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--shop-accent);
+  /* A readable eyebrow label uses a text token, never the accent: the accent
+     is held to 3:1 as a fill, and at 12px this needs 4.5:1 (the playful
+     exemplar's accent read 4.0:1 on its cream, 2026-10-10). */
+  color: var(--shop-text-muted);
   font-weight: 600;
   margin-bottom: 10px;
 }
@@ -890,7 +893,10 @@
 .pdp-variant-was {
   font-size: 12px;
   font-weight: 500;
-  color: var(--shop-text-faint);
+  /* Readable copy, so ink-soft (held to 4.5:1 on the surface by the design
+     contract), never ink-faint: at 12px on the magazine exemplar's surface
+     it measured 2.9:1 (2026-10-10). The card's struck-through MRP rule. */
+  color: var(--shop-text-muted);
   text-decoration: line-through;
 }
 
@@ -1314,7 +1320,11 @@
     bottom: 12px;
     padding: 4px 10px;
     border-radius: 999px;
-    background: rgba(var(--sm-shadow-rgb), 0.62);
+    /* A black wash, not the theme's shadow tint: on a sage palette the
+       tinted pill blended to #717a71 under the white count (2.9:1, the
+       soft-and-natural exemplar, 2026-10-10). Black at this opacity over a
+       white photo is 6:1 and darker over any other. */
+    background: rgba(0, 0, 0, 0.62);
     color: #ffffff;
     font-size: 12px;
     font-weight: 600;
@@ -1337,6 +1347,268 @@
   .sm-gallery .pdp-zoom-hint {
     display: none;
   }
+}
+
+/* ── Gallery shapes (plan Phase 2e, `mode-*` on .sm-gallery) ───────────
+   Desktop only; the phone strip above wins below 860px whatever the mode. */
+@media (min-width: 860px) {
+  /* Thumbnails beside the photo, in a column on the left. */
+  .sm-gallery.mode-thumbs-left {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+  }
+  .sm-gallery.mode-thumbs-left .sm-gallery-frame {
+    order: 2;
+  }
+  .sm-gallery.mode-thumbs-left .pdp-thumbs,
+  .sm-gallery.mode-thumbs-left .gpdp-thumbs {
+    order: 1;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    margin-top: 0;
+    max-height: 560px;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  /* Every photo at once: a column, or a two-up grid led by the first. */
+  .sm-gallery.mode-stacked .sm-gallery-track,
+  .sm-gallery.mode-grid .sm-gallery-track {
+    display: grid;
+    gap: 12px;
+  }
+  .sm-gallery.mode-grid .sm-gallery-track {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sm-gallery.mode-grid .sm-gallery-track > .sm-gallery-slide:first-child {
+    grid-column: 1 / -1;
+  }
+  /* Every slide, active or not: this outranks the desktop hide rule above
+     (0,3,0) and each layout's own slide rule. */
+  .sm-gallery.mode-stacked .sm-gallery-track > .sm-gallery-slide[data-active],
+  .sm-gallery.mode-grid .sm-gallery-track > .sm-gallery-slide[data-active] {
+    display: block;
+    width: 100%;
+  }
+  /* The phone strip at every width: swipe, snap and the counter. */
+  .sm-gallery.mode-carousel .sm-gallery-track.is-multi {
+    display: flex;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .sm-gallery.mode-carousel .sm-gallery-track.is-multi::-webkit-scrollbar {
+    display: none;
+  }
+  .sm-gallery.mode-carousel
+    .sm-gallery-track.is-multi
+    > .sm-gallery-slide[data-active] {
+    display: block;
+    flex: 0 0 100%;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+  }
+  .sm-gallery.mode-carousel .sm-gallery-count {
+    display: inline-flex;
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.62);
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+}
+
+/* ── Collection template (plan Phase 2e, lib/themes/templates.ts) ──────
+   Filters as a row of popovers above the grid, numbered pages, and the
+   theme's promotional tiles among the cards. The sidebar and Load more above
+   stay the defaults. */
+.shop-topbar-filters {
+  display: none;
+}
+@media (min-width: 1024px) {
+  .shop-topbar-filters {
+    display: block;
+    margin: 0 0 20px;
+  }
+  .shop-topbar-filters .shop-facets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .shop-topbar-filters .shop-filter-group {
+    position: relative;
+    border: 0;
+  }
+  .shop-topbar-filters .shop-filter-group > summary {
+    min-height: 40px;
+    padding: 0 14px;
+    border: 1px solid var(--sm-border);
+    border-radius: var(--sm-radius-pill);
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .shop-topbar-filters .shop-filter-group > summary::after {
+    margin-left: 4px;
+  }
+  .shop-topbar-filters .shop-filter-group[open] > summary {
+    border-color: var(--sm-ink);
+  }
+  .shop-topbar-filters .shop-filter-group-body {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    z-index: 6;
+    width: max-content;
+    min-width: 240px;
+    max-width: min(360px, 80vw);
+    max-height: 360px;
+    overflow: auto;
+    padding: 14px 16px;
+    background: var(--sm-surface);
+    border: 1px solid var(--sm-border);
+    border-radius: var(--sm-radius-card);
+    box-shadow: 0 12px 32px rgba(var(--sm-shadow-rgb), 0.14);
+  }
+  .shop-filter-btn.has-topbar {
+    display: none;
+  }
+}
+
+.shop-pages {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin: 36px 0 8px;
+}
+.shop-pages-count {
+  width: 100%;
+  margin: 0 0 4px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--sm-ink-soft);
+}
+.shop-pages button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--sm-radius-control);
+  background: transparent;
+  color: var(--sm-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.shop-pages button[aria-current="page"] {
+  background: var(--sm-ink);
+  color: var(--sm-on-ink);
+}
+.shop-pages button:hover:not([aria-current="page"]):not(:disabled) {
+  border-color: var(--sm-border);
+}
+.shop-pages button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.shop-pages button:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 2px;
+}
+.shop-pages-gap {
+  min-width: 24px;
+  text-align: center;
+  color: var(--sm-ink-soft);
+}
+.shop-more-sentinel {
+  width: 100%;
+  height: 1px;
+}
+
+/* A tile's `theme` is the COPY's colour, as it is on every other tile, hero
+   and slide: "dark" is the page ink, "light" the on-ink. The default field
+   follows the copy (the surface under dark copy, the ink colour under light),
+   and a `background` hex replaces the field, never the copy. Until 2026-10-10
+   this read "dark" as a dark FIELD with light copy, the opposite of the
+   prompt's and the builder's words, so a tile authored as dark copy on a
+   pale field rendered pale on pale (1.1:1, the magazine exemplar). */
+.shop-promo-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 240px;
+  padding: 22px;
+  overflow: hidden;
+  border-radius: var(--sm-radius-card);
+  background: var(--sm-surface);
+  color: var(--sm-ink);
+  text-decoration: none;
+}
+.shop-promo-tile.theme-light {
+  background: var(--sm-ink);
+  color: var(--sm-on-ink);
+}
+.shop-promo-tile-img {
+  object-fit: cover;
+}
+/* Over a photograph the scrim sits behind the copy in the copy's opposite:
+   a pale wash under dark copy, a dark wash under light. */
+.shop-promo-tile.has-image::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(255, 255, 255, 0.72),
+    rgba(255, 255, 255, 0) 60%
+  );
+}
+.shop-promo-tile.has-image.theme-light::before {
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.58),
+    rgba(0, 0, 0, 0) 60%
+  );
+}
+.shop-promo-tile-copy {
+  position: relative;
+}
+.shop-promo-tile h2 {
+  margin: 0;
+  font-size: calc(1.35rem * var(--sm-hs, 1));
+  line-height: 1.15;
+  font-weight: 700;
+}
+.shop-promo-tile p {
+  margin: 6px 0 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  opacity: 0.88;
+}
+.shop-promo-tile-cta {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.shop-promo-tile:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 3px;
 }
 
 /* ── Full-screen photo viewer ──────────────────────────────────────── */
@@ -1493,6 +1765,206 @@
   color: var(--shop-text-muted);
   margin: 0;
   white-space: pre-wrap;
+}
+
+/* ── Template blocks (plan Phase 2e, lib/themes/templates.ts) ──────────
+   The theme-authored blocks of the information column: a trust row, a
+   disclosure list and a rich-text note. Each keeps to the page's own type
+   and tokens so a theme's blocks read as part of the page. */
+.pdp-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin: 20px 0 0;
+  padding: 16px 0 0;
+  list-style: none;
+  border-top: 1px solid var(--shop-border);
+}
+.pdp-trust li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--shop-text);
+}
+.pdp-trust svg {
+  color: var(--shop-accent);
+  flex: 0 0 auto;
+}
+.pdp-accordion {
+  margin-top: 24px;
+  border-top: 1px solid var(--shop-border);
+}
+.pdp-accordion-row {
+  border-bottom: 1px solid var(--shop-border);
+}
+.pdp-accordion-row > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  list-style: none;
+  cursor: pointer;
+}
+.pdp-accordion-row > summary::-webkit-details-marker {
+  display: none;
+}
+.pdp-accordion-row > summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s ease;
+}
+.pdp-accordion-row[open] > summary::after {
+  transform: translateY(2px) rotate(-135deg);
+}
+.pdp-accordion-row > summary:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 2px;
+}
+.pdp-accordion-body {
+  padding: 0 0 16px;
+}
+.pdp-accordion-body p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--shop-text-muted);
+  white-space: pre-wrap;
+}
+.pdp-size-guide {
+  margin-top: 24px;
+  border-top: 1px solid var(--shop-border);
+  border-bottom: 1px solid var(--shop-border);
+}
+.pdp-size-guide > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  list-style: none;
+  cursor: pointer;
+}
+.pdp-size-guide > summary::-webkit-details-marker {
+  display: none;
+}
+.pdp-size-guide > summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s ease;
+}
+.pdp-size-guide[open] > summary::after {
+  transform: translateY(2px) rotate(-135deg);
+}
+.pdp-size-guide > summary:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 2px;
+}
+/* The table scrolls inside its own box on a phone, never the page; the
+   scroller is positioned so it contains its sr-only header. */
+.pdp-size-guide-scroll {
+  position: relative;
+  overflow-x: auto;
+  padding: 0 0 16px;
+  -webkit-overflow-scrolling: touch;
+}
+.pdp-size-guide table {
+  width: 100%;
+  min-width: 320px;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+.pdp-size-guide th,
+.pdp-size-guide td {
+  padding: 8px 12px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--shop-border);
+}
+.pdp-size-guide thead th {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--shop-text-muted);
+}
+.pdp-size-guide tbody th {
+  font-weight: 700;
+}
+.pdp-size-guide tbody tr:last-child th,
+.pdp-size-guide tbody tr:last-child td {
+  border-bottom: 0;
+}
+.pdp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pdp-rich {
+  margin-top: 24px;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--shop-text-muted);
+}
+.pdp-rich p {
+  margin: 0 0 12px;
+}
+.pdp-rich p:last-child {
+  margin-bottom: 0;
+}
+.pdp-rich a {
+  color: var(--shop-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ── Stacked product layout (design.layout.productDetail = "stacked") ──
+   The gallery above a centred information column, on one column at every
+   width: a wide stage for the photograph, then the details, the way a
+   lookbook product page reads. Classic markup, selected by the root class
+   like editorial. */
+.sm-pdp-stacked .pdp-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 32px;
+}
+.sm-pdp-stacked .sm-gallery {
+  width: min(100%, 880px);
+  margin-inline: auto;
+}
+.sm-pdp-stacked .pdp-main-img {
+  aspect-ratio: 4 / 3;
+}
+.sm-pdp-stacked .sm-gallery.mode-thumbs-bottom .pdp-thumbs {
+  justify-content: center;
+}
+.sm-pdp-stacked .pdp-info {
+  width: min(100%, 720px);
+  margin-inline: auto;
 }
 
 /* ── Reviews ──────────────────────────────────────── */

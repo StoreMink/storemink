@@ -1,34 +1,33 @@
 import type { Metadata } from "next";
-import { BRAND_TAGLINE } from "@/lib/seo/brand-identity";
-import { getThemeCatalog } from "@/lib/themes/runtime-registry";
-import { SignupThemeCatalogProvider } from "./theme-catalog-context";
+// Self-contained: signup is the first screen of the product, not a marketing
+// page, so it does not load the marketing site's homepage.css.
+import "./signup.css";
 
 // page.tsx is a client component (the signup wizard), so its metadata lives
 // here. Without this it inherited the platform layout's metadata wholesale and
 // served the homepage's exact title + og:url — two URLs claiming to be the same
 // page, one of which app/sitemap.ts submits.
 export const metadata: Metadata = {
-  title: `${BRAND_TAGLINE} — StoreMink`,
+  title: "Create your store · StoreMink",
   description:
-    "Turn your idea into a distinctive brand and a working business with StoreMink, the AI-native business operating system for independent brands.",
+    "Create your StoreMink account and set up your store in a few minutes. No credit card needed to start.",
   alternates: { canonical: "/signup" },
   openGraph: {
-    title: `${BRAND_TAGLINE} — StoreMink`,
+    title: "Create your store · StoreMink",
     description:
-      "Turn your idea into a distinctive brand and a working business with StoreMink, the AI-native business operating system for independent brands.",
+      "Create your StoreMink account and set up your store in a few minutes. No credit card needed to start.",
     url: "/signup",
   },
 };
 
-export default async function SignupLayout({
+// Signup no longer offers themes (every store starts on the default and its
+// owner chooses another from the dashboard's Themes page), so this layout has
+// nothing to load: the wizard's only server state, the live plan prices, is
+// read by the Plan step itself from /api/plans/pricing.
+export default function SignupLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const themes = await getThemeCatalog();
-  return (
-    <SignupThemeCatalogProvider themes={themes}>
-      {children}
-    </SignupThemeCatalogProvider>
-  );
+  return children;
 }

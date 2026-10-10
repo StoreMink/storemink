@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { formatPrice } from "@/lib/pricing";
 import {
@@ -36,12 +36,15 @@ export function ShopFilterControls({
   view,
   onChange,
   live,
+  collapsed = false,
 }: {
   query: ShopQuery;
   view: ShopFacetView;
   onChange: (next: ShopQuery) => void;
   /** Sidebar: true (apply now). Drawer: false (a draft). */
   live: boolean;
+  /** Groups start closed (the top-bar's popovers); open by default. */
+  collapsed?: boolean;
 }) {
   return (
     <div className="shop-facets">
@@ -51,11 +54,16 @@ export function ShopFilterControls({
           <FacetGroup
             key={facet.key}
             facet={facet}
+            collapsed={collapsed}
             onToggle={(value) => onChange(toggleCategory(query, value))}
           />
         ))}
 
-      <Group title="Availability" selected={query.inStock ? 1 : 0}>
+      <Group
+        title="Availability"
+        selected={query.inStock ? 1 : 0}
+        collapsed={collapsed}
+      >
         <label className="shop-filter-check">
           <input
             type="checkbox"
@@ -76,6 +84,7 @@ export function ShopFilterControls({
           <FacetGroup
             key={facet.key}
             facet={facet}
+            collapsed={collapsed}
             onToggle={(value) =>
               onChange(toggleOptionValue(query, facet.key, value))
             }
@@ -86,6 +95,67 @@ export function ShopFilterControls({
         query={query}
         span={view.span}
         live={live}
+        collapsed={collapsed}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
+/**
+ * The same groups as a row of popovers above the grid (plan Phase 2e, the
+ * collection template's "top-bar" filters). Each group is a closed
+ * `<details>` whose body the CSS floats under its summary; opening one closes
+ * the others, and a press outside or Escape closes them all, which native
+ * `<details>` does not do on its own.
+ */
+export function ShopFilterBar({
+  query,
+  view,
+  onChange,
+}: {
+  query: ShopQuery;
+  view: ShopFacetView;
+  onChange: (next: ShopQuery) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    const closeExcept = (keep: Element | null) => {
+      root
+        .querySelectorAll<HTMLDetailsElement>("details.shop-filter-group[open]")
+        .forEach((group) => {
+          if (group !== keep) group.open = false;
+        });
+    };
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      const inside = target?.closest?.("details.shop-filter-group") ?? null;
+      closeExcept(inside && root.contains(inside) ? inside : null);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeExcept(null);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+  return (
+    <div
+      ref={ref}
+      className="shop-topbar-filters"
+      role="group"
+      aria-label="Filters"
+    >
+      <ShopFilterControls
+        query={query}
+        view={view}
+        live
+        collapsed
         onChange={onChange}
       />
     </div>
@@ -95,14 +165,16 @@ export function ShopFilterControls({
 function Group({
   title,
   selected,
+  collapsed = false,
   children,
 }: {
   title: string;
   selected: number;
+  collapsed?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <details className="shop-filter-group" open>
+    <details className="shop-filter-group" open={!collapsed}>
       <summary>
         <span>{title}</span>
         {selected > 0 && (
@@ -119,9 +191,11 @@ function Group({
 
 function FacetGroup({
   facet,
+  collapsed,
   onToggle,
 }: {
   facet: Facet;
+  collapsed?: boolean;
   onToggle: (valueKey: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -133,7 +207,11 @@ function FacetGroup({
       : facet.values.filter((v, i) => i < COLLAPSED_VALUES || v.selected);
 
   return (
-    <Group title={facet.label} selected={facet.selectedCount}>
+    <Group
+      title={facet.label}
+      selected={facet.selectedCount}
+      collapsed={collapsed}
+    >
       {facet.kind === "size" ? (
         <div
           className="shop-filter-pills"
@@ -202,11 +280,13 @@ function PriceGroup({
   query,
   span,
   live,
+  collapsed,
   onChange,
 }: {
   query: ShopQuery;
   span: { min: number; max: number } | null;
   live: boolean;
+  collapsed?: boolean;
   onChange: (next: ShopQuery) => void;
 }) {
   const text = (n: number | null) => (n === null ? "" : String(n));
@@ -279,6 +359,7 @@ function PriceGroup({
     <Group
       title="Price"
       selected={query.min !== null || query.max !== null ? 1 : 0}
+      collapsed={collapsed}
     >
       {span && (
         <p className="shop-filter-muted shop-filter-hint">

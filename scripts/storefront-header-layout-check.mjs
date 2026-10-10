@@ -1,6 +1,8 @@
 /** Offline header clearance regression using production CSS and local Chrome.
  * No network, database or provider calls. The measured cases model the height
- * published by useHeaderFit; its observer/lifecycle is tested in Vitest.
+ * published by useHeaderFit; its observer/lifecycle is tested in Vitest. Eight
+ * header variants: the four originals plus transparent, hamburger, stacked and
+ * utility (2026-10-09); the last two are two rows tall on desktop.
  * Run: node scripts/storefront-header-layout-check.mjs
  * --css-ref=<revision> diagnoses old CSS; --screenshots=<dir> saves fixtures,
  * not live storefront evidence.
@@ -48,7 +50,9 @@ const first = {
   custom:
     '<section class="home-section home-custom-code"><div style="height:300px;background:#eee">Custom hero</div></section>',
 };
-function fixture(header, content, width, order) {
+const announcement =
+  '<div class="announcement" data-sm="announcement"><a class="announcementLink" href="/shop"><span class="announcementText">Free delivery on orders over ₹999, easy 14-day returns</span></a></div>';
+function fixture(header, content, width, order, announce = false) {
   // Landscape/tablet fits fold the same three controls as useHeaderFit.
   const compact =
     width > 768 && width < 1200
@@ -58,8 +62,8 @@ function fixture(header, content, width, order) {
     *{box-sizing:border-box}body{margin:0;font:16px/1.5 Arial}button,input{font:inherit}button{padding:0}svg{display:block}
     :root{--sm-ink:#2a211f;--sm-cream:#fbfaf8;--sm-surface:#fff;--sm-ink-soft:#6e635e;--sm-ink-faint:#766861;--sm-on-ink:#fff;--sm-shadow-rgb:42,33,31;--sm-border:#ddd6cf;--sm-header-bg:#fbfaf8;--sm-header-fg:#2a211f;--sm-accent-warm:#8c6f63;--sm-on-accent:#fff;--sm-sand:#efebe6}
     ${order === "forward" ? sheets.join("\n") : [...sheets].reverse().join("\n")}
-    </style></head><body><div class="storefront-root sm-header-${header}">
-    <header class="header" ${compact}><div class="headerLeft"><a class="logo" href="/"><span class="brandNameText">Vitrine</span></a><nav class="navLinks"><a href="/shop">Shop</a><a href="/about">Our story</a></nav></div>
+    </style></head><body><div class="storefront-root sm-header-${header}${announce ? " sm-announce" : ""}">
+    <header class="header" ${compact}>${announce ? announcement : ""}<div class="headerLeft"><a class="logo" href="/"><span class="brandNameText">Vitrine</span></a><nav class="navLinks"><a href="/shop">Shop</a><a href="/about">Our story</a></nav></div>
     <div class="headerRight"><div class="root" data-delivery-control><button class="trigger">${icon}<span class="triggerCopy"><small>Deliver to</small><strong>Check delivery</strong></span></button></div><div class="searchWrap"><form class="searchBar"><input class="searchInput" aria-label="Search" placeholder="Search products"></form></div><button class="phoneSearchBtn" aria-label="Search">${icon}</button><div class="iconGroup"><button class="userIcon" aria-label="Account">${icon}</button><button class="cartBtn" aria-label="Cart">${icon}</button></div><button class="hamburgerBtn" aria-label="Menu">${icon}</button></div></header>
     <main><div class="home-sections">${first[content]}<section class="home-section">${hero}</section></div></main></div></body></html>`;
 }
@@ -82,97 +86,156 @@ try {
     [844, 390],
     [1440, 900],
   ])
-    for (const header of ["classic", "centered", "minimal", "market"])
+    for (const header of [
+      "classic",
+      "centered",
+      "minimal",
+      "market",
+      "transparent",
+      "hamburger",
+      "stacked",
+      "utility",
+    ])
       for (const content of Object.keys(first))
         for (const order of ["forward", "reverse"])
-          for (const mode of ["server", "measured"]) {
-            await page.setViewportSize({ width, height });
-            await page.setContent(fixture(header, content, width, order));
-            if (mode === "measured" && publishesHeight)
-              await page.evaluate(() => {
-                const header = document.querySelector("header");
-                header
-                  .closest(".storefront-root")
-                  .style.setProperty(
-                    "--sm-header-h",
-                    `${Math.ceil(header.getBoundingClientRect().height)}px`,
-                  );
-              });
-            const result = await page.evaluate(() => {
-              const header = document
-                .querySelector("header")
-                .getBoundingClientRect();
-              const first = document
-                .querySelector(".home-section")
-                .getBoundingClientRect();
-              const children = [
-                ...document.querySelectorAll(
-                  "header .logo,header .phoneSearchBtn,header .userIcon,header .cartBtn,header .hamburgerBtn",
-                ),
-              ]
-                .map((el) => el.getBoundingClientRect())
-                .filter((r) => r.width && r.height);
-              return {
-                headerHeight: header.height,
-                contentTop: first.top,
-                gap: first.top - header.bottom,
-                controlsPadding: Math.min(
-                  ...children.map((r) =>
-                    Math.min(r.top - header.top, header.bottom - r.bottom),
+          for (const mode of ["server", "measured"])
+            // The announcement bar (lib/themes/announcement.ts) rides in the
+            // header's top border: one content and one order per variant and
+            // width is enough to prove it sits above the controls, spans the
+            // viewport and is counted in the height the page reserves.
+            for (const announce of content === "ticker" && order === "forward"
+              ? [false, true]
+              : [false]) {
+              await page.setViewportSize({ width, height });
+              await page.setContent(
+                fixture(header, content, width, order, announce),
+              );
+              if (mode === "measured" && publishesHeight)
+                await page.evaluate(() => {
+                  const header = document.querySelector("header");
+                  header
+                    .closest(".storefront-root")
+                    .style.setProperty(
+                      "--sm-header-h",
+                      `${Math.ceil(header.getBoundingClientRect().height)}px`,
+                    );
+                });
+              const result = await page.evaluate(() => {
+                const header = document
+                  .querySelector("header")
+                  .getBoundingClientRect();
+                const first = document
+                  .querySelector(".home-section")
+                  .getBoundingClientRect();
+                const children = [
+                  ...document.querySelectorAll(
+                    "header .logo,header .phoneSearchBtn,header .userIcon,header .cartBtn,header .hamburgerBtn",
                   ),
-                ),
-                overflow: document.documentElement.scrollWidth > innerWidth + 1,
-              };
-            });
-            const label = `${width}x${height}/${header}/${content}/${order}/${mode}`;
-            measurements.push({ label, ...result });
-            const problems = [];
-            if (["ticker", "text"].includes(content) && result.gap < 15.9)
-              problems.push(
-                `leading content overlaps/crowds the header (${result.gap}px)`,
-              );
-            if (result.controlsPadding < 11.9)
-              problems.push(
-                `controls have only ${result.controlsPadding}px vertical padding`,
-              );
-            if (width <= 768 && result.overflow)
-              problems.push("phone viewport overflow");
-            // Photo/custom-led transparent headers keep their existing origin;
-            // the opaque market bar reserves space once, including in landscape.
-            if (
-              content === "custom" &&
-              Math.abs(
-                result.contentTop -
-                  (header === "market" ? result.headerHeight : 0),
-              ) > (mode === "server" ? 16 : 1)
-            )
-              problems.push("custom hero clearance changed");
-            if (["hero", "carousel"].includes(content)) {
-              const expected =
-                header === "market"
-                  ? result.headerHeight +
-                    Math.min(32, Math.max(16, width * 0.025))
-                  : Math.min(72, Math.max(40, width * 0.06));
-              if (
-                Math.abs(result.contentTop - expected) >
-                (mode === "server" ? 16 : 1)
-              )
-                problems.push("native hero origin changed");
-            }
-            if (problems.length) failures.push({ label, problems });
-            if (
-              screenshots &&
-              width === 390 &&
-              header === "minimal" &&
-              content === "ticker" &&
-              order === "forward" &&
-              mode === "measured"
-            )
-              await page.screenshot({
-                path: join(screenshots, "vitrine-header.png"),
-                clip: { x: 0, y: 0, width, height: 250 },
+                ]
+                  .map((el) => el.getBoundingClientRect())
+                  .filter((r) => r.width && r.height);
+                const bar = document.querySelector(".announcement");
+                const barRect = bar ? bar.getBoundingClientRect() : null;
+                const logo = document.querySelector("header .logo");
+                return {
+                  headerHeight: header.height,
+                  contentTop: first.top,
+                  gap: first.top - header.bottom,
+                  controlsPadding: Math.min(
+                    ...children.map((r) =>
+                      Math.min(r.top - header.top, header.bottom - r.bottom),
+                    ),
+                  ),
+                  overflow:
+                    document.documentElement.scrollWidth > innerWidth + 1,
+                  bar: barRect
+                    ? {
+                        top: barRect.top,
+                        bottom: barRect.bottom,
+                        width: barRect.width,
+                        aboveLogo:
+                          barRect.bottom <= logo.getBoundingClientRect().top,
+                        oneLine: bar.scrollHeight <= barRect.height + 1,
+                        linkHeight: bar
+                          .querySelector("a")
+                          .getBoundingClientRect().height,
+                      }
+                    : null,
+                };
               });
-          }
+              const label = `${width}x${height}/${header}/${content}/${order}/${mode}${announce ? "/announce" : ""}`;
+              measurements.push({ label, ...result });
+              const problems = [];
+              if (announce) {
+                const bar = result.bar;
+                if (!bar) problems.push("announcement bar not rendered");
+                else {
+                  if (bar.top !== 0 || Math.abs(bar.bottom - 36) > 0.5)
+                    problems.push("announcement bar is not the 36px top strip");
+                  if (bar.width < width - 1)
+                    problems.push(
+                      "announcement bar does not span the viewport",
+                    );
+                  if (!bar.aboveLogo)
+                    problems.push("announcement bar overlaps the controls");
+                  if (!bar.oneLine) problems.push("announcement copy wraps");
+                  if (bar.linkHeight < 24)
+                    problems.push("announcement link is a small target");
+                  if (result.headerHeight < 36 + 40)
+                    problems.push("header height does not include the bar");
+                }
+              }
+              if (["ticker", "text"].includes(content) && result.gap < 15.9)
+                problems.push(
+                  `leading content overlaps/crowds the header (${result.gap}px)`,
+                );
+              if (result.controlsPadding < 11.9)
+                problems.push(
+                  `controls have only ${result.controlsPadding}px vertical padding`,
+                );
+              if (width <= 768 && result.overflow)
+                problems.push("phone viewport overflow");
+              // Photo/custom-led transparent headers keep their existing origin;
+              // the opaque market bar reserves space once, including in landscape.
+              if (
+                content === "custom" &&
+                Math.abs(
+                  result.contentTop -
+                    (header === "market" ? result.headerHeight : 0),
+                ) > (mode === "server" ? 16 : 1)
+              )
+                problems.push("custom hero clearance changed");
+              if (["hero", "carousel"].includes(content)) {
+                // The transparent header floats over the opening photograph,
+                // which therefore starts at the top of the page.
+                const expected =
+                  header === "market"
+                    ? result.headerHeight +
+                      Math.min(32, Math.max(16, width * 0.025))
+                    : header === "transparent"
+                      ? 0
+                      : Math.min(72, Math.max(40, width * 0.06));
+                if (
+                  Math.abs(result.contentTop - expected) >
+                  (mode === "server" ? 16 : 1)
+                )
+                  problems.push("native hero origin changed");
+              }
+              if (problems.length) failures.push({ label, problems });
+              if (announce) continue;
+              if (
+                screenshots &&
+                width === 390 &&
+                header === "minimal" &&
+                content === "ticker" &&
+                order === "forward" &&
+                mode === "measured"
+              )
+                await page.screenshot({
+                  path: join(screenshots, "vitrine-header.png"),
+                  clip: { x: 0, y: 0, width, height: 250 },
+                });
+            }
 } finally {
   await browser.close();
 }

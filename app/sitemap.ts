@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { headers } from "next/headers";
 import { LEGAL_DOCS } from "@/lib/legal/documents";
+import { MARKETING_PAGES } from "@/app/platform/marketing-routes";
 import { matchesDisallow } from "@/lib/seo/disallow";
 import {
   HELP_URL,
@@ -73,6 +74,13 @@ function imageEntry(
 // WholeSip fallback never leaks its products into storemink.com/sitemap.xml.
 const PLATFORM_PATHS: { path: string; priority: number; freq: ChangeFreq }[] = [
   { path: "/", priority: 1, freq: "weekly" },
+  // The marketing pages (Why StoreMink, Products, Pricing), from the same
+  // registry the header and footer read, so a page cannot ship unlisted.
+  ...MARKETING_PAGES.map((page) => ({
+    path: page.path,
+    priority: page.path === "/pricing" ? 0.9 : 0.7,
+    freq: "monthly" as const,
+  })),
   { path: "/signup", priority: 0.8, freq: "monthly" },
   { path: "/legal", priority: 0.3, freq: "yearly" },
   // Derived from the legal registry rather than hardcoded, so publishing a new

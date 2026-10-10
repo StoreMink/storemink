@@ -34,7 +34,7 @@ describe("upgrade summary", () => {
     expect(planHighlights("free")).toContain("5 products");
     expect(planHighlights("free")).toContain("Cash on Delivery checkout");
     expect(planHighlights("pro")).toContain("Unlimited products");
-    expect(planPriceLine("free")).toBe("Free forever");
+    expect(planPriceLine("free")).toBe("₹0/month");
     expect(planPriceLine("basic")).toBe("₹1,500/month");
   });
 });

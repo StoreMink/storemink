@@ -1,3 +1,5 @@
+import { templateIssues } from "@/lib/themes/templates";
+import { announcementIssues } from "@/lib/themes/announcement";
 import { THEME_RELEASE_OBJECT_ROOT } from "@/lib/storage/paths";
 import {
   HOMEPAGE_SECTION_TYPES,
@@ -12,6 +14,7 @@ import type {
   ThemeIndustry,
 } from "@/lib/themes/meta";
 import type { ThemeDefinition } from "@/lib/themes/types";
+import { isThemeFontValue } from "@/lib/themes/fonts";
 import { SECTION_SCHEMES } from "@/lib/themes/schemes";
 import { cleanButtons } from "@/lib/themes/buttons";
 import { cleanMotion } from "@/lib/themes/motion";
@@ -157,6 +160,10 @@ export interface ThemeIntent {
     aspectRatio: string;
     artDirection: string;
     source: "operator" | "curated" | "generate";
+    /** Whether the image may show adults (a model wearing the garment, a
+     *  hand holding the cup). Absent on intents before prompt v28 and means
+     *  "none"; never children, never a real person. */
+    people?: "none" | "adults";
   }[];
   /** One bounded, structured reading for every supplied screenshot, in the
    * same order as the immutable reference ids on the message. Legacy intents
@@ -341,39 +348,18 @@ const HEX_RE = /^#[0-9a-fA-F]{3,8}$/;
 const SCHEME_HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const RGB_TRIPLE_RE = /^\d{1,3},\s*\d{1,3},\s*\d{1,3}$/;
 const CSS_LENGTH_RE = /^\d+(?:\.\d+)?(?:px|rem|em|%)$/;
-const FONT_RE = /^var\(--font-[a-z0-9-]+\)$/;
 const RATIO_RE = /^\d{1,3}:\d{1,3}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-/** Key-order-independent JSON serialization. PostgreSQL `jsonb` stores object
- * keys sorted by length then bytes, so a package read back from the registry
- * never has the key order it was written with. Every structural comparison in
- * this module — and the registry's content digest — must go through this, or a
- * valid stored package is rejected purely for having been stored. Undefined
- * members are dropped exactly as JSON.stringify drops them. */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null";
-  }
-  if (Array.isArray(value)) {
-    return `[${value
-      .map((item) => (item === undefined ? "null" : canonicalJson(item)))
-      .join(",")}]`;
-  }
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .filter((key) => record[key] !== undefined)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    .join(",")}}`;
-}
-
-function sameJson(a: unknown, b: unknown): boolean {
-  return canonicalJson(a) === canonicalJson(b);
-}
+/** Key-order independent JSON (lib/themes/canonical-json.ts): jsonb reorders
+ * keys, so every comparison and digest over a stored package goes through it.
+ * Re-exported here because the registry, the Studio and Mink import it from
+ * the contract. */
+import { canonicalJson, sameJson } from "@/lib/themes/canonical-json";
+export { canonicalJson, sameJson };
 
 function rejectUnknownKeys(
   value: Record<string, unknown>,
@@ -765,7 +751,15 @@ export function validateThemeIntent(
       }
       rejectUnknownKeys(
         raw,
-        ["id", "purpose", "subject", "aspectRatio", "artDirection", "source"],
+        [
+          "id",
+          "purpose",
+          "subject",
+          "aspectRatio",
+          "artDirection",
+          "source",
+          "people",
+        ],
         `assetBriefs[${index}]`,
         issues,
       );
@@ -808,6 +802,16 @@ export function validateThemeIntent(
         `assetBriefs[${index}].source`,
         issues,
       );
+      // Optional: intents stored before prompt v28 never carry it.
+      const people =
+        raw.people === undefined
+          ? undefined
+          : enumValue(
+              raw.people,
+              ["none", "adults"] as const,
+              `assetBriefs[${index}].people`,
+              issues,
+            );
       if (id && purpose && subject && aspectRatio && artDirection && source) {
         assetBriefs.push({
           id,
@@ -816,6 +820,7 @@ export function validateThemeIntent(
           aspectRatio,
           artDirection,
           source,
+          ...(people ? { people } : {}),
         });
       }
     }
@@ -1220,10 +1225,25 @@ function validateThemeDefinition(
     issues.push("definition.preset must be an object.");
   rejectUnknownKeys(
     preset,
-    ["brand", "design", "pages", "menus", "sampleData"],
+    [
+      "brand",
+      "design",
+      "pages",
+      "menus",
+      "sampleData",
+      "templates",
+      "announcement",
+    ],
     "definition.preset",
     issues,
   );
+  // Plan Phase 2e: optional, and judged as written (nothing is coerced on
+  // the way in, so a draft is repaired rather than silently trimmed).
+  if (preset.templates !== undefined)
+    issues.push(...templateIssues(preset.templates));
+  // The announcement bar (plan Phase 2c): optional, judged as written.
+  if (preset.announcement !== undefined)
+    issues.push(...announcementIssues(preset.announcement));
   const brand = isRecord(preset.brand) ? preset.brand : {};
   if (!isRecord(preset.brand))
     issues.push("definition.preset.brand must be an object.");
@@ -1421,9 +1441,9 @@ function validateDefinitionDesign(value: unknown, issues: string[]): void {
     issues,
   );
   for (const key of ["body", "display"] as const) {
-    if (!FONT_RE.test(String(fonts[key] ?? ""))) {
+    if (!isThemeFontValue(fonts[key])) {
       issues.push(
-        `definition.preset.design.fonts.${key} must reference a loaded font variable.`,
+        `definition.preset.design.fonts.${key} must be a loaded font value (lib/themes/fonts.ts).`,
       );
     }
   }
@@ -1468,11 +1488,35 @@ function validateDefinitionDesign(value: unknown, issues: string[]): void {
       issues,
     );
     const layoutEnums = [
-      ["header", ["classic", "market", "centered", "minimal"]],
-      ["card", ["classic", "quick_add", "overlay", "framed", "grocery"]],
-      ["productDetail", ["classic", "grocery", "editorial"]],
+      [
+        "header",
+        [
+          "classic",
+          "market",
+          "centered",
+          "minimal",
+          "transparent",
+          "hamburger",
+          "stacked",
+          "utility",
+        ],
+      ],
+      [
+        "card",
+        [
+          "classic",
+          "quick_add",
+          "overlay",
+          "framed",
+          "grocery",
+          "centered",
+          "soft",
+          "wide",
+        ],
+      ],
+      ["productDetail", ["classic", "grocery", "editorial", "stacked"]],
       ["cart", ["classic", "grocery", "compact"]],
-      ["footer", ["rich", "minimal", "editorial"]],
+      ["footer", ["rich", "minimal", "editorial", "centered", "compact"]],
       ["storefront", ["classic", "grocery"]],
     ] as const;
     for (const [key, allowed] of layoutEnums) {

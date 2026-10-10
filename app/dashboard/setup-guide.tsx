@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -20,6 +21,13 @@ import {
   regenerateStorefrontPassword,
 } from "@/app/actions/launch-actions";
 import type { LaunchChecklistItem } from "@/lib/store/launch-checklist-rules";
+
+// The phone library and Firebase's phone sign-in load only when somebody opens
+// the mobile task, never with Dashboard Home itself.
+const VerifyPhoneForm = dynamic(
+  () => import("./components/verify-phone-form").then((m) => m.VerifyPhoneForm),
+  { ssr: false, loading: () => <div className="h-24" aria-hidden /> },
+);
 
 /**
  * The Shopify-shaped setup guide: ONE card. Its head carries what the owner
@@ -41,6 +49,7 @@ export function SetupGuide({
   ready,
   missing,
   canLaunch,
+  ownerCanVerifyPhone = false,
   password,
   previewUrl,
 }: {
@@ -50,9 +59,12 @@ export function SetupGuide({
   ready: boolean;
   missing: string[];
   canLaunch: boolean;
+  /** The viewer is this store's owner, so the mobile task verifies in place. */
+  ownerCanVerifyPhone?: boolean;
   password: string | null;
   previewUrl: string;
 }) {
+  const router = useRouter();
   const required = items.filter((i) => i.required);
   const recommended = items.filter((i) => !i.required);
   const recommendedDone = recommended.filter((i) => i.done).length;
@@ -102,6 +114,23 @@ export function SetupGuide({
             item={item}
             open={open === item.key}
             onToggle={() => setOpen(open === item.key ? null : item.key)}
+            phone={
+              item.key === "phone"
+                ? {
+                    canVerify: ownerCanVerifyPhone,
+                    onVerified: () => {
+                      toast.success("Mobile number verified");
+                      // Move on to the next task while the refreshed list
+                      // (with this one ticked) is on its way.
+                      setOpen(
+                        required.find((i) => !i.done && i.key !== "phone")
+                          ?.key ?? null,
+                      );
+                      router.refresh();
+                    },
+                  }
+                : undefined
+            }
           />
         ))}
       </ul>
@@ -151,10 +180,13 @@ function TaskRow({
   item,
   open,
   onToggle,
+  phone,
 }: {
   item: LaunchChecklistItem;
   open: boolean;
   onToggle: () => void;
+  /** Present only for the mobile task, which is done inline, not elsewhere. */
+  phone?: { canVerify: boolean; onVerified: () => void };
 }) {
   return (
     <li className="border-t border-[var(--dash-border)]">
@@ -198,14 +230,27 @@ function TaskRow({
           <p className="text-[13px] leading-snug text-[var(--dash-text-2)]">
             {item.description}
           </p>
-          <div>
-            <Link
-              href={item.href}
-              className={`dash-btn dash-btn-sm ${item.done ? "dash-btn-ghost" : "dash-btn-primary"}`}
-            >
-              {item.done ? "Review" : item.action}
-            </Link>
-          </div>
+          {phone && !item.done ? (
+            phone.canVerify ? (
+              <VerifyPhoneForm onVerified={phone.onVerified} />
+            ) : (
+              // Anyone else verifying THEIR number would not finish the
+              // owner's task, so there is nothing to press here.
+              <p className="text-[12.5px] text-[var(--dash-text-3)]">
+                The store owner verifies their own mobile number, from this card
+                or from their account settings.
+              </p>
+            )
+          ) : (
+            <div>
+              <Link
+                href={item.href}
+                className={`dash-btn dash-btn-sm ${item.done ? "dash-btn-ghost" : "dash-btn-primary"}`}
+              >
+                {item.done ? "Review" : item.action}
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </li>

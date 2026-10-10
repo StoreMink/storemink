@@ -54,3 +54,4 @@ db-data.sql
 
 # Rendered email previews from `npm run email:gallery` (regenerate any time).
 /.email-gallery/
+.marketing-raw/

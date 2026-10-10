@@ -130,7 +130,7 @@ gcloud builds submit --project storemink-prod --region global --config=cloudbuil
 | `storemink-mink-publications`       | `* * * * *`    | `https://storemink.com/api/cron/mink-publications`       |
 | `storemink-mink-workflows`          | `* * * * *`    | `https://storemink.com/api/cron/mink-workflows`          |
 | `storemink-theme-studio-runs`       | `* * * * *`    | `https://storemink.com/api/internal/theme-studio/runs`   |
-| `storemink-theme-studio-capture`    | `* * * * *`    | Cloud Run Job execution API                              |
+| `storemink-theme-studio-capture`    | `* * * * *` ⚠  | Cloud Run Job execution API (to pause: see below)        |
 | `storemink-theme-studio-qa`         | `* * * * *`    | `https://storemink.com/api/internal/theme-studio/qa`     |
 
 > ⚠ **The table above is the INTENDED state. Measured live 2026-09-08 with
@@ -239,6 +239,21 @@ queued. Dev and production each have their own job and five-minute schedule,
 and both completed an empty-queue smoke execution before
 `THEME_STUDIO_CAPTURE_ENABLED=true` was enabled. Build, deploy and schedule:
 `docs/theme-studio-capture-job.md`.
+
+★ **Dev has no schedules at all (owner, 2026-10-10).** Themes are never built
+on dev, so every Theme Studio `-dev` schedule is deleted and Theme Studio is
+switched off on the dev trigger (`docs/gcp-ci-cd.md`). Do not recreate them.
+
+⚠ **The capture schedules are to be PAUSED (2026-10-10).** A Cloud Run job
+execution is billed for at least one minute, so the every-minute schedules in
+dev and production cost ₹5,819 of Cloud Run's ₹5,972 for 1–10 October, almost
+all of it idle executions. The `-qa` and `-runs` routes now start the job
+themselves when a capture is waiting (`lib/theme-studio/capture-start.ts`).
+Pause `storemink-theme-studio-capture` and `storemink-theme-studio-capture-dev`
+only after granting the runtime service account `roles/run.invoker` on both
+jobs and deploying; the order and commands are in
+`docs/theme-studio-capture-job.md` ("Start it on demand instead"). Update the
+table above to PAUSED once done.
 
 Track 5 reuses this job for automatic acceptance and pre-review. It captures
 every preview surface at five widths and reports browser evidence; the server

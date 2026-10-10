@@ -14,6 +14,7 @@ import {
 import { revalidatePath, revalidateTag } from "next/cache";
 import { deleteAuthUser } from "@/lib/auth/firebase-users";
 import { isFirebaseAdminConfigured } from "@/lib/auth/firebase-admin";
+import { authIdsInUse } from "@/lib/auth/identity-usage";
 import { logError } from "@/lib/observability/logger";
 import { getServerUser } from "@/lib/auth/server-user";
 import { withService } from "@/lib/db/client";
@@ -817,53 +818,23 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   // A Firebase identity may also be a customer, admin or POS operator in a
   // different store, or a platform operator. Delete only identities left with
   // no StoreMink role after the store cascade; otherwise deleting one tenant
-  // would break access to another.
+  // would break access to another. A kept login is NAMED in the result: its
+  // email cannot sign up as new, and the operator who deleted the store would
+  // otherwise assume it could.
   const retainedAuthIds = new Set<string>();
+  const keptInUse: string[] = [];
   if (authUserIds.size > 0 && !isFirebaseAdminConfigured()) {
     cleanupFailures.push("Identity Platform is not configured");
   } else if (authUserIds.size > 0) {
     try {
-      const candidates = [...authUserIds];
-      const candidateEmails = [
-        ...new Set(
-          [...authEmailsById.values()].flatMap((emails) => [...emails]),
-        ),
-      ];
-      await withService(async (db) => {
-        const remainingAdmins = await db
-          .select({ id: admins.id })
-          .from(admins)
-          .where(inArray(admins.id, candidates));
-        const remainingCustomers = await db
-          .select({ id: users.id })
-          .from(users)
-          .where(inArray(users.id, candidates));
-        const remainingPosStaff = await db
-          .select({ id: posStaff.userId })
-          .from(posStaff)
-          .where(inArray(posStaff.userId, candidates));
-        for (const row of [...remainingAdmins, ...remainingCustomers]) {
-          retainedAuthIds.add(row.id);
-        }
-        for (const row of remainingPosStaff) {
-          if (row.id) retainedAuthIds.add(row.id);
-        }
-
-        if (candidateEmails.length > 0) {
-          const operators = await db
-            .select({ email: platformAdmins.email })
-            .from(platformAdmins)
-            .where(inArray(platformAdmins.email, candidateEmails));
-          const operatorEmails = new Set(
-            operators.map((row) => row.email.trim().toLowerCase()),
-          );
-          for (const [id, emails] of authEmailsById) {
-            if ([...emails].some((email) => operatorEmails.has(email))) {
-              retainedAuthIds.add(id);
-            }
-          }
-        }
-      });
+      const candidates = new Map<string, ReadonlySet<string>>();
+      for (const id of authUserIds) {
+        candidates.set(id, authEmailsById.get(id) ?? new Set<string>());
+      }
+      for (const id of await authIdsInUse(candidates)) {
+        retainedAuthIds.add(id);
+        keptInUse.push([...(authEmailsById.get(id) ?? [])][0] ?? id);
+      }
     } catch (err) {
       // Fail safe: if the cross-store reference check is unavailable, retain
       // every login. Deleting a possibly-shared identity is worse than leaving
@@ -885,13 +856,23 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   }
 
   revalidateTag(STORE_TAG, "max");
-  return cleanupFailures.length
-    ? {
-        success: true,
-        warning: `The store data was deleted, but cleanup still needs attention: ${cleanupFailures.join(
-          ", ",
-        )}.`,
-      }
+  const notes: string[] = [];
+  if (cleanupFailures.length) {
+    notes.push(
+      `The store data was deleted, but cleanup still needs attention: ${cleanupFailures.join(
+        ", ",
+      )}.`,
+    );
+  }
+  if (keptInUse.length) {
+    notes.push(
+      `Kept ${keptInUse.length === 1 ? "1 login" : `${keptInUse.length} logins`} that another store or the operator console still uses (${keptInUse.join(
+        ", ",
+      )}). Signing up with ${keptInUse.length === 1 ? "that email" : "those emails"} reuses the existing account.`,
+    );
+  }
+  return notes.length
+    ? { success: true, warning: notes.join(" ") }
     : { success: true };
 }
 

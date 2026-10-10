@@ -1,0 +1,653 @@
+/* --------------------------------------------------------------------------
+   Marketing pages (Why StoreMink, Products, Pricing).
+
+   Loaded beside homepage.css and scoped under the same .smh root, so the
+   tokens, buttons, links and chrome are shared. These are only the blocks the
+   inner pages compose from: page hero, feature rows, pillar grid, CTA band.
+   Same dark system as the homepage.
+   -------------------------------------------------------------------------- */
+
+/* Page hero -------------------------------------------------------------- */
+
+.smm-hero {
+  position: relative;
+  isolation: isolate;
+  padding: 110px 0 72px;
+}
+
+.smm-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(
+    ellipse 55% 40% at 50% 0%,
+    rgba(87, 60, 240, 0.3),
+    transparent 70%
+  );
+}
+
+.smm-hero-copy {
+  max-width: 980px;
+  text-align: center;
+}
+
+.smm-hero h1 {
+  margin-top: 18px;
+  font-size: clamp(42px, 5.8vw, 84px);
+  line-height: 1.04;
+}
+
+.smm-hero h1 em {
+  font-style: normal;
+  color: var(--smh-dim);
+}
+
+.smm-hero-lead {
+  max-width: 680px;
+  margin: 26px auto 0 !important;
+}
+
+.smm-hero-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.smm-hero-actions .smh-button {
+  min-height: 56px;
+  padding-inline: 32px;
+  font-size: 17px;
+}
+
+.smm-hero-art {
+  margin-top: 64px;
+}
+
+/* A photograph under a page hero, full container width. */
+.smm-hero-photo {
+  position: relative;
+  aspect-ratio: 21 / 9;
+  overflow: hidden;
+  border-radius: 24px;
+  background: var(--smh-card);
+}
+
+.smm-hero-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Feature rows ----------------------------------------------------------- */
+
+.smm-features {
+  padding: 40px 0 110px;
+}
+
+.smm-feature-list {
+  display: grid;
+  gap: 22px;
+}
+
+.smm-feature {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  align-items: center;
+  gap: 56px;
+  overflow: hidden;
+  padding: 56px;
+  border-radius: 24px;
+  background: var(--smh-card);
+}
+
+.smm-feature.is-flip .smm-feature-copy {
+  order: 2;
+}
+
+.smm-feature-list
+  > .smm-feature:nth-child(even):not(.is-flip)
+  .smm-feature-copy {
+  order: 2;
+}
+
+.smm-feature h2 {
+  margin-top: 14px;
+  font-size: clamp(30px, 3.4vw, 46px);
+}
+
+.smm-feature-copy .smh-lead {
+  max-width: 500px;
+  margin-top: 18px !important;
+  font-size: 17px;
+}
+
+.smm-feature-copy .smh-check-list {
+  margin-top: 22px;
+}
+
+.smm-feature-copy .smh-text-link {
+  margin-top: 26px;
+}
+
+.smm-art {
+  position: relative;
+  min-height: 420px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 32px;
+  border-radius: 18px;
+}
+
+.smm-art.is-lilac {
+  background:
+    radial-gradient(
+      ellipse 80% 70% at 50% 100%,
+      rgba(87, 60, 240, 0.35),
+      transparent 70%
+    ),
+    var(--smh-card-2);
+}
+
+.smm-art.is-mint {
+  background:
+    radial-gradient(
+      ellipse 80% 70% at 50% 100%,
+      rgba(31, 154, 99, 0.3),
+      transparent 70%
+    ),
+    var(--smh-card-2);
+}
+
+.smm-art.is-cream {
+  background:
+    radial-gradient(
+      ellipse 80% 70% at 50% 100%,
+      rgba(246, 207, 107, 0.18),
+      transparent 70%
+    ),
+    var(--smh-card-2);
+}
+
+.smm-art.is-grey {
+  background: var(--smh-card-2);
+}
+
+.smm-art.is-navy {
+  background:
+    radial-gradient(
+      circle at 90% 0%,
+      rgba(100, 73, 233, 0.55),
+      transparent 40%
+    ),
+    #121326;
+  color: #fff;
+}
+
+/* Artwork sizing inside a feature panel. */
+.smm-art .sm-art {
+  width: 100%;
+  max-width: 520px;
+  font-size: 12px;
+}
+
+.smm-art .sm-art-invoice {
+  max-width: 380px;
+  font-size: 14px;
+  transform: rotate(-1.5deg);
+}
+
+.smm-art .sm-art-invoice .art-sheet {
+  padding: 23px 25px;
+  border-radius: 15px;
+}
+
+.smm-art .sm-art-invoice .art-inv-title,
+.smm-art .sm-art-invoice .art-inv-meta,
+.smm-art .sm-art-invoice .art-inv-table,
+.smm-art .sm-art-invoice .art-inv-gst div {
+  font-size: 11px;
+}
+
+.smm-art .sm-art-invoice .art-inv-total {
+  padding: 11px 13px;
+  font-size: 13px;
+}
+
+.smm-art .sm-art-store .art-browser,
+.smm-art .sm-art-builder .art-app {
+  border-radius: 14px;
+  box-shadow: 0 30px 55px -32px rgba(0, 0, 0, 0.9);
+}
+
+.smm-art .sm-art-register {
+  max-width: 560px;
+  font-size: 11px;
+}
+
+.smm-art .smh-order-art {
+  width: 100%;
+  max-width: 520px;
+  margin: 0;
+}
+
+.smm-art .smh-channels-art,
+.smm-art .smh-growth-art {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  max-width: 460px;
+}
+
+.smm-art .smh-mink-art {
+  max-width: 460px;
+  justify-self: center;
+}
+
+.smm-art .smh-command {
+  width: 100%;
+  padding: 8px;
+  border-radius: 18px;
+}
+
+.smm-art .smh-command-body {
+  min-height: 0;
+  max-height: 420px;
+  overflow: hidden;
+}
+
+.smm-art .smh-float-order,
+.smm-art .smh-float-store,
+.smm-art .smh-float-pos {
+  display: none;
+}
+
+/* A photograph as the art panel. */
+.smm-art.is-photo {
+  padding: 0;
+}
+
+.smm-art.is-photo img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Pillars ---------------------------------------------------------------- */
+
+.smm-pillars {
+  padding: 0 0 110px;
+}
+
+.smm-pillars-head {
+  max-width: 880px;
+  margin-bottom: 48px;
+}
+
+.smm-pillars-head h2 {
+  margin-top: 14px;
+  font-size: clamp(32px, 4.2vw, 58px);
+}
+
+.smm-pillars-head .smh-lead {
+  margin-top: 18px !important;
+}
+
+.smm-pillar-grid {
+  display: grid;
+  gap: 22px;
+}
+
+.smm-pillar-grid.is-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.smm-pillar-grid.is-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.smm-pillar-grid.is-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.smm-pillar {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 30px;
+  border-radius: var(--smh-radius);
+  background: var(--smh-card);
+  color: inherit;
+  text-decoration: none;
+  transition: background 180ms ease;
+}
+
+.smm-pillar.is-link:hover {
+  background: var(--smh-card-2);
+}
+
+.smm-pillar-index {
+  display: block;
+  margin-bottom: 26px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--smh-line);
+  color: var(--smh-mint);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+}
+
+.smm-pillar h3 {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.smm-pillar p {
+  flex: 1;
+  margin-top: 10px !important;
+  color: var(--smh-muted);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.smm-pillar .smh-text-link {
+  margin-top: 22px;
+  font-size: 15px;
+}
+
+/* CTA band --------------------------------------------------------------- */
+
+.smm-cta {
+  position: relative;
+  isolation: isolate;
+  padding: 120px 0 140px;
+}
+
+.smm-cta::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(
+    ellipse 50% 60% at 50% 100%,
+    rgba(87, 60, 240, 0.4),
+    transparent 70%
+  );
+}
+
+.smm-cta-inner {
+  max-width: 820px;
+  text-align: center;
+}
+
+.smm-cta h2 {
+  font-size: clamp(40px, 5.6vw, 84px);
+}
+
+.smm-cta .smh-lead {
+  margin-top: 20px !important;
+}
+
+.smm-cta-inner > div {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 36px;
+}
+
+.smm-cta-inner .smh-button {
+  min-height: 56px;
+  padding-inline: 32px;
+  font-size: 17px;
+}
+
+/* Related pages ---------------------------------------------------------- */
+
+.smm-related {
+  padding: 0 0 110px;
+}
+
+.smm-related-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.smm-related-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 12px;
+  padding: 20px 22px;
+  border: 1px solid var(--smh-line);
+  border-radius: 18px;
+  text-decoration: none;
+  transition: border-color 150ms ease;
+}
+
+.smm-related-card:hover {
+  border-color: var(--smh-line-strong);
+}
+
+.smm-related-card b {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.smm-related-card span {
+  grid-column: 1;
+  margin-top: 3px;
+  color: var(--smh-muted);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.smm-related-card svg {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  color: var(--smh-muted);
+}
+
+/* Pricing page ----------------------------------------------------------- */
+
+.smm-pricing .smm-hero {
+  padding-bottom: 36px;
+}
+
+.smm-pricing .smh-pricing-area {
+  padding-top: 0;
+}
+
+.smm-pricing-faq {
+  padding: 0 0 110px;
+}
+
+.smm-pricing-faq h2 {
+  margin-top: 15px;
+  font-size: clamp(32px, 3.8vw, 52px);
+}
+
+/* Products overview ------------------------------------------------------ */
+
+.smm-product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.smm-product-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--smh-radius);
+  background: var(--smh-card);
+  color: inherit;
+  text-decoration: none;
+  transition: background 180ms ease;
+}
+
+.smm-product-card:hover {
+  background: var(--smh-card-2);
+}
+
+.smm-product-card .smm-art {
+  height: 320px;
+  min-height: 0;
+  place-items: start center;
+  padding: 28px;
+  border-radius: 0;
+}
+
+/* Every card's art box is the same height; a tall drawing is cropped at the
+   bottom rather than stretching its card past its neighbours. */
+.smm-product-card .smm-art > * {
+  max-height: 100%;
+}
+
+.smm-product-card .smm-art .sm-art,
+.smm-product-card .smm-art .smh-order-art,
+.smm-product-card .smm-art .smh-channels-art,
+.smm-product-card .smm-art .smh-growth-art,
+.smm-product-card .smm-art .smh-mink-art {
+  max-width: 440px;
+}
+
+.smm-product-copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 26px 28px 30px;
+}
+
+.smm-product-copy h2 {
+  font-size: 24px;
+  letter-spacing: -0.01em;
+}
+
+.smm-product-copy p {
+  flex: 1;
+  margin-top: 10px !important;
+  color: var(--smh-muted);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.smm-product-copy .smh-text-link {
+  margin-top: 20px;
+}
+
+/* Responsive ------------------------------------------------------------- */
+
+@media (max-width: 1200px) {
+  .smm-feature {
+    padding: 40px;
+    gap: 36px;
+  }
+}
+
+@media (max-width: 940px) {
+  .smm-feature {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+  .smm-feature.is-flip .smm-feature-copy,
+  .smm-feature-list
+    > .smm-feature:nth-child(even):not(.is-flip)
+    .smm-feature-copy {
+    order: 0;
+  }
+  .smm-art {
+    min-height: 360px;
+  }
+  .smm-pillar-grid.is-3,
+  .smm-pillar-grid.is-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .smm-related-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .smm-product-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .smm-hero {
+    padding: 64px 0 48px;
+  }
+  .smm-hero h1 {
+    font-size: 40px;
+  }
+  .smm-hero-lead {
+    font-size: 16px;
+  }
+  .smm-hero-actions {
+    flex-direction: column;
+  }
+  .smm-hero-actions .smh-button {
+    width: 100%;
+  }
+  .smm-hero-art {
+    margin-top: 40px;
+  }
+  .smm-hero-photo {
+    aspect-ratio: 4 / 3;
+    border-radius: 18px;
+  }
+  .smm-features,
+  .smm-pillars,
+  .smm-pricing-faq,
+  .smm-related {
+    padding-bottom: 72px;
+  }
+  .smm-feature-list {
+    gap: 14px;
+  }
+  .smm-feature {
+    padding: 24px;
+    border-radius: 20px;
+  }
+  .smm-feature h2,
+  .smm-pillars-head h2,
+  .smm-pricing-faq h2 {
+    font-size: 30px;
+  }
+  .smm-art {
+    min-height: 280px;
+    padding: 18px;
+    border-radius: 16px;
+  }
+  .smm-pillar-grid.is-2,
+  .smm-pillar-grid.is-3,
+  .smm-pillar-grid.is-4,
+  .smm-related-grid {
+    grid-template-columns: 1fr;
+  }
+  .smm-pillar {
+    padding: 24px 22px;
+  }
+  .smm-cta {
+    padding: 72px 0 96px;
+  }
+  .smm-cta h2 {
+    font-size: 40px;
+  }
+  .smm-cta-inner > div {
+    flex-direction: column;
+  }
+  .smm-product-card {
+    border-radius: 18px;
+  }
+  .smm-product-copy {
+    padding: 22px;
+  }
+}

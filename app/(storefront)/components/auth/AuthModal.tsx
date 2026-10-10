@@ -3,15 +3,17 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
 import {
-  RecaptchaVerifier,
   signInWithPhoneNumber,
   type ConfirmationResult,
+  type RecaptchaVerifier,
 } from "firebase/auth";
 import {
   getFirebaseAuth,
   establishSession,
+  firebaseAuthErrorCode,
   firebaseAuthErrorMessage,
 } from "@/lib/auth/firebase-client";
+import { freshInvisibleVerifier } from "@/lib/auth/recaptcha";
 import {
   updateCustomerProfile,
   getMyCustomer,
@@ -66,29 +68,18 @@ export default function AuthModal() {
   const confirmationRef = useRef<ConfirmationResult | null>(null);
 
   /**
-   * A FRESH reCAPTCHA verifier for every send attempt.
+   * A FRESH reCAPTCHA verifier for every send attempt, in a fresh element.
    *
-   * A RecaptchaVerifier is SINGLE-USE: once signInWithPhoneNumber solves it,
-   * that instance can never be handed to Firebase again. This used to memoise
-   * one and only tear it down when the modal CLOSED, which produced a dead end
-   * the user couldn't escape:
-   *
-   *   • First send fails (a mistyped number, say). The verifier is already
-   *     spent. Correct the number, press Continue → the same spent verifier
-   *     goes back to Firebase → fails again, with the same opaque message,
-   *     forever. "Please try again" was advice that could not work.
-   *   • "Resend code" had it too: it reused the verifier the initial send
-   *     consumed, so resending never once succeeded.
-   *
-   * Recreating per attempt costs nothing — the widget is invisible and the
-   * container is reused — and removes the whole class of problem.
+   * ★ The element matters as much as the verifier. An invisible widget stays in
+   * the element it rendered into, so creating the next verifier on the same
+   * element made every Continue or Resend after a first failure end in
+   * "Something went wrong" without reaching Firebase (lib/auth/recaptcha.ts).
    */
   const getVerifier = useCallback((): RecaptchaVerifier => {
-    verifierRef.current?.clear();
-    verifierRef.current = new RecaptchaVerifier(
+    verifierRef.current = freshInvisibleVerifier(
       getFirebaseAuth(),
       recaptchaRef.current!,
-      { size: "invisible" },
+      verifierRef.current,
     );
     return verifierRef.current;
   }, []);
@@ -184,6 +175,7 @@ export default function AuthModal() {
       // Focus first OTP input
       setTimeout(() => otpRefs.current[0]?.focus(), 100);
     } catch (err) {
+      console.warn("Sign-in code not sent:", firebaseAuthErrorCode(err));
       setError(firebaseAuthErrorMessage(err));
       setLoading(false);
     }
@@ -209,6 +201,7 @@ export default function AuthModal() {
       setOtp(Array(OTP_LENGTH).fill(""));
       setTimeout(() => otpRefs.current[0]?.focus(), 100);
     } catch (err) {
+      console.warn("Sign-in code not resent:", firebaseAuthErrorCode(err));
       setError(firebaseAuthErrorMessage(err) || "Failed to resend OTP.");
     }
     setLoading(false);
