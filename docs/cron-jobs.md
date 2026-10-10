@@ -240,6 +240,10 @@ and both completed an empty-queue smoke execution before
 `THEME_STUDIO_CAPTURE_ENABLED=true` was enabled. Build, deploy and schedule:
 `docs/theme-studio-capture-job.md`.
 
+★ **Dev has no schedules at all (owner, 2026-10-10).** Themes are never built
+on dev, so every Theme Studio `-dev` schedule is deleted and Theme Studio is
+switched off on the dev trigger (`docs/gcp-ci-cd.md`). Do not recreate them.
+
 ⚠ **The capture schedules are to be PAUSED (2026-10-10).** A Cloud Run job
 execution is billed for at least one minute, so the every-minute schedules in
 dev and production cost ₹5,819 of Cloud Run's ₹5,972 for 1–10 October, almost

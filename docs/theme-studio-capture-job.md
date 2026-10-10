@@ -11,7 +11,9 @@
 > **2026-10-10:** those schedules were 97% of the Cloud Run bill. The web app
 > now starts the job only when a capture is waiting; see
 > [Start it on demand instead](#start-it-on-demand-instead-2026-10-10) for the
-> permission, deploy and pause steps.
+> permission, deploy and pause steps. Dev has no schedules at all and Theme
+> Studio is switched off there (owner decision; themes are never built on dev,
+> see `docs/gcp-ci-cd.md`).
 
 Publication needs a theme's catalog card and two screenshots, and an image
 model cannot draw them: they are pictures of the storefront itself. The
@@ -160,12 +162,12 @@ stop:
    `theme_studio.capture_job_started` (a refusal logs
    `theme_studio.capture_job_start_failed` with the HTTP status; 403 means
    step 1 is missing).
-4. Pause both schedules. `resume` brings either back as a fallback.
+4. Pause the production schedule. `resume` brings it back as a fallback.
+   Dev has no schedule at all (owner decision, 2026-10-10).
 
    ```bash
-   for s in storemink-theme-studio-capture storemink-theme-studio-capture-dev; do
-     gcloud scheduler jobs pause "$s" --project storemink-prod --location asia-south1
-   done
+   gcloud scheduler jobs pause storemink-theme-studio-capture \
+     --project storemink-prod --location asia-south1
    ```
 
 A capture now starts within about a minute of being queued (the next QA or

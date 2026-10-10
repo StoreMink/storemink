@@ -300,6 +300,16 @@ the log-retention sweep against the **staging database** dev shares. If you
 need to exercise a cron on dev, invoke its endpoint by hand with the
 `CRON_SECRET` bearer token, and know what it will touch first.
 
+★ **Owner decision (2026-10-10): no schedules on dev at all, and Theme Studio
+is off there.** Themes are never built on dev. The Theme Studio `-dev`
+schedules added on 2026-09-29/10-01 (`runs-dev`, `qa-dev`, `capture-dev`, and
+any `-peer-dev`) were deleted, and the dev trigger sets
+`_THEME_STUDIO_GENERATION_ENABLED=false`, `_THEME_STUDIO_PROVIDER=fake` and
+capture/auto-QA `false`, so nothing on dev can spend Vertex or Cloud Run
+money on a theme. Dev and production share the `storemink-prod` billing
+project: the every-minute dev capture schedule alone was half of Cloud Run's
+October bill. Do not recreate them.
+
 **dev is never indexed and never provisions certificates**, with nothing to
 configure: `SEARCH_INDEXABLE` and `IS_PRODUCTION_PLATFORM`
 (`lib/store/host.ts`) both test `ROOT_DOMAIN === "storemink.com"`, so
@@ -407,9 +417,10 @@ inherits staging's database, Firebase project, bucket and every secret name.
 | `_MINK_MAX_OUTPUT_TOKENS`                   | `2048`                                                              | `2048`                                                              | `2048`                                                           |
 | `_MINK_MAX_MODEL_RETRIES`                   | `1`                                                                 | `1`                                                                 | `1`                                                              |
 | `_MINK_RUN_TIMEOUT_SECONDS`                 | `180`                                                               | `180`                                                               | `180`                                                            |
-| `_THEME_STUDIO_PROVIDER`                    | `vertex-gemini` **←**                                               | _(no staging service)_                                              | `vertex-gemini`                                                  |
-| `_THEME_STUDIO_CAPTURE_ENABLED`             | `true` **←**                                                        | _(no staging service)_                                              | `true`                                                           |
-| `_THEME_STUDIO_AUTO_QA_ENABLED`             | `true` **←**                                                        | _(no staging service)_                                              | `true`                                                           |
+| `_THEME_STUDIO_PROVIDER`                    | `fake` **←** (2026-10-10)                                           | _(no staging service)_                                              | `vertex-gemini`                                                  |
+| `_THEME_STUDIO_GENERATION_ENABLED`          | `false` **←** (2026-10-10)                                          | _(no staging service)_                                              | `true`                                                           |
+| `_THEME_STUDIO_CAPTURE_ENABLED`             | `false` **←** (2026-10-10)                                          | _(no staging service)_                                              | `true`                                                           |
+| `_THEME_STUDIO_AUTO_QA_ENABLED`             | `false` **←** (2026-10-10)                                          | _(no staging service)_                                              | `true`                                                           |
 
 > **SARVAM_API_KEY is deliberately not in Secret Manager.** At the operator's
 > direction it is a regular Cloud Build trigger substitution and becomes a
