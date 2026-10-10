@@ -119,6 +119,7 @@ export default async function CollectionPage({
         shopFilters={view.layout.shopFilters}
         productCards={view.layout.productCards}
         collectionBanner={view.layout.collectionBanner}
+        collectionTemplate={view.layout.templates.collection}
         storeLowStockThreshold={view.lowStockThreshold}
         offerBadges={view.offerBadges}
       />

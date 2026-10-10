@@ -25,6 +25,22 @@ import { normalizeOptions } from "@/lib/products/options";
 import ProductDetailClient, {
   type DetailProduct,
 } from "./product-detail-client";
+import { sanitizeBlogContent } from "@/lib/sanitize";
+import type { ProductTemplate } from "@/lib/themes/templates";
+
+/** A template's rich-text block is stored HTML (a theme's or the merchant's),
+ *  so it is sanitised here, at the render boundary, before it reaches the
+ *  client bundle — the rich-text section's rule. */
+function sanitizedProductTemplate(template: ProductTemplate): ProductTemplate {
+  return {
+    ...template,
+    blocks: template.blocks.map((block) =>
+      block.type === "rich_text"
+        ? { ...block, html: sanitizeBlogContent(block.html) }
+        : block,
+    ),
+  };
+}
 import type { RelatedProduct } from "./related-products";
 import type { ProductReview } from "./reviews-section";
 import "../shop.css";
@@ -414,6 +430,7 @@ export default async function ProductDetailPage({
         related={related}
         reviews={reviews}
         grocery={layout.productDetail === "grocery"}
+        template={sanitizedProductTemplate(layout.templates.product)}
         storeLowStockThreshold={lowStockThreshold as number}
         offerMarker={offerMarker}
         requestedVariantId={requestedVariant}

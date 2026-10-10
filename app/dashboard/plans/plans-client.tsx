@@ -688,7 +688,6 @@ export function PlansBillingClient({
               period === "yearly"
                 ? Math.round(p_.yearlyInr / 12)
                 : p_.monthlyInr;
-            const billed = period === "yearly" ? p_.yearlyInr : p_.monthlyInr;
             return (
               <div
                 key={p}
@@ -718,9 +717,6 @@ export function PlansBillingClient({
                     </>
                   )}
                 </div>
-                {billed === 0 && (
-                  <p className="mt-0.5 text-xs text-[#5b6472]">Free forever</p>
-                )}
                 <p className="mt-1 text-xs text-[#5b6472]">{meta.tagline}</p>
 
                 <ul className="mt-4 flex-1 space-y-2">

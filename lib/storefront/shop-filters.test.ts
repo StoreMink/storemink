@@ -14,6 +14,7 @@ import {
   shopQueryEntries,
   withShopQuery,
   type ShopFacts,
+  pageNumbers,
 } from "./shop-filters";
 
 type Row = { id: string } & ShopFacts;
@@ -298,5 +299,19 @@ describe("option and category filters", () => {
     expect(facetKey("Colour")).toBe("color");
     expect(facetKey(" Fit Type ")).toBe("fit-type");
     expect(valueKey("  Navy   Blue ")).toBe("navy blue");
+  });
+});
+
+// Plan Phase 2e: the numbered-pages control.
+describe("pageNumbers", () => {
+  it("lists every page up to seven and windows beyond that", () => {
+    expect(pageNumbers(1, 1)).toEqual([1]);
+    expect(pageNumbers(3, 7)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(pageNumbers(1, 20)).toEqual([1, 2, 3, 4, null, 20]);
+    expect(pageNumbers(10, 20)).toEqual([1, null, 9, 10, 11, null, 20]);
+    expect(pageNumbers(20, 20)).toEqual([1, null, 17, 18, 19, 20]);
+    // Out-of-range pages clamp rather than listing nothing.
+    expect(pageNumbers(99, 20)).toEqual([1, null, 17, 18, 19, 20]);
+    expect(pageNumbers(1, 0)).toEqual([]);
   });
 });

@@ -8,6 +8,7 @@ import {
 import { shouldShowInStoreHistory } from "@/lib/orders/history-channels";
 import styles from "./orders.module.css";
 import { OrderHistory } from "./order-history";
+import { AccountShell } from "@/app/(storefront)/components/account/account-shell";
 
 export const dynamic = "force-dynamic";
 
@@ -33,28 +34,30 @@ export default async function MyOrdersPage() {
   });
 
   return (
-    <div className={styles.container}>
-      <div className={styles.content}>
-        <header className={styles.header}>
-          <h1 className={styles.title}>My orders</h1>
-          <p className={styles.subtitle}>
-            Everything you&apos;ve ordered from us, newest first.
-          </p>
-        </header>
+    <AccountShell>
+      <div className={styles.container}>
+        <div className={styles.content}>
+          <header className={styles.header}>
+            <h1 className={styles.title}>My orders</h1>
+            <p className={styles.subtitle}>
+              Everything you&apos;ve ordered from us, newest first.
+            </p>
+          </header>
 
-        {error ? (
-          <div className={styles.card}>
-            <p className={styles.summary}>{error}</p>
-          </div>
-        ) : (
-          <OrderHistory
-            orders={orders}
-            showInStoreTab={showInStoreTab}
-            supportsPos={capabilities.supportsPos}
-            supportsPickup={capabilities.supportsPickup}
-          />
-        )}
+          {error ? (
+            <div className={styles.card}>
+              <p className={styles.summary}>{error}</p>
+            </div>
+          ) : (
+            <OrderHistory
+              orders={orders}
+              showInStoreTab={showInStoreTab}
+              supportsPos={capabilities.supportsPos}
+              supportsPickup={capabilities.supportsPickup}
+            />
+          )}
+        </div>
       </div>
-    </div>
+    </AccountShell>
   );
 }

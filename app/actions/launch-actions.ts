@@ -1,6 +1,9 @@
 "use server";
 
+import { and, eq } from "drizzle-orm";
 import { updateTag } from "next/cache";
+import { admins } from "@/drizzle/schema";
+import { withService } from "@/lib/db/client";
 import {
   getViewerContext,
   isStoreSuperadmin,
@@ -52,6 +55,14 @@ export interface LaunchState {
   /** Null until the store is unlaunched AND the viewer may see it. */
   password: string | null;
   canLaunch: boolean;
+  /**
+   * The viewer is one of this store's own owners (a real superadmin admin
+   * row), so the checklist can verify their mobile in place. A platform
+   * operator also counts as superadmin for `canLaunch`, but has no admin row
+   * here to record a number on, and staff verifying their OWN number would
+   * not complete the owner's task.
+   */
+  ownerCanVerifyPhone: boolean;
 }
 
 export async function getLaunchState(): Promise<LaunchState | null> {
@@ -59,11 +70,28 @@ export async function getLaunchState(): Promise<LaunchState | null> {
   if (!ctx?.profile) return null;
   const store = await getCurrentStore();
   const launched = isStoreLaunched(store);
-  const [checklist, canonicalUrl, requestOrigin] = await Promise.all([
-    buildLaunchChecklist(store),
-    getStoreUrl(),
-    getRequestOrigin(),
-  ]);
+  const [checklist, canonicalUrl, requestOrigin, ownerRows] = await Promise.all(
+    [
+      buildLaunchChecklist(store),
+      getStoreUrl(),
+      getRequestOrigin(),
+      ctx.isSuperadmin
+        ? withService((db) =>
+            db
+              .select({ id: admins.id })
+              .from(admins)
+              .where(
+                and(
+                  eq(admins.id, ctx.userId),
+                  eq(admins.storeId, store.id),
+                  eq(admins.role, "superadmin"),
+                ),
+              )
+              .limit(1),
+          ).catch(() => [])
+        : Promise.resolve([]),
+    ],
+  );
   // storeOrigin() is the CANONICAL https address with no port — right for
   // production, unreachable in local dev, where the shop is plain http on
   // `{slug}.localhost:3000`. The dashboard is served from the store's own
@@ -91,6 +119,7 @@ export async function getLaunchState(): Promise<LaunchState | null> {
     previewUrl: `${storeUrl}${STOREFRONT_PASSWORD_PATH}`,
     password,
     canLaunch: ctx.isSuperadmin,
+    ownerCanVerifyPhone: ownerRows.length > 0,
   };
 }
 

@@ -7,6 +7,7 @@ import { getStoreBrand } from "@/lib/store/brand";
 import { getDraftChromeForEditor } from "@/lib/chrome/queries";
 import { DEFAULT_CHROME } from "@/lib/chrome/types";
 import { themeDesignDefaults } from "@/lib/chrome/design";
+import { themeTemplates } from "@/lib/themes/templates";
 import { resolveInstalledThemeDefinition } from "@/lib/themes/runtime-registry";
 import { readThemeSelection } from "@/lib/themes/meta";
 import { schemeDesignFor } from "@/lib/themes/schemes";
@@ -80,6 +81,7 @@ export default async function BuilderPage() {
   const themeDefinition = await resolveInstalledThemeDefinition(themeSelection);
   const themeDefaults = themeDesignDefaults(
     themeDefinition?.preset.design ?? null,
+    themeDefinition ? themeTemplates(themeDefinition.preset) : undefined,
   );
   // The colours each section scheme is built from, so the Style tab can show
   // real swatches. The merchant's own palette edits are layered on in the

@@ -152,3 +152,71 @@ describe("homepage opening", () => {
       expect(isOpeningSettingPath(pkg, path)).toBe(false);
   });
 });
+
+describe("homepage opening as a slideshow (v27)", () => {
+  const carousel = { carousel: true };
+  it("accepts a two- or three-slide carousel with distinct images and refuses one slide or a repeated brief", () => {
+    const ok = pkgWith("vitrine", (def) => {
+      carouselFirst(def);
+      (home(def).sections[0].config as HeroCarouselConfig).height = "large";
+    });
+    expect(homepageOpeningIssues(ok, carousel)).toEqual([]);
+    expect(enforceHomepageOpening(ok, carousel).issues).toEqual([]);
+    const one = pkgWith("vitrine", (def) => {
+      carouselFirst(def);
+      const config = home(def).sections[0].config as HeroCarouselConfig;
+      config.height = "large";
+      config.slides = config.slides.slice(0, 1);
+    });
+    expect(homepageOpeningIssues(one, carousel)).toEqual([
+      expect.stringContaining("2 to 3 slides"),
+    ]);
+    const repeated = pkgWith("vitrine", (def) => {
+      carouselFirst(def);
+      const config = home(def).sections[0].config as HeroCarouselConfig;
+      config.height = "large";
+      config.slides[1].image_url = config.slides[0].image_url;
+    });
+    expect(homepageOpeningIssues(repeated, carousel)).toEqual([
+      expect.stringContaining("its own image brief"),
+    ]);
+    const four = pkgWith("vitrine", (def) => {
+      carouselFirst(def);
+      const config = home(def).sections[0].config as HeroCarouselConfig;
+      config.height = "large";
+      config.slides = [0, 1, 2, 3].map((i) => ({
+        ...config.slides[i % 2],
+        image_url: `theme-asset://scene-${i}`,
+      }));
+    });
+    expect(homepageOpeningIssues(four, carousel)).toEqual([
+      expect.stringContaining("2 to 3 slides"),
+    ]);
+  });
+
+  // Plan Phase 2d: a split carousel puts the copy beside the photo, so it
+  // may open any page but the homepage, under either revision of the rule.
+  it("refuses a split carousel as the opening: its photographs must fill the band", () => {
+    const split = pkgWith("vitrine", (def) => {
+      carouselFirst(def);
+      const config = home(def).sections[0].config as HeroCarouselConfig;
+      config.height = "large";
+      config.layout = "split";
+    });
+    expect(homepageOpeningIssues(split, carousel)).toEqual([
+      expect.stringContaining('set it to "full"'),
+    ]);
+    expect(homepageOpeningIssues(split)).toEqual([
+      expect.stringContaining('set it to "full"'),
+    ]);
+  });
+
+  it("refuses any single hero as the opening, which the v26 rule still allows", () => {
+    const single = pkgWith("ritual", fullbleed);
+    expect(homepageOpeningIssues(single)).toEqual([]);
+    expect(homepageOpeningIssues(single, carousel)).toEqual([
+      expect.stringMatching(/must open with a hero_carousel .* not hero/),
+    ]);
+    expect(enforceHomepageOpening(single, carousel).package).toBe(single);
+  });
+});

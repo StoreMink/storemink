@@ -148,22 +148,35 @@ function exemptFromOverflow(
 ): boolean {
   const cached = cache.get(element);
   if (cached !== undefined) return cached;
-  let exempt = false;
-  const parent = element.parentElement;
-  if (parent && parent !== document.body) {
-    const style = getComputedStyle(parent);
-    if (style.position === "fixed") {
-      exempt = true;
-    } else if (
-      style.overflowX !== "visible" &&
-      parent.getBoundingClientRect().right <= edge
-    ) {
-      exempt = true;
-    } else {
-      exempt = exemptFromOverflow(parent, edge, cache);
+  const style = getComputedStyle(element);
+  let exempt = style.position === "fixed";
+  if (!exempt) {
+    // ★ The nearest box that can clip this one: its parent for an in-flow
+    // box, but for an absolutely positioned box its CONTAINING BLOCK (the
+    // nearest positioned ancestor). A scroll container between the two does
+    // not clip it: a product carousel's screen-reader-only labels resolved
+    // against the carousel wrapper outside the track, scrolled off-screen
+    // with their cards, and widened the page by the whole hidden track
+    // while this scan, walking parents, exempted them as "inside a fitting
+    // scroll container" and named nothing (2026-10-09).
+    const container =
+      style.position === "absolute"
+        ? ((element as HTMLElement).offsetParent ?? document.body)
+        : element.parentElement;
+    if (container && container !== document.body) {
+      const containerStyle = getComputedStyle(container);
+      if (containerStyle.position === "fixed") {
+        exempt = true;
+      } else if (
+        containerStyle.overflowX !== "visible" &&
+        container.getBoundingClientRect().right <= edge
+      ) {
+        exempt = true;
+      } else {
+        exempt = exemptFromOverflow(container, edge, cache);
+      }
     }
   }
-  if (!exempt && getComputedStyle(element).position === "fixed") exempt = true;
   cache.set(element, exempt);
   return exempt;
 }
@@ -177,6 +190,11 @@ function exemptFromOverflow(
  * than scrollable and `scrollWidth` reports it as fitting. That is how the
  * grocery product page shipped 734px wide on a 390px screen — its right half
  * simply missing — with this gate green. Measuring rectangles is what sees it.
+ * ★ The reverse also happens: `body.scrollWidth` DOES count layout overflow
+ * that escapes a scroll container (an absolutely positioned descendant whose
+ * containing block lies outside the track), which the rectangles only name
+ * with the containing-block rule in `exemptFromOverflow`. Both measures are
+ * kept; neither alone is enough.
  */
 function clippedOverflow(limit: number): { px: number; offenders: string[] } {
   const width = document.documentElement.clientWidth;

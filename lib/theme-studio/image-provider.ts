@@ -11,7 +11,7 @@ import type { ProviderErrorCode } from "./provider";
 /** Names the prompt document and request builder an image run used, recorded
  *  on the run like a text run's prompt version. Bump it with any change to
  *  docs/theme-studio-image-prompt.md or image-prompt.ts. */
-export const THEME_STUDIO_IMAGE_PROMPT_VERSION = "theme-studio-image-v3";
+export const THEME_STUDIO_IMAGE_PROMPT_VERSION = "theme-studio-image-v4";
 export const THEME_STUDIO_IMAGE_FAKE_PROMPT_VERSION =
   "theme-studio-image-fake-v1";
 
@@ -69,6 +69,10 @@ export interface ThemeImageRequest {
   /** The fully rendered prompt (image-prompt.ts). */
   prompt: string;
   references: ThemeImageReference[];
+  /** Whether the provider may draw adults for this image (the brief's own
+   *  choice, prompt v28). Absent means none; the provider never allows
+   *  children or prominent people whatever this says. */
+  people?: "none" | "adults";
 }
 
 export interface ImageUsage {

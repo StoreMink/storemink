@@ -3,6 +3,8 @@
 
    Scoped to .smh so the platform login, signup, POS and operator surfaces can
    continue sharing platform.css without inheriting this marketing system.
+   Signup deliberately does NOT load this file: it is the first screen of the
+   product, styled calm and light by signup/signup.css.
 
    The design system is shopify.com's: black page, dark-grey cards with large
    radii, regular-weight headlines set large and loosely tracked, a grey-then-
@@ -1546,6 +1548,7 @@
 }
 
 .smh-theme-card-media {
+  position: relative;
   display: block;
   aspect-ratio: 4 / 3;
   overflow: hidden;
@@ -1558,11 +1561,60 @@
   height: 100%;
   object-fit: cover;
   object-position: top;
-  transition: transform 700ms ease;
+  transition:
+    transform 700ms ease,
+    filter 220ms ease;
 }
 
 .smh-theme-card:hover img {
   transform: scale(1.03);
+}
+
+/* Cards with a live demo: hovering softens and dims the preview and floats
+   a white "Preview" pill with a north-east arrow over it, the quiet cue that
+   the card opens somewhere else (the demo store, in a new tab). Cards whose
+   demo is down keep the plain hover and link to the catalogue instead. */
+.smh-theme-card-live:hover img,
+.smh-theme-card-live:focus-visible img {
+  filter: blur(3px);
+}
+
+.smh-theme-card-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(16, 16, 18, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 220ms ease;
+}
+
+.smh-theme-card-preview > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px 10px 16px;
+  border-radius: 999px;
+  background: #fff;
+  color: #111;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  transform: translateY(6px);
+  transition: transform 220ms ease;
+}
+
+.smh-theme-card-live:hover .smh-theme-card-preview,
+.smh-theme-card-live:focus-visible .smh-theme-card-preview {
+  opacity: 1;
+}
+
+.smh-theme-card-live:hover .smh-theme-card-preview > span,
+.smh-theme-card-live:focus-visible .smh-theme-card-preview > span {
+  transform: translateY(0);
 }
 
 /* Name, then industries, stacked: a long industry list wraps under the
@@ -3978,6 +4030,12 @@
   .smh-marquee {
     overflow-x: auto;
     mask-image: none;
+  }
+
+  .smh-theme-card-media img,
+  .smh-theme-card-preview,
+  .smh-theme-card-preview > span {
+    transition: none;
   }
 }
 

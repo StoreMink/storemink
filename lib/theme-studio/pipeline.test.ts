@@ -1237,7 +1237,45 @@ describe("theme generation pipeline", () => {
       "split",
       "minimal",
     ]);
+    expect(visibleSectionChoices(false, false).hero.variant).toEqual([
+      "banner",
+      "split",
+      "minimal",
+    ]);
+    // v26 to v30 print the four; v31 adds the Phase 2d pair.
+    expect(visibleSectionChoices(true, false).hero.variant).toEqual([
+      "banner",
+      "split",
+      "minimal",
+      "fullbleed",
+    ]);
     expect(VISIBLE_SECTION_CHOICES.hero.variant).toContain("fullbleed");
+    expect(VISIBLE_SECTION_CHOICES.hero.variant).toContain("stacked");
+    expect(VISIBLE_SECTION_CHOICES.hero.variant).toContain("offset");
+    // v32 (plan Phase 2c's collection list): the third category display
+    // prints only from v32; earlier twins keep the two they were written
+    // with, and the hero list they had.
+    expect(VISIBLE_SECTION_CHOICES.shop_by_category.display).toEqual([
+      "circles",
+      "cards",
+      "list",
+    ]);
+    expect(
+      visibleSectionChoices(true, true, false).shop_by_category.display,
+    ).toEqual(["circles", "cards"]);
+    expect(visibleSectionChoices(true, true, false).hero.variant).toEqual(
+      VISIBLE_SECTION_CHOICES.hero.variant,
+    );
+    expect(visibleSectionChoices(true, true).shop_by_category.display).toEqual([
+      "circles",
+      "cards",
+      "list",
+    ]);
+    expect(visibleSectionChoices(false, false, false).hero.variant).toEqual([
+      "banner",
+      "split",
+      "minimal",
+    ]);
     const first = await run();
     if (first.kind !== "version") throw new Error("fixture failed");
     const v25 = stageBVarietySystemPrompt(first.intent, true, true, false);
@@ -1250,6 +1288,400 @@ describe("theme generation pipeline", () => {
     expect(stageBInitialSystemPrompt(first.intent, true, true)).toContain(
       opening,
     );
+    // v27: the opening is a slideshow with previous/next arrows; v26 text is
+    // unchanged.
+    const slideshow = "hero_carousel with two or three slides";
+    expect(stageBSystemPrompt(true, true, true, true)).toContain(slideshow);
+    expect(stageBSystemPrompt(true, true, true, true)).not.toContain(opening);
+    expect(stageBSystemPrompt(true, true, true)).not.toContain(slideshow);
+    expect(stageASystemPrompt(true, true, true)).toContain(
+      "one dedicated brief per slide",
+    );
+    expect(stageASystemPrompt(true, true)).not.toContain("per slide");
+    expect(
+      stageBVarietySystemPrompt(first.intent, true, true, true, true),
+    ).toContain(slideshow);
+  });
+
+  // Plan Phase 2b: sections hold blocks. The vocabulary grows under v29 and
+  // every earlier prompt keeps its bytes.
+  it("prints the nested-block vocabulary only under v29 and keeps v28 text byte for byte", async () => {
+    const {
+      stageASystemPrompt,
+      stageBSystemPrompt,
+      stageBInitialSystemPrompt,
+      stageBVarietySystemPrompt,
+    } = await import("./prompts");
+    const blocks = "- Blocks: list-shaped sections hold blocks";
+    expect(stageBSystemPrompt(true, true, true, true, true)).toContain(blocks);
+    expect(stageBSystemPrompt(true, true, true, true, true)).toContain(
+      "\ncomparison: {",
+    );
+    expect(stageBSystemPrompt(true, true, true, true, true)).toContain(
+      "\naccordion: {",
+    );
+    expect(stageBSystemPrompt(true, true, true, true, true)).toContain(
+      '"stories":[]',
+    );
+    const v28 = stageBSystemPrompt(true, true, true, true);
+    expect(v28).not.toContain(blocks);
+    expect(v28).not.toContain("\ncomparison: {");
+    expect(v28).not.toContain("\naccordion: {");
+    expect(v28).not.toContain('"stories"');
+    expect(v28).toBe(stageBSystemPrompt(true, true, true, true, false));
+    expect(stageASystemPrompt(true, true, true, true, true)).toContain(
+      "Sections hold blocks",
+    );
+    expect(stageASystemPrompt(true, true, true, true, true)).toContain(
+      "- comparison:",
+    );
+    expect(stageASystemPrompt(true, true, true, true)).not.toContain(
+      "Sections hold blocks",
+    );
+    expect(stageASystemPrompt(true, true, true, true)).not.toContain(
+      "- comparison:",
+    );
+    const first = await run();
+    if (first.kind !== "version") throw new Error("fixture failed");
+    const variety = stageBVarietySystemPrompt(
+      first.intent,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety).toContain(
+      '"style":"CHOOSE ONE: [\\"table\\",\\"cards\\"]"',
+    );
+    expect(variety).toContain('"open_first":"CHOOSE ONE: [true,false]"');
+    // The v31 variety prompt prints two category displays, the v32 one
+    // three (plan Phase 2c's collection list).
+    expect(variety).toContain(
+      '"display":"CHOOSE ONE: [\\"circles\\",\\"cards\\"]"',
+    );
+    expect(
+      stageBVarietySystemPrompt(
+        first.intent,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+      ),
+    ).toContain(
+      '"display":"CHOOSE ONE: [\\"circles\\",\\"cards\\",\\"list\\"]"',
+    );
+    expect(
+      stageBVarietySystemPrompt(first.intent, true, true, true, true),
+    ).not.toContain("\ncomparison:");
+    expect(
+      stageBInitialSystemPrompt(first.intent, true, true, true, true),
+    ).toContain(blocks);
+  });
+
+  // Plan Phase 2d, first slice: more layout variants under v31; v30 text is
+  // unchanged, and so is the Stage B schema a v30 request is keyed on.
+  it("prints the v31 layout variants only under v31 and keeps v30 text byte for byte", async () => {
+    const {
+      stageASystemPrompt,
+      stageAVarietySystemPrompt,
+      stageBSystemPrompt,
+      stageBInitialSystemPrompt,
+      stageBVarietySystemPrompt,
+    } = await import("./prompts");
+    const bullet = "- More layouts: hero variants stacked";
+    const v31 = stageBSystemPrompt(true, true, true, true, true, true, true);
+    expect(v31).toContain(bullet);
+    expect(v31).toContain('"transparent"');
+    expect(v31).toContain('"soft"');
+    expect(v31).toContain('"compact"');
+    const v30 = stageBSystemPrompt(true, true, true, true, true, true);
+    expect(v30).not.toContain(bullet);
+    expect(v30).not.toContain("hamburger");
+    expect(v30).toBe(
+      stageBSystemPrompt(true, true, true, true, true, true, false),
+    );
+    expect(v31).toContain('layout "split"');
+    const a31 = stageASystemPrompt(true, true, true, true, true, true, true);
+    expect(a31).toContain("transparent, hamburger, stacked and utility");
+    expect(a31).toContain("soft (the photograph on a padded");
+    expect(a31).toContain("compact (one slim row");
+    const a30 = stageASystemPrompt(true, true, true, true, true, true);
+    expect(a30).not.toContain("hamburger");
+    expect(a30).toBe(
+      stageASystemPrompt(true, true, true, true, true, true, false),
+    );
+    expect(
+      stageAVarietySystemPrompt(true, true, true, true, true, true),
+    ).toContain("centered or compact");
+    expect(
+      stageAVarietySystemPrompt(true, true, true, true, true),
+    ).not.toContain("centered or compact");
+    const first = await run();
+    if (first.kind !== "version") throw new Error("fixture failed");
+    expect(
+      stageBInitialSystemPrompt(
+        first.intent,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+      ),
+    ).toContain(bullet);
+    expect(
+      stageBInitialSystemPrompt(first.intent, true, true, true, true, true),
+    ).not.toContain(bullet);
+    const variety31 = stageBVarietySystemPrompt(
+      first.intent,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety31).toContain(bullet);
+    // The hero's CHOOSE ONE list (a JSON string inside the example's JSON,
+    // so its quotes are escaped) prints the six variants under v31.
+    expect(variety31).toContain('\\"stacked\\"');
+    const variety30 = stageBVarietySystemPrompt(
+      first.intent,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety30).not.toContain('\\"stacked\\"');
+    expect(variety30).not.toContain(bullet);
+    expect(variety30).toBe(
+      stageBVarietySystemPrompt(
+        first.intent,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+      ),
+    );
+  });
+
+  // Plan Phase 2e: the page templates under v32; v31 text is unchanged, and
+  // Stage A does not move at all.
+  it("prints the v32 templates only under v32 and keeps v31 text byte for byte", async () => {
+    const {
+      stageASystemPrompt,
+      stageBSystemPrompt,
+      stageBInitialSystemPrompt,
+      stageBVarietySystemPrompt,
+    } = await import("./prompts");
+    const bullet = '- Templates: write a top-level "templates" object';
+    const v32 = stageBSystemPrompt(
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(v32).toContain(bullet);
+    expect(v32).toContain('"thumbs-left"');
+    expect(v32).toContain('"sticky_bar"');
+    expect(v32).toContain('"top-bar"');
+    expect(v32).toContain('productDetail may also be "stacked"');
+    expect(v32).toContain(
+      '- Announcement bar: write a top-level "announcement" object',
+    );
+    expect(v32).toContain('shop_by_category display may also be "list"');
+    const v31 = stageBSystemPrompt(true, true, true, true, true, true, true);
+    expect(v31).not.toContain(bullet);
+    expect(v31).not.toContain("Announcement bar");
+    expect(v31).toBe(
+      stageBSystemPrompt(true, true, true, true, true, true, true, false),
+    );
+    expect(v31).toContain("- More layouts: hero variants stacked");
+    // Stage A takes no templates flag and prints nothing of them.
+    expect(
+      stageASystemPrompt(true, true, true, true, true, true, true),
+    ).not.toContain("templates.product");
+    const first = await run();
+    if (first.kind !== "version") throw new Error("fixture failed");
+    expect(
+      stageBInitialSystemPrompt(
+        first.intent,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+      ),
+    ).toContain(bullet);
+    expect(
+      stageBInitialSystemPrompt(
+        first.intent,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+      ),
+    ).not.toContain(bullet);
+    const variety32 = stageBVarietySystemPrompt(
+      first.intent,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety32).toContain(bullet);
+    const variety31 = stageBVarietySystemPrompt(
+      first.intent,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety31).not.toContain(bullet);
+    expect(variety31).toBe(
+      stageBVarietySystemPrompt(
+        first.intent,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+      ),
+    );
+    // The fixture runs under prompt v1, so its version carries no templates;
+    // a run under the current version does, completed and bounded by the
+    // renderer's normaliser (the closed schema's empty carriers gone), and
+    // the contract's strict report has nothing to say about them.
+    expect(first.package.definition.preset.templates).toBeUndefined();
+    expect(first.package.definition.preset.announcement).toBeUndefined();
+    const { templateIssues } = await import("@/lib/themes/templates");
+    const { THEME_STUDIO_PROMPT_VERSION } = await import("./prompt-features");
+    const current = await runThemeGeneration(
+      createFakeModelClient(base),
+      { ...input(), promptVersion: THEME_STUDIO_PROMPT_VERSION },
+      new AbortController().signal,
+    );
+    if (current.kind !== "version") throw new Error("fixture failed");
+    const templates = current.package.definition.preset.templates;
+    expect(templates?.product.gallery).toBe("thumbs-left");
+    // The announcement bar the draft wrote, normalised and contract-clean.
+    expect(current.package.definition.preset.announcement).toEqual({
+      text: "Free delivery on orders over ₹999, easy 14-day returns",
+      href: "/shop",
+    });
+    expect(templates?.product.blocks.map((b) => b.type)).toEqual([
+      "price",
+      "variant_picker",
+      "buy_box",
+      "trust_row",
+      "description",
+      "accordion",
+      "size_guide",
+      "reviews",
+      "recommendations",
+      "sticky_bar",
+    ]);
+    expect(templates?.product.blocks[0]).toEqual({ type: "price" });
+    expect(templates?.product.blocks[6]).toEqual({
+      type: "size_guide",
+      columns: ["Height", "Width"],
+      sizes: [
+        { label: "Small", values: ["12", "9"] },
+        { label: "Large", values: ["18", "14"] },
+      ],
+    });
+    expect(templates?.blog).toEqual({ index: "featured", article: "sidebar" });
+    expect(templates?.account).toEqual({ layout: "tabs", scheme: "soft" });
+    expect(templates?.collection).toMatchObject({
+      filters: "top-bar",
+      pagination: "paged",
+    });
+    expect(templates?.collection.promoTiles[0]).toMatchObject({
+      afterIndex: 4,
+      heading: "The everyday edit",
+      href: "/shop",
+      background: "",
+    });
+    expect(templateIssues(templates)).toEqual([]);
+  });
+
+  // Plan Phase 2c, first slice: five more sections under v30; v29 text is
+  // unchanged.
+  it("prints the v30 sections only under v30 and keeps v29 text byte for byte", async () => {
+    const {
+      stageASystemPrompt,
+      stageBSystemPrompt,
+      stageBInitialSystemPrompt,
+      stageBVarietySystemPrompt,
+    } = await import("./prompts");
+    const more = "- More sections: multicolumn holds";
+    const v30 = stageBSystemPrompt(true, true, true, true, true, true);
+    expect(v30).toContain(more);
+    expect(v30).toContain("\nimage_hotspots: {");
+    expect(v30).toContain("\nproduct_spotlight: {");
+    expect(v30).not.toContain("\nlogo_strip: {");
+    expect(v30).not.toContain("\ncountdown: {");
+    const v29 = stageBSystemPrompt(true, true, true, true, true);
+    expect(v29).not.toContain(more);
+    expect(v29).not.toContain("\nimage_hotspots: {");
+    expect(v29).toContain("\ncomparison: {");
+    expect(v29).toBe(stageBSystemPrompt(true, true, true, true, true, false));
+    expect(stageASystemPrompt(true, true, true, true, true, true)).toContain(
+      "Further sections give a homepage",
+    );
+    expect(stageASystemPrompt(true, true, true, true, true)).not.toContain(
+      "- before_after:",
+    );
+    const first = await run();
+    if (first.kind !== "version") throw new Error("fixture failed");
+    const variety = stageBVarietySystemPrompt(
+      first.intent,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    );
+    expect(variety).toContain(
+      '"media_position":"CHOOSE ONE: [\\"left\\",\\"right\\"]"',
+    );
+    expect(variety).toContain("\nmulticolumn: {");
+    expect(
+      stageBVarietySystemPrompt(first.intent, true, true, true, true, true),
+    ).not.toContain("\nmulticolumn: {");
+    expect(
+      stageBInitialSystemPrompt(first.intent, true, true, true, true, true),
+    ).toContain(more);
   });
 
   it("keeps the system prompts deterministic so they cache", async () => {

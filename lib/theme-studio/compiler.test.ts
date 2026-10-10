@@ -244,3 +244,57 @@ describe("font pairings (prompt v25)", () => {
     });
   });
 });
+
+// Plan Phase 2e: the offline provider writes the page templates only when the
+// request's schema carries them, so a pre-v32 replay gets a pre-v32 answer;
+// what the compiler makes of them is proved end to end in pipeline.test.ts.
+describe("page templates in the offline draft (prompt v32)", () => {
+  const input = {
+    name: "Clay & Co",
+    brief: "A calm ceramics shop.",
+    industries: ["home" as const],
+    catalogSizes: ["small" as const],
+    requiredFeatures: [],
+    referenceCount: 0,
+  };
+  const draftFor = async (schema: unknown) => {
+    const result = await createFakeModelClient(input).generate(
+      { stage: "draft", content: [], schema } as never,
+      new AbortController().signal,
+    );
+    if (result.kind !== "ok") throw new Error("fake draft failed");
+    return result.value as Record<string, unknown>;
+  };
+
+  it("writes templates for a v32 schema and none for an earlier one", async () => {
+    const { STAGE_B_DRAFT_SCHEMA, stageBSchemaFor } = await import("./schemas");
+    const v32 = await draftFor(STAGE_B_DRAFT_SCHEMA);
+    expect(v32.templates).toMatchObject({
+      product: { gallery: "thumbs-left" },
+      collection: { filters: "top-bar", pagination: "paged" },
+    });
+    // The announcement bar rides the same flag.
+    expect(v32.announcement).toEqual({
+      text: "Free delivery on orders over ₹999, easy 14-day returns",
+      href: "/shop",
+    });
+    const v31 = await draftFor(
+      stageBSchemaFor(STAGE_B_DRAFT_SCHEMA, true, true, true, true, false),
+    );
+    expect(v31.templates).toBeUndefined();
+    expect(v31.announcement).toBeUndefined();
+    // The draft still prepares the same way either side of the flag.
+    const intent = runFakeProvider(input);
+    if (!intent.ok) throw new Error("fake intent failed");
+    expect(prepareDraft(v32, intent.value as ThemeIntent).issues).toEqual([]);
+    expect(prepareDraft(v31, intent.value as ThemeIntent).issues).toEqual([]);
+    // An off-site announcement link is a repair issue, like a menu link.
+    const offsite = {
+      ...v32,
+      announcement: { text: "Sale on now", href: "https://example.com" },
+    };
+    expect(prepareDraft(offsite, intent.value as ThemeIntent).issues).toEqual([
+      'announcement.href must be a site path starting with "/".',
+    ]);
+  });
+});

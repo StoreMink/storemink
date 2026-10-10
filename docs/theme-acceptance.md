@@ -24,10 +24,10 @@ its own catalog choice because that is what the merchant sees and selects.
 
 | State     | Meaning                                                                                        |
 | --------- | ---------------------------------------------------------------------------------------------- |
-| Draft     | Design or implementation is in progress. It must not appear in signup.                         |
+| Draft     | Design or implementation is in progress. It must not appear on the Themes page.                |
 | Candidate | Package-integrity tests pass and a demo is available for review.                               |
 | Approved  | Every required story in this document passed for the current release.                          |
-| Published | Approved and visible in the merchant catalog/signup picker.                                    |
+| Published | Approved and visible in the merchant catalog and the dashboard Themes page.                    |
 | Blocked   | A required gate failed. Record the failure in the baseline table before more catalog exposure. |
 
 Approval belongs to a specific theme release. A change to shared storefront

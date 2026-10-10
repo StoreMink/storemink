@@ -3,8 +3,12 @@
 This document is the executable prompt Theme Studio sends to its image model
 (`lib/theme-studio/image-models.ts`) for every generated theme image.
 `lib/theme-studio/image-prompt.ts` reads the marked text fence at runtime,
-validates its four placeholders and fills them from the theme's Stage A intent,
-its compiled palette and one asset brief.
+validates its five placeholders and fills them from the theme's Stage A intent,
+its compiled palette and one asset brief. `{{people}}` is the output rule about
+people, chosen per brief (`peopleRule` in `image-prompt.ts`): the people-free
+rule unless the Stage A brief set `people: "adults"`, in which case adults may
+appear where the picture is about the product being worn or used. Children and
+prominent people are refused by the provider settings whatever the rule says.
 
 It is a separate document from `docs/mink-ai-image-prompt.md` on purpose. Mink
 makes one marketing image for a merchant's real product; Theme Studio makes a
@@ -45,7 +49,7 @@ SET RULES
 OUTPUT RULES
 - One photograph only: not a collage, grid, contact sheet, split panel, mockup frame or design board.
 - No text of any kind in the pixels: no headlines, captions, prices, labels with words, logos, monograms, watermarks, signatures or UI. Packaging should carry wordless label artwork that suits the product, so it looks like a real finished product rather than a blank mockup: colour blocks, patterns, illustrations, botanical or abstract shapes. Never letters, numbers, words, logos, monograms or symbols that read as a brand mark, whether printed, embossed or engraved.
-- No people, faces, hands or body parts, and no mannequins or forms with faces. If THIS IMAGE mentions a model, a person, hands or someone wearing the product, show the product on its own instead: garments flat-lay, on a hanger, folded or draped; footwear and bags on a plinth or step; lifestyle scenes as empty, styled rooms and places where the products are the subject.
+{{people}}
 - Crisp commercial quality: sharp edges, clean tonal detail, no blur, no compression artefacts, no smeared shapes, no obvious upscaling.
 - Avoid duplicated or malformed objects, floating items, clipped subjects and unrelated clutter.
 
@@ -57,8 +61,9 @@ Return exactly one image.
 ## Editing contract
 
 - Keep exactly one ordered marker pair and one `text` code fence.
-- Keep `{{theme_direction}}`, `{{asset_brief}}`, `{{composition}}` and
-  `{{reference_guidance}}` exactly once each and add no other placeholders.
+- Keep `{{theme_direction}}`, `{{asset_brief}}`, `{{composition}}`,
+  `{{reference_guidance}}` and `{{people}}` exactly once each and add no other
+  placeholders.
 - Do not add Markdown formatting inside the marked prompt.
 - The file ships with the server: it is listed in `next.config.ts`
   `outputFileTracingIncludes` and excepted in `.dockerignore`.

@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v26";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v32";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -23,5 +23,34 @@ export function themePromptFeatures(version: string) {
      * hero_carousel or a fullbleed hero at full width), the way Shopify
      * themes do; checked in generation as a repair issue. */
     fullBleedOpening: revision >= 26,
+    /** The opening is a slideshow: hero_carousel with two or three
+     * photograph slides, previous/next arrows and dots (owner, 2026-10-09),
+     * never a single hero. */
+    carouselOpening: revision >= 27,
+    /** Stage A may put adults in a brief where the picture is about how the
+     * product is worn or used (owner, 2026-10-09); the image model then
+     * allows adults for that image only. Most briefs stay people-free. */
+    peopleInImagery: revision >= 28,
+    /** Sections carry nested blocks (plan Phase 2b): media_text stories, and
+     * the accordion and comparison sections with typed rows. The vocabulary
+     * a prompt prints and a schema admits grows with it; earlier requests
+     * keep the shorter list byte for byte. */
+    nestedBlocks: revision >= 29,
+    /** Five more sections a theme may use (plan Phase 2c, first slice):
+     * multicolumn, image_marquee, image_hotspots, before_after and
+     * product_spotlight, plus the tile grid's collage layout. */
+    moreSections: revision >= 30,
+    /** More layout variants (plan Phase 2d, first slice): hero stacked and
+     * offset, header transparent and hamburger, cards centered, soft and
+     * wide, footers centered and compact. The prompts print them and the
+     * Stage B layout enums admit them from v31; earlier requests keep the
+     * shorter lists byte for byte. */
+    moreVariants: revision >= 31,
+    /** Templates (plan Phase 2e): Stage B writes the product and collection
+     * page compositions (gallery shape and ordered blocks; filters, paging
+     * and promotional tiles) as a top-level `templates` object the compiler
+     * normalises into preset.templates, and design.layout.productDetail may
+     * be "stacked". Earlier requests keep the shorter schema byte for byte. */
+    templates: revision >= 32,
   };
 }

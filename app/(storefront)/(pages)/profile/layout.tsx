@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { requireStorefrontStoreId } from "@/lib/store/resolve";
+import { AccountShell } from "@/app/(storefront)/components/account/account-shell";
 
 // profile/page.tsx is a client component, so the host guard and metadata live
 // here. A customer's own profile is personal and signed-in-only — noindex, not
@@ -15,5 +16,5 @@ export default async function ProfileLayout({
   children: React.ReactNode;
 }) {
   await requireStorefrontStoreId();
-  return children;
+  return <AccountShell>{children}</AccountShell>;
 }

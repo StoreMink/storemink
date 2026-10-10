@@ -40,6 +40,7 @@ export async function LaunchChecklistCard() {
       ready={checklist.ready}
       missing={checklist.missing}
       canLaunch={state.canLaunch}
+      ownerCanVerifyPhone={state.ownerCanVerifyPhone}
       password={state.password}
       previewUrl={state.previewUrl}
     />

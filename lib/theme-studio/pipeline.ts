@@ -49,6 +49,7 @@ import {
 import { customerCopy, unsupportedClaimIssues } from "./claims";
 import {
   STAGE_A_ENVELOPE_SCHEMA,
+  stageASchemaFor,
   STAGE_B_DRAFT_SCHEMA,
   STAGE_B_INITIAL_DRAFT_SCHEMA,
   STAGE_A_VARIETY_SCHEMA,
@@ -520,6 +521,16 @@ async function generate(
   const fullBleedOpening = themePromptFeatures(
     input.promptVersion,
   ).fullBleedOpening;
+  const carouselOpening = themePromptFeatures(
+    input.promptVersion,
+  ).carouselOpening;
+  const peopleInImagery = themePromptFeatures(
+    input.promptVersion,
+  ).peopleInImagery;
+  const nestedBlocks = themePromptFeatures(input.promptVersion).nestedBlocks;
+  const moreSections = themePromptFeatures(input.promptVersion).moreSections;
+  const moreVariants = themePromptFeatures(input.promptVersion).moreVariants;
+  const templatesFeature = themePromptFeatures(input.promptVersion).templates;
   // Explicit styles (intent schema 2) apply to new builds and to revisions of
   // themes that already carry a design direction. A revision of an older
   // schema-1 theme keeps its original contract: forcing a new direction and
@@ -550,6 +561,8 @@ async function generate(
     // A theme that opens with a full-band photograph keeps it: the opening's
     // variant, height and width are not repair settings, and a repair that
     // moved them anyway is a validation issue below.
+    // Any full-band opening the base already has (a slideshow or a single
+    // photo) is kept, whichever rule the base was built under.
     const keepOpening = fullBleedOpening && !homepageOpeningIssues(base).length;
     const context = JSON.stringify({
       request: input.messages.map((m) => m.body),
@@ -702,14 +715,30 @@ async function generate(
         modelKey: input.compile.modelKey,
         providerModel: input.providerModel,
         system: explicitStyles
-          ? stageAVarietySystemPrompt(fullBleedOpening)
+          ? stageAVarietySystemPrompt(
+              fullBleedOpening,
+              carouselOpening,
+              peopleInImagery,
+              nestedBlocks,
+              moreSections,
+              moreVariants,
+            )
           : stageASystemPrompt(
               themePromptFeatures(input.promptVersion).nativeCommerce,
+              false,
+              false,
+              peopleInImagery,
+              nestedBlocks,
+              moreSections,
+              moreVariants,
             ),
         content: [{ type: "text", text: userText }, ...images],
-        schema: explicitStyles
-          ? STAGE_A_VARIETY_SCHEMA
-          : STAGE_A_ENVELOPE_SCHEMA,
+        schema: stageASchemaFor(
+          explicitStyles ? STAGE_A_VARIETY_SCHEMA : STAGE_A_ENVELOPE_SCHEMA,
+          peopleInImagery,
+          nestedBlocks,
+          moreSections,
+        ),
         effort: "high",
       },
       telemetry,
@@ -846,17 +875,32 @@ async function generate(
                 compactInitial,
                 fontPairings,
                 fullBleedOpening,
+                carouselOpening,
+                nestedBlocks,
+                moreSections,
+                moreVariants,
+                templatesFeature,
               )
             : compactInitial
               ? stageBInitialSystemPrompt(
                   intent,
                   fontPairings,
                   fullBleedOpening,
+                  carouselOpening,
+                  nestedBlocks,
+                  moreSections,
+                  moreVariants,
+                  templatesFeature,
                 )
               : stageBSystemPrompt(
                   themePromptFeatures(input.promptVersion).nativeFraming,
                   fontPairings,
                   fullBleedOpening,
+                  carouselOpening,
+                  nestedBlocks,
+                  moreSections,
+                  moreVariants,
+                  templatesFeature,
                 )) + (heroContrast ? heroContrastPrompt(fullBleedOpening) : ""),
         content: [{ type: "text", text: userText }],
         schema: stageBSchemaFor(
@@ -868,6 +912,10 @@ async function generate(
               ? STAGE_B_INITIAL_DRAFT_SCHEMA
               : STAGE_B_DRAFT_SCHEMA,
           fontPairings,
+          nestedBlocks,
+          moreSections,
+          moreVariants,
+          templatesFeature,
         ),
         effort: "high",
       },
@@ -946,7 +994,9 @@ async function generate(
       // been given one.
       const opened =
         fullBleedOpening && !input.revision
-          ? enforceHomepageOpening(compiled.package)
+          ? enforceHomepageOpening(compiled.package, {
+              carousel: carouselOpening,
+            })
           : { package: compiled.package, issues: [] as string[] };
       if (claims.length || opened.issues.length) {
         issuesB = [...claims, ...opened.issues];

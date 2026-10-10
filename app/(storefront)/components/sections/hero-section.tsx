@@ -5,7 +5,7 @@ import { SectionShell } from "./section-shell";
 import { HeroImage, HeroOverlay, heroClasses } from "./hero-media";
 import { MediaTone } from "./media-tone";
 
-// First-class hero block. Four variants:
+// First-class hero block. Six variants:
 //   banner    — inset rounded card on a solid colour field, copy left / image
 //               right (grocery-market style);
 //   split     — half copy / half image band;
@@ -13,7 +13,11 @@ import { MediaTone } from "./media-tone";
 //               background behind the copy;
 //   fullbleed — the photograph fills the whole band and the copy sits over
 //               it, left or centred: a one-slide carousel without the
-//               controls, and the opening every Studio theme uses.
+//               controls, and the opening every Studio theme uses;
+//   stacked   — the copy above a full-width photograph (plan Phase 2d);
+//   offset    — the photograph fills the band and the copy sits in a card
+//               over it, at the lower edge unless content_position says
+//               otherwise; the card is opaque, so no tone probe or overlay.
 // `config.background` is validated as a strict colour (safeColor), so it is
 // safe in an inline style attribute — same contract as SectionStyle.background.
 export function HeroSection({
@@ -46,9 +50,13 @@ export function HeroSection({
     )
   ) : null;
 
-  const asBackground =
+  const hasMedia = !!(config.image_url || config.video_url);
+  // Copy over the photo's own pixels: MediaTone and the overlay apply.
+  const overlaid =
     (config.variant === "minimal" || config.variant === "fullbleed") &&
-    !!(config.image_url || config.video_url);
+    hasMedia;
+  // The media covers the band (an offset hero's copy card sits over it).
+  const asBackground = overlaid || (config.variant === "offset" && hasMedia);
   // Video wins over the image; the image doubles as its poster frame.
   // YouTube/Vimeo links become a chrome-less background embed; direct files
   // play via <video>. Muted + playsInline are required for mobile autoplay.
@@ -80,7 +88,11 @@ export function HeroSection({
       src={config.image_url}
       alt={config.heading || "Hero"}
       eager
-      sizes={asBackground ? "100vw" : "(max-width: 860px) 100vw, 50vw"}
+      sizes={
+        asBackground || config.variant === "stacked"
+          ? "100vw"
+          : "(max-width: 860px) 100vw, 50vw"
+      }
       className="home-hero-img"
       options={config}
     />
@@ -89,7 +101,7 @@ export function HeroSection({
     height: config.height,
     content_position: config.content_position,
     // A tuned overlay only means something where copy sits on the media.
-    overlay_opacity: asBackground ? config.overlay_opacity : undefined,
+    overlay_opacity: overlaid ? config.overlay_opacity : undefined,
   });
 
   return (
@@ -104,12 +116,12 @@ export function HeroSection({
           <div className="home-hero-bgmedia">
             {media}
             <HeroOverlay
-              opacity={config.overlay_opacity}
+              opacity={overlaid ? config.overlay_opacity : undefined}
               theme={config.theme}
             />
           </div>
         )}
-        {asBackground && config.image_url && !config.video_url && (
+        {overlaid && config.image_url && !config.video_url && (
           <MediaTone
             preferred={config.theme}
             copy=".home-hero-copy"

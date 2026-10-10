@@ -647,6 +647,46 @@
   }
 }
 
+/* ── Index layouts (plan Phase 2e, the blog template) ─────────────────────
+   "grid" is the three-up grid above. "list" lays each card as a row, the
+   picture beside the copy, from the tablet width up. "featured" gives the
+   first card the whole first row as a wide picture-and-copy band and keeps
+   the grid for the rest. Both are the same card markup; only the card's
+   direction and the picture's frame change. */
+@media (min-width: 640px) {
+  .blog-grid.layout-list {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .blog-grid.layout-list .blog-card,
+  .blog-grid.layout-featured > .blog-card:first-child {
+    flex-direction: row;
+    align-items: stretch;
+  }
+  .blog-grid.layout-list .blog-card-image-wrapper,
+  .blog-grid.layout-featured > .blog-card:first-child .blog-card-image-wrapper {
+    flex: 0 0 38%;
+    aspect-ratio: auto;
+    min-height: 200px;
+  }
+  .blog-grid.layout-list .blog-card-body,
+  .blog-grid.layout-featured > .blog-card:first-child .blog-card-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
+  }
+  .blog-grid.layout-featured > .blog-card:first-child {
+    grid-column: 1 / -1;
+  }
+  .blog-grid.layout-featured > .blog-card:first-child .blog-card-image-wrapper {
+    flex-basis: 50%;
+    min-height: 280px;
+  }
+  .blog-grid.layout-featured > .blog-card:first-child .blog-card-title {
+    font-size: 1.6rem;
+  }
+}
+
 /* ============================================
    BLOG CARD
    ============================================ */
@@ -869,6 +909,75 @@
   max-width: 720px;
   margin: 0 auto;
   position: relative;
+}
+
+/* ── Article layouts (plan Phase 2e, the blog template) ───────────────────
+   "narrow" is the 720px reading column above. "wide" widens it; "sidebar"
+   keeps the reading column and floats an aside of related posts beside it
+   from 1024px, above the article below that. */
+.blog-detail-page-section.article-wide .blog-detail-content-container {
+  max-width: 960px;
+}
+.blog-article-aside {
+  margin: 0 0 32px;
+  padding: 20px 22px;
+  border: 1px solid var(--blog-border);
+  border-radius: 14px;
+  background: var(--blog-card);
+}
+.blog-article-aside-kicker {
+  margin: 0 0 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--blog-muted);
+}
+.blog-article-aside-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+.blog-article-aside-list a {
+  display: block;
+  min-height: 40px;
+  padding: 8px 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--blog-dark);
+  text-decoration: none;
+  border-bottom: 1px solid var(--blog-border-light);
+}
+.blog-article-aside-list li:last-child a {
+  border-bottom: 0;
+}
+.blog-article-aside-list a:hover {
+  color: var(--blog-accent);
+}
+@media (min-width: 1024px) {
+  .blog-detail-page-section.article-sidebar .blog-detail-content-container {
+    max-width: 1060px;
+    display: grid;
+    grid-template-columns: minmax(0, 720px) 280px;
+    column-gap: 48px;
+    justify-content: center;
+    align-items: start;
+  }
+  .blog-detail-page-section.article-sidebar
+    .blog-detail-content-container
+    > :not(.blog-article-aside) {
+    grid-column: 1;
+  }
+  .blog-detail-page-section.article-sidebar .blog-article-aside {
+    grid-column: 2;
+    grid-row: 1 / span 12;
+    position: sticky;
+    top: calc(var(--sm-header-h, 80px) + 24px);
+    margin: 0;
+  }
 }
 
 /* — Back link — */

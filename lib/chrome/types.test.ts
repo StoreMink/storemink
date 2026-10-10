@@ -5,6 +5,7 @@ import {
   resolveStorefrontAppearance,
   sanitizeChromeForSave,
 } from "./types";
+import { defaultTemplates } from "@/lib/themes/templates";
 
 describe("normalizeChrome", () => {
   it("returns the defaults for empty input", () => {
@@ -118,6 +119,47 @@ describe("normalizeChrome", () => {
   });
 });
 
+describe("the announcement bar", () => {
+  it("reads as enabled and empty on a row saved before the field, so the theme's bar shows", () => {
+    const c = normalizeChrome({ header: { showSearch: true } });
+    expect(c.header.announcement).toEqual({
+      enabled: true,
+      text: "",
+      href: "",
+    });
+  });
+
+  it("keeps an explicit off, bounds the text and holds the link to a site path", () => {
+    const c = normalizeChrome({
+      header: {
+        announcement: {
+          enabled: false,
+          text: `  ${"x".repeat(200)}  `,
+          href: "javascript:alert(1)",
+        },
+      },
+    });
+    expect(c.header.announcement.enabled).toBe(false);
+    expect(c.header.announcement.text).toHaveLength(160);
+    expect(c.header.announcement.href).toBe("");
+    expect(
+      normalizeChrome({
+        header: { announcement: { text: "Sale", href: " /collections/sale " } },
+      }).header.announcement,
+    ).toEqual({ enabled: true, text: "Sale", href: "/collections/sale" });
+    expect(
+      normalizeChrome({
+        header: { announcement: { href: "https://example.com" } },
+      }).header.announcement.href,
+    ).toBe("");
+    expect(
+      sanitizeChromeForSave({
+        header: { announcement: { enabled: true, text: "Hi", href: "//x" } },
+      }).header.announcement,
+    ).toEqual({ enabled: true, text: "Hi", href: "" });
+  });
+});
+
 describe("resolveStorefrontAppearance", () => {
   it("uses modern theme defaults while separating quick-add from card shape", () => {
     expect(
@@ -143,6 +185,7 @@ describe("resolveStorefrontAppearance", () => {
       productDetail: "editorial",
       cart: "compact",
       footer: "minimal",
+      templates: defaultTemplates({ stickyAddToCart: false }),
     });
   });
 
@@ -250,12 +293,127 @@ describe("resolveStorefrontAppearance", () => {
       productDetail: "classic",
       cart: "classic",
       footer: "editorial",
+      templates: defaultTemplates({ stickyAddToCart: false }),
     });
+  });
+
+  // Plan Phase 2e (2026-10-09): the product and collection pages are
+  // composed from a template the theme writes and a merchant may override.
+  it("resolves templates from the theme, the merchant override or the defaults", () => {
+    const theme = { stickyAddToCart: true } as const;
+    const inherited = resolveStorefrontAppearance(
+      theme,
+      DEFAULT_CHROME.appearance,
+    );
+    expect(inherited.templates).toEqual(defaultTemplates(theme));
+    expect(inherited.stickyAddToCart).toBe(true);
+    // A theme-authored template wins over the layout's defaults.
+    const authored = resolveStorefrontAppearance(
+      theme,
+      DEFAULT_CHROME.appearance,
+      {
+        ...defaultTemplates(theme),
+        product: {
+          gallery: "grid",
+          blocks: [{ type: "price" }, { type: "buy_box" }],
+        },
+      },
+    );
+    expect(authored.templates.product.gallery).toBe("grid");
+    // The sticky bar follows the blocks, not the layout flag.
+    expect(authored.stickyAddToCart).toBe(false);
+    // A merchant override replaces one page and inherits the other.
+    const overridden = resolveStorefrontAppearance(theme, {
+      ...DEFAULT_CHROME.appearance,
+      templates: {
+        product: "theme",
+        collection: { filters: "top-bar", pagination: "paged", promoTiles: [] },
+        blog: "theme",
+        account: "theme",
+      },
+    });
+    expect(overridden.templates.product).toEqual(
+      defaultTemplates(theme).product,
+    );
+    expect(overridden.templates.collection.filters).toBe("top-bar");
+    // Rows saved before templates existed carry no key and inherit.
+    const legacy = resolveStorefrontAppearance(theme, {
+      ...DEFAULT_CHROME.appearance,
+      templates: undefined as never,
+    });
+    expect(legacy.templates).toEqual(defaultTemplates(theme));
+    // Stored junk normalises back to inheritance.
+    expect(
+      normalizeChrome({
+        appearance: { templates: { product: 7, collection: "x" } },
+      }).appearance.templates,
+    ).toEqual({
+      product: "theme",
+      collection: "theme",
+      blog: "theme",
+      account: "theme",
+    });
+    // The blog and account templates (second slice) override the same way,
+    // and a row saved between the two slices carries neither key.
+    const pages = resolveStorefrontAppearance(theme, {
+      ...DEFAULT_CHROME.appearance,
+      templates: {
+        product: "theme",
+        collection: "theme",
+        blog: { index: "featured", article: "wide" },
+        account: { layout: "sidebar", scheme: "soft" },
+      },
+    });
+    expect(pages.templates.blog).toEqual({
+      index: "featured",
+      article: "wide",
+    });
+    expect(pages.templates.account).toEqual({
+      layout: "sidebar",
+      scheme: "soft",
+    });
+    const between = resolveStorefrontAppearance(theme, {
+      ...DEFAULT_CHROME.appearance,
+      templates: { product: "theme", collection: "theme" } as never,
+    });
+    expect(between.templates.blog).toEqual(defaultTemplates(theme).blog);
+    expect(between.templates.account).toEqual(defaultTemplates(theme).account);
   });
 
   it("normalises invalid stored appearance values back to theme inheritance", () => {
     const chrome = normalizeChrome({ appearance: { header: "impossible" } });
     expect(chrome.appearance).toEqual(DEFAULT_CHROME.appearance);
+  });
+
+  // Plan Phase 2d (2026-10-09): two headers, three cards and two footers
+  // joined the lists, as merchant overrides and as theme defaults.
+  it("keeps the Phase 2d variants a merchant or a theme may choose", () => {
+    const chrome = normalizeChrome({
+      appearance: { header: "transparent", card: "soft", footer: "compact" },
+    });
+    expect(chrome.appearance.header).toBe("transparent");
+    expect(chrome.appearance.card).toBe("soft");
+    expect(chrome.appearance.footer).toBe("compact");
+    for (const header of ["hamburger", "stacked", "utility"] as const)
+      expect(
+        normalizeChrome({ appearance: { header } }).appearance.header,
+      ).toBe(header);
+    for (const card of ["centered", "wide"] as const)
+      expect(normalizeChrome({ appearance: { card } }).appearance.card).toBe(
+        card,
+      );
+    expect(
+      normalizeChrome({ appearance: { footer: "centered" } }).appearance.footer,
+    ).toBe("centered");
+    const resolved = resolveStorefrontAppearance({
+      header: "hamburger",
+      card: "wide",
+      footer: "centered",
+    });
+    expect(resolved.header).toBe("hamburger");
+    expect(resolved.card).toBe("wide");
+    expect(resolved.cardQuickAdd).toBe(false);
+    expect(resolved.footer).toBe("centered");
   });
 });
 

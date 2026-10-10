@@ -148,6 +148,15 @@ describe("draft vs publish validation modes", () => {
       ["testimonials", { items: [] }],
       ["video", { video_url: "" }],
       ["newsletter", { heading: "", subheading: "", consent_text: "" }],
+      ["accordion", { items: [] }],
+      ["comparison", { columns: [], rows: [] }],
+      ["multicolumn", { items: [] }],
+      ["image_marquee", { items: [] }],
+      ["image_hotspots", { image_url: "", hotspots: [] }],
+      ["before_after", { before: { image_url: "" }, after: { image_url: "" } }],
+      ["product_spotlight", { source: "manual", product_id: null }],
+      ["logo_strip", { items: [] }],
+      ["countdown", { ends_at: "" }],
     ];
     for (const [type, raw] of incomplete) {
       expect(

@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import {
   collectThemeImageUrls,
   validateThemeCatalogMeta,
-  validateThemeDesign,
   validateThemeHomepage,
   validateThemeImage,
   validateThemeLinks,
@@ -10,6 +9,7 @@ import {
   validateThemeSampleData,
   type ThemeFinding,
   validateThemeCopy,
+  validateStudioDesign,
 } from "@/lib/themes/validation";
 import type { ThemeDefinition } from "@/lib/themes/types";
 import { PLACEHOLDER_LICENSE_NOTE, THEME_ASSET_PREFIX } from "./compiler";
@@ -539,7 +539,7 @@ export function evaluatePackageGates(
             })),
         ),
       ),
-      gate("package.design", fromThemeFindings(validateThemeDesign(theme))),
+      gate("package.design", fromThemeFindings(validateStudioDesign(theme))),
       gate("package.security", securityFindings(pkg)),
       gate("assets.integrity", assetIntegrityFindings(pkg, rows)),
       gate("assets.provenance", assetProvenanceFindings(pkg)),

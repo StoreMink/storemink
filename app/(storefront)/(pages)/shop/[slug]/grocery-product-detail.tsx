@@ -5,6 +5,7 @@ import { Truck, RotateCcw, Sprout, Minus } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { ProductGallery } from "./product-gallery";
+import type { ProductGalleryMode } from "@/lib/themes/templates";
 import { formatPrice, hasSpecialPrice } from "@/lib/pricing";
 import { isSoldOut } from "@/lib/inventory/status";
 import { RatingStars } from "./reviews-section";
@@ -39,6 +40,7 @@ export function GroceryProductDetail({
   onAddToCart,
   onBuyNow,
   deliveryEstimator,
+  galleryMode,
 }: {
   product: DetailProduct;
   gallery: string[];
@@ -68,6 +70,8 @@ export function GroceryProductDetail({
   onAddToCart: () => void;
   onBuyNow: () => void;
   deliveryEstimator: ReactNode;
+  /** The template's gallery shape (plan Phase 2e). */
+  galleryMode?: ProductGalleryMode;
 }) {
   const [descOpen, setDescOpen] = useState(true);
   const catActive = product.category && product.category.status === "active";
@@ -99,6 +103,7 @@ export function GroceryProductDetail({
           onActiveIndexChange={setActiveIndex}
           onZoom={onZoom}
           classPrefix="gpdp"
+          mode={galleryMode}
           sizes="(max-width: 860px) 100vw, 560px"
         />
 

@@ -506,7 +506,7 @@ export async function confirmPlanChange(input: {
     return {
       ok: false,
       error:
-        "Your payment went through but we couldn't switch your plan. Contact support — don't pay again.",
+        "Your payment went through but we couldn't switch your plan. Contact support, and please don't pay again.",
     };
   }
   return {

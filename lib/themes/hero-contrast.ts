@@ -52,6 +52,11 @@ export function solidHeroContrast(
         (config.image_url || config.video_url)
       )
         return;
+      // An offset hero's copy sits in a surface card (over the band or its
+      // photo): the design contract's ink-on-surface pair, which
+      // validateThemeDesign already holds to 4.5:1. A stacked hero's copy
+      // sits on the band field like a split one and is measured below.
+      if (config.variant === "offset") return;
 
       let ink = opaqueHex(design.palette.ink);
       let onInk = opaqueHex(design.palette.onInk);
@@ -150,4 +155,65 @@ export function heroContrastIssues(theme: ThemeDefinition): string[] {
           : `Neither text mode is readable. Adjust this hero's background or its palette/scheme text colours.`
       }`;
     });
+}
+
+/** The collection page's promotional tiles are solid fields too: a tile's
+ *  `theme` is its copy colour (dark = the page ink, light = the on-ink), its
+ *  `background` a hex or "" for the field that suits the copy (the surface
+ *  under dark copy, the ink colour under light), exactly as shop.css paints
+ *  it. The heading is large text (3:1); the body, at its 88% opacity, and
+ *  the CTA are not (4.5:1). A tile over a photograph is left to the browser
+ *  stage. Added when the magazine exemplar's tile read 1.1:1 (2026-10-10)
+ *  because the renderer had the theme the other way round. */
+export const PROMO_TILE_BODY_OPACITY = 88;
+
+export function promoTileContrastIssues(theme: ThemeDefinition): string[] {
+  const tiles = theme.preset.templates?.collection?.promoTiles ?? [];
+  const palette = theme.preset.design.palette;
+  const ink = opaqueHex(palette.ink);
+  const onInk = opaqueHex(palette.onInk);
+  const surface = opaqueHex(palette.surface);
+  const issues: string[] = [];
+  tiles.forEach((tile, index) => {
+    if (tile.image_url) return;
+    const measure = (tone: "light" | "dark") => {
+      const text = tone === "light" ? onInk : ink;
+      const field = tile.background
+        ? opaqueHex(tile.background)
+        : tone === "light"
+          ? ink
+          : surface;
+      if (!text || !field) return null;
+      const heading = tile.heading ? schemeContrast(text, field) : null;
+      const body = tile.body
+        ? schemeContrast(mixHex(text, field, PROMO_TILE_BODY_OPACITY), field)
+        : null;
+      const cta = tile.cta_label ? schemeContrast(text, field) : null;
+      const failing = [
+        heading !== null && heading < 3
+          ? `heading ${heading.toFixed(2)}:1 (needs 3:1)`
+          : null,
+        body !== null && body < 4.5
+          ? `body at ${PROMO_TILE_BODY_OPACITY}% opacity ${body.toFixed(2)}:1 (needs 4.5:1)`
+          : null,
+        cta !== null && cta < 4.5
+          ? `link ${cta.toFixed(2)}:1 (needs 4.5:1)`
+          : null,
+      ].filter((part): part is string => part !== null);
+      return { text, field, failing };
+    };
+    const tone = tile.theme === "light" ? "light" : "dark";
+    const current = measure(tone);
+    if (!current || current.failing.length === 0) return;
+    const other = tone === "light" ? "dark" : "light";
+    const alternative = measure(other);
+    issues.push(
+      `Promotional tile ${index + 1} on the collection page: ${tone} copy (${current.text}) on ${current.field} fails contrast: ${current.failing.join("; ")}. ${
+        alternative && alternative.failing.length === 0
+          ? `Set definition.preset.templates.collection.promoTiles[${index}].theme to "${other}" for readable ${alternative.text} copy.`
+          : `Neither copy colour reads on this field; give the tile a background the palette's ink or on-ink reads on.`
+      }`,
+    );
+  });
+  return issues;
 }

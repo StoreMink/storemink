@@ -43,7 +43,102 @@
 > at full width (`lib/theme-studio/opening.ts`, checked in generation only;
 > revisions keep their base's opening). The rest of 2d (stacked, offset-card,
 > collage, text-only, video, carousel-split heroes; the transparent-sticky
-> header that would float over this opening) is still open.
+> header that would float over this opening) is still open. v27 (same day)
+> makes that opening a two- or three-slide `hero_carousel` with arrows and
+> dots; the first live v26 run on Bubble stopped before artwork on four
+> shared-chrome renderer defects, all fixed (CODEBASE §11), which is the kind
+> of stall Phase 1's "reliability first" exists to remove.
+> v28 (owner's decisions, same day): a Stage A brief may allow adults where
+> the picture is about the product being worn or used, with the provider,
+> prompt and reviewer following that one choice; wide slots are stored at
+> 2400px and up to 1000 KiB. Phase 2b landed (same day, prompt v29): a block
+> registry (`SECTION_BLOCKS`) over every list-shaped section, media_text
+> stories, the new `accordion` and `comparison` sections with typed rows, one
+> shared builder block list (adopted by usp_bar, tile_grid, testimonials and
+> the new sections), the Studio vocabulary gated so pre-v29 requests replay
+> byte for byte, and renderer fixtures for the new markup at the five widths.
+> Not yet run against live Gemini; the 2b exit (every new item on an
+> exemplar theme per direction) is folded into the Phase 2 exit. Phase 2c,
+> first slice (same day, prompt v30): seven of the fourteen candidates
+> landed — multicolumn, image marquee, image hotspots (Bubble's gap),
+> before/after, product spotlight, logo strip and countdown (the last two
+> builder-only) — plus the tile grid's collage layout, each with builder
+> form, thumbnail, validator, renderer fixtures and prompt vocabulary. Of
+> the rest: comparison table landed in 2b; lookbook is the gallery's
+> editorial layout; the video-background hero exists (`hero.video_url` on
+> every variant); split banner duo is a two-column tile grid; collection
+> list is `shop_by_category` in cards. Still open from the pool: the
+> announcement bar, which belongs in the header group above the header
+> (chrome, not a page section — the v27 opening rule puts the carousel
+> first on the homepage), and a true collection list with descriptions.
+> Phase 2d, first slice (same day, prompt v31): nine variants — hero
+> `stacked` and `offset`, header `transparent` (the owner-flagged gap: the
+> bar floats over the opening photograph with its controls in the colour
+> that reads over it, solid once scrolled) and `hamburger`, cards
+> `centered`, `soft` and `wide`, footers `centered` and `compact` — each a
+> CSS treatment of existing markup, in the builder selects, the package
+> contract and the Studio vocabulary (gated so v30 requests replay byte for
+> byte), with the offline checks widened to cover them. Of the plan's list:
+> collage is the tile grid's collage layout, text-only is a minimal hero
+> without media, video is `hero.video_url`. The second slice (same day,
+> same prompt version, unused by any run) closed the list: the split
+> carousel (`hero_carousel.layout: "split"`, copy beside the photo, never
+> the homepage opening) and the `stacked` (logo centred, menu below) and
+> `utility` (double row) headers, which needed the header fit rule to judge
+> rows rather than one line. Not yet run against live Gemini.
+> Phase 2e, first slice (same day, prompt v32): the product and collection
+> pages compose from `templates` (an optional `preset.templates`, no schema
+> bump) — a gallery shape and the ordered blocks of the information column
+> (price, options, buy box, description, delivery, share, trust row,
+> accordion, rich text, then reviews, recommendations and the sticky bar)
+> for the product page; filters placement (sidebar, drawer, top-bar), paging
+> (load more, numbered pages, infinite) and promotional tiles for the
+> collection page — rendered by the block renderers in
+> `product-detail-client.tsx` and `shop-client.tsx`, overridable per store
+> in the Brand row, written by Stage B under v32 and normalised by the
+> compiler; `productDetail` gains `stacked`. The second slice (same day,
+> same prompt version) closed the field: the `size_guide` block, the blog
+> template (index grid / list / featured; article narrow / wide / sidebar),
+> the account template (plain / tabs / sidebar, plus a scheme) and
+> `renderer.minVersion` enforced in the runtime registry. Schema v3 was
+> not needed: `templates` is an optional field and `defaultTemplates`
+> reproduces today's pages, so the "v2→v3 migration" is a pure function and
+> every published release round-trips unchanged. Not yet run against live
+> Gemini; the 2e exit's hand-authored exemplar per direction is folded into
+> the Phase 2 exit. Out of 2e by decision: cart templates (the cart stays a
+> layout variant); the fingerprint axes for templates are Phase 3.
+> **Phase 2 closed offline (same day; v32 extended in place, unused by any
+> run).** The two 2c candidates left open landed: the announcement bar
+> (header chrome, `preset.announcement` + `HeaderConfig.announcement`,
+> rendered in the fixed header's top border so the reserved height includes
+> it) and the collection list (`shop_by_category.display: "list"`, rows with
+> descriptions). The exit evidence exists: seven hand-authored exemplar
+> themes, one per design direction (`lib/themes/exemplars/`, hidden drafts
+> borrowing the bundled themes' photography through linked folders), each
+> using every vocabulary item 2a–2e added, held by `exemplars.test.ts` to
+> the content floors, copy floors, contract, opening rule and visible-choice
+> vocabulary, and by `npm run theme-studio:exemplars` to the real package
+> gates (6/6 pass for all seven) and, against a local server, to the route,
+> link and markup gates and the probe's deterministic browser rules at the
+> five widths (see CODEBASE §11 for what that run found). Seeding them as
+> stores found a Phase 2e defect before any browser ran: `templateIssues`
+> compared with `JSON.stringify`, so a stored package with `templates` was
+> refused by the registry's parse and rendered un-themed; the comparison is
+> key-order independent now (`lib/themes/canonical-json.ts`) and every
+> exemplar's package is validated through a jsonb-shaped re-order. The
+> browser run itself found nine shared-renderer defects, none a theme
+> setting (CODEBASE §11 lists them: the transparent header's tone rule
+> reaching the drawer, the collage's fixed row height, the promotional
+> tile's inverted `theme`, four small-text labels on faint or accent
+> colours, two aria-hidden clones with focusable links), and one gap in
+> the contract: the 3:1 on-accent floor lets a candidate through whose
+> every button label fails axe at 4.5:1, so the Studio now holds
+> `button_label_contrast` at compile time and in the package gate. With
+> those in, all seven exemplars pass every gate the script runs. Still open, and
+> needing a deploy: the deployed acceptance run per exemplar (LCP/CLS, the
+> probe's clipped-text scan, the chrome states through the real probe) and
+> one live Gemini batch under v32, which is also where the 2a–2e prompt
+> bullets get their first live reading.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

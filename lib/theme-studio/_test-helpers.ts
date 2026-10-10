@@ -19,6 +19,9 @@ export function hex(seed: string): string {
  * mobile screenshot at 9:19). */
 export function placeholderPackage(): ThemePackageV2 {
   let theme: ThemeDefinition = structuredClone(THEME_DEFINITIONS[0]);
+  // A Studio package, so it meets the Studio's button-label floor
+  // (validateStudioDesign, 4.5:1); Basket's white on #ef5a2a is 3.41:1.
+  theme.preset.brand.primaryColor = "#c2410c";
   const urls = [...collectThemeImageUrls(theme)];
   const slotFor = new Map(urls.map((url, i) => [url, `slot-${i}`]));
   const rewrite = (value: unknown): unknown => {

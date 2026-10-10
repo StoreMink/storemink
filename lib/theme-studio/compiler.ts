@@ -36,6 +36,8 @@ import {
 } from "./contracts";
 import type { ThemeStudioModelKey } from "./models";
 import { validateSectionStyle } from "@/lib/homepage/section-types";
+import { defaultTemplates, normalizeTemplates } from "@/lib/themes/templates";
+import { normalizeAnnouncement } from "@/lib/themes/announcement";
 import {
   isSectionScheme,
   SCHEMELESS_SECTION_TYPES,
@@ -46,12 +48,12 @@ import {
 import { PALETTE_KEYS, THEME_STUDIO_SECTION_TYPES } from "./schemas";
 import { resolveOptionRows, type ProductOption } from "@/lib/products/options";
 import {
-  validateThemeDesign,
   validateThemeHomepage,
   validateThemeLinks,
   validateThemePages,
   validateThemeSampleData,
   validateThemeCopy,
+  validateStudioDesign,
 } from "@/lib/themes/validation";
 
 // ---------------------------------------------------------------------------
@@ -503,6 +505,14 @@ function buildPages(
         if (section.type === "shop_by_category" && config.source !== "all") {
           issues.push(`${where}: shop_by_category must use source "all".`);
         }
+        if (
+          section.type === "product_spotlight" &&
+          (config.source !== "featured" || config.product_id)
+        ) {
+          issues.push(
+            `${where}: product_spotlight must use source "featured" with product_id null (ids are assigned at install).`,
+          );
+        }
         const style = buildSectionStyle(section.style, String(section.type));
         return [
           {
@@ -839,6 +849,12 @@ export function prepareDraft(
   links.forEach((link, i) => {
     if (isRec(link)) checkLink(text(link.href), `menus link ${i + 1}`, issues);
   });
+  // v32: the announcement bar's link, held to the same rule as a menu link;
+  // its text is bounded by the renderer's normaliser at assembly.
+  if (isRec(draftInput.announcement)) {
+    const href = text(draftInput.announcement.href);
+    if (href) checkLink(href, "announcement.href", issues);
+  }
 
   return {
     parts: { draft: draftInput, design, pages, catalogue, productSlots },
@@ -950,6 +966,22 @@ export function assemblePackage(
       pages: withSeoDescriptions(pages, text(draft.description), facts.name),
       menus,
       sampleData: catalogue,
+      // v32 (plan Phase 2e): the page templates the draft wrote, completed
+      // and bounded by the renderer's own normaliser so the contract's strict
+      // report has nothing to object to. A pre-v32 draft carries none, and
+      // the storefront then composes the pages its layout implies.
+      ...(isRec(draft.templates)
+        ? {
+            templates: normalizeTemplates(
+              draft.templates,
+              defaultTemplates(design?.layout),
+            ),
+          }
+        : {}),
+      // v32: the announcement bar, or nothing when the draft wrote text "".
+      ...(normalizeAnnouncement(draft.announcement)
+        ? { announcement: normalizeAnnouncement(draft.announcement) }
+        : {}),
     },
   };
 
@@ -992,7 +1024,7 @@ export function contentFloorIssues(pkg: ThemePackageV2): string[] {
     ...validateThemeHomepage(theme),
     ...validateThemeSampleData(theme),
     ...validateThemeLinks(theme),
-    ...validateThemeDesign(theme),
+    ...validateStudioDesign(theme),
     ...validateThemeCopy(theme),
   ].map((finding) => finding.message);
 }

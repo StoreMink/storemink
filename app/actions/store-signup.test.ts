@@ -24,6 +24,26 @@ vi.mock("@/lib/themes/runtime-registry", async () => {
   const { THEME_META } = await import("@/lib/themes/meta");
   return { getThemeCatalog: vi.fn(async () => [...THEME_META]) };
 });
+const firebaseAuth = vi.hoisted(() => ({
+  getUserByEmail: null as any,
+  // The account record behind a session; null means unreadable.
+  getUser: null as any,
+}));
+vi.mock("@/lib/auth/firebase-admin", () => ({
+  getFirebaseAdminAuth: vi.fn(() => firebaseAuth),
+}));
+vi.mock("@/lib/auth/firebase-users", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/firebase-users")>()),
+  deleteAuthUser: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/auth/identity-usage", () => ({
+  authIdsInUse: vi.fn(async () => new Set<string>()),
+}));
+vi.mock("@/lib/rate-limit", () => ({
+  rateLimit: vi.fn(async () => ({ allowed: true })),
+  clientIp: vi.fn(() => "203.0.113.7"),
+}));
+vi.mock("next/headers", () => ({ headers: vi.fn(async () => new Headers()) }));
 
 import { updateTag } from "next/cache";
 import { isUniqueViolation } from "@/lib/db/errors";
@@ -33,10 +53,15 @@ import { recordSignupConsent } from "@/lib/legal/store";
 import { applyTheme } from "@/lib/themes/apply";
 import { DEFAULT_THEME_ID } from "@/lib/themes/meta";
 import { admins, storeBillingSettings, stores } from "@/drizzle/schema";
+import { getFirebaseAdminAuth } from "@/lib/auth/firebase-admin";
+import { deleteAuthUser } from "@/lib/auth/firebase-users";
+import { authIdsInUse } from "@/lib/auth/identity-usage";
+import { rateLimit } from "@/lib/rate-limit";
 import {
   checkStoreSlugAvailability,
   createStore,
   getSignupResumeInfo,
+  reclaimUnusedSignupEmail,
 } from "./store-signup";
 
 const USER = {
@@ -134,10 +159,27 @@ describe("getSignupResumeInfo", () => {
     expect(await getSignupResumeInfo()).toEqual({
       authenticated: false,
       hasStore: false,
-      phoneConfirmed: false,
       emailConfirmed: false,
     });
     expect(dbHolder.current.calls.select).toHaveLength(0);
+  });
+
+  it("★ resumes at the store step when the account was verified after the session was minted", async () => {
+    vi.mocked(getServerUser).mockResolvedValue({
+      ...USER,
+      emailConfirmed: false,
+    });
+    firebaseAuth.getUser = vi.fn(async () => ({ emailVerified: true }));
+    try {
+      dbHolder.current = makeDbMock({ selectQueue: [[]] });
+      expect(await getSignupResumeInfo()).toMatchObject({
+        authenticated: true,
+        emailConfirmed: true,
+      });
+      expect(firebaseAuth.getUser).toHaveBeenCalledWith(USER.id);
+    } finally {
+      firebaseAuth.getUser = null;
+    }
   });
 
   it("resumes a verified account without a store", async () => {
@@ -145,7 +187,6 @@ describe("getSignupResumeInfo", () => {
     expect(await getSignupResumeInfo()).toMatchObject({
       authenticated: true,
       hasStore: false,
-      phoneConfirmed: true,
       emailConfirmed: true,
       email: "owner@example.com",
     });
@@ -165,6 +206,29 @@ describe("getSignupResumeInfo", () => {
       firstName: "Asha",
       lastName: "Devi Shah",
     });
+  });
+
+  it("says whether an existing store's owner has a verified mobile", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [{ store_id: "store-1", phone_verified_at: "2026-10-10T08:00:00Z" }],
+        [{ slug: "acme" }],
+      ],
+    });
+    expect(await getSignupResumeInfo()).toMatchObject({
+      hasStore: true,
+      phoneVerified: true,
+    });
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [{ store_id: "store-1", phone_verified_at: null }],
+        [{ slug: "acme" }],
+      ],
+    });
+    expect((await getSignupResumeInfo()).phoneVerified).toBe(false);
+    // No store, no claim either way.
+    dbHolder.current = makeDbMock({ selectQueue: [[]] });
+    expect(await getSignupResumeInfo()).not.toHaveProperty("phoneVerified");
   });
 
   it("prefers provider given and family names", async () => {
@@ -190,7 +254,6 @@ describe("getSignupResumeInfo", () => {
     expect(await getSignupResumeInfo()).toMatchObject({
       authenticated: true,
       hasStore: false,
-      phoneConfirmed: true,
       emailConfirmed: true,
     });
   });
@@ -204,7 +267,7 @@ describe("createStore gates", () => {
     expect(getServerUser).not.toHaveBeenCalled();
   });
 
-  it("requires an authenticated, email-confirmed and phone-confirmed owner", async () => {
+  it("requires an authenticated, email-confirmed owner", async () => {
     vi.mocked(getServerUser).mockResolvedValue(null);
     expect((await createStore(INPUT)).error).toMatch(/sign in/i);
 
@@ -213,13 +276,37 @@ describe("createStore gates", () => {
       emailConfirmed: false,
     });
     expect((await createStore(INPUT)).error).toMatch(/verify your email/i);
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+  });
 
+  it("★ trusts the account record when the session still says unverified", async () => {
     vi.mocked(getServerUser).mockResolvedValue({
       ...USER,
+      emailConfirmed: false,
+    });
+    firebaseAuth.getUser = vi.fn(async () => ({ emailVerified: true }));
+    try {
+      const result = await createStore(INPUT);
+      expect(result.error).toBeUndefined();
+      expect(result.storeId).toBeTruthy();
+    } finally {
+      firebaseAuth.getUser = null;
+    }
+  });
+
+  it("★ creates the store without a phone; the go-live checklist asks for it", async () => {
+    vi.mocked(getServerUser).mockResolvedValue({
+      ...USER,
+      phone: null,
       phoneConfirmed: false,
     });
-    expect((await createStore(INPUT)).error).toMatch(/verify your phone/i);
-    expect(dbHolder.current.calls.insert).toHaveLength(0);
+    const result = await createStore(INPUT);
+    expect(result.error).toBeUndefined();
+    expect(dbHolder.current.calls.insert[1]).toBe(admins);
+    expect(dbHolder.current.calls.values[1]).toMatchObject({
+      phone: null,
+      phoneVerifiedAt: null,
+    });
   });
 
   it("re-checks slug ownership and one-store-per-owner on the server", async () => {
@@ -245,7 +332,11 @@ describe("createStore gates", () => {
       firstName: "Asha",
       country: "in",
     });
-    expect(result).toEqual({ slug: "acme-foods", storeId: "store-1" });
+    expect(result).toEqual({
+      slug: "acme-foods",
+      storeId: "store-1",
+      phoneVerified: true,
+    });
     expect(dbHolder.current.calls.values[0].settings.business).toEqual({
       country: "IN",
     });
@@ -257,6 +348,29 @@ describe("createStore gates", () => {
       contactEmail: "owner@example.com",
       contactPhone: "+919876543210",
     });
+  });
+
+  it("★ opens on the default theme when signup names none (themes live in the dashboard)", async () => {
+    const result = await createStore({ name: "Acme Foods", firstName: "Asha" });
+    expect(result.error).toBeUndefined();
+    expect(applyTheme).toHaveBeenCalledWith(
+      "store-1",
+      DEFAULT_THEME_ID,
+      expect.objectContaining({ publish: true }),
+    );
+    expect(dbHolder.current.calls.values[0].settings.template).toBe(
+      DEFAULT_THEME_ID,
+    );
+  });
+
+  it("reports whether the owner's mobile is verified, for a paid plan at signup", async () => {
+    expect((await createStore(INPUT)).phoneVerified).toBe(true);
+    vi.mocked(getServerUser).mockResolvedValue({ ...USER, phone: null });
+    dbHolder.current = makeDbMock({
+      selectQueue: [[], []],
+      returning: [{ id: "store-1", slug: "acme-foods" }],
+    });
+    expect((await createStore(INPUT)).phoneVerified).toBe(false);
   });
 
   it("falls back to the platform's home country for a missing or unknown code", async () => {
@@ -279,7 +393,11 @@ describe("createStore provisioning", () => {
   it("writes a non-indexable free store with normalized business location", async () => {
     const result = await createStore(INPUT);
 
-    expect(result).toEqual({ slug: "acme-foods", storeId: "store-1" });
+    expect(result).toEqual({
+      slug: "acme-foods",
+      storeId: "store-1",
+      phoneVerified: true,
+    });
     expect(dbHolder.current.calls.insert[0]).toBe(stores);
     expect(dbHolder.current.calls.values[0]).toEqual({
       slug: "acme-foods",
@@ -350,7 +468,7 @@ describe("createStore provisioning", () => {
     });
   });
 
-  it("★★ records the OTP-verified phone on the owner row, not only the invoice profile", async () => {
+  it("★★ records a login's verified phone on the owner row, not only the invoice profile", async () => {
     // `admins.phone` is where `resolveBillingEmail` — and therefore
     // `startEnrolment` — looks for a billing contact. Writing it to
     // store_billing_settings alone left every wizard-created store unable to
@@ -359,6 +477,9 @@ describe("createStore provisioning", () => {
     expect(dbHolder.current.calls.values[1]).toMatchObject({
       phone: "+919876543210",
     });
+    // A number already on the login is Firebase-verified, so it is recorded
+    // as verified and the checklist does not ask for it again.
+    expect(dbHolder.current.calls.values[1].phoneVerifiedAt).toBeTruthy();
   });
 
   it("falls back to the email local-part when the owner name is blank", async () => {
@@ -420,6 +541,7 @@ describe("createStore provisioning", () => {
     expect(await createStore(INPUT)).toEqual({
       slug: "acme-foods",
       storeId: "store-1",
+      phoneVerified: true,
     });
     expect(updateTag).toHaveBeenCalledWith("stores");
   });
@@ -457,5 +579,86 @@ describe("createStore provisioning", () => {
         payload: { slug: "acme-foods", template: DEFAULT_THEME_ID },
       }),
     );
+  });
+});
+
+describe("reclaimUnusedSignupEmail", () => {
+  const notFound = Object.assign(new Error("no user"), {
+    code: "auth/user-not-found",
+  });
+
+  beforeEach(() => {
+    firebaseAuth.getUserByEmail = vi.fn(async () => ({
+      uid: "orphan-uid",
+      email: "Iamvansh@Gmail.com",
+    }));
+    vi.mocked(getFirebaseAdminAuth).mockReturnValue(firebaseAuth as any);
+    vi.mocked(authIdsInUse).mockResolvedValue(new Set());
+    vi.mocked(rateLimit).mockResolvedValue({ allowed: true });
+  });
+
+  it("removes a login that holds no StoreMink role so the email signs up as new", async () => {
+    const res = await reclaimUnusedSignupEmail("  iamvansh@gmail.com ");
+
+    expect(res).toEqual({ reclaimed: true });
+    expect(firebaseAuth.getUserByEmail).toHaveBeenCalledWith(
+      "iamvansh@gmail.com",
+    );
+    // The role check sees the login's own email as well as the typed one, so
+    // a platform operator is recognised whichever spelling they signed up with.
+    expect(vi.mocked(authIdsInUse).mock.calls[0][0]).toEqual(
+      new Map([["orphan-uid", new Set(["iamvansh@gmail.com"])]]),
+    );
+    expect(deleteAuthUser).toHaveBeenCalledWith("orphan-uid");
+  });
+
+  it("never deletes a login that another store, a customer account or the console still uses", async () => {
+    vi.mocked(authIdsInUse).mockResolvedValue(new Set(["orphan-uid"]));
+
+    expect(await reclaimUnusedSignupEmail("iamvansh@gmail.com")).toEqual({
+      reclaimed: false,
+    });
+    expect(deleteAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the role check cannot answer", async () => {
+    vi.mocked(authIdsInUse).mockRejectedValue(new Error("db down"));
+
+    expect(await reclaimUnusedSignupEmail("iamvansh@gmail.com")).toEqual({
+      reclaimed: false,
+    });
+    expect(deleteAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("reports the email free when the login is already gone", async () => {
+    firebaseAuth.getUserByEmail = vi.fn(async () => {
+      throw notFound;
+    });
+
+    expect(await reclaimUnusedSignupEmail("iamvansh@gmail.com")).toEqual({
+      reclaimed: true,
+    });
+    expect(authIdsInUse).not.toHaveBeenCalled();
+    expect(deleteAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed email, a rate-limited caller and an unconfigured auth backend", async () => {
+    expect(await reclaimUnusedSignupEmail("not-an-email")).toEqual({
+      reclaimed: false,
+    });
+    expect(rateLimit).not.toHaveBeenCalled();
+
+    vi.mocked(rateLimit).mockResolvedValueOnce({ allowed: false });
+    expect(await reclaimUnusedSignupEmail("iamvansh@gmail.com")).toEqual({
+      reclaimed: false,
+    });
+
+    vi.mocked(getFirebaseAdminAuth).mockReturnValueOnce(null);
+    expect(await reclaimUnusedSignupEmail("iamvansh@gmail.com")).toEqual({
+      reclaimed: false,
+    });
+
+    expect(firebaseAuth.getUserByEmail).not.toHaveBeenCalled();
+    expect(deleteAuthUser).not.toHaveBeenCalled();
   });
 });

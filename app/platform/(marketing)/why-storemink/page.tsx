@@ -162,8 +162,8 @@ export default function WhyStoreMinkPage() {
             linkText: "See plans",
           },
           {
-            title: "Free plan forever",
-            body: "A real storefront on your own subdomain, the full dashboard, GST invoicing and cash on delivery, with no card needed.",
+            title: "Free to start",
+            body: "A real storefront on your own subdomain, the full dashboard, GST invoicing and cash on delivery. No card needed, and you upgrade when you need more.",
             href: "/signup",
             linkText: "Create your store",
           },

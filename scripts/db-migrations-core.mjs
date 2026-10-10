@@ -350,6 +350,24 @@ export function classifyDrift(expected, actual) {
   };
 }
 
+/**
+ * ★ A LOCAL DATABASE IS SHARED BY EVERY BRANCH ITS DEVELOPER WORKS ON.
+ *
+ * Applying one branch's migrations leaves ledger rows that another branch's
+ * manifest has never heard of, and the runner then refuses that other branch
+ * outright: "Ledger contains unknown migrations". In staging and production
+ * that refusal is the point, since an unknown row means the deployed code is
+ * older than the database. Locally it only means "you also work on another
+ * branch", so this lets a developer say so, out loud and for one database:
+ * `--allow-unknown local`. Pending migrations still apply in manifest order,
+ * and checksum drift and out-of-order rows still refuse.
+ */
+export function toleratesUnknownMigrations(options) {
+  return (
+    options.environment === "local" && options["allow-unknown"] === "local"
+  );
+}
+
 export function parseCli(argv) {
   const [command, ...rest] = argv;
   if (
@@ -369,15 +387,21 @@ export function parseCli(argv) {
     );
   }
   const allowedFlags = {
-    status: new Set(["environment", "manifest"]),
+    status: new Set(["environment", "manifest", "allow-unknown"]),
     baseline: new Set([
       "environment",
       "manifest",
       "commit",
       "confirm-production",
     ]),
-    apply: new Set(["environment", "manifest", "commit", "confirm-production"]),
-    verify: new Set(["environment", "manifest"]),
+    apply: new Set([
+      "environment",
+      "manifest",
+      "commit",
+      "confirm-production",
+      "allow-unknown",
+    ]),
+    verify: new Set(["environment", "manifest", "allow-unknown"]),
     audit: new Set(["environment", "through"]),
     drift: new Set(["environment", "manifest", "update-baseline"]),
     adopt: new Set([
@@ -421,6 +445,17 @@ export function parseCli(argv) {
     // takes the same shape of confirmation the adopt guards use.
     throw new Error(
       "drift --update-baseline must name the environment, e.g. --update-baseline staging",
+    );
+  }
+  if (
+    options["allow-unknown"] !== undefined &&
+    !toleratesUnknownMigrations(options)
+  ) {
+    // Only a developer's own database is shared between branches. Anywhere
+    // else an unknown ledger row means the code is older than the database,
+    // which is exactly what the refusal exists to catch.
+    throw new Error(
+      "--allow-unknown is only for a local database and must name it: --allow-unknown local",
     );
   }
   if (command === "adopt") {
