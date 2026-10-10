@@ -22,6 +22,12 @@ import {
   firebaseAuthErrorMessage,
   getSecondaryFirebaseAuth,
 } from "@/lib/auth/firebase-client";
+import {
+  checkPhoneSend,
+  phoneSendErrorMessage,
+  recordPhoneSend,
+  recordPhoneSendFailure,
+} from "@/lib/auth/phone-send-guard";
 import { freshInvisibleVerifier } from "@/lib/auth/recaptcha";
 import { LOCAL_DEV_ROOT } from "@/lib/store/host";
 import { useOtpThrottle } from "@/lib/use-otp-throttle";
@@ -77,6 +83,10 @@ export interface PhoneVerificationRefs {
  * the server (`confirmVerifiedPhone`) checks the resulting proof and records
  * the number, and the admin's own session is never touched. The POS counter
  * verifies customers the same way (app/pos/customer-phone-verification.tsx).
+ *
+ * ★ Every send is checked against `lib/auth/phone-send-guard.ts` first, so
+ * Change number, a remount or a repeated tap cannot drive the number into
+ * Firebase's undisclosed "too many requests" block.
  */
 export function usePhoneVerification(
   onVerified: (phone: string) => void,
@@ -95,6 +105,11 @@ export function usePhoneVerification(
   const { recaptcha: recaptchaRef, codeInput: codeInputRef } = refs;
   const verifier = useRef<RecaptchaVerifier | null>(null);
   const confirmation = useRef<ConfirmationResult | null>(null);
+  /** The number `confirmation` was texted to: a live code is only resumed for it. */
+  const confirmationPhone = useRef<string | null>(null);
+  // ★ Synchronous, unlike `sending`: Enter, key-repeat and a double tap all
+  // reach sendCode before React re-renders a disabled button.
+  const sendInFlight = useRef(false);
   const proof = useRef<string | null>(null);
   const temporaryUser = useRef<User | null>(null);
   const createdAuthUser = useRef(false);
@@ -159,6 +174,16 @@ export function usePhoneVerification(
   }
 
   async function sendCode(resend = false) {
+    if (sendInFlight.current) return;
+    sendInFlight.current = true;
+    try {
+      await sendCodeNow(resend);
+    } finally {
+      sendInFlight.current = false;
+    }
+  }
+
+  async function sendCodeNow(resend: boolean) {
     if (!phone || !isValidPhoneNumber(phone)) {
       setError("Enter a valid mobile number, including the country code.");
       return;
@@ -167,24 +192,54 @@ export function usePhoneVerification(
       setError("Too many codes requested. Please try again later.");
       return;
     }
+    const number = phone;
+    // ★ Before the reCAPTCHA verifier and Firebase: a refused tap must not
+    // reach Firebase, where it extends the block (lib/auth/phone-send-guard.ts).
+    const check = checkPhoneSend(number);
+    if (!check.ok) {
+      if (
+        check.reason === "cooldown" &&
+        confirmation.current &&
+        confirmationPhone.current &&
+        sameNumber(confirmationPhone.current, number)
+      ) {
+        // The code already on their phone still works: back to it, no send.
+        setError("");
+        setStep("code");
+        setResendIn(
+          Math.max(1, Math.ceil((check.retryAt - Date.now()) / 1000)),
+        );
+        setTimeout(() => codeInputRef.current?.focus(), 50);
+        return;
+      }
+      setError(check.message);
+      return;
+    }
     setSending(true);
     setError("");
     try {
       await clearTemporarySession();
-      confirmation.current = await signInWithPhoneNumber(
+      const result = await signInWithPhoneNumber(
         getSecondaryFirebaseAuth(),
-        phone,
+        number,
         getVerifier(),
       );
+      recordPhoneSend(number);
+      confirmation.current = result;
+      confirmationPhone.current = number;
+      // A fresh code starts a clean wrong-code tally. Done here rather than
+      // in changeNumber, so returning to a live code keeps its tally.
       if (resend) throttle.registerResend();
+      else throttle.reset();
       setCode("");
       setStep("code");
       setResendIn(RESEND_SECONDS);
       setTimeout(() => codeInputRef.current?.focus(), 50);
     } catch (err) {
       console.warn("Mobile code not sent:", firebaseAuthErrorCode(err));
+      recordPhoneSendFailure(number, err);
       setError(
-        firebaseAuthErrorMessage(err) ||
+        phoneSendErrorMessage(number, err) ||
           "Couldn't send the code. Please try again.",
       );
     } finally {
@@ -210,6 +265,9 @@ export function usePhoneVerification(
             ? credential.user
             : null;
           proof.current = await credential.user.getIdToken();
+          // A confirmed code is spent: never resume the code step for it.
+          confirmation.current = null;
+          confirmationPhone.current = null;
         } catch (err) {
           throttle.registerFailedVerify();
           setError(
@@ -259,8 +317,9 @@ export function usePhoneVerification(
 
   function changeNumber() {
     void clearTemporarySession();
-    confirmation.current = null;
-    throttle.reset();
+    // ★ The live confirmation (and its number) is kept: going back to the
+    // same number inside the send cooldown resumes the code step rather than
+    // texting again. A successful send to another number replaces it.
     setStep("number");
     setCode("");
     setError("");
@@ -286,4 +345,8 @@ export function usePhoneVerification(
     retrySave: () => void verify(code),
     changeNumber,
   };
+}
+
+function sameNumber(a: string, b: string): boolean {
+  return a.replace(/[^\d+]/g, "") === b.replace(/[^\d+]/g, "");
 }

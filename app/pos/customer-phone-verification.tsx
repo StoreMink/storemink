@@ -18,12 +18,31 @@ import {
   firebaseAuthErrorMessage,
   getSecondaryFirebaseAuth,
 } from "@/lib/auth/firebase-client";
+import {
+  checkPhoneSend,
+  PHONE_SEND_COOLDOWN_MS,
+  phoneSendErrorMessage,
+  recordPhoneSend,
+  recordPhoneSendFailure,
+} from "@/lib/auth/phone-send-guard";
 import { freshInvisibleVerifier } from "@/lib/auth/recaptcha";
 import type { PosCustomerVerificationPurpose } from "@/lib/pos/customer-verification";
 import { useOtpThrottle } from "@/lib/use-otp-throttle";
+import {
+  forgetPendingCode,
+  pendingCodeKey,
+  rememberPendingCode,
+  resumablePendingCode,
+  trackSend,
+  waitForEarlierSend,
+} from "./pending-customer-codes";
 
 const OTP_LENGTH = 6;
 const RESEND_SECONDS = 30;
+
+function formatWait(seconds: number): string {
+  return seconds >= 60 ? `${Math.ceil(seconds / 60)} min` : `${seconds}s`;
+}
 
 export function CustomerPhoneVerification({
   orderId,
@@ -56,23 +75,38 @@ export function CustomerPhoneVerification({
   const [sending, setSending] = useState(true);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState("");
-  const [resendIn, setResendIn] = useState(0);
+  // ★ Sends are held until a wall-clock time, not by a ticking counter: after
+  // Firebase says "too many" the wait is half an hour, and every tap during it
+  // would still spend one of the server's five codes per order per 15 minutes.
+  const [sendAllowedAt, setSendAllowedAt] = useState(0);
+  const [now, setNow] = useState(0);
   const started = useRef(false);
   const recaptchaNode = useRef<HTMLDivElement | null>(null);
   const verifier = useRef<RecaptchaVerifier | null>(null);
   const confirmation = useRef<ConfirmationResult | null>(null);
+  // ★ Set synchronously before the first await: a disabled button only stops a
+  // second send once React has re-rendered, and a double tap can beat that.
+  const sendInFlight = useRef(false);
   const token = useRef<string | null>(null);
   const temporaryUser = useRef<User | null>(null);
   const createdAuthUser = useRef(false);
   const otpInput = useRef<HTMLInputElement | null>(null);
   const { verifyBlocked, resendBlocked, registerFailedVerify, registerResend } =
     useOtpThrottle();
+  const codeKey = pendingCodeKey(orderId, purpose);
+  const waitSeconds =
+    sendAllowedAt > now ? Math.ceil((sendAllowedAt - now) / 1000) : 0;
 
   useEffect(() => {
-    if (resendIn <= 0) return;
-    const timer = setInterval(() => setResendIn((n) => n - 1), 1000);
+    if (sendAllowedAt <= now) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [resendIn]);
+  }, [sendAllowedAt, now]);
+
+  const holdSendsUntil = useCallback((at: number) => {
+    setSendAllowedAt(at);
+    setNow(Date.now());
+  }, []);
 
   useEffect(
     () => () => {
@@ -110,14 +144,23 @@ export function CustomerPhoneVerification({
 
   const sendCode = useCallback(
     async (resend = false) => {
+      if (sendInFlight.current) return;
       if (resend && resendBlocked) {
         setError("Too many code requests. Please try again later.");
         return;
       }
+      sendInFlight.current = true;
       setSending(true);
       setError("");
+      // The number Firebase was actually asked to text; null until then, so a
+      // failure before that point is never recorded against the guard.
+      let sentTo: string | null = null;
+      let releaseSend: (() => void) | null = null;
       try {
-        if (resend) await clearTemporarySession();
+        // ★ A copy of this dialog closed while its send was still in the air
+        // may be about to record it. Without waiting, the guard below has not
+        // seen that send yet and the customer is texted twice.
+        await waitForEarlierSend(codeKey);
         // Re-authorize and rate-limit EVERY send, including resends. Caching the
         // phone in the browser must not become a way around the server limit or
         // keep sending to an order number that changed in the meantime.
@@ -138,30 +181,85 @@ export function CustomerPhoneVerification({
           return;
         }
         const target = begun.phone ?? "";
+        // ★ Checked only now, because the server owns the number. Refusing here
+        // keeps a till from driving one customer's number into Firebase's
+        // block; other customers' numbers are keyed separately.
+        const check = checkPhoneSend(target);
+        if (!check.ok) {
+          // Kept outside the dialog, so this also finds a code sent before
+          // the dialog was closed and reopened.
+          const live =
+            check.reason === "cooldown"
+              ? resumablePendingCode(
+                  codeKey,
+                  target,
+                  check.retryAt - PHONE_SEND_COOLDOWN_MS,
+                )
+              : undefined;
+          if (live) {
+            // The code already on their phone still confirms: stay on it.
+            confirmation.current = live.confirmation;
+            setMaskedPhone(begun.maskedPhone ?? live.maskedPhone);
+            holdSendsUntil(check.retryAt);
+            setTimeout(() => otpInput.current?.focus(), 50);
+            return;
+          }
+          setError(check.message);
+          // Until the guard would allow it, another tap could only spend one
+          // of the server's codes for this order on a guaranteed refusal.
+          holdSendsUntil(check.retryAt);
+          return;
+        }
+        // Torn down only once a new code will really be sent, so a refused
+        // resend leaves the in-progress verification usable.
+        if (resend) await clearTemporarySession();
         token.current = null;
-        confirmation.current = await signInWithPhoneNumber(
+        sentTo = target;
+        releaseSend = trackSend(codeKey);
+        const sent = await signInWithPhoneNumber(
           getSecondaryFirebaseAuth(),
           target,
           getVerifier(),
         );
-        setMaskedPhone(begun.maskedPhone ?? "");
+        recordPhoneSend(target);
+        confirmation.current = sent;
+        const maskedTarget = begun.maskedPhone ?? "";
+        rememberPendingCode(codeKey, {
+          phone: target,
+          maskedPhone: maskedTarget,
+          confirmation: sent,
+          sentAt: Date.now(),
+        });
+        setMaskedPhone(maskedTarget);
         if (resend) registerResend();
         setOtp("");
-        setResendIn(RESEND_SECONDS);
+        holdSendsUntil(Date.now() + RESEND_SECONDS * 1000);
         setTimeout(() => otpInput.current?.focus(), 50);
       } catch (err) {
         console.warn("Customer code not sent:", firebaseAuthErrorCode(err));
+        if (sentTo) {
+          recordPhoneSendFailure(sentTo, err);
+          const after = checkPhoneSend(sentTo);
+          if (!after.ok) holdSendsUntil(after.retryAt);
+        }
         setError(
-          firebaseAuthErrorMessage(err) ||
+          (sentTo
+            ? phoneSendErrorMessage(sentTo, err)
+            : firebaseAuthErrorMessage(err)) ||
             "Couldn't send the code. Please try again.",
         );
       } finally {
+        // After the guard has heard how it ended, never before.
+        releaseSend?.();
+        sendInFlight.current = false;
         setSending(false);
       }
     },
     [
       clearTemporarySession,
+      codeKey,
       getVerifier,
+      holdSendsUntil,
       onVerified,
       orderId,
       purpose,
@@ -187,7 +285,10 @@ export function CustomerPhoneVerification({
       setError("");
       try {
         if (!token.current) {
-          const credential = await confirmation.current!.confirm(code);
+          const used = confirmation.current!;
+          const credential = await used.confirm(code);
+          // A code confirms once; a reopened dialog must not resume it.
+          forgetPendingCode(codeKey, used);
           createdAuthUser.current =
             getAdditionalUserInfo(credential)?.isNewUser === true;
           temporaryUser.current = createdAuthUser.current
@@ -223,6 +324,7 @@ export function CustomerPhoneVerification({
     },
     [
       clearTemporarySession,
+      codeKey,
       onVerified,
       orderId,
       purpose,
@@ -355,24 +457,29 @@ export function CustomerPhoneVerification({
             )}
             <button
               type="button"
-              disabled={sending || verifying || resendIn > 0 || resendBlocked}
+              disabled={
+                sending || verifying || waitSeconds > 0 || resendBlocked
+              }
               onClick={() => void sendCode(true)}
               className="mt-4 w-full rounded-xl bg-[var(--pos-surface-2)] py-2.5 text-sm font-medium hover:bg-[var(--pos-surface-3)] disabled:opacity-40"
             >
               {sending
                 ? "Sending…"
-                : resendIn > 0
-                  ? `Resend in ${resendIn}s`
+                : waitSeconds > 0
+                  ? `Resend in ${formatWait(waitSeconds)}`
                   : "Resend code"}
             </button>
           </>
         ) : (
           <button
             type="button"
+            disabled={sending || waitSeconds > 0}
             onClick={() => void sendCode()}
-            className="mt-5 w-full rounded-xl bg-[var(--pos-accent)] py-2.5 text-sm font-semibold text-[var(--pos-on-accent)] hover:opacity-90"
+            className="mt-5 w-full rounded-xl bg-[var(--pos-accent)] py-2.5 text-sm font-semibold text-[var(--pos-on-accent)] hover:opacity-90 disabled:opacity-40"
           >
-            Try sending again
+            {waitSeconds > 0
+              ? `Try again in ${formatWait(waitSeconds)}`
+              : "Try sending again"}
           </button>
         )}
 
