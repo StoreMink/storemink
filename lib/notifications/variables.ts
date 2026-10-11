@@ -279,6 +279,12 @@ const EVENT_VARIABLES: Partial<Record<EventKey, TemplateVariable[]>> = {
   ],
   "order.payment_received": [
     { name: "total", description: "Amount captured.", sample: "₹1,240.00" },
+    {
+      name: "refund_due",
+      description:
+        "Owed back when the payment arrived after the order was cancelled. Absent otherwise.",
+      sample: "₹1,240.00",
+    },
   ],
   "order.payment_failed": [
     {

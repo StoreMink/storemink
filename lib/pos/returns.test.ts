@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { computeTax } from "@/lib/billing/tax";
 import {
   fullReturnRequest,
+  isReturnAttemptKey,
   refundBreakdown,
   remainingQty,
+  returnAttemptFingerprint,
   type ReturnableLine,
 } from "./returns";
 
@@ -415,5 +418,255 @@ describe("refundBreakdown — offer discounts", () => {
       request: [{ id: "l", quantity: 1 }],
     });
     expect(withField).toEqual(without);
+  });
+});
+
+// ★★ A TAX-INCLUSIVE ORDER CARRIES ITS TAX INSIDE THE LINE.
+//
+// `computeTax` with `pricesIncludeTax` carves the tax OUT of the discounted
+// gross and leaves the total untouched, so `order_items.total` already holds
+// the tax. Refunding `total + tax_amount` on such an order handed the tax back
+// twice: a ₹1,180 item at 18% inclusive came back as ₹1,360. These tests derive
+// every tax figure from `computeTax` itself, so they prove the refund is the
+// exact inverse of what the sale charged rather than of a hand-typed number.
+describe("★★ refundBreakdown — tax-inclusive orders", () => {
+  it("★★ refunds what was paid, not paid + the tax inside it", () => {
+    // ₹1,180 at 18% inclusive: ₹1,000 of goods + ₹180 of tax, ₹1,180 paid.
+    const lines: ReturnableLine[] = [
+      { id: "a", quantity: 1, lineTotal: 1180, taxAmount: 180 },
+    ];
+    const inclusive = refundBreakdown({
+      lines,
+      taxInclusive: true,
+      request: [{ id: "a", quantity: 1 }],
+    });
+    expect(inclusive.total).toBe(1180);
+    expect(inclusive.tax).toBe(180);
+    expect(inclusive.amount).toBe(1000);
+    expect(inclusive.lines[0]).toEqual({
+      id: "a",
+      quantity: 1,
+      amount: 1000,
+      tax: 180,
+      total: 1180,
+    });
+  });
+
+  it("★ an EXCLUSIVE order is unchanged — the flag defaults to the old maths", () => {
+    // ₹1,000 listed + ₹180 tax on top: also ₹1,180 paid, reached the other way.
+    const lines: ReturnableLine[] = [
+      { id: "a", quantity: 1, lineTotal: 1000, taxAmount: 180 },
+    ];
+    const omitted = refundBreakdown({
+      lines,
+      request: [{ id: "a", quantity: 1 }],
+    });
+    const explicit = refundBreakdown({
+      lines,
+      taxInclusive: false,
+      request: [{ id: "a", quantity: 1 }],
+    });
+    expect(omitted).toEqual(explicit);
+    expect(omitted).toMatchObject({ amount: 1000, tax: 180, total: 1180 });
+  });
+
+  it("splits a partial quantity — one of two units is half the paid total", () => {
+    const lines: ReturnableLine[] = [
+      { id: "a", quantity: 2, lineTotal: 2360, taxAmount: 360 },
+    ];
+    const r = refundBreakdown({
+      lines,
+      taxInclusive: true,
+      request: [{ id: "a", quantity: 1 }],
+    });
+    expect(r).toMatchObject({ amount: 1000, tax: 180, total: 1180 });
+  });
+
+  it("★ undoes an ORDER discount exactly as computeTax applied it", () => {
+    // Two inclusive lines and a ₹177 order discount. computeTax allocates the
+    // discount proportionally and carves 18% out of each discounted gross.
+    const sale = computeTax({
+      lines: [
+        { amount: 1180, rate: 18 },
+        { amount: 590, rate: 18 },
+      ],
+      discount: 177,
+      pricesIncludeTax: true,
+    });
+    const lines: ReturnableLine[] = [
+      { id: "a", quantity: 1, lineTotal: 1180, taxAmount: sale.lines[0].tax },
+      { id: "b", quantity: 1, lineTotal: 590, taxAmount: sale.lines[1].tax },
+    ];
+
+    const lineA = refundBreakdown({
+      lines,
+      orderDiscount: 177,
+      taxInclusive: true,
+      request: [{ id: "a", quantity: 1 }],
+    });
+    // What the customer paid for line A, tax included — no more.
+    expect(lineA.total).toBe(sale.lines[0].discountedAmount);
+    expect(lineA.tax).toBe(sale.lines[0].tax);
+    expect(lineA.amount).toBe(sale.lines[0].taxableValue);
+
+    const everything = refundBreakdown({
+      lines,
+      orderDiscount: 177,
+      taxInclusive: true,
+      request: fullReturnRequest(lines),
+    });
+    // The whole order back is exactly what was charged: 1,770 − 177.
+    expect(everything.total).toBe(1593);
+    expect(everything.tax).toBe(sale.totalTax);
+  });
+
+  it("★ undoes an OFFER share on its own line, tax included", () => {
+    // ₹118 off line A by an offer: ₹1,062 paid, ₹162 of it tax.
+    const sale = computeTax({
+      lines: [
+        { amount: 1180, rate: 18, discount: 118 },
+        { amount: 590, rate: 18 },
+      ],
+      pricesIncludeTax: true,
+    });
+    const lines: ReturnableLine[] = [
+      {
+        id: "a",
+        quantity: 1,
+        lineTotal: 1180,
+        taxAmount: sale.lines[0].tax,
+        offerDiscount: 118,
+      },
+      { id: "b", quantity: 1, lineTotal: 590, taxAmount: sale.lines[1].tax },
+    ];
+    const r = refundBreakdown({
+      lines,
+      taxInclusive: true,
+      request: [{ id: "a", quantity: 1 }],
+    });
+    expect(r).toMatchObject({ total: 1062, tax: 162, amount: 900 });
+    // The untouched line comes back whole.
+    const b = refundBreakdown({
+      lines,
+      taxInclusive: true,
+      request: [{ id: "b", quantity: 1 }],
+    });
+    expect(b).toMatchObject({ total: 590, tax: 90, amount: 500 });
+  });
+
+  it("★ composes an offer share, an order discount and a partial quantity", () => {
+    const sale = computeTax({
+      lines: [
+        { amount: 2360, rate: 18, discount: 236 },
+        { amount: 1180, rate: 18 },
+      ],
+      discount: 330,
+      pricesIncludeTax: true,
+    });
+    const lines: ReturnableLine[] = [
+      {
+        id: "a",
+        quantity: 2,
+        lineTotal: 2360,
+        taxAmount: sale.lines[0].tax,
+        offerDiscount: 236,
+      },
+      { id: "b", quantity: 1, lineTotal: 1180, taxAmount: sale.lines[1].tax },
+    ];
+    const one = refundBreakdown({
+      lines,
+      orderDiscount: 330,
+      taxInclusive: true,
+      request: [{ id: "a", quantity: 1 }],
+    });
+    // Half of line A's paid share, and the tax inside it — never more.
+    expect(one.total).toBeCloseTo(sale.lines[0].discountedAmount / 2, 2);
+    expect(one.tax).toBeCloseTo(sale.lines[0].tax / 2, 2);
+    expect(one.amount + one.tax).toBeCloseTo(one.total, 2);
+
+    const all = refundBreakdown({
+      lines,
+      orderDiscount: 330,
+      taxInclusive: true,
+      request: fullReturnRequest(lines),
+    });
+    expect(all.total).toBeCloseTo(3540 - 236 - 330, 2);
+  });
+
+  it("never reports negative goods when a legacy row's tax exceeds the line", () => {
+    const r = refundBreakdown({
+      lines: [{ id: "a", quantity: 1, lineTotal: 100, taxAmount: 500 }],
+      taxInclusive: true,
+      request: [{ id: "a", quantity: 1 }],
+    });
+    expect(r.amount).toBe(0);
+    expect(r.total).toBe(100);
+  });
+});
+
+describe("★ the till's retry key", () => {
+  it("accepts a UUID and the other shapes the server stores", () => {
+    expect(isReturnAttemptKey("3f2c9a1e-8b7d-4c6e-9f10-2a3b4c5d6e7f")).toBe(
+      true,
+    );
+    expect(isReturnAttemptKey("abcDEF_123-x")).toBe(true);
+  });
+
+  it("refuses anything else", () => {
+    expect(isReturnAttemptKey("short")).toBe(false);
+    expect(isReturnAttemptKey("x".repeat(101))).toBe(false);
+    expect(isReturnAttemptKey("has spaces in it")).toBe(false);
+    expect(isReturnAttemptKey("semi;colon;key")).toBe(false);
+    expect(isReturnAttemptKey(12345678901)).toBe(false);
+    expect(isReturnAttemptKey(null)).toBe(false);
+    expect(isReturnAttemptKey(undefined)).toBe(false);
+  });
+
+  const base = {
+    orderId: "o1",
+    lines: [
+      { orderItemId: "b", quantity: 1, condition: "sellable" },
+      { orderItemId: "a", quantity: 2, condition: "damaged" },
+    ],
+    method: "cash",
+    reason: "changed_mind",
+  };
+
+  it("★ the same request is the same attempt, however it was tapped in", () => {
+    const reordered = {
+      ...base,
+      lines: [
+        { orderItemId: "a", quantity: 2, condition: "damaged" },
+        { orderItemId: "c", quantity: 0 },
+        { orderItemId: "b", quantity: 1 },
+      ],
+    };
+    expect(returnAttemptFingerprint(reordered)).toBe(
+      returnAttemptFingerprint(base),
+    );
+  });
+
+  it("★ a changed selection is a NEW attempt", () => {
+    const fp = returnAttemptFingerprint(base);
+    expect(
+      returnAttemptFingerprint({
+        ...base,
+        lines: [{ orderItemId: "a", quantity: 1, condition: "damaged" }],
+      }),
+    ).not.toBe(fp);
+    expect(
+      returnAttemptFingerprint({
+        ...base,
+        lines: [
+          { orderItemId: "b", quantity: 1, condition: "damaged" },
+          { orderItemId: "a", quantity: 2, condition: "damaged" },
+        ],
+      }),
+    ).not.toBe(fp);
+    expect(returnAttemptFingerprint({ ...base, method: "card" })).not.toBe(fp);
+    expect(returnAttemptFingerprint({ ...base, reason: "damaged" })).not.toBe(
+      fp,
+    );
+    expect(returnAttemptFingerprint({ ...base, orderId: "o2" })).not.toBe(fp);
   });
 });

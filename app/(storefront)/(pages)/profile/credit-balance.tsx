@@ -22,6 +22,10 @@ const KIND_LABEL: Record<string, string> = {
   grant: "Added by the store",
   spend: "Spent on an order",
   expire: "Expired",
+  // Cashback had no label and showed as "Adjustment", and its reversal is
+  // new: a cancelled or refunded order takes back the cashback it earned.
+  cashback: "Cashback",
+  cashback_reversal: "Cashback taken back",
 };
 
 /** An unknown kind still renders — a blank row would look like a bug, and the

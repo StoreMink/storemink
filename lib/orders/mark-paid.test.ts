@@ -15,6 +15,10 @@ vi.mock("@/lib/observability/logger", () => ({
   logWarn: vi.fn(),
 }));
 vi.mock("@/lib/notifications/record", () => ({ emitEvent: vi.fn() }));
+vi.mock("@/lib/payments/refund-reconcile", () => ({
+  syncOrderRefundState: vi.fn(async () => undefined),
+  refundDueForOrder: vi.fn(async () => 120),
+}));
 
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
@@ -23,6 +27,7 @@ vi.mock("@/lib/db/client", () => ({
 
 import { markOrderPaid } from "./mark-paid";
 import { emitEvent } from "@/lib/notifications/record";
+import { syncOrderRefundState } from "@/lib/payments/refund-reconcile";
 
 const CLAIMED = {
   storeId: "store-1",
@@ -115,8 +120,40 @@ describe("markOrderPaid", () => {
     dbHolder.current.db.select = vi.fn(() => {
       throw new Error("db down");
     });
-    await expect(markOrderPaid("order-1", "pay_abc")).resolves.toBeUndefined();
+    await expect(markOrderPaid("order-1", "pay_abc")).resolves.toBe("paid");
     // The team still gets the ledger line — it needs no extra read.
     expect(eventsOfType("order.payment_received")).toHaveLength(1);
+  });
+});
+
+describe("markOrderPaid — a payment after the order expired", () => {
+  it("★★ records it on the still-cancelled order and tells the merchant what is owed", async () => {
+    // The pending claim matches nothing (the reaper cancelled the order); the
+    // late claim matches. The money must be recorded, never dropped.
+    dbHolder.current = makeDbMock({ returningQueue: [[], [CLAIMED]] });
+    await expect(markOrderPaid("order-1", "pay_late")).resolves.toBe("late");
+
+    const lateSet = dbHolder.current.calls.set[1];
+    expect(lateSet).toMatchObject({
+      paymentStatus: "paid",
+      razorpayPaymentId: "pay_late",
+    });
+    // The order stays cancelled: nothing sets its status back.
+    expect(lateSet).not.toHaveProperty("status");
+    expect(syncOrderRefundState).toHaveBeenCalledWith("order-1");
+
+    const [ev] = eventsOfType("order.payment_received")[0] as any[];
+    expect(ev.payload).toMatchObject({ late: true, refund_due: 120 });
+    // No order confirmation for an order that was never placed.
+    expect(eventsOfType("order.placed")).toHaveLength(0);
+  });
+
+  it("changes nothing when neither claim matches (a replay)", async () => {
+    dbHolder.current = makeDbMock({ returningQueue: [[], []] });
+    await expect(markOrderPaid("order-1", "pay_abc")).resolves.toBe(
+      "unchanged",
+    );
+    expect(emitEvent).not.toHaveBeenCalled();
+    expect(syncOrderRefundState).not.toHaveBeenCalled();
   });
 });

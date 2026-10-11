@@ -20,11 +20,23 @@ export interface StoreGateway {
   enabled: boolean;
 }
 
-/** The store's decrypted BYO Razorpay credentials, or null when not
- *  connected (or the stored secret fails to decrypt). */
-export async function getStoreGateway(
+/**
+ * The store's gateway, saying WHY there is none.
+ *
+ * ★ "Not connected" and "could not read it" are different facts, and the
+ * pending-payment reaper must not treat them alike: a merchant who
+ * disconnected Razorpay has nothing to check, but a database blip or a
+ * rotated decryption key says nothing about whether a shopper paid, and
+ * cancelling on it turned paid orders into cancelled ones.
+ */
+export type StoreGatewayLookup =
+  | { status: "connected"; gateway: StoreGateway }
+  | { status: "none" }
+  | { status: "error" };
+
+export async function lookupStoreGateway(
   storeId: string,
-): Promise<StoreGateway | null> {
+): Promise<StoreGatewayLookup> {
   let data:
     | { key_id: string; key_secret_enc: string; enabled: boolean }
     | undefined;
@@ -47,30 +59,40 @@ export async function getStoreGateway(
     );
     data = rows[0];
   } catch (err) {
-    // ★ Structured, not console.error. Both failures here silently revert a
-    // store to COD — the merchant sees online payments stop working with no
-    // error anywhere — so they are exactly what should reach Cloud Error
-    // Reporting. logError normalises a non-Error itself, so the raw value goes
-    // straight in.
     logError("payments.gateway_load", err, { storeId });
-    return null;
+    return { status: "error" };
   }
-  if (!data) return null;
+  if (!data) return { status: "none" };
   try {
     return {
-      creds: {
-        keyId: data.key_id,
-        keySecret: decryptSecret(data.key_secret_enc),
+      status: "connected",
+      gateway: {
+        creds: {
+          keyId: data.key_id,
+          keySecret: decryptSecret(data.key_secret_enc),
+        },
+        enabled: !!data.enabled,
       },
-      enabled: !!data.enabled,
     };
   } catch (err) {
-    // Wrong/rotated PAYMENT_CRED_KEY or corrupt row — treat as not connected
-    // rather than crashing checkout. This is the one an operator most needs
-    // alerting on: nothing else in the system will ever mention it.
     logError("payments.gateway_decrypt", err, { storeId });
-    return null;
+    return { status: "error" };
   }
+}
+
+/** The store's decrypted BYO Razorpay credentials, or null when not
+ *  connected (or the stored secret fails to decrypt).
+ *
+ * ★ Both failures here silently revert a store to COD — the merchant sees
+ * online payments stop working with no error anywhere — so lookupStoreGateway
+ * logs them as structured errors: exactly what should reach Cloud Error
+ * Reporting. A wrong or rotated PAYMENT_CRED_KEY is the one an operator most
+ * needs alerting on: nothing else in the system will ever mention it. */
+export async function getStoreGateway(
+  storeId: string,
+): Promise<StoreGateway | null> {
+  const found = await lookupStoreGateway(storeId);
+  return found.status === "connected" ? found.gateway : null;
 }
 
 /**

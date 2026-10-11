@@ -12,15 +12,17 @@ import "server-only";
 // ★ A balance is money. Treat a bug here the way you'd treat a bug in
 // refunds — it is the same thing pointed the other way.
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, or, sql } from "drizzle-orm";
 import { withService, type Db } from "@/lib/db/client";
 import {
   customerCreditBalances,
   customerCreditLedger,
   orderRefunds,
+  orders,
 } from "@/drizzle/schema";
+import { isSchemaNotReady } from "@/lib/db/errors";
 import { logError } from "@/lib/observability/logger";
-import { toPaise, toRupees } from "@/lib/payments/refunds";
+import { orderMoneyTaken, toPaise, toRupees } from "@/lib/payments/refunds";
 
 export type CreditKind =
   | "refund"
@@ -33,7 +35,11 @@ export type CreditKind =
   // overstates what the store gave away — cashback earned by a promotion is a
   // third thing again, and a merchant reviewing what their offers cost must be
   // able to see it apart from what they handed out by hand.
-  | "cashback";
+  | "cashback"
+  // Cashback taken back because its order was cancelled or refunded (0185).
+  // Never a `spend`: a spend is keyed on the order id, and a reversal under
+  // the same (kind, ref) would collide with the order's real spend.
+  | "cashback_reversal";
 
 export interface CreditLedgerRow {
   id: string;
@@ -129,15 +135,26 @@ export async function getCreditBalances(
  * whenever there is a thing being credited FOR — omit it only for a bare
  * goodwill grant, which by definition has nothing to deduplicate against.
  */
-export async function issueCredit(input: {
-  storeId: string;
-  customerId: string;
-  amount: number;
-  kind: Exclude<CreditKind, "spend">;
-  ref?: string | null;
-  note?: string | null;
-  actor?: string | null;
-}): Promise<{ ok: boolean; alreadyIssued?: boolean; error?: string }> {
+export async function issueCredit(
+  input: {
+    storeId: string;
+    customerId: string;
+    amount: number;
+    kind: Exclude<CreditKind, "spend" | "cashback_reversal">;
+    ref?: string | null;
+    note?: string | null;
+    actor?: string | null;
+  },
+  /**
+   * ★ Run inside the caller's transaction. A store-credit REFUND passes its
+   * own, so the refund row and the credit commit together or not at all: a
+   * refund row reading "completed" with no credit behind it is a customer
+   * told they were refunded who holds nothing. ⚠ A caller that passes `db`
+   * must treat `ok: false` as fatal and unwind, because Postgres has
+   * aborted that transaction (spendCredit's rule).
+   */
+  db?: Db,
+): Promise<{ ok: boolean; alreadyIssued?: boolean; error?: string }> {
   const amount = toRupees(toPaise(input.amount));
   if (!(amount > 0))
     return { ok: false, error: "Amount must be more than zero." };
@@ -145,12 +162,13 @@ export async function issueCredit(input: {
     return { ok: false, error: "Missing store or customer." };
   }
 
-  try {
-    const res = await withService((db) =>
-      db.execute(
-        sql`select add_customer_credit(p_store => ${input.storeId}, p_customer => ${input.customerId}, p_amount => ${amount}, p_kind => ${input.kind}, p_ref => ${input.ref ?? null}, p_note => ${input.note ?? null}, p_actor => ${input.actor ?? null}) as ok`,
-      ),
+  const run = (handle: Db) =>
+    handle.execute(
+      sql`select add_customer_credit(p_store => ${input.storeId}, p_customer => ${input.customerId}, p_amount => ${amount}, p_kind => ${input.kind}, p_ref => ${input.ref ?? null}, p_note => ${input.note ?? null}, p_actor => ${input.actor ?? null}) as ok`,
     );
+
+  try {
+    const res = db ? await run(db) : await withService(run);
     const ok = (res.rows[0] as { ok?: boolean } | undefined)?.ok === true;
     // false here means "this ref was already credited", which is success from
     // the caller's point of view — the customer has the money.
@@ -195,15 +213,25 @@ export async function spendCredit(
     customerId: string;
     amount: number;
     orderId: string;
+    /**
+     * ★ A SECOND spend on one order needs its own ref. The ledger is unique
+     * per (store, customer, kind, ref), so a pay-at-store collection spending
+     * more credit on an order that already spent some at checkout collided
+     * with that first row and failed the hand-over with a misleading
+     * "credit changed". Use `${orderId}:<suffix>`; reinstateCreditForOrder
+     * finds both shapes. Defaults to the order id.
+     */
+    ref?: string;
     note?: string | null;
   },
   db?: Db,
 ): Promise<boolean> {
   const amount = toRupees(toPaise(input.amount));
   if (!(amount > 0)) return false;
+  const ref = input.ref ?? input.orderId;
   const run = (handle: Db) =>
     handle.execute(
-      sql`select try_spend_customer_credit(p_store => ${input.storeId}, p_customer => ${input.customerId}, p_amount => ${amount}, p_ref => ${input.orderId}, p_note => ${input.note ?? null}) as ok`,
+      sql`select try_spend_customer_credit(p_store => ${input.storeId}, p_customer => ${input.customerId}, p_amount => ${amount}, p_ref => ${ref}, p_note => ${input.note ?? null}) as ok`,
     );
   try {
     const res = db ? await run(db) : await withService(run);
@@ -231,7 +259,7 @@ export async function reinstateCreditForOrder(
   orderId: string,
 ): Promise<number> {
   try {
-    const spent = await withService((db) =>
+    const rows = await withService((db) =>
       db
         .select({
           customer_id: customerCreditLedger.customerId,
@@ -242,11 +270,27 @@ export async function reinstateCreditForOrder(
           and(
             eq(customerCreditLedger.storeId, storeId),
             eq(customerCreditLedger.kind, "spend"),
-            eq(customerCreditLedger.ref, orderId),
+            orderRefCondition(orderId),
           ),
         ),
     );
-    if (!spent.length) return 0;
+    if (!rows.length) return 0;
+
+    // ★ ONE REINSTATEMENT PER CUSTOMER, SUMMED. An order can carry two spends
+    // (checkout, then more at the pickup counter) and the reinstate row is
+    // keyed on the order id, so issuing one per spend would have the second
+    // collide with the first and silently keep that credit.
+    const byCustomer = new Map<string, number>();
+    for (const r of rows) {
+      byCustomer.set(
+        r.customer_id,
+        (byCustomer.get(r.customer_id) ?? 0) + Math.abs(Number(r.delta) || 0),
+      );
+    }
+    const spent = [...byCustomer].map(([customer_id, amount]) => ({
+      customer_id,
+      delta: amount,
+    }));
 
     // ★ A REFUND ALREADY PAID AS CREDIT HAS ALREADY GIVEN IT BACK.
     //
@@ -344,5 +388,184 @@ export async function getCreditLedger(
   } catch (err) {
     logError("credit.ledger", err, { storeId, customerId });
     return [];
+  }
+}
+
+/**
+ * Ledger rows that belong to an order: the bare order id (checkout's spend,
+ * the reinstatement, the cashback) and `${orderId}:…` (a second spend at the
+ * pickup counter, each cashback reversal). An order id is a uuid, so it holds
+ * no LIKE wildcard.
+ */
+function orderRefCondition(orderId: string) {
+  return or(
+    eq(customerCreditLedger.ref, orderId),
+    like(customerCreditLedger.ref, `${orderId}:%`),
+  );
+}
+
+/**
+ * Store credit a cancellation has already given back for this order.
+ *
+ * ★ The refund caps subtract it (refundableAmount). It is the ledger's own
+ * figure rather than `store_credit_used`, because reinstateCreditForOrder
+ * offsets credit refunds made earlier, so what came back can be less than
+ * what was spent. Pass `db` to read inside a caller's transaction.
+ */
+export async function creditReinstatedForOrder(
+  storeId: string,
+  orderId: string,
+  db?: Db,
+): Promise<number> {
+  const run = (handle: Db) =>
+    handle
+      .select({
+        total: sql<string>`coalesce(sum(${customerCreditLedger.delta}), 0)`,
+      })
+      .from(customerCreditLedger)
+      .where(
+        and(
+          eq(customerCreditLedger.storeId, storeId),
+          eq(customerCreditLedger.kind, "reinstate"),
+          eq(customerCreditLedger.ref, orderId),
+        ),
+      );
+  const rows = db ? await run(db) : await withService(run);
+  return Math.max(0, Number(rows[0]?.total ?? 0));
+}
+
+/**
+ * Take back the cashback an order earned, in proportion to what has gone
+ * back to the customer.
+ *
+ * Cashback is issued once the order is PAID (the `orders_issue_cashback`
+ * trigger, migration 0185). Cancelling an order reverses all of it; a refund
+ * reverses the same share of it that the refund is of what the customer paid,
+ * so returning half an order takes back half its cashback.
+ *
+ * ★ NEVER MORE THAN THEY HOLD. `reverse_customer_cashback` takes at most the
+ * current balance: cashback already spent cannot be taken back from a balance
+ * that no longer has it, and the balance CHECK forbids going below zero. The
+ * shortfall is left, and logged.
+ *
+ * ★ EXACTLY ONCE PER LEVEL. Each reversal's ref is the order id plus the
+ * cumulative target it brings the order to, so a retried refund, a second
+ * cancel or two syncs racing each other reverse nothing twice.
+ *
+ * Never throws: a refund or a cancellation has already happened by the time
+ * this runs, and must not be reported as failed because the cashback could
+ * not be adjusted.
+ */
+export async function syncOrderCashback(orderId: string): Promise<number> {
+  try {
+    const [order] = await withService((db) =>
+      db
+        .select({
+          storeId: orders.storeId,
+          customerId: orders.customerId,
+          total: orders.total,
+          status: orders.status,
+          paymentStatus: orders.paymentStatus,
+          paymentMethod: orders.paymentMethod,
+          deliveredAt: orders.deliveredAt,
+          storeCreditUsed: orders.storeCreditUsed,
+        })
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1),
+    );
+    if (!order?.customerId) return 0;
+    const storeId = order.storeId;
+    const customerId = order.customerId;
+
+    const ledger = await withService((db) =>
+      db
+        .select({
+          kind: customerCreditLedger.kind,
+          delta: customerCreditLedger.delta,
+        })
+        .from(customerCreditLedger)
+        .where(
+          and(
+            eq(customerCreditLedger.storeId, storeId),
+            eq(customerCreditLedger.customerId, customerId),
+            inArray(customerCreditLedger.kind, [
+              "cashback",
+              "cashback_reversal",
+            ]),
+            orderRefCondition(orderId),
+          ),
+        ),
+    );
+    const issuedP = ledger
+      .filter((r) => r.kind === "cashback")
+      .reduce((sum, r) => sum + Math.max(0, toPaise(Number(r.delta))), 0);
+    if (issuedP <= 0) return 0;
+    const reversedP = ledger
+      .filter((r) => r.kind === "cashback_reversal")
+      .reduce((sum, r) => sum + Math.max(0, -toPaise(Number(r.delta))), 0);
+
+    let targetP = issuedP;
+    if (order.status !== "cancelled") {
+      const settled = await withService((db) =>
+        db
+          .select({
+            total: sql<string>`coalesce(sum(${orderRefunds.amount}), 0)`,
+          })
+          .from(orderRefunds)
+          .where(
+            and(
+              eq(orderRefunds.orderId, orderId),
+              eq(orderRefunds.status, "completed"),
+            ),
+          ),
+      );
+      const refundedP = Math.max(0, toPaise(Number(settled[0]?.total ?? 0)));
+      const totalP = Math.max(0, toPaise(Number(order.total ?? 0)));
+      const creditP = Math.min(
+        totalP,
+        Math.max(0, toPaise(Number(order.storeCreditUsed ?? 0))),
+      );
+      const moneyTaken = orderMoneyTaken({
+        paymentStatus: order.paymentStatus,
+        paymentMethod: order.paymentMethod,
+        status: order.status,
+        deliveredAt: order.deliveredAt,
+      });
+      const valueP = (moneyTaken ? totalP - creditP : 0) + creditP;
+      targetP =
+        valueP > 0
+          ? Math.round((issuedP * Math.min(valueP, refundedP)) / valueP)
+          : 0;
+    }
+
+    const takeP = targetP - reversedP;
+    if (takeP <= 0) return 0;
+
+    const res = await withService((db) =>
+      db.execute(
+        sql`select reverse_customer_cashback(p_store => ${storeId}, p_customer => ${customerId}, p_amount => ${toRupees(takeP)}, p_ref => ${`${orderId}:${targetP}`}, p_note => ${order.status === "cancelled" ? "Order cancelled" : "Order refunded"}) as taken`,
+      ),
+    );
+    const taken = Number(
+      (res.rows[0] as { taken?: string | number } | undefined)?.taken ?? 0,
+    );
+    if (toPaise(taken) < takeP) {
+      // They had already spent some of it. Nothing more can be taken from
+      // a balance that no longer holds it; the merchant can see the order.
+      logError(
+        "credit.cashback_reversal_short",
+        new Error("Cashback partly spent before it could be reversed"),
+        { storeId, orderId, wanted: toRupees(takeP), taken },
+      );
+    }
+    return taken;
+  } catch (err) {
+    // Before migration 0185 the function does not exist; that is the
+    // rollout window, not a fault.
+    if (!isSchemaNotReady(err)) {
+      logError("credit.cashback_reversal", err, { orderId });
+    }
+    return 0;
   }
 }

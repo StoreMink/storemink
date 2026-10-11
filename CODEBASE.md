@@ -3175,7 +3175,10 @@ wholesip/
 │       │                      # excludes future schedules from self-chaining.
 │       ├── cron/plan-expiry/  # ★ Daily: flips expired timed plans → free (§15)
 │       ├── cron/expire-pending-payments/ # ★ Hourly reaper for unpaid razorpay
-│       │                      # orders: mark paid if captured, else cancel+restock (§18)
+│       │                      # orders: mark paid if captured (capturing an authorized
+│       │                      # payment of the exact amount), skip if the gateway can't
+│       │                      # be READ, else cancel through releaseCancelledOrder; then
+│       │                      # records payments that landed after expiry (§18)
 │       ├── cron/seo-refresh/  # ★ Daily Google reconciliation: platform/help/themes
 │       │                      # sitemaps + every launched store; custom-domain META
 │       │                      # verification/property creation; 503 triggers retries
@@ -4015,7 +4018,11 @@ wholesip/
 │   │                          # ★ refunds.ts (§26: PURE refund arithmetic — the cap,
 │   │                          # the status map, the gateway matcher; tested) +
 │   │                          # refund-reconcile.ts (settles refunds whose gateway
-│   │                          # answer never arrived: reconcile-on-read + cron sweep)
+│   │                          # answer never arrived: reconcile-on-read + cron sweep;
+│   │                          # loadOrderRefundFacts, the one read of what an order
+│   │                          # can still refund) + ★ capture.ts (§18: settleOrderPayment
+│   │                          # + verifyCallbackPayment; captures an AUTHORIZED payment
+│   │                          # of the exact amount, never one on a dead order)
 │   ├── billing/               # ★ invoice.ts (§34, PURE + tested): line items,
 │   │                          # tax in BOTH modes (inclusive carves
 │   │                          # gross×r/(1+r), NOT gross×r), GST split,
@@ -4498,7 +4505,12 @@ wholesip/
 │                              # out-of-order check refuses. 0184 rewrites every
 │                              # em dash in Help articles and categories (§5.40); every
 │                              # Help migration after it is held to no em dash by
-│                              # help:lint. Next free: 0185.
+│                              # help:lint. 0185 is the refund and store-credit
+│                              # integrity pass (§26, §29): `cashback_reversal`,
+│                              # reverse_customer_cashback(), orders.cashback_amount
+│                              # plus the orders_issue_cashback trigger,
+│                              # order_returns.idempotency_key, and five Help
+│                              # sentence edits. Next free: 0186.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -9059,6 +9071,47 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     `loadPaymentWebhookSecret` failed closed and the route answered 503 —
     which is the behaviour to expect again in any environment it has not run
     in.
+    **★★ THE CALLBACK SIGNATURE PROVES THE CALLBACK, NOT THE MONEY
+    (2026-10-11, `lib/payments/capture.ts`).** Capture is a SETTING on the
+    merchant's Razorpay account, so on a manual-capture account Checkout's
+    success callback fires on AUTHORIZATION: the money is only held. The
+    callback checked the HMAC and nothing else, so the order was marked paid
+    and shipped, Razorpay voided the hold after its capture window, and the
+    refund that followed failed because nothing had been captured.
+    Reconcile and the reaper accepted only `captured`, so the same payment
+    read as unpaid there. `verifyCallbackPayment` now reads the payment
+    back, refuses one for another order, another amount or another currency,
+    and CAPTURES an authorized one for exactly the amount we asked
+    (`rzpCapturePayment`, then a re-read, so a capture whose answer was lost
+    still counts). A gateway READ failure falls back to the signature (the
+    platform-billing rule: refusing after a blip strands a real payment and
+    invites the shopper to pay twice). `settleOrderPayment` is the same
+    answer for reconcile-on-read and the reaper. The expected amount is
+    always `total − store_credit_used`, what the gateway was asked for.
+    **★★ A PAYMENT AFTER EXPIRY IS RECORDED, NEVER LOST.** A shopper whose
+    window stayed open past the 45-minute grace, or whose UPI approval came
+    late, was charged for an order the reaper had cancelled, and
+    `markOrderPaid` only claimed `pending`. It now returns
+    `paid | late | unchanged`: on `late` it moves a cancelled razorpay order
+    with no payment id from `failed` to `paid` (the order stays cancelled),
+    re-syncs what is owed and emits `order.payment_received` with
+    `late: true` and `refund_due`, so the merchant sees money to give back.
+    Nothing refunds it automatically (§27b's rule). The reaper also sweeps
+    the last 3 days of expired orders (`sweepLatePayments`), READ ONLY: an
+    authorized hold on a dead order is left for Razorpay to void, which
+    returns the money by itself.
+    **★ THE REAPER NEVER CANCELS ON A GATEWAY IT COULD NOT READ.**
+    `lookupStoreGateway` (provider.ts) separates `none` from `error`; a
+    database blip or a rotated `PAYMENT_CRED_KEY` used to read as "not
+    connected" and cancel paid orders. An unreadable gateway leaves the
+    order alone for 7 days. Expiry now goes through `releaseCancelledOrder`,
+    so store credit spent at checkout comes back; the hand-written restock
+    it replaced never reinstated it.
+    **★ PRODUCTION REFUSES TEST KEYS.** On the production platform
+    (`IS_PRODUCTION_PLATFORM`), `saveRazorpayCredentials` refuses a key id
+    from Razorpay's test mode (the `rzp_test` prefix): test-mode payments and
+    refunds move no real money, so a live store on them takes orders it is
+    never paid for.
 
 19. **Signup wizard (Shopify-style, `app/platform/signup/page.tsx`).** One
     client wizard, one focused screen per step, with a progress stepper.
@@ -11635,7 +11688,8 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
         order and takes the max; `totalsByMethod` delegates to it rather than
         re-implementing. Both directions are tested.
       - Settings (convention #9): `pos.requireOpenShift` (default **off** —
-        turning it on can stop a till, so it stays the merchant's call) and
+        turning it on can stop a till, so it stays the merchant's call; it
+        also refuses a CASH refund at the till, §28) and
         `pos.cashVarianceTolerance` (a hand-counted drawer is never exact to
         the paise). Capabilities: `open_close_shift` to open/close,
         `cash_drop` to bank cash — a cashier sells INTO the drawer but cannot
@@ -13296,6 +13350,41 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       now matches the current refund API's `X-Refund-Idempotency` contract and
       locally enforces its minimum 10 characters plus alphanumeric / `_` / `-`
       alphabet. The notes key remains the reconciliation backstop.
+    - **★★ WHAT AN ORDER CAN STILL REFUND (2026-10-11, `refundCaps` +
+      `loadOrderRefundFacts`).** One read of the facts, shared by
+      `issueRefund`, `getOrderRefundState`, `syncOrderRefundState` and
+      `refundDueForOrder`, so the panel, the cap and the derived
+      `payment_status` agree. Value = money actually taken + store credit
+      used. Overall cap = value − live refunds − credit a cancellation
+      already REINSTATED (a cancellation gives spent credit back, so counting
+      it as still owed refunded it twice). Money cap = money taken − money
+      refunds. Money is "taken" when `payment_status` was ever paid, or for
+      cash on delivery once delivered (`orderMoneyTaken`, `wasPaid`).
+    - **★ AN UNPAID ORDER REFUNDS NOTHING.** A manual refund on an unpaid
+      order used to pass and record money going back that was never
+      received. `issueRefund` now answers `not_paid` unless money was taken
+      or store credit settled part of it, and `nothing_due` when the cap is
+      zero (approve-cancellation treats `nothing_due` as success).
+    - **★★ A STORE-CREDIT REFUND IS ATOMIC WITH ITS ROW.** It used to write
+      the row `completed` and then credit in a second call; `failRefund`
+      only touches PENDING rows, so a failed credit left a completed refund
+      the customer never received, with a GST credit note against it.
+      `issueCredit(input, db)` now runs inside the refund transaction and a
+      failure throws, rolling the row back. A walk-in with no account is
+      refused before anything is written (`no_customer`).
+    - **★★ RAZORPAY CAN ANSWER `failed` STRAIGHT AWAY**, and that is now an
+      error (`gateway_failed`), not a success the dashboard announced and the
+      customer was emailed about.
+    - **★ THE GATEWAY PAYMENT CAN LIVE ON `order_payments`.** A till sale
+      keeps its Razorpay ids there, never on the order row. One gateway leg
+      is refunded directly; two or more are refused with a message (refunding
+      the wrong card is unrecoverable; the till refunds each leg). Reconcile
+      searches the same candidates and pages a payment's refunds (up to
+      1,000), and a refund it settles now emits `order.refund_issued`, so a
+      refund that settled late still tells the customer.
+    - **★ `order.refund_issued` FIRES ONLY FOR MONEY THAT SETTLED**, in the
+      dashboard action and at the till: a pending refund is announced when
+      reconcile settles it, never before.
 
 27. **Cancellation — a REQUEST, then a decision** (roadmap Step 2, rebuilt
     2026-08-09). Design: `docs/roadmap.md` Step 2.
@@ -13341,6 +13430,11 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
     - One active request per order, enforced by a conditional claim on
       `cancellation_status IS NULL`; a declined request cannot be reopened by
       asking again.
+    - **★ `releaseCancelledOrder` RE-SYNCS THE ORDER AFTER REINSTATING CREDIT**
+      (`syncOrderRefundState`), which also takes back the cashback the order
+      earned (§29). The pickup expiry sweep and the payment reaper now call it
+      instead of their own hand-written subsets, which released holds or
+      stock and never gave spent credit back.
 
 27b. **The original cancellation notes — and why nothing paid automatically.** The other half of
 roadmap Step 2; design in `docs/returns-exchanges-plan.md` §10. - **★ CANCELLING NEVER MOVES MONEY, AND THAT IS THE FEATURE.** Auto-refund
@@ -13673,6 +13767,41 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         one order can be refunded more than once.
       - **⚠ NOT reviewed by a CA**, the §25 posture. It covers the fields the
         format needs; get a professional to check it before anyone files.
+    - **★★ A RETURN IS REFUNDED FROM ITS OWN ROW (2026-10-11).** The returns
+      queue shows **Refund ₹X** on a received return, opening the order's
+      `RefundPanel` with `returnId`. `refundOrder` passes
+      `capToReturn: true`, so `issueRefund` caps the refund at that return's
+      total less what it has already been refunded, and refuses until the
+      return is `received` (you know what came back). When completed refunds
+      cover the return, `completeReturnIfRefunded` moves it
+      received → completed. Before this, nothing linked a dashboard refund to
+      the return it paid for, and the queue never emptied.
+    - **★★ TAX-INCLUSIVE ORDERS WERE REFUNDED THEIR TAX TWICE.**
+      `refundBreakdown(…, taxInclusive)` now carves the tax OUT of what was
+      paid when the order snapshot says `tax_inclusive`; it used to add the
+      line tax on top of a price that already contained it. Every caller
+      passes the order's flag: the till (read under the order lock), its
+      preview, `priceReturn`, and the shopper's estimate, which now ships
+      `taxInclusive` in `ReturnableOrderView`.
+    - **★ A MIXED SWAP-AND-REFUND IS SETTLED LINE BY LINE**
+      (`returnRequestSettlement`, lib/returns/exchange.ts). Owed = refunded
+      lines with their tax + any swap shortfall − fees, shared by
+      `requestReturn` and the storefront estimate so they cannot disagree.
+      "A replacement may not cost more" is judged against the SWAPPED lines
+      only, so a refunded line can no longer pay for an upgrade; in an
+      inclusive store the swap compares paid totals, or every like-for-like
+      swap would be refused.
+    - **★★ THE TILL (2026-10-11).** A returned exchange REPLACEMENT
+      (`payment_method 'exchange'`) refunds as store credit to the customer,
+      never cash or card, since it was paid for with goods; with no customer
+      the route is `none` (goods back, no money, refund from the dashboard).
+      An online order part-paid with credit splits into a money leg and a
+      credit leg. A cash refund obeys `pos.requireOpenShift`. `processReturn`
+      takes an idempotency key (`order_returns.idempotency_key`, unique per
+      store, migration 0185); a repeat answers with the original return and
+      `alreadyRecorded: true`, and the till keeps one key per request
+      fingerprint. Stories: `docs/pos-acceptance.md` PS-11.19–11.22,
+      PS-14.11–14.12, PS-15.11–15.12, PS-18.9–18.10.
 
 29. **Store credit — a balance the store owes, spendable at checkout.**
     Design: `docs/returns-exchanges-plan.md` §16 (roadmap Step 4).
@@ -13781,6 +13910,26 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       behind it), expiry (`'expire'` is reserved in the CHECK so it needs no
       migration), a merchant grant UI (`issueCredit` takes `kind: 'grant'` and is
       ready), split-tender refunds, and spending credit at a COLLECTION.
+    - **★★ CASHBACK IS ISSUED WHEN THE ORDER IS PAID, AND TAKEN BACK
+      (2026-10-11, migration 0185).** It used to be issued at checkout,
+      before any payment, and nothing reversed it: abandoning the payment
+      window (repeatably, one order each time), cancelling, or refunding in
+      full all left the shopper holding the credit. Checkout and the till now
+      only RECORD `orders.cashback_amount` (written after the order commits,
+      never in its INSERT, so a rolled-back order takes it with it). The
+      `orders_issue_cashback` trigger issues it once the order is paid, or
+      delivered for cash on delivery, idempotent on the order.
+      `syncOrderCashback` (called from `syncOrderRefundState`) takes it back
+      through `reverse_customer_cashback`: all of it on a cancellation, the
+      refunded share otherwise, never more than the balance still holds (a
+      shortfall is logged), keyed on the target so a re-run is a no-op. The
+      shopper's history labels both kinds ("Cashback", "Cashback taken back").
+    - **★ REINSTATING SUMS PER CUSTOMER.** An order can carry two spends
+      (checkout, then the pickup counter, which now spends under
+      `${orderId}:collect` because the ledger is unique per (kind, ref)), and
+      the reinstate row is keyed on the order. One reinstatement per spend
+      would collide and keep the second.
+      `creditReinstatedForOrder` is what the refund cap subtracts (§26).
 
 30. **Custom domains & TLS — three conditions, and nobody is watching.**
     `lib/domains/`, `/dashboard/settings/domain`, Pro-only. A domain is marked

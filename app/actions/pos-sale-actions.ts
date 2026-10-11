@@ -39,7 +39,6 @@ import { TENDER_LABEL } from "@/lib/pos/receipt";
 import {
   getCreditBalance,
   getCreditBalances,
-  issueCredit,
   spendCredit,
 } from "@/lib/credit/store-credit";
 import { withService } from "@/lib/db/client";
@@ -2515,15 +2514,21 @@ export async function placePosSale(
   // requires an attached customer before any pricing or payment write. A
   // balance has to belong to somebody; issuing it to nobody would be a
   // liability the shop could never honour.
+  //
+  // ★ RECORDED ON THE ORDER, ISSUED BY THE DATABASE. The sale is already paid,
+  // so the `orders_issue_cashback` trigger (migration 0185) issues it the
+  // moment this lands, exactly once, and a later return or cancellation can
+  // then take it back (syncOrderCashback): issued straight to the ledger, as
+  // it was, nothing on the order said it had been earned, so a full refund
+  // left the customer holding it.
   if (offerResult?.credit && offerResult.credit.amount > 0 && customerId) {
-    await issueCredit({
-      storeId: op.storeId,
-      customerId,
-      amount: offerResult.credit.amount,
-      kind: "cashback",
-      ref: orderId,
-      note: offerResult.credit.offerName,
-    }).catch((err: unknown) =>
+    const credit = offerResult.credit;
+    await withService((db) =>
+      db
+        .update(orders)
+        .set({ cashbackAmount: credit.amount, cashbackNote: credit.offerName })
+        .where(and(eq(orders.id, orderId), eq(orders.storeId, op.storeId))),
+    ).catch((err: unknown) =>
       logError("pos.cashback_failed", err, { storeId: op.storeId, orderId }),
     );
   }

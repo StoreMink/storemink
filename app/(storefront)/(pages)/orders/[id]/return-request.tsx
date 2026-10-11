@@ -27,7 +27,7 @@ import {
   wantsPhoto,
   type ReturnReason,
 } from "@/lib/returns/reasons";
-import { exchangeSettlement } from "@/lib/returns/exchange";
+import { returnRequestSettlement } from "@/lib/returns/exchange";
 import { refundBreakdown } from "@/lib/pos/returns";
 import styles from "../orders.module.css";
 
@@ -85,6 +85,7 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
           alreadyReturned: l.returned,
         })),
         orderDiscount: view.orderDiscount,
+        taxInclusive: view.taxInclusive,
         request: Object.entries(qty).map(([id, q]) => ({ id, quantity: q })),
       }),
     [view, qty],
@@ -107,27 +108,33 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
     [reason, goodsValue, view.restockingFeePercent, view.returnShippingFee],
   );
 
-  // What the replacements cost, at the prices the server just quoted.
-  const replacementValue = useMemo(
+  // ★ WHAT THE STORE WILL OWE, BY THE SERVER'S OWN RULE. A refunded line
+  // owes everything paid for it, tax included; a swapped line owes only what
+  // its replacement costs less (returnRequestSettlement). The estimate used to
+  // quote the goods value with "tax is refunded on top", which double-counted
+  // the tax in a tax-inclusive store and could not describe a return that
+  // mixed swaps and refunds.
+  const settled = useMemo(
     () =>
-      selectable.reduce((sum, l) => {
-        const target = swap[l.orderItemId];
-        if (!target) return sum;
-        const opt = l.swapOptions.find((o) => o.variantId === target);
-        return sum + (opt?.price ?? 0) * (qty[l.orderItemId] ?? 0);
-      }, 0),
-    [selectable, swap, qty],
-  );
-
-  const swapping = Object.values(swap).some(Boolean);
-  const settlement = useMemo(
-    () =>
-      exchangeSettlement({
-        returnValue: swapping ? goodsValue : 0,
-        replacementValue,
+      returnRequestSettlement({
+        lines: breakdown.lines,
+        replacementValueByLine: new Map(
+          breakdown.lines.map((l) => {
+            const target = swap[l.id];
+            const line = view.lines.find((x) => x.orderItemId === l.id);
+            const opt = target
+              ? line?.swapOptions.find((o) => o.variantId === target)
+              : undefined;
+            return [l.id, opt ? opt.price * l.quantity : null] as const;
+          }),
+        ),
+        taxInclusive: view.taxInclusive,
+        deduction: fees.totalDeduction,
       }),
-    [swapping, goodsValue, replacementValue],
+    [breakdown, swap, view, fees.totalDeduction],
   );
+  const settlement = settled.settlement;
+  const swapping = settled.swapping;
 
   const picked = Object.values(qty).reduce((a, b) => a + b, 0);
   const needPhoto = wantsPhoto(reason || null, view.requirePhoto);
@@ -371,7 +378,7 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
             <div className={styles.returnTotals}>
               <div>
                 <span>Items</span>
-                <span>{money(goodsValue)}</span>
+                <span>{money(breakdown.total)}</span>
               </div>
               {fees.totalDeduction > 0 && (
                 <div>
@@ -400,17 +407,14 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
                   </div>
                   <div className={styles.returnTotalRow}>
                     <span>
-                      {settlement.even ? "Nothing to pay" : "You'd get back"}
+                      {settlement.even && settled.owed <= 0
+                        ? "Nothing to pay"
+                        : "You'd get back"}
                     </span>
                     <span>
-                      {settlement.even
+                      {settlement.even && settled.owed <= 0
                         ? "₹0.00"
-                        : money(
-                            Math.max(
-                              0,
-                              settlement.storeOwes - fees.totalDeduction,
-                            ),
-                          )}
+                        : money(settled.owed)}
                     </span>
                   </div>
                   {/* ★ Refused before they submit, with what to do instead —
@@ -424,14 +428,11 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
               ) : (
                 <div className={styles.returnTotalRow}>
                   <span>You&apos;d get back</span>
-                  <span>
-                    {money(Math.max(0, goodsValue - fees.totalDeduction))}
-                  </span>
+                  <span>{money(settled.owed)}</span>
                 </div>
               )}
               <p className={styles.returnNote}>
-                An estimate - the store confirms the exact amount, and tax is
-                refunded on top.
+                An estimate, tax included - the store confirms the exact amount.
               </p>
             </div>
           )}

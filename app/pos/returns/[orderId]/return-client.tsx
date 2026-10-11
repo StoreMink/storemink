@@ -4,7 +4,7 @@
 // the server decides what that is worth — this screen's total is a preview
 // computed with the same pure function, never the figure that gets refunded.
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRightLeft, Loader2, RotateCcw } from "lucide-react";
@@ -14,7 +14,7 @@ import {
   type RefundMethod,
   type ReturnableSale,
 } from "@/app/actions/pos-return-actions";
-import { refundBreakdown } from "@/lib/pos/returns";
+import { refundBreakdown, returnAttemptFingerprint } from "@/lib/pos/returns";
 import { CustomerPhoneVerification } from "../../customer-phone-verification";
 import {
   feesFor,
@@ -35,6 +35,19 @@ const METHODS: { id: RefundMethod; label: string }[] = [
   { id: "upi", label: "UPI" },
 ];
 
+/**
+ * A fresh retry key for one return attempt. `crypto.randomUUID()` needs a
+ * secure context (the till is always served over https), with a
+ * getRandomValues fallback so an odd kiosk browser still sends a valid key —
+ * 32 hex characters, which the server's 10–100 `[A-Za-z0-9_-]` rule accepts.
+ */
+function newAttemptKey(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function ReturnClient({ sale }: { sale: ReturnableSale }) {
   const router = useRouter();
   const [qty, setQty] = useState<Record<string, number>>({});
@@ -48,6 +61,16 @@ export function ReturnClient({ sale }: { sale: ReturnableSale }) {
   const [intent, setIntent] = useState<"refund" | "exchange">("refund");
   const [pending, start] = useTransition();
   const [verificationOpen, setVerificationOpen] = useState(false);
+  // ★★ ONE RETRY KEY PER RETURN ATTEMPT. A partial return retried after a
+  // lost response used to book a second return and refund. The key is kept
+  // while the attempt is unchanged — a retry, a double tap, the re-submit
+  // after the customer's OTP all reuse it, so the server answers with the
+  // return it already recorded — and replaced the moment the cashier changes
+  // what is coming back (or after a success), because that is a different
+  // request. Read and written only in the submit handler, never in render.
+  const attempt = useRef<{ fingerprint: string; key: string } | null>(null);
+  // `none`: this order's money is refunded from the dashboard, not here.
+  const noCounterRefund = route.method === "none";
 
   const preview = useMemo(
     () =>
@@ -64,6 +87,9 @@ export function ReturnClient({ sale }: { sale: ReturnableSale }) {
           alreadyReturned: l.returned,
         })),
         orderDiscount: sale.orderDiscount,
+        // On a tax-inclusive order each line's tax is already inside its
+        // total; the server prices with the same flag, so the quote matches.
+        taxInclusive: sale.taxInclusive,
         request: Object.entries(qty).map(([id, q]) => ({ id, quantity: q })),
       }),
     [qty, sale],
@@ -87,20 +113,33 @@ export function ReturnClient({ sale }: { sale: ReturnableSale }) {
 
   const submit = (ackUnverified = false) =>
     start(async () => {
+      const returnLines = Object.entries(qty)
+        .filter(([, q]) => q > 0)
+        .map(([orderItemId, quantity]) => ({
+          orderItemId,
+          quantity,
+          condition: damaged[orderItemId]
+            ? ("damaged" as const)
+            : ("sellable" as const),
+        }));
+      const fingerprint = returnAttemptFingerprint({
+        orderId: sale.orderId,
+        lines: returnLines,
+        method,
+        reason: reason || null,
+      });
+      if (attempt.current?.fingerprint !== fingerprint) {
+        attempt.current = { fingerprint, key: newAttemptKey() };
+      }
       const res = await processReturn(
         sale.orderId,
-        Object.entries(qty)
-          .filter(([, q]) => q > 0)
-          .map(([orderItemId, quantity]) => ({
-            orderItemId,
-            quantity,
-            condition: damaged[orderItemId]
-              ? ("damaged" as const)
-              : ("sellable" as const),
-          })),
+        returnLines,
         method,
         reason || undefined,
-        { acknowledgeUnverifiedCustomer: ackUnverified },
+        {
+          acknowledgeUnverifiedCustomer: ackUnverified,
+          idempotencyKey: attempt.current.key,
+        },
       );
       if (res.verificationRequired || res.verificationUnavailable) {
         setVerificationOpen(true);
@@ -110,9 +149,20 @@ export function ReturnClient({ sale }: { sale: ReturnableSale }) {
         toast.error(res.error);
         return;
       }
-      // A gateway refund that failed or hasn't confirmed still means the goods
-      // came back — so it is a WARNING, not an error, and the return stands.
-      if (res.note) {
+      // Done: the next return on this screen is a new attempt.
+      attempt.current = null;
+      if (res.alreadyRecorded) {
+        // A retry of a return that already went through: say so plainly so
+        // nobody hands the money over a second time.
+        toast.info(
+          `This return was already recorded · ${money(res.refunded ?? 0)} refunded. Nothing was taken back twice.`,
+          { duration: 8000 },
+        );
+        if (res.note) toast.warning(res.note, { duration: 8000 });
+      } else if (res.note) {
+        // A gateway refund that failed or hasn't confirmed still means the
+        // goods came back — so it is a WARNING, not an error, and the return
+        // stands.
         toast.warning(res.note, { duration: 8000 });
       } else {
         toast.success(`Return recorded · ${money(res.refunded ?? 0)} refunded`);
@@ -371,7 +421,11 @@ export function ReturnClient({ sale }: { sale: ReturnableSale }) {
               <div className="flex items-center gap-4">
                 <div className="min-w-0">
                   <div className="text-xs text-[var(--pos-ink-2)]">
-                    {intent === "exchange" ? "Return value" : "Refund"}
+                    {intent === "exchange"
+                      ? "Return value"
+                      : noCounterRefund
+                        ? "Owed, refund from the dashboard"
+                        : "Refund"}
                   </div>
                   <div className="text-2xl font-bold tabular-nums">
                     {money(refundPreview)}
@@ -392,7 +446,9 @@ export function ReturnClient({ sale }: { sale: ReturnableSale }) {
                   )}
                   {intent === "exchange"
                     ? "Continue exchange"
-                    : `Refund ${money(refundPreview)}`}
+                    : noCounterRefund
+                      ? "Take items back"
+                      : `Refund ${money(refundPreview)}`}
                 </button>
               </div>
             </div>

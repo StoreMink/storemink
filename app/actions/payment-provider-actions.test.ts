@@ -34,7 +34,7 @@ import { getManagerUserId } from "@/app/dashboard/lib/access";
 import { validateCredentials } from "@/lib/payments/razorpay";
 
 const STORE = "a0000000-0000-4000-8000-000000000001";
-const KEY_ID = "rzp_test_abc123XYZ";
+const KEY_ID = "rzp_live_abc123XYZ";
 const SECRET = "super_secret_value";
 
 const storeRow = (plan: string) => ({ plan, plan_expires_at: null });
@@ -70,6 +70,17 @@ describe("saveRazorpayCredentials", () => {
     const res = await saveRazorpayCredentials("not-a-key", SECRET);
     expect(res.error).toMatch(/key id/i);
     expect(validateCredentials).not.toHaveBeenCalled();
+  });
+
+  it("★★ refuses a test-mode key on the production platform, before calling Razorpay", async () => {
+    // Test mode accepts test cards and moves no money, so a live store on
+    // test keys would mark unpaid orders paid and "refund" nothing.
+    dbHolder.current = makeDbMock({ selectQueue: [[storeRow("basic")]] });
+    const res = await saveRazorpayCredentials("rzp_test_abc123XYZ", SECRET);
+    expect(res.error).toMatch(/test-mode key/i);
+    expect(res.error).toContain("rzp_live_");
+    expect(validateCredentials).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
   });
 
   it("rejects credentials Razorpay itself refuses", async () => {

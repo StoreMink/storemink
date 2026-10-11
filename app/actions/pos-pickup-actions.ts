@@ -980,6 +980,10 @@ export async function markCollected(
             customerId: claimedRows[0].customer_id ?? "",
             amount: creditAsked,
             orderId,
+            // ★ Its own ref: checkout may already have spent credit on this
+            // order under the bare order id, and the ledger is unique per
+            // (kind, ref), so reusing it failed the hand-over.
+            ref: `${orderId}:collect`,
             note: "Collection",
           },
           db,

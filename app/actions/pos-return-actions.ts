@@ -16,7 +16,7 @@
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { withService } from "@/lib/db/client";
-import { dbErrorMessage } from "@/lib/db/errors";
+import { dbErrorMessage, isUniqueViolation } from "@/lib/db/errors";
 import {
   orderItems,
   orderPayments,
@@ -36,6 +36,7 @@ import { posCan } from "@/lib/pos/permissions";
 import { posAudit } from "@/lib/pos/audit";
 import { currentShiftIdFor } from "./pos-shift-actions";
 import {
+  isReturnAttemptKey,
   refundBreakdown,
   remainingQty,
   type ReturnableLine,
@@ -58,11 +59,17 @@ import {
   type ReturnReason,
 } from "@/lib/returns/reasons";
 import { getCreditBalance } from "@/lib/credit/store-credit";
+import { getStoreSettings } from "@/lib/settings/resolve";
 
 /** Tenders a shop can hand money back through at the counter. */
 // What a counter can hand money back through, PLUS the gateway — which the
 // operator never chooses (refundRouteFor decides it from the tender) but which
 // processReturn must accept when that is where the money has to go.
+//
+// `none` is the one route that moves NO money here: the goods come back and the
+// refund is completed from the dashboard (an exchange replacement with no
+// customer to credit — see refundRouteFor). It is only ever accepted when the
+// SERVER's route says so; a client cannot pick it to dodge a refund it owes.
 const REFUND_METHODS = [
   "cash",
   "card",
@@ -70,11 +77,15 @@ const REFUND_METHODS = [
   "razorpay",
   "store_credit",
   "original",
+  "none",
 ] as const;
 export type RefundMethod = (typeof REFUND_METHODS)[number];
 
+/** A method a single refund leg can actually go through. */
+type TenderMethod = Exclude<RefundMethod, "original" | "none">;
+
 export interface CounterRefundTender {
-  method: Exclude<RefundMethod, "original">;
+  method: TenderMethod;
   amount: number;
   reference: string | null;
 }
@@ -118,6 +129,10 @@ export interface ReturnableSale {
    *  line's total, and each line's offer share rides on the line itself
    *  (see lib/pos/returns.ts). */
   orderDiscount: number;
+  /** `orders.tax_inclusive`: each line's tax is INSIDE its total rather than
+   *  on top of it. The preview must pass this to `refundBreakdown` exactly as
+   *  `processReturn` does, or the screen quotes the tax twice. */
+  taxInclusive: boolean;
   paymentMethod: string;
   lines: ReturnableSaleLine[];
   /** TRUE when this order was NOT rung at this counter — an online order, or
@@ -144,7 +159,7 @@ export interface FoundOrder {
   broughtIn: boolean;
 }
 
-const REFUND_LABEL: Record<Exclude<RefundMethod, "original">, string> = {
+const REFUND_LABEL: Record<TenderMethod, string> = {
   cash: "cash",
   card: "the card terminal",
   upi: "UPI",
@@ -152,11 +167,17 @@ const REFUND_LABEL: Record<Exclude<RefundMethod, "original">, string> = {
   store_credit: "store credit",
 };
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 function refundRouting(
   order: {
     payment_method: string | null;
     payment_status: string | null;
     total: number;
+    /** `orders.store_credit_used` — the part of `total` settled with credit. */
+    store_credit_used?: number | null;
+    /** Whether a store-credit leg has somebody to credit. */
+    customer_id?: string | null;
   },
   rows: Array<{
     method: string;
@@ -165,13 +186,41 @@ function refundRouting(
     reference: string | null;
   }>,
 ): { route: CounterRefundRoute; tenders: CounterRefundTender[] } {
-  const allowed = new Set<Exclude<RefundMethod, "original">>([
+  const allowed = new Set<TenderMethod>([
     "cash",
     "card",
     "upi",
     "razorpay",
     "store_credit",
   ]);
+  const hasCustomer = Boolean(order.customer_id);
+
+  // ★★ AN EXCHANGE REPLACEMENT IS DECIDED FIRST, AND UNCONDITIONALLY.
+  // `payment_method: 'exchange'` was paid for by goods that came back — often
+  // goods bought on a card — so it must never reach a cash/card/UPI counter
+  // refund, whatever else is recorded against it. It used to fall through to
+  // refundRouteFor's counter-choice default, which offered CASH: swap a card
+  // purchase for something, return that, walk out with clean cash.
+  if (order.payment_method === "exchange") {
+    const route = refundRouteFor({
+      paymentMethod: order.payment_method,
+      paymentStatus: order.payment_status,
+      hasCustomer,
+    });
+    return {
+      route,
+      tenders:
+        route.method === "store_credit"
+          ? [
+              {
+                method: "store_credit",
+                amount: round2(Math.max(0, Number(order.total) || 0)),
+                reference: null,
+              },
+            ]
+          : [],
+    };
+  }
   // ★★ CHANGE IS ONE FIGURE PER SALE, NOT ONE PER TENDER ROW. `placePosSale`
   // computes the sale's change once and stamps it on EVERY cash tender, so
   // subtracting it row by row deducts it once per row: a ₹500 sale settled
@@ -193,7 +242,7 @@ function refundRouting(
     0,
   );
   const tenders = rows.flatMap((row) => {
-    if (!allowed.has(row.method as Exclude<RefundMethod, "original">)) {
+    if (!allowed.has(row.method as TenderMethod)) {
       return [];
     }
     // Cash handed over can exceed the sale; change was never payment and must
@@ -207,7 +256,7 @@ function refundRouting(
     if (contribution <= 0) return [];
     return [
       {
-        method: row.method as Exclude<RefundMethod, "original">,
+        method: row.method as TenderMethod,
         amount: contribution,
         reference: row.reference ?? null,
       },
@@ -241,13 +290,83 @@ function refundRouting(
   // Online gateway orders predate order_payments, and some legacy POS sales
   // did not record tender rows. A named original method is still authoritative;
   // only an ambiguous legacy counter row falls back to a cashier choice.
-  if (allowed.has(order.payment_method as Exclude<RefundMethod, "original">)) {
-    const method = order.payment_method as Exclude<RefundMethod, "original">;
+  if (allowed.has(order.payment_method as TenderMethod)) {
+    const method = order.payment_method as TenderMethod;
+    const total = round2(Math.max(0, Number(order.total) || 0));
+
+    // ★★ PART OF `total` MAY HAVE BEEN PAID WITH STORE CREDIT, AND NO
+    // INSTRUMENT EVER SAW THAT PART (§29 — credit is a payment, not a
+    // discount, so `total` stays the full goods value). One leg for the whole
+    // total sent the credit share to the card: issueRefund caps a money refund
+    // at `total − store_credit_used`, so a full return's gateway leg was
+    // refused AFTER the return was saved and the stock restocked — goods back,
+    // customer paid nothing — and a partial return quietly sent credit-funded
+    // value to the card. So the fallback is split the way the order was paid:
+    // the money method for what money paid, store credit for the rest, and
+    // allocateRefund divides any refund between them proportionally.
+    const creditUsed =
+      method === "store_credit"
+        ? 0
+        : round2(
+            Math.min(total, Math.max(0, Number(order.store_credit_used) || 0)),
+          );
+    if (creditUsed > 0) {
+      const moneyPart = round2(total - creditUsed);
+      const legs: CounterRefundTender[] = [];
+      if (moneyPart > 0) {
+        legs.push({ method, amount: moneyPart, reference: null });
+      }
+      // A balance belongs to somebody. With no customer there is nobody to
+      // give the credit share back to, so only the money leg is offered — and
+      // capped at what money paid, which processReturn's cap check enforces
+      // before anything is written.
+      if (hasCustomer) {
+        legs.push({
+          method: "store_credit",
+          amount: creditUsed,
+          reference: null,
+        });
+      }
+      if (legs.length > 1) {
+        return {
+          tenders: legs,
+          route: {
+            method: "original",
+            counterChoice: false,
+            copy: `Refunded the way it was paid: part to ${REFUND_LABEL[method]}, part as store credit.`,
+            affectsDrawer: method === "cash",
+          },
+        };
+      }
+      if (legs.length === 1) {
+        const only = legs[0]!.method;
+        return {
+          tenders: legs,
+          route: {
+            method: only,
+            counterChoice: false,
+            copy: `Refund to ${REFUND_LABEL[only]}, matching the original payment.`,
+            affectsDrawer: only === "cash",
+          },
+        };
+      }
+      // Paid entirely with credit, and no account to give it back to.
+      return {
+        tenders: [],
+        route: {
+          method: "none",
+          counterChoice: false,
+          copy: "This order was paid with store credit and has no customer account to give it back to, so no money is handed back here. Take the items back, then refund it from the order in the dashboard.",
+          affectsDrawer: false,
+        },
+      };
+    }
+
     return {
       tenders: [
         {
           method,
-          amount: Number(order.total) || 0,
+          amount: total,
           reference: null,
         },
       ],
@@ -263,6 +382,7 @@ function refundRouting(
   const legacy = refundRouteFor({
     paymentMethod: order.payment_method,
     paymentStatus: order.payment_status,
+    hasCustomer,
   });
   return {
     tenders: [],
@@ -278,11 +398,14 @@ function allocateRefund(
   route: CounterRefundRoute,
   original: CounterRefundTender[],
 ): CounterRefundTender[] {
+  // No money moves at this counter — the dashboard completes the refund.
+  if (route.method === "none") return [];
   if (route.method !== "original") {
-    const source = original.find((tender) => tender.method === route.method);
+    const method = route.method;
+    const source = original.find((tender) => tender.method === method);
     return [
       {
-        method: route.method,
+        method,
         amount,
         reference: source?.reference ?? null,
       },
@@ -422,6 +545,9 @@ export async function getReturnableSale(
           created_at: orders.createdAt,
           total: orders.total,
           discount: orders.discount,
+          tax_inclusive: orders.taxInclusive,
+          store_credit_used: orders.storeCreditUsed,
+          customer_id: orders.customerId,
           payment_method: orders.paymentMethod,
           payment_status: orders.paymentStatus,
           location_id: orders.locationId,
@@ -568,6 +694,8 @@ export async function getReturnableSale(
         payment_method: order.payment_method,
         payment_status: order.payment_status,
         total: Number(order.total) || 0,
+        store_credit_used: Number(order.store_credit_used) || 0,
+        customer_id: order.customer_id ?? null,
       },
       paymentRows,
     );
@@ -592,6 +720,7 @@ export async function getReturnableSale(
         createdAt: order.created_at,
         total: Number(order.total) || 0,
         orderDiscount,
+        taxInclusive: order.tax_inclusive === true,
         paymentMethod: order.payment_method ?? "",
         lines: items.map((i) => {
           const returned = prior.get(i.id) ?? 0;
@@ -651,10 +780,16 @@ export interface ReturnLineInput {
 
 export interface ReturnResult {
   returnId?: string;
+  /** Money that actually SETTLED. A leg still confirming at the bank, or one
+   *  that failed, is not counted — it is described in `note` instead. */
   refunded?: number;
   /** The goods came back but the money needs a word — a gateway refund that
    *  failed or hasn't confirmed. NOT an error: the return stands. */
   note?: string;
+  /** This exact return attempt (same retry key) was recorded by an earlier
+   *  submission. Nothing new was taken back or refunded by THIS call; the
+   *  return id and amount are the original's. */
+  alreadyRecorded?: boolean;
   error?: string;
   verificationRequired?: boolean;
   /** The OTP cannot run on this order at all — see `override_verification`. */
@@ -752,6 +887,71 @@ export async function getPosExchangeContext(
 }
 
 /**
+ * The answer to a retry of a return that already committed.
+ *
+ * Rebuilt from what was stored rather than replayed: the return id is the
+ * original's, and `refunded` is what has SETTLED against it so far — the same
+ * definition the original call reported. Nothing is taken back, restocked,
+ * refunded, announced or audited a second time. Returns null when no return
+ * carries the key (the caller then reports its own error).
+ */
+async function alreadyRecordedReturn(
+  storeId: string,
+  orderId: string,
+  key: string,
+): Promise<ReturnResult | null> {
+  const found = await withService(async (db) => {
+    const rows = await db
+      .select({ id: orderReturns.id, order_id: orderReturns.orderId })
+      .from(orderReturns)
+      .where(
+        and(
+          eq(orderReturns.storeId, storeId),
+          eq(orderReturns.idempotencyKey, key),
+        ),
+      )
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    if (row.order_id !== orderId) return { wrongOrder: true as const };
+    const refunds = await db
+      .select({ amount: orderRefunds.amount, status: orderRefunds.status })
+      .from(orderRefunds)
+      .where(
+        and(
+          eq(orderRefunds.storeId, storeId),
+          eq(orderRefunds.returnId, row.id),
+        ),
+      );
+    return { id: row.id, refunds };
+  });
+  if (!found) return null;
+  if ("wrongOrder" in found) {
+    // A key is minted per attempt on ONE order; reusing it on another is a
+    // client bug, never a retry. Refuse rather than report someone else's
+    // return as this one's.
+    return {
+      error:
+        "This return couldn't be sent safely. Reload the page and try again.",
+    };
+  }
+  const settled = round2(
+    found.refunds
+      .filter((r) => r.status === "completed")
+      .reduce((sum, r) => sum + (Number(r.amount) || 0), 0),
+  );
+  const stillConfirming = found.refunds.some((r) => r.status === "pending");
+  return {
+    returnId: found.id,
+    refunded: settled,
+    alreadyRecorded: true,
+    note: stillConfirming
+      ? "The bank refund for it is still confirming. Do not send it a second time."
+      : undefined,
+  };
+}
+
+/**
  * Take goods back and hand the money over.
  *
  * The amount is never taken from the client: it is recomputed with
@@ -767,6 +967,15 @@ export async function processReturn(
     /** A manager's attestation that the customer cannot be verified by code.
      *  Honoured only after the server confirms the order has no mobile. */
     acknowledgeUnverifiedCustomer?: boolean;
+    /**
+     * One key per return ATTEMPT, minted by the till (`crypto.randomUUID()`)
+     * and kept until that attempt succeeds or the cashier changes what is
+     * coming back. A second submission carrying it — a retry after a lost
+     * response, a double tap — is answered with the FIRST return instead of
+     * booking another one. Optional, so an older till keeps working exactly
+     * as before.
+     */
+    idempotencyKey?: string;
   } = {},
 ): Promise<ReturnResult> {
   const op = await resolvePosOperator();
@@ -780,6 +989,20 @@ export async function processReturn(
   if (!Array.isArray(lines) || lines.length === 0) {
     return { error: "Choose what's coming back." };
   }
+  // ★★ A PARTIAL RETURN USED TO BE REPEATABLE. The row lock below stops two
+  // submissions taking the SAME units, but a partial return leaves units
+  // behind, so a retry after a lost response re-priced what was left and
+  // booked a second return and a second refund for goods handed over once.
+  // The key is validated here, before anything is read, and looked up INSIDE
+  // the locked transaction below. Absent = an older till: no lookup at all.
+  const rawKey = opts.idempotencyKey;
+  if (rawKey !== undefined && rawKey !== null && !isReturnAttemptKey(rawKey)) {
+    return {
+      error:
+        "This return couldn't be sent safely. Reload the page and try again.",
+    };
+  }
+  const idempotencyKey = isReturnAttemptKey(rawKey) ? rawKey : null;
   // The same dead end the hand-over counter had: an order carrying no textable
   // mobile could never be taken back at all. `refund` is already manager-and-
   // above, so the operator standing here is the one `override_verification`
@@ -849,6 +1072,40 @@ export async function processReturn(
   const lineById = new Map(sale.lines.map((l) => [l.id, l]));
   const shiftId = await currentShiftIdFor(op.locationId);
 
+  // Every refund — cash, terminal, UPI, credit, gateway, and each leg of a
+  // split — goes through the shared money core. This gives counter tenders the
+  // same row lock and cap as Razorpay and records the original source instead
+  // of letting the cashier convert a card payment into cash.
+  const effectiveRoute: CounterRefundRoute = route.counterChoice
+    ? { ...route, method }
+    : route;
+
+  // ★★ CASH OUT OBEYS `pos.requireOpenShift` THE WAY CASH IN DOES. A sale is
+  // refused without an open shift when the merchant asks for one
+  // (placePosSale); a cash refund was not, so the drawer could pay out with no
+  // shift to count it against — money leaving a till that, by the merchant's
+  // own setting, should not have been open. Only a route that would actually
+  // take cash out of the drawer is affected; card, UPI, credit and gateway
+  // refunds never touch it. The setting is read the way the collection
+  // counter reads it (pos-pickup-actions), failing OPEN on a read error so a
+  // settings blip cannot strand a customer at the counter; the refusal itself
+  // lands inside the transaction below, after the retry-key lookup (a retry of
+  // a return that already committed must still be answered) and before any
+  // write.
+  const paysCashFromDrawer =
+    effectiveRoute.method === "cash" ||
+    (effectiveRoute.method === "original" &&
+      sale.refundTenders.some((t) => t.method === "cash" && t.amount > 0));
+  let shiftRequired = false;
+  if (!shiftId && paysCashFromDrawer) {
+    try {
+      shiftRequired =
+        (await getStoreSettings())["pos.requireOpenShift"] === true;
+    } catch {
+      shiftRequired = false;
+    }
+  }
+
   let returnId: string;
   let breakdown: ReturnType<typeof refundBreakdown>;
   let refundTotal = 0;
@@ -869,12 +1126,37 @@ export async function processReturn(
           total: orders.total,
           discount: orders.discount,
           store_credit_used: orders.storeCreditUsed,
+          tax_inclusive: orders.taxInclusive,
         })
         .from(orders)
         .where(and(eq(orders.id, orderId), eq(orders.storeId, op.storeId)))
         .limit(1)
         .for("update");
       if (!locked.length) return { error: "That sale isn't from this shop." };
+
+      // ★ THE RETRY KEY IS CHECKED UNDER THE LOCK, BEFORE PRICING. Before
+      // pricing, because a retry of a FULL return would otherwise be told
+      // "nothing is still returnable" — true, and useless to a cashier who
+      // cannot tell whether their first tap went through. Under the lock,
+      // because a second submission racing the first then waits for it to
+      // commit and finds its row here.
+      if (idempotencyKey) {
+        const prior = await db
+          .select({ id: orderReturns.id })
+          .from(orderReturns)
+          .where(
+            and(
+              eq(orderReturns.storeId, op.storeId),
+              eq(orderReturns.idempotencyKey, idempotencyKey),
+            ),
+          )
+          .limit(1);
+        if (prior.length) return { duplicateOf: prior[0]!.id };
+      }
+
+      if (shiftRequired) {
+        return { error: "Open a shift before giving cash back." };
+      }
 
       const items = await db
         .select({
@@ -942,6 +1224,10 @@ export async function processReturn(
           0,
           (Number(locked[0]!.discount) || 0) - lineDiscounts - offerDiscounts,
         ),
+        // ★★ Read under the lock with everything else that prices the
+        // return: on a tax-inclusive order each line's tax is already inside
+        // its total, and adding it again refunded the tax twice.
+        taxInclusive: locked[0]!.tax_inclusive === true,
         request: lines.map((l) => ({
           id: l.orderItemId,
           quantity: l.quantity,
@@ -967,9 +1253,15 @@ export async function processReturn(
 
       // ★ AND CAP IT AGAINST WHAT THE ORDER CAN STILL GIVE BACK. The quantity
       // clamp above bounds the GOODS; this bounds the MONEY, which is the
-      // thing leaving the drawer. issueRefund does exactly this for the
-      // gateway; the counter tenders had no equivalent at all.
-      if (method !== "razorpay") {
+      // thing leaving the drawer. issueRefund applies the same caps per leg,
+      // but only AFTER the return below is written and the stock restocked —
+      // so a refusal there leaves goods back and nothing paid. This check
+      // therefore covers EVERY route that moves money, the gateway included
+      // (it used to skip Razorpay, which is how a Razorpay leg larger than
+      // what money paid on a credit-funded order was refused only after the
+      // fact). Only `none` — no money moves here — has nothing to cap (and
+      // `method` can only be `none` when the route is, by the check above).
+      if (route.method !== "none" && method !== "none") {
         const existing = await db
           .select({
             amount: orderRefunds.amount,
@@ -1054,6 +1346,9 @@ export async function processReturn(
           reasonCode,
           reason: reasonCode,
           actor: op.staffId ?? op.name,
+          // The unique (store_id, idempotency_key) index is the backstop for
+          // a race the lookup above cannot see; null for an older till.
+          idempotencyKey,
         })
         .returning({ id: orderReturns.id });
       const id = inserted[0]!.id;
@@ -1075,10 +1370,39 @@ export async function processReturn(
       return { id, priced, payable };
     });
     if ("error" in written) return { error: written.error };
+    if ("duplicateOf" in written) {
+      // The first submission committed; this is its retry. Answer with it.
+      const again = await alreadyRecordedReturn(
+        op.storeId,
+        orderId,
+        idempotencyKey!,
+      );
+      await clearCustomerVerification();
+      return (
+        again ?? {
+          returnId: written.duplicateOf,
+          alreadyRecorded: true,
+        }
+      );
+    }
     returnId = written.id;
     breakdown = written.priced;
     refundTotal = written.payable;
   } catch (err) {
+    // ★ The lookup above runs under the order lock, so a same-key race on one
+    // order serialises and finds the first row. The unique index catches what
+    // that cannot — and a violation on it means the attempt IS recorded.
+    if (idempotencyKey && isUniqueViolation(err)) {
+      const again = await alreadyRecordedReturn(
+        op.storeId,
+        orderId,
+        idempotencyKey,
+      ).catch(() => null);
+      if (again) {
+        await clearCustomerVerification();
+        return again;
+      }
+    }
     return { error: dbErrorMessage(err, "Couldn't record the return.") };
   }
 
@@ -1134,20 +1458,21 @@ export async function processReturn(
     );
   }
 
-  // Every refund — cash, terminal, UPI, credit, gateway, and each leg of a
-  // split — goes through the shared money core. This gives counter tenders the
-  // same row lock and cap as Razorpay and records the original source instead
-  // of letting the cashier convert a card payment into cash.
-  const effectiveRoute: CounterRefundRoute = route.counterChoice
-    ? { ...route, method }
-    : route;
   const allocations = allocateRefund(
     refundTotal,
     effectiveRoute,
     sale.refundTenders,
   ).filter((allocation) => allocation.amount > 0);
   const notes: string[] = [];
+  // ★★ ONLY MONEY THAT SETTLED IS ANNOUNCED. This summed every leg that came
+  // back without an error — including a gateway leg still `pending` at the
+  // bank and one Razorpay answered `failed` — so the customer's refund email
+  // and the money audit claimed money that had not gone back, and a return
+  // whose every leg was refused still announced "₹0 refunded". A leg counts
+  // only once issueRefund reports it `completed`; anything else is described
+  // to the cashier instead.
   let settled = 0;
+  const settledMethods: TenderMethod[] = [];
   for (const allocation of allocations) {
     const res = await issueRefund({
       storeId: op.storeId,
@@ -1172,16 +1497,34 @@ export async function processReturn(
       );
       continue;
     }
-    settled += res.amount ?? allocation.amount;
-    if (res.pendingReconcile) {
+    if (res.status === "completed") {
+      settled += res.amount ?? allocation.amount;
+      if (!settledMethods.includes(allocation.method)) {
+        settledMethods.push(allocation.method);
+      }
+    } else if (res.pendingReconcile || res.status === "pending") {
       notes.push(
         "The bank refund is still confirming. Do not send it a second time.",
       );
+    } else if (res.status === "failed") {
+      notes.push(
+        `The ${REFUND_LABEL[allocation.method]} refund didn't go through. Complete it from the order dashboard.`,
+      );
+    } else {
+      notes.push(
+        `${REFUND_LABEL[allocation.method]} refund needs attention. Check the order in the dashboard.`,
+      );
     }
   }
+  settled = round2(settled);
   if (refundTotal === 0) {
     notes.push(
       "The return was recorded; the policy deductions leave no refund.",
+    );
+  } else if (effectiveRoute.method === "none") {
+    // Deliberate: this order's money is not handed back at a counter.
+    notes.push(
+      `The items were taken back, but no money was handed over here. Refund ₹${refundTotal.toFixed(2)} from the order in the dashboard.`,
     );
   } else if (allocations.length === 0) {
     notes.push(
@@ -1189,42 +1532,47 @@ export async function processReturn(
     );
   }
 
-  emitEvent({
-    type: "order.refund_issued",
-    storeId: op.storeId,
-    locationId: op.locationId,
-    actor: { type: "admin", id: op.staffId ?? null, label: op.name },
-    subject: {
-      type: "order",
-      id: orderId,
-      label: sale.receiptNo || sale.orderRef,
-    },
-    payload: {
-      // `amount`, not `total` — see refund-actions.ts.
-      amount: settled,
-      currency: "INR",
-      paymentMethod:
-        allocations.length > 1
-          ? "original split"
-          : (allocations[0]?.method ?? method),
-      items: breakdown.lines.reduce((a, l) => a + l.quantity, 0),
-    },
-  });
+  const itemCount = breakdown.lines.reduce((a, l) => a + l.quantity, 0);
+  if (settled > 0) {
+    emitEvent({
+      type: "order.refund_issued",
+      storeId: op.storeId,
+      locationId: op.locationId,
+      actor: { type: "admin", id: op.staffId ?? null, label: op.name },
+      subject: {
+        type: "order",
+        id: orderId,
+        label: sale.receiptNo || sale.orderRef,
+      },
+      payload: {
+        // `amount`, not `total` — see refund-actions.ts.
+        amount: settled,
+        currency: "INR",
+        // Named after the legs that SETTLED, so the copy never says a card
+        // was credited when only the store-credit half went through.
+        paymentMethod:
+          settledMethods.length > 1 ? "original split" : settledMethods[0]!,
+        items: itemCount,
+      },
+    });
 
-  // ── The money audit (Step 14) ─────────────────────────────────────────────
-  // A till refund is a discretionary act — someone decided to hand money back —
-  // and `order_refunds` records the amount but not who stood at the counter.
-  // ★ After the refund has actually settled, so a refused one logs nothing.
-  posAudit({
-    storeId: op.storeId,
-    event: "refund_issued",
-    locationId: op.locationId,
-    staffId: op.staffId,
-    actor: op.name,
-    amount: settled,
-    orderId,
-    detail: `${sale.receiptNo || sale.orderRef || orderId.slice(0, 8)} · ${method} · ${breakdown.lines.reduce((a, l) => a + l.quantity, 0)} item(s)`,
-  });
+    // ── The money audit (Step 14) ───────────────────────────────────────────
+    // A till refund is a discretionary act — someone decided to hand money
+    // back — and `order_refunds` records the amount but not who stood at the
+    // counter. ★ Only for money that actually settled, so a refused or
+    // still-confirming refund logs nothing here (its `order_refunds` row is
+    // the record of it).
+    posAudit({
+      storeId: op.storeId,
+      event: "refund_issued",
+      locationId: op.locationId,
+      staffId: op.staffId,
+      actor: op.name,
+      amount: settled,
+      orderId,
+      detail: `${sale.receiptNo || sale.orderRef || orderId.slice(0, 8)} · ${method} · ${itemCount} item(s)`,
+    });
+  }
 
   // A SEPARATE row from `refund_issued` above, deliberately: that one answers
   // "who gave money back", this one answers "and nobody checked who they were".
@@ -1244,9 +1592,11 @@ export async function processReturn(
 
   revalidatePath("/pos/sales");
   await clearCustomerVerification();
+  // Two legs still confirming would otherwise say so twice.
+  const uniqueNotes = Array.from(new Set(notes));
   return {
     returnId,
     refunded: settled,
-    note: notes.length > 0 ? notes.join(" ") : undefined,
+    note: uniqueNotes.length > 0 ? uniqueNotes.join(" ") : undefined,
   };
 }

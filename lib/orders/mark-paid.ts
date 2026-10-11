@@ -17,7 +17,7 @@ import "server-only";
  * for a given payment, and the confirmation can never be sent twice.
  */
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { orderItems, orders, storeLocations } from "@/drizzle/schema";
 import { emitEvent } from "@/lib/notifications/record";
@@ -26,6 +26,10 @@ import { formatAddressLine } from "@/lib/locations/address";
 import { formatCollectionCode } from "@/lib/fulfilment/collection-code";
 import { logError } from "@/lib/observability/logger";
 import { recordStorefrontPurchase } from "@/lib/analytics/storefront-purchase";
+import {
+  refundDueForOrder,
+  syncOrderRefundState,
+} from "@/lib/payments/refund-reconcile";
 
 /**
  * The `order.placed` event, typed off `emitEvent` itself so the two builders
@@ -173,10 +177,17 @@ async function emitOrderPlacedForPaidOrder(orderId: string): Promise<void> {
   }
 }
 
+/**
+ * What a payment did to its order: claimed it as `paid`, recorded it LATE on
+ * an order that had already been cancelled for want of one, or nothing (a
+ * replay, or an order that is no longer waiting on this payment).
+ */
+export type MarkPaidOutcome = "paid" | "late" | "unchanged";
+
 export async function markOrderPaid(
   orderId: string,
   rzpPaymentId: string,
-): Promise<void> {
+): Promise<MarkPaidOutcome> {
   // The single choke point for "this order is now paid" — reached from the
   // client callback, reconcile-on-read, and the cron reaper alike. The UPDATE
   // is a conditional pending → paid CLAIM, so `claimed` is non-empty for
@@ -208,7 +219,7 @@ export async function markOrderPaid(
   });
 
   const row = claimed[0];
-  if (!row) return;
+  if (!row) return recordLatePayment(orderId, rzpPaymentId);
 
   await recordStorefrontPurchase(orderId);
 
@@ -225,4 +236,89 @@ export async function markOrderPaid(
     subject: { type: "order", id: orderId, label: row.orderRef },
     payload: { total: row.total, currency: row.currency },
   });
+  return "paid";
+}
+
+/**
+ * A payment captured AFTER its order was cancelled for want of one.
+ *
+ * ★★ IT USED TO BE DROPPED. The pending-payment reaper cancels an order 45
+ * minutes after checkout if no payment has been captured, and a shopper who
+ * leaves the Razorpay window open past that, or whose UPI or netbanking
+ * approval arrives late, is then charged for an order that no longer exists.
+ * Every path refused it: this claim only matched `pending`, the webhook
+ * answered 200, the callback said "can no longer be paid", and reconcile did
+ * not ask. The customer was out of pocket and nobody was told.
+ *
+ * ★ THE ORDER STAYS CANCELLED. Its stock was released and its credit given
+ * back when it expired, and the goods may have sold since, so reviving it is
+ * not ours to decide. What changes is that the money is RECORDED: the order
+ * reads paid, so the refund panel says what is owed back and can send it to
+ * the card, and the merchant is told. Money still never leaves without a
+ * person pressing the button (returns-exchanges-plan §2.2).
+ *
+ * ★ ONLY AN ORDER CANCELLED UNPAID. `payment_status = 'failed'` is what the
+ * reaper writes, and an existing payment id means this order already has a
+ * payment on record, which must not be overwritten.
+ */
+async function recordLatePayment(
+  orderId: string,
+  rzpPaymentId: string,
+): Promise<MarkPaidOutcome> {
+  const late = await withService((db) =>
+    db
+      .update(orders)
+      .set({ paymentStatus: "paid", razorpayPaymentId: rzpPaymentId })
+      .where(
+        and(
+          eq(orders.id, orderId),
+          eq(orders.paymentMethod, "razorpay"),
+          eq(orders.paymentStatus, "failed"),
+          eq(orders.status, "cancelled"),
+          isNull(orders.razorpayPaymentId),
+        ),
+      )
+      .returning({
+        storeId: orders.storeId,
+        orderRef: orders.orderRef,
+        customerId: orders.customerId,
+        total: orders.total,
+        currency: orders.currency,
+      }),
+  ).catch((err) => {
+    logError("checkout.late_payment_claim", err, { orderId });
+    return [] as {
+      storeId: string;
+      orderRef: string;
+      customerId: string | null;
+      total: number;
+      currency: string;
+    }[];
+  });
+
+  const row = late[0];
+  if (!row) return "unchanged";
+
+  // Credit the expiry reinstated counts as already given back.
+  await syncOrderRefundState(orderId);
+  const refundDue = await refundDueForOrder({ id: orderId });
+
+  logError(
+    "checkout.payment_after_expiry",
+    new Error("A payment was captured for an order already cancelled"),
+    { orderId, storeId: row.storeId, refundDue },
+  );
+  emitEvent({
+    type: "order.payment_received",
+    storeId: row.storeId,
+    actor: { type: "customer", id: row.customerId },
+    subject: { type: "order", id: orderId, label: row.orderRef },
+    payload: {
+      total: row.total,
+      currency: row.currency,
+      late: true,
+      ...(refundDue > 0 ? { refund_due: refundDue } : {}),
+    },
+  });
+  return "late";
 }

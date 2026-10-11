@@ -176,7 +176,13 @@ export async function approveCancellation(
         reason: `Cancelled - ${cancelReasonLabel(input.reasonCode)}`,
       }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
 
-      if ("pendingReconcile" in res && res.pendingReconcile) {
+      if ("code" in res && res.code === "nothing_due") {
+        // ★ Nothing left to send. The cancellation has just reinstated the
+        // store credit this order was paid with, and that IS the refund: an
+        // order paid entirely with credit has nothing more to give back, and
+        // refunding it again as credit is how a ₹500 order left its customer
+        // holding ₹1,000. Not an error.
+      } else if ("pendingReconcile" in res && res.pendingReconcile) {
         // ★ AN UNKNOWN ANSWER IS NOT A FAILURE (CODEBASE §26). The refund is
         // real and in flight; the gateway's reply just never arrived, and
         // reconcile-on-read will settle it. Reporting this as an error is how

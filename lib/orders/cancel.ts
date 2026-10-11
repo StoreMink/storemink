@@ -32,6 +32,7 @@ import { withService } from "@/lib/db/client";
 import { orderItems, orders, stockReservations } from "@/drizzle/schema";
 import { releaseHold } from "@/lib/inventory/reservations";
 import { reinstateCreditForOrder } from "@/lib/credit/store-credit";
+import { syncOrderRefundState } from "@/lib/payments/refund-reconcile";
 import { logError } from "@/lib/observability/logger";
 
 /** A DB scope to run the claim in — `withService`, or `(fn) => withUser(id, fn)`. */
@@ -127,6 +128,12 @@ export async function releaseCancelledOrder(
   // customer's money. Keyed on the order, so a second cancel reinstates
   // nothing rather than minting it.
   await reinstateCreditForOrder(storeId, orderId);
+
+  // ★ What the order now owes, and the cashback it earned, both follow from
+  // the cancellation: credit just given back counts as returned (so a
+  // credit-paid order stops reading "owed" and inviting a second, store-credit
+  // refund of the same money), and cashback is taken back. Never throws.
+  await syncOrderRefundState(orderId);
 
   // ── Pickup holds ─────────────────────────────────────────────────────────
   // Never restocked (see the header): the units are still physically on the

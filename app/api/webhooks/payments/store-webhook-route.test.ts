@@ -63,7 +63,7 @@ beforeEach(() => {
   // mockRejectedValue that otherwise leaks into whichever test runs next —
   // invisible in declaration order, caught by `npm run test:shuffle`.
   vi.mocked(loadPaymentWebhookSecret).mockResolvedValue(SECRET);
-  vi.mocked(markOrderPaid).mockResolvedValue(undefined);
+  vi.mocked(markOrderPaid).mockResolvedValue("paid");
   dbHolder.current = makeDbMock({ selectQueue: [[{ id: "order-1" }]] });
 });
 
