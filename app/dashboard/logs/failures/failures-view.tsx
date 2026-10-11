@@ -75,7 +75,7 @@ export function FailuresView({
       {failedSources.length > 0 && (
         <p className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">
           <AlertTriangle className="size-4 shrink-0" aria-hidden />
-          Couldn&apos;t read {failedSources.join(", ")} — this list is
+          Couldn&apos;t read {failedSources.join(", ")} - this list is
           incomplete.
         </p>
       )}
@@ -104,13 +104,13 @@ export function FailuresView({
                   <td className="font-medium">{r.title}</td>
                   <td className={SOURCE_STYLE[r.source] ?? ""}>{r.source}</td>
                   {storeNames && (
-                    <td>{(r.storeId && storeNames[r.storeId]) || "—"}</td>
+                    <td>{(r.storeId && storeNames[r.storeId]) || "-"}</td>
                   )}
                   <td
                     className="max-w-md truncate text-black/60 dark:text-white/60"
                     title={r.detail ?? ""}
                   >
-                    {r.detail || "—"}
+                    {r.detail || "-"}
                   </td>
                   <td className="whitespace-nowrap tabular-nums">
                     {formatWhen(r.occurredAt)}

@@ -136,7 +136,7 @@ export async function savePlatformTaxSettings(
       return {
         ok: false,
         error:
-          "Add your GSTIN before switching tax on — an invoice charging GST without one isn't a valid tax invoice.",
+          "Add your GSTIN before switching tax on - an invoice charging GST without one isn't a valid tax invoice.",
       };
     }
     // ★ Not a database constraint, but a real one: `splitGst` compares this
@@ -146,14 +146,14 @@ export async function savePlatformTaxSettings(
       return {
         ok: false,
         error:
-          "Add your state before switching tax on — it decides CGST+SGST vs IGST on every invoice.",
+          "Add your state before switching tax on - it decides CGST+SGST vs IGST on every invoice.",
       };
     }
     if (!legalName) {
       return {
         ok: false,
         error:
-          "Add the registered legal name before switching tax on — it's what the invoice is issued by.",
+          "Add the registered legal name before switching tax on - it's what the invoice is issued by.",
       };
     }
   }
@@ -168,7 +168,7 @@ export async function savePlatformTaxSettings(
     if (fromGstin && fromGstin !== stateCode) {
       return {
         ok: false,
-        error: `Your GSTIN starts with ${fromGstin}, which is a different state from the one selected (${stateCode}). One of them is wrong — they decide CGST+SGST vs IGST on every invoice.`,
+        error: `Your GSTIN starts with ${fromGstin}, which is a different state from the one selected (${stateCode}). One of them is wrong - they decide CGST+SGST vs IGST on every invoice.`,
       };
     }
   }

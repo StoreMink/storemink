@@ -37,7 +37,7 @@ function money(n: number): string {
 
 const STATUS_COPY: Record<string, string> = {
   requested: "Waiting for the store to review",
-  approved: "Approved — send it back",
+  approved: "Approved - send it back",
   received: "The store has your items",
   completed: "Completed",
   rejected: "Declined",
@@ -165,7 +165,7 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
           res.isExchange
             ? "We've asked the store to swap this for you."
             : res.autoApproved
-              ? "Return approved — check your email for what to do next."
+              ? "Return approved - check your email for what to do next."
               : "We've asked the store to review your return.",
         );
         setOpen(false);
@@ -280,7 +280,7 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
                   )}
                   {!l.returnable && (
                     <p className={styles.returnNote}>
-                      Final sale — this item can&apos;t be returned.
+                      Final sale - this item can&apos;t be returned.
                     </p>
                   )}
                   {/* Swap, offered only when the store allows exchanges and
@@ -309,7 +309,7 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
                             disabled={!o.available}
                           >
                             Swap for {o.name}
-                            {o.available ? "" : " — out of stock"}
+                            {o.available ? "" : " - out of stock"}
                           </option>
                         ))}
                       </select>
@@ -363,7 +363,7 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
 
           {needPhoto && (
             <p className={styles.returnNote}>
-              The store may ask for a photo of the damage — have one ready.
+              The store may ask for a photo of the damage - have one ready.
             </p>
           )}
 
@@ -388,7 +388,7 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
                   matters — and a customer who can see it stops arguing. */}
               {fees.waived && (
                 <p className={styles.returnNote}>
-                  No fees — this one&apos;s on us, and we&apos;ll cover the
+                  No fees - this one&apos;s on us, and we&apos;ll cover the
                   return postage.
                 </p>
               )}
@@ -430,7 +430,7 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
                 </div>
               )}
               <p className={styles.returnNote}>
-                An estimate — the store confirms the exact amount, and tax is
+                An estimate - the store confirms the exact amount, and tax is
                 refunded on top.
               </p>
             </div>

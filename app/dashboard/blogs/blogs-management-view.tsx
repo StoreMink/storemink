@@ -257,7 +257,7 @@ export function BlogsManagementView({
 
   // ── Helpers ───────────────────────────────────────────────
   const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return "—";
+    if (!dateStr) return "-";
     return new Date(dateStr).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
@@ -462,13 +462,13 @@ export function BlogsManagementView({
                         ))}
                       </div>
                     ) : (
-                      "—"
+                      "-"
                     )}
                   </td>
 
                   {/* Author */}
                   <td className="text-muted">
-                    {blog.author || "—"}
+                    {blog.author || "-"}
                     {blog.is_customer_submission && blog.submitter_name && (
                       <div className="mt-1 flex items-center gap-1.5">
                         <span className="dash-cell-sub">
@@ -514,7 +514,7 @@ export function BlogsManagementView({
                               {tag}
                             </span>
                           ))
-                        : "—"}
+                        : "-"}
                       {blog.tags.length > 3 && (
                         <span className="dash-chip">
                           +{blog.tags.length - 3}

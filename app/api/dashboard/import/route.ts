@@ -93,7 +93,7 @@ export async function POST(request: Request) {
   if (file.size > MAX_IMPORT_FILE_BYTES) {
     return NextResponse.json(
       {
-        error: `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_IMPORT_FILE_BYTES / 1024 / 1024} MB — split it into a few smaller files.`,
+        error: `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_IMPORT_FILE_BYTES / 1024 / 1024} MB - split it into a few smaller files.`,
       },
       { status: 413 },
     );
@@ -134,7 +134,7 @@ export async function POST(request: Request) {
   if (csv.rows.length > MAX_IMPORT_ROWS) {
     return NextResponse.json(
       {
-        error: `That file has ${csv.rows.length.toLocaleString("en-IN")} rows. Imports are limited to ${MAX_IMPORT_ROWS.toLocaleString("en-IN")} at a time — split it and run them one after another.`,
+        error: `That file has ${csv.rows.length.toLocaleString("en-IN")} rows. Imports are limited to ${MAX_IMPORT_ROWS.toLocaleString("en-IN")} at a time - split it and run them one after another.`,
       },
       { status: 413 },
     );

@@ -90,7 +90,7 @@ export function GroupForm({ group }: Props) {
               className={fieldClass}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
-              placeholder="Optional — what this group is for"
+              placeholder="Optional - what this group is for"
             />
           </div>
 

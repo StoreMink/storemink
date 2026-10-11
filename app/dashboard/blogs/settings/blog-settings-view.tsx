@@ -84,7 +84,7 @@ function TaxonomyManager({
     }
     run(
       () => renameBlogTaxonomyItem(kind, item.id, name),
-      `Renamed to "${name}" — existing posts updated`,
+      `Renamed to "${name}" - existing posts updated`,
       () => setEditingId(null),
     );
   };
@@ -93,7 +93,7 @@ function TaxonomyManager({
     if (!deleteTarget) return;
     run(
       () => deleteBlogTaxonomyItem(kind, deleteTarget.id),
-      `Deleted "${deleteTarget.name}" — removed from existing posts`,
+      `Deleted "${deleteTarget.name}" - removed from existing posts`,
       () => setDeleteTarget(null),
     );
   };
@@ -282,7 +282,7 @@ export function BlogSettingsView({
         <TaxonomyManager
           kind="category"
           title="Categories"
-          description="Broad topics readers browse by — shown on posts and as blog filters."
+          description="Broad topics readers browse by - shown on posts and as blog filters."
           items={taxonomy.categories}
           canManage={canManage}
         />

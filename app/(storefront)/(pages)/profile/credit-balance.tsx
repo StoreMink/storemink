@@ -111,7 +111,7 @@ export default function CreditBalance() {
       <div className={styles.cardHeader}>
         <h2 className={styles.cardTitle}>Store credit</h2>
         <p className={styles.cardSubtitle}>
-          Applied automatically at checkout — there is nothing to enter.
+          Applied automatically at checkout - there is nothing to enter.
         </p>
       </div>
 

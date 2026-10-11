@@ -14,7 +14,7 @@ import { requireOperator } from "../../../require-operator";
 import { SuperadminOnly } from "../studio-ui";
 import { NewProjectForm } from "./new-project-form";
 
-export const metadata = { title: "New Studio project — StoreMink Admin" };
+export const metadata = { title: "New Studio project · StoreMink Admin" };
 
 export default async function NewThemeStudioProjectPage() {
   await requireOperator();

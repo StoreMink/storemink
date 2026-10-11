@@ -2,7 +2,7 @@ import { getPlatformAnalyticsFeatures } from "@/lib/analytics/platform-feature-s
 import { AnalyticsSettingsPanel } from "./analytics-settings-panel";
 import { canManage, requireOperator } from "../require-operator";
 
-export const metadata = { title: "Analytics — StoreMink Admin" };
+export const metadata = { title: "Analytics · StoreMink Admin" };
 export const dynamic = "force-dynamic";
 
 export default async function PlatformAnalyticsPage() {

@@ -95,7 +95,7 @@ export function MetricCard({
         {!noComparison ? (
           <span className={`dash-metric-delta ${deltaClass}`}>
             {flat
-              ? "—"
+              ? "-"
               : `${stat.trendUp ? "↑" : "↓"} ${Math.abs(stat.trendPct ?? 0)}%`}
           </span>
         ) : null}

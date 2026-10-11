@@ -344,7 +344,7 @@ export function NavTreeList({
             {depth === 0 && hasChildren && (
               <div className="sm-b-subnav sm-b-navimage">
                 <span className="sm-b-hint">
-                  Menu image (optional) — shown beside these links on larger
+                  Menu image (optional) - shown beside these links on larger
                   screens.
                 </span>
                 <ImageUpload
@@ -512,7 +512,7 @@ export function HeaderForm({
       <Group title="Logo" defaultOpen={false}>
         <p className="sm-b-hint">
           Your logo and store name come from your brand, so they stay the same
-          everywhere — invoices and emails included.{" "}
+          everywhere - invoices and emails included.{" "}
           <a href="/dashboard/branding" target="_blank" rel="noopener">
             Edit branding
           </a>
@@ -1835,7 +1835,7 @@ export function BrandForm({
       <Group title="Everything else" defaultOpen={false}>
         <p className="sm-b-hint">
           Your store name, contact details, social profiles and legal name are
-          store identity — they also appear on invoices and in email, so they
+          store identity - they also appear on invoices and in email, so they
           live in{" "}
           <a href="/dashboard/branding" target="_blank" rel="noopener">
             branding

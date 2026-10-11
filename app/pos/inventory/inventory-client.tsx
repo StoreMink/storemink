@@ -302,7 +302,7 @@ function Row({
         >
           <span className="block truncate text-sm font-medium">{label}</span>
           <span className="block truncate text-xs text-[var(--pos-ink-2)]">
-            {item.sku ?? item.barcode ?? "—"}
+            {item.sku ?? item.barcode ?? "-"}
           </span>
         </button>
 

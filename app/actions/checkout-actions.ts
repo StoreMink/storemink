@@ -2098,7 +2098,7 @@ export async function placeOrder(
       return {
         error:
           remaining > 0
-            ? `Not enough stock for ${label} — only ${remaining} left. Please lower the quantity and try again.`
+            ? `Not enough stock for ${label} - only ${remaining} left. Please lower the quantity and try again.`
             : `${label} just sold out. Please remove it from your cart and try again.`,
       };
     }

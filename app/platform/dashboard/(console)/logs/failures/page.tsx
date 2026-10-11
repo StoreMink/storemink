@@ -7,7 +7,7 @@ import {
 import { FailuresView } from "@/app/dashboard/logs/failures/failures-view";
 import { requireOperator } from "../../require-operator";
 
-export const metadata = { title: "Failures — StoreMink Admin" };
+export const metadata = { title: "Failures · StoreMink Admin" };
 
 // Cross-store failures, for operators.
 //

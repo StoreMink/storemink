@@ -176,7 +176,7 @@ function IntegrationCard({
             Status: {status}
             {unsaved ? (
               <span className="ml-1 font-semibold text-amber-700">
-                — unsaved changes below
+                - unsaved changes below
               </span>
             ) : null}
           </span>

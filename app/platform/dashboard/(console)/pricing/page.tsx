@@ -10,7 +10,7 @@ import { getMinkConfig } from "@/lib/mink/config";
 import { includedMinkCredits, NO_PLAN_ALLOWANCE_OVERRIDES } from "@/lib/plans";
 import { canManage, requireOperator } from "../require-operator";
 
-export const metadata = { title: "Pricing — StoreMink Admin" };
+export const metadata = { title: "Pricing · StoreMink Admin" };
 
 // What StoreMink charges.
 //

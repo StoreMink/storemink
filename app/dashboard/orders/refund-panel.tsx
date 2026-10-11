@@ -120,7 +120,7 @@ export function RefundPanel({
         if (res.pendingReconcile) {
           // Deliberately NOT an error, and deliberately not retryable.
           toast.info(
-            "The refund is with Razorpay and hasn't confirmed yet. We'll keep checking — don't send it again.",
+            "The refund is with Razorpay and hasn't confirmed yet. We'll keep checking - don't send it again.",
           );
         } else {
           toast.success(`Refunded ${formatPrice(res.amount ?? 0)}.`);
@@ -159,7 +159,7 @@ export function RefundPanel({
       {refundOwed && (
         <p className="mb-2 flex items-start gap-1.5 text-[13px] font-medium text-amber-900">
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          This order was cancelled after it was paid for —{" "}
+          This order was cancelled after it was paid for -{" "}
           {formatPrice(refundable)} is owed back.
         </p>
       )}
@@ -192,7 +192,7 @@ export function RefundPanel({
                 {r.status === "pending" && (
                   <div className="mt-0.5 flex items-center gap-1 text-[11px] text-amber-700">
                     <Clock className="h-3 w-3" />
-                    Waiting on the gateway — we&apos;re checking.
+                    Waiting on the gateway - we&apos;re checking.
                   </div>
                 )}
               </div>
@@ -295,7 +295,7 @@ export function RefundPanel({
 
           {method === "store_credit" && (
             <p className="text-xs text-muted-foreground">
-              Adds to their balance here — no money leaves.
+              Adds to their balance here - no money leaves.
               {creditBalance > 0 &&
                 ` They currently hold ${formatPrice(creditBalance)}.`}{" "}
               Make sure they&apos;ve agreed to this rather than a refund.
@@ -304,7 +304,7 @@ export function RefundPanel({
           {method === "manual" && (
             <label className="block">
               <span className="text-xs text-muted-foreground">
-                Reference (UPI or bank transaction id) — required
+                Reference (UPI or bank transaction id) - required
               </span>
               <input
                 value={reference}

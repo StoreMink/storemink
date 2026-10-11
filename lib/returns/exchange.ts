@@ -70,7 +70,7 @@ export function exchangeSettlement(input: {
     allowed: customerOwes === 0,
     blockedCopy:
       customerOwes > 0
-        ? `That costs ₹${customerOwes.toFixed(2)} more than what you're sending back. Place a new order for it instead — we'll refund this one.`
+        ? `That costs ₹${customerOwes.toFixed(2)} more than what you're sending back. Place a new order for it instead - we'll refund this one.`
         : null,
   };
 }

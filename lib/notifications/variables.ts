@@ -34,13 +34,13 @@ export const BASE_VARIABLES: readonly TemplateVariable[] = [
   },
   {
     name: "actor_name",
-    description: "Who caused this — a customer, a staff member, or 'System'.",
+    description: "Who caused this - a customer, a staff member, or 'System'.",
     sample: "Priya S.",
   },
   {
     name: "subject_label",
     description:
-      "What it happened to — an order reference, product name, or page title.",
+      "What it happened to - an order reference, product name, or page title.",
     sample: "ORD10010004",
   },
   {
@@ -108,7 +108,7 @@ const EVENT_VARIABLES: Partial<Record<EventKey, TemplateVariable[]>> = {
     {
       name: "collection_code",
       description:
-        "The code to show at the counter. Empty for delivery. Text, not a QR — an emailed QR is a broken image in most clients.",
+        "The code to show at the counter. Empty for delivery. Text, not a QR - an emailed QR is a broken image in most clients.",
       sample: "PK0M-3T9V",
     },
   ],
@@ -172,7 +172,7 @@ const EVENT_VARIABLES: Partial<Record<EventKey, TemplateVariable[]>> = {
     {
       name: "refund_due",
       description:
-        "Money owed back on a prepaid order nobody collected. Present only when there is any — nothing pays it automatically, by design.",
+        "Money owed back on a prepaid order nobody collected. Present only when there is any - nothing pays it automatically, by design.",
       sample: "₹1,240.00",
     },
   ],
@@ -198,7 +198,7 @@ const EVENT_VARIABLES: Partial<Record<EventKey, TemplateVariable[]>> = {
     {
       name: "refund_due",
       description:
-        "Money still owed to the customer. Present only when the order was paid and nothing has been refunded yet — nothing pays it automatically, by design.",
+        "Money still owed to the customer. Present only when the order was paid and nothing has been refunded yet - nothing pays it automatically, by design.",
       sample: "₹1,240.00",
     },
   ],
@@ -255,7 +255,7 @@ const EVENT_VARIABLES: Partial<Record<EventKey, TemplateVariable[]>> = {
     {
       name: "note",
       description:
-        "Why it was declined. The one variable here that really matters — a rejection without it is a silent no.",
+        "Why it was declined. The one variable here that really matters - a rejection without it is a silent no.",
       sample: "This item is past its 7-day return window.",
     },
   ],

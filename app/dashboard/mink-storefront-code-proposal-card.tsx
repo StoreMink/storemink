@@ -769,7 +769,7 @@ function readActionValues(value: unknown): MinkStorefrontCodeActionValues {
 }
 
 const UNKNOWN_STOREFRONT_ACTION_OUTCOME =
-  "We couldn't confirm whether the Builder draft was saved. Check Website Builder, or retry here — the same save cannot apply twice.";
+  "We couldn't confirm whether the Builder draft was saved. Check Website Builder, or retry here - the same save cannot apply twice.";
 
 class StorefrontActionRequestError extends Error {
   constructor(

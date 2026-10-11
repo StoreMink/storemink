@@ -1238,7 +1238,7 @@ export async function processReturn(
       staffId: op.staffId,
       actor: op.name,
       orderId,
-      detail: `Return taken without customer verification — no mobile on the order`,
+      detail: `Return taken without customer verification - no mobile on the order`,
     });
   }
 

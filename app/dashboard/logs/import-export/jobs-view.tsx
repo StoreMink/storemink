@@ -220,7 +220,7 @@ export function JobsView({
                         </td>
                         <td className="max-w-[220px]">
                           <span className="block truncate text-xs text-[var(--dash-text-3)]">
-                            {job.filename ?? "—"}
+                            {job.filename ?? "-"}
                           </span>
                         </td>
                         <td className="whitespace-nowrap text-xs">
@@ -249,7 +249,7 @@ export function JobsView({
                         </td>
                         <td className="max-w-[180px]">
                           <span className="block truncate text-xs text-[var(--dash-text-3)]">
-                            {job.actorEmail ?? "—"}
+                            {job.actorEmail ?? "-"}
                           </span>
                         </td>
                         <td className="whitespace-nowrap text-xs text-[var(--dash-text-3)]">

@@ -203,7 +203,7 @@ async function checkStockChanges(
     const alert = stockAlertFor(previous, next, threshold);
     if (!alert) continue;
 
-    const label = variant ? `${product.name} — ${variant.name}` : product.name;
+    const label = variant ? `${product.name} - ${variant.name}` : product.name;
     await recordEvent({
       type: alert === "out" ? "inventory.out_of_stock" : "inventory.low_stock",
       storeId,

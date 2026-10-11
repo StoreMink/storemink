@@ -48,7 +48,7 @@ export function QuickAddButton({ product }: { product: ShopCardProduct }) {
     }
     if (inCart >= max) {
       toast.error(
-        `Only ${max} of ${product.name} available — already in your cart.`,
+        `Only ${max} of ${product.name} available - already in your cart.`,
         { duration: 2200 },
       );
       return;

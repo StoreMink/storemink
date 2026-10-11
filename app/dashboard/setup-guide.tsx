@@ -380,7 +380,7 @@ function GoLiveHead({
     navigator.clipboard
       ?.writeText(shown)
       .then(() => toast.success("Password copied"))
-      .catch(() => toast.error("Couldn't copy — select it and copy by hand."));
+      .catch(() => toast.error("Couldn't copy - select it and copy by hand."));
   }
 
   function goLive() {

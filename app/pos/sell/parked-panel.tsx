@@ -63,7 +63,7 @@ export function ParkedPanel({
   async function handleDiscard(sale: ParkedSale) {
     if (
       !window.confirm(
-        `Discard "${parkedSaleLabel(sale)}"? The items go back on the shelf — nothing was ever held for them.`,
+        `Discard "${parkedSaleLabel(sale)}"? The items go back on the shelf - nothing was ever held for them.`,
       )
     )
       return;

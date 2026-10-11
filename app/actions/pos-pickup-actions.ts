@@ -126,7 +126,7 @@ async function auditIdentityOverride(
     staffId: op.staffId,
     actor: op.name,
     orderId,
-    detail: `Pickup ${what} without customer verification — no mobile on the order`,
+    detail: `Pickup ${what} without customer verification - no mobile on the order`,
   });
 }
 
@@ -264,7 +264,7 @@ async function takeDeposit(input: {
     if (err instanceof Error && err.message === OVERPAID) {
       return {
         error:
-          "That is more than this order still owes — someone may have just taken a payment. Reload and check.",
+          "That is more than this order still owes - someone may have just taken a payment. Reload and check.",
       };
     }
     if (err instanceof Error && err.message === PAYMENT_MOVED) {
@@ -849,7 +849,7 @@ export async function markCollected(
     // nothing would inflate the drawer's expected cash with money that was
     // never handed over, reporting it SHORT — the very failure being fixed,
     // pointed the other way.
-    return { error: "This order is already paid — no payment is due here." };
+    return { error: "This order is already paid - no payment is due here." };
   }
 
   let claimed:

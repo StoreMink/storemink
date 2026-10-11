@@ -35,7 +35,7 @@ const DESTINATION_LABEL: Record<RefundDestination, string> = {
 };
 
 function when(iso: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   // Asia/Kolkata pinned: this renders on the server, where the zone is UTC on
   // Cloud Run, and a request timestamped three hours early is unreadable
   // (CODEBASE §24).
@@ -135,7 +135,7 @@ function RequestCard({
         );
       } else if (res.refundPending) {
         toast.success(
-          "Order cancelled. The refund is in flight — we're checking with the gateway, so don't send it again.",
+          "Order cancelled. The refund is in flight - we're checking with the gateway, so don't send it again.",
         );
       } else {
         toast.success("Order cancelled.");
@@ -150,7 +150,7 @@ function RequestCard({
         toast.error(res.error);
         return;
       }
-      toast.success("Request declined — the customer has been told.");
+      toast.success("Request declined - the customer has been told.");
       router.refresh();
     });
 

@@ -50,7 +50,7 @@ export function PreviewBadge() {
         fontFamily: "system-ui, sans-serif",
       }}
     >
-      Draft preview — not published
+      Draft preview - not published
     </div>
   );
 }

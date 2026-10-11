@@ -59,7 +59,7 @@ export const MAILERS: MailerDef[] = [
     key: "notification",
     label: "Notification",
     description:
-      "Order, inventory and account notifications — the mail configured in Settings → Notifications.",
+      "Order, inventory and account notifications - the mail configured in Settings → Notifications.",
   },
   {
     key: "coupon_campaign",
@@ -179,4 +179,4 @@ export function isSensitiveMailer(key: string): boolean {
 }
 
 /** Stored in place of a redacted subject/body, so the row still reads sensibly. */
-export const REDACTED = "[redacted — contains a sign-in code or link]";
+export const REDACTED = "[redacted - contains a sign-in code or link]";

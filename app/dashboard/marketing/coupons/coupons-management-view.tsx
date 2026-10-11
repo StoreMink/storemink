@@ -62,7 +62,7 @@ function formatDiscount(c: Coupon): string {
 }
 
 function formatDate(value: string | null): string {
-  if (!value) return "—";
+  if (!value) return "-";
   return new Date(value).toLocaleDateString("en-IN", {
     day: "numeric",
     month: "short",
@@ -259,7 +259,7 @@ export function CouponsManagementView({
                     <td className="text-muted">
                       {c.min_order_amount > 0
                         ? `₹${c.min_order_amount.toLocaleString("en-IN")}`
-                        : "—"}
+                        : "-"}
                     </td>
                     <td className="text-dim font-mono-dash">
                       {c.used_count}

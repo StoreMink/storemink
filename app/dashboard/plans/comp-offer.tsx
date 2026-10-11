@@ -99,7 +99,7 @@ export function CompOfferCard({
           </p>
           <p className="mt-1 text-sm text-violet-800">
             Starts when you accept. When it ends you go back to{" "}
-            {currentPlanName} — nothing else changes.
+            {currentPlanName} - nothing else changes.
           </p>
 
           {canManage ? (
@@ -147,7 +147,7 @@ export function CompActiveNotice({
           </h2>
           <p className="mt-1 text-sm text-violet-800">
             {left === 1 ? "1 day left" : `${left} days left`}. Your{" "}
-            {paidPlanName} plan continues and is billed as usual — when this
+            {paidPlanName} plan continues and is billed as usual - when this
             ends you go back to {paidPlanName}.
           </p>
         </div>

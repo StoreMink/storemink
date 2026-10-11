@@ -218,7 +218,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pos.ownerOnlyDiscounts",
     label: "Only the owner can give discounts",
     description:
-      "Cashiers and managers cannot discount a sale, mark a line down, or override a price — not even with a manager's PIN. A price override is a discount by another name, so it is covered here too. Turn this off to let cashiers discount up to the limit below, with a manager approving anything larger.",
+      "Cashiers and managers cannot discount a sale, mark a line down, or override a price - not even with a manager's PIN. A price override is a discount by another name, so it is covered here too. Turn this off to let cashiers discount up to the limit below, with a manager approving anything larger.",
     group: "Point of Sale",
     section: "pos",
     type: "boolean",
@@ -254,7 +254,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pos.requireOpenShift",
     label: "Require an open shift to sell",
     description:
-      "Cashiers must open the drawer with a counted float before ringing a sale. Off by default — turning it on can stop a till, so it is the merchant's call.",
+      "Cashiers must open the drawer with a counted float before ringing a sale. Off by default - turning it on can stop a till, so it is the merchant's call.",
     group: "Point of Sale",
     section: "pos",
     type: "boolean",
@@ -363,7 +363,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "orders.cancellationWindow",
     label: "Cancellation window",
     description:
-      "How long after ordering a customer may ask to cancel. 'Until fulfilled' is the usual choice — it tracks your own packing rather than a guess at how long it takes.",
+      "How long after ordering a customer may ask to cancel. 'Until fulfilled' is the usual choice - it tracks your own packing rather than a guess at how long it takes.",
     group: "Orders",
     section: "orders",
     type: "select",
@@ -463,7 +463,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.windowDays",
     label: "Returns accepted within",
     description:
-      "Days from DELIVERY, not from the order date — a window counted from checkout can expire before a slow parcel even arrives. Individual products can override this.",
+      "Days from DELIVERY, not from the order date - a window counted from checkout can expire before a slow parcel even arrives. Individual products can override this.",
     group: "Returns",
     section: "orders",
     type: "number",
@@ -487,7 +487,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.autoApprove",
     label: "Approve straightforward returns automatically",
     description:
-      "Only ever applies to no-fault reasons. A claim that the item was damaged or wrong always goes to a person — otherwise anyone could waive your fees by picking that reason.",
+      "Only ever applies to no-fault reasons. A claim that the item was damaged or wrong always goes to a person - otherwise anyone could waive your fees by picking that reason.",
     group: "Returns",
     section: "orders",
     type: "boolean",
@@ -498,7 +498,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.allowExchanges",
     label: "Offer exchanges as well as refunds",
     description:
-      "An exchange keeps the sale — it costs you less than a refund, so it's on by default.",
+      "An exchange keeps the sale - it costs you less than a refund, so it's on by default.",
     group: "Returns",
     section: "orders",
     type: "boolean",
@@ -509,7 +509,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.restockingFeePercent",
     label: "Restocking fee",
     description:
-      "Percent of the returned goods value. NEVER charged when the return is your fault — damaged, faulty, wrong item, not as described, or late.",
+      "Percent of the returned goods value. NEVER charged when the return is your fault - damaged, faulty, wrong item, not as described, or late.",
     group: "Returns",
     section: "orders",
     type: "number",
@@ -546,7 +546,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.requirePhotoForDamage",
     label: "Ask for a photo when something arrived damaged",
     description:
-      "Only for claims a picture can actually settle — never for a change of mind.",
+      "Only for claims a picture can actually settle - never for a change of mind.",
     group: "Returns",
     section: "orders",
     type: "boolean",

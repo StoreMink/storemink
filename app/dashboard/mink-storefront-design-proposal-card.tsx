@@ -413,7 +413,7 @@ function Badge({ children }: { children: ReactNode }) {
 }
 
 const UNKNOWN_DESIGN_OUTCOME =
-  "We could not confirm whether the design was saved. Check Website Builder, or retry here — the same save cannot apply twice.";
+  "We could not confirm whether the design was saved. Check Website Builder, or retry here - the same save cannot apply twice.";
 
 class DesignActionRequestError extends Error {
   constructor(

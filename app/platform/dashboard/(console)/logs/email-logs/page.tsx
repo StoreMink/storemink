@@ -2,7 +2,7 @@ import { getEmailLogs } from "@/app/actions/email-log-actions";
 import { EmailLogsView } from "@/app/dashboard/logs/email-logs/email-logs-view";
 import { pickPage, pickParam } from "@/app/dashboard/lib/list-params";
 
-export const metadata = { title: "Email logs — StoreMink Admin" };
+export const metadata = { title: "Email logs · StoreMink Admin" };
 
 export default async function PlatformEmailLogsPage({
   searchParams,

@@ -180,7 +180,7 @@ export function MinkStorefrontPublicationControls({
           setApproval(null);
         } else {
           setError(
-            "StoreMink couldn't confirm the publication outcome. Approve this same request again—repeating it is safe and reports the committed result.",
+            "StoreMink couldn't confirm the publication outcome. Approve this same request again - repeating it is safe and reports the committed result.",
           );
         }
       } else {

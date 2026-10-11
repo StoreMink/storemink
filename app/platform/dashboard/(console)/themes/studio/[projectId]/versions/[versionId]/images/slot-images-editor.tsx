@@ -85,7 +85,7 @@ export function historyLine(history: SlotDrawHistory): {
   const twice = history.attempts > 1 ? " after a redraw" : "";
   // The reviewer writes whole sentences; the line adds its own full stop.
   const trimmed = history.note.trim().replace(/[.\s]+$/, "");
-  const note = trimmed ? ` — ${trimmed}` : "";
+  const note = trimmed ? ` - ${trimmed}` : "";
   switch (history.status) {
     case "generated":
       if (history.review === "passed") {

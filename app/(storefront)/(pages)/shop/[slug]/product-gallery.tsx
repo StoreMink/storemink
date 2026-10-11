@@ -159,7 +159,7 @@ export function ProductGallery({
             >
               <Image
                 src={url}
-                alt={index === 0 ? alt : `${alt} — photo ${index + 1}`}
+                alt={index === 0 ? alt : `${alt} - photo ${index + 1}`}
                 fill
                 sizes={sizes}
                 className={`${p}-main-img-el`}
@@ -301,7 +301,7 @@ export function ProductLightbox({
       className="sm-lightbox"
       role="dialog"
       aria-modal="true"
-      aria-label={`${alt} — photo ${active + 1} of ${count}`}
+      aria-label={`${alt} - photo ${active + 1} of ${count}`}
     >
       <div className="sm-lightbox-bar">
         {count > 1 && (
@@ -342,7 +342,7 @@ export function ProductLightbox({
             >
               <Image
                 src={url}
-                alt={i === 0 ? alt : `${alt} — photo ${i + 1}`}
+                alt={i === 0 ? alt : `${alt} - photo ${i + 1}`}
                 fill
                 sizes="100vw"
                 className="sm-lightbox-img"

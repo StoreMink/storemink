@@ -262,7 +262,7 @@ export function validatePageSlug(
     };
   }
   if (RESERVED_PAGE_SLUGS.has(slug)) {
-    return { error: `"${slug}" is reserved — pick a different slug.` };
+    return { error: `"${slug}" is reserved - pick a different slug.` };
   }
   return { slug };
 }

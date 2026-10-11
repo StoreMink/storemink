@@ -239,9 +239,9 @@ describe("product launch preparation result", () => {
     expect(result.blockers.join(" ")).toContain("out of stock");
     expect(result.warnings.join(" ")).toContain("human-approved action");
     expect(result.suggestedCopy).toEqual({
-      headline: "Meet Basmati Rice (Sample) — 5 kg",
+      headline: "Meet Basmati Rice (Sample) - 5 kg",
       subheading:
-        "Discover Basmati Rice (Sample) — 5 kg in Groceries from Echos.",
+        "Discover Basmati Rice (Sample) - 5 kg in Groceries from Echos.",
       callToAction: "Discover more",
     });
     expect(result.checklist.join(" ")).toContain(

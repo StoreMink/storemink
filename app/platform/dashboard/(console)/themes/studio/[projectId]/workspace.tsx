@@ -392,7 +392,7 @@ export function ProjectWorkspace({
                           .map((p) => THEME_IMAGE_PROBLEM_LABEL[p])
                           .join(", ") || "a problem"}
                         {r.images.anchorRejection.note
-                          ? ` — ${r.images.anchorRejection.note}`
+                          ? ` - ${r.images.anchorRejection.note}`
                           : ""}
                       </p>
                     ) : null}

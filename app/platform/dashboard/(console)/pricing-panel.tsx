@@ -124,7 +124,7 @@ export function PricingPanel({
           <h2 className="text-lg font-bold">Plan pricing</h2>
           <p className="text-sm text-[var(--stq-muted)]">
             Changes show on the pricing page immediately.{" "}
-            <b>Anyone already subscribed keeps the price they signed up at</b> —
+            <b>Anyone already subscribed keeps the price they signed up at</b> -
             a new price creates a new Razorpay plan and never reprices a live
             mandate.
           </p>
@@ -169,7 +169,7 @@ export function PricingPanel({
                           price has nowhere to render — offering the field would
                           store a number nobody ever sees. */}
                         {isAddon && key.startsWith("base") ? (
-                          <span className="text-[var(--stq-muted)]">—</span>
+                          <span className="text-[var(--stq-muted)]">-</span>
                         ) : (
                           <input
                             className="stq-input w-28"
@@ -227,7 +227,7 @@ export function PricingPanel({
         </div>
 
         <p className="mt-3 text-xs text-[var(--stq-muted)]">
-          Leave a “Was” field blank when no offer is running — the page then
+          Leave a “Was” field blank when no offer is running - the page then
           shows one price with no strike-through. A “Was” price must be at least
           the price you charge.
         </p>
@@ -284,7 +284,7 @@ function MinkCreditAllowances({
         <h2 className="text-lg font-bold">Included Mink credits</h2>
         <p className="text-sm text-[var(--stq-muted)]">
           What each plan grants every 30 days, before any top-up pack. Applies
-          to every store on that plan at its next request —{" "}
+          to every store on that plan at its next request -{" "}
           <b>including stores already subscribed</b>, unlike a price change.
         </p>
       </header>
@@ -572,7 +572,7 @@ function MinkCreditPacks({ packs }: { packs: CreditPack[] }) {
                     disabled={rows.length === 1}
                     title={
                       rows.length === 1
-                        ? "Keep at least one pack — a store with none cannot top up."
+                        ? "Keep at least one pack - a store with none cannot top up."
                         : undefined
                     }
                     className="stq-btn px-2 py-1 text-[var(--stq-bad)] disabled:opacity-30"
@@ -611,7 +611,7 @@ function MinkCreditPacks({ packs }: { packs: CreditPack[] }) {
         )}
       </div>
       <p className="mt-3 text-xs text-[var(--stq-muted)]">
-        Removing a pack does not affect past purchases — an order records the
+        Removing a pack does not affect past purchases - an order records the
         credits and the amount it was sold for, so history and balances are
         untouched. A merchant mid-purchase on a removed pack is asked to pick
         again.

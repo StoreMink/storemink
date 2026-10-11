@@ -6816,6 +6816,28 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261011_0184_help_no_long_dashes",
+      "description": "Help: rewrite every em dash in Help articles and categories, published or draft, as a hyphen or a colon",
+      "file": "sql/20261011_0184_help_no_long_dashes.sql",
+      "transaction": true,
+      "requires": ["20261011_0183_storefront_theme_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "No Help article holds an em dash",
+            "sql": "select count(*)::text from public.help_articles where coalesce(title, '') || coalesce(excerpt, '') || coalesce(body, '') || coalesce(seo_title, '') || coalesce(seo_description, '') like '%—%'",
+            "equals": "0"
+          },
+          {
+            "name": "No Help category holds an em dash",
+            "sql": "select count(*)::text from public.help_categories where coalesce(title, '') || coalesce(description, '') like '%—%'",
+            "equals": "0"
+          }
+        ]
+      }
     }
   ]
 }

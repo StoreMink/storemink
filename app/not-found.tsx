@@ -44,7 +44,7 @@ export default function NotFound() {
           <p className="sm404-lede sm404-rise sm404-rise-2">
             The address you typed isn&rsquo;t tied to an active StoreMink store.
             It may have moved, been renamed, or never been set up at all. Spin
-            up your own in minutes — or get in touch and we&rsquo;ll help you
+            up your own in minutes - or get in touch and we&rsquo;ll help you
             find it.
           </p>
 

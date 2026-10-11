@@ -33,7 +33,7 @@ export async function generateMetadata({
 }) {
   const { storeId } = await params;
   const store = await loadStoreDetail(storeId);
-  return { title: `${store?.name ?? "Store"} — StoreMink Admin` };
+  return { title: `${store?.name ?? "Store"} · StoreMink Admin` };
 }
 
 // ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ function money(rupees: number): string {
 }
 
 function date(iso: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   // Pinned to IST for the §24 reason: this renders on the server, where the
   // timezone is UTC on Cloud Run, so an unpinned date silently shifts.
   return new Date(iso).toLocaleDateString("en-GB", {
@@ -311,7 +311,7 @@ export default async function StoreDetailPage({
             <Facts
               rows={[
                 ["Plan", <PlanSummary key="p" store={store} />],
-                ["Source", store.planSource ?? "—"],
+                ["Source", store.planSource ?? "-"],
                 [
                   "Expires",
                   store.planExpiresAt
@@ -411,12 +411,12 @@ export default async function StoreDetailPage({
           <Card title="Details" icon={<Truck className="h-4 w-4" />}>
             <Facts
               rows={[
-                ["Owner", store.owner?.email ?? "—"],
+                ["Owner", store.owner?.email ?? "-"],
                 [
                   "Business location",
                   [store.business.city, store.business.country]
                     .filter(Boolean)
-                    .join(", ") || "—",
+                    .join(", ") || "-",
                 ],
                 [
                   "Custom domain",
@@ -434,7 +434,7 @@ export default async function StoreDetailPage({
                       )}
                     </span>
                   ) : (
-                    "—"
+                    "-"
                   ),
                 ],
                 ["Search-indexable", store.launched ? "Yes" : "Not yet"],

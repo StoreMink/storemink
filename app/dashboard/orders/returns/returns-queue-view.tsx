@@ -153,7 +153,7 @@ export function ReturnsQueueView({
           const at = shelf ? ` at ${shelf.name}` : "";
           toast.success(
             res.exchangeOrderId
-              ? "Booked in — the replacement order is on its way."
+              ? "Booked in - the replacement order is on its way."
               : res.restocked
                 ? `Booked in. ${res.restocked} line${res.restocked === 1 ? "" : "s"} back on the shelf${at}.`
                 : "Booked in.",
@@ -232,7 +232,7 @@ export function ReturnsQueueView({
                       {r.merchantFault && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-600/20">
                           <AlertTriangle className="h-3 w-3" />
-                          Our fault — no fees
+                          Our fault - no fees
                         </span>
                       )}
                       {/* An exchange keeps the sale — it costs the store far

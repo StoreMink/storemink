@@ -31,7 +31,7 @@ const EVENT_META: Record<
   device_authorized: { label: "Device authorized", tone: "info" },
   device_revoked: { label: "Device revoked", tone: "info" },
   device_clone_detected: {
-    label: "Device revoked automatically — copied credential detected",
+    label: "Device revoked automatically - copied credential detected",
     tone: "danger",
   },
   operator_login: { label: "Staff signed in", tone: "info" },
@@ -40,13 +40,13 @@ const EVENT_META: Record<
   // `warn`, not `info`: it is ordinary enough on legacy orders to be expected,
   // and serious enough that a run of them is worth a second look.
   identity_override: {
-    label: "Handed over without customer verification — no mobile on the order",
+    label: "Handed over without customer verification - no mobile on the order",
     tone: "warn",
   },
 };
 
 const REVOKED_REASON: Record<string, string> = {
-  clone_detected: "Revoked automatically — a copied credential was detected",
+  clone_detected: "Revoked automatically - a copied credential was detected",
   revoked_by_admin: "Revoked from the dashboard",
   // Without this the row falls through to a bare "Revoked", which for a device
   // the owner deliberately swapped out reads like something went wrong.
@@ -150,7 +150,7 @@ export function DevicesClient({
         <h1>POS Devices</h1>
         <p>
           Staff can only sign into the register on a device you&apos;ve
-          authorized — their personal phones won&apos;t work. The easiest way is
+          authorized - their personal phones won&apos;t work. The easiest way is
           to open /pos on the shop&apos;s device while signed in as the owner
           and tap &ldquo;Authorize this device&rdquo;; use a code below to set
           one up remotely.
@@ -313,7 +313,7 @@ export function DevicesClient({
                       {danger && (
                         <p className="mt-1.5 text-xs text-red-700">
                           If this was your own device, authorize it again. If
-                          not, someone copied a register credential — change
+                          not, someone copied a register credential - change
                           affected staff PINs.
                         </p>
                       )}

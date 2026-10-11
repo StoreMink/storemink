@@ -2,15 +2,15 @@ export const DEFAULT_ANALYTICS_TIME_ZONE = "Asia/Kolkata";
 
 /** Common merchant zones for the first settings control; validation accepts any IANA zone. */
 export const COMMON_ANALYTICS_TIME_ZONES = [
-  ["Asia/Kolkata", "India — Kolkata"],
-  ["Asia/Dubai", "United Arab Emirates — Dubai"],
+  ["Asia/Kolkata", "India - Kolkata"],
+  ["Asia/Dubai", "United Arab Emirates - Dubai"],
   ["Asia/Singapore", "Singapore"],
-  ["Europe/London", "United Kingdom — London"],
-  ["America/New_York", "United States — Eastern"],
-  ["America/Chicago", "United States — Central"],
-  ["America/Denver", "United States — Mountain"],
-  ["America/Los_Angeles", "United States — Pacific"],
-  ["Australia/Sydney", "Australia — Sydney"],
+  ["Europe/London", "United Kingdom - London"],
+  ["America/New_York", "United States - Eastern"],
+  ["America/Chicago", "United States - Central"],
+  ["America/Denver", "United States - Mountain"],
+  ["America/Los_Angeles", "United States - Pacific"],
+  ["Australia/Sydney", "Australia - Sydney"],
 ] as const;
 
 export const ANALYTICS_RANGE_PRESETS = [

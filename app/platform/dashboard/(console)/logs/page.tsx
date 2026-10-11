@@ -3,7 +3,7 @@ import { AlertTriangle, Mail, MessageSquare } from "lucide-react";
 import { requireOperator } from "../require-operator";
 import { PLATFORM_LOG_TYPES } from "./log-types";
 
-export const metadata = { title: "Logs — StoreMink Admin" };
+export const metadata = { title: "Logs · StoreMink Admin" };
 
 const ICONS = {
   mail: Mail,

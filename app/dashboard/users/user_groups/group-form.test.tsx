@@ -78,7 +78,7 @@ describe("GroupForm", () => {
       "Newbies",
     );
     await user.type(
-      screen.getByPlaceholderText("Optional — what this group is for"),
+      screen.getByPlaceholderText("Optional - what this group is for"),
       "Just joined",
     );
     await user.click(screen.getByRole("button", { name: "Create group" }));
@@ -136,7 +136,7 @@ describe("GroupForm", () => {
       "VIP shoppers",
     );
     expect(
-      screen.getByPlaceholderText("Optional — what this group is for"),
+      screen.getByPlaceholderText("Optional - what this group is for"),
     ).toHaveValue("Top spenders");
 
     await user.click(screen.getByRole("button", { name: "Save changes" }));

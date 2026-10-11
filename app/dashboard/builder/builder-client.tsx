@@ -592,7 +592,7 @@ export function BuilderClient({
     startTransition(async () => {
       const flushed = await flush();
       if (!flushed) {
-        toast.error("Couldn't save your latest changes — publish aborted.");
+        toast.error("Couldn't save your latest changes - publish aborted.");
         return;
       }
       // One Publish means one website: the page AND the site-wide chrome go
@@ -1183,12 +1183,12 @@ export function BuilderClient({
                   // sections stay and win — that's the point of taking over.
                   const fresh = await getPageDraft(draft.id);
                   if (!fresh) {
-                    toast.error("Could not reach the page — try reloading.");
+                    toast.error("Could not reach the page - try reloading.");
                     return;
                   }
                   tokenRef.current = fresh.updated_at;
                   const ok = await unblock();
-                  if (ok) toast.success("Took over — your version is saved.");
+                  if (ok) toast.success("Took over - your version is saved.");
                   else toast.error("Still couldn't save. Reload the builder.");
                 });
               }}
@@ -1234,7 +1234,7 @@ function SaveStatusIndicator({
   if (status === "error") {
     return (
       <button className="sm-builder-savestate is-error" onClick={onRetry}>
-        Couldn&apos;t save — retry
+        Couldn&apos;t save - retry
       </button>
     );
   }

@@ -531,7 +531,7 @@ export function CounterClient({
     // wrong for a deposit — the order is still work.
     if (res.partial) {
       toast.success(
-        `₹${res.partial.paid.toLocaleString("en-IN")} taken. ₹${res.partial.remaining.toLocaleString("en-IN")} still to pay — the order stays on the shelf.`,
+        `₹${res.partial.paid.toLocaleString("en-IN")} taken. ₹${res.partial.remaining.toLocaleString("en-IN")} still to pay - the order stays on the shelf.`,
       );
       refreshQueue();
       // The panel stays OPEN — the order is still work — but its figures have
@@ -885,7 +885,7 @@ export function CounterClient({
           // scanned code still resolves here.
           placeholder={
             isReturns
-              ? "Order number, phone or email — or scan a code…"
+              ? "Order number, phone or email - or scan a code…"
               : "Scan a collection code, or type an order number, phone or email…"
           }
           className="w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] py-3.5 pl-11 pr-11 text-base outline-none focus:border-[var(--pos-border-strong)]"
@@ -903,7 +903,7 @@ export function CounterClient({
 
       {tooShort && (
         <p className="mb-3 text-sm text-[var(--pos-ink-2)]">
-          Type a bit more — at least 4 characters.
+          Type a bit more - at least 4 characters.
         </p>
       )}
 

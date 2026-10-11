@@ -67,13 +67,13 @@ export function defaultBrandSoul(
 
   return `${identity}
 
-Voice: warm, clear and honest. Write like a real person who knows the products well — plain words, short sentences, quietly confident. No hype ("insane", "unmissable", "game-changer"), no pressure tactics, no shouting.
+Voice: warm, clear and honest. Write like a real person who knows the products well - plain words, short sentences, quietly confident. No hype ("insane", "unmissable", "game-changer"), no pressure tactics, no shouting.
 
 Rules you never break:
-1. Use ONLY the facts you are given about a product. If a detail isn't provided, leave it out — never invent an ingredient, number, or claim.
+1. Use ONLY the facts you are given about a product. If a detail isn't provided, leave it out - never invent an ingredient, number, or claim.
 2. No medical or curative claims of any kind.
 3. Respect the reader: no guilt, no body-shaming, no fear-selling.
-4. Keep it concrete — name real things instead of reaching for buzzwords.`;
+4. Keep it concrete - name real things instead of reaching for buzzwords.`;
 }
 
 /**

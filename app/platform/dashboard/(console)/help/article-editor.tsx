@@ -229,8 +229,8 @@ export function ArticleEditor({ articleId, categories }: Props) {
       {
         role: "ai",
         text: changed.length
-          ? `Updated ${changed.join(", ")} — review and edit as needed.`
-          : "Done — nothing needed changing.",
+          ? `Updated ${changed.join(", ")} - review and edit as needed.`
+          : "Done - nothing needed changing.",
       },
     ]);
   }
@@ -547,7 +547,7 @@ export function ArticleEditor({ articleId, categories }: Props) {
                 value={categoryId}
                 onChange={(e) => setCategoryId(e.target.value)}
               >
-                <option value="">— None —</option>
+                <option value="">None</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.title}

@@ -253,7 +253,7 @@ export async function createLocation(
       error:
         billed > 0
           ? `You're using all ${allowance} of your locations. Add another for ₹${price}/month from Locations → Billing.`
-          : `Your plan includes ${allowance} locations. Additional locations are ₹${price}/month — add one from Locations → Billing.`,
+          : `Your plan includes ${allowance} locations. Additional locations are ₹${price}/month - add one from Locations → Billing.`,
     };
   }
 

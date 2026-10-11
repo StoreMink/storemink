@@ -117,7 +117,7 @@ export function HelpSearchBox({
         placeholder={
           compact
             ? "Search help or ask a question…"
-            : "Ask in any language — payments, domains, products…"
+            : "Ask in any language - payments, domains, products…"
         }
         aria-label="Search the help centre"
         enterKeyHint="search"

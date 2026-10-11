@@ -7,7 +7,7 @@ import { THEME_STUDIO_MODELS } from "@/lib/theme-studio/models";
 import { requireOperator } from "../../require-operator";
 import { StudioStatusBadge, SuperadminOnly, studioDate } from "./studio-ui";
 
-export const metadata = { title: "AI Theme Studio — StoreMink Admin" };
+export const metadata = { title: "AI Theme Studio · StoreMink Admin" };
 
 // ★ Every Studio page gates itself (require-operator.ts explains why the
 // layout's redirect is not enough), and then gates AGAIN on superadmin: a

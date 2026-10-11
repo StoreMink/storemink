@@ -317,7 +317,7 @@ export function explainCertificate(managed: ManagedCert | undefined): {
         failureReason: reason,
         diagnosis:
           "Google has temporarily rate-limited certificate requests for this domain. " +
-          "This clears by itself — try again in an hour. Nothing needs changing.",
+          "This clears by itself - try again in an hour. Nothing needs changing.",
       });
     case "CONFIG":
     case "AUTHORIZATION_ISSUE":

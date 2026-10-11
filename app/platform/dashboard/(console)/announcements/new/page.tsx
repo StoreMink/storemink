@@ -4,7 +4,7 @@ import { smsAvailability } from "@/lib/announcements/sms-availability";
 import { canManage, requireOperator } from "../../require-operator";
 import { AnnouncementComposer } from "../composer";
 
-export const metadata = { title: "New announcement — StoreMink Admin" };
+export const metadata = { title: "New announcement · StoreMink Admin" };
 
 export default async function NewAnnouncementPage() {
   const viewer = await requireOperator();

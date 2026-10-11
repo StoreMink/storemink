@@ -610,7 +610,7 @@ export async function saveNotificationConfig(
         if (channelKey === "sms" && on && !(await storeCanSendSms(storeId))) {
           return {
             error:
-              "Connect Twilio in Channels first — SMS also needs your DLT sender header and Entity ID.",
+              "Connect Twilio in Channels first - SMS also needs your DLT sender header and Entity ID.",
           };
         }
         if (!channel.available && on) {
@@ -1356,7 +1356,7 @@ export async function retryFailedEmail(
     if (suppressed.has(normalizeEmail(target.email))) {
       return {
         error:
-          "This address bounced permanently or reported spam. Retrying can't succeed — contact the recipient for a working address.",
+          "This address bounced permanently or reported spam. Retrying can't succeed - contact the recipient for a working address.",
       };
     }
 

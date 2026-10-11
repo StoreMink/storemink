@@ -191,7 +191,7 @@ export function OutlinePanel({
         )}
         {sections?.length === 0 && (
           <p className="sm-builder-empty">
-            No sections yet — add your first one below.
+            No sections yet - add your first one below.
           </p>
         )}
 
@@ -328,7 +328,7 @@ function SortableSectionRow({
           {hiddenOnPage && section.enabled && (
             <span
               className="sm-builder-hiddenbadge"
-              title="Not visible on the page — it has nothing to show yet (e.g. no products/content)."
+              title="Not visible on the page - it has nothing to show yet (e.g. no products/content)."
             >
               empty
             </span>

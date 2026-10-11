@@ -70,7 +70,7 @@ export default async function CollectPage({
 
           <p className={styles.collectStatus}>
             {ready
-              ? "Ready now — come in whenever suits you."
+              ? "Ready now - come in whenever suits you."
               : order.pickup_ready_at
                 ? `We'll have it ready by ${when(order.pickup_ready_at)}. We'll email you when it's waiting.`
                 : "We'll email you as soon as it's ready."}

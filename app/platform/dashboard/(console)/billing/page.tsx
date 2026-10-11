@@ -36,7 +36,7 @@ export default async function PlatformBillingPage() {
       <h1 className="text-2xl font-bold text-[#111827]">Billing &amp; tax</h1>
       <p className="mt-1 mb-6 max-w-2xl text-sm text-[#5b6472]">
         What StoreMink&apos;s own subscription invoices say, and whether they
-        charge GST. This is the platform&apos;s tax identity — not a
+        charge GST. This is the platform&apos;s tax identity - not a
         merchant&apos;s. A merchant&apos;s own tax settings live in their
         dashboard.
       </p>

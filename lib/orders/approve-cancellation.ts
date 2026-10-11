@@ -126,7 +126,7 @@ export async function approveCancellation(
   if (!claimed) {
     return {
       error:
-        "This order has moved on and can't be cancelled now — it may already be cancelled or fulfilled.",
+        "This order has moved on and can't be cancelled now - it may already be cancelled or fulfilled.",
     };
   }
 
@@ -173,7 +173,7 @@ export async function approveCancellation(
         customerId,
         method,
         actor: input.actorLabel ?? input.actorId ?? "system",
-        reason: `Cancelled — ${cancelReasonLabel(input.reasonCode)}`,
+        reason: `Cancelled - ${cancelReasonLabel(input.reasonCode)}`,
       }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
 
       if ("pendingReconcile" in res && res.pendingReconcile) {

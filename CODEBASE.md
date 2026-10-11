@@ -4495,7 +4495,10 @@ wholesip/
 │                              # ⚠ When both branches merge, manifest.json conflicts:
 │                              # whichever lands second must append its entries AFTER
 │                              # every applied one and fix `requires`, or the runner's
-│                              # out-of-order check refuses. Next free: 0184.
+│                              # out-of-order check refuses. 0184 rewrites every
+│                              # em dash in Help articles and categories (§5.40); every
+│                              # Help migration after it is held to no em dash by
+│                              # help:lint. Next free: 0185.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -9276,8 +9279,8 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
       resolution never caches a missing store host. This prevents a successful
       checkout from redirecting into a cached pre-creation miss, which used to
       fall back to WholeSip and falsely render "No access to this dashboard".
-      Dashboard metadata is platform-owned (`StoreMink — Operations Centre`, with
-      child titles suffixed `— StoreMink`) and never reads merchant/fallback brand
+      Dashboard metadata is platform-owned (`StoreMink · Operations Centre`, with
+      child titles suffixed `· StoreMink`) and never reads merchant/fallback brand
       data, so WholeSip cannot leak into the admin browser tab.
       Runs on the PLATFORM's Razorpay account (env `RAZORPAY_KEY_ID` /
       `RAZORPAY_KEY_SECRET`). - **Location autofill is independent of the map.**
@@ -16790,6 +16793,69 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
         is PROMOTIONAL (numeric headers, DND scrubbing, time-of-day limits), which
         is heavier than the transactional templates §37 models. It is built gated
         and refuses with a reason rather than queueing what carriers drop.
+
+40. **No em dash in product text (owner's rule, 2026-10-11).** The email and
+    marketing rule (§24, §4 `platform/page.tsx`) now covers the whole product:
+    dashboard, storefront, POS and operator console. A sentence uses " - ", a
+    comma or a colon; an empty table cell is "-" (it was "—"); a page title uses
+    " · " (`Orders · StoreMink`); a date range reads "1 Oct 2026 to 30 Oct 2026".
+    - **`app/long-dash-coverage.test.ts` is the guard.** It parses every
+      non-test `.ts`/`.tsx`/`.mjs` file under `app`, `components`, `lib` and
+      `hooks` with the TypeScript parser and fails on U+2014 (or `—`) in a
+      string literal, template text or JSX text. Comments and regex literals are
+      not checked: comments are not product text, and the migration/help lints
+      and `withoutLongDashes` MATCH a dash on purpose.
+    - **★ Its exemptions are text frozen somewhere else**, so editing the source
+      would change nothing a visitor sees or would break a checksum:
+      `lib/themes/definitions/` and `lib/themes/meta.ts` (bundled theme
+      releases are digest-checked, so changed content without a version bump
+      fails `importBundledThemeReleases`), `lib/theme-studio/` (model-facing,
+      and `qa-diagnosis.ts` splits acceptance messages on " — examples: ") and
+      `lib/help/embedding-worker.ts` (embedding input only). The guard fails if
+      an exempt path stops existing.
+    - **★ The pricing matrix's "—" was a sentinel, not text.**
+      `pricing-content.tsx` rendered `value === "—"` as the "Not included" minus
+      icon; the two POS rows in `planFeatureMatrix` now say `false`, which
+      renders the same icon, and the sentinel is gone.
+    - **★ AI copy gets the rule twice.** `callGemini` (every product
+      description, SEO, brand voice, help article, help assistant and coupon
+      email) appends `NO_LONG_DASH_RULE` to the system instruction and passes the
+      reply through `withoutLongDashes`, which moved to `lib/text/long-dashes.ts`
+      (re-exported from `lib/email/coupon-campaign.ts`, so existing imports
+      hold). Mink's prompt (`docs/mink-ai-system-prompt.md`) carries the rule in
+      its answer-style bullet; its streamed answer is not rewritten after the
+      fact. Prompt versions advance to `draft-action-beta-v47` /
+      `read-beta-v26` and tool registries to `draft-beta-v37` / `read-beta-v22`
+      (three tool descriptions changed text). `brand/tasks/*.md` lost their
+      dashes too, since a model mirrors the punctuation of its prompt.
+    - **★ THE POLICIES ARE IN SCOPE, AND ONLY THE DRAFT CHANGED.** The v2
+      Terms, Privacy and Acceptable Use bodies in `lib/legal/content.ts` lost
+      their 29 dashes (colons, commas, parentheses or semicolons, chosen per
+      sentence; a mechanical " - " reads badly in a contract). v2 was drafted
+      on 2026-09-05 and never published, so no version number moved and no
+      checksum changed. Nothing reaches a reader until
+      `scripts/publish-legal.ts --publish` runs, which still asks every
+      merchant to accept again (§25),
+      and the two blocked v1 clauses at the top of that file are unchanged.
+    - **★ THE HELP CENTRE IS CLEANED BY MIGRATION 0184**, one generic pass
+      over every article and category, published or draft, including console
+      edits: a table cell of only a dash becomes "-", a dash in a heading or
+      straight after bold text becomes ": ", and every other dash " - ". A
+      pass rather than a replace() per sentence because quoting dozens of
+      sentences would depend on whatever every earlier migration and console
+      edit left behind; it is idempotent. It bumps `updated_at` on changed
+      rows, so Mink's help index re-embeds them. Verified against a copy of
+      staging in a rolled-back transaction: 7 guides change, none of the 63
+      durable `verify` results moves. `help:lint` then holds every Help
+      migration AFTER 0184 (manifest order) to no em dash, published or
+      quoted, since a quoted dash names text that no longer exists
+      (`lintLongDashes`, `GRANDFATHERED_LONG_DASH` for an already-applied
+      migration merged from another branch); `help:audit` reports one in
+      published rows, which is the only check that sees a console edit.
+    - **⚠ Not changed, deliberately:** code comments and internal docs (not
+      product text), CLI output in `scripts/`, and other content already
+      stored in the database (pages, product descriptions, theme content).
+      Those keep their dashes until edited.
 
 ## 6. Commands
 

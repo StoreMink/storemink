@@ -55,7 +55,7 @@ export function AcceptanceRunBadge({
 }
 
 function short(digest: string | null): string {
-  return digest ? `${digest.slice(0, 12)}…` : "—";
+  return digest ? `${digest.slice(0, 12)}…` : "-";
 }
 
 function metricText(metrics: GateResult["metrics"]): string | null {

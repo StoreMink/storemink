@@ -355,7 +355,7 @@ export function NotificationDetailView({
             hint={
               notification.configurable
                 ? "Turn off to stop notifying. It's still recorded in Activity."
-                : "This one can't be switched off — you'd be blind to a change you need to see."
+                : "This one can't be switched off - you'd be blind to a change you need to see."
             }
           >
             <div className="flex items-center gap-2.5 pt-1">
@@ -470,7 +470,7 @@ export function NotificationDetailView({
 
           {current.key === "customer" && (
             <p className="text-[12.5px] text-[var(--dash-text-3)]">
-              Goes to the shopper this happened to — there&apos;s no recipient
+              Goes to the shopper this happened to - there&apos;s no recipient
               list to choose.
             </p>
           )}
@@ -509,7 +509,7 @@ export function NotificationDetailView({
                     />
                     {channel.label}
                     {!channel.available && (
-                      <span className="text-[11.5px]">— {channel.note}</span>
+                      <span className="text-[11.5px]">- {channel.note}</span>
                     )}
                   </label>
                 ))}
@@ -625,7 +625,7 @@ export function NotificationDetailView({
                   label="Message"
                   hint={
                     activeChannel === "email"
-                      ? "HTML. Use <p>, <ul>/<li> and <strong> — the email styles them for you."
+                      ? "HTML. Use <p>, <ul>/<li> and <strong> - the email styles them for you."
                       : "Clear it to fall back to the built-in wording."
                   }
                 >
@@ -670,7 +670,7 @@ export function NotificationDetailView({
                   <div className="mt-2 overflow-hidden rounded-md border border-[var(--dash-border)]">
                     <div className="border-b border-[var(--dash-border)] bg-[var(--dash-surface-2)] px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--dash-text-3)]">
                       {activeChannel === "email"
-                        ? `Inbox preview — ${current.label.toLowerCase()}`
+                        ? `Inbox preview - ${current.label.toLowerCase()}`
                         : "Bell preview"}
                     </div>
                     {activeChannel === "email" ? (

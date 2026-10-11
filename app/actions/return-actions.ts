@@ -582,7 +582,7 @@ export async function requestReturn(input: {
       }
       if (!option.available) {
         return {
-          error: `"${option.name}" is out of stock — choose another, or ask for a refund instead.`,
+          error: `"${option.name}" is out of stock - choose another, or ask for a refund instead.`,
         };
       }
       swapVariantId = option.variantId;

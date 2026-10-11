@@ -249,7 +249,7 @@ export function ReturnClient({ sale }: { sale: ReturnableSale }) {
                         }
                         className="h-4 w-4 accent-amber-500"
                       />
-                      Damaged — don&apos;t restock
+                      Damaged - don&apos;t restock
                     </label>
                   )}
                 </div>

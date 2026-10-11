@@ -12,7 +12,7 @@ import { requireOperator } from "../../../require-operator";
 import { SuperadminOnly } from "../studio-ui";
 import { ProjectWorkspace, type VersionAcceptance } from "./workspace";
 
-export const metadata = { title: "Studio project — StoreMink Admin" };
+export const metadata = { title: "Studio project · StoreMink Admin" };
 
 export default async function ThemeStudioProjectPage({
   params,

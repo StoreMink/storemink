@@ -50,7 +50,7 @@ export function BrandVoiceForm({
     setUsage((u) => (u.cap === null ? u : { ...u, used: u.used + 1 }));
     setStatus({
       ok: true,
-      msg: "Draft ready — review it below, tweak anything, then save.",
+      msg: "Draft ready - review it below, tweak anything, then save.",
     });
   }
 
@@ -63,7 +63,7 @@ export function BrandVoiceForm({
     setStatus(
       res.error
         ? { ok: false, msg: res.error }
-        : { ok: true, msg: "Brand voice saved — AI copy now speaks in it." },
+        : { ok: true, msg: "Brand voice saved - AI copy now speaks in it." },
     );
   }
 
@@ -91,7 +91,7 @@ export function BrandVoiceForm({
       <div className="brandingSection">
         <h2>Brand voice (AI)</h2>
         <p className="lead" style={{ marginBottom: 16 }}>
-          The identity your AI copy speaks from — product descriptions, SEO and
+          The identity your AI copy speaks from - product descriptions, SEO and
           marketing emails all follow this guide. Answer a few questions and let
           AI draft it, or write your own below.
           {usage.cap !== null && (

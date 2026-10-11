@@ -103,7 +103,7 @@ function planFeatures(plan: Plan, included: IncludedMinkCredits): string[] {
     ...(l.customCode ? ["Custom-code page sections"] : []),
     ...(l.emailCampaigns ? ["Email campaigns"] : []),
     ...(l.advancedAnalytics
-      ? ["Advanced analytics — GA4, Meta Pixel and conversion insights"]
+      ? ["Advanced analytics - GA4, Meta Pixel and conversion insights"]
       : []),
     ...(l.removeBadge ? ['No "Powered by StoreMink" badge'] : []),
   ];
@@ -238,7 +238,7 @@ export function PlansBillingClient({
       rzpOrderId: start.rzpOrderId,
       amountPaise: start.amountPaise,
       name: "StoreMink",
-      description: `${pack.credits} Mink credits — ${start.packName} pack`,
+      description: `${pack.credits} Mink credits - ${start.packName} pack`,
       onSuccess: async (res) => {
         const confirm = await confirmCreditPurchase(
           start.purchaseId,
@@ -248,7 +248,7 @@ export function PlansBillingClient({
         setBuyingPack(null);
         if (confirm.error) {
           toast.info(
-            "Payment received — your credits will appear here in a few minutes.",
+            "Payment received - your credits will appear here in a few minutes.",
           );
         } else {
           toast.success(`${confirm.creditsAdded} Mink credits added!`);
@@ -342,7 +342,7 @@ export function PlansBillingClient({
                 ? "Trial"
                 : data.planSource === "comp"
                   ? "Complimentary"
-                  : "—"}
+                  : "-"}
           </Detail>
         </dl>
 
@@ -354,7 +354,7 @@ export function PlansBillingClient({
             <p className="text-sm text-[#5b6472]">
               {subscription.cancelAtPeriodEnd ? (
                 <>
-                  Cancelled — you keep {planMeta.name}
+                  Cancelled - you keep {planMeta.name}
                   {subscription.currentEnd
                     ? ` until ${formatDate(subscription.currentEnd)}`
                     : " until the cycle ends"}
@@ -590,7 +590,7 @@ export function PlansBillingClient({
           </div>
           {data.ledger.length === 0 ? (
             <p className="mt-3 text-sm text-[#5b6472]">
-              No Mink credit activity yet — purchases, grants and spends show up
+              No Mink credit activity yet - purchases, grants and spends show up
               here.
             </p>
           ) : (
@@ -924,7 +924,7 @@ function UpgradeModal({
       rzpOrderId: start.rzpOrderId,
       amountPaise: start.amountPaise,
       name: "StoreMink",
-      description: `${selectedPack.credits} Mink credits — one-time purchase`,
+      description: `${selectedPack.credits} Mink credits - one-time purchase`,
       onSuccess: async (res) => {
         const confirmed = await confirmCreditPurchase(
           start.purchaseId,
@@ -998,7 +998,7 @@ function UpgradeModal({
       // a Cards-only screen. No mandate, no recurring binding.
       customerId: start.autopay ? start.providerCustomerId : undefined,
       name: "StoreMink",
-      description: `${meta.name} plan — first ${selectedPeriod === "yearly" ? "year" : "month"}`,
+      description: `${meta.name} plan - first ${selectedPeriod === "yearly" ? "year" : "month"}`,
       onSuccess: async (res) => {
         const confirmed = await confirmSubscribe(
           start.invoiceId,
@@ -1064,7 +1064,7 @@ function UpgradeModal({
       rzpOrderId: res.payment.providerOrderId,
       amountPaise: res.payment.amountPaise,
       name: "StoreMink",
-      description: `${meta.name} plan — part period`,
+      description: `${meta.name} plan - part period`,
       onSuccess: async (r) => {
         const done = await confirmMyPlanChange(
           res.payment!.invoiceId,

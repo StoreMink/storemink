@@ -132,7 +132,7 @@ export async function saveSmsCredentials(input: {
   if (!senderHeader) {
     return {
       error:
-        "A DLT sender header is exactly six letters, no digits — that's the transactional form (a numeric header is promotional).",
+        "A DLT sender header is exactly six letters, no digits - that's the transactional form (a numeric header is promotional).",
     };
   }
   if (!dltEntityId) {

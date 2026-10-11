@@ -22,7 +22,7 @@ import {
   imageRunEstimate,
 } from "@/lib/theme-studio/image-generation-core";
 
-export const metadata = { title: "Theme images — StoreMink Admin" };
+export const metadata = { title: "Theme images · StoreMink Admin" };
 
 // Every image slot of one version, and the operator's replacements for them.
 // Saving creates ONE new version; this version is never changed.
@@ -103,7 +103,7 @@ export default async function ThemeStudioSlotImagesPage({
           slot that still has a placeholder, or tick a placeholder or generated
           image to have it drawn again: an upload is cropped to the slot&apos;s
           shape and compressed to the storefront&apos;s limits. Say where each
-          image came from — acceptance and publication rely on it. Saving
+          image came from - acceptance and publication rely on it. Saving
           creates a new version; version {listing.versionNumber} stays as it is.
           {placeholders > 0
             ? ` ${placeholders} of ${listing.slots.length} slots still have a placeholder.`

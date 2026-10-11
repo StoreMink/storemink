@@ -18,7 +18,7 @@ const fmtDate = (iso: string | null) =>
         year: "numeric",
         timeZone: "Asia/Kolkata",
       })
-    : "—";
+    : "-";
 
 /** Merchant-facing wording — `uncollectible` is our word, not theirs. */
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -99,8 +99,8 @@ export default async function InvoicesPage() {
                     </td>
                     <td className="text-sm text-[#5b6472]">
                       {inv.periodStart && inv.periodEnd
-                        ? `${fmtDate(inv.periodStart)} — ${fmtDate(inv.periodEnd)}`
-                        : "—"}
+                        ? `${fmtDate(inv.periodStart)} to ${fmtDate(inv.periodEnd)}`
+                        : "-"}
                     </td>
                     <td className="text-right text-sm font-medium text-[#111827]">
                       {inr(inv.totalPaise)}

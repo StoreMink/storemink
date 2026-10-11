@@ -156,7 +156,7 @@ export function MoneyLogClient({
                           ? `+${formatPrice(Math.abs(amount))}`
                           : formatPrice(amount)}
                       </td>
-                      <td>{e.actor ?? "—"}</td>
+                      <td>{e.actor ?? "-"}</td>
                       <td>
                         {e.approver ? (
                           <span className="font-medium">{e.approver}</span>
@@ -169,10 +169,10 @@ export function MoneyLogClient({
                         )}
                       </td>
                       <td className="text-muted-foreground">
-                        {locName(e.locationId) || "—"}
+                        {locName(e.locationId) || "-"}
                       </td>
                       <td className="max-w-[22rem] truncate text-muted-foreground">
-                        {e.detail ?? "—"}
+                        {e.detail ?? "-"}
                       </td>
                       <td className="whitespace-nowrap text-muted-foreground">
                         {when(e.createdAt)}

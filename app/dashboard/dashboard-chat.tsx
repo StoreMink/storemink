@@ -1086,7 +1086,7 @@ export function minkCreditWarning(
   if (totalLeft < MINK_MAX_RUN_CREDITS)
     return {
       level: "low",
-      message: `Only ${totalLeft} Mink credit${totalLeft === 1 ? "" : "s"} left — a large request can use up to ${MINK_MAX_RUN_CREDITS}. Top up under Plans & Billing.`,
+      message: `Only ${totalLeft} Mink credit${totalLeft === 1 ? "" : "s"} left - a large request can use up to ${MINK_MAX_RUN_CREDITS}. Top up under Plans & Billing.`,
     };
   return null;
 }

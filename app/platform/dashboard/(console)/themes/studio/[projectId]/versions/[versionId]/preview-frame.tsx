@@ -233,7 +233,7 @@ export function PreviewFrame({
           {loading ? (
             <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-slate-600">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Preparing the
-              preview — the first open of a version builds its store.
+              preview - the first open of a version builds its store.
             </div>
           ) : null}
         </div>

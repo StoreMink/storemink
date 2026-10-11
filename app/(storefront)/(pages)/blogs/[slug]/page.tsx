@@ -366,7 +366,7 @@ export default async function BlogDetailPage({ params }: Props) {
                 textAlign: "center",
               }}
             >
-              👁 Preview — this post is{" "}
+              👁 Preview - this post is{" "}
               <strong>
                 {blog.status === "pending_review"
                   ? "pending review"

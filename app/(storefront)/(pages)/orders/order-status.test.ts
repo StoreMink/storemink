@@ -142,7 +142,7 @@ describe("pickupNote", () => {
         },
         NOW,
       ),
-    ).toBe("Handed over — thank you.");
+    ).toBe("Handed over - thank you.");
     expect(
       pickupNote(
         { pickup_status: "expired", pickup_expires_at: "2026-08-10T00:00:00Z" },

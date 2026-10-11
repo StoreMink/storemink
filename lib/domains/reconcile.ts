@@ -60,7 +60,7 @@ export const UPGRADE_MESSAGE =
  * only useful thing to say.
  */
 export const NON_PRODUCTION_MESSAGE =
-  "Custom domains can only be connected on production — this environment's " +
+  "Custom domains can only be connected on production - this environment's " +
   "load balancer routes them to the production backend, so the domain would " +
   "never reach this store.";
 
@@ -536,7 +536,7 @@ async function pendingMessage(
   // The records are right and Google simply hasn't finished. Say so, because the
   // honest answer here is "nothing left to do" — the old message asked the
   // merchant to go and re-check DNS they had already got correct.
-  return "Your DNS records look right. Google is still issuing the certificate — this can take up to 30 minutes. We'll finish this automatically, so you can close this page.";
+  return "Your DNS records look right. Google is still issuing the certificate - this can take up to 30 minutes. We'll finish this automatically, so you can close this page.";
 }
 
 /**

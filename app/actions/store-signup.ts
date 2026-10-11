@@ -556,7 +556,7 @@ export async function createStore(
     });
   } catch (err) {
     if (isUniqueViolation(err)) {
-      return { error: "That name was just taken — try another." };
+      return { error: "That name was just taken - try another." };
     }
     console.error(
       "createStore (store transaction):",

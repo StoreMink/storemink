@@ -126,7 +126,7 @@ export function smsAvailability(
     available: false,
     reason: sender
       ? "This announcement has no approved DLT template, so carriers would drop it."
-      : "StoreMink can't send SMS yet — it has no registered sender of its own.",
+      : "StoreMink can't send SMS yet - it has no registered sender of its own.",
     blockers,
   };
 }

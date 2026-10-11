@@ -843,7 +843,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                       }}
                     />
                     <span>
-                      Final sale — this product can&apos;t be returned
+                      Final sale - this product can&apos;t be returned
                     </span>
                   </label>
                   {form.returnable !== false && (
@@ -1180,7 +1180,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                           }}
                         />
                         <p className={hintClass}>
-                          The supplier barcode on the packaging — what the
+                          The supplier barcode on the packaging - what the
                           register scans.
                         </p>
                       </div>
@@ -1262,8 +1262,8 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
               title="Variants"
               description={
                 hasOptions
-                  ? "One row per combination of your options — each with its own price, stock, and auto-generated SKU."
-                  : "Options like size or flavour — each with its own price, stock, and auto-generated SKU. Leave empty for a single-price product."
+                  ? "One row per combination of your options - each with its own price, stock, and auto-generated SKU."
+                  : "Options like size or flavour - each with its own price, stock, and auto-generated SKU. Leave empty for a single-price product."
               }
               icon={Layers}
               tint="sky"
@@ -1281,7 +1281,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
             >
               {form.variants.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-[#d1d5db] bg-[#f9fafb] px-4 py-6 text-center text-xs text-[#9ca3af]">
-                  No variants yet. This is a single-price product — add variants
+                  No variants yet. This is a single-price product - add variants
                   only if it comes in multiple options.
                 </p>
               ) : (
@@ -1395,7 +1395,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                             aria-label="Supplier barcode"
                             value={v.barcode ?? ""}
                             placeholder="Scan"
-                            title="Supplier barcode — scan the item to fill"
+                            title="Supplier barcode - scan the item to fill"
                             onChange={(e) =>
                               updateVariant(i, "barcode", e.target.value)
                             }
@@ -1460,7 +1460,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                               }
                             />
                             <span className="text-[11px] text-[#9ca3af]">
-                              ₹ — leave blank to inherit the product cost.
+                              ₹ - leave blank to inherit the product cost.
                             </span>
                           </div>
                         ) : null}
@@ -1483,7 +1483,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                             }
                           />
                           <span className="text-[11px] text-[#9ca3af]">
-                            ₹ — leave 0 for no sale. Shows a yellow tag on the
+                            ₹ - leave 0 for no sale. Shows a yellow tag on the
                             variant chip when set.
                           </span>
                         </div>
@@ -1491,7 +1491,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                     ))}
                     <p className={hintClass}>
                       The top variant is selected by default on the product page
-                      — use the arrows to reorder. Stock entered for a new
+                      - use the arrows to reorder. Stock entered for a new
                       variant is opening stock at the main location.
                     </p>
                   </div>
@@ -1520,9 +1520,9 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                       }
                     >
                       <option value="draft">
-                        Draft — hidden from storefront
+                        Draft - hidden from storefront
                       </option>
-                      <option value="published">Published — live</option>
+                      <option value="published">Published - live</option>
                     </select>
                   </div>
                   <div>
@@ -1590,7 +1590,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                   </div>
                   <div className="mt-1 line-clamp-2 text-[13px] leading-snug text-[#4d5156]">
                     {form.seo_description ||
-                      "Your meta description appears here — a compelling summary encourages clicks from search results."}
+                      "Your meta description appears here - a compelling summary encourages clicks from search results."}
                   </div>
                 </div>
 

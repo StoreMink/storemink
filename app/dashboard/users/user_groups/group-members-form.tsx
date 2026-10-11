@@ -65,7 +65,7 @@ export function GroupMembersForm({ group, customers }: Props) {
           <ArrowLeft className="h-4 w-4" />
           Back to user groups
         </Link>
-        <h1>Members — {group.name}</h1>
+        <h1>Members - {group.name}</h1>
         <p>
           {selected.size} of {customers.length} customer
           {customers.length === 1 ? "" : "s"} selected.

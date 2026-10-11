@@ -79,7 +79,7 @@ export function checkDltTemplate(template: DltTemplate): DltTemplateCheck {
   if (body.trimEnd().endsWith(DLT_VARIABLE)) {
     return {
       ok: false,
-      error: `A template cannot end with ${DLT_VARIABLE}. Put fixed text after it — the store name usually works.`,
+      error: `A template cannot end with ${DLT_VARIABLE}. Put fixed text after it - the store name usually works.`,
     };
   }
 

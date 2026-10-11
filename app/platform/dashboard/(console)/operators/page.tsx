@@ -3,7 +3,7 @@ import { getServerUser } from "@/lib/auth/server-user";
 import { getPlatformViewer, listPlatformAdmins } from "@/app/actions/platform";
 import { OperatorsConsole } from "../operators-console";
 
-export const metadata = { title: "Operators — StoreMink Admin" };
+export const metadata = { title: "Operators · StoreMink Admin" };
 
 export default async function OperatorsPage() {
   const user = await getServerUser();
