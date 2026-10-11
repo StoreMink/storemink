@@ -518,7 +518,14 @@ describe("help content lint", () => {
       });
       const ids = manifest.default.migrations.map((m) => m.id);
       expect(ids).toContain(LONG_DASH_CLEANUP_ID);
-      expect(GRANDFATHERED_LONG_DASH.size).toBe(0);
+      // Only 0176, applied on staging before the cleanup existed; 0186 takes
+      // its dash back out on production, where it lands after 0184.
+      expect([...GRANDFATHERED_LONG_DASH]).toEqual([
+        "20261008_0176_whatsapp_notify_help",
+      ]);
+      expect(
+        ids.indexOf("20261012_0186_help_no_long_dashes_after_whatsapp"),
+      ).toBeGreaterThan(ids.indexOf("20261008_0176_whatsapp_notify_help"));
     });
   });
 });

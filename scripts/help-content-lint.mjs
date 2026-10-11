@@ -667,9 +667,15 @@ export function lintUnwitnessedEdits(migration) {
  * so their SQL cannot change, and the cleanup already undid what they wrote.
  * A migration from another branch that is merged after the cleanup but was
  * already applied somewhere belongs in GRANDFATHERED_LONG_DASH.
+ *
+ * 0176 (whatsapp branch) was applied on staging before 0184 existed, so its
+ * SQL is checksummed there and cannot lose its dash. Production applies it
+ * after 0184, so 20261012_0186 repeats the cleanup to take the dash back out.
  */
 export const LONG_DASH_CLEANUP_ID = "20261011_0184_help_no_long_dashes";
-export const GRANDFATHERED_LONG_DASH = new Set();
+export const GRANDFATHERED_LONG_DASH = new Set([
+  "20261008_0176_whatsapp_notify_help",
+]);
 
 export const LONG_DASH_RULE = {
   name: "long-dash",

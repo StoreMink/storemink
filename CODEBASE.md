@@ -4779,19 +4779,36 @@ wholesip/
 │                              # was not rewired — both blocks hang off 0173 in the shared
 │                              # base, and `requires` is part of each entry's checksum.
 │                              # 0184 and 0185 came from `main` after that merge and sit
-│                              # between 0183 and the WhatsApp block (0184 requires 0183).
+│                              # between 0183 and the WhatsApp block (0184 requires 0183):
+│                              # production applied them first (2026-10-11) and has
+│                              # 0174-0178 still pending, so this is ITS order.
+│                              # ★ STAGING APPLIED THE TWO BLOCKS THE OTHER WAY ROUND.
+│                              # dev deployed the WhatsApp block before main merged in,
+│                              # so storemink_staging had 0174-0178 but not 0184/0185,
+│                              # and no single order passed both runners. Resolved with
+│                              # two dev pushes (2026-10-12): one dev build ran with
+│                              # 0184/0185 listed after 0178 so staging applied them,
+│                              # then the order went back to this one, which staging
+│                              # accepts because nothing is pending there. Moving an
+│                              # entry is safe once every database has applied it, or
+│                              # while it is pending everywhere; checksums exclude
+│                              # position. The two blocks share no tables, functions or
+│                              # Help articles, so either order builds the same schema.
 │                              # ⚠ Do not reorder for a local database: one that applied
 │                              # 0174-0178 before 0183-0185 reports them out_of_order
 │                              # until it applies 0183-0185 too.
 │                              # 0184 rewrites every em dash in Help articles and
 │                              # categories (§5.40); every Help migration after it (in
 │                              # manifest order, so 0176 and 0178 too) is held to no em
-│                              # dash by help:lint. 0185 is the refund and store-credit
-│                              # integrity pass (§26, §29): `cashback_reversal`,
-│                              # reverse_customer_cashback(), orders.cashback_amount
-│                              # plus the orders_issue_cashback trigger,
-│                              # order_returns.idempotency_key, and five Help
-│                              # sentence edits. Next free: 0186.
+│                              # dash by help:lint. 0176 has one and is grandfathered
+│                              # (staging recorded its checksum); 0186 repeats the 0184
+│                              # pass so production, which applies 0176 after 0184,
+│                              # loses the dash too (a no-op on staging). 0185 is the
+│                              # refund and store-credit integrity pass (§26, §29):
+│                              # `cashback_reversal`, reverse_customer_cashback(),
+│                              # orders.cashback_amount plus the orders_issue_cashback
+│                              # trigger, order_returns.idempotency_key, and five Help
+│                              # sentence edits. Next free: 0187.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -17280,7 +17297,10 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       migration AFTER 0184 (manifest order) to no em dash, published or
       quoted, since a quoted dash names text that no longer exists
       (`lintLongDashes`, `GRANDFATHERED_LONG_DASH` for an already-applied
-      migration merged from another branch); `help:audit` reports one in
+      migration merged from another branch: today only
+      `20261008_0176_whatsapp_notify_help`, whose dash
+      `20261012_0186_help_no_long_dashes_after_whatsapp` removes again on
+      production, where 0176 lands after 0184); `help:audit` reports one in
       published rows, which is the only check that sees a console edit.
     - **⚠ Not changed, deliberately:** code comments and internal docs (not
       product text), CLI output in `scripts/`, and other content already
