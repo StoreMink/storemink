@@ -433,7 +433,7 @@ export default function ProductDetailClient({
                     }${hasSale ? " has-sale" : ""}`}
                     onClick={() => !disabled && selectVariant(v)}
                     disabled={disabled}
-                    aria-label={`${v.name} — ${formatPrice(vSelling)}${
+                    aria-label={`${v.name} - ${formatPrice(vSelling)}${
                       hasSale ? ", best value" : ""
                     }${disabled ? ", sold out" : ""}`}
                   >

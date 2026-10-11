@@ -67,8 +67,8 @@ import {
 } from "@/lib/inventory/reservations";
 import { resolveFulfilmentLocation } from "@/lib/fulfilment/resolve";
 import {
-  exchangeSettlement,
   isExchange,
+  returnRequestSettlement,
   type ExchangeLineRequest,
 } from "@/lib/returns/exchange";
 import { productVariants } from "@/drizzle/schema";
@@ -130,6 +130,10 @@ export interface ReturnableOrderView {
    * server would refuse could be offered as allowed.
    */
   orderDiscount: number;
+  /** Whether line totals already include tax (`orders.tax_inclusive`). The
+   *  estimate passes it to `refundBreakdown`, or an inclusive store's shopper
+   *  would be quoted the tax twice. */
+  taxInclusive: boolean;
   eligibility: ReturnEligibility;
   /** Customer-facing sentence when `eligibility.eligible` is false. */
   blockedCopy: string | null;
@@ -185,6 +189,7 @@ export async function getReturnableOrder(
           order_ref: orders.orderRef,
           status: orders.status,
           discount: orders.discount,
+          tax_inclusive: orders.taxInclusive,
           created_at: orders.createdAt,
           delivered_at: orders.deliveredAt,
           collected_at: orders.collectedAt,
@@ -272,6 +277,7 @@ export async function getReturnableOrder(
         orderId: order.id,
         orderRef: order.order_ref,
         orderDiscount: viewOrderDiscount,
+        taxInclusive: order.tax_inclusive === true,
         eligibility,
         blockedCopy: eligibility.reason
           ? RETURN_BLOCKED_COPY[eligibility.reason]
@@ -582,7 +588,7 @@ export async function requestReturn(input: {
       }
       if (!option.available) {
         return {
-          error: `"${option.name}" is out of stock — choose another, or ask for a refund instead.`,
+          error: `"${option.name}" is out of stock - choose another, or ask for a refund instead.`,
         };
       }
       swapVariantId = option.variantId;
@@ -618,10 +624,6 @@ export async function requestReturn(input: {
     exchangeVariantId: swaps.get(r.orderItemId)?.variantId ?? null,
   }));
   const swapping = isExchange(exchangeLines);
-  const replacementValue = requested.reduce((sum, r) => {
-    const swap = swaps.get(r.orderItemId);
-    return sum + (swap?.price ?? 0) * r.quantity;
-  }, 0);
 
   let returnId: string;
   let breakdown: Awaited<ReturnType<typeof priceReturn>>["breakdown"];
@@ -660,16 +662,28 @@ export async function requestReturn(input: {
       // boundary — see lib/returns/exchange.ts). Collecting a difference is a
       // payment flow that doesn't exist outside checkout, and half-building it
       // leaves replacement orders unpaid forever.
-      const settlement = exchangeSettlement({
-        // Against the GOODS value, excluding tax: tax is recomputed on the
-        // replacement at its own rate and refunded on the return from its
-        // snapshot. The two are different transactions with the government.
-        returnValue: swapping ? priced.breakdown.amount : 0,
-        replacementValue,
+      //
+      // ★ The replacement is valued per PRICED line, at the units the locked
+      // re-price actually let through — never at the quantity the form asked
+      // for, which a concurrent return may since have taken.
+      const replacementByLine = new Map<string, number | null>();
+      for (const l of priced.breakdown.lines) {
+        const swap = swaps.get(l.id);
+        replacementByLine.set(
+          l.id,
+          swap?.variantId ? (swap.price ?? 0) * l.quantity : null,
+        );
+      }
+      const settled = returnRequestSettlement({
+        lines: priced.breakdown.lines,
+        replacementValueByLine: replacementByLine,
+        taxInclusive: priced.taxInclusive,
+        deduction: priced.fees.totalDeduction,
       });
-      if (swapping && !settlement.allowed) {
+      if (settled.swapping && !settled.settlement.allowed) {
         return {
-          error: settlement.blockedCopy ?? "That exchange isn't possible.",
+          error:
+            settled.settlement.blockedCopy ?? "That exchange isn't possible.",
         };
       }
 
@@ -681,9 +695,13 @@ export async function requestReturn(input: {
       // like-for-like replacement — while the customer's own screen, which
       // calls exchangeSettlement, correctly quoted ₹0. Two ends of one object
       // disagreeing about money is the §22 posTotals failure again.
-      const owed = swapping
-        ? Math.max(0, settlement.storeOwes - priced.fees.totalDeduction)
-        : Math.max(0, priced.breakdown.total - priced.fees.totalDeduction);
+      //
+      // ★★ AND A REFUNDED LINE KEEPS ITS TAX. With some lines swapped and
+      // some refunded, the owed figure used to be computed from the GOODS
+      // value of every line, so the refunded ones lost their tax: ₹1,000 +
+      // ₹180 tax refunded beside an even swap stored ₹1,000 owed instead of
+      // ₹1,180. returnRequestSettlement settles each half on its own terms.
+      const owed = settled.owed;
 
       const inserted = await db
         .insert(orderReturns)
@@ -1077,10 +1095,16 @@ async function priceReturn(
     .from(orderItems)
     .where(eq(orderItems.orderId, orderId));
   const orderRow = await db
-    .select({ discount: orders.discount })
+    .select({
+      discount: orders.discount,
+      // ★★ Whether each line's tax is INSIDE its total. Without it a
+      // tax-inclusive order refunded the tax twice (see lib/pos/returns.ts).
+      tax_inclusive: orders.taxInclusive,
+    })
     .from(orders)
     .where(eq(orders.id, orderId))
     .limit(1);
+  const taxInclusive = orderRow[0]?.tax_inclusive === true;
 
   const returned = await countReturnedUnits(
     orderId,
@@ -1123,11 +1147,13 @@ async function priceReturn(
       alreadyReturned: returned.get(r.id) ?? 0,
     })),
     orderDiscount,
+    taxInclusive,
     request: lines.map((l) => ({ id: l.orderItemId, quantity: l.quantity })),
   });
 
   // Fees are charged on the GOODS, never on the tax — that share belongs to
-  // the government, not the store.
+  // the government, not the store. On a tax-inclusive order `amount` is the
+  // goods value with the tax carved back out, so this holds in both modes.
   const fees = feesFor(
     reasonCode,
     {
@@ -1138,7 +1164,7 @@ async function priceReturn(
     breakdown.amount,
   );
 
-  return { breakdown, fees };
+  return { breakdown, fees, taxInclusive };
 }
 
 /**

@@ -110,7 +110,7 @@ export function canCustomerCancel(
       ok: false,
       code: "disabled",
       reason:
-        "This store handles cancellations directly — please contact them.",
+        "This store handles cancellations directly - please contact them.",
     };
   }
   if (order.status === "cancelled") {

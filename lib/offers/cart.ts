@@ -126,7 +126,7 @@ export async function resolveOffersForCart(
       // Expected between the application deploy and the migration. Warn, not
       // error: this is a known window, and paging on it teaches people to
       // ignore the log.
-      logWarn("offers unavailable — migration not applied", {
+      logWarn("offers unavailable - migration not applied", {
         storeId: input.storeId,
       });
     } else {
@@ -253,7 +253,7 @@ export async function reserveOfferUses(
       reserved.push({ offerId: offer.offerId, amountPaise });
     } catch (err) {
       if (isSchemaNotReady(err)) {
-        logWarn("offer reservation skipped — migration not applied", {
+        logWarn("offer reservation skipped - migration not applied", {
           storeId,
         });
       } else {
@@ -434,7 +434,7 @@ export async function loadOffersForRegister(
     return { offers, policy };
   } catch (err) {
     if (isSchemaNotReady(err)) {
-      logWarn("register offers unavailable — migration not applied", {
+      logWarn("register offers unavailable - migration not applied", {
         storeId,
       });
     } else {

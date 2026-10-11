@@ -102,7 +102,7 @@ export function RevenueChart({
                 }`}
               >
                 {total.trendPct === 0
-                  ? "—"
+                  ? "-"
                   : `${total.trendUp ? "↑" : "↓"} ${Math.abs(total.trendPct)}%`}
               </span>
               <span className="mb-0.5 text-[12.5px] text-[var(--dash-text-3)]">

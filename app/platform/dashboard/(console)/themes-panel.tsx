@@ -65,7 +65,7 @@ export function ThemesPanel({
                 </div>
                 <div className="mt-0.5 text-sm text-gray-500">
                   {t.demo.slug}.{rootDomain}
-                  {!exists && " — not seeded yet"}
+                  {!exists && " - not seeded yet"}
                 </div>
                 {t.demo.status !== "healthy" && (
                   <div className="mt-1 text-xs font-medium text-amber-700">

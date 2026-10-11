@@ -2,7 +2,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { GEMINI_MODEL, brandSystemText, callGemini } from "./gemini";
+import {
+  GEMINI_MODEL,
+  NO_LONG_DASH_RULE,
+  brandSystemText,
+  callGemini,
+} from "./gemini";
 
 // Mock ADC token minting so the Vertex AI path can be tested without real
 // Google Cloud credentials. Only the token fn is a vi.fn (re-armed per test);
@@ -109,7 +114,9 @@ describe("callGemini", () => {
     expect(init.headers["Content-Type"]).toBe("application/json");
 
     const body = JSON.parse(init.body);
-    expect(body.systemInstruction.parts[0].text).toBe("system prompt");
+    expect(body.systemInstruction.parts[0].text).toBe(
+      `system prompt\n\n${NO_LONG_DASH_RULE}`,
+    );
     expect(body.contents[0].role).toBe("user");
     expect(body.contents[0].parts[0].text).toBe("user prompt");
     expect(body.generationConfig.temperature).toBe(0.7);
@@ -118,6 +125,35 @@ describe("callGemini", () => {
     // No JSON-mode options unless requested.
     expect(body.generationConfig.responseMimeType).toBeUndefined();
     expect(body.generationConfig.responseSchema).toBeUndefined();
+  });
+
+  // StoreMink copy never uses a long dash: the rule rides every system
+  // instruction, and a dash the model writes anyway is rewritten before any
+  // caller sees it.
+  it("rewrites a long dash the model wrote anyway", async () => {
+    (fetch as any).mockResolvedValue(
+      fakeResponse({
+        ok: true,
+        status: 200,
+        json: okJson(
+          "Rich and creamy \u2014 made for mornings. Serves 2\u20134.",
+        ),
+      }),
+    );
+
+    const result = await callGemini("s", "u");
+    expect(result).toEqual({
+      text: "Rich and creamy, made for mornings. Serves 2 to 4.",
+    });
+  });
+
+  it("leaves dash-free text exactly as the model wrote it", async () => {
+    (fetch as any).mockResolvedValue(
+      fakeResponse({ ok: true, status: 200, json: okJson("Hello, . world") }),
+    );
+
+    const result = await callGemini("s", "u");
+    expect(result).toEqual({ text: "Hello, . world" });
   });
 
   it("honors temperature and maxOutputTokens overrides", async () => {
@@ -170,7 +206,7 @@ describe("callGemini", () => {
 
     const result = await callGemini("s", "u");
     expect(result.error).toBe(
-      "AI request rejected — check that GEMINI_API_KEY is valid.",
+      "AI request rejected - check that GEMINI_API_KEY is valid.",
     );
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -182,7 +218,7 @@ describe("callGemini", () => {
 
     const result = await callGemini("s", "u");
     expect(result.error).toBe(
-      "AI request rejected — check that GEMINI_API_KEY is valid.",
+      "AI request rejected - check that GEMINI_API_KEY is valid.",
     );
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -341,7 +377,9 @@ describe("callGemini (Vertex AI backend)", () => {
     expect(init.headers["x-goog-api-key"]).toBeUndefined();
     // Request body is identical to the Developer API path.
     const body = JSON.parse(init.body);
-    expect(body.systemInstruction.parts[0].text).toBe("sys");
+    expect(body.systemInstruction.parts[0].text).toBe(
+      `sys\n\n${NO_LONG_DASH_RULE}`,
+    );
     expect(body.contents[0].parts[0].text).toBe("user");
     expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
   });

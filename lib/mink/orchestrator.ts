@@ -307,7 +307,7 @@ function repeatedResponse(
       ? {
           ...(output as Record<string, unknown>),
           alreadyRequestedInThisRun: true,
-          note: "You already requested this exact read in this run; this is the same result. Do not request it again — continue with the task.",
+          note: "You already requested this exact read in this run; this is the same result. Do not request it again - continue with the task.",
         }
       : output;
   return {

@@ -155,7 +155,7 @@ describe("InvoiceSheet — the rest", () => {
 
   it("★ translates our status vocabulary into the merchant's", () => {
     render(<InvoiceSheet doc={doc({ status: "uncollectible" })} />);
-    expect(screen.getByText("Unpaid — plan ended")).toBeInTheDocument();
+    expect(screen.getByText("Unpaid - plan ended")).toBeInTheDocument();
     expect(screen.queryByText("uncollectible")).not.toBeInTheDocument();
   });
 

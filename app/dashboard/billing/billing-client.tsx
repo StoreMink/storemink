@@ -325,7 +325,7 @@ export function BillingClient({
                 onChange={(e) => set("defaultTaxClassId", e.target.value)}
                 disabled={!canManage}
               >
-                <option value="">— None —</option>
+                <option value="">None</option>
                 {classes.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name} ({c.rate}%)

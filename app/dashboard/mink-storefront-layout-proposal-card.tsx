@@ -296,7 +296,7 @@ export function MinkStorefrontLayoutProposalCard({
               <p className="mt-2 flex gap-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-rose-800">
                 <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
-                  {publishError} Your draft is safe — open Website Builder to
+                  {publishError} Your draft is safe - open Website Builder to
                   publish it there.
                 </span>
               </p>
@@ -431,7 +431,7 @@ function Badge({ children }: { children: ReactNode }) {
 }
 
 const UNKNOWN_LAYOUT_OUTCOME =
-  "We could not confirm whether the layout was saved. Check Website Builder, or retry here — the same save cannot apply twice.";
+  "We could not confirm whether the layout was saved. Check Website Builder, or retry here - the same save cannot apply twice.";
 
 class LayoutActionRequestError extends Error {
   constructor(

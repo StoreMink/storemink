@@ -1477,7 +1477,7 @@ describe("phase 3 video and newsletter sections", () => {
       heading: "Notes worth opening",
       consent_text: "I agree to receive updates.",
       button_label: "Subscribe",
-      success_message: "You're on the list — thank you.",
+      success_message: "You're on the list - thank you.",
       theme: "light",
       alignment: "left",
     });

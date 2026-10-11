@@ -47,9 +47,13 @@ function methodLabel(m: string): string {
 
 export function RefundPanel({
   orderId,
+  returnId,
   onRefunded,
 }: {
   orderId: string;
+  /** Refund one return: the default amount is what that return is owed, and
+   *  the refund is recorded against it. */
+  returnId?: string;
   onRefunded?: () => void;
 }) {
   const [state, setState] = useState<OrderRefundState | null>(null);
@@ -64,13 +68,15 @@ export function RefundPanel({
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await getOrderRefundState(orderId);
+    const res = await getOrderRefundState(orderId, returnId ?? null);
     if (res.state) {
       setState(res.state);
-      setMethod(res.state.canRefundOnline ? "razorpay" : "manual");
+      setMethod(defaultMethod(res.state));
+    } else if (res.error) {
+      toast.error(res.error);
     }
     setLoading(false);
-  }, [orderId]);
+  }, [orderId, returnId]);
 
   useEffect(() => {
     void load();
@@ -89,13 +95,29 @@ export function RefundPanel({
   const {
     refunds,
     refundable,
+    moneyRefundable,
     canRefundOnline,
     onlineBlockedReason,
     refundOwed,
     canRefundToCredit,
     creditBalance,
+    returnRefund,
   } = state;
-  const nothingLeft = refundable <= 0;
+  // What can go back at all: the order's cap, narrowed to the return's
+  // remaining amount when the panel was opened for one return.
+  const overallCap = returnRefund
+    ? Math.min(refundable, returnRefund.remaining)
+    : refundable;
+  const nothingLeft = overallCap <= 0;
+  // ★ The cap that applies to the CHOSEN method. Part of an order paid with
+  // store credit can only go back as credit, so card and by-hand refunds are
+  // capped at what money paid. Showing the overall figure under "Refund
+  // online" quoted an amount the server then refused.
+  const methodCap =
+    method === "store_credit"
+      ? overallCap
+      : Math.min(overallCap, moneyRefundable);
+  const canRefundMoney = moneyRefundable > 0;
 
   function submit() {
     if (inFlight) return;
@@ -111,7 +133,11 @@ export function RefundPanel({
           amount: parsed,
           method,
           reason: reason.trim() || undefined,
-          reference: reference.trim() || undefined,
+          // Only a by-hand refund carries a reference; a value typed before
+          // switching methods must not ride along on a card refund.
+          reference:
+            method === "manual" ? reference.trim() || undefined : undefined,
+          returnId,
         });
         if (res.error) {
           toast.error(res.error);
@@ -120,7 +146,7 @@ export function RefundPanel({
         if (res.pendingReconcile) {
           // Deliberately NOT an error, and deliberately not retryable.
           toast.info(
-            "The refund is with Razorpay and hasn't confirmed yet. We'll keep checking — don't send it again.",
+            "The refund is with Razorpay and hasn't confirmed yet. We'll keep checking - don't send it again.",
           );
         } else {
           toast.success(`Refunded ${formatPrice(res.amount ?? 0)}.`);
@@ -156,11 +182,19 @@ export function RefundPanel({
           obligation is stated here rather than left for the customer to chase.
           It disappears on its own once the refund lands, because it is derived
           from the order rather than stored as a flag. */}
-      {refundOwed && (
+      {refundOwed && !returnRefund && (
         <p className="mb-2 flex items-start gap-1.5 text-[13px] font-medium text-amber-900">
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          This order was cancelled after it was paid for —{" "}
+          This order was cancelled after it was paid for -{" "}
           {formatPrice(refundable)} is owed back.
+        </p>
+      )}
+      {returnRefund && (
+        <p className="mb-2 text-xs text-muted-foreground">
+          This return is owed {formatPrice(returnRefund.owed)}
+          {returnRefund.refunded > 0
+            ? `, and ${formatPrice(returnRefund.refunded)} of it has already gone back.`
+            : "."}
         </p>
       )}
       {refunds.length > 0 && (
@@ -192,7 +226,7 @@ export function RefundPanel({
                 {r.status === "pending" && (
                   <div className="mt-0.5 flex items-center gap-1 text-[11px] text-amber-700">
                     <Clock className="h-3 w-3" />
-                    Waiting on the gateway — we&apos;re checking.
+                    Waiting on the gateway - we&apos;re checking.
                   </div>
                 )}
               </div>
@@ -221,15 +255,21 @@ export function RefundPanel({
 
       {nothingLeft ? (
         <p className="text-xs text-muted-foreground">
-          {refunds.length > 0
-            ? "Fully refunded."
-            : "Nothing to refund on this order."}
+          {returnRefund
+            ? "This return has been refunded in full."
+            : refunds.length > 0
+              ? "Fully refunded."
+              : "Nothing to refund on this order."}
         </p>
       ) : !open ? (
         <div>
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs text-muted-foreground">
-              {formatPrice(refundable)} can still be refunded
+              {formatPrice(overallCap)} can still be refunded
+              {moneyRefundable < overallCap &&
+                (moneyRefundable > 0
+                  ? ` (${formatPrice(moneyRefundable)} as money, the rest as store credit)`
+                  : " as store credit")}
             </span>
             <button
               type="button"
@@ -259,11 +299,13 @@ export function RefundPanel({
                 label="Refund online"
               />
             )}
-            <MethodChip
-              active={method === "manual"}
-              onClick={() => setMethod("manual")}
-              label="I paid them by hand"
-            />
+            {canRefundMoney && (
+              <MethodChip
+                active={method === "manual"}
+                onClick={() => setMethod("manual")}
+                label="I paid them by hand"
+              />
+            )}
             {/* No money leaves — the honest answer for COD, where nothing was
                 captured. Offered, never forced: a customer owed money for a
                 faulty item is entitled to refuse a balance. */}
@@ -278,24 +320,24 @@ export function RefundPanel({
 
           <label className="block">
             <span className="text-xs text-muted-foreground">
-              Amount (blank = all {formatPrice(refundable)})
+              Amount (blank = all {formatPrice(methodCap)})
             </span>
             <input
               type="number"
               inputMode="decimal"
               step="0.01"
               min="0"
-              max={refundable}
+              max={methodCap}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              placeholder={String(refundable)}
+              placeholder={String(methodCap)}
               className="mt-0.5 w-full rounded-md border border-border px-2 py-1 text-sm"
             />
           </label>
 
           {method === "store_credit" && (
             <p className="text-xs text-muted-foreground">
-              Adds to their balance here — no money leaves.
+              Adds to their balance here - no money leaves.
               {creditBalance > 0 &&
                 ` They currently hold ${formatPrice(creditBalance)}.`}{" "}
               Make sure they&apos;ve agreed to this rather than a refund.
@@ -304,7 +346,7 @@ export function RefundPanel({
           {method === "manual" && (
             <label className="block">
               <span className="text-xs text-muted-foreground">
-                Reference (UPI or bank transaction id) — required
+                Reference (UPI or bank transaction id) - required
               </span>
               <input
                 value={reference}
@@ -354,6 +396,14 @@ export function RefundPanel({
       )}
     </div>
   );
+}
+
+/** The method the panel opens on: the original payment when it can go back
+ *  online, then a by-hand refund, then store credit. */
+function defaultMethod(state: OrderRefundState): DashboardRefundMethod {
+  if (state.canRefundOnline) return "razorpay";
+  if (state.moneyRefundable > 0) return "manual";
+  return state.canRefundToCredit ? "store_credit" : "manual";
 }
 
 function MethodChip({

@@ -430,7 +430,7 @@ export async function replaceDevice(
     // The slot is already free, so say that plainly. Without it the owner reads
     // a bare failure and cannot tell whether the old till is still working.
     return {
-      error: `${res.error} The previous device was already retired, so there is now a free slot — try again.`,
+      error: `${res.error} The previous device was already retired, so there is now a free slot - try again.`,
     };
   }
   revalidatePath("/dashboard/pos/devices");
@@ -725,7 +725,7 @@ export async function pairDevice(
     // `capReached` is deliberately NOT forwarded — see authorizeThisDevice for
     // why the replace option never reaches the pairing-code path.
     return {
-      error: `${res.error} This code has now been used — generate a new one after freeing a slot.`,
+      error: `${res.error} This code has now been used - generate a new one after freeing a slot.`,
     };
   }
   return { success: res.success };
@@ -1005,7 +1005,7 @@ export async function requestPosCredentialReset(
     storeId,
     to: email,
     mailer: "pos_credential_reset",
-    devFallback: `🔑 POS CREDENTIAL RESET (email not configured — dev fallback)\nEmail: ${email}\nReset: ${link}`,
+    devFallback: `🔑 POS CREDENTIAL RESET (email not configured - dev fallback)\nEmail: ${email}\nReset: ${link}`,
     build: (brand) =>
       buildPosCredentialResetEmail({ brand, name: staff!.name, link }),
   });

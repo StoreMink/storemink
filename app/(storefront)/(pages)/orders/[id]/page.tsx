@@ -146,8 +146,11 @@ export default async function MyOrderDetailPage({
                   {order.pickup_status === "expired"
                     ? "This order wasn't collected in time, so it was cancelled and the items went back on the shelf."
                     : "This order was cancelled."}{" "}
-                  If you paid online, any refund goes back to your original
-                  payment method.
+                  {/* The store chooses where a refund goes (back to the card,
+                      or as store credit), so this must not promise one. */}
+                  If you paid, the store refunds you, to your original payment
+                  method or as store credit. Any store credit you used is back
+                  in your balance.
                 </p>
               ) : (
                 <ol className={styles.track}>

@@ -12,7 +12,7 @@ import {
 } from "../../../studio-ui";
 import { PreviewFrame } from "./preview-frame";
 
-export const metadata = { title: "Theme preview — StoreMink Admin" };
+export const metadata = { title: "Theme preview · StoreMink Admin" };
 
 // One version's private preview. The frame asks the server for an entry token
 // only after the page loads, so no token is ever rendered into this HTML.

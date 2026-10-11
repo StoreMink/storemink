@@ -538,7 +538,7 @@ export default function CheckoutPage() {
         if (reduced.length > 0) {
           toast.info(
             reduced.length === 1
-              ? `Only ${reduced[0].to} of ${reduced[0].name} left — quantity updated.`
+              ? `Only ${reduced[0].to} of ${reduced[0].name} left - quantity updated.`
               : "Some items had limited stock; quantities were updated.",
           );
         }
@@ -683,7 +683,7 @@ export default function CheckoutPage() {
             // transient). Send the shopper to the confirmation page anyway —
             // the server reconciles pending payments against Razorpay.
             toast.info(
-              "Payment received — we're confirming it with the gateway.",
+              "Payment received - we're confirming it with the gateway.",
             );
           } else {
             toast.success("Payment successful!");
@@ -794,7 +794,7 @@ export default function CheckoutPage() {
       <main className={styles.center}>
         <h1 className={styles.centerTitle}>Sign in to continue</h1>
         <p className={styles.centerText}>
-          Please sign in to review your order and check out — your cart is
+          Please sign in to review your order and check out - your cart is
           saved.
         </p>
         <Button size="lg" onClick={openAuthModal}>
@@ -1373,7 +1373,7 @@ export default function CheckoutPage() {
                           </div>
                           <div className={styles.payDesc}>
                             {online
-                              ? "UPI, cards or netbanking — secured by Razorpay."
+                              ? "UPI, cards or netbanking - secured by Razorpay."
                               : fulfilment === "pickup"
                                 ? "Pay at the counter when you collect your order."
                                 : "Pay with cash when your order arrives at your doorstep."}
@@ -1399,7 +1399,7 @@ export default function CheckoutPage() {
                     <div className={styles.payDesc}>
                       {fulfilment === "pickup"
                         ? "This store takes payment for collection orders when you place them."
-                        : "UPI, cards or netbanking — secured by Razorpay."}
+                        : "UPI, cards or netbanking - secured by Razorpay."}
                     </div>
                   </div>
                   <span className={styles.payCheck}>
@@ -1668,7 +1668,7 @@ export default function CheckoutPage() {
                   {creditSplit.heldBackForMinimum && (
                     <p className={styles.creditHeldBack}>
                       We&apos;ve kept a little credit back so there&apos;s a
-                      chargeable amount — the rest stays on your balance.
+                      chargeable amount - the rest stays on your balance.
                     </p>
                   )}
                 </>

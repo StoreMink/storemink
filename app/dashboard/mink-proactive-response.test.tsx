@@ -46,7 +46,7 @@ describe("Approved response result safety", () => {
     expect(screen.getByText(/Showing a limited sample/)).toBeInTheDocument();
     expect(
       screen.getByRole("heading", {
-        name: "Suggested next steps—not executed",
+        name: "Suggested next steps - not executed",
       }),
     ).toBeInTheDocument();
     expect(screen.getByText(/Shop and Delhi/)).toBeInTheDocument();

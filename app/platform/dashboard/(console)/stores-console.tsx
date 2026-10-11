@@ -299,7 +299,7 @@ export function StoresConsole({
                     </td>
                     <td className="px-6 py-4 text-gray-600">
                       {s.owner_email ?? (
-                        <span className="text-gray-400">—</span>
+                        <span className="text-gray-400">-</span>
                       )}
                     </td>
                     <td className="px-6 py-4">
@@ -589,9 +589,9 @@ export function StoresConsole({
                     Permanently delete {toDelete.name}?
                   </h2>
                   <p className="mt-1 text-sm text-gray-500">
-                    This erases the store and <strong>all of its data</strong> —
+                    This erases the store and <strong>all of its data</strong> -
                     products, categories, blogs, pages, menus, coupons and
-                    uploaded media — plus every login for it (owner
+                    uploaded media - plus every login for it (owner
                     {toDelete.owner_email ? ` ${toDelete.owner_email}` : ""},
                     staff and customers). This <strong>cannot be undone</strong>
                     .

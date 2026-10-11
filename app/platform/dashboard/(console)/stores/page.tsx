@@ -5,7 +5,7 @@ import { getPlanAllowances } from "@/lib/plans/allowances";
 import { getMinkConfig } from "@/lib/mink/config";
 import { includedMinkCredits } from "@/lib/plans";
 
-export const metadata = { title: "Stores — StoreMink Admin" };
+export const metadata = { title: "Stores · StoreMink Admin" };
 
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "storemink.com";
 
@@ -41,7 +41,7 @@ export default async function StoresPage({
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {stores.length === 500
-              ? "Showing the 500 most recent stores — search to narrow it down."
+              ? "Showing the 500 most recent stores - search to narrow it down."
               : `${stores.length.toLocaleString("en-IN")} ${
                   stores.length === 1 ? "store" : "stores"
                 } on the platform.`}

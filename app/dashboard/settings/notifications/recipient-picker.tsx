@@ -323,7 +323,7 @@ export function RecipientPicker({
                           note={
                             eligible
                               ? undefined
-                              : `Can't view ${sectionLabel} — give the role access first`
+                              : `Can't view ${sectionLabel} - give the role access first`
                           }
                         />
                       );
@@ -352,7 +352,7 @@ export function RecipientPicker({
                           note={
                             eligible
                               ? undefined
-                              : `Can't view ${sectionLabel} — change their role first`
+                              : `Can't view ${sectionLabel} - change their role first`
                           }
                         />
                       );

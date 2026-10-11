@@ -24,20 +24,31 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import { orderRefunds, orders } from "@/drizzle/schema";
+import {
+  orderPayments,
+  orderRefunds,
+  orderReturns,
+  orders,
+} from "@/drizzle/schema";
 import { getStoreGateway } from "./provider";
 import { capturedPayment, rzpFetchOrderPayments, rzpRefund } from "./razorpay";
 import {
   checkRefundAmount,
+  orderMoneyTaken,
   refundableAmount,
   toPaise,
+  toRupees,
+  wasPaid,
   type RefundStatus,
 } from "./refunds";
 import {
   reconcileOrderRefunds,
   syncOrderRefundState,
 } from "./refund-reconcile";
-import { issueCredit } from "@/lib/credit/store-credit";
+import {
+  creditReinstatedForOrder,
+  issueCredit,
+} from "@/lib/credit/store-credit";
 import { logError } from "@/lib/observability/logger";
 
 /** Where the money physically goes. `razorpay` is the only one that moves it
@@ -50,14 +61,6 @@ export type IssueRefundMethod =
   | "card"
   | "upi"
   | "store_credit";
-
-/**
- * Payment statuses that mean money was captured at some point.
- *
- * The two refunded states are DERIVED from settled refunds, so they are proof
- * of capture rather than evidence against it. See the gateway guard below.
- */
-const PAID_FOR_REFUND = new Set(["paid", "partially_refunded", "refunded"]);
 
 export interface IssueRefundInput {
   storeId: string;
@@ -82,6 +85,16 @@ export interface IssueRefundInput {
   shiftId?: string | null;
   /** Links the money back to the goods, when there are goods. */
   returnId?: string | null;
+  /**
+   * ★ Cap this refund at what the RETURN still owes, not just the order.
+   *
+   * The dashboard refunds a return from the returns queue, and an omitted
+   * amount there must mean "what this return is owed", never "everything
+   * left on the order" (which is how returning one ₹1,180 line from a ₹3,540
+   * order defaulted to a ₹3,540 refund). Opt-in, because the till computes
+   * its own legs against the same return and caps them itself.
+   */
+  capToReturn?: boolean;
   /**
    * Extra guard the caller wants applied INSIDE the row lock, once the amount
    * has resolved. Used by the dashboard's owner-approval cap, which can't be
@@ -110,7 +123,13 @@ export interface IssueRefundResult {
     | "gateway_not_connected"
     | "no_captured_payment"
     | "gateway_refused"
-    | "no_customer";
+    | "gateway_failed"
+    | "no_customer"
+    | "not_paid"
+    /** Nothing is left to give back. A cancellation that has just restored
+     *  the order's store credit reaches this on purpose: that credit IS the
+     *  refund, so the caller should not report it as a failure. */
+    | "nothing_due";
 }
 
 interface LockedOrder {
@@ -122,9 +141,15 @@ interface LockedOrder {
   store_credit_used: number;
   payment_method: string | null;
   payment_status: string | null;
+  status: string | null;
+  delivered_at: string | null;
   razorpay_payment_id: string | null;
   razorpay_order_id: string | null;
 }
+
+/** Thrown inside the reserve transaction so a credit that did not land rolls
+ *  its refund row back with it. */
+class CreditNotIssued extends Error {}
 
 export async function issueRefund(
   input: IssueRefundInput,
@@ -145,8 +170,14 @@ export async function issueRefund(
   // and both would pass the cap, which is how an order gets refunded twice
   // with every individual check passing.
   let reserved:
-    | { refundId: string; key: string; amount: number; order: LockedOrder }
-    | { error: string };
+    | {
+        refundId: string;
+        key: string;
+        amount: number;
+        order: LockedOrder;
+        gatewayLegs: string[];
+      }
+    | { error: string; code?: IssueRefundResult["code"] };
   try {
     reserved = await withService(async (db) => {
       const rows = await db
@@ -158,6 +189,8 @@ export async function issueRefund(
           store_credit_used: orders.storeCreditUsed,
           payment_method: orders.paymentMethod,
           payment_status: orders.paymentStatus,
+          status: orders.status,
+          delivered_at: orders.deliveredAt,
           razorpay_payment_id: orders.razorpayPaymentId,
           razorpay_order_id: orders.razorpayOrderId,
         })
@@ -173,8 +206,52 @@ export async function issueRefund(
         store_credit_used: Number(found.store_credit_used ?? 0),
       };
 
+      const moneyTaken = orderMoneyTaken({
+        paymentStatus: order.payment_status,
+        paymentMethod: order.payment_method,
+        status: order.status,
+        deliveredAt: order.delivered_at,
+      });
+
+      // ★★ NOTHING IS REFUNDED ON AN ORDER NOBODY PAID FOR. Only the gateway
+      // checked this, so an undelivered cash-on-delivery order showed its whole
+      // total as refundable and "store credit" turned it into a real balance.
+      // The one thing an unpaid order can give back is credit it spent, which
+      // refundableAmount keeps.
+      if (!moneyTaken && order.store_credit_used <= 0) {
+        return {
+          code: "not_paid" as const,
+          error:
+            "This order hasn't been paid yet, so there's nothing to refund.",
+        };
+      }
+
+      // Gateway legs taken at a counter. A till sale keeps its Razorpay
+      // payment ids here, never on the order row.
+      const legs =
+        input.method === "razorpay"
+          ? await db
+              .select({ reference: orderPayments.reference })
+              .from(orderPayments)
+              .where(
+                and(
+                  eq(orderPayments.orderId, orderId),
+                  eq(orderPayments.method, "razorpay"),
+                ),
+              )
+          : [];
+      const gatewayLegs = [
+        ...new Set(
+          legs.map((l) => l.reference).filter((r): r is string => !!r),
+        ),
+      ];
+
       if (input.method === "razorpay") {
-        if (order.payment_method !== "razorpay" && !input.gatewayPaymentId) {
+        if (
+          order.payment_method !== "razorpay" &&
+          !input.gatewayPaymentId &&
+          gatewayLegs.length === 0
+        ) {
           return {
             error:
               "This order wasn't paid online, so it can't be refunded through the gateway.",
@@ -185,22 +262,36 @@ export async function issueRefund(
         // `partially_refunded` and `refunded` are DERIVED by
         // syncOrderRefundState from refunds that actually settled, so both of
         // them PROVE the order was captured — they are the one thing that can
-        // never mean "never paid". Comparing against `paid` alone therefore
-        // refused a gateway refund the moment any earlier refund landed, and
-        // that fires INSIDE a single split return: the till settles the cash
-        // leg, syncOrderRefundState writes `partially_refunded`, and the
-        // Razorpay leg for the same return is then rejected with "This order
-        // was never paid" — goods restocked, card never credited. It also
-        // blocked every second partial gateway refund on one order.
+        // never mean "never paid". Comparing against `paid` alone refused a
+        // gateway refund the moment any earlier refund landed, and that fires
+        // INSIDE a single split return: the till settles the cash leg,
+        // syncOrderRefundState writes `partially_refunded`, and the Razorpay
+        // leg for the same return is then rejected with "This order was never
+        // paid" — goods restocked, card never credited.
         //
         // The real ceiling is refundableAmount below, which already excludes
         // what has gone back; a fully-refunded order fails there with an
         // accurate message instead of a false one here.
-        if (!PAID_FOR_REFUND.has(order.payment_status ?? "")) {
+        if (!wasPaid(order.payment_status)) {
           return {
+            code: "not_paid" as const,
             error: "This order was never paid, so there's nothing to refund.",
           };
         }
+      }
+
+      // ★ Somebody to credit, decided BEFORE anything is written. A refund row
+      // for a credit nobody can receive is a refund that never happened.
+      const creditCustomerId =
+        input.method === "store_credit"
+          ? (input.customerId ?? order.customer_id)
+          : null;
+      if (input.method === "store_credit" && !creditCustomerId) {
+        return {
+          code: "no_customer" as const,
+          error:
+            "This order has no customer account, so there's nobody to give store credit to.",
+        };
       }
 
       const existing = await db
@@ -208,11 +299,18 @@ export async function issueRefund(
           amount: orderRefunds.amount,
           status: orderRefunds.status,
           method: orderRefunds.method,
+          returnId: orderRefunds.returnId,
         })
         .from(orderRefunds)
         .where(eq(orderRefunds.orderId, orderId));
 
-      const refundable = refundableAmount({
+      const creditReinstated = await creditReinstatedForOrder(
+        storeId,
+        orderId,
+        db,
+      );
+
+      let refundable = refundableAmount({
         orderTotal: order.total,
         refunds: existing.map((r) => ({
           amount: Number(r.amount ?? 0),
@@ -222,10 +320,50 @@ export async function issueRefund(
         // A money refund can't exceed what money paid — the rest of the total
         // was settled with credit, which no instrument ever received.
         storeCreditUsed: order.store_credit_used,
+        // Credit a cancellation already gave back is not owed a second time.
+        creditReinstated,
+        moneyTaken,
         method: input.method,
       });
+
+      if (input.capToReturn && input.returnId) {
+        const [ret] = await db
+          .select({
+            total: orderReturns.total,
+            status: orderReturns.status,
+          })
+          .from(orderReturns)
+          .where(
+            and(
+              eq(orderReturns.id, input.returnId),
+              eq(orderReturns.orderId, orderId),
+              eq(orderReturns.storeId, storeId),
+            ),
+          )
+          .limit(1);
+        if (!ret) return { error: "That return isn't part of this order." };
+        if (ret.status !== "received" && ret.status !== "completed") {
+          return {
+            error:
+              "Refund a return once its goods have been received, so you know what came back.",
+          };
+        }
+        const owedP = Math.max(0, toPaise(Number(ret.total ?? 0)));
+        const paidForReturnP = existing
+          .filter((r) => r.returnId === input.returnId && r.status !== "failed")
+          .reduce((sum, r) => sum + Math.max(0, toPaise(Number(r.amount))), 0);
+        refundable = Math.min(
+          refundable,
+          toRupees(Math.max(0, owedP - paidForReturnP)),
+        );
+      }
+
       const checked = checkRefundAmount(input.amount, refundable);
-      if ("error" in checked) return { error: checked.error };
+      if ("error" in checked) {
+        return toPaise(refundable) <= 0
+          ? { error: checked.error, code: "nothing_due" as const }
+          : { error: checked.error };
+      }
 
       // The caller's own rule, applied once the amount is REAL — an omitted
       // amount means "everything left", which nothing up front can check.
@@ -255,67 +393,71 @@ export async function issueRefund(
           actor: input.actor,
         })
         .returning({ id: orderRefunds.id });
+      const refundId = inserted[0]!.id;
+
+      // ── Store credit: the balance and the refund row commit TOGETHER ─────
+      // ★★ It used to run after this transaction committed, with the row
+      // already written as `completed` — and failRefund only touches PENDING
+      // rows, so a credit that did not land left a "completed" refund the
+      // customer never received, with a GST credit note allocated against it
+      // and its amount used up so nobody could retry. Inside the transaction,
+      // a failed credit rolls the row back with it. The refund id is the
+      // credit's ref, so even a replay could not credit twice.
+      if (input.method === "store_credit" && creditCustomerId) {
+        const credited = await issueCredit(
+          {
+            storeId,
+            customerId: creditCustomerId,
+            amount: checked.amount,
+            kind: "refund",
+            ref: refundId,
+            note: `Refund on ${order.order_ref ?? orderId}`,
+            actor: input.actor,
+          },
+          db,
+        );
+        if (!credited.ok) {
+          throw new CreditNotIssued(
+            credited.error ?? "Couldn't add store credit.",
+          );
+        }
+      }
 
       return {
-        refundId: inserted[0]!.id,
+        refundId,
         key,
         amount: checked.amount,
         order,
+        gatewayLegs,
       };
     });
   } catch (err) {
+    if (err instanceof CreditNotIssued) {
+      return { error: err.message };
+    }
     logError("refund.reserve", err, { orderId });
     return { error: "Couldn't start the refund." };
   }
-  if ("error" in reserved) return { error: reserved.error };
+  if ("error" in reserved) {
+    return {
+      error: reserved.error,
+      ...(reserved.code ? { code: reserved.code } : {}),
+    };
+  }
 
-  const { refundId, key, amount, order } = reserved;
+  const { refundId, key, amount, order, gatewayLegs } = reserved;
   const identity = {
     orderRef: order.order_ref,
     customerId: order.customer_id,
   };
 
-  // ── 2. Store credit: no money moves, a balance appears ───────────────────
-  // Done AFTER the refund row so the row is the thing being credited FOR —
-  // its id is the idempotency ref, which makes a retry a no-op rather than a
-  // second credit.
-  if (input.method === "store_credit") {
-    const customerId = input.customerId ?? order.customer_id;
-    if (!customerId) {
-      await failRefund(refundId, "No customer to credit.");
-      return {
-        code: "no_customer",
-        error:
-          "This order has no customer account, so there's nobody to give store credit to.",
-      };
-    }
-    const credited = await issueCredit({
-      storeId,
-      customerId,
-      amount,
-      kind: "refund",
-      ref: refundId,
-      note: `Refund on ${order.order_ref ?? orderId}`,
-      actor: input.actor,
-    });
-    if (!credited.ok) {
-      await failRefund(
-        refundId,
-        credited.error ?? "Couldn't add store credit.",
-      );
-      return { error: credited.error ?? "Couldn't add store credit." };
-    }
-    await syncOrderRefundState(orderId);
-    return { refundId, status: "completed", amount, ...identity };
-  }
-
-  // ── 3. Other non-gateway: the money already moved ────────────────────────
+  // ── 2. Non-gateway: the money already moved (or the credit just landed) ──
   if (input.method !== "razorpay") {
     await syncOrderRefundState(orderId);
     return { refundId, status: "completed", amount, ...identity };
   }
 
-  // ── 4. Gateway ───────────────────────────────────────────────────────────
+  // ── 3. Gateway ───────────────────────────────────────────────────────────
   const gateway = await getStoreGateway(storeId);
   if (!gateway) {
     await failRefund(refundId, "Razorpay isn't connected for this store.");
@@ -327,6 +469,19 @@ export async function issueRefund(
   }
 
   let paymentId = input.gatewayPaymentId ?? order.razorpay_payment_id;
+  // A till sale: its one gateway payment lives on order_payments.
+  if (!paymentId && gatewayLegs.length === 1) paymentId = gatewayLegs[0]!;
+  if (!paymentId && gatewayLegs.length > 1) {
+    await failRefund(
+      refundId,
+      "Paid with more than one online payment; choose which to refund.",
+    );
+    return {
+      code: "no_captured_payment",
+      error:
+        "This sale was paid with more than one online payment, so it can't tell which one to refund. Take the return at the till, which refunds each payment to its own card.",
+    };
+  }
   if (!paymentId && order.razorpay_order_id) {
     const payments = await rzpFetchOrderPayments(
       gateway.creds,
@@ -390,6 +545,24 @@ export async function issueRefund(
   // answer — it sends the UI to "we're checking" rather than asserting a state
   // we didn't write.
   const status: RefundStatus = claimed.length ? next : "pending";
+
+  // ★★ RAZORPAY CAN ANSWER "failed" STRAIGHT AWAY, and that is a failure.
+  // It used to be returned with no error, so the dashboard said "Refunded
+  // ₹X", the customer was emailed that their money was on its way, and the
+  // till counted it as settled. The row is already `failed`, so the amount is
+  // free to refund again once the cause is fixed.
+  if (status === "failed") {
+    return {
+      refundId,
+      status,
+      amount,
+      code: "gateway_failed",
+      error:
+        "Razorpay couldn't process this refund, so no money was sent. Check the payment in your Razorpay dashboard, then try again or record the refund manually.",
+      ...identity,
+    };
+  }
+
   if (status === "completed") await syncOrderRefundState(orderId);
 
   return {

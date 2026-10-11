@@ -401,7 +401,7 @@ export const FAILURE_SOURCES: FailureSource[] = [
         return rows.map((r) => ({
           id: `subscription:${r.id}`,
           source: "subscription" as const,
-          title: `Subscription payment failed — ₹${(r.amountPaise / 100).toLocaleString("en-IN")}`,
+          title: `Subscription payment failed - ₹${(r.amountPaise / 100).toLocaleString("en-IN")}`,
           // The code is ours and the reason is the gateway's; either alone is
           // often not enough to act on.
           detail: r.failureReason ?? r.failureCode,

@@ -24,10 +24,10 @@ const VARIANCE_TONE: Record<string, string> = {
 };
 
 function when(iso: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
-    ? "—"
+    ? "-"
     : d.toLocaleString("en-GB", {
         day: "2-digit",
         month: "short",
@@ -128,7 +128,7 @@ export function ShiftsClient({
                       {/* Null until close — an open drawer has not been
                           counted, which is not the same as counting zero. */}
                       {s.countedCash === null
-                        ? "—"
+                        ? "-"
                         : formatPrice(s.countedCash)}
                     </td>
                     <td
@@ -138,7 +138,7 @@ export function ShiftsClient({
                           : ""
                       }`}
                     >
-                      {s.variance === null ? "—" : formatPrice(s.variance)}
+                      {s.variance === null ? "-" : formatPrice(s.variance)}
                     </td>
                     <td className="dash-col-actions">
                       <button

@@ -49,8 +49,8 @@ const dashMono = JetBrains_Mono({
 // browser tab before the dashboard had even established access.
 export const metadata: Metadata = {
   title: {
-    default: "StoreMink — Operations Centre",
-    template: "%s — StoreMink",
+    default: "StoreMink · Operations Centre",
+    template: "%s · StoreMink",
   },
   icons: STOREMINK_ICONS,
 };
@@ -86,7 +86,7 @@ export default async function DashboardLayout({
             Couldn&apos;t reach the database
           </h1>
           <p className="text-sm text-[#5b6472]">
-            Your dashboard is fine — we just can&apos;t load it right now. This
+            Your dashboard is fine - we just can&apos;t load it right now. This
             is usually temporary, so try again in a moment.
           </p>
           <form>

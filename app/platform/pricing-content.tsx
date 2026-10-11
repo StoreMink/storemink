@@ -69,7 +69,7 @@ function MatrixValue({ value }: { value: PlanMatrixValue }) {
       </span>
     );
   }
-  if (value === false || value === "—") {
+  if (value === false) {
     return (
       <span className="smh-matrix-no" aria-label="Not included">
         <Minus size={15} aria-hidden="true" />

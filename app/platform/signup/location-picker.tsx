@@ -351,7 +351,7 @@ export function LocationPicker({
           <span>
             {value.address ||
               `${value.lat.toFixed(5)}, ${value.lng.toFixed(5)}`}
-            {mapState === "ready" && " — drag the pin to adjust."}
+            {mapState === "ready" && " - drag the pin to adjust."}
           </span>
         </p>
       )}

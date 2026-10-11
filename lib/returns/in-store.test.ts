@@ -132,3 +132,62 @@ describe("isTenderAllowed", () => {
     expect(isTenderAllowed(gateway, "")).toBe(false);
   });
 });
+
+// ★★ An exchange replacement was paid for by goods that came back — often
+// goods bought on a card. It used to fall through to the counter-choice
+// default and offer CASH: swap a card purchase, return the swap, walk out
+// with clean money.
+describe("★★ refundRouteFor — an exchange replacement is never cashed out", () => {
+  it("goes back as store credit when there is a customer to credit", () => {
+    const r = refundRouteFor({
+      paymentMethod: "exchange",
+      paymentStatus: "paid",
+      hasCustomer: true,
+    });
+    expect(r.method).toBe("store_credit");
+    expect(r.counterChoice).toBe(false);
+    expect(r.affectsDrawer).toBe(false);
+    expect(r.copy).toContain("store credit");
+  });
+
+  it("moves no money at the counter when there is nobody to credit", () => {
+    const r = refundRouteFor({
+      paymentMethod: "exchange",
+      paymentStatus: "paid",
+    });
+    expect(r.method).toBe("none");
+    expect(r.counterChoice).toBe(false);
+    expect(r.affectsDrawer).toBe(false);
+    expect(r.copy).toContain("dashboard");
+  });
+
+  it("★ refuses every counter tender for it, even if the client asks", () => {
+    for (const hasCustomer of [true, false]) {
+      const route = refundRouteFor({
+        paymentMethod: "exchange",
+        paymentStatus: "paid",
+        hasCustomer,
+      });
+      expect(isTenderAllowed(route, "cash")).toBe(false);
+      expect(isTenderAllowed(route, "card")).toBe(false);
+      expect(isTenderAllowed(route, "upi")).toBe(false);
+    }
+  });
+
+  it("leaves every other method's route exactly as it was", () => {
+    expect(
+      refundRouteFor({
+        paymentMethod: "cash_on_delivery",
+        paymentStatus: "paid",
+        hasCustomer: true,
+      }).method,
+    ).toBe("cash");
+    expect(
+      refundRouteFor({
+        paymentMethod: "razorpay",
+        paymentStatus: "paid",
+        hasCustomer: true,
+      }).method,
+    ).toBe("razorpay");
+  });
+});

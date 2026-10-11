@@ -1051,7 +1051,7 @@ export async function declineCancellation(
   const note = (reason ?? "").trim().slice(0, 300);
   if (!note) {
     return {
-      error: "Give the customer a reason — they'll be told what it is.",
+      error: "Give the customer a reason - they'll be told what it is.",
     };
   }
   const storeId = await getActingStoreId();

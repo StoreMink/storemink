@@ -10,7 +10,7 @@ import {
 import { requireOperator } from "../../../../require-operator";
 import { SuperadminOnly } from "../../studio-ui";
 
-export const metadata = { title: "Compare versions — StoreMink Admin" };
+export const metadata = { title: "Compare versions · StoreMink Admin" };
 
 function List({ title, items }: { title: string; items: string[] }) {
   if (items.length === 0) return null;
@@ -66,7 +66,7 @@ function Changes({ diff }: { diff: ThemeDiff }) {
                           />
                         ) : null}
                         <span className="break-all font-mono text-xs text-slate-800">
-                          {value ?? "—"}
+                          {value ?? "-"}
                         </span>
                       </span>
                     </td>
@@ -96,8 +96,8 @@ function Changes({ diff }: { diff: ThemeDiff }) {
                   </span>
                 </p>
                 <div className="mt-1 grid gap-2 text-xs text-slate-700 sm:grid-cols-2">
-                  <p>Before: {page.before.join(" → ") || "—"}</p>
-                  <p>After: {page.after.join(" → ") || "—"}</p>
+                  <p>Before: {page.before.join(" → ") || "-"}</p>
+                  <p>After: {page.after.join(" → ") || "-"}</p>
                 </div>
               </li>
             ))}

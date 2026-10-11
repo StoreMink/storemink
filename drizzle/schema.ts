@@ -1965,6 +1965,19 @@ export const orders = pgTable(
     })
       .notNull()
       .default(0),
+    // Cashback this order EARNS (0185). Recorded at checkout and issued only
+    // once the order is paid; cancelling or refunding the order takes it back.
+    // Kept on the order because the offer engine's answer exists only while
+    // the checkout runs, and the payment may land hours later.
+    cashbackAmount: numeric("cashback_amount", {
+      precision: 12,
+      scale: 2,
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
+    /** The offer name, snapshotted for the ledger note. */
+    cashbackNote: text("cashback_note"),
     // When the parcel actually LANDED (refunds_01_gateway.sql). The return
     // window starts here — measured from created_at, a 7-day window on a
     // 10-day delivery expires before the customer has the goods.
@@ -8005,6 +8018,9 @@ export const orderReturns = pgTable(
     /** The replacement order (returns_03_exchanges.sql). An exchange is a return
      *  PLUS a new order, never a third entity. NULL until the goods arrive. */
     exchangeOrderId: uuid("exchange_order_id"),
+    /** A till return's retry key (0185). A second submit with the same key
+     *  answers with the FIRST return instead of handing the money back twice. */
+    idempotencyKey: text("idempotency_key"),
   },
   (table) => [
     index("mink_brief_returns_store_created_idx").on(

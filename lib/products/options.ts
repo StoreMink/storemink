@@ -85,7 +85,7 @@ export function normalizeOptions(
       if (!value) continue;
       if (value.includes(VARIANT_NAME_SEPARATOR.trim()))
         return {
-          error: `"${value}" can't contain "/" — it separates option values in a variant's name.`,
+          error: `"${value}" can't contain "/" - it separates option values in a variant's name.`,
         };
       if (seen.has(key(value)))
         return { error: `"${name || "An option"}" lists "${value}" twice.` };

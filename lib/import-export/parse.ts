@@ -181,7 +181,7 @@ export function parseFile(
     missingMatch.length === resource.matchOn.length
   ) {
     return {
-      error: `This file needs a "${resource.matchOn[0]}" column — it's how each row is matched to an existing ${resource.label.toLowerCase().replace(/s$/, "")}. Found: ${csv.header.filter(Boolean).join(", ") || "nothing"}.`,
+      error: `This file needs a "${resource.matchOn[0]}" column - it's how each row is matched to an existing ${resource.label.toLowerCase().replace(/s$/, "")}. Found: ${csv.header.filter(Boolean).join(", ") || "nothing"}.`,
     };
   }
 

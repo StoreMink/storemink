@@ -99,7 +99,7 @@ export function CreditNoteDocument({ data }: { data: CreditNoteData }) {
               reverses nothing. */}
           <div className="inv-meta-row">
             <span>Against invoice</span>
-            <strong>{data.orderRef ?? "—"}</strong>
+            <strong>{data.orderRef ?? "-"}</strong>
           </div>
           <div className="inv-meta-row">
             <span>Invoice date</span>
@@ -121,7 +121,7 @@ export function CreditNoteDocument({ data }: { data: CreditNoteData }) {
         <div>
           <div className="inv-party-label">Place of supply</div>
           <div className="inv-party-body">
-            <div>{data.placeOfSupplyState || "—"}</div>
+            <div>{data.placeOfSupplyState || "-"}</div>
             <div>{data.intraState ? "Intra-state" : "Inter-state"}</div>
           </div>
         </div>
@@ -154,7 +154,7 @@ export function CreditNoteDocument({ data }: { data: CreditNoteData }) {
                   <div className="inv-item-variant">{l.variantName}</div>
                 )}
               </td>
-              <td>{l.hsnCode || "—"}</td>
+              <td>{l.hsnCode || "-"}</td>
               <td style={{ textAlign: "right" }}>{l.quantity}</td>
               <td style={{ textAlign: "right" }}>{formatPrice(l.amount)}</td>
               <td style={{ textAlign: "right" }}>{l.taxRate}%</td>
@@ -216,7 +216,7 @@ export function CreditNoteDocument({ data }: { data: CreditNoteData }) {
       </div>
 
       <div className="inv-tax-note">
-        Credit note issued against invoice {data.orderRef ?? "—"} dated{" "}
+        Credit note issued against invoice {data.orderRef ?? "-"} dated{" "}
         {fmtDate(data.orderDate)}. Tax shown is reversed against the output tax
         declared on that invoice.
       </div>

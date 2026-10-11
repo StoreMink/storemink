@@ -101,7 +101,7 @@ function PublishPanel({
       <h2 className="text-sm font-semibold text-slate-900">Publish</h2>
       {!publishable ? (
         <p className="mt-1 text-sm text-slate-600">
-          Publishing opens once version {state.versionNumber ?? "—"} passes its
+          Publishing opens once version {state.versionNumber ?? "-"} passes its
           checks.{" "}
           <Link
             href={checksHref}
@@ -112,7 +112,7 @@ function PublishPanel({
         </p>
       ) : state.evidence.ok ? (
         <p className="mt-1 text-sm text-slate-600">
-          Version {state.versionNumber ?? "—"} passed every check. Publishing
+          Version {state.versionNumber ?? "-"} passed every check. Publishing
           adds it to themes.storemink.com and signup, with a live demo store.
           Stores that later install it keep that exact version.
         </p>

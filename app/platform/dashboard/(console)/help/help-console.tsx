@@ -141,14 +141,14 @@ export function HelpConsole({
               return (
                 <tr key={a.id}>
                   <td className="t-title">{a.title}</td>
-                  <td>{cat?.title ?? <span className="muted">—</span>}</td>
+                  <td>{cat?.title ?? <span className="muted">-</span>}</td>
                   <td>
                     <span className={`badge ${a.status}`}>{a.status}</span>
                   </td>
                   <td>{a.viewCount}</td>
                   <td className="muted">
                     {/* helpful counts not on the card query — shown in editor */}
-                    —
+                    -
                   </td>
                   <td className="t-actions">
                     <a

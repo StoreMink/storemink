@@ -42,6 +42,7 @@ vi.mock("@/lib/payments/refund-reconcile", () => ({
 }));
 vi.mock("@/lib/credit/store-credit", () => ({
   issueCredit: vi.fn(async () => ({ ok: true })),
+  creditReinstatedForOrder: vi.fn(async () => 0),
 }));
 
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
@@ -57,7 +58,10 @@ import {
   reconcileOrderRefunds,
   syncOrderRefundState,
 } from "@/lib/payments/refund-reconcile";
-import { issueCredit } from "@/lib/credit/store-credit";
+import {
+  creditReinstatedForOrder,
+  issueCredit,
+} from "@/lib/credit/store-credit";
 import { logError } from "@/lib/observability/logger";
 import { issueRefund } from "./issue-refund";
 
@@ -91,9 +95,17 @@ function seed(
   orderRow: any[] = [order()],
   existing: any[] = [],
   inserted: any[] = [{ id: "rf-new" }],
+  opts: { legs?: any[]; ret?: any[] } = {},
 ) {
+  // By TABLE, so the reads the reserve step makes (gateway legs, the return
+  // being refunded) cannot shift the order row and the refunds along.
   dbHolder.current = makeDbMock({
-    selectQueue: [orderRow, existing],
+    selectByTable: {
+      orders: [orderRow],
+      order_refunds: [existing],
+      order_payments: [opts.legs ?? []],
+      order_returns: [opts.ret ?? []],
+    },
     returning: inserted,
   });
 }
@@ -231,7 +243,10 @@ describe("★ reserving the amount", () => {
 
   it("★ won't refund an online order that was never paid", async () => {
     seed([order({ payment_status: "pending" })]);
-    expect((await issueRefund(input())).error).toContain("never paid");
+    const res = await issueRefund(input());
+    expect(res.error).toContain("hasn't been paid yet");
+    expect(res.code).toBe("not_paid");
+    expect(rzpRefund).not.toHaveBeenCalled();
   });
 
   // ★★ That guard asks "was it EVER paid?", not "is it STILL fully paid?".
@@ -274,21 +289,68 @@ describe("★ reserving the amount", () => {
     it("still refuses a status that never meant capture", async () => {
       for (const payment_status of ["pending", "failed", "cancelled", null]) {
         seed([order({ payment_status })]);
-        expect((await issueRefund(input())).error).toContain("never paid");
+        expect((await issueRefund(input())).code).toBe("not_paid");
       }
     });
   });
 
-  it("lets a MANUAL refund proceed on an unpaid order", async () => {
-    // Those two guards are gateway-specific: a merchant recording money they
-    // moved themselves is not constrained by what Razorpay holds.
+  it("★★ refuses ANY refund on an order nobody has paid for", async () => {
+    // Only the gateway used to check this, so an undelivered cash-on-delivery
+    // order offered its whole total as a manual or store-credit refund, and
+    // store credit turned it into a real balance.
+    for (const method of ["manual", "store_credit", "cash"]) {
+      seed([
+        order({
+          payment_method: "cash_on_delivery",
+          payment_status: "pending",
+          status: "processing",
+        }),
+      ]);
+      const res = await issueRefund(input({ method, reference: "UPI-1" }));
+      expect(res.code).toBe("not_paid");
+    }
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+  });
+
+  it("lets a manual refund through on a DELIVERED cash-on-delivery order nobody marked paid", async () => {
+    // The courier took the cash at the door; nothing flips COD to `paid`
+    // automatically, so delivery is what proves the money was taken.
     seed([
-      order({ payment_method: "cash_on_delivery", payment_status: "pending" }),
+      order({
+        payment_method: "cash_on_delivery",
+        payment_status: "pending",
+        status: "delivered",
+      }),
     ]);
     const res = await issueRefund(
       input({ method: "manual", reference: "UPI-1" }),
     );
     expect(res.status).toBe("completed");
+  });
+
+  it("★★ does not refund store credit a cancellation already gave back", async () => {
+    // A ₹500 order paid entirely with credit, cancelled: the ₹500 is back in
+    // the balance. Refunding it again as credit is how the customer ended up
+    // holding ₹1,000.
+    vi.mocked(creditReinstatedForOrder).mockResolvedValue(500);
+    seed([
+      order({
+        payment_method: "store_credit",
+        status: "cancelled",
+        store_credit_used: 500,
+      }),
+    ]);
+    const res = await issueRefund(input({ method: "store_credit" }));
+    expect(res.code).toBe("nothing_due");
+    expect(issueCredit).not.toHaveBeenCalled();
+  });
+
+  it("caps a card refund at the money part once the credit part came back", async () => {
+    // ₹300 card + ₹200 credit, cancelled: ₹200 reinstated, ₹300 still owed.
+    vi.mocked(creditReinstatedForOrder).mockResolvedValue(200);
+    seed([order({ status: "cancelled", store_credit_used: 200 })]);
+    const res = await issueRefund(input());
+    expect(res.amount).toBe(300);
   });
 
   it("applies the caller's extra check once the amount is REAL", async () => {
@@ -426,7 +488,9 @@ describe("refunding as store credit", () => {
     seed([order({ payment_method: "cash_on_delivery" })]);
     const res = await issueRefund(input({ method: "store_credit" }));
     expect(res.status).toBe("completed");
-    expect(issueCredit).toHaveBeenCalledWith(
+    // ★★ Inside the refund's own transaction: the second argument is its db.
+    expect(vi.mocked(issueCredit).mock.calls[0]![1]).toBe(dbHolder.current.db);
+    expect(vi.mocked(issueCredit).mock.calls[0]![0]).toEqual(
       expect.objectContaining({
         storeId: STORE,
         customerId: "cust-1",
@@ -449,17 +513,23 @@ describe("refunding as store credit", () => {
     );
   });
 
-  it("★ refuses a walk-in with no account, and fails the row", async () => {
+  it("★ refuses a walk-in with no account BEFORE writing a refund row", async () => {
     seed([order({ customer_id: null, payment_method: "cash" })]);
     const res = await issueRefund(input({ method: "store_credit" }));
     expect(res.code).toBe("no_customer");
     expect(res.error).toContain("nobody to give store credit to");
-    // The reserved amount is freed, or it would block a real refund later.
-    expect(updates()[0]).toMatchObject({ status: "failed" });
+    // No row at all: a "completed" refund nobody could receive is a refund
+    // that never happened, and it would block a real one later.
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+    expect(issueCredit).not.toHaveBeenCalled();
   });
 
-  it("★ fails the row when the credit doesn't land", async () => {
-    // Otherwise the refund reads as settled while the customer holds nothing.
+  it("★★ rolls the refund row back when the credit doesn't land", async () => {
+    // The row is written `completed` (nothing is in flight for credit), and
+    // failRefund only touches PENDING rows, so a credit that failed AFTER
+    // the transaction used to leave a completed refund the customer never
+    // received, with a GST credit note against it. The credit now lands in
+    // the SAME transaction, and failing it throws so the row rolls back.
     seed([order({ payment_method: "cash" })]);
     vi.mocked(issueCredit).mockResolvedValue({
       ok: false,
@@ -467,7 +537,11 @@ describe("refunding as store credit", () => {
     } as any);
     const res = await issueRefund(input({ method: "store_credit" }));
     expect(res.error).toContain("Couldn't add store credit");
-    expect(updates()[0]).toMatchObject({ status: "failed" });
+    expect(res.status).toBeUndefined();
+    expect(syncOrderRefundState).not.toHaveBeenCalled();
+    // Nothing is UPDATEd to `failed` after the fact: the transaction is
+    // what undoes the row.
+    expect(updates()).toHaveLength(0);
   });
 });
 
@@ -502,6 +576,11 @@ describe("the gateway path", () => {
     } as any);
     const res = await issueRefund(input());
     expect(res.status).toBe("failed");
+    // ★★ A failure Razorpay reports at once is an ERROR. It used to come back
+    // with no error, so the dashboard said "Refunded ₹500" and the customer
+    // was emailed that money was on its way.
+    expect(res.code).toBe("gateway_failed");
+    expect(res.error).toContain("no money was sent");
     expect(syncOrderRefundState).not.toHaveBeenCalled();
   });
 
@@ -744,6 +823,114 @@ describe("★ null data degrades safely", () => {
     vi.mocked(issueCredit).mockResolvedValue({ ok: false } as any);
     const res = await issueRefund(input({ method: "store_credit" }));
     expect(res.error).toBe("Couldn't add store credit.");
+    expect(updates()).toHaveLength(0);
+  });
+});
+
+describe("★ a till sale's gateway payments live on order_payments", () => {
+  const tillSale = () =>
+    order({
+      payment_method: "split",
+      razorpay_payment_id: null,
+      razorpay_order_id: null,
+    });
+
+  it("refunds the one gateway leg the sale took", async () => {
+    seed([tillSale()], [], [{ id: "rf-new" }], {
+      legs: [{ reference: "pay_leg" }],
+    });
+    const res = await issueRefund(input({ amount: 200 }));
+    expect(res.status).toBe("completed");
+    expect(vi.mocked(rzpRefund).mock.calls[0][1]).toMatchObject({
+      paymentId: "pay_leg",
+      amountPaise: 20000,
+    });
+  });
+
+  it("★ refuses to GUESS between two gateway legs", async () => {
+    // Refunding the wrong card is unrecoverable; the till refunds each leg
+    // to its own payment.
+    seed([tillSale()], [], [{ id: "rf-new" }], {
+      legs: [{ reference: "pay_a" }, { reference: "pay_b" }],
+    });
+    const res = await issueRefund(input({ amount: 100 }));
+    expect(res.code).toBe("no_captured_payment");
+    expect(res.error).toContain("more than one online payment");
+    expect(rzpRefund).not.toHaveBeenCalled();
     expect(updates()[0]).toMatchObject({ status: "failed" });
+  });
+
+  it("still refuses the gateway for a sale with no online payment at all", async () => {
+    seed([tillSale()]);
+    const res = await issueRefund(input());
+    expect(res.error).toContain("wasn't paid online");
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+  });
+});
+
+describe("★ a refund for a return is capped at that return", () => {
+  it("refunds what the return is worth when no amount is given", async () => {
+    seed([order()], [], [{ id: "rf-new" }], {
+      ret: [{ total: 200, status: "received" }],
+    });
+    const res = await issueRefund(
+      input({ method: "manual", returnId: "ret-1", capToReturn: true }),
+    );
+    expect(res).toMatchObject({ status: "completed", amount: 200 });
+  });
+
+  it("★ refuses more than the return is worth, though the ORDER has more", async () => {
+    seed([order()], [], [{ id: "rf-new" }], {
+      ret: [{ total: 200, status: "received" }],
+    });
+    const res = await issueRefund(
+      input({
+        method: "manual",
+        amount: 300,
+        returnId: "ret-1",
+        capToReturn: true,
+      }),
+    );
+    expect(res.error).toBeTruthy();
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+  });
+
+  it("subtracts what this return has already been refunded", async () => {
+    seed(
+      [order()],
+      [
+        {
+          amount: 150,
+          status: "completed",
+          method: "manual",
+          returnId: "ret-1",
+        },
+      ],
+      [{ id: "rf-new" }],
+      { ret: [{ total: 200, status: "received" }] },
+    );
+    const res = await issueRefund(
+      input({ method: "manual", returnId: "ret-1", capToReturn: true }),
+    );
+    expect(res).toMatchObject({ amount: 50 });
+  });
+
+  it("★ waits for the goods: an approved-but-not-received return can't be refunded yet", async () => {
+    seed([order()], [], [{ id: "rf-new" }], {
+      ret: [{ total: 200, status: "approved" }],
+    });
+    const res = await issueRefund(
+      input({ method: "manual", returnId: "ret-1", capToReturn: true }),
+    );
+    expect(res.error).toContain("received");
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+  });
+
+  it("refuses a return that isn't on this order", async () => {
+    seed([order()], [], [{ id: "rf-new" }], { ret: [] });
+    const res = await issueRefund(
+      input({ method: "manual", returnId: "ret-x", capToReturn: true }),
+    );
+    expect(res.error).toBe("That return isn't part of this order.");
   });
 });

@@ -93,7 +93,7 @@ export function EmailLogsView({
           <p>
             {platform
               ? "Platform delivery history for signup, operator access and StoreMink billing. Signup verification codes are visible here for assisted and test-store creation; password-reset and staff-invite credentials remain redacted."
-              : "Every email this store has sent — order notifications, campaigns, invites and sign-in codes. Password resets and staff invites are recorded without their contents, because the link inside is a working credential."}
+              : "Every email this store has sent - order notifications, campaigns, invites and sign-in codes. Password resets and staff invites are recorded without their contents, because the link inside is a working credential."}
           </p>
         </div>
       </header>

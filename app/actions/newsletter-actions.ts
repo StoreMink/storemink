@@ -27,7 +27,7 @@ export async function subscribeNewsletter(
   // Honeypot: bots commonly fill every field. Return the normal success shape
   // so the endpoint does not teach them how to bypass it.
   if (String(formData.get("website") ?? "").trim()) {
-    return { status: "success", message: "You're on the list — thank you." };
+    return { status: "success", message: "You're on the list - thank you." };
   }
 
   const email = String(formData.get("email") ?? "")
@@ -107,5 +107,5 @@ export async function subscribeNewsletter(
   }
 
   // Same response for a new or existing address: do not expose membership.
-  return { status: "success", message: "You're on the list — thank you." };
+  return { status: "success", message: "You're on the list - thank you." };
 }

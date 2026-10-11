@@ -252,7 +252,7 @@ export async function loadCreditNote(
  */
 function missingReasonFor(status: string, orderTax: number): string | null {
   if (status !== "completed") {
-    return "This refund hasn't settled yet. A credit note is raised once the money has actually gone back — a serial issued for a refund that then fails would leave a gap in the series.";
+    return "This refund hasn't settled yet. A credit note is raised once the money has actually gone back - a serial issued for a refund that then fails would leave a gap in the series.";
   }
   if (orderTax <= 0) {
     return "No tax was charged on this order, so there is no output tax to reverse and no credit note is needed.";

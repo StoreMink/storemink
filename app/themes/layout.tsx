@@ -7,7 +7,7 @@ const DESCRIPTION =
 
 export const metadata: Metadata = {
   metadataBase: new URL(THEMES_URL),
-  title: "StoreMink Themes — Professional storefronts, ready to make yours",
+  title: "StoreMink Themes · Professional storefronts, ready to make yours",
   description: DESCRIPTION,
   applicationName: "StoreMink Themes",
   alternates: { canonical: "/" },
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
         url: "/themes/catalog-og.png",
         width: 1200,
         height: 630,
-        alt: "StoreMink Themes — Make your store feel like your brand.",
+        alt: "StoreMink Themes - Make your store feel like your brand.",
       },
     ],
   },

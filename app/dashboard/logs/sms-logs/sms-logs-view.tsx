@@ -90,8 +90,8 @@ export function SmsLogsView({
           <h1>SMS logs</h1>
           <p>
             {platform
-              ? "Every text StoreMink itself has sent. Merchants' own messages to their shoppers are logged in their store, not here — SMS is a per-store connection."
-              : "Every text this store has sent. A message blocked by a carrier for not matching its DLT template arrives here as sent — carriers drop those silently, so a delivery report is the only place it shows."}
+              ? "Every text StoreMink itself has sent. Merchants' own messages to their shoppers are logged in their store, not here - SMS is a per-store connection."
+              : "Every text this store has sent. A message blocked by a carrier for not matching its DLT template arrives here as sent - carriers drop those silently, so a delivery report is the only place it shows."}
           </p>
         </div>
       </header>
@@ -159,7 +159,7 @@ export function SmsLogsView({
             <MessageSquare className="mx-auto mb-2 h-5 w-5 opacity-40" />
             {platform ? (
               <>
-                No platform messages — and there cannot be any yet.
+                No platform messages - and there cannot be any yet.
                 <span className="mt-1.5 block">
                   StoreMink has no SMS sender of its own. The one-time code sent
                   during signup comes from Firebase phone auth, which Google
@@ -192,9 +192,9 @@ export function SmsLogsView({
                     className="cursor-pointer"
                   >
                     <td className="font-mono text-[12px]">{row.to_phone}</td>
-                    <td>{row.event_key ?? "—"}</td>
+                    <td>{row.event_key ?? "-"}</td>
                     <td className="font-mono text-[12px]">
-                      {row.sender_header ?? "—"}
+                      {row.sender_header ?? "-"}
                     </td>
                     <td>{row.segments}</td>
                     <td>

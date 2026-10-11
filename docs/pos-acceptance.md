@@ -1980,6 +1980,40 @@ also race two attempts to complete the replacement.
 replacement order exists until one normal sale completes, and the return can
 link only one winning order.
 
+**PS-11.19 ★★ — A tax-inclusive sale refunds its tax once**
+Turn on "Prices include tax" (Invoices & Billing) with an 18% class, sell one
+₹1,180 item, then return it at the till.
+**Expect:** the preview and the refund are both ₹1,180 (₹1,000 goods + ₹180
+tax inside it), and the credit note reverses ₹180. **Was:** ₹1,360 — the tax
+inside the line was added a second time. Repeat with an order discount and
+with a scoped offer: a full return equals exactly what was charged. An
+exclusive-tax store is unchanged.
+
+**PS-11.20 ★ — Cash back needs an open shift when the store requires one**
+Turn on `pos.requireOpenShift`, close the shift, then return a cash sale.
+**Expect:** "Open a shift before giving cash back." and nothing is written: no
+return, no restock, no refund. A card/UPI/credit/Razorpay refund is NOT
+affected. A split whose original tenders include cash is refused the same way.
+With the setting off, the cash refund goes through unattributed to a shift.
+
+**PS-11.21 ★★ — A retried return is recorded once**
+Take a PARTIAL return (1 of 2 units) and, with the network throttled, tap
+Refund; let the request time out after the server committed, then tap Refund
+again without changing anything. Also tap Refund twice quickly.
+**Expect:** one `order_returns` row (carrying the attempt's
+`idempotency_key`) and one refund. The retry says "This return was already
+recorded" with the original amount. Changing a quantity, condition, method or
+reason is a NEW attempt. **Was:** the retry re-priced the remaining unit and
+booked a second return and refund for goods handed over once.
+
+**PS-11.22 ★ — Only money that settled is announced**
+Return a Razorpay-paid order while the gateway is slow (the refund comes back
+pending), and separately one the bank declines.
+**Expect:** the till warns ("still confirming, do not send it again" or
+"didn't go through"), the return stands, and NO `order.refund_issued`
+notification or `refund_issued` money-audit row is written for money that has
+not settled. A split where one leg settles announces only that leg's amount.
+
 ---
 
 ## 10c. Refunds from the dashboard (CODEBASE §26)
@@ -2208,6 +2242,19 @@ once (the hold is committed, not re-reserved). The customer is notified.
 Receive a return with no swaps.
 **Expect:** no new order, no hold committed.
 
+**PS-14.11 ★★ — A mixed request keeps the refunded line's tax**
+On one order, refund a ₹1,000 + ₹180 tax line and swap a second line for a
+same-price variant.
+**Expect:** the queue row, approval email and stored total all say ₹1,180.
+**Was:** ₹1,000 — the swap beside it made the refunded line lose its tax.
+A cheaper swap adds its difference on top; a dearer swap is refused even when
+the refunded line's value would "cover" it.
+
+**PS-14.12 — A tax-inclusive store's even swap is even**
+With "Prices include tax" on, swap a ₹590 variant for a ₹590 one.
+**Expect:** allowed and ₹0 owed — the swap is compared on the inclusive shelf
+price, not refused for "costing" the tax more.
+
 ## 10f. BORIS — returning an online order at a counter (CODEBASE §28)
 
 Needs: Order Settings → Accept returns AND "Accept online returns in your
@@ -2264,6 +2311,26 @@ Disconnect Razorpay in Channels, then return a card order.
 **Expect:** the return SUCCEEDS with a warning telling the cashier to have the
 owner refund from the dashboard. The customer handed the goods over — undoing
 that would be worse.
+
+**PS-15.11 ★★ — An exchange replacement is never cashed out**
+Receive an online exchange so its replacement order exists (payment method
+`exchange`), then bring the replacement to a counter.
+**Expect:** no Cash/Card/UPI buttons. With a customer account, the screen says
+its value goes back as store credit; with none, it says no money is handed
+back here and the button reads "Take items back" (the refund is completed
+from the dashboard). Calling `processReturn` with `cash` directly is refused.
+**Was:** it fell through to the counter-choice default and offered cash, so a
+card purchase could be swapped and then returned for cash.
+
+**PS-15.12 ★★ — An online order part-paid with store credit**
+Place a ₹2,360 online order paying ₹1,000 with store credit and ₹1,360 on
+Razorpay, then return it at a counter.
+**Expect:** the screen shows two legs (Razorpay ₹1,360, store credit ₹1,000).
+A full return sends each share back to where it came from; a partial return
+splits proportionally, so credit never reaches the card. On an order with no
+customer account, only the card leg is offered and a refund beyond ₹1,360 is
+refused BEFORE anything is written. **Was:** one Razorpay leg for the full
+₹2,360, refused by the gateway cap after the return was saved and restocked.
 
 ## 10g. GST credit notes (CODEBASE §28)
 
@@ -2426,6 +2493,20 @@ Reject an online return, then bring the same goods to a counter.
 Submit a return photo at `https://storage.googleapis.com/not-our-bucket/x.svg`.
 **Expect:** dropped.
 **Was:** stored and rendered in the merchant's dashboard.
+
+**PS-18.9 — Card → exchange → cash**
+Buy online by card, exchange it, then return the replacement at a counter and
+ask for cash (also by calling `processReturn` directly).
+**Expect:** refused; the value goes back as store credit or is left to the
+dashboard (PS-15.11).
+**Was:** the counter offered cash.
+
+**PS-18.10 — The same partial return, submitted twice**
+Submit one partial return twice with the same retry key (lost response,
+double tap).
+**Expect:** one return, one refund, the second call answered "already
+recorded" (PS-11.21).
+**Was:** two returns and two refunds for one unit.
 
 ## 10j. The register shell — one navigation, one counter (CODEBASE §22 "the shell")
 
@@ -4252,6 +4333,8 @@ Real and deliberate, so nobody files them as bugs:
 | **Order detail and cancellation reads can exceed staff location scope** | The main Orders list applies assigned shops, but the current order-detail and cancellation server reads are store-scoped rather than location-scoped; scope lookup errors also fail open. Public Help tells restricted staff not to act and to contact support. Fix the authorization boundary and add negative tests before removing that warning.                                                            |
 | **Priority fulfilment routes on raw on-hand stock**                     | The resolver compares `inventory_levels.on_hand` with demand rather than reservation-adjusted availability. A shop whose remaining units are already reserved can be selected ahead of a genuinely available shop. Route on `on_hand - reserved` and pin the race in resolver tests.                                                                                                                           |
 | **Missing parcel measurements use carrier-facing defaults**             | Rate quoting and booking substitute 500 g and 10×10×5 cm when catalogue measurements are absent. Help discloses this because the fallback can change a carrier quote; replace it with a merchant-visible validation or confirmation step before treating live rates as production-safe.                                                                                                                        |
+| **The shopper's return estimate lags two return fixes**                 | `requestReturn` settles tax-inclusive and mixed swap + refund requests correctly (PS-11.19, PS-14.11), but `getReturnableOrder` ships no `tax_inclusive` and `return-request.tsx` still estimates the old way, so the form can quote the tax twice or drop a refunded line's tax. The stored amount the queue and email use is right                                                                           |
+| **A COD order part-paid with credit, returned at a counter**            | The legacy counter-choice route still sends the whole refund to the one tender the cashier picks, capped at what money paid: a return over the cap is refused before any write, but a partial one does not send the credit share back to credit. Online gateway orders are split (PS-15.12)                                                                                                                    |
 
 ## Mink product photo and CSV chat workflows (2026-10-04)
 

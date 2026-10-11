@@ -41,7 +41,7 @@ export function posSessionConfigured(): boolean {
 
 /** Shown wherever a mint is refused for want of the secret. */
 export const POS_SECRET_MISSING_ERROR =
-  "Point of Sale isn't fully configured on this server (POS_SESSION_SECRET is missing). Contact support — this needs a deployment setting, not a change on your side.";
+  "Point of Sale isn't fully configured on this server (POS_SESSION_SECRET is missing). Contact support - this needs a deployment setting, not a change on your side.";
 
 // Signing MUST have a secret; verifying without one just means "no valid
 // session" (so the proxy never 500s when POS isn't configured — it falls to the
@@ -50,7 +50,7 @@ function requireSecret(): string {
   const s = secretOrNull();
   if (!s) {
     throw new Error(
-      "POS_SESSION_SECRET is not set — cannot sign POS sessions.",
+      "POS_SESSION_SECRET is not set - cannot sign POS sessions.",
     );
   }
   return s;

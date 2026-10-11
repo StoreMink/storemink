@@ -281,7 +281,7 @@ export function InvoiceDocument({
               <td className="num">{formatPrice(it.price)}</td>
               {hasTax && (
                 <td className="num">
-                  {it.tax_rate > 0 ? `${it.tax_rate}%` : "—"}
+                  {it.tax_rate > 0 ? `${it.tax_rate}%` : "-"}
                 </td>
               )}
               <td className="num">{formatPrice(it.total)}</td>

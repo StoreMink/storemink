@@ -241,7 +241,7 @@ describe("OfferForm — the card layout", () => {
     view({ offer: OFFER });
     expect(screen.getByText("on any order")).toBeInTheDocument();
     expect(
-      screen.getByText("No limits — runs until you pause it"),
+      screen.getByText("No limits - runs until you pause it"),
     ).toBeInTheDocument();
   });
 });

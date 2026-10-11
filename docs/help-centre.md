@@ -73,6 +73,15 @@ Write in the second person. Third-person copy about "the merchant" and "the
 merchant's own account" is a sign the text was drafted for an engineer, and it
 reads as though it is about somebody else.
 
+### No em dash
+
+StoreMink copy never uses an em dash, and the Help Centre is no exception
+(owner's rule, 2026-10-11). Write " - ", a comma or a colon in a sentence, and
+"-" in a table cell that means "not included". Migration `20261011_0184`
+removed every existing one; `help:lint` fails any later Help migration that
+publishes or quotes one, and `help:audit` reports one an operator typed in the
+console.
+
 ---
 
 ## 3. How to change published content

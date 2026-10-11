@@ -87,7 +87,7 @@ function channelSummary(keys: string[]): string {
 
 function recipientSummary(row: ConsoleRow): string {
   const team = row.audiences.find((a) => a.key === "team");
-  if (!team?.routing) return "—";
+  if (!team?.routing) return "-";
   if (team.routing.mode === "roles") {
     const n = team.routing.roles.length;
     return `${n} role${n === 1 ? "" : "s"}`;
@@ -279,7 +279,7 @@ export function NotificationOverview({
           </span>
           <span className="mt-0.5 block text-[12.5px] text-[var(--dash-text-3)]">
             Every notification with filters, search, and channel-by-channel
-            control — {total} in total.
+            control - {total} in total.
           </span>
         </span>
         <ChevronRight className="h-4 w-4 shrink-0 text-[var(--dash-text-3)]" />

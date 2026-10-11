@@ -314,17 +314,17 @@ describe("Theme Studio conversation", () => {
       />,
     );
     expect(
-      screen.getByText("Small edit — only what you asked for changes"),
+      screen.getByText("Small edit - only what you asked for changes"),
     ).toBeTruthy();
     expect(
       screen.getByText("Changed the hero heading to Spring Sale."),
     ).toBeTruthy();
     expect(screen.getByText(/1 setting changed; everything else/)).toBeTruthy();
     expect(screen.getByText(/Redrawing 1 picture/)).toBeTruthy();
-    expect(screen.getByText("Larger change — revising the theme")).toBeTruthy();
+    expect(screen.getByText("Larger change - revising the theme")).toBeTruthy();
     expect(screen.getByText(/couldn’t be made as a simple edit/)).toBeTruthy();
     expect(
-      screen.getByText("Starting over — building a new theme from scratch"),
+      screen.getByText("Starting over - building a new theme from scratch"),
     ).toBeTruthy();
     expect(screen.getByText(/earlier versions stay available/)).toBeTruthy();
   });

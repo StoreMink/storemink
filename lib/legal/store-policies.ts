@@ -40,12 +40,12 @@ export const STORE_POLICIES: StorePolicyDef[] = [
     slug: "terms",
     title: "Terms & Conditions",
     description:
-      "The agreement between your store and your customers — ordering, pricing, and what you promise.",
+      "The agreement between your store and your customers - ordering, pricing, and what you promise.",
     shortLabel: "Terms & Conditions",
     atCheckout: true,
     prompts: [
       "Who you are: legal or trading name, and where you operate from.",
-      "When an order becomes binding — on payment, or when you accept it.",
+      "When an order becomes binding - on payment, or when you accept it.",
       "How you handle pricing errors and out-of-stock items.",
       "What a customer may not do with your site or content.",
     ],
@@ -90,7 +90,7 @@ export const STORE_POLICIES: StorePolicyDef[] = [
     atCheckout: false,
     prompts: [
       "What you collect: name, address, phone, email, order history.",
-      "Why you collect it — fulfilling orders, support, marketing.",
+      "Why you collect it - fulfilling orders, support, marketing.",
       "Who you share it with (delivery partners, payment gateway).",
       "How a customer can ask to see or delete their data.",
     ],

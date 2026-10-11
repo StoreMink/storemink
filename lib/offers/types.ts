@@ -553,7 +553,7 @@ export function validateOfferConditions(
     issues.push({
       field: "reward",
       message:
-        "Free delivery only applies to website orders — a register sale has nothing to deliver. Set the offer to your website only.",
+        "Free delivery only applies to website orders - a register sale has nothing to deliver. Set the offer to your website only.",
     });
   }
 
@@ -589,7 +589,7 @@ export function validateOfferConditions(
         message:
           c.type === "payment_method"
             ? "A payment-method condition only works on your website. The register shows the total before payment is taken, so it cannot change once a method is chosen. Set the offer to your website only."
-            : "A delivery or pickup condition only works on your website — a register sale is neither. Set the offer to your website only.",
+            : "A delivery or pickup condition only works on your website - a register sale is neither. Set the offer to your website only.",
       });
       continue;
     }

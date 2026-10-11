@@ -469,7 +469,7 @@ export default function ShopClient({
             <div className="shop-empty">
               <div className="shop-empty-emoji">🛒</div>
               <h2>No products yet</h2>
-              <p>Check back soon — we&rsquo;re stocking the shelves.</p>
+              <p>Check back soon - we&rsquo;re stocking the shelves.</p>
             </div>
           ) : (
             <>
@@ -537,7 +537,7 @@ export default function ShopClient({
                       >
                         {facetValueLabel(facetView, "category", slug)}
                         <X size={14} aria-hidden />
-                        <span className="shop-sr-only"> — remove filter</span>
+                        <span className="shop-sr-only"> - remove filter</span>
                       </button>
                     ))}
                     {Object.entries(shop.options).flatMap(([key, values]) =>
@@ -552,7 +552,7 @@ export default function ShopClient({
                         >
                           {facetValueLabel(facetView, key, value)}
                           <X size={14} aria-hidden />
-                          <span className="shop-sr-only"> — remove filter</span>
+                          <span className="shop-sr-only"> - remove filter</span>
                         </button>
                       )),
                     )}
@@ -566,7 +566,7 @@ export default function ShopClient({
                       >
                         In stock
                         <X size={14} aria-hidden />
-                        <span className="shop-sr-only"> — remove filter</span>
+                        <span className="shop-sr-only"> - remove filter</span>
                       </button>
                     )}
                     {(shop.min !== null || shop.max !== null) && (
@@ -588,7 +588,7 @@ export default function ShopClient({
                             ? `From ${formatPrice(shop.min)}`
                             : `Up to ${formatPrice(shop.max!)}`}
                         <X size={14} aria-hidden />
-                        <span className="shop-sr-only"> — remove filter</span>
+                        <span className="shop-sr-only"> - remove filter</span>
                       </button>
                     )}
                     {filterCount > 1 && (

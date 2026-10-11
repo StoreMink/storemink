@@ -382,7 +382,7 @@ describe("ShopClient option and category filters", () => {
     expect(names()).toEqual(["Shirt"]);
     // A chip per value, which removes just that value.
     fireEvent.click(
-      screen.getByRole("button", { name: /^M\s*—\s*remove filter$/ }),
+      screen.getByRole("button", { name: /^M\s*-\s*remove filter$/ }),
     );
     expect(names()).toEqual(["Tee", "Shirt"]);
   });

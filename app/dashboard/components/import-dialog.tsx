@@ -130,7 +130,7 @@ export function ImportDialog({
 
     if (picked.size > MAX_IMPORT_FILE_BYTES) {
       setFileError(
-        `That file is ${(picked.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_IMPORT_FILE_BYTES / 1024 / 1024} MB — split it into a few smaller files.`,
+        `That file is ${(picked.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_IMPORT_FILE_BYTES / 1024 / 1024} MB - split it into a few smaller files.`,
       );
       return;
     }
@@ -258,7 +258,7 @@ export function ImportDialog({
       }
 
       toast.success("Import started", {
-        description: "It runs on our servers — you can close this tab.",
+        description: "It runs on our servers - you can close this tab.",
       });
       close(false);
       router.push(`/dashboard/logs/import-export/${answer.jobId}`);
@@ -469,7 +469,7 @@ export function ImportDialog({
                   of this flow people don't expect, so it should not be a
                   surprise. */}
               <p className="hidden text-xs text-[var(--dash-text-3)] sm:block">
-                Runs on our servers — we&apos;ll take you to its log.
+                Runs on our servers - we&apos;ll take you to its log.
               </p>
               <div className="flex items-center gap-2">
                 <button

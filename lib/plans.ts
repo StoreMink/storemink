@@ -173,7 +173,7 @@ export const PLAN_META: Record<Plan, PlanMeta> = {
   basic: {
     id: "basic",
     name: "Basic",
-    tagline: "Run a real business — payments, shipping, team tools",
+    tagline: "Run a real business - payments, shipping, team tools",
     monthlyInr: 1500,
     // Ten months for twelve — the "two months free" the pricing page and the
     // FAQ both promise. Keep the 10× relationship if these ever move, or that
@@ -183,7 +183,7 @@ export const PLAN_META: Record<Plan, PlanMeta> = {
   pro: {
     id: "pro",
     name: "Pro",
-    tagline: "Scale with your team — advanced analytics, POS, campaigns",
+    tagline: "Scale with your team - advanced analytics, POS, campaigns",
     monthlyInr: 5000,
     yearlyInr: 50000,
   },
@@ -636,14 +636,14 @@ export function planFeatureMatrix(
         },
         {
           label: "Included POS locations",
-          free: "—",
-          basic: "—",
+          free: false,
+          basic: false,
           pro: String(PLAN_LIMITS.pro.posLocationsIncluded),
         },
         {
           label: "Authorised tills per location",
-          free: "—",
-          basic: "—",
+          free: false,
+          basic: false,
           pro: String(PLAN_LIMITS.pro.posDevicesPerLocation),
         },
       ],

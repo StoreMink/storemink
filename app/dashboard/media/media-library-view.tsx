@@ -134,7 +134,7 @@ export function MediaLibraryView({ assets, total, page, pageSize }: Props) {
       setTimeout(() => setCopiedId((c) => (c === asset.id ? null : c)), 1800);
       toast.success("URL copied");
     } catch {
-      toast.error("Couldn't copy — select the URL and copy it manually.");
+      toast.error("Couldn't copy - select the URL and copy it manually.");
     }
   }
 

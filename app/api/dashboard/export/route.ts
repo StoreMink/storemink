@@ -212,7 +212,7 @@ export async function GET(request: Request) {
           controller.enqueue(
             encoder.encode(
               serializeCsvRow([
-                `EXPORT FAILED after ${rowCount} rows — this file is incomplete. See Activity logs → Imports & exports.`,
+                `EXPORT FAILED after ${rowCount} rows - this file is incomplete. See Activity logs → Imports & exports.`,
               ]),
             ),
           );

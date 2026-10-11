@@ -8,7 +8,7 @@ import { getMinkVoiceProvider } from "@/lib/mink/voice-settings";
 import { canManage, requireOperator } from "../require-operator";
 import { VoiceProviderSwitch } from "./voice-provider-switch";
 
-export const metadata = { title: "Mink AI runs — StoreMink Admin" };
+export const metadata = { title: "Mink AI runs · StoreMink Admin" };
 export const dynamic = "force-dynamic";
 
 export default async function PlatformMinkRunsPage({
@@ -106,7 +106,7 @@ export default async function PlatformMinkRunsPage({
           label="Success rate"
           value={
             data.summary.successRate === null
-              ? "—"
+              ? "-"
               : `${data.summary.successRate}%`
           }
         />
@@ -164,7 +164,7 @@ export default async function PlatformMinkRunsPage({
           value={
             data.summary.totalTokens > 0
               ? `${Math.round((data.summary.cachedTokens / data.summary.totalTokens) * 100)}%`
-              : "—"
+              : "-"
           }
           note={`${formatNumber(data.summary.cachedTokens)} prompt tokens served from cache`}
         />
@@ -206,7 +206,7 @@ export default async function PlatformMinkRunsPage({
                   </td>
                   <td className="max-w-56 px-4 py-3 text-xs">
                     <div>
-                      {run.costCohort ?? "—"} · {run.shadowCredits ?? 0} shadow
+                      {run.costCohort ?? "-"} · {run.shadowCredits ?? 0} shadow
                     </div>
                     <div
                       className="truncate text-slate-400"
@@ -222,7 +222,7 @@ export default async function PlatformMinkRunsPage({
                   </td>
                   <td className="max-w-64 px-4 py-3 text-xs">
                     <div className="font-medium text-slate-700">
-                      {run.feedbackRating ?? "—"}
+                      {run.feedbackRating ?? "-"}
                     </div>
                     {run.feedbackIssueCategory ? (
                       <div className="text-amber-700">
@@ -260,7 +260,7 @@ export default async function PlatformMinkRunsPage({
                     ) : null}
                   </td>
                   <td className="max-w-64 px-4 py-3 text-xs">
-                    {run.toolNames.length ? run.toolNames.join(", ") : "—"}
+                    {run.toolNames.length ? run.toolNames.join(", ") : "-"}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     {run.stepCount} / {run.toolCallCount}
@@ -355,7 +355,7 @@ function formatCost(microusd: number): string {
 }
 
 function formatDuration(value: number | null): string {
-  if (value === null) return "—";
+  if (value === null) return "-";
   if (value < 1000) return `${value} ms`;
   return `${(value / 1000).toFixed(1)} s`;
 }

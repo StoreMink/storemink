@@ -72,6 +72,32 @@ vi.mock("@/lib/payments/razorpay", async (importOriginal) => {
     rzpCreateOrder: vi.fn(),
     rzpFetchOrderPayments: vi.fn(),
     verifyCheckoutSignature: vi.fn(),
+    // ★ The callback now reads the payment back. Left real, every confirm
+    // test made a live HTTP call to Razorpay and passed only because the
+    // credentials were refused. The default is "could not read", which falls
+    // back to the signature exactly as before; tests that care override it.
+    rzpFetchPayment: vi.fn(async () => ({
+      ok: false,
+      error: "not mocked",
+      outcome: "unknown",
+    })),
+    rzpCapturePayment: vi.fn(async () => ({
+      ok: false,
+      error: "not mocked",
+      outcome: "unknown",
+    })),
+  };
+});
+// A pass-through, so the confirm tests still see the real pending → paid
+// claim, while the late-payment tests can say how it came out.
+vi.mock("@/lib/orders/mark-paid", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/orders/mark-paid")>();
+  return {
+    ...actual,
+    markOrderPaid: vi.fn((...args: Parameters<typeof actual.markOrderPaid>) =>
+      actual.markOrderPaid(...args),
+    ),
   };
 });
 
@@ -165,8 +191,11 @@ import { getLiveStoreGateway, getStoreGateway } from "@/lib/payments/provider";
 import {
   rzpCreateOrder,
   rzpFetchOrderPayments,
+  rzpFetchPayment,
+  rzpCapturePayment,
   verifyCheckoutSignature,
 } from "@/lib/payments/razorpay";
+import { markOrderPaid } from "@/lib/orders/mark-paid";
 import { makeDbMock, sqlText, sqlParamValues } from "./_test-helpers";
 import { orders, orderItems, productVariants } from "@/drizzle/schema";
 import { emitEvent } from "@/lib/notifications/record";
@@ -1090,6 +1119,130 @@ describe("confirmOnlinePayment", () => {
     const res = await confirmOnlinePayment("order-1", "pay_1", "sig");
     expect("error" in res && res.error).toMatch(/not found/i);
   });
+
+  describe("★★ the signature proves the callback, not the money", () => {
+    const priced = { ...pendingOrder, status: "pending", total: 200 };
+
+    it("refuses a payment for a different amount than the order", async () => {
+      dbHolder.current = makeDbMock({ selectQueue: [[priced]] });
+      vi.mocked(rzpFetchPayment).mockResolvedValue({
+        ok: true,
+        data: {
+          id: "pay_1",
+          order_id: "rzp_order_1",
+          amount: 100,
+          currency: "INR",
+          status: "captured",
+        },
+      } as any);
+      const res = await confirmOnlinePayment("order-1", "pay_1", "sig");
+      expect("error" in res && res.error).toMatch(/amount/i);
+      expect(dbHolder.current.calls.update).toHaveLength(0);
+    });
+
+    it("★ captures a payment that was only AUTHORIZED before marking paid", async () => {
+      // On a manual-capture Razorpay account the callback fires on
+      // authorization; marking paid then shipped orders whose money Razorpay
+      // later released.
+      dbHolder.current = makeDbMock({ selectQueue: [[priced]] });
+      vi.mocked(rzpFetchPayment).mockResolvedValue({
+        ok: true,
+        data: {
+          id: "pay_1",
+          order_id: "rzp_order_1",
+          amount: 20000,
+          currency: "INR",
+          status: "authorized",
+        },
+      } as any);
+      vi.mocked(rzpCapturePayment).mockResolvedValue({
+        ok: true,
+        data: { id: "pay_1", status: "captured" },
+      } as any);
+      const res = await confirmOnlinePayment("order-1", "pay_1", "sig");
+      expect(rzpCapturePayment).toHaveBeenCalledWith(
+        GATEWAY.creds,
+        "pay_1",
+        20000,
+      );
+      expect(res).toEqual({ success: true, paid: true });
+    });
+
+    it("does NOT mark paid an authorization that will not capture", async () => {
+      dbHolder.current = makeDbMock({ selectQueue: [[priced]] });
+      vi.mocked(rzpFetchPayment).mockResolvedValue({
+        ok: true,
+        data: {
+          id: "pay_1",
+          order_id: "rzp_order_1",
+          amount: 20000,
+          currency: "INR",
+          status: "authorized",
+        },
+      } as any);
+      const res = await confirmOnlinePayment("order-1", "pay_1", "sig");
+      expect("error" in res && res.error).toMatch(/Don't pay again/);
+      expect(markOrderPaid).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("★★ a payment that arrives after the order expired", () => {
+    const expired = {
+      ...pendingOrder,
+      status: "cancelled",
+      payment_status: "failed",
+      total: 200,
+    };
+
+    it("is recorded so the store can refund it, never lost", async () => {
+      dbHolder.current = makeDbMock({ selectQueue: [[expired]] });
+      vi.mocked(rzpFetchOrderPayments).mockResolvedValue({
+        ok: true,
+        data: [
+          {
+            id: "pay_late",
+            order_id: "rzp_order_1",
+            amount: 20000,
+            status: "captured",
+          },
+        ],
+      } as any);
+      vi.mocked(markOrderPaid).mockResolvedValueOnce("late");
+      const res = await confirmOnlinePayment("order-1", "pay_late", "sig");
+      expect(markOrderPaid).toHaveBeenCalledWith("order-1", "pay_late");
+      expect("error" in res && res.error).toMatch(/payment is safe/);
+    });
+
+    it("★ never captures a hold on the dead order", async () => {
+      dbHolder.current = makeDbMock({ selectQueue: [[expired]] });
+      vi.mocked(rzpFetchOrderPayments).mockResolvedValue({
+        ok: true,
+        data: [
+          {
+            id: "pay_late",
+            order_id: "rzp_order_1",
+            amount: 20000,
+            status: "authorized",
+          },
+        ],
+      } as any);
+      const res = await confirmOnlinePayment("order-1", "pay_late", "sig");
+      expect(rzpCapturePayment).not.toHaveBeenCalled();
+      expect(markOrderPaid).not.toHaveBeenCalled();
+      expect("error" in res && res.error).toMatch(/released automatically/);
+    });
+
+    it("tells the shopper when the reaper won the race with their payment", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [[{ ...pendingOrder, status: "pending", total: 200 }]],
+      });
+      vi.mocked(markOrderPaid).mockResolvedValueOnce("late");
+      const res = await confirmOnlinePayment("order-1", "pay_1", "sig");
+      expect("error" in res && res.error).toMatch(
+        /expired before your payment/,
+      );
+    });
+  });
 });
 
 describe("reconcileMyOrderPayment", () => {
@@ -1539,6 +1692,40 @@ describe("placeOrder — offers", () => {
       // Cashback's cost to the merchant IS the credit issued, so a budget cap
       // on it binds exactly.
       expect(claim.amount).toBe(100);
+    });
+
+    it("★★ RECORDS cashback on the order instead of issuing it at checkout", async () => {
+      // Issued at placement, cashback on an online order was spendable before
+      // the payment was even captured, and stayed spendable after a cancel or
+      // a refund. The database issues it once the order is paid (or a COD
+      // order delivered) and the refund/cancel paths take it back.
+      vi.mocked(resolveOffersForCart).mockResolvedValue(
+        offerResult({
+          lines: [{ id: "0", offerDiscount: 0 }],
+          discount: 0,
+          applied: [],
+          allocations: [],
+          credit: {
+            offerId: "offer-cash",
+            offerName: "₹100 back",
+            code: null,
+            amount: 100,
+          },
+        }) as any,
+      );
+      dbHolder.current = makeDbMock({
+        selectQueue: [[productRow()], [], []],
+        executeQueue: [[{ reserved: true }]],
+        returning: [{ id: "order-1", order_ref: "ORD1" }],
+      });
+      const { issueCredit } = await import("@/lib/credit/store-credit");
+      await placeOrder(validForm, [oneItem()]);
+
+      expect(issueCredit).not.toHaveBeenCalled();
+      expect(dbHolder.current.calls.set).toContainEqual({
+        cashbackAmount: 100,
+        cashbackNote: "₹100 back",
+      });
     });
 
     it("★★ records what it reserved, so max_per_customer can bind", async () => {

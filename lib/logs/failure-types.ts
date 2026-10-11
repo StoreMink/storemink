@@ -110,6 +110,6 @@ export const FAILURE_SOURCE_META: FailureSourceMeta[] = [
     key: "subscription",
     label: "Subscription",
     blurb:
-      "Plan payments that failed — the merchant is heading for a downgrade.",
+      "Plan payments that failed - the merchant is heading for a downgrade.",
   },
 ];

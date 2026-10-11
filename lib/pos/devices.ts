@@ -137,7 +137,7 @@ export async function getAuthorizedDevice(
         locationId: row.location_id,
         actor: "system",
         detail:
-          "A POS device cookie was presented with a retired token. The device was revoked automatically — re-authorize it if this was legitimate.",
+          "A POS device cookie was presented with a retired token. The device was revoked automatically - re-authorize it if this was legitimate.",
       });
       return null;
     }

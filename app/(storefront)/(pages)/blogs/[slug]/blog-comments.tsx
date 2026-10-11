@@ -157,7 +157,7 @@ export function BlogComments({
       <div className="blog-comment-list">
         {count === 0 ? (
           <p className="blog-comments-empty">
-            No comments yet — be the first to share your thoughts.
+            No comments yet - be the first to share your thoughts.
           </p>
         ) : (
           visible.map((c) => {

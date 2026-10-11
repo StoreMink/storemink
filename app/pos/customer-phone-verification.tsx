@@ -381,8 +381,8 @@ export function CustomerPhoneVerification({
             {unverifiable.canOverride ? (
               <>
                 <p className="mt-3 text-sm text-[var(--pos-ink-2)]">
-                  Check who the customer is another way — the order reference,
-                  their name, or the email on the order — then continue. This is
+                  Check who the customer is another way - the order reference,
+                  their name, or the email on the order - then continue. This is
                   recorded against your name.
                 </p>
                 <button

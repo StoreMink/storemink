@@ -30,7 +30,7 @@ const fmtDate = (iso: string | null) =>
         year: "numeric",
         timeZone: "Asia/Kolkata",
       })
-    : "—";
+    : "-";
 
 function addressLines(a: {
   line1?: string;
@@ -67,7 +67,7 @@ export function InvoiceSheet({ doc }: { doc: InvoiceDocument }) {
           {doc.periodStart && doc.periodEnd && (
             <Row
               label="Service period"
-              value={`${fmtDate(doc.periodStart)} — ${fmtDate(doc.periodEnd)}`}
+              value={`${fmtDate(doc.periodStart)} to ${fmtDate(doc.periodEnd)}`}
             />
           )}
           <Row label="Status" value={statusLabel(doc.status)} />
@@ -85,7 +85,7 @@ export function InvoiceSheet({ doc }: { doc: InvoiceDocument }) {
         </div>
         <div>
           <h2>Billed to</h2>
-          <p className="sminv-name">{doc.customer.legalName ?? "—"}</p>
+          <p className="sminv-name">{doc.customer.legalName ?? "-"}</p>
           {addressLines(doc.customer.address).map((l) => (
             <p key={l}>{l}</p>
           ))}
@@ -206,7 +206,7 @@ function statusLabel(status: string): string {
     case "processing":
       return "Payment in progress";
     case "uncollectible":
-      return "Unpaid — plan ended";
+      return "Unpaid - plan ended";
     case "void":
       return "Cancelled";
     default:

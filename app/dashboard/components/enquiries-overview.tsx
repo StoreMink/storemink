@@ -125,7 +125,7 @@ export async function EnquiriesOverview() {
                   </Link>
                 </td>
                 <td className="text-muted max-w-[160px] truncate">
-                  {enquiry.subject?.trim() || "—"}
+                  {enquiry.subject?.trim() || "-"}
                 </td>
                 <td>
                   <span

@@ -475,7 +475,7 @@ export function InventoryManagementView({
                     {r.sku ? (
                       <span className="dash-cell-title mono">{r.sku}</span>
                     ) : (
-                      <span className="text-dim">—</span>
+                      <span className="text-dim">-</span>
                     )}
                   </td>
                   <td>

@@ -6818,6 +6818,90 @@
       }
     },
     {
+      "id": "20261011_0184_help_no_long_dashes",
+      "description": "Help: rewrite every em dash in Help articles and categories, published or draft, as a hyphen or a colon",
+      "file": "sql/20261011_0184_help_no_long_dashes.sql",
+      "transaction": true,
+      "requires": ["20261011_0183_storefront_theme_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "No Help article holds an em dash",
+            "sql": "select count(*)::text from public.help_articles where coalesce(title, '') || coalesce(excerpt, '') || coalesce(body, '') || coalesce(seo_title, '') || coalesce(seo_description, '') like '%—%'",
+            "equals": "0"
+          },
+          {
+            "name": "No Help category holds an em dash",
+            "sql": "select count(*)::text from public.help_categories where coalesce(title, '') || coalesce(description, '') like '%—%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261011_0185_refund_credit_integrity",
+      "description": "Cashback is issued once an order is paid and reversed on cancel or refund; till returns carry a retry key; Help says when cashback lands, that restored credit is not owed twice, and that Razorpay needs live keys",
+      "file": "sql/20261011_0185_refund_credit_integrity.sql",
+      "transaction": true,
+      "requires": ["20261011_0184_help_no_long_dashes"],
+      "verify": {
+        "columns": [
+          "orders.cashback_amount",
+          "orders.cashback_note",
+          "order_returns.idempotency_key"
+        ],
+        "constraints": [
+          "customer_credit_ledger_kind_check",
+          "orders_cashback_amount_check"
+        ],
+        "indexes": ["order_returns_idempotency_key"],
+        "functions": [
+          "reverse_customer_cashback(uuid,text,numeric,text,text)",
+          "issue_order_cashback()"
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "The cashback reversal kind is accepted by the ledger",
+            "sql": "select count(*)::text from pg_constraint where conname = 'customer_credit_ledger_kind_check' and pg_get_constraintdef(oid) like '%cashback_reversal%'",
+            "equals": "1"
+          },
+          {
+            "name": "Paid orders issue their cashback through the orders trigger",
+            "sql": "select count(*)::text from pg_trigger where tgname = 'orders_issue_cashback' and tgrelid = 'public.orders'::regclass and not tgisinternal",
+            "equals": "1"
+          },
+          {
+            "name": "Offers guide says cashback is added once the order is paid and comes back off on cancel",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-and-manage-offers' and status = 'published' and body like '%The credit is added once the order is paid:%' and body like '%the cashback comes off their balance again%' and body not like '%The credit is added once the order is placed%'",
+            "equals": "1"
+          },
+          {
+            "name": "Store credit guide says restored credit is not owed twice",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-and-understand-store-credit' and status = 'published' and body like '%Credit that a cancellation has already restored is not counted as owed again%'",
+            "equals": "1"
+          },
+          {
+            "name": "Razorpay guide asks for live keys",
+            "sql": "select count(*)::text from public.help_articles where slug = 'connect-razorpay-and-accept-online-payments' and status = 'published' and body like '%switch to <strong>Live mode</strong>%' and body like '%Test-mode keys are refused%' and body not like '%<li>Sign in to Razorpay and create API keys under%'",
+            "equals": "1"
+          },
+          {
+            "name": "POS returns guide says an exchange replacement comes back as store credit",
+            "sql": "select count(*)::text from public.help_articles where slug = 'take-returns-at-the-counter' and status = 'published' and body like '%A replacement order sent in an exchange was paid for with the goods the customer returned%' and body like '%a cash refund waits until a manager opens the drawer%'",
+            "equals": "1"
+          },
+          {
+            "name": "POS shifts guide says the open-shift rule covers cash refunds",
+            "sql": "select count(*)::text from public.help_articles where slug = 'open-close-and-reconcile-cash-shifts' and status = 'published' and body like '%unpaid pickup collection, and cash refunds until a manager opens the drawer%' and body not like '%deposits, and unpaid pickup collection until%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
       "id": "20261008_0174_whatsapp_accounts",
       "description": "WhatsApp Commerce slice 1: per-store WhatsApp account, Meta templates and raw inbound webhook events (service-only)",
       "file": "sql/20261008_0174_whatsapp_accounts.sql",

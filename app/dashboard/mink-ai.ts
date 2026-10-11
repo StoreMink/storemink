@@ -9,7 +9,7 @@ import type {
 import { readMinkArtifacts } from "./mink-artifact-parser";
 
 export const ASSISTANT_NAME = "Mink AI";
-export const CANNED_REPLY = `Hi, I'm ${ASSISTANT_NAME} — your store assistant. I'm coming soon, and I'll be able to answer questions about your products, orders and customers right here.`;
+export const CANNED_REPLY = `Hi, I'm ${ASSISTANT_NAME} - your store assistant. I'm coming soon, and I'll be able to answer questions about your products, orders and customers right here.`;
 const REPLY_DELAY_MS = 500;
 
 export type MinkMessage = {

@@ -145,7 +145,7 @@ export function collectionNote(
   if (status === "expired") {
     // Says what happened to the STOCK too: it is the question a merchant asks
     // next, and the answer is not obvious from "cancelled".
-    return "Not collected in time — this order was cancelled and the stock went back on the shelf.";
+    return "Not collected in time - this order was cancelled and the stock went back on the shelf.";
   }
   if (status === "cancelled") return "This order was cancelled.";
   return "This order is no longer waiting for collection.";
@@ -264,7 +264,7 @@ export function collectionPayment(input: {
     return paid > 0
       ? {
           state: "part",
-          label: "Part paid — the rest is due at the counter",
+          label: "Part paid - the rest is due at the counter",
           paid,
           due,
         }
@@ -274,7 +274,7 @@ export function collectionPayment(input: {
   if (status === "failed") {
     return {
       state: "failed",
-      label: "Payment failed — this order was never settled",
+      label: "Payment failed - this order was never settled",
       paid,
       due: 0,
     };

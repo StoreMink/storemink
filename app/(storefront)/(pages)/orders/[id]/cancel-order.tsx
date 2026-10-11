@@ -78,7 +78,7 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
       <div className={styles.cancelPanel}>
         <p className={styles.cancelPanelTitle}>Request to cancel this order?</p>
         <p className={styles.cancelNote}>
-          This asks the store to cancel <strong>the entire order</strong> —
+          This asks the store to cancel <strong>the entire order</strong> -
           every item on it. They&apos;ll review the request and let you know.
           Any refund is handled by the store and may take a few days.
         </p>

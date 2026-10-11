@@ -140,7 +140,7 @@ const PRODUCT_COLUMNS: ColumnDef[] = [
     min: 0,
     max: 9999999,
     aliases: ["quantity", "qty", "inventory qty", "inventory quantity"],
-    help: "Only applied when creating. Change stock on an existing product with an Inventory import — it has to go through the stock ledger.",
+    help: "Only applied when creating. Change stock on an existing product with an Inventory import - it has to go through the stock ledger.",
     example: "120",
   },
   {
@@ -165,7 +165,7 @@ const PRODUCT_COLUMNS: ColumnDef[] = [
     field: "taxClass",
     type: "text",
     maxLength: 200,
-    help: "Matched by name against your existing tax classes. Never created automatically — a wrong rate is a tax filing problem.",
+    help: "Matched by name against your existing tax classes. Never created automatically - a wrong rate is a tax filing problem.",
     example: "GST 5%",
   },
   { key: "Returnable", field: "returnable", type: "boolean" },
@@ -222,7 +222,7 @@ const PRODUCT_COLUMNS: ColumnDef[] = [
     type: "integer",
     min: 0,
     max: 9999999,
-    help: "Only applied when creating the variant — see Stock.",
+    help: "Only applied when creating the variant - see Stock.",
   },
   {
     key: "Variant Barcode",

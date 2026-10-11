@@ -34,7 +34,7 @@ const KIND_LABEL: Record<string, string> = {
 
 const inr = (paise: number | null) =>
   paise === null
-    ? "—"
+    ? "-"
     : `₹${(paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
 const fmt = (iso: string | null) =>
@@ -47,7 +47,7 @@ const fmt = (iso: string | null) =>
         minute: "2-digit",
         timeZone: "Asia/Kolkata",
       })
-    : "—";
+    : "-";
 
 export function ReconciliationQueue({
   items,
@@ -71,7 +71,7 @@ export function ReconciliationQueue({
         </p>
         <p className="mx-auto mt-1 max-w-md text-sm text-[#6b7280]">
           {status === "open"
-            ? "The hourly sweep files anything it finds and cannot decide — an amount that differs from what we asked for, or a payment that maps to no store."
+            ? "The hourly sweep files anything it finds and cannot decide - an amount that differs from what we asked for, or a payment that maps to no store."
             : "No items with this outcome yet."}
         </p>
       </div>
@@ -93,7 +93,7 @@ export function ReconciliationQueue({
                     orphan payment nobody can attribute. Say so rather than
                     rendering a blank. */}
                 <span className="text-sm text-[#5b6472]">
-                  {item.storeName ?? "no store — needs attributing"}
+                  {item.storeName ?? "no store - needs attributing"}
                 </span>
               </div>
 
@@ -129,7 +129,7 @@ export function ReconciliationQueue({
                   <strong>{item.status}</strong>
                   {item.resolvedBy ? ` by ${item.resolvedBy}` : ""}
                   {item.resolvedAt ? ` · ${fmt(item.resolvedAt)}` : ""}
-                  {item.resolutionNote ? ` — ${item.resolutionNote}` : ""}
+                  {item.resolutionNote ? ` - ${item.resolutionNote}` : ""}
                 </p>
               )}
             </div>
@@ -183,7 +183,7 @@ function CloseForm({ id, onDone }: { id: string; onDone: () => void }) {
     <div className="mt-4 border-t border-[#e5e5e5] pt-4">
       {/* ★ Stated at the point of action, not in a header nobody re-reads. */}
       <p className="mb-3 rounded-lg bg-[#f9fafb] px-3 py-2 text-xs text-[#5b6472]">
-        This records what you found. It does <strong>not</strong> move money —
+        This records what you found. It does <strong>not</strong> move money -
         refunding a difference or issuing a credit happens on the store&apos;s
         own billing screens.
       </p>
@@ -220,7 +220,7 @@ function CloseForm({ id, onDone }: { id: string; onDone: () => void }) {
         rows={2}
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="What did you find? (required — this is the audit trail)"
+        placeholder="What did you find? (required - this is the audit trail)"
       />
 
       <button

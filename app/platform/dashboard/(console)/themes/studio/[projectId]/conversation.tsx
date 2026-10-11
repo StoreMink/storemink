@@ -23,9 +23,9 @@ const referenceUrl = (id: string) =>
   `/api/platform/theme-studio/references/${id}`;
 
 const SCOPE_TITLE: Record<ThemeStudioChangeView["scope"], string> = {
-  edit: "Small edit — only what you asked for changes",
-  revise: "Larger change — revising the theme",
-  recreate: "Starting over — building a new theme from scratch",
+  edit: "Small edit - only what you asked for changes",
+  revise: "Larger change - revising the theme",
+  recreate: "Starting over - building a new theme from scratch",
 };
 
 function ChangeBubble({ change }: { change: ThemeStudioChangeView }) {
@@ -469,7 +469,7 @@ export function ThemeConversation({
               ? "Reply to the questions above. You can attach screenshots too."
               : creating
                 ? "Describe what to build. Paste or drop screenshots here…"
-                : "Describe a change — small requests change only that; say “start over” to rebuild from scratch. Paste or drop screenshots here…"
+                : "Describe a change - small requests change only that; say “start over” to rebuild from scratch. Paste or drop screenshots here…"
           }
           className="block min-h-28 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50"
         />

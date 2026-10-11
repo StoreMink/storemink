@@ -13,7 +13,7 @@ import {
 } from "../../studio-ui";
 import { ReleaseWorkspace } from "./release-workspace";
 
-export const metadata = { title: "Theme release — StoreMink Admin" };
+export const metadata = { title: "Theme release · StoreMink Admin" };
 
 // Publish a theme in one step once its checks pass, then hide, show or
 // restore it. Every rule shown here is re-checked by the server and, for

@@ -198,10 +198,10 @@ export function CouponEmailForm({ coupon, groups }: Props) {
         toast.error(res.error);
       } else {
         const skipped = res.skippedNoEmail
-          ? ` (${res.skippedNoEmail} skipped — no email)`
+          ? ` (${res.skippedNoEmail} skipped - no email)`
           : "";
         toast.success(
-          `Queued ${res.queued} email(s) — sending in the background${skipped}`,
+          `Queued ${res.queued} email(s) - sending in the background${skipped}`,
         );
         router.push(LIST_HREF);
       }
@@ -218,7 +218,7 @@ export function CouponEmailForm({ coupon, groups }: Props) {
           <ArrowLeft className="h-4 w-4" />
           Back to coupons
         </Link>
-        <h1>Send email — {coupon.code}</h1>
+        <h1>Send email - {coupon.code}</h1>
         <p>
           Promote this coupon by email. Write it yourself or generate a draft
           with AI, then preview before sending.

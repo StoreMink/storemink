@@ -162,12 +162,26 @@ export function renderNotification(
             url: adminOrderUrl(event),
           };
 
-    case "order.payment_received":
+    case "order.payment_received": {
+      // A payment that arrived after its order was cancelled for want of one
+      // (markOrderPaid's late path). The order stays cancelled, so the one
+      // thing the merchant needs to know is that money is owed back.
+      if (p.late === true) {
+        const due = money(p.refund_due, currency);
+        return {
+          title: `Payment received for a cancelled order${subject ? ` · ${subject}` : ""}`,
+          body: due
+            ? `The order expired before the payment arrived. ${due} is owed back to the customer: refund it from the order.`
+            : "The order expired before the payment arrived. Check the order and refund the customer.",
+          url: adminOrderUrl(event),
+        };
+      }
       return {
         title: `Payment received${total ? ` · ${total}` : ""}`,
         body: subject ? `Order ${subject}` : null,
         url: adminOrderUrl(event),
       };
+    }
 
     case "order.payment_failed":
       return {

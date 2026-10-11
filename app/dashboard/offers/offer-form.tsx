@@ -123,7 +123,7 @@ const CONDITION_LABELS: Record<
   },
   first_order: {
     title: "First order only",
-    hint: "Needs a signed-in customer — there is no order history to check for a guest, so a guest checkout will not qualify.",
+    hint: "Needs a signed-in customer - there is no order history to check for a guest, so a guest checkout will not qualify.",
   },
   time_window: {
     title: "Days and times",
@@ -190,7 +190,7 @@ function ConditionsEditor({
       <h3 className="text-sm font-medium">Extra conditions</h3>
       <p className={hintClass}>
         Optional. <strong>All</strong> of them must be true for the offer to
-        apply — they narrow it, never widen it. For &ldquo;either of two
+        apply - they narrow it, never widen it. For &ldquo;either of two
         situations&rdquo;, make two offers; the better one is chosen
         automatically.
       </p>
@@ -376,7 +376,7 @@ function ConditionsEditor({
                     ) : c.endMinute < c.startMinute ? (
                       <p className={hintClass}>
                         This runs past midnight, and counts as the day it starts
-                        on — {DAY_LABELS[c.days[0] ?? 0]}{" "}
+                        on - {DAY_LABELS[c.days[0] ?? 0]}{" "}
                         {minuteToTime(c.startMinute)} reaches into the next
                         morning.
                       </p>
@@ -584,7 +584,7 @@ function LadderEditor({
 
       <span className={hintClass}>
         {isSpend
-          ? "The highest level the order reaches applies — never several at once. Levels are judged on the order total before any discount."
+          ? "The highest level the order reaches applies - never several at once. Levels are judged on the order total before any discount."
           : "Units are counted across all the products you choose, and once a level is reached every one of those items is discounted."}
       </span>
     </div>
@@ -621,7 +621,7 @@ const TYPE_GROUPS: {
       {
         value: "tiered",
         title: "Spend more, save more",
-        blurb: "A ladder — spend ₹1,000 save 5%, spend ₹2,500 save 10%.",
+        blurb: "A ladder - spend ₹1,000 save 5%, spend ₹2,500 save 10%.",
       },
     ],
   },
@@ -646,7 +646,7 @@ const TYPE_GROUPS: {
       {
         value: "volume_break",
         title: "Buy more, save more",
-        blurb: "A case price — buy 10 or more, save 15% on each.",
+        blurb: "A case price - buy 10 or more, save 15% on each.",
       },
       {
         value: "bundle_price",
@@ -960,7 +960,7 @@ export function OfferForm({
   const howSummary = [
     form.delivery === "automatic"
       ? "Applied automatically"
-      : `Code ${form.code ? form.code.toUpperCase() : "—"}`,
+      : `Code ${form.code ? form.code.toUpperCase() : "-"}`,
     form.channels.length === 1
       ? form.channels[0] === "pos"
         ? "point of sale only"
@@ -987,7 +987,7 @@ export function OfferForm({
       form.validFrom || form.validUntil ? "scheduled" : null,
     ]
       .filter(Boolean)
-      .join(" · ") || "No limits — runs until you pause it";
+      .join(" · ") || "No limits - runs until you pause it";
 
   const submit = () =>
     startTransition(async () => {
@@ -1136,7 +1136,7 @@ export function OfferForm({
                     {form.delivery === "automatic" && !autoApplyOn && (
                       <span className="mt-1 block text-[11px] text-amber-700">
                         Your store has automatic offers switched off, so this
-                        will not apply to anything — online or at the till —
+                        will not apply to anything - online or at the till -
                         however you set it up here. Turn on{" "}
                         <Link
                           href="/dashboard/offers/settings"
@@ -1284,7 +1284,7 @@ export function OfferForm({
                                   bundles are the long tail. */}
                       <optgroup label="Off the whole order">
                         <option value="coupon">
-                          A coupon — a percentage or an amount off
+                          A coupon - a percentage or an amount off
                         </option>
                         <option value="tiered">
                           Spend more, save more (order levels)
@@ -1339,7 +1339,7 @@ export function OfferForm({
                       ))}
                       <span className={`${hintClass} sm:col-span-3`}>
                         Items are counted across the basket, and the most
-                        expensive qualifying ones go into the bundle — which
+                        expensive qualifying ones go into the bundle - which
                         gives the customer the biggest saving and means a bundle
                         can never charge more than the items were worth. If they
                         come to less than the bundle price, the offer does not
@@ -1351,7 +1351,7 @@ export function OfferForm({
                               {form.maxSets === 1 ? "bundle" : "bundles"} caps
                               it
                             </strong>{" "}
-                            — a bigger basket earns no more.
+                            - a bigger basket earns no more.
                           </>
                         ) : (
                           <>
@@ -1387,7 +1387,7 @@ export function OfferForm({
                       <p className="mt-2 text-xs text-[#b45309]">
                         This is money you owe. Unlike a discount, which costs
                         you once, credit sits on the customer&rsquo;s account
-                        until they spend it — set a budget if you want a ceiling
+                        until they spend it - set a budget if you want a ceiling
                         on how much you issue.
                       </p>
                     </div>
@@ -1428,14 +1428,14 @@ export function OfferForm({
                         The gift is added to the order at ₹0 and its stock is
                         reserved like any sold item, so it is taken off your
                         shelf and appears on the order and the receipt. The
-                        offer stops applying on its own when the gift runs out —
+                        offer stops applying on its own when the gift runs out -
                         customers are never promised one you cannot send.
                       </span>
                       <p className="mt-2 text-xs text-[#b45309]">
                         Tax on free goods: the line records the gift&rsquo;s own
                         tax class, and tax on a zero value is zero. Whether GST
                         is due on a free item given with a sale depends on your
-                        circumstances — check with your accountant before
+                        circumstances - check with your accountant before
                         relying on this for a return.
                       </p>
                     </div>
@@ -1517,7 +1517,7 @@ export function OfferForm({
                                   outcome, and the outcome is what they came to check. */}
                       <span className={hintClass}>
                         A set is {form.buyQuantity || 0} +{" "}
-                        {form.getQuantity || 0} = {setSize} items — so a basket
+                        {form.getQuantity || 0} = {setSize} items - so a basket
                         of {setSize * 2} means the customer pays for{" "}
                         {(form.buyQuantity || 0) * 2} and{" "}
                         {(form.getQuantity || 0) * 2} come free. The cheapest
@@ -1529,7 +1529,7 @@ export function OfferForm({
                               Your limit of {form.maxSets}{" "}
                               {form.maxSets === 1 ? "set" : "sets"} caps that
                             </strong>{" "}
-                            — however many they buy, only{" "}
+                            - however many they buy, only{" "}
                             {(form.getQuantity || 0) * form.maxSets} can ever be
                             free.
                           </>
@@ -1537,7 +1537,7 @@ export function OfferForm({
                           <>
                             It repeats for as long as the basket allows. To
                             bound what you give away, set a{" "}
-                            <strong>total budget</strong> under Limits — it
+                            <strong>total budget</strong> under Limits - it
                             stops the offer at a rupee figure you choose, rather
                             than changing what it means.
                           </>
@@ -1631,8 +1631,8 @@ export function OfferForm({
                 <OfferCard
                   title={
                     scopeIsReward
-                      ? "Applies to — which items are discounted"
-                      : "Applies to — which items qualify"
+                      ? "Applies to - which items are discounted"
+                      : "Applies to - which items qualify"
                   }
                   subtitle={
                     scopeCount > 0
@@ -1816,7 +1816,7 @@ export function OfferForm({
               <OfferCard title="Maximum uses" subtitle={limitsSummary}>
                 <p className={`${hintClass} mb-2`}>
                   When several offers could apply, the one that saves the
-                  customer most wins — so a budget is the safest way to bound a
+                  customer most wins - so a budget is the safest way to bound a
                   new offer.
                 </p>
                 <div className="mt-2 grid gap-4 sm:grid-cols-3">

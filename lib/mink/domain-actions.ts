@@ -628,7 +628,7 @@ async function writeOffer(
     ) {
       throw new MinkRequestError(
         "mink_offer_too_deep",
-        `Mink can propose a discount of at most ${ceiling}% — this store's own limit for a single order.`,
+        `Mink can propose a discount of at most ${ceiling}% - this store's own limit for a single order.`,
         422,
       );
     }

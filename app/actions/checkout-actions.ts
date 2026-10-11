@@ -44,17 +44,18 @@ import type { VariantSellingFields } from "@/lib/pricing";
 import { getLiveStoreGateway, getStoreGateway } from "@/lib/payments/provider";
 import {
   getCreditBalance,
-  issueCredit,
   spendCredit,
   reinstateCreditForOrder,
 } from "@/lib/credit/store-credit";
 import { creditToApply } from "@/lib/credit/apply";
 import {
-  capturedPayment,
   rzpCreateOrder,
-  rzpFetchOrderPayments,
   verifyCheckoutSignature,
 } from "@/lib/payments/razorpay";
+import {
+  settleOrderPayment,
+  verifyCallbackPayment,
+} from "@/lib/payments/capture";
 import { emitEvent } from "@/lib/notifications/record";
 import { logError } from "@/lib/observability/logger";
 import { reportStockChanges } from "@/lib/inventory/alerts";
@@ -2095,10 +2096,13 @@ export async function placeOrder(
 
     if (reserveFailed || !reserved) {
       await releaseHolds();
-      await releaseHolds();
       await releaseStock();
       await deleteOrder();
       await releaseDiscounts();
+      // ★ The credit was spent before this step. Deleting the order without
+      // giving it back took the shopper's balance for a sale that never
+      // happened (only the gateway rollback below used to release it).
+      await releaseCredit();
       // Report the exact shortfall so the shopper knows what to do rather than
       // seeing a generic "not enough stock". reserve_stock failed because the
       // SKU is tracked, non-backorderable, and short — so the live count is the
@@ -2114,7 +2118,7 @@ export async function placeOrder(
       return {
         error:
           remaining > 0
-            ? `Not enough stock for ${label} — only ${remaining} left. Please lower the quantity and try again.`
+            ? `Not enough stock for ${label} - only ${remaining} left. Please lower the quantity and try again.`
             : `${label} just sold out. Please remove it from your cart and try again.`,
       };
     }
@@ -2179,6 +2183,7 @@ export async function placeOrder(
     await releaseStock();
     await deleteOrder();
     await releaseDiscounts();
+    await releaseCredit();
     return { error: "Failed to save order items. Please try again." };
   }
 
@@ -2206,31 +2211,35 @@ export async function placeOrder(
     });
   }
 
-  // ★★ CASHBACK IS ISSUED AFTER THE ORDER COMMITS, and never before. It is a
+  // ★★ CASHBACK IS RECORDED HERE AND ISSUED ONCE THE ORDER IS PAID. It is a
   // LIABILITY, not a discount (plan §14): it changes nothing about what the
-  // customer paid, so issuing it early would credit a balance for an order
-  // that then failed to save. Idempotent on the order — `issueCredit`'s unique
-  // key is (store, customer, kind, ref) — so a retry credits once.
+  // customer paid. It used to be issued right here, before any payment and
+  // before the Razorpay order even existed, and nothing ever took it back, so
+  // abandoning the payment window (repeatably, one new order each time),
+  // cancelling, or refunding in full all left the shopper holding the credit.
+  // The amount now rides on the order and the `orders_issue_cashback` trigger
+  // (migration 0185) issues it when the order becomes paid, or delivered for
+  // cash on delivery; syncOrderCashback takes it back on a cancellation or a
+  // refund.
   //
-  // ★ ITS OWN LEDGER KIND, not `grant`. §29 keeps `reinstate` apart from
-  // `grant` because "a report that can't tell a returned spend from a goodwill
-  // gesture overstates what the store gave away"; cashback earned by a
-  // promotion is a third thing again, and a merchant reviewing what their
-  // offers cost must be able to see it separately from what they handed out by
-  // hand.
+  // ★ Written once the order row has committed, never in its INSERT: the
+  // trigger fires on INSERT as well, and an order born paid (the till) that
+  // a later step then deletes would leave its cashback behind. Here nothing
+  // is paid yet, so recording it early costs nothing and a rollback that
+  // deletes the order takes the unissued amount with it.
   //
-  // ★ NEVER FAILS THE ORDER. The money is taken and the goods are committed;
-  // refusing here would tell a paying customer their order did not work
-  // because a free extra could not be recorded.
+  // ★ NEVER FAILS THE ORDER. A free extra that could not be recorded must not
+  // tell a paying customer their order did not work.
   if (offerResult?.credit && offerResult.credit.amount > 0) {
-    await issueCredit({
-      storeId,
-      customerId: user.id,
-      amount: offerResult.credit.amount,
-      kind: "cashback",
-      ref: order.id,
-      note: offerResult.credit.offerName,
-    }).catch((err: unknown) =>
+    await withService((db) =>
+      db
+        .update(orders)
+        .set({
+          cashbackAmount: offerResult.credit!.amount,
+          cashbackNote: offerResult.credit!.offerName,
+        })
+        .where(eq(orders.id, order.id)),
+    ).catch((err: unknown) =>
       logError("checkout.cashback_failed", err, {
         storeId,
         orderId: order.id,
@@ -2508,6 +2517,7 @@ async function loadOwnRazorpayOrder(
     db
       .select({
         id: orders.id,
+        status: orders.status,
         payment_method: orders.paymentMethod,
         payment_status: orders.paymentStatus,
         razorpay_order_id: orders.razorpayOrderId,
@@ -2527,6 +2537,7 @@ async function loadOwnRazorpayOrder(
   );
   return (rows[0] ?? null) as {
     id: string;
+    status: string | null;
     payment_method: string;
     payment_status: string;
     razorpay_order_id: string | null;
@@ -2579,7 +2590,15 @@ export async function confirmOnlinePayment(
     return { error: "Order not found." };
   }
   if (order.payment_status === "paid") return { success: true, paid: true };
-  if (order.payment_status !== "pending" || !order.razorpay_order_id) {
+  // ★ An order the reaper cancelled for want of a payment can still RECEIVE
+  // one (a Razorpay window left open, a late UPI approval). That payment is
+  // verified and recorded rather than refused, so the money is not lost.
+  const expired =
+    order.payment_status === "failed" && order.status === "cancelled";
+  if (
+    (order.payment_status !== "pending" && !expired) ||
+    !order.razorpay_order_id
+  ) {
     return { error: "This order can no longer be paid." };
   }
 
@@ -2601,7 +2620,59 @@ export async function confirmOnlinePayment(
     return { error: "Payment verification failed." };
   }
 
-  await markOrderPaid(orderId, rzpPaymentId);
+  // ★★ THE SIGNATURE PROVES THE CALLBACK, NOT THE MONEY. On a Razorpay
+  // account set to capture manually the callback fires on AUTHORIZATION, so
+  // marking paid here shipped orders whose money was only held, and Razorpay
+  // later released it. This reads the payment back, checks it belongs to
+  // this order and amount, and captures it when it was only authorized. A
+  // cancelled order is never captured: its hold is left for Razorpay to
+  // release, which returns the shopper's money by itself.
+  const expectedPaise = Math.round(
+    (Number(order.total ?? 0) - Number(order.store_credit_used ?? 0)) * 100,
+  );
+  if (expired) {
+    const state = await settleOrderPayment(
+      gateway.creds,
+      order.razorpay_order_id,
+      expectedPaise,
+      { capture: false },
+    );
+    if (state.kind === "captured") {
+      await markOrderPaid(orderId, state.paymentId);
+      return {
+        error:
+          "This order expired before your payment arrived, so it wasn't placed. Your payment is safe: the store has been told and will refund it.",
+      };
+    }
+    return {
+      error:
+        "This order expired before your payment completed, so it wasn't placed. Any amount held on your account will be released automatically.",
+    };
+  }
+
+  const verified = await verifyCallbackPayment(gateway.creds, {
+    paymentId: rzpPaymentId,
+    rzpOrderId: order.razorpay_order_id,
+    expectedPaise,
+  });
+  if (!verified.ok) return { error: verified.error };
+  if (!verified.verified) {
+    logError(
+      "checkout.payment_unverified",
+      new Error(
+        "Razorpay could not be read; the checkout signature alone vouched for this payment",
+      ),
+      { orderId, storeId },
+    );
+  }
+
+  const outcome = await markOrderPaid(orderId, rzpPaymentId);
+  if (outcome === "late") {
+    return {
+      error:
+        "This order expired before your payment arrived, so it wasn't placed. Your payment is safe: the store has been told and will refund it.",
+    };
+  }
   return { success: true, paid: true };
 }
 
@@ -2633,21 +2704,35 @@ export async function reconcileMyOrderPayment(
     return { error: "Order not found." };
   }
   if (order.payment_status === "paid") return { success: true, paid: true };
-  if (order.payment_status !== "pending" || !order.razorpay_order_id) {
+  const expired =
+    order.payment_status === "failed" && order.status === "cancelled";
+  if (
+    (order.payment_status !== "pending" && !expired) ||
+    !order.razorpay_order_id
+  ) {
     return { success: true, paid: false };
   }
 
   const gateway = await getStoreGateway(storeId);
   if (!gateway) return { success: true, paid: false };
 
-  const payments = await rzpFetchOrderPayments(
+  // ★ What the GATEWAY was asked for, which is the total LESS anything store
+  // credit settled (§29) — comparing against `orders.total` would report a
+  // mismatch on every credit-assisted order.
+  const expectedPaise = Math.round(
+    (Number(order.total ?? 0) - Number(order.store_credit_used ?? 0)) * 100,
+  );
+
+  // Captures an authorized payment of the exact amount on a live order (see
+  // confirmOnlinePayment); a cancelled one is only ever read, never captured.
+  const state = await settleOrderPayment(
     gateway.creds,
     order.razorpay_order_id,
+    expectedPaise,
+    { capture: !expired },
   );
-  if (!payments.ok) return { success: true, paid: false };
-
-  const captured = capturedPayment(payments.data);
-  if (!captured) return { success: true, paid: false };
+  if (state.kind !== "captured") return { success: true, paid: false };
+  const captured = { id: state.paymentId, amount: state.amountPaise };
 
   // ★ The order is marked paid EITHER WAY — money arrived, and refusing to
   // record it is the one outcome with no recovery. But an amount that differs
@@ -2657,12 +2742,6 @@ export async function reconcileMyOrderPayment(
   // than silently underwriting an order. `lib/billing/reconcile.ts` makes the
   // same check against its own attempts and raises a reconciliation item; there
   // is no equivalent queue for shopper orders, so this logs.
-  // ★ What the GATEWAY was asked for, which is the total LESS anything store
-  // credit settled (§29) — comparing against `orders.total` would report a
-  // mismatch on every credit-assisted order.
-  const expectedPaise = Math.round(
-    (Number(order.total ?? 0) - Number(order.store_credit_used ?? 0)) * 100,
-  );
   if (
     typeof captured.amount === "number" &&
     expectedPaise > 0 &&
@@ -2681,6 +2760,6 @@ export async function reconcileMyOrderPayment(
     );
   }
 
-  await markOrderPaid(orderId, captured.id);
-  return { success: true, paid: true };
+  const outcome = await markOrderPaid(orderId, captured.id);
+  return { success: true, paid: outcome === "paid" };
 }

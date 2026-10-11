@@ -1109,3 +1109,177 @@ describe("★★ the shopper is quoted what the server will actually pay", () =>
     expect(res.refundAmount).toBe(estimate.total);
   });
 });
+
+// ★★ A TAX-INCLUSIVE ORDER — the tax is inside the line, so it comes back once.
+describe("★★ requestReturn — tax-inclusive orders refund the tax once", () => {
+  it("★★ owes what was paid for the units, not paid + the tax inside it", async () => {
+    // Two units at ₹118 each, 18% inclusive: ₹236 paid, ₹36 of it tax.
+    seedOrder({
+      orderOver: { tax_inclusive: true },
+      itemOver: { price: 118, total: 236, tax_amount: 36 },
+    });
+    const res = await requestReturn({
+      orderId: "o1",
+      lines: [{ orderItemId: "li-a", quantity: 1 }],
+      reasonCode: "damaged",
+    });
+    expect(res.error).toBeUndefined();
+    // Was ₹136: ₹118 + the ₹18 already inside it.
+    expect(res.refundAmount).toBe(118);
+    const stored = dbHolder.current.calls.values[0];
+    expect(Number(stored.amount)).toBe(100);
+    expect(Number(stored.tax)).toBe(18);
+    expect(Number(stored.total)).toBe(118);
+  });
+
+  it("★ charges a restocking fee on the goods, never on the tax inside them", async () => {
+    (getStoreSettings as any).mockResolvedValue(
+      settings({ "returns.restockingFeePercent": 10 }),
+    );
+    seedOrder({
+      orderOver: { tax_inclusive: true },
+      itemOver: { price: 118, total: 236, tax_amount: 36 },
+    });
+    const res = await requestReturn({
+      orderId: "o1",
+      lines: [{ orderItemId: "li-a", quantity: 1 }],
+      reasonCode: "changed_mind",
+    });
+    // 10% of ₹100 of goods, not of ₹118.
+    expect(res.refundAmount).toBe(108);
+  });
+
+  it("an exclusive order is unchanged", async () => {
+    seedOrder({ orderOver: { tax_inclusive: false } });
+    const res = await requestReturn({
+      orderId: "o1",
+      lines: [{ orderItemId: "li-a", quantity: 1 }],
+      reasonCode: "damaged",
+    });
+    expect(res.refundAmount).toBe(105);
+  });
+});
+
+// ★★ A MIXED REQUEST — one line swapped, one refunded — settles each half on
+// its own terms. The owed figure used to come from the GOODS value of every
+// line, so the refunded line lost its tax beside the swap.
+describe("★★ requestReturn — a mixed swap + refund", () => {
+  /** Line A (₹1,000 + ₹180 tax) and line B (₹500 + ₹90 tax), one unit each. */
+  function seedMixed(
+    opts: {
+      swapPrice?: number;
+      taxInclusive?: boolean;
+    } = {},
+  ) {
+    const inclusive = opts.taxInclusive === true;
+    const order = {
+      id: "o1",
+      order_ref: "ORD10011027",
+      status: "delivered",
+      discount: 0,
+      tax_inclusive: inclusive,
+      created_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+      delivered_at: new Date(Date.now() - 86_400_000).toISOString(),
+      collected_at: null,
+    };
+    const items = [
+      {
+        id: "li-a",
+        name: "Shirt",
+        variant_name: null,
+        quantity: 1,
+        price: inclusive ? 1180 : 1000,
+        total: inclusive ? 1180 : 1000,
+        line_discount: 0,
+        offer_discount: 0,
+        tax_amount: 180,
+        product_id: "p1",
+        variant_id: "v-shirt",
+        product_returnable: true,
+        product_window: null,
+      },
+      {
+        id: "li-b",
+        name: "Trousers",
+        variant_name: "M",
+        quantity: 1,
+        price: inclusive ? 590 : 500,
+        total: inclusive ? 590 : 500,
+        line_discount: 0,
+        offer_discount: 0,
+        tax_amount: 90,
+        product_id: "p2",
+        variant_id: "v-m",
+        product_returnable: true,
+        product_window: null,
+      },
+    ];
+    const swapTo = {
+      id: "v-l",
+      product_id: "p2",
+      name: "L",
+      base_price: opts.swapPrice ?? (inclusive ? 590 : 500),
+      selling_price: opts.swapPrice ?? (inclusive ? 590 : 500),
+      track_inventory: true,
+      stock: 5,
+      allow_backorder: false,
+    };
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [order],
+        items,
+        [],
+        [],
+        [swapTo],
+        [order],
+        items,
+        [order],
+        [],
+      ],
+      returning: [{ id: "ret-1" }],
+    });
+  }
+
+  const mixed = {
+    orderId: "o1",
+    lines: [
+      { orderItemId: "li-a", quantity: 1 },
+      { orderItemId: "li-b", quantity: 1, exchangeVariantId: "v-l" },
+    ],
+    reasonCode: "size_fit",
+  };
+
+  it("★★ the refunded line keeps its tax beside an EVEN swap", async () => {
+    seedMixed();
+    const res = await requestReturn(mixed);
+    expect(res.error).toBeUndefined();
+    expect(res.isExchange).toBe(true);
+    // Was ₹1,000 — line A's ₹180 of tax was lost to the swap beside it.
+    expect(res.refundAmount).toBe(1180);
+    expect(Number(dbHolder.current.calls.values[0].total)).toBe(1180);
+  });
+
+  it("adds a CHEAPER swap's difference to the refunded line", async () => {
+    seedMixed({ swapPrice: 400 });
+    const res = await requestReturn(mixed);
+    expect(res.refundAmount).toBe(1280);
+  });
+
+  it("★ refuses a DEARER swap even when the refunded line could 'cover' it", async () => {
+    // The ₹1,180 refund would absorb a ₹200 upgrade on B — an upgrade nobody
+    // priced. It is judged against the swapped line alone.
+    seedMixed({ swapPrice: 700 });
+    const res = await requestReturn(mixed);
+    expect(res.error).toContain("more than what you're sending back");
+    expect(holdStock).not.toHaveBeenCalled();
+  });
+
+  it("★ a tax-INCLUSIVE store compares the swap on its inclusive shelf price", async () => {
+    // ₹590 trousers for the ₹590 size up — even, not '₹90 more'.
+    seedMixed({ taxInclusive: true });
+    const res = await requestReturn(mixed);
+    expect(res.error).toBeUndefined();
+    // Line A back in full — ₹1,180 paid, tax inside it — and nothing for B.
+    expect(res.refundAmount).toBe(1180);
+  });
+});

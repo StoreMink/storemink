@@ -156,7 +156,7 @@ export function StaffClient({
           <p>
             Invite cashiers and managers. They finish setup from an email link
             (verify phone, set a password + 8-digit PIN) and can only access
-            /pos on an authorized device — never the dashboard.
+            /pos on an authorized device - never the dashboard.
           </p>
         </div>
         {canManage && (
@@ -315,9 +315,9 @@ export function StaffClient({
                     })
                   }
                 >
-                  <option value="cashier">Cashier — ring sales</option>
+                  <option value="cashier">Cashier - ring sales</option>
                   <option value="manager">
-                    Manager — sales, refunds, inventory
+                    Manager - sales, refunds, inventory
                   </option>
                 </select>
               </label>

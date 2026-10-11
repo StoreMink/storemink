@@ -23,6 +23,9 @@ vi.mock("@/lib/payments/issue-refund", () => ({
 vi.mock("@/lib/returns/counter-policy", () => ({
   getCounterReturnPolicy: vi.fn(),
 }));
+vi.mock("@/lib/settings/resolve", () => ({
+  getStoreSettings: vi.fn(async () => ({})),
+}));
 
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
@@ -40,6 +43,9 @@ import {
 import { gateCustomerVerification } from "@/lib/pos/customer-verification";
 import { posAudit } from "@/lib/pos/audit";
 import { getCounterReturnPolicy } from "@/lib/returns/counter-policy";
+import { getStoreSettings } from "@/lib/settings/resolve";
+import { currentShiftIdFor } from "./pos-shift-actions";
+import { orderReturns } from "@/drizzle/schema";
 
 const MANAGER = {
   role: "manager" as const,
@@ -998,5 +1004,773 @@ describe("★★ a scoped offer is refunded from its own line", () => {
     );
     expect(r.error).toBeUndefined();
     expect(refunded()).toBe(52.5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The money-correctness fixes (2026-10-11 audit)
+// ---------------------------------------------------------------------------
+
+/**
+ * A sale seeded row by row, for the cases `seedSale` cannot express.
+ *
+ * The positional select order is fixed by the action: getReturnableSale reads
+ * order → items → prior returns → tender rows; processReturn's transaction then
+ * reads the FOR UPDATE order → (the retry-key lookup, only when a key is sent)
+ * → items → prior returns → recorded refunds (the money cap, skipped only when
+ * no money moves at this counter).
+ */
+function seedRows(opts: {
+  order: Record<string, unknown>;
+  items: any[];
+  paymentRows?: any[];
+  prior?: any[];
+  /** Present = a retry key is sent; its lookup result. */
+  keyLookup?: any[];
+  /** null = the route moves no money, so the cap read never happens. */
+  existingRefunds?: any[] | null;
+  tail?: any[][];
+}) {
+  const prior = opts.prior ?? [];
+  const queue: any[][] = [
+    [opts.order],
+    opts.items,
+    prior,
+    opts.paymentRows ?? [],
+    [opts.order],
+  ];
+  if (opts.keyLookup) queue.push(opts.keyLookup);
+  queue.push(opts.items, prior);
+  if (opts.existingRefunds !== null) queue.push(opts.existingRefunds ?? []);
+  queue.push(...(opts.tail ?? []));
+  dbHolder.current = makeDbMock({
+    selectQueue: queue,
+    returning: [{ id: "ret-1" }],
+  });
+}
+
+const baseOrder = (over: Record<string, unknown> = {}) => ({
+  id: "o1",
+  receipt_no: "POS-000007",
+  order_ref: "ORD1",
+  created_at: "2026-07-30T10:00:00Z",
+  total: 262.5,
+  discount: 0,
+  store_credit_used: 0,
+  customer_id: null,
+  tax_inclusive: false,
+  payment_method: "cash",
+  payment_status: "paid",
+  location_id: "loc-1",
+  sales_channel: "pos",
+  status: "completed",
+  delivered_at: null,
+  collected_at: null,
+  ...over,
+});
+
+const line = (over: Record<string, unknown> = {}) => ({
+  id: "li-a",
+  product_id: "p1",
+  variant_id: null,
+  name: "Kurta",
+  variant_name: null,
+  quantity: 1,
+  price: 1180,
+  total: 1180,
+  line_discount: 0,
+  offer_discount: 0,
+  tax_amount: 180,
+  product_returnable: true,
+  product_window: null,
+  ...over,
+});
+
+const refundedTotal = () =>
+  vi
+    .mocked(issueRefund)
+    .mock.calls.reduce((sum, [input]) => sum + Number(input.amount ?? 0), 0);
+
+describe("★★ fix 1 — a tax-inclusive sale refunds its tax once", () => {
+  it("★★ refunds what was paid, not paid + the tax inside it", async () => {
+    // ₹1,180 at 18% inclusive. The till used to hand back ₹1,360.
+    seedRows({
+      order: baseOrder({ total: 1180, tax_inclusive: true }),
+      items: [line()],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+    );
+    expect(r.error).toBeUndefined();
+    expect(r.refunded).toBe(1180);
+    expect(refundedTotal()).toBe(1180);
+    // The stored return carries the goods and the tax carved out of them.
+    const stored = dbHolder.current.calls.values[0];
+    expect(stored).toMatchObject({ amount: 1000, tax: 180, total: 1180 });
+  });
+
+  it("★ tells the till preview the order was inclusive", async () => {
+    seedRows({
+      order: baseOrder({ total: 1180, tax_inclusive: true }),
+      items: [line()],
+    });
+    const { sale } = await getReturnableSale("o1");
+    expect(sale?.taxInclusive).toBe(true);
+  });
+
+  it("an exclusive sale is unchanged", async () => {
+    seedRows({
+      order: baseOrder({ total: 1180, tax_inclusive: false }),
+      items: [line({ price: 1000, total: 1000, tax_amount: 180 })],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+    );
+    expect(r.refunded).toBe(1180);
+    const { sale } = await (async () => {
+      seedRows({
+        order: baseOrder({ total: 1180 }),
+        items: [line({ price: 1000, total: 1000, tax_amount: 180 })],
+      });
+      return getReturnableSale("o1");
+    })();
+    expect(sale?.taxInclusive).toBe(false);
+  });
+});
+
+describe("★★ fix 2 — an exchange replacement is never cashed out", () => {
+  /** A website exchange order: paid by goods that came back, no tender rows. */
+  const exchangeOrder = (customerId: string | null) =>
+    baseOrder({
+      receipt_no: null,
+      total: 590,
+      payment_method: "exchange",
+      payment_status: "paid",
+      customer_id: customerId,
+      location_id: null,
+      sales_channel: "online",
+      status: "delivered",
+      delivered_at: "2026-08-28T10:00:00Z",
+    });
+  // createExchangeOrder writes the replacement with no tax of its own.
+  const exchangeLine = line({ price: 590, total: 590, tax_amount: 0 });
+
+  it("routes it to store credit when the order has a customer", async () => {
+    seedRows({ order: exchangeOrder("cust-1"), items: [exchangeLine] });
+    const { sale } = await getReturnableSale("o1");
+    expect(sale?.refundRoute).toMatchObject({
+      method: "store_credit",
+      counterChoice: false,
+      affectsDrawer: false,
+    });
+    expect(sale?.refundTenders).toEqual([
+      { method: "store_credit", amount: 590, reference: null },
+    ]);
+  });
+
+  it("★★ REFUSES cash for it server-side, even when the client asks", async () => {
+    for (const asked of ["cash", "card", "upi"] as const) {
+      vi.mocked(issueRefund).mockClear();
+      seedRows({ order: exchangeOrder("cust-1"), items: [exchangeLine] });
+      const r = await processReturn(
+        "o1",
+        [{ orderItemId: "li-a", quantity: 1 }],
+        asked,
+      );
+      expect(r.error).toContain("original source");
+      expect(issueRefund).not.toHaveBeenCalled();
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+    }
+  });
+
+  it("sends it back as store credit through the shared core", async () => {
+    seedRows({ order: exchangeOrder("cust-1"), items: [exchangeLine] });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "store_credit",
+    );
+    expect(r.error).toBeUndefined();
+    expect(issueRefund).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(issueRefund).mock.calls[0][0]).toMatchObject({
+      method: "store_credit",
+      amount: 590,
+      shiftId: null,
+    });
+  });
+
+  it("★ with no customer to credit, takes the goods back and moves NO money", async () => {
+    seedRows({
+      order: exchangeOrder(null),
+      items: [exchangeLine],
+      existingRefunds: null,
+    });
+    const { sale } = await getReturnableSale("o1");
+    expect(sale?.refundRoute.method).toBe("none");
+    expect(sale?.refundTenders).toEqual([]);
+
+    seedRows({
+      order: exchangeOrder(null),
+      items: [exchangeLine],
+      existingRefunds: null,
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "none",
+    );
+    expect(r.error).toBeUndefined();
+    expect(r.returnId).toBe("ret-1");
+    expect(r.refunded).toBe(0);
+    expect(r.note).toContain("dashboard");
+    expect(issueRefund).not.toHaveBeenCalled();
+    expect(emitEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "order.refund_issued" }),
+    );
+  });
+
+  it("★ and refuses cash there too", async () => {
+    seedRows({
+      order: exchangeOrder(null),
+      items: [exchangeLine],
+      existingRefunds: null,
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+    );
+    expect(r.error).toContain("original source");
+    expect(issueRefund).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ fix 3 — an online order part-paid with store credit", () => {
+  /** ₹2,360 of goods: ₹1,000 store credit, ₹1,360 on Razorpay, no tender rows. */
+  const creditOrder = (customerId: string | null) =>
+    baseOrder({
+      receipt_no: null,
+      total: 2360,
+      store_credit_used: 1000,
+      customer_id: customerId,
+      payment_method: "razorpay",
+      location_id: null,
+      sales_channel: "online",
+      status: "delivered",
+      delivered_at: "2026-08-28T10:00:00Z",
+    });
+  const twoUnits = line({ quantity: 2, total: 2360, tax_amount: 360 });
+
+  it("★★ builds TWO legs — the money method and store credit", async () => {
+    seedRows({
+      order: { ...creditOrder("cust-1"), tax_inclusive: true },
+      items: [twoUnits],
+    });
+    const { sale } = await getReturnableSale("o1");
+    expect(sale?.refundRoute).toMatchObject({
+      method: "original",
+      counterChoice: false,
+      affectsDrawer: false,
+    });
+    expect(sale?.refundTenders).toEqual([
+      { method: "razorpay", amount: 1360, reference: null },
+      { method: "store_credit", amount: 1000, reference: null },
+    ]);
+  });
+
+  it("★★ a FULL return sends each share back to where it came from", async () => {
+    seedRows({
+      order: { ...creditOrder("cust-1"), tax_inclusive: true },
+      items: [twoUnits],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 2 }],
+      "original",
+    );
+    expect(r.error).toBeUndefined();
+    expect(
+      vi.mocked(issueRefund).mock.calls.map(([i]) => [i.method, i.amount]),
+    ).toEqual([
+      ["razorpay", 1360],
+      ["store_credit", 1000],
+    ]);
+  });
+
+  it("★ a PARTIAL return splits proportionally — credit never reaches the card", async () => {
+    seedRows({
+      order: { ...creditOrder("cust-1"), tax_inclusive: true },
+      items: [twoUnits],
+    });
+    await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "original",
+    );
+    // ₹1,180 back: 1360/2360 of it to the card, the rest to credit.
+    expect(
+      vi.mocked(issueRefund).mock.calls.map(([i]) => [i.method, i.amount]),
+    ).toEqual([
+      ["razorpay", 680],
+      ["store_credit", 500],
+    ]);
+  });
+
+  it("★ with no customer, offers only the money leg, capped at what money paid", async () => {
+    seedRows({
+      order: { ...creditOrder(null), tax_inclusive: true },
+      items: [twoUnits],
+    });
+    const { sale } = await getReturnableSale("o1");
+    expect(sale?.refundRoute.method).toBe("razorpay");
+    expect(sale?.refundTenders).toEqual([
+      { method: "razorpay", amount: 1360, reference: null },
+    ]);
+  });
+
+  it("★★ refuses BEFORE writing when the card leg would exceed what money paid", async () => {
+    // It used to save the return, restock, then have issueRefund refuse the
+    // card leg — goods back, customer paid nothing.
+    seedRows({
+      order: { ...creditOrder(null), tax_inclusive: true },
+      items: [twoUnits],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 2 }],
+      "razorpay",
+    );
+    expect(r.error).toMatch(/at most ₹1360\.00/);
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+    expect(issueRefund).not.toHaveBeenCalled();
+  });
+
+  it("allows a partial return the money leg CAN carry", async () => {
+    seedRows({
+      order: { ...creditOrder(null), tax_inclusive: true },
+      items: [twoUnits],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "razorpay",
+    );
+    expect(r.error).toBeUndefined();
+    expect(vi.mocked(issueRefund).mock.calls[0][0]).toMatchObject({
+      method: "razorpay",
+      amount: 1180,
+    });
+  });
+
+  it("★ the in-lock cap now covers a pure gateway route too", async () => {
+    // ₹1,000 has already gone back to the card, so of the ₹1,360 money paid
+    // only ₹360 is left. A ₹1,180 card leg used to pass this point (the check
+    // skipped Razorpay) and be refused by issueRefund AFTER the write.
+    seedRows({
+      order: { ...creditOrder(null), tax_inclusive: true },
+      items: [twoUnits],
+      existingRefunds: [
+        { amount: 1000, status: "completed", method: "razorpay" },
+      ],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "razorpay",
+    );
+    expect(r.error).toMatch(/at most ₹360\.00/);
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+    expect(issueRefund).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ fix 4 — only SETTLED money is announced", () => {
+  const splitRows = [
+    { method: "cash", amount: 62.5, change_due: 0, reference: null },
+    { method: "card", amount: 200, change_due: null, reference: "T-1" },
+  ];
+
+  it("★★ counts a completed leg and NOT a pending one", async () => {
+    seedSale({ paymentRows: splitRows });
+    vi.mocked(issueRefund)
+      .mockResolvedValueOnce({
+        refundId: "rf-1",
+        status: "completed",
+        amount: 25,
+      } as any)
+      .mockResolvedValueOnce({
+        refundId: "rf-2",
+        status: "pending",
+        amount: 80,
+        pendingReconcile: true,
+      } as any);
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "original",
+    );
+    expect(r.refunded).toBe(25);
+    expect(r.note).toContain("Do not send it a second time");
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "order.refund_issued",
+        payload: expect.objectContaining({ amount: 25, paymentMethod: "cash" }),
+      }),
+    );
+    const audit = vi
+      .mocked(posAudit)
+      .mock.calls.find(([e]) => e.event === "refund_issued");
+    expect(audit?.[0].amount).toBe(25);
+  });
+
+  it("★★ announces NOTHING when no leg settled", async () => {
+    seedBroughtIn({ paymentMethod: "razorpay" });
+    vi.mocked(issueRefund).mockResolvedValueOnce({
+      refundId: "rf-1",
+      status: "pending",
+      pendingReconcile: true,
+    } as any);
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "razorpay",
+    );
+    // The return itself still stands — the goods came back.
+    expect(r.returnId).toBeTruthy();
+    expect(r.refunded).toBe(0);
+    expect(r.note).toContain("Do not send it a second time");
+    expect(emitEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "order.refund_issued" }),
+    );
+    expect(
+      vi.mocked(posAudit).mock.calls.some(([e]) => e.event === "refund_issued"),
+    ).toBe(false);
+  });
+
+  it("★ a leg the bank answered FAILED is not money that went back", async () => {
+    seedBroughtIn({ paymentMethod: "razorpay" });
+    vi.mocked(issueRefund).mockResolvedValueOnce({
+      refundId: "rf-1",
+      status: "failed",
+      amount: 105,
+    } as any);
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "razorpay",
+    );
+    expect(r.refunded).toBe(0);
+    expect(r.note).toContain("didn't go through");
+    expect(emitEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "order.refund_issued" }),
+    );
+  });
+
+  it("a refused leg is a note, never part of the amount", async () => {
+    seedBroughtIn({ paymentMethod: "razorpay" });
+    vi.mocked(issueRefund).mockResolvedValueOnce({
+      error: "Razorpay refused it.",
+      code: "gateway_failed",
+    } as any);
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "razorpay",
+    );
+    expect(r.refunded).toBe(0);
+    expect(r.note).toContain("needs attention");
+    expect(emitEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "order.refund_issued" }),
+    );
+  });
+});
+
+describe("★★ fix 5 — cash refunds obey pos.requireOpenShift", () => {
+  it("★★ refuses cash with no open shift, BEFORE anything is written", async () => {
+    vi.mocked(currentShiftIdFor).mockResolvedValueOnce(null);
+    vi.mocked(getStoreSettings).mockResolvedValueOnce({
+      "pos.requireOpenShift": true,
+    } as any);
+    seedSale();
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+    );
+    expect(r.error).toBe("Open a shift before giving cash back.");
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+    expect(issueRefund).not.toHaveBeenCalled();
+  });
+
+  it("★ refuses a split that would take cash out of the drawer", async () => {
+    vi.mocked(currentShiftIdFor).mockResolvedValueOnce(null);
+    vi.mocked(getStoreSettings).mockResolvedValueOnce({
+      "pos.requireOpenShift": true,
+    } as any);
+    seedSale({
+      paymentRows: [
+        { method: "cash", amount: 62.5, change_due: 0, reference: null },
+        { method: "card", amount: 200, change_due: null, reference: "T-1" },
+      ],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "original",
+    );
+    expect(r.error).toContain("Open a shift");
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+  });
+
+  it("★ leaves a non-cash refund alone — it never touches the drawer", async () => {
+    vi.mocked(currentShiftIdFor).mockResolvedValueOnce(null);
+    vi.mocked(getStoreSettings).mockResolvedValue({
+      "pos.requireOpenShift": true,
+    } as any);
+    seedSale({
+      paymentRows: [
+        { method: "card", amount: 262.5, change_due: null, reference: "T-1" },
+      ],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "card",
+    );
+    expect(r.error).toBeUndefined();
+    // The setting is not even consulted for a refund that pays no cash.
+    expect(getStoreSettings).not.toHaveBeenCalled();
+  });
+
+  it("pays cash with no shift when the setting is OFF", async () => {
+    vi.mocked(currentShiftIdFor).mockResolvedValueOnce(null);
+    vi.mocked(getStoreSettings).mockResolvedValueOnce({
+      "pos.requireOpenShift": false,
+    } as any);
+    seedSale();
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+    );
+    expect(r.error).toBeUndefined();
+    expect(vi.mocked(issueRefund).mock.calls[0][0].shiftId).toBeNull();
+  });
+
+  it("fails OPEN when the setting cannot be read", async () => {
+    vi.mocked(currentShiftIdFor).mockResolvedValueOnce(null);
+    vi.mocked(getStoreSettings).mockRejectedValueOnce(new Error("blip"));
+    seedSale();
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+    );
+    expect(r.error).toBeUndefined();
+  });
+
+  it("an open shift is never refused", async () => {
+    vi.mocked(getStoreSettings).mockResolvedValue({
+      "pos.requireOpenShift": true,
+    } as any);
+    seedSale();
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+    );
+    expect(r.error).toBeUndefined();
+    expect(vi.mocked(issueRefund).mock.calls[0][0].shiftId).toBe("shift-1");
+  });
+});
+
+describe("★★ fix 6 — a return attempt is recorded once", () => {
+  const KEY = "3f2c9a1e-8b7d-4c6e-9f10-2a3b4c5d6e7f";
+  const items = [line({ quantity: 2, price: 100, total: 200, tax_amount: 10 })];
+
+  it("★ refuses a malformed key before reading anything", async () => {
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+      undefined,
+      { idempotencyKey: "bad key" },
+    );
+    expect(r.error).toContain("couldn't be sent safely");
+    expect(dbHolder.current.calls.select).toHaveLength(0);
+    expect(gateCustomerVerification).not.toHaveBeenCalled();
+  });
+
+  it("stores the key on the new return", async () => {
+    seedRows({ order: baseOrder({ total: 210 }), items, keyLookup: [] });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+      undefined,
+      { idempotencyKey: KEY },
+    );
+    expect(r.error).toBeUndefined();
+    expect(r.alreadyRecorded).toBeUndefined();
+    expect(dbHolder.current.calls.values[0].idempotencyKey).toBe(KEY);
+  });
+
+  it("an older till sends no key — no lookup, a null key, as before", async () => {
+    seedSale();
+    await processReturn("o1", [{ orderItemId: "li-a", quantity: 1 }], "cash");
+    expect(dbHolder.current.calls.values[0].idempotencyKey).toBeNull();
+  });
+
+  it("★★ a RETRY answers with the first return and books nothing new", async () => {
+    // The first submission committed `ret-first` and refunded ₹105; its
+    // response was lost. The retry carries the same key, stops at the lookup
+    // (the rest of the transaction never runs), and alreadyRecordedReturn
+    // reads the stored return and its refunds.
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [baseOrder({ total: 210 })],
+        items,
+        [],
+        [],
+        [baseOrder({ total: 210 })],
+        [{ id: "ret-first" }],
+        [{ id: "ret-first", order_id: "o1" }],
+        [{ amount: 105, status: "completed" }],
+      ],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+      undefined,
+      { idempotencyKey: KEY },
+    );
+    expect(r).toMatchObject({
+      returnId: "ret-first",
+      refunded: 105,
+      alreadyRecorded: true,
+    });
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+    expect(issueRefund).not.toHaveBeenCalled();
+    expect(emitEvent).not.toHaveBeenCalled();
+    expect(posAudit).not.toHaveBeenCalled();
+  });
+
+  it("★ answers even a FULL return's retry, instead of 'nothing returnable'", async () => {
+    // Everything already came back on the first submission.
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [baseOrder({ total: 210 })],
+        items,
+        [{ order_item_id: "li-a", qty: 2 }],
+        [],
+        [baseOrder({ total: 210 })],
+        [{ id: "ret-first" }],
+        [{ id: "ret-first", order_id: "o1" }],
+        [{ amount: 210, status: "completed" }],
+      ],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 2 }],
+      "cash",
+      undefined,
+      { idempotencyKey: KEY },
+    );
+    expect(r.error).toBeUndefined();
+    expect(r).toMatchObject({ returnId: "ret-first", alreadyRecorded: true });
+  });
+
+  it("★ refuses a key reused on a DIFFERENT order", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [baseOrder({ total: 210 })],
+        items,
+        [],
+        [],
+        [baseOrder({ total: 210 })],
+        [{ id: "ret-elsewhere" }],
+        [{ id: "ret-elsewhere", order_id: "o-other" }],
+      ],
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+      undefined,
+      { idempotencyKey: KEY },
+    );
+    expect(r.error).toContain("couldn't be sent safely");
+    expect(r.returnId).toBeUndefined();
+    expect(issueRefund).not.toHaveBeenCalled();
+  });
+
+  it("★★ maps a unique-key RACE on insert to 'already recorded'", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [baseOrder({ total: 210 })],
+        items,
+        [],
+        [],
+        [baseOrder({ total: 210 })],
+        [], // the lookup saw nothing — the other submission had not committed
+        items,
+        [],
+        [], // recorded refunds (cap)
+        // alreadyRecordedReturn, after the violation:
+        [{ id: "ret-winner", order_id: "o1" }],
+        [],
+      ],
+    });
+    const db = dbHolder.current.db;
+    const realInsert = db.insert;
+    db.insert = vi.fn((table: any) => {
+      if (table !== orderReturns) return realInsert(table);
+      return {
+        values: () => ({
+          returning: () =>
+            Promise.reject(
+              Object.assign(new Error("duplicate key"), { code: "23505" }),
+            ),
+        }),
+      };
+    });
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+      undefined,
+      { idempotencyKey: KEY },
+    );
+    expect(r).toMatchObject({
+      returnId: "ret-winner",
+      alreadyRecorded: true,
+      refunded: 0,
+    });
+    expect(issueRefund).not.toHaveBeenCalled();
+  });
+
+  it("a unique violation with NO key is still an ordinary error", async () => {
+    seedSale();
+    const db = dbHolder.current.db;
+    db.insert = vi.fn(() => ({
+      values: () => ({
+        returning: () =>
+          Promise.reject(
+            Object.assign(new Error("duplicate key"), { code: "23505" }),
+          ),
+      }),
+    }));
+    const r = await processReturn(
+      "o1",
+      [{ orderItemId: "li-a", quantity: 1 }],
+      "cash",
+    );
+    expect(r.error).toBeDefined();
+    expect(r.alreadyRecorded).toBeUndefined();
   });
 });

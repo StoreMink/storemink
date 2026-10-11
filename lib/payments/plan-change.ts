@@ -107,7 +107,7 @@ export function canUpdateSubscription(status: string | null | undefined): {
     return {
       ok: false,
       reason:
-        "Your last payment didn't go through, so the plan can't be changed yet. Update your payment method first — once a charge succeeds you can switch plans.",
+        "Your last payment didn't go through, so the plan can't be changed yet. Update your payment method first - once a charge succeeds you can switch plans.",
     };
   }
   if (s === "cancelled" || s === "completed" || s === "expired") {

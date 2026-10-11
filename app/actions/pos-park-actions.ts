@@ -206,7 +206,7 @@ export async function resumeParkedSale(
     const row = rows[0];
     if (!row) {
       return {
-        error: "That held sale is gone — someone else may have resumed it.",
+        error: "That held sale is gone - someone else may have resumed it.",
       };
     }
 

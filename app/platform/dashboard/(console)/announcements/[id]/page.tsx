@@ -18,7 +18,7 @@ export async function generateMetadata({
   const { id } = await params;
   const announcement = await getAnnouncement(id);
   return {
-    title: `${announcement?.title ?? "Announcement"} — StoreMink Admin`,
+    title: `${announcement?.title ?? "Announcement"} · StoreMink Admin`,
   };
 }
 
@@ -31,7 +31,7 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 function when(iso: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   return new Date(iso).toLocaleString("en-GB", {
     day: "2-digit",
     month: "short",
@@ -109,7 +109,7 @@ export default async function AnnouncementPage({
 
           {recipients.length === 0 ? (
             <p className="px-5 py-8 text-center text-sm text-slate-500">
-              No recipient rows yet — the worker resolves them within a minute
+              No recipient rows yet - the worker resolves them within a minute
               of sending.
             </p>
           ) : (

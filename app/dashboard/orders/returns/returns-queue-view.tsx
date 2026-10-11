@@ -37,6 +37,7 @@ import {
   type ReturnQueueRow,
 } from "@/app/actions/return-actions";
 import type { RestockLocation } from "@/lib/returns/restock-location";
+import { RefundPanel } from "../refund-panel";
 
 const TABS: { key: string; label: string }[] = [
   { key: "", label: "Open" },
@@ -90,6 +91,8 @@ export function ReturnsQueueView({
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<string | null>(null);
+  // The return whose refund panel is open, one at a time.
+  const [refunding, setRefunding] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [, startTransition] = useTransition();
 
@@ -153,7 +156,7 @@ export function ReturnsQueueView({
           const at = shelf ? ` at ${shelf.name}` : "";
           toast.success(
             res.exchangeOrderId
-              ? "Booked in — the replacement order is on its way."
+              ? "Booked in - the replacement order is on its way."
               : res.restocked
                 ? `Booked in. ${res.restocked} line${res.restocked === 1 ? "" : "s"} back on the shelf${at}.`
                 : "Booked in.",
@@ -232,7 +235,7 @@ export function ReturnsQueueView({
                       {r.merchantFault && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-600/20">
                           <AlertTriangle className="h-3 w-3" />
-                          Our fault — no fees
+                          Our fault - no fees
                         </span>
                       )}
                       {/* An exchange keeps the sale — it costs the store far
@@ -376,21 +379,51 @@ export function ReturnsQueueView({
                           )}
                         </div>
                       )}
-                      {r.status === "received" && (
-                        <Link
-                          href={`/dashboard/orders?q=${encodeURIComponent(r.orderRef ?? "")}`}
-                          className="dash-btn dash-btn-ghost"
-                        >
-                          {/* An even exchange owes nothing, so sending the
-                              merchant to the refund panel would be wrong. */}
-                          {r.exchangeOrderId
-                            ? "View on the order"
-                            : "Refund on the order"}
-                        </Link>
-                      )}
+                      {/* ★★ THE REFUND IS FOR THIS RETURN, NOT THE ORDER.
+                          It linked to the order's refund panel, whose blank
+                          amount meant "everything left on the order", shipping
+                          included, and whose refund was tied to no return:
+                          returning one item of three defaulted to refunding all
+                          three, and nothing stopped a second refund for the
+                          same return. The panel opened here is capped at what
+                          this return is owed and records the refund against it.
+                          ★ An exchange that owes a balance (a cheaper
+                          replacement) gets the button too; only one that owes
+                          nothing is sent to the order instead. */}
+                      {r.status === "received" &&
+                        (r.total > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRefunding(refunding === r.id ? null : r.id)
+                            }
+                            aria-expanded={refunding === r.id}
+                            className="dash-btn dash-btn-primary"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                            Refund {formatPrice(r.total)}
+                          </button>
+                        ) : (
+                          <Link
+                            href={`/dashboard/orders?q=${encodeURIComponent(r.orderRef ?? "")}`}
+                            className="dash-btn dash-btn-ghost"
+                          >
+                            View on the order
+                          </Link>
+                        ))}
                     </div>
                   )}
                 </div>
+
+                {refunding === r.id && (
+                  <div className="mt-3">
+                    <RefundPanel
+                      orderId={r.orderId}
+                      returnId={r.id}
+                      onRefunded={() => router.refresh()}
+                    />
+                  </div>
+                )}
 
                 {/* ★ Declining is a FORM. The note is what the customer reads,
                     and the server refuses an empty one. */}

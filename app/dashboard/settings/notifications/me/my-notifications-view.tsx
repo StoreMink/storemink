@@ -204,13 +204,13 @@ export function MyNotificationsView({
                         <Toggle
                           on={value.inApp}
                           disabled={locked || isPending}
-                          label={`${row.label} — in-app`}
+                          label={`${row.label} - in-app`}
                           onChange={(next) => set(row.key, { inApp: next })}
                         />
                         <Toggle
                           on={value.email}
                           disabled={locked || isPending}
-                          label={`${row.label} — email`}
+                          label={`${row.label} - email`}
                           onChange={(next) => set(row.key, { email: next })}
                         />
                       </div>

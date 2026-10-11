@@ -29,7 +29,7 @@ export default async function OrderSettingsPage() {
         <p className="mt-3 text-sm text-muted-foreground">
           Requests wait in <strong>Orders → Cancellations</strong> unless you
           switch approval to automatic. When you approve one you choose where
-          the money goes — nothing is refunded without you saying so.
+          the money goes - nothing is refunded without you saying so.
         </p>
       </div>
     </div>

@@ -242,7 +242,7 @@ export async function inviteUser(formData: FormData) {
   // email was actually sent (avoids plaintext credentials in production logs).
   if (!isResendAvailable) {
     console.log("\n" + "=".repeat(60));
-    console.log("📨 USER INVITED (email not configured — dev fallback)");
+    console.log("📨 USER INVITED (email not configured - dev fallback)");
     console.log(`Email: ${email}`);
     console.log(`Role: ${role}`);
     console.log(`Temporary Password: ${tempPassword}`);

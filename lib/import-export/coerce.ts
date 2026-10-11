@@ -98,7 +98,7 @@ function coerceDate(raw: string): CoerceResult {
   if (!ISO_DATE.test(raw)) {
     return err(
       "date_format",
-      `"${raw}" isn't a date we can read without guessing. Use YYYY-MM-DD (for example 2026-08-07) — a date like 05/08/2026 could mean either 5 August or 8 May.`,
+      `"${raw}" isn't a date we can read without guessing. Use YYYY-MM-DD (for example 2026-08-07) - a date like 05/08/2026 could mean either 5 August or 8 May.`,
     );
   }
   const iso = raw.includes("T") ? raw : raw.replace(" ", "T");
@@ -133,7 +133,7 @@ function coerceUrl(raw: string): CoerceResult {
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     return err(
       "url_scheme",
-      `"${truncate(raw)}" isn't allowed — image and link URLs must be http or https.`,
+      `"${truncate(raw)}" isn't allowed - image and link URLs must be http or https.`,
     );
   }
   return ok(parsed.toString());
@@ -178,7 +178,7 @@ export function coerceCell(raw: string, col: ColumnDef): CoerceResult {
       if (n === null)
         return err(
           "not_a_number",
-          `${col.key} must be a whole number — got "${truncate(trimmed)}".`,
+          `${col.key} must be a whole number - got "${truncate(trimmed)}".`,
         );
       // Excel stores every number as a float, so "45.0" is what a perfectly
       // ordinary stock column looks like. Accept an integral one; refuse a
@@ -186,7 +186,7 @@ export function coerceCell(raw: string, col: ColumnDef): CoerceResult {
       if (!Number.isInteger(n)) {
         return err(
           "not_an_integer",
-          `${col.key} must be a whole number — got "${truncate(trimmed)}".`,
+          `${col.key} must be a whole number - got "${truncate(trimmed)}".`,
         );
       }
       return rangeCheck(n, col);
@@ -197,7 +197,7 @@ export function coerceCell(raw: string, col: ColumnDef): CoerceResult {
       if (n === null)
         return err(
           "not_a_number",
-          `${col.key} must be a number — got "${truncate(trimmed)}".`,
+          `${col.key} must be a number - got "${truncate(trimmed)}".`,
         );
       const rounded = Math.round(n * 100) / 100;
       const checked = rangeCheck(rounded, col);
@@ -205,7 +205,7 @@ export function coerceCell(raw: string, col: ColumnDef): CoerceResult {
       if (rounded !== n) {
         return ok(rounded, {
           code: "rounded",
-          message: `${col.key} was rounded to ${rounded} — prices carry two decimal places.`,
+          message: `${col.key} was rounded to ${rounded} - prices carry two decimal places.`,
         });
       }
       return checked;
@@ -217,7 +217,7 @@ export function coerceCell(raw: string, col: ColumnDef): CoerceResult {
       if (FALSE_WORDS.has(word)) return ok(false);
       return err(
         "not_a_boolean",
-        `${col.key} must be TRUE or FALSE — got "${truncate(trimmed)}".`,
+        `${col.key} must be TRUE or FALSE - got "${truncate(trimmed)}".`,
       );
     }
 
@@ -230,7 +230,7 @@ export function coerceCell(raw: string, col: ColumnDef): CoerceResult {
       if (!match) {
         return err(
           "not_allowed",
-          `${col.key} must be one of ${(col.enumValues ?? []).join(", ")} — got "${truncate(trimmed)}".`,
+          `${col.key} must be one of ${(col.enumValues ?? []).join(", ")} - got "${truncate(trimmed)}".`,
         );
       }
       return ok(match);
@@ -251,12 +251,12 @@ function rangeCheck(n: number, col: ColumnDef): CoerceResult {
   if (col.min !== undefined && n < col.min)
     return err(
       "below_min",
-      `${col.key} can't be less than ${col.min} — got ${n}.`,
+      `${col.key} can't be less than ${col.min} - got ${n}.`,
     );
   if (col.max !== undefined && n > col.max)
     return err(
       "above_max",
-      `${col.key} can't be more than ${col.max} — got ${n}.`,
+      `${col.key} can't be more than ${col.max} - got ${n}.`,
     );
   return ok(n);
 }

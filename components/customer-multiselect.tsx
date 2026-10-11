@@ -164,7 +164,7 @@ export function CustomerMultiselect({
                         {displayName(c)}
                       </span>
                       <span className="block truncate text-xs text-[#9ca3af]">
-                        {c.email ?? c.phone ?? "—"}
+                        {c.email ?? c.phone ?? "-"}
                       </span>
                     </span>
                   </label>

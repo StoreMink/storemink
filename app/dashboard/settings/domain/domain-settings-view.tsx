@@ -236,7 +236,7 @@ export function DomainSettingsView({
               </h2>
               <p className="mt-1 text-sm text-[#5b6472]">
                 Your store is live. Add the record below and visitors who type
-                the other form of your address get HTTPS too — until then their
+                the other form of your address get HTTPS too - until then their
                 browser shows a security warning.
               </p>
             </div>
@@ -271,7 +271,7 @@ export function DomainSettingsView({
                       NOT promise an email: platform.domain_verified is
                       operators-only/in-app, so there is nothing to send yet. */}
                   Waiting on DNS and your certificate. You can safely close this
-                  page — setup finishes on its own, usually within an hour of
+                  page - setup finishes on its own, usually within an hour of
                   your records going live.
                 </p>
               </div>
@@ -310,8 +310,8 @@ export function DomainSettingsView({
             </p>
             <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
               Enter each Name exactly as shown. GoDaddy and most DNS providers
-              add <strong>{state.domain}</strong> automatically—don&apos;t type
-              the domain again.
+              add <strong>{state.domain}</strong> automatically - don&apos;t
+              type the domain again.
             </p>
           </div>
           <div className="divide-y divide-[rgba(17,24,39,0.08)]">
@@ -320,7 +320,7 @@ export function DomainSettingsView({
             ))}
             {state.records.length === 0 && (
               <p className="p-6 text-sm text-[#5b6472]">
-                Preparing your records — check back in a moment.
+                Preparing your records - check back in a moment.
               </p>
             )}
           </div>

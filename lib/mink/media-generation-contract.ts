@@ -171,7 +171,7 @@ export function validateMinkMediaGenerationRequest(
     : null;
   if (!purpose) {
     issues.push(
-      `purpose must be one of ${MINK_MEDIA_PURPOSES.join(", ")} — it decides the image's shape.`,
+      `purpose must be one of ${MINK_MEDIA_PURPOSES.join(", ")} - it decides the image's shape.`,
     );
   }
 

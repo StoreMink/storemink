@@ -65,7 +65,7 @@ export function FeedbackWidget({ articleId }: { articleId: string }) {
         <p className="thanks">
           {voted
             ? "Thanks for your feedback! 🎉"
-            : "Thanks — we'll use this to improve the docs."}
+            : "Thanks - we'll use this to improve the docs."}
         </p>
       )}
     </div>

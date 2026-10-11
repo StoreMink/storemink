@@ -19,6 +19,16 @@
 // across lines in floats leaves a stray fraction that turns a full return into
 // "₹0.01 less than they paid" — the kind of difference a customer notices at a
 // counter and nobody can explain.
+//
+// ── ★★ Tax-inclusive orders carry their tax INSIDE the line ─────────────────
+// `orders.tax_inclusive` records which mode the sale was priced in
+// (lib/billing/tax.ts `computeTax`): EXCLUSIVE adds `tax_amount` on top of the
+// line, INCLUSIVE carves it OUT of the line and leaves the total untouched. So
+// for an inclusive order `lineTotal` already contains `taxAmount`, and adding
+// the two refunds the tax TWICE — a ₹1,180 item at 18% inclusive came back as
+// ₹1,360. `taxInclusive` tells this function which of the two it is looking at;
+// it defaults to exclusive, which is byte-for-byte the behaviour every caller
+// had before the flag existed.
 
 import { allocateProportional, toPaise, toRupees } from "@/lib/money/allocate";
 
@@ -27,9 +37,12 @@ export interface ReturnableLine {
   /** order_items.id */
   id: string;
   quantity: number;
-  /** order_items.total — net of this line's markdown, gross of order discount. */
+  /** order_items.total — net of this line's markdown, gross of order discount.
+   *  On a tax-INCLUSIVE order this figure also contains the line's tax. */
   lineTotal: number;
-  /** order_items.tax_amount — already net of the allocated order discount. */
+  /** order_items.tax_amount — already net of the allocated order discount.
+   *  On a tax-inclusive order it is the share carved OUT of `lineTotal`, not
+   *  an amount charged on top of it. */
   taxAmount: number;
   /**
    * `order_items.offer_discount` — this line's share of an OFFER, as the engine
@@ -95,13 +108,20 @@ export function remainingQty(line: ReturnableLine): number {
  * A request for more than remains is clamped rather than rejected: the caller
  * validates and reports, and this function's job is to never produce a number
  * bigger than the sale.
+ *
+ * `taxInclusive` is `orders.tax_inclusive`. Every caller that prices a real
+ * order MUST pass it — omitting it on an inclusive order is exactly the
+ * double-counted-tax refund described in the header.
  */
 export function refundBreakdown(input: {
   lines: ReturnableLine[];
   orderDiscount?: number;
+  /** `orders.tax_inclusive`. Absent = exclusive, the historical behaviour. */
+  taxInclusive?: boolean;
   request: { id: string; quantity: number }[];
 }): RefundBreakdown {
   const { lines, request } = input;
+  const taxInclusive = input.taxInclusive === true;
 
   // Allocate the order discount across lines exactly as the sale did:
   // proportionally to each line's amount, in paise, remainder to the largest
@@ -158,10 +178,26 @@ export function refundBreakdown(input: {
     // it is, so this can only ever be the sold quantity itself.
     const sold = Math.max(1, soldQty(line));
     // Net of this line's offer share AND its share of the order discount — the
-    // number the customer actually paid for these goods.
+    // number the customer actually paid for these goods. On an EXCLUSIVE order
+    // that is the goods value and the tax sits on top; on an INCLUSIVE order it
+    // is everything they paid for the line, tax included.
     const netP = netAfterOffers[i] - share[i];
-    const lineAmountP = Math.round((netP * qty) / sold);
-    const lineTaxP = Math.round((toPaise(line.taxAmount) * qty) / sold);
+    const paidShareP = Math.round((netP * qty) / sold);
+    const storedTaxP = Math.round((toPaise(line.taxAmount) * qty) / sold);
+
+    let lineAmountP: number;
+    let lineTaxP: number;
+    if (taxInclusive) {
+      // ★ The tax is INSIDE what they paid, so the total is the paid share
+      // and the goods value is what is left once the tax is carved back out.
+      // Clamped so a bad legacy row (tax larger than the line) can never
+      // produce negative goods — the total is still exactly what was paid.
+      lineTaxP = Math.min(Math.max(0, storedTaxP), Math.max(0, paidShareP));
+      lineAmountP = paidShareP - lineTaxP;
+    } else {
+      lineAmountP = paidShareP;
+      lineTaxP = storedTaxP;
+    }
 
     amountP += lineAmountP;
     taxP += lineTaxP;
@@ -189,4 +225,57 @@ export function fullReturnRequest(
   return lines
     .map((l) => ({ id: l.id, quantity: remainingQty(l) }))
     .filter((r) => r.quantity > 0);
+}
+
+// ── The till's retry key (order_returns.idempotency_key) ────────────────────
+// A partial return retried after a lost response — or one prepared screen
+// submitted from two taps — used to book a SECOND return and a second refund:
+// unlike a full return, a partial one still has units left for the re-priced
+// retry to take. The till therefore sends one key per return ATTEMPT and the
+// server answers a repeat with the return it already recorded. These two
+// helpers live here, not in the server action, because a "use server" file may
+// only export async functions — and the client needs the same rules.
+
+/** 10–100 characters of `[A-Za-z0-9_-]` — the shape the server accepts. A
+ *  `crypto.randomUUID()` is 36 characters and always passes. */
+const RETURN_ATTEMPT_KEY = /^[A-Za-z0-9_-]{10,100}$/;
+
+/** Whether a client-supplied retry key has the one shape the server stores. */
+export function isReturnAttemptKey(value: unknown): value is string {
+  return typeof value === "string" && RETURN_ATTEMPT_KEY.test(value);
+}
+
+/**
+ * A stable description of what a return attempt ASKS FOR — the order, each
+ * line's quantity and condition, the refund method and the reason.
+ *
+ * ★ The till keeps its retry key for as long as this fingerprint is
+ * unchanged, and mints a new one the moment it changes. That is the whole
+ * rule: retrying the SAME request (lost response, double tap, a re-submit
+ * after the customer's OTP) must reuse the key so the server can recognise
+ * it, while a cashier who changes the selection is asking for something
+ * different and must not be told "already recorded". Lines are sorted and
+ * zero quantities dropped, so the order the cashier tapped things in — or a
+ * line bumped up and back down — does not read as a different request.
+ */
+export function returnAttemptFingerprint(input: {
+  orderId: string;
+  lines: { orderItemId: string; quantity: number; condition?: string }[];
+  method: string;
+  reason?: string | null;
+}): string {
+  const lines = input.lines
+    .map((l) => ({
+      id: l.orderItemId,
+      q: Math.max(0, Math.trunc(Number(l.quantity) || 0)),
+      c: l.condition === "damaged" ? "damaged" : "sellable",
+    }))
+    .filter((l) => l.q > 0)
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return JSON.stringify({
+    o: input.orderId,
+    l: lines.map((l) => [l.id, l.q, l.c]),
+    m: input.method,
+    r: input.reason || "",
+  });
 }

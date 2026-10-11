@@ -171,7 +171,7 @@ export function pickupNote(
   },
   now: Date = new Date(),
 ): string {
-  if (order.pickup_status === "collected") return "Handed over — thank you.";
+  if (order.pickup_status === "collected") return "Handed over - thank you.";
   if (order.pickup_status === "expired") {
     return "This order wasn't collected in time and was cancelled.";
   }
