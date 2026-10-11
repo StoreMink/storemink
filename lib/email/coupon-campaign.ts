@@ -27,22 +27,11 @@ export function mergeTokens(text: string, firstName: string): string {
   return text.replace(/\{\{\s*(first_name|name)\s*\}\}/gi, () => name);
 }
 
-/**
- * Rewrite em and en dashes as ordinary punctuation. StoreMink's own email copy
- * never uses a long dash, so text StoreMink GENERATES for a merchant (the AI
- * coupon draft) passes through this before the merchant sees it in the editor.
- * Copy a merchant types themselves is theirs and is never rewritten at send.
- * A number range becomes "2 to 4"; any other dash becomes a comma, and the
- * punctuation that leaves behind is tidied (no ", ," and no ", ." pairs).
- */
-export function withoutLongDashes(text: string): string {
-  return text
-    .replace(/([\d%])[ \t]*[\u2013\u2014]+[ \t]*([\u20b9$]?\d)/g, "$1 to $2")
-    .replace(/[ \t]*[\u2013\u2014]+[ \t]*/g, ", ")
-    .replace(/,[ \t]*([,.;:!?])/g, "$1")
-    .replace(/^,[ \t]*/gm, "")
-    .replace(/,[ \t]+$/gm, ",");
-}
+// withoutLongDashes moved to lib/text/long-dashes.ts so every AI copy feature
+// (lib/ai/gemini.ts) can use it without importing the email layer. Re-exported
+// here because the coupon draft and Mink's draft tools already import it from
+// this module.
+export { withoutLongDashes } from "@/lib/text/long-dashes";
 
 export type CouponEmailContent = {
   /** AI- or hand-written body. Plain text; blank lines separate paragraphs.

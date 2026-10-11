@@ -210,7 +210,7 @@ export default async function PlatformDashboard() {
         // answer is the one thing this screen must never do.
         <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          Platform figures are unavailable — the database read failed. The
+          Platform figures are unavailable - the database read failed. The
           numbers below are not current.
         </div>
       ) : null}
@@ -260,7 +260,7 @@ export default async function PlatformDashboard() {
         <section className="lg:col-span-2 rounded-xl border border-slate-200 bg-white shadow-sm">
           <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
             <h2 className="text-sm font-semibold text-slate-900">
-              Signups — last 12 weeks
+              Signups - last 12 weeks
             </h2>
             <span className="text-xs text-slate-400">peak {peak} / week</span>
           </header>
@@ -347,7 +347,7 @@ export default async function PlatformDashboard() {
               );
             })}
             <p className="pt-1 text-xs text-slate-400">
-              Counted by effective plan — an expired timed grant reads as Free.
+              Counted by effective plan - an expired timed grant reads as Free.
             </p>
           </div>
         </section>

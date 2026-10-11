@@ -197,7 +197,7 @@ export function TaxSettingsForm({
         label="Charge GST on subscription invoices"
         hint={
           missingForTax
-            ? `Add ${missingForTax} above before switching this on — an invoice charging GST without one isn't a valid tax invoice.`
+            ? `Add ${missingForTax} above before switching this on - an invoice charging GST without one isn't a valid tax invoice.`
             : "Applies from the next invoice issued. Existing invoices are immutable and never change."
         }
       >
@@ -234,14 +234,14 @@ export function TaxSettingsForm({
             checked={!taxInclusive}
             onChange={() => setTaxInclusive(false)}
             disabled={!canEdit}
-            title="Exclusive — tax on top"
+            title="Exclusive - tax on top"
             body={`A ₹5,000 plan is billed ₹${Math.round(5000 * (1 + Number(taxRatePercent || 0) / 100)).toLocaleString("en-IN")}. Every merchant's bill goes up the day you switch tax on.`}
           />
           <Radio
             checked={taxInclusive}
             onChange={() => setTaxInclusive(true)}
             disabled={!canEdit}
-            title="Inclusive — tax carved out"
+            title="Inclusive - tax carved out"
             body={`A ₹5,000 plan is billed ₹5,000, of which ₹${Math.round((5000 * Number(taxRatePercent || 0)) / (100 + Number(taxRatePercent || 0))).toLocaleString("en-IN")} is GST. Nobody's bill changes; revenue per plan falls.`}
           />
         </div>

@@ -25,7 +25,7 @@ export function BusinessTimeZoneForm({ timeZone }: { timeZone: string }) {
       </div>
       <p className="mt-0.5 text-[13px] leading-[1.5] text-[#6a6a6a]">
         Defines calendar-day boundaries in Analytics. Existing stores default to
-        India — Kolkata.
+        India - Kolkata.
       </p>
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <select

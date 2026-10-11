@@ -200,7 +200,7 @@ export function StoreManageBar({
 
       {planOpen && (
         <Modal
-          title={`Change plan — ${name}`}
+          title={`Change plan - ${name}`}
           onClose={() => setPlanOpen(false)}
         >
           <label className="block text-sm font-medium text-slate-700">
@@ -269,7 +269,7 @@ export function StoreManageBar({
 
       {creditsOpen && (
         <Modal
-          title={`Grant Mink credits — ${name}`}
+          title={`Grant Mink credits - ${name}`}
           onClose={() => setCreditsOpen(false)}
         >
           <label className="block text-sm font-medium text-slate-700">

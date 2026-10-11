@@ -18,7 +18,7 @@ import { CounterClient } from "../counter-client";
 // this route's gate before the merge; it comes back with it.
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Returns — Register" };
+export const metadata = { title: "Returns · Register" };
 
 export default async function PosReturnsPage() {
   const operator = await resolvePosOperator();

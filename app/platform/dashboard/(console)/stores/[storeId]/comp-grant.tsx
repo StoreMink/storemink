@@ -82,7 +82,7 @@ export function CompGrantCard({
           {date(comp.active.expiresAt)}
         </div>
         <p className="mt-1 text-xs text-violet-800">
-          Started {date(comp.active.startsAt)}. It runs to the end — there is no
+          Started {date(comp.active.startsAt)}. It runs to the end - there is no
           mid-window cancel. Their own subscription is unaffected and still
           billed.
         </p>

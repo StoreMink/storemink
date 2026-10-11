@@ -204,7 +204,7 @@ function ProfileTab({
           <Label>Email</Label>
           <div className="flex h-10 items-center gap-2 rounded-md border border-input bg-[var(--dash-surface-2)] px-3 text-sm text-[var(--dash-text-2)]">
             <Mail className="h-4 w-4 text-[var(--dash-text-3)]" />
-            {email || "—"}
+            {email || "-"}
           </div>
           <p className="text-xs text-[var(--dash-text-3)]">
             Email is tied to your login and cannot be changed here. Ask a

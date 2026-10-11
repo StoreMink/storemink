@@ -115,7 +115,7 @@ export async function importCoupons(
             record.line,
             "Discount Value",
             "percent_over_100",
-            `A percentage discount can't be more than 100 — got ${patch.discountValue}.`,
+            `A percentage discount can't be more than 100 - got ${patch.discountValue}.`,
             "error",
             String(patch.discountValue),
           ),

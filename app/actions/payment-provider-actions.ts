@@ -24,6 +24,7 @@ import {
   rotatePaymentWebhookSecret,
 } from "@/lib/payments/store-webhook";
 import { getCurrentStore } from "@/lib/store/resolve";
+import { IS_PRODUCTION_PLATFORM } from "@/lib/store/host";
 
 export interface ChannelState {
   connected: boolean;
@@ -162,6 +163,17 @@ export async function saveRazorpayCredentials(
   // check before we spend an API call on obviously wrong input.
   if (!/^rzp_(test|live)_[A-Za-z0-9]{6,}$/.test(id)) {
     return { error: "That doesn't look like a Razorpay Key ID (rzp_…)." };
+  }
+  // ★★ TEST KEYS NEVER TAKE REAL ORDERS. Razorpay's test mode accepts test
+  // cards and moves no money, so a live store connected with test keys marks
+  // orders paid that nobody paid for, ships the goods, and "refunds" money
+  // that never arrived. Refused on the production platform only, so dev and
+  // local can still be exercised end to end with test cards.
+  if (IS_PRODUCTION_PLATFORM && id.startsWith("rzp_test_")) {
+    return {
+      error:
+        "That's a test-mode key, which can't take real payments. In Razorpay, switch to Live mode and create a key that starts with rzp_live_.",
+    };
   }
   if (secret.length < 8 || secret.length > 200) {
     return { error: "That doesn't look like a Razorpay Key Secret." };

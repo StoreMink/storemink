@@ -307,7 +307,7 @@ export function ChannelsClient({
         <h1 className="text-2xl font-bold text-[#111827]">Channels</h1>
         <p className="mt-1 text-sm text-[#5b6472]">
           Connect the services your store sells and operates through. Money from
-          online payments settles directly in your own gateway account —
+          online payments settles directly in your own gateway account -
           StoreMink never touches it and takes no transaction fee.
         </p>
       </div>
@@ -879,7 +879,7 @@ function RazorpayModal({
       toast.error(res.error);
       return;
     }
-    toast.success("Razorpay connected — online payments are live.");
+    toast.success("Razorpay connected - online payments are live.");
     onState((s) => ({
       ...s,
       connected: true,
@@ -973,7 +973,7 @@ function RazorpayModal({
                   Online payments are included from the Basic plan.
                 </p>
                 <p className="mt-1">
-                  Upgrade your plan to connect your own Razorpay account —
+                  Upgrade your plan to connect your own Razorpay account -
                   checkout stays Cash&nbsp;on&nbsp;Delivery until then.
                 </p>
               </div>
@@ -1230,7 +1230,7 @@ function TwilioModal({
     // portal and cannot be retyped from memory.
     if (
       !window.confirm(
-        "Disconnect SMS? Your DLT sender header and Entity ID are removed too — you'll need them from your DLT portal to reconnect.",
+        "Disconnect SMS? Your DLT sender header and Entity ID are removed too - you'll need them from your DLT portal to reconnect.",
       )
     )
       return;
@@ -1321,7 +1321,7 @@ function TwilioModal({
                 </p>
                 <p className="mt-1 text-xs text-[#5b6472]">
                   Carriers in India drop any message whose text doesn&apos;t
-                  match a template you registered on your DLT portal — with no
+                  match a template you registered on your DLT portal - with no
                   bounce and no error. Add each one under Settings →
                   Notifications before switching a message on.
                 </p>
@@ -1362,7 +1362,7 @@ function TwilioModal({
                 value={senderHeader}
                 onChange={(v) => setSenderHeader(v.toUpperCase().slice(0, 6))}
                 placeholder="CORNRS"
-                hint="Exactly six letters — the transactional form. A numeric header is promotional and will be rejected."
+                hint="Exactly six letters - the transactional form. A numeric header is promotional and will be rejected."
                 mono
               />
               <Field

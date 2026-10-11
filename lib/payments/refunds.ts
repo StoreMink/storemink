@@ -52,6 +52,53 @@ export const DASHBOARD_REFUND_METHODS = [
 export const toPaise = (n: number) => Math.round((Number(n) || 0) * 100);
 export const toRupees = (p: number) => Math.round(p) / 100;
 
+/**
+ * Payment statuses that mean money was captured at some point.
+ *
+ * The two refunded states are DERIVED from settled refunds
+ * (syncOrderRefundState), so they are proof of capture rather than evidence
+ * against it. Comparing against `paid` alone is the mistake that hid the
+ * second online refund on every partly refunded order.
+ */
+export const PAID_PAYMENT_STATUSES = [
+  "paid",
+  "partially_refunded",
+  "refunded",
+] as const;
+
+export function wasPaid(paymentStatus: string | null | undefined): boolean {
+  return (PAID_PAYMENT_STATUSES as readonly string[]).includes(
+    paymentStatus ?? "",
+  );
+}
+
+/**
+ * Whether the MONEY part of an order has been taken.
+ *
+ * A paid status says so directly. Cash on delivery is the exception: the
+ * courier collects at the door and nothing marks the order paid
+ * automatically, so a delivered COD order has been paid for even while its
+ * status still reads `pending`. Anything else (an undelivered COD order, an
+ * abandoned online payment) has taken no money, and refunding money for it
+ * would hand out cash nobody paid.
+ */
+export function orderMoneyTaken(order: {
+  paymentStatus: string | null | undefined;
+  paymentMethod: string | null | undefined;
+  status: string | null | undefined;
+  deliveredAt?: string | null;
+}): boolean {
+  if (wasPaid(order.paymentStatus)) return true;
+  if (order.paymentMethod === "cash_on_delivery") {
+    return (
+      order.status === "delivered" ||
+      order.status === "completed" ||
+      Boolean(order.deliveredAt)
+    );
+  }
+  return false;
+}
+
 /** One already-recorded refund, as stored. */
 export interface ExistingRefund {
   amount: number;
@@ -86,7 +133,22 @@ export interface ExistingRefund {
  * Refunding AS CREDIT is uncapped by this rule: giving back a balance for a
  * balance costs the store nothing it didn't already owe.
  *
- * Both new inputs are optional and default to the old behaviour, so a caller
+ * ★★ CREDIT ALREADY GIVEN BACK BY A CANCELLATION IS NOT OWED AGAIN.
+ *
+ * Cancelling reinstates the store credit an order spent
+ * (reinstateCreditForOrder), and nothing here knew: a ₹500 order paid
+ * entirely with credit, cancelled, still read "₹500 owed back", and the
+ * cancellation queue then pre-selected store credit, so the customer ended
+ * with ₹1,000. `creditReinstated` is that ledger figure, and it comes off the
+ * overall cap. (Refund-then-cancel was already safe: the reinstatement is
+ * offset by earlier credit refunds, so it is reported here as smaller.)
+ *
+ * ★ AND AN ORDER THAT TOOK NO MONEY HAS NO MONEY TO GIVE BACK. `moneyTaken`
+ * false (an undelivered COD order, an unpaid online one) leaves only the
+ * credit part refundable: refunding the whole total as store credit on an
+ * order nobody paid for would create a balance out of nothing.
+ *
+ * Every new input is optional and defaults to the old behaviour, so a caller
  * that doesn't know about store credit is unaffected.
  */
 export function refundableAmount(input: {
@@ -94,30 +156,71 @@ export function refundableAmount(input: {
   refunds: ExistingRefund[];
   /** `orders.store_credit_used` — the part of the total no instrument paid. */
   storeCreditUsed?: number;
+  /** Store credit this order has already had REINSTATED by a cancellation. */
+  creditReinstated?: number;
+  /** Whether the money part was ever taken. Defaults to true. */
+  moneyTaken?: boolean;
   /** Where this refund would go. Omit for the overall cap. */
   method?: RefundMethod | null;
 }): number {
   const totalP = Math.max(0, toPaise(input.orderTotal));
+  const creditP = Math.min(
+    totalP,
+    Math.max(0, toPaise(input.storeCreditUsed ?? 0)),
+  );
+  const reinstatedP = Math.min(
+    creditP,
+    Math.max(0, toPaise(input.creditReinstated ?? 0)),
+  );
+  const moneyPaidP = input.moneyTaken === false ? 0 : totalP - creditP;
+
   const live = input.refunds.filter((r) => r.status !== "failed");
   const spentP = live.reduce(
     (sum, r) => sum + Math.max(0, toPaise(r.amount)),
     0,
   );
-  const overallP = Math.max(0, totalP - spentP);
+  const overallP = Math.max(0, moneyPaidP + creditP - spentP - reinstatedP);
 
   if (!input.method || input.method === "store_credit") {
     return toRupees(overallP);
   }
 
-  const creditP = Math.max(0, toPaise(input.storeCreditUsed ?? 0));
-  if (creditP <= 0) return toRupees(overallP);
-
-  const moneyPaidP = Math.max(0, totalP - creditP);
   const moneyBackP = live
     .filter((r) => r.method !== "store_credit")
     .reduce((sum, r) => sum + Math.max(0, toPaise(r.amount)), 0);
 
   return toRupees(Math.max(0, Math.min(overallP, moneyPaidP - moneyBackP)));
+}
+
+/**
+ * Everything the refund caps are computed from, read together so every
+ * caller (the refund itself, the refund panel, the "still owed" figure on a
+ * cancellation) sees one answer.
+ */
+export interface OrderRefundFacts {
+  total: number;
+  storeCreditUsed: number;
+  creditReinstated: number;
+  moneyTaken: boolean;
+  refunds: ExistingRefund[];
+}
+
+/** The overall cap and the money cap for one order, from its facts. */
+export function refundCaps(facts: OrderRefundFacts): {
+  overall: number;
+  money: number;
+} {
+  const base = {
+    orderTotal: facts.total,
+    refunds: facts.refunds,
+    storeCreditUsed: facts.storeCreditUsed,
+    creditReinstated: facts.creditReinstated,
+    moneyTaken: facts.moneyTaken,
+  };
+  return {
+    overall: refundableAmount(base),
+    money: refundableAmount({ ...base, method: "manual" }),
+  };
 }
 
 export type AmountCheck = { amount: number } | { error: string };

@@ -32,6 +32,9 @@ vi.mock("@/lib/inventory/reservations", () => ({
 vi.mock("@/lib/credit/store-credit", () => ({
   reinstateCreditForOrder: vi.fn(async () => 0),
 }));
+vi.mock("@/lib/payments/refund-reconcile", () => ({
+  syncOrderRefundState: vi.fn(async () => undefined),
+}));
 
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
@@ -40,6 +43,7 @@ vi.mock("@/lib/db/client", () => ({
 
 import { releaseHold } from "@/lib/inventory/reservations";
 import { reinstateCreditForOrder } from "@/lib/credit/store-credit";
+import { syncOrderRefundState } from "@/lib/payments/refund-reconcile";
 import { logError } from "@/lib/observability/logger";
 import { releaseCancelledOrder, type DbRunner } from "./cancel";
 
@@ -206,6 +210,18 @@ describe("store credit comes back", () => {
   it("reinstates on the ordinary path too", async () => {
     await releaseCancelledOrder(STORE, ORDER, runner);
     expect(reinstateCreditForOrder).toHaveBeenCalledWith(STORE, ORDER);
+  });
+
+  it("★★ re-syncs what is owed AFTER the credit comes back", async () => {
+    // A credit-paid order that was cancelled kept reading "owed back", which
+    // invited a second, store-credit refund of money already returned. The
+    // sync is what counts the reinstated credit, so it must run after it.
+    await releaseCancelledOrder(STORE, ORDER, runner);
+    expect(syncOrderRefundState).toHaveBeenCalledWith(ORDER);
+    const reinstated = vi.mocked(reinstateCreditForOrder).mock
+      .invocationCallOrder[0]!;
+    const synced = vi.mocked(syncOrderRefundState).mock.invocationCallOrder[0]!;
+    expect(synced).toBeGreaterThan(reinstated);
   });
 
   it("★★ still reinstates credit and releases holds when stock must not be restocked", async () => {

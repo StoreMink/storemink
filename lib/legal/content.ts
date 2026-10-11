@@ -107,11 +107,11 @@ const TERMS_BODY = [
     "5. Accounts and services you connect",
     `Some features work by connecting an account you hold with someone else. Where you do that, the account and everything done through it remain yours, and you are responsible for complying with that provider's terms and with any registration the law requires. This includes:`,
     [
-      `<strong>Payment gateways</strong> — your merchant account, your settlement, your chargebacks.`,
-      `<strong>Shipping and logistics</strong> — rates, bookings, pickups, loss, damage and delay are between you and the carrier. Where measurements are missing we may use conservative defaults to obtain a quote, and a quote is an estimate, not a promise.`,
-      `<strong>SMS</strong> — you are responsible for your sender registration, your approved message templates, and for the consent behind every number you message.`,
-      `<strong>Analytics and advertising tags</strong> — anything you add sends your customers' data to your own accounts, on your own instructions.`,
-      `<strong>Domains</strong> — you control the DNS. If a domain stops resolving to us we may stop serving it and fall back to your ${COMPANY} address so that your store stays reachable.`,
+      `<strong>Payment gateways</strong>: your merchant account, your settlement, your chargebacks.`,
+      `<strong>Shipping and logistics</strong>: rates, bookings, pickups, loss, damage and delay are between you and the carrier. Where measurements are missing we may use conservative defaults to obtain a quote, and a quote is an estimate, not a promise.`,
+      `<strong>SMS</strong>: you are responsible for your sender registration, your approved message templates, and for the consent behind every number you message.`,
+      `<strong>Analytics and advertising tags</strong>: anything you add sends your customers' data to your own accounts, on your own instructions.`,
+      `<strong>Domains</strong>: you control the DNS. If a domain stops resolving to us we may stop serving it and fall back to your ${COMPANY} address so that your store stays reachable.`,
     ],
     `We are not responsible for a third party's availability, pricing, accuracy or decisions, and disconnecting one may disable the features that depend on it.`,
   ),
@@ -132,7 +132,7 @@ const TERMS_BODY = [
   section(
     "8. AI features",
     `Some features use automated systems, including third-party models, to read your store's data and to draft text, images or code. They are provided to help you work, not to make decisions for you.`,
-    `<strong>Output can be wrong, incomplete or misleading.</strong> Figures, summaries, recommendations and drafts are not advice — not legal, tax, financial, medical or professional advice of any kind — and must be checked against your own records before you rely on them or publish them.`,
+    `<strong>Output can be wrong, incomplete or misleading.</strong> Figures, summaries, recommendations and drafts are not advice (not legal, tax, financial, medical or professional advice of any kind) and must be checked against your own records before you rely on them or publish them.`,
     `Where a feature can change your store, it acts only on a change you are shown and explicitly approve. <strong>Your approval is your instruction</strong>, and what follows is your responsibility as if you had made the change yourself, including anything published to your live storefront.`,
     `AI features consume the allowance or credits described on your plan, may be rate-limited, and may be changed or withdrawn. Some are offered as a beta and are excluded from any availability expectation.`,
     `We do not use your data to train our own models. Providers who process it for us are bound by contract; their terms, not ours, govern what they may do with it.`,
@@ -141,14 +141,14 @@ const TERMS_BODY = [
   section(
     "9. Code and scripts you add",
     `You may add your own HTML, CSS and JavaScript to your storefront. We run it inside a restricted frame to limit what it can reach, but <strong>that is a precaution, not a guarantee</strong>, and it does not make the code safe or lawful.`,
-    `Code you add — or code you approve from an AI feature — is your content under clause 2. You are responsible for what it does to your customers, for anything it loads from elsewhere, and for any consent its behaviour requires. We may disable code that harms your customers, other merchants, or the platform.`,
+    `Code you add, or code you approve from an AI feature, is your content under clause 2. You are responsible for what it does to your customers, for anything it loads from elsewhere, and for any consent its behaviour requires. We may disable code that harms your customers, other merchants, or the platform.`,
   ),
 
   section(
     "10. Your responsibilities",
     `You must comply with all laws that apply to your business, including consumer protection, product safety, labelling, advertising, tax, and data protection law. You must obtain any licence or registration your trade requires.`,
     `You are responsible for everything posted through your account, for keeping your credentials secure, and for the actions of anyone you invite to your dashboard or authorise on a register.`,
-    `You must publish your own store policies to your customers — at least how returns, refunds, delivery and privacy work in your business — and keep them accurate.`,
+    `You must publish your own store policies to your customers (at least how returns, refunds, delivery and privacy work in your business) and keep them accurate.`,
     `You must comply with our Acceptable Use Policy, which forms part of these Terms.`,
   ),
 
@@ -163,14 +163,14 @@ const TERMS_BODY = [
     "12. Availability, beta features, and changes to the service",
     `We work to keep the service available, but we do not guarantee uninterrupted or error-free operation. We may change, add or remove features. Where a change materially reduces core functionality on a paid plan, we will give reasonable notice.`,
     `Features labelled beta, preview or alpha are made available so you can try them. They may be incomplete, may change without notice, and may be withdrawn. They carry no availability expectation and, to the extent the law allows, no liability.`,
-    `Some functionality depends on third parties — payment gateways, logistics, email and SMS delivery, hosting, maps, AI models. Their outages, rate limits and decisions are not within our control.`,
+    `Some functionality depends on third parties: payment gateways, logistics, email and SMS delivery, hosting, maps, AI models. Their outages, rate limits and decisions are not within our control.`,
   ),
 
   section(
     "13. Suspension and termination",
     `You may stop using the service at any time.`,
     `We may suspend or terminate an account that breaches these Terms or the Acceptable Use Policy, that exposes us or our other users to legal risk or harm, or where required by law. Where practical and lawful, we will tell you why and give you an opportunity to put it right. We may suspend immediately and without notice where the risk is serious.`,
-    `You can export your own data at any time while your account is active, and for a reasonable period after termination, after which we may delete it. Deletion is permanent and includes the media you uploaded. It does not remove records we must keep — for example a record that you accepted these Terms, or an invoice we must retain for tax.`,
+    `You can export your own data at any time while your account is active, and for a reasonable period after termination, after which we may delete it. Deletion is permanent and includes the media you uploaded. It does not remove records we must keep, for example a record that you accepted these Terms, or an invoice we must retain for tax.`,
   ),
 
   // ⚠ REVIEW — an "as is" disclaimer's enforceability varies by jurisdiction
@@ -192,7 +192,7 @@ const TERMS_BODY = [
 
   section(
     "16. You indemnify us",
-    `You will defend and indemnify ${COMPANY}, its officers and employees against any claim, loss, liability or cost (including reasonable legal fees) arising from your products, your content, your use of the service, your breach of these Terms or the Acceptable Use Policy, or your breach of any law or third-party right — including any claim brought by one of your customers, by your staff, by a provider you connected, or by an authority.`,
+    `You will defend and indemnify ${COMPANY}, its officers and employees against any claim, loss, liability or cost (including reasonable legal fees) arising from your products, your content, your use of the service, your breach of these Terms or the Acceptable Use Policy, or your breach of any law or third-party right, including any claim brought by one of your customers, by your staff, by a provider you connected, or by an authority.`,
     `This includes claims arising from output you approved or published from an AI feature, from code or scripts you added, from messages you sent, and from tax documents issued through your store.`,
   ),
 
@@ -248,16 +248,16 @@ const PRIVACY_BODY = [
 
   section(
     "1. Two different roles",
-    `This policy covers data ${COMPANY} holds as a <strong>controller</strong> — your merchant account, your billing, your staff accounts, and your use of our dashboard.`,
-    `For the personal data your <strong>customers</strong> give to <strong>your</strong> store — names, addresses, order history — the merchant is the controller and ${COMPANY} is a <strong>processor</strong> acting on their instructions. If you shopped at a store built on ${COMPANY} and want your data changed or removed, contact that store first; we will assist them.`,
+    `This policy covers data ${COMPANY} holds as a <strong>controller</strong>: your merchant account, your billing, your staff accounts, and your use of our dashboard.`,
+    `For the personal data your <strong>customers</strong> give to <strong>your</strong> store (names, addresses, order history), the merchant is the controller and ${COMPANY} is a <strong>processor</strong> acting on their instructions. If you shopped at a store built on ${COMPANY} and want your data changed or removed, contact that store first; we will assist them.`,
   ),
 
   section(
     "2. What we collect",
-    `<strong>Account data</strong>: name, email address, phone number, password (hashed — we never see it in the clear), and the business location you give at signup.`,
+    `<strong>Account data</strong>: name, email address, phone number, password (hashed; we never see it in the clear), and the business location you give at signup.`,
     `<strong>Staff data</strong>: for people you invite to the dashboard or a register, their name, email, role, the locations you assign them, and their register credential (stored hashed).`,
-    `<strong>Store data</strong>: what you create in the product — products, pages, orders, customers, and settings.`,
-    `<strong>Usage and technical data</strong>: IP address, browser and device information, and logs of requests, errors, emails and messages sent. Some of this is security evidence rather than analytics — for example, we record the IP and browser used when someone accepts our Terms, and when a register device is authorised.`,
+    `<strong>Store data</strong>: what you create in the product: products, pages, orders, customers, and settings.`,
+    `<strong>Usage and technical data</strong>: IP address, browser and device information, and logs of requests, errors, emails and messages sent. Some of this is security evidence rather than analytics; for example, we record the IP and browser used when someone accepts our Terms, and when a register device is authorised.`,
     `<strong>AI interactions</strong>: the questions you put to our AI features, the context we assembled to answer them, the output returned, and any rating or issue report you send us about an answer. See clause 5.`,
     `<strong>Payment data</strong>: we do <strong>not</strong> store card numbers. Payments are handled by payment providers; we store only identifiers, amounts and status returned by them.`,
   ),
@@ -272,15 +272,15 @@ const PRIVACY_BODY = [
     "4. Who we share it with",
     `Providers who process data on our behalf under contract, so that the service works. Currently:`,
     [
-      `<strong>Google Cloud</strong> — hosting, database and file storage.`,
-      `<strong>Google Identity Platform</strong> — accounts, sign-in, and the SMS one-time codes used to verify a phone number.`,
-      `<strong>Google Vertex AI and the Gemini API</strong> — our AI features. See clause 5 for what reaches them.`,
-      `<strong>Resend</strong> — email delivery, including delivery outcomes such as bounces and complaints.`,
-      `<strong>Razorpay</strong> — our own subscription and credit payments.`,
-      `<strong>Google Maps</strong> and <strong>BigDataCloud</strong> — turning a location or coordinates into an address, when someone asks us to. The BigDataCloud lookup is made by the browser at the moment a merchant or a shopper chooses to use it.`,
-      `<strong>Google Search Console</strong> — search performance for launched stores and their sitemaps.`,
+      `<strong>Google Cloud</strong>: hosting, database and file storage.`,
+      `<strong>Google Identity Platform</strong>: accounts, sign-in, and the SMS one-time codes used to verify a phone number.`,
+      `<strong>Google Vertex AI and the Gemini API</strong>: our AI features. See clause 5 for what reaches them.`,
+      `<strong>Resend</strong>: email delivery, including delivery outcomes such as bounces and complaints.`,
+      `<strong>Razorpay</strong>: our own subscription and credit payments.`,
+      `<strong>Google Maps</strong> and <strong>BigDataCloud</strong>: turning a location or coordinates into an address, when someone asks us to. The BigDataCloud lookup is made by the browser at the moment a merchant or a shopper chooses to use it.`,
+      `<strong>Google Search Console</strong>: search performance for launched stores and their sitemaps.`,
     ],
-    `Where <strong>you</strong> connect an account of your own — a payment gateway, a logistics provider such as <strong>Shiprocket</strong>, an SMS provider such as <strong>Twilio</strong>, or an analytics or advertising tag — our software sends data to it <strong>on your instructions</strong>. Those providers act for you, under your agreement with them, and this policy does not govern what they do with it. Shipping a parcel sends your customer's name, address and phone to the carrier; sending an SMS sends their number and the message.`,
+    `Where <strong>you</strong> connect an account of your own (a payment gateway, a logistics provider such as <strong>Shiprocket</strong>, an SMS provider such as <strong>Twilio</strong>, or an analytics or advertising tag), our software sends data to it <strong>on your instructions</strong>. Those providers act for you, under your agreement with them, and this policy does not govern what they do with it. Shipping a parcel sends your customer's name, address and phone to the carrier; sending an SMS sends their number and the message.`,
     `We may also disclose data where required by law, or to protect the rights and safety of our users or the public.`,
   ),
 
@@ -297,19 +297,19 @@ const PRIVACY_BODY = [
   section(
     "6. Where it is held, and for how long",
     `Data is hosted on Google Cloud infrastructure. Some providers may process data outside your country; where they do, we rely on the safeguards those providers offer.`,
-    `We keep data for as long as your account is active, then for a period afterwards where we need it for legal, tax or dispute-resolution reasons. Operational records are pruned on a rolling basis — activity records after one year, notification, email and message records after ninety days, AI conversations after ninety days, and raw storefront analytics events after fourteen days once they have been aggregated. Search performance history is kept longer because the source only reports a limited window.`,
+    `We keep data for as long as your account is active, then for a period afterwards where we need it for legal, tax or dispute-resolution reasons. Operational records are pruned on a rolling basis: activity records after one year, notification, email and message records after ninety days, AI conversations after ninety days, and raw storefront analytics events after fourteen days once they have been aggregated. Search performance history is kept longer because the source only reports a limited window.`,
   ),
 
   section(
     "7. Your rights",
     `Depending on where you live, you may ask us to give you a copy of your data, correct it, delete it, restrict how we use it, or object to a use. Write to <a href="mailto:support@storemink.com">support@storemink.com</a> and we will respond within the period the applicable law allows.`,
     `You can export most of your store data yourself from the dashboard at any time.`,
-    `Deleting a store is permanent. It removes the store's records, its uploaded media, and the sign-in accounts that existed only for that store; an account that is also used elsewhere is kept. Some data cannot be deleted on request — a record that you accepted our Terms, or an invoice we must keep for tax, are examples. If you need an account or its order history removed, contact us rather than deleting piecemeal, so that linked records are handled correctly.`,
+    `Deleting a store is permanent. It removes the store's records, its uploaded media, and the sign-in accounts that existed only for that store; an account that is also used elsewhere is kept. Some data cannot be deleted on request; a record that you accepted our Terms, or an invoice we must keep for tax, are examples. If you need an account or its order history removed, contact us rather than deleting piecemeal, so that linked records are handled correctly.`,
   ),
 
   section(
     "8. If you shopped at a store built on StoreMink",
-    `The merchant decides what to collect and why; we process it for them. Ask them first — they can change or remove your details, and we will help them do it.`,
+    `The merchant decides what to collect and why; we process it for them. Ask them first: they can change or remove your details, and we will help them do it.`,
     `A merchant may add their own analytics or advertising tags to their storefront. Those send data to the merchant's own accounts, not ours, and only after you allow that category on their site. You can withdraw that choice on the same site at any time. First-party measurement, where the merchant has switched it on, uses a key we rotate daily and does not store an identifier in your browser.`,
   ),
 
@@ -375,7 +375,7 @@ const AUP_BODY = [
 
   section(
     "4. Shared infrastructure and fair use",
-    `Sending reputation, rate limits and capacity are shared. Behaviour that degrades them for others — sustained abnormal load, mass automated requests, or sending patterns that trigger provider penalties — may be limited or stopped even where no other clause is breached. Where a feature has a published limit, working around it is a breach.`,
+    `Sending reputation, rate limits and capacity are shared. Behaviour that degrades them for others (sustained abnormal load, mass automated requests, or sending patterns that trigger provider penalties) may be limited or stopped even where no other clause is breached. Where a feature has a published limit, working around it is a breach.`,
   ),
 
   section(
@@ -386,7 +386,7 @@ const AUP_BODY = [
 
   section(
     "6. How we enforce it",
-    `We may investigate suspected breaches and may suspend a store, disable a feature, withhold a message, or terminate an account. Serious cases — fraud, harm to others, or anything we are legally required to report — may be referred to the authorities.`,
+    `We may investigate suspected breaches and may suspend a store, disable a feature, withhold a message, or terminate an account. Serious cases (fraud, harm to others, or anything we are legally required to report) may be referred to the authorities.`,
     `Where practical and lawful, we will tell you what the problem is and give you a chance to fix it first. Where the risk to customers, to other merchants or to the platform is serious, we may act first and explain afterwards.`,
   ),
 

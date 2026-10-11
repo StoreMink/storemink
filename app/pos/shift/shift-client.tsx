@@ -411,7 +411,7 @@ export function ShiftClient({
                 <h3 className="font-semibold">Count the drawer</h3>
                 <p className="mb-3 text-sm text-[var(--pos-ink-2)]">
                   Enter what is physically there. The expected figure is hidden
-                  until you have — a count you can see the answer to is not a
+                  until you have - a count you can see the answer to is not a
                   count.
                 </p>
                 <div className="flex flex-wrap items-end gap-2">

@@ -88,7 +88,7 @@ export function SmsTemplateEditor({
   function remove() {
     if (
       !window.confirm(
-        "Remove this SMS template? Your DLT registration is untouched — this only stops us sending this notification by SMS.",
+        "Remove this SMS template? Your DLT registration is untouched - this only stops us sending this notification by SMS.",
       )
     )
       return;
@@ -130,7 +130,7 @@ export function SmsTemplateEditor({
           Paste the body exactly as it was approved, using{" "}
           <code className="font-mono">{DLT_VARIABLE}</code> where each variable
           goes. Carriers in India drop any message whose text doesn&apos;t match
-          — with no bounce and no error — so the wording here has to be
+          - with no bounce and no error - so the wording here has to be
           character-for-character what your operator approved.
         </p>
       </div>
@@ -172,7 +172,7 @@ export function SmsTemplateEditor({
           </span>
           {segments > 1 && (
             <span className="text-amber-700 dark:text-amber-500">
-              Over one segment — check for ₹, emoji or curly quotes, which cut
+              Over one segment - check for ₹, emoji or curly quotes, which cut
               the limit from 160 characters to 70.
             </span>
           )}
@@ -211,7 +211,7 @@ export function SmsTemplateEditor({
                   <option value="">Choose a value…</option>
                   {variables.map((v) => (
                     <option key={v.name} value={v.name}>
-                      {v.name} — {v.description}
+                      {v.name} - {v.description}
                     </option>
                   ))}
                 </select>

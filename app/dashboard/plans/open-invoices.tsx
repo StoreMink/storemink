@@ -45,7 +45,7 @@ function period(from: string | null, to: string | null): string | null {
       month: "short",
       year: "numeric",
     });
-  return `${fmt(from)} — ${fmt(to)}`;
+  return `${fmt(from)} to ${fmt(to)}`;
 }
 
 export function OpenInvoices({
@@ -88,7 +88,7 @@ export function OpenInvoices({
           // merchant told "payment failed" pays twice (§26's rule, same shape).
           toast.info(done.error);
         } else if (done.planRestored) {
-          toast.success("Paid — your plan is active again.");
+          toast.success("Paid - your plan is active again.");
         } else {
           toast.success("Paid. Thank you!");
         }

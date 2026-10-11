@@ -398,7 +398,7 @@ export async function resolveReconciliationItem(input: {
   if (!note) {
     return {
       ok: false,
-      error: "Say what you found — this is the audit trail.",
+      error: "Say what you found - this is the audit trail.",
     };
   }
   try {

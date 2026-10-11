@@ -679,7 +679,7 @@ export function buildProductLaunchPreparationResult(
   const ready = checks.filter((item) => item.status === "ready").length;
   const readinessScore = Math.round((ready / Math.max(1, checks.length)) * 100);
   const displayName = snapshot.requestedVariantName
-    ? `${snapshot.productName} — ${snapshot.requestedVariantName}`
+    ? `${snapshot.productName} - ${snapshot.requestedVariantName}`
     : snapshot.productName;
 
   return {
@@ -875,7 +875,7 @@ export function buildDelayedPickupReviewResult(
       status: "prepared_for_review",
       orderReferences: preparationOrders.map((pickup) => pickup.orderRef),
       subject: "Update on pickup order [order reference]",
-      body: "We’re sorry—your pickup order [order reference] at [location] is taking longer than planned. We now expect it to be ready by [confirmed revised ready time]. Please wait for the ready-to-collect notice before travelling.",
+      body: "We’re sorry, your pickup order [order reference] at [location] is taking longer than planned. We now expect it to be ready by [confirmed revised ready time]. Please wait for the ready-to-collect notice before travelling.",
       note: "Confirm a revised ready time and verify the live order before adapting or sending this copy manually.",
     });
   }

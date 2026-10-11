@@ -151,7 +151,7 @@ function MetricValue({
       {stat.trendPct !== null ? (
         <span className={`dash-metric-delta ${deltaClass}`}>
           {flat
-            ? "—"
+            ? "-"
             : `${stat.direction === "up" ? "↑" : "↓"} ${Math.abs(stat.trendPct)}%`}
         </span>
       ) : null}

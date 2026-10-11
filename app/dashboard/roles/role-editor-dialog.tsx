@@ -123,7 +123,7 @@ export function RoleEditorDialog({ open, role, onClose, onSaved }: Props) {
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>
-            {isEditing ? `Edit role — ${role?.name}` : "New role"}
+            {isEditing ? `Edit role - ${role?.name}` : "New role"}
           </DialogTitle>
           <DialogDescription>
             Choose which dashboard sections this role can view and manage.

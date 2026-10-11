@@ -167,7 +167,7 @@ export function LayoutEditMode({
             <span className="text-[var(--pos-ink-2)]">
               {" · "}
               {placed.length} of {catalog.length} on the till
-              {placed.length === 0 && " — empty shows everything"}
+              {placed.length === 0 && " - empty shows everything"}
             </span>
           </div>
           <div className="flex items-center gap-1.5">

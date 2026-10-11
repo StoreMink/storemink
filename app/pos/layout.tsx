@@ -10,7 +10,7 @@ import { IdleLock } from "./idle-lock";
 import { PosNav } from "./pos-nav";
 import "./pos.css";
 
-export const metadata = { title: "Register — Point of Sale" };
+export const metadata = { title: "Register · Point of Sale" };
 
 // The POS app shell. Lives OUTSIDE the (storefront) route group, so it gets only
 // the root layout — its own chrome, no storefront header/footer. Gates on an

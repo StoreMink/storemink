@@ -103,7 +103,7 @@ export async function generateBrandVoice(
 
   const s = normalizeStructured(raw);
   if (!s.sell) {
-    return { error: "Tell us what you sell first — it anchors everything." };
+    return { error: "Tell us what you sell first - it anchors everything." };
   }
 
   const storeId = await getActingStoreId();
@@ -139,7 +139,7 @@ export async function generateBrandVoice(
 
   const userText = `Write a brand voice guide for the store below, in markdown, 250–400 words. Structure it as:
 
-# ${storeName} — Brand Voice
+# ${storeName} - Brand Voice
 ## Who we are        (2–3 sentences: what we sell, who it's for, why we exist)
 ## How we sound      (voice + tone in concrete terms, with 2 short example lines that SOUND like this brand)
 ## Words we use      (a handful of words/phrases that fit)
@@ -147,7 +147,7 @@ export async function generateBrandVoice(
 ## Rules we never break
   (always include: use only provided product facts, never invent details or numbers, no medical or curative claims, no guilt or body-shaming, no fake urgency)
 
-Use ONLY the merchant's answers below — do not invent products, history, or claims they didn't state. Output the markdown only: no preamble, no notes, no code fences.
+Use ONLY the merchant's answers below - do not invent products, history, or claims they didn't state. Output the markdown only: no preamble, no notes, no code fences.
 
 MERCHANT'S ANSWERS:
 ${answers}`;

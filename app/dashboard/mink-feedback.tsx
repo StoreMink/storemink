@@ -140,7 +140,7 @@ export function MinkFeedbackControls({
             onChange={(event) => setDetails(event.target.value)}
             maxLength={1000}
             rows={2}
-            placeholder="Optional details—do not include passwords, OTPs, or customer data"
+            placeholder="Optional details - do not include passwords, OTPs, or customer data"
             className="mt-2 w-full resize-none rounded-lg border border-[#dedede] px-2.5 py-2 text-xs outline-none focus:border-[#6d4dff]"
           />
           {error ? (

@@ -27,7 +27,7 @@ export function TopCategories({ items }: { items: TopCategory[] }) {
       <div className="dash-card-body">
         {items.length === 0 ? (
           <div className="py-8 text-center text-[13px] text-[var(--dash-text-3)]">
-            No categories yet — add some to see where sales come from.
+            No categories yet - add some to see where sales come from.
           </div>
         ) : (
           // Every category is listed, so the list scrolls inside the card
@@ -63,7 +63,7 @@ export function TopCategories({ items }: { items: TopCategory[] }) {
           // order subtotals, not to the Total sales card. Say so here, where
           // someone who just added the numbers up will be looking.
           <p className="dash-cat-note">
-            Line-item totals, before tax and discounts — so this won&rsquo;t
+            Line-item totals, before tax and discounts - so this won&rsquo;t
             match Total sales.
           </p>
         )}

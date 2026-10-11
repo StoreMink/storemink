@@ -169,7 +169,7 @@ export default async function HelpArticlePage({ params, searchParams }: Props) {
             <div className="hc-preview-bar" role="status">
               <span className="dot" aria-hidden />
               <span>
-                Draft preview — <b className="cap">{article.status}</b>. Only
+                Draft preview - <b className="cap">{article.status}</b>. Only
                 operators can see this; it isn&apos;t public or indexed.
               </span>
             </div>

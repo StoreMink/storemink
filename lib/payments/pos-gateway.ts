@@ -191,7 +191,7 @@ async function verifyCapturedAmount(
     return {
       ok: false,
       error:
-        "Couldn't confirm that payment with the gateway. Don't take it again — check and retry.",
+        "Couldn't confirm that payment with the gateway. Don't take it again - check and retry.",
     };
   }
   const p = fetched.data;
@@ -201,7 +201,7 @@ async function verifyCapturedAmount(
       error:
         p.status === "failed"
           ? "That payment failed. Take it again or use another method."
-          : "That payment hasn't completed yet. Don't take it again — retry in a moment.",
+          : "That payment hasn't completed yet. Don't take it again - retry in a moment.",
     };
   }
   if (p.currency !== "INR") {

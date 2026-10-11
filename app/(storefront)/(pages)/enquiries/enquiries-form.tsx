@@ -376,7 +376,7 @@ export default function EnquiriesForm({
               </div>
               <h2 className={styles.successTitle}>Enquiry sent!</h2>
               <p className={styles.successText}>
-                Thanks, {name.trim() || "there"} — we&rsquo;ve received your
+                Thanks, {name.trim() || "there"} - we&rsquo;ve received your
                 message and will be in touch within 1&ndash;2 business days. A
                 confirmation has been sent to <strong>{email.trim()}</strong>.
               </p>

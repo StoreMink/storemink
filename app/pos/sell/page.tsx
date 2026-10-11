@@ -8,7 +8,7 @@ import {
 import { SellClient } from "./sell-client";
 import { getPosExchangeContext } from "@/app/actions/pos-return-actions";
 
-export const metadata = { title: "Sell — Register" };
+export const metadata = { title: "Sell · Register" };
 
 export default async function PosSellPage({
   searchParams,

@@ -193,7 +193,7 @@ export function RolesManagementView({
                       </div>
                     </td>
                     <td className="dash-cell-sub max-w-[320px]">
-                      {role.description || "—"}
+                      {role.description || "-"}
                     </td>
                     <td className="dash-cell-sub">
                       {role.slug === "superadmin" ? (
@@ -241,7 +241,7 @@ export function RolesManagementView({
                           </DropdownMenuContent>
                         </DropdownMenu>
                       ) : (
-                        <span className="dash-cell-sub">—</span>
+                        <span className="dash-cell-sub">-</span>
                       )}
                     </td>
                   </tr>

@@ -144,7 +144,7 @@ export function CouponForm({ coupon, groups, allowsGroups = true }: Props) {
               className={fieldClass}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
-              placeholder="Optional — internal note (e.g. Summer sale)"
+              placeholder="Optional - internal note (e.g. Summer sale)"
             />
           </div>
 

@@ -69,13 +69,13 @@ export function decideReissue(input: ReissueInput): ReissueDecision {
   // the failure IS that we have asked too often, so asking again is the one
   // action guaranteed to prolong it. It clears by itself.
   if (input.failureReason === "RATE_LIMITED") {
-    return no("rate limited — a new certificate would deepen it");
+    return no("rate limited - a new certificate would deepen it");
   }
 
   // A CAA record forbidding Google applies to every certificate for the domain,
   // so a fresh one hits the identical wall. Only the merchant can fix this.
   if (input.failureReason === "CAA") {
-    return no("CAA record forbids issuance — reissuing changes nothing");
+    return no("CAA record forbids issuance - reissuing changes nothing");
   }
 
   // No recorded failure means Google is either working on it right now
@@ -88,13 +88,13 @@ export function decideReissue(input: ReissueInput): ReissueDecision {
   // justified because we can see that the cause is already gone.
   if (!input.cnameCorrect) {
     return no(
-      "challenge CNAME still wrong — the failure is current, not stale",
+      "challenge CNAME still wrong - the failure is current, not stale",
     );
   }
 
   // Cannot judge staleness without a timestamp, and acting blind here means
   // recreating a certificate Google may be authorizing this second.
-  if (!input.attemptTime) return no("no attemptTime — cannot judge staleness");
+  if (!input.attemptTime) return no("no attemptTime - cannot judge staleness");
 
   const attemptMs = Date.parse(input.attemptTime);
   if (Number.isNaN(attemptMs)) return no("unparseable attemptTime");

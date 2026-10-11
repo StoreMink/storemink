@@ -914,7 +914,7 @@ export const EMPTY_CONFIG: {
     heading: "Notes worth opening",
     subheading: "New releases, useful stories and occasional offers.",
     button_label: "Subscribe",
-    success_message: "You're on the list — thank you.",
+    success_message: "You're on the list - thank you.",
     consent_text: "I agree to receive store news and offers by email.",
     theme: "dark",
     alignment: "center",
@@ -1068,7 +1068,7 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
   hero: {
     label: "Hero",
     description:
-      "The big opening block — headline, button and image on a colour field.",
+      "The big opening block - headline, button and image on a colour field.",
     icon: "hero",
     category: "essentials",
     keywords: ["banner", "header", "headline", "cover", "splash", "cta"],
@@ -1114,7 +1114,7 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
   tile_grid: {
     label: "Tile Grid",
     description:
-      "Linked colour or image tiles — offers, collections, mini banners.",
+      "Linked colour or image tiles - offers, collections, mini banners.",
     icon: "tiles",
     category: "essentials",
     keywords: ["cards", "links", "grid", "offers", "collage"],
@@ -1168,7 +1168,7 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
   ticker: {
     label: "Ticker",
     description:
-      "A scrolling marquee of short messages — offers, news, announcements.",
+      "A scrolling marquee of short messages - offers, news, announcements.",
     icon: "ticker",
     category: "essentials",
     keywords: [
@@ -1191,7 +1191,7 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
   accordion: {
     label: "Collapsible Content",
     description:
-      "Rows a shopper opens as needed — shipping, care, materials — with an optional picture in each.",
+      "Rows a shopper opens as needed - shipping, care, materials - with an optional picture in each.",
     icon: "accordion",
     category: "content",
     keywords: [
@@ -1215,7 +1215,7 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
   multicolumn: {
     label: "Multi-column",
     description:
-      "Two to four columns of icon or picture, heading and copy — values, benefits, how it works.",
+      "Two to four columns of icon or picture, heading and copy - values, benefits, how it works.",
     icon: "multicolumn",
     category: "content",
     keywords: ["columns", "benefits", "values", "features", "icons", "steps"],
@@ -1223,7 +1223,7 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
   image_marquee: {
     label: "Image Marquee",
     description:
-      "A row of pictures drifting sideways — product shots, moods, press.",
+      "A row of pictures drifting sideways - product shots, moods, press.",
     icon: "image_marquee",
     category: "content",
     keywords: ["scrolling", "images", "strip", "carousel", "moodboard"],
@@ -1247,7 +1247,7 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
   product_spotlight: {
     label: "Product Spotlight",
     description:
-      "One product, large — its photo, name and price beside your copy and a link.",
+      "One product, large - its photo, name and price beside your copy and a link.",
     icon: "product_spotlight",
     category: "commerce",
     keywords: ["featured product", "hero product", "launch", "single", "focus"],
@@ -1284,7 +1284,7 @@ export const SECTION_TYPE_META: Record<HomepageSectionType, SectionTypeMeta> = {
   },
   rich_text: {
     label: "Rich Text",
-    description: "Free-form formatted text — headings, paragraphs, images.",
+    description: "Free-form formatted text - headings, paragraphs, images.",
     icon: "rich_text",
     category: "content",
     keywords: ["paragraph", "editor", "seo", "copy", "about"],
@@ -2026,7 +2026,7 @@ export function validateConfig(
       button_label: str(input.button_label).slice(0, 60) || "Subscribe",
       success_message:
         str(input.success_message).slice(0, 180) ||
-        "You're on the list — thank you.",
+        "You're on the list - thank you.",
       consent_text,
       theme: textTheme(input.theme, "dark"),
       alignment: input.alignment === "left" ? "left" : "center",

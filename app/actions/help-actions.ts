@@ -1084,7 +1084,7 @@ export async function reorderHelpCategories(
 const HELP_WRITER_FALLBACK = `You are a senior technical writer for StoreMink, an India-first no-code e-commerce store builder (like Shopify). You write clear, friendly, task-oriented help-centre articles for non-technical merchants.
 
 Rules:
-- Output clean semantic HTML only — use <h2>/<h3> for sections, <p>, <ul>/<ol>/<li>, <strong>, <a>. NO <html>, <head>, <body>, <h1>, inline styles, or scripts.
+- Output clean semantic HTML only - use <h2>/<h3> for sections, <p>, <ul>/<ol>/<li>, <strong>, <a>. NO <html>, <head>, <body>, <h1>, inline styles, or scripts.
 - Start with a one or two sentence intro (no heading), then step-by-step sections.
 - Use numbered lists for procedures. Be concise and concrete. Reference real StoreMink concepts (dashboard, storefront, plans: Free/Basic/Pro, custom domain, Razorpay, COD, GST) accurately; never invent features or prices.
 - Indian English, rupee (₹) for money. No marketing fluff.`;
@@ -1171,14 +1171,14 @@ export async function runHelpAiCommand(
 
   const system = `${await loadHelpWriterSystem()}
 
-OUTPUT CONTRACT — respond as JSON only:
+OUTPUT CONTRACT - respond as JSON only:
 - If the request is ambiguous or missing key details (which feature, the audience, the scope), set "action" to "clarify" and put ONE short question in "question". Do NOT write the article yet.
 - Otherwise set "action" to "apply" and return:
-  • "body": the COMPLETE article as clean semantic HTML. ALWAYS use <ol><li> for step-by-step procedures and <ul><li> for unordered lists — never fake lists with paragraphs, dashes or "1." text.
+  • "body": the COMPLETE article as clean semantic HTML. ALWAYS use <ol><li> for step-by-step procedures and <ul><li> for unordered lists - never fake lists with paragraphs, dashes or "1." text.
   • "excerpt": a one-line plain-text summary.
   • "seoTitle": <= 60 characters.
   • "seoDescription": a ~150-character plain-text meta description.
-Preserve the existing values I give you unless the instruction asks to change them — echo them back.`;
+Preserve the existing values I give you unless the instruction asks to change them - echo them back.`;
 
   const history = (input.history ?? [])
     .slice(-6)

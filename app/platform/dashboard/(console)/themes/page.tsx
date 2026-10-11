@@ -6,7 +6,7 @@ import { getThemeCatalog } from "@/lib/themes/runtime-registry";
 import { ThemesPanel } from "../themes-panel";
 import { canManage, requireOperator } from "../require-operator";
 
-export const metadata = { title: "Themes — StoreMink Admin" };
+export const metadata = { title: "Themes · StoreMink Admin" };
 
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "storemink.com";
 

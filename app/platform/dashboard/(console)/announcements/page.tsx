@@ -4,7 +4,7 @@ import { listAnnouncements } from "@/app/actions/announcement-actions";
 import { CATEGORY_META, describeAudience } from "@/lib/announcements/audience";
 import { requireOperator, canManage } from "../require-operator";
 
-export const metadata = { title: "Announcements — StoreMink Admin" };
+export const metadata = { title: "Announcements · StoreMink Admin" };
 
 // Telling merchants something.
 //
@@ -22,7 +22,7 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 function date(iso: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   return new Date(iso).toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "short",

@@ -160,7 +160,7 @@ export function ProductsManagementView({
         const skipped = Number(result.data?.skipped ?? 0);
         if (skipped > 0) {
           toast.warning(
-            `Deleted ${deleted} product${deleted === 1 ? "" : "s"}. ${skipped} ${skipped === 1 ? "has" : "have"} orders and ${skipped === 1 ? "was" : "were"} kept — unpublish ${skipped === 1 ? "it" : "them"} instead.`,
+            `Deleted ${deleted} product${deleted === 1 ? "" : "s"}. ${skipped} ${skipped === 1 ? "has" : "have"} orders and ${skipped === 1 ? "was" : "were"} kept - unpublish ${skipped === 1 ? "it" : "them"} instead.`,
           );
         } else {
           toast.success(successMsg);
@@ -488,7 +488,7 @@ export function ProductsManagementView({
                         {p.variants.length === 1 ? "variant" : "variants"}
                       </span>
                     ) : (
-                      "—"
+                      "-"
                     )}
                   </td>
                   <td>
@@ -666,7 +666,7 @@ export function ProductsManagementView({
             <DialogDescription>
               This permanently deletes the selected product
               {selection.count === 1 ? "" : "s"}, their variants and images.
-              This action cannot be undone. Products that have orders are kept —
+              This action cannot be undone. Products that have orders are kept -
               unpublish those instead.
             </DialogDescription>
           </DialogHeader>
@@ -705,7 +705,7 @@ export function ProductsManagementView({
             <DialogDescription>
               Are you sure you want to delete &ldquo;{deleteTarget?.name}
               &rdquo;? This also removes its variants and cannot be undone. A
-              product that has orders can&rsquo;t be deleted — unpublish it
+              product that has orders can&rsquo;t be deleted - unpublish it
               instead.
             </DialogDescription>
           </DialogHeader>

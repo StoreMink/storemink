@@ -173,7 +173,7 @@ export function InspectorPanel({
       <aside className="sm-builder-inspector">
         <div className="sm-builder-inspector-idle">
           <p className="sm-builder-inspector-idle-hint">
-            Click a section on the canvas — or in the outline — to edit it.
+            Click a section on the canvas - or in the outline - to edit it.
           </p>
           <Button
             variant="outline"
@@ -416,7 +416,7 @@ export function StyleForm({
           ))}
         </div>
         <p className="text-muted-foreground mt-1 text-[11px]">
-          One-click starting points — tweak anything below after.
+          One-click starting points - tweak anything below after.
         </p>
       </div>
 

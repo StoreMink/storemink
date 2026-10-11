@@ -37,6 +37,7 @@ export interface RzpPayment {
   id: string;
   order_id: string;
   amount: number; // paise
+  currency?: string;
   status: string; // created | authorized | captured | refunded | failed
 }
 
@@ -418,6 +419,46 @@ export function capturedPayment(payments: RzpPayment[]): RzpPayment | null {
   return payments.find((p) => p.status === "captured") ?? null;
 }
 
+/**
+ * Capture a payment the shopper AUTHORIZED but nobody captured yet.
+ *
+ * ★★ WHY IT EXISTS. Capture is an account SETTING at Razorpay, not something
+ * the order fixes, so on an account set to manual capture the checkout
+ * callback fires on authorization: the money is only held, Razorpay voids it
+ * after its capture window, and a refund of it fails because there is
+ * nothing captured to refund. Capturing the exact amount we created the
+ * order for, before marking the order paid, makes the store's own capture
+ * setting irrelevant.
+ *
+ * Capturing is idempotent at Razorpay in effect: a second capture of a
+ * captured payment is refused with a 4xx, and callers re-read the payment
+ * rather than trusting either answer.
+ */
+export async function rzpCapturePayment(
+  creds: RazorpayCreds,
+  paymentId: string,
+  amountPaise: number,
+): Promise<RzpResult<RzpPaymentDetail>> {
+  if (!paymentId) {
+    return { ok: false, error: "No payment to capture.", outcome: "rejected" };
+  }
+  if (!Number.isInteger(amountPaise) || amountPaise < 100) {
+    return {
+      ok: false,
+      error: "Amount too small to capture.",
+      outcome: "rejected",
+    };
+  }
+  return rzpFetch<RzpPaymentDetail>(
+    creds,
+    `/payments/${encodeURIComponent(paymentId)}/capture`,
+    {
+      method: "POST",
+      body: JSON.stringify({ amount: amountPaise, currency: "INR" }),
+    },
+  );
+}
+
 // ───────────────────────────────── Refunds ─────────────────────────────────
 // Money going back out (roadmap Step 2, docs/returns-exchanges-plan.md §3.2).
 //
@@ -502,15 +543,31 @@ export async function rzpRefund(
   );
 }
 
-/** Every refund recorded against a payment — the reconciliation source of
- *  truth when a create call's outcome was never learned. */
+/** Most refunds Razorpay returns in one page of the list endpoint. */
+export const RZP_REFUND_PAGE_SIZE = 100;
+
+/** Refunds recorded against a payment, one page at a time — the
+ *  reconciliation source of truth when a create call's outcome was never
+ *  learned.
+ *
+ *  ★ PAGED, because the list defaults to the newest 10. A payment with more
+ *  refunds than one page holds (a long run of partial returns) would hide an
+ *  older one, and reconcile reads "not in the list" as "never reached the
+ *  gateway" after its grace period, which fails a refund that really
+ *  happened and frees its amount to be refunded a second time. */
 export async function rzpFetchPaymentRefunds(
   creds: RazorpayCreds,
   paymentId: string,
+  page: { count?: number; skip?: number } = {},
 ): Promise<RzpResult<RzpRefund[]>> {
+  const count = Math.min(
+    RZP_REFUND_PAGE_SIZE,
+    Math.max(1, Math.trunc(page.count ?? RZP_REFUND_PAGE_SIZE)),
+  );
+  const skip = Math.max(0, Math.trunc(page.skip ?? 0));
   const res = await rzpFetch<{ items: RzpRefund[] }>(
     creds,
-    `/payments/${encodeURIComponent(paymentId)}/refunds`,
+    `/payments/${encodeURIComponent(paymentId)}/refunds?count=${count}&skip=${skip}`,
   );
   if (!res.ok) return res;
   return { ok: true, data: res.data.items ?? [] };

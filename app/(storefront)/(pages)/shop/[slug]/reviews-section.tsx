@@ -252,7 +252,7 @@ export default function ReviewsSection({
       <div className="pdp-review-list">
         {count === 0 ? (
           <p className="pdp-reviews-empty">
-            No reviews yet — be the first to review this product.
+            No reviews yet - be the first to review this product.
           </p>
         ) : (
           <>

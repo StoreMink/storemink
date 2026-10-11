@@ -149,7 +149,7 @@ async function sendInviteEmail(
     storeId,
     to,
     mailer: "pos_staff_invite",
-    devFallback: `🧾 POS STAFF INVITED (email not configured — dev fallback)\nEmail: ${to}\nRole: ${role}\nRegister: ${link}`,
+    devFallback: `🧾 POS STAFF INVITED (email not configured - dev fallback)\nEmail: ${to}\nRole: ${role}\nRegister: ${link}`,
     build: (brand) => buildPosStaffInviteEmail({ brand, name, role, link }),
   });
 }
@@ -555,7 +555,7 @@ export async function completeStaffRegistration(
       error:
         adminRows === null
           ? "Couldn't verify this account. Please try again."
-          : "This email is already a dashboard admin, and staff accounts can't sign in to the dashboard. Ask for the invitation to be sent to a different address — as an owner or admin you can already use the register without one.",
+          : "This email is already a dashboard admin, and staff accounts can't sign in to the dashboard. Ask for the invitation to be sent to a different address - as an owner or admin you can already use the register without one.",
     };
   }
 

@@ -31,7 +31,7 @@ export function MinkProactiveResponse({
           dashboard to review the full scope.
         </p>
       )}
-      <h4 className="font-medium">Suggested next steps—not executed</h4>
+      <h4 className="font-medium">Suggested next steps - not executed</h4>
       <ul className="list-disc space-y-2 pl-5">
         {result.nextSteps.map((s) => (
           <li key={s}>{s}</li>

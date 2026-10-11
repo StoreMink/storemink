@@ -70,7 +70,7 @@ export function DeliveryHealth({
               : `${total} emails couldn't be delivered`}
           </div>
           <div className="dash-card-sub">
-            In the last 7 days. These were sent but never arrived — usually a
+            In the last 7 days. These were sent but never arrived - usually a
             wrong address.
           </div>
         </div>

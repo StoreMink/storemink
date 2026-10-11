@@ -112,7 +112,7 @@ export function UsersManagementView({
       };
     }
     // Unknown / unseeded slug.
-    return { label: slug || "—", pillClass: "dash-badge-grey", Icon: KeyRound };
+    return { label: slug || "-", pillClass: "dash-badge-grey", Icon: KeyRound };
   };
 
   const handleAction = async () => {
@@ -168,7 +168,7 @@ export function UsersManagementView({
       <header className="dash-page-header row">
         <div>
           <h1>Admins</h1>
-          <p>Manage dashboard access — only authorised admins</p>
+          <p>Manage dashboard access - only authorised admins</p>
         </div>
         {canManage && canInvite && (
           <InviteUserDialog
@@ -257,7 +257,7 @@ export function UsersManagementView({
                   </td>
                   <td className="dash-col-actions">
                     {profile.id === currentUserId || !canManage ? (
-                      <span className="text-dim text-[12px]">—</span>
+                      <span className="text-dim text-[12px]">-</span>
                     ) : (
                       <DropdownMenu>
                         <DropdownMenuTrigger className="dash-row-menu">
@@ -380,7 +380,7 @@ export function UsersManagementView({
                     rather than quietly rely on it. */}
                 {newLocations.length === 0 && (
                   <p className="mt-1 text-[12.5px] text-[var(--dash-text-3)]">
-                    Nothing ticked — this person will see every location.
+                    Nothing ticked - this person will see every location.
                   </p>
                 )}
               </div>

@@ -171,7 +171,7 @@ export function OffersView({
 
       {loadError && (
         <div className="dash-card mb-4 border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-          {loadError} Your offers are safe — this is a read problem, and nothing
+          {loadError} Your offers are safe - this is a read problem, and nothing
           has changed.
         </div>
       )}
@@ -219,7 +219,7 @@ export function OffersView({
         {atCap && (
           <p className="px-5 pb-3 text-sm text-[var(--dash-ink-2)]">
             You are using all {limit} active offers your plan includes. Pause
-            one to activate another — nothing is deleted, and a paused offer
+            one to activate another - nothing is deleted, and a paused offer
             keeps its settings and its history.
           </p>
         )}
@@ -333,7 +333,7 @@ export function OffersView({
                       !autoApplyOn ? (
                         <span
                           className="dash-badge dash-badge-amber"
-                          title="Active, but automatic offers are switched off for this store — see the note above."
+                          title="Active, but automatic offers are switched off for this store - see the note above."
                         >
                           Not applying
                         </span>
@@ -418,7 +418,7 @@ export function OffersView({
       {locationCount > 1 && (
         <p className="mt-4 text-xs text-[var(--dash-ink-2)]">
           An offer limited to particular locations applies at those tills only.
-          Online orders are never location-limited — the shop that fulfils a web
+          Online orders are never location-limited - the shop that fulfils a web
           order is chosen by your routing rules, not by the customer.
         </p>
       )}
@@ -436,7 +436,7 @@ export function OffersView({
                   every line it touched, so invoices and returns are unaffected.
                   What goes is the record of who redeemed it. */}
               Orders that already used this offer keep their prices and their
-              records — invoices and returns are unaffected. What is deleted is
+              records - invoices and returns are unaffected. What is deleted is
               this offer&rsquo;s own redemption history
               {confirmDelete && confirmDelete.redemptionCount > 0
                 ? ` (${confirmDelete.redemptionCount} so far)`

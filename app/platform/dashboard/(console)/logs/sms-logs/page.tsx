@@ -3,7 +3,7 @@ import { SmsLogsView } from "@/app/dashboard/logs/sms-logs/sms-logs-view";
 import { pickPage, pickParam } from "@/app/dashboard/lib/list-params";
 import { requireOperator } from "../../require-operator";
 
-export const metadata = { title: "SMS logs — StoreMink Admin" };
+export const metadata = { title: "SMS logs · StoreMink Admin" };
 
 // Platform SMS.
 //

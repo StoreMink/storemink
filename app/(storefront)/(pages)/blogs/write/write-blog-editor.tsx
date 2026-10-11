@@ -314,7 +314,7 @@ export default function WriteBlogEditor({
       setEditingStatus("draft");
       setMode("edit");
       toast.success(
-        "Draft saved — you can finish it anytime from My Submissions",
+        "Draft saved - you can finish it anytime from My Submissions",
       );
     });
   };

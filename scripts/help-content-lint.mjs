@@ -653,10 +653,51 @@ export function lintUnwitnessedEdits(migration) {
     }));
 }
 
+/**
+ * ★ NO EM DASH IN HELP COPY (owner's rule, 2026-10-11).
+ *
+ * 20261011_0184 rewrote every em dash in the Help Centre, the rule
+ * app/long-dash-coverage.test.ts holds the product's own text to. Every Help
+ * migration AFTER it, in manifest order, is held to the same rule: one that
+ * publishes a dash puts one back, and one that QUOTES a dash in a replace()
+ * search argument quotes text that no longer exists, so its edit silently does
+ * nothing. Either way the fix is to write the copy without one.
+ *
+ * Migrations up to the cleanup are not checked: they are applied everywhere,
+ * so their SQL cannot change, and the cleanup already undid what they wrote.
+ * A migration from another branch that is merged after the cleanup but was
+ * already applied somewhere belongs in GRANDFATHERED_LONG_DASH.
+ */
+export const LONG_DASH_CLEANUP_ID = "20261011_0184_help_no_long_dashes";
+export const GRANDFATHERED_LONG_DASH = new Set();
+
+export const LONG_DASH_RULE = {
+  name: "long-dash",
+  pattern: /.{0,30}—.{0,30}/,
+  message:
+    'uses an em dash. StoreMink copy never does: write " - ", a comma or a colon instead, and "-" in a table cell that means "not included".',
+};
+
+export function lintLongDashes(migration) {
+  if (GRANDFATHERED_LONG_DASH.has(migration.id)) return [];
+  if (!touchesHelpContent(migration.sql)) return [];
+  if (parseAllowMarkers(migration.sql).has(LONG_DASH_RULE.name)) return [];
+  const hit = withoutSqlComments(migration.sql).match(LONG_DASH_RULE.pattern);
+  if (!hit) return [];
+  return [
+    {
+      rule: LONG_DASH_RULE.name,
+      message: LONG_DASH_RULE.message,
+      sample: hit[0].trim(),
+    },
+  ];
+}
+
 export async function lintManifest(manifestPath) {
   const manifest = await loadManifest(manifestPath);
   const failures = [];
   let checked = 0;
+  let afterDashCleanup = false;
   for (const migration of manifest.migrations) {
     const touches = touchesHelpContent(migration.sql);
     if (touches) checked += 1;
@@ -664,9 +705,11 @@ export async function lintManifest(manifestPath) {
       ...lintHelpSql(migration.sql, { id: migration.id }),
       ...(touches ? lintVerifyContract(migration) : []),
       ...lintUnwitnessedEdits(migration),
+      ...(afterDashCleanup ? lintLongDashes(migration) : []),
     ]) {
       failures.push({ id: migration.id, file: migration.file, ...finding });
     }
+    if (migration.id === LONG_DASH_CLEANUP_ID) afterDashCleanup = true;
   }
   failures.push(...lintStaleQuotes(manifest.migrations));
   return { checked, total: manifest.migrations.length, failures };

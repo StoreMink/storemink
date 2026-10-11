@@ -115,7 +115,7 @@ export function AuthorizeDevice({
           <h1 className="text-xl font-semibold">Replace a device</h1>
           <p className="mt-2 text-sm text-[var(--pos-ink-2)]">
             {locationName} already has its {full.cap} authorized devices. Pick
-            one to retire and this device takes its place — the one you choose
+            one to retire and this device takes its place - the one you choose
             is signed out of the register.
           </p>
 
@@ -180,7 +180,7 @@ export function AuthorizeDevice({
             <p className="mt-2 text-center text-sm text-[var(--pos-ink-2)]">
               Your staff can only sign into POS on a device you&apos;ve
               authorized. Authorize this one so cashiers and managers can log in
-              here — their personal phones won&apos;t work.
+              here - their personal phones won&apos;t work.
             </p>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
               <select

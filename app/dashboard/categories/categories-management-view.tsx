@@ -250,7 +250,7 @@ export function CategoriesManagementView({
             <DialogTitle>Delete category</DialogTitle>
             <DialogDescription>
               Delete &ldquo;{deleteTarget?.name}&rdquo;? Products in this
-              category won&rsquo;t be deleted — they&rsquo;ll become
+              category won&rsquo;t be deleted - they&rsquo;ll become
               uncategorized.
             </DialogDescription>
           </DialogHeader>

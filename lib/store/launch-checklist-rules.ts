@@ -181,7 +181,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       key: "products",
       title: "Add your first product",
       description:
-        "Publish at least one product of your own. Theme samples don't count — they're drafts your customers never see.",
+        "Publish at least one product of your own. Theme samples don't count - they're drafts your customers never see.",
       href: "/dashboard/products",
       action: "Add product",
       required: true,

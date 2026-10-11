@@ -14,7 +14,7 @@ import { CounterClient } from "../counter-client";
 // return is `refund`, both gated per action below and again inside the actions.
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Pickups — Register" };
+export const metadata = { title: "Pickups · Register" };
 
 export default async function PosPickupsPage() {
   const operator = await resolvePosOperator();

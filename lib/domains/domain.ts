@@ -73,12 +73,12 @@ export interface DomainCheck {
 const MESSAGES: Record<DomainRejection, string> = {
   invalid: "That doesn't look like a valid domain name.",
   not_a_domain:
-    "Enter a full domain, like shop.example.com or example.com — not just a name.",
+    "Enter a full domain, like shop.example.com or example.com - not just a name.",
   too_long: "That domain name is too long.",
   ip_address: "Enter a domain name, not an IP address.",
   wildcard:
     "Wildcard domains aren't supported. Connect each domain you want to use.",
-  platform_domain: `You already have a free ${ROOT_DOMAIN} address — connect a domain you own instead.`,
+  platform_domain: `You already have a free ${ROOT_DOMAIN} address - connect a domain you own instead.`,
   reserved: "That domain can't be used.",
 };
 

@@ -26,7 +26,11 @@
 
 import process from "node:process";
 import pg from "pg";
-import { HELP_LINT_RULES } from "./help-content-lint.mjs";
+import { HELP_LINT_RULES, LONG_DASH_RULE } from "./help-content-lint.mjs";
+
+// Published rows are held to the em dash rule too: a guide edited in the Help
+// console never passes through a migration, so only this can catch one.
+const AUDIT_RULES = [...HELP_LINT_RULES, LONG_DASH_RULE];
 
 const { Client } = pg;
 
@@ -81,7 +85,7 @@ async function main() {
     const text = renderedText(
       `${row.title}\n${row.excerpt ?? ""}\n${row.body ?? ""}`,
     );
-    for (const rule of HELP_LINT_RULES) {
+    for (const rule of AUDIT_RULES) {
       const hit = text.match(rule.pattern);
       if (hit)
         failures.push({
@@ -124,7 +128,7 @@ async function main() {
     byRule.get(f.rule).push(f);
   }
   for (const [rule, list] of byRule) {
-    const def = HELP_LINT_RULES.find((r) => r.name === rule);
+    const def = AUDIT_RULES.find((r) => r.name === rule);
     console.error(`\n  [${rule}] ${def.message}`);
     for (const f of list)
       console.error(`      ${f.slug} — found ${JSON.stringify(f.sample)}`);

@@ -2,10 +2,13 @@ import { describe, expect, test } from "vitest";
 import {
   GRANDFATHERED,
   GRANDFATHERED_VERIFY,
+  GRANDFATHERED_LONG_DASH,
   GRANDFATHERED_WITNESS,
   HELP_LINT_RULES,
+  LONG_DASH_CLEANUP_ID,
   extractReplacements,
   lintHelpSql,
+  lintLongDashes,
   lintManifest,
   lintStaleQuotes,
   lintUnwitnessedEdits,
@@ -467,6 +470,55 @@ describe("help content lint", () => {
     test("every shipped migration is witnessed or grandfathered", async () => {
       const { failures } = await lintManifest();
       expect(failures.filter((f) => f.rule === "unwitnessed-edit")).toEqual([]);
+    });
+  });
+  // ★ No em dash in Help copy once the cleanup has run (owner's rule).
+  describe("long dashes", () => {
+    const mig = (sql, id = "20261012_0185_next_help") => ({
+      id,
+      file: `sql/${id}.sql`,
+      sql,
+    });
+
+    test("flags an em dash a Help migration publishes", () => {
+      expect(
+        rules(lintLongDashes(mig(HELP("<p>Save it \u2014 then publish.</p>")))),
+      ).toEqual(["long-dash"]);
+    });
+
+    test("★ flags a quoted em dash too: that text no longer exists anywhere", () => {
+      const quote = `UPDATE public.help_articles SET body = replace(body, $old$Save it \u2014 then publish.$old$, $new$Save it, then publish.$new$) WHERE slug = 'x';`;
+      expect(rules(lintLongDashes(mig(quote)))).toEqual(["long-dash"]);
+    });
+
+    test("passes copy without one, and a dash that only sits in a comment", () => {
+      expect(
+        lintLongDashes(mig(HELP("<p>Save it, then publish.</p>"))),
+      ).toEqual([]);
+      expect(
+        lintLongDashes(
+          mig(
+            `-- Why: the old guide said \u2014 this.\n${HELP("<p>Fine.</p>")}`,
+          ),
+        ),
+      ).toEqual([]);
+    });
+
+    test("leaves migrations that never touch Help alone", () => {
+      expect(
+        lintLongDashes(mig("comment on table orders is 'a \u2014 b';")),
+      ).toEqual([]);
+    });
+
+    test("the cleanup is in the manifest, so the rule actually switches on", async () => {
+      const { failures } = await lintManifest();
+      expect(failures.filter((f) => f.rule === "long-dash")).toEqual([]);
+      const manifest = await import("../drizzle/migrations/manifest.json", {
+        with: { type: "json" },
+      });
+      const ids = manifest.default.migrations.map((m) => m.id);
+      expect(ids).toContain(LONG_DASH_CLEANUP_ID);
+      expect(GRANDFATHERED_LONG_DASH.size).toBe(0);
     });
   });
 });

@@ -844,7 +844,7 @@ export function BlogEditorDialog({
               <FieldGroup label="Categories">
                 {categoryOptions.length === 0 && categories.length === 0 && (
                   <p style={{ fontSize: 12, color: "#8b93a3", marginTop: 4 }}>
-                    No categories yet — add them in{" "}
+                    No categories yet - add them in{" "}
                     <NextLink href="/dashboard/blogs/settings">
                       Blog settings
                     </NextLink>
@@ -1057,7 +1057,7 @@ export function BlogEditorDialog({
                       marginBottom: 12,
                     }}
                   >
-                    Community submission pending review — set status to{" "}
+                    Community submission pending review - set status to{" "}
                     <strong>Published</strong> and save to approve it (the
                     author is emailed automatically).
                   </div>
@@ -1090,7 +1090,7 @@ export function BlogEditorDialog({
                 <SectionTitle>Tags</SectionTitle>
                 {tagOptions.length === 0 && tags.length === 0 && (
                   <p style={{ fontSize: 12, color: "#8b93a3", marginTop: 4 }}>
-                    No tags yet — add them in{" "}
+                    No tags yet - add them in{" "}
                     <NextLink href="/dashboard/blogs/settings">
                       Blog settings
                     </NextLink>

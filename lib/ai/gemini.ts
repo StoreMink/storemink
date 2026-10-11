@@ -16,6 +16,7 @@
 // URL + auth header differ. Callers see the same {text,error} contract either way.
 
 import { logInfo, logWarn, logError } from "@/lib/observability/logger";
+import { hasLongDash, withoutLongDashes } from "@/lib/text/long-dashes";
 
 export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
@@ -42,8 +43,14 @@ async function getVertexAccessToken(): Promise<string | null> {
 export function brandSystemText(brand: string): string {
   return `${brand}
 
-The text above is the brand's soul — its voice, tone, values and vocabulary. You ARE this brand speaking. Everything you write must sound exactly like it.`;
+The text above is the brand's soul: its voice, tone, values and vocabulary. You ARE this brand speaking. Everything you write must sound exactly like it.`;
 }
+
+// StoreMink copy never uses a long dash, and models reach for them constantly.
+// Every AI copy feature goes through callGemini, so the rule is added here once
+// and the reply is cleaned of any dash the model wrote anyway.
+export const NO_LONG_DASH_RULE =
+  'Never use an em dash or an en dash. Use a comma, a colon, a full stop or a plain hyphen instead, and write number ranges as "2 to 4".';
 
 export interface GeminiOptions {
   temperature?: number;
@@ -81,8 +88,8 @@ export async function callGemini(
   let authHeaders: Record<string, string>;
   // Message shown on a 400/403 — the likely cause differs by backend.
   const rejectionError = useVertex
-    ? "AI request rejected by Vertex AI — check the project has the Vertex AI API enabled and the credentials hold the 'Vertex AI User' role."
-    : "AI request rejected — check that GEMINI_API_KEY is valid.";
+    ? "AI request rejected by Vertex AI - check the project has the Vertex AI API enabled and the credentials hold the 'Vertex AI User' role."
+    : "AI request rejected - check that GEMINI_API_KEY is valid.";
 
   if (useVertex) {
     // Vertex AI: OAuth bearer token from ADC; project- and location-scoped URL.
@@ -109,7 +116,9 @@ export async function callGemini(
   }
 
   const requestBody = JSON.stringify({
-    systemInstruction: { parts: [{ text: systemText }] },
+    systemInstruction: {
+      parts: [{ text: `${systemText}\n\n${NO_LONG_DASH_RULE}` }],
+    },
     contents: [{ role: "user", parts: [{ text: userText }] }],
     generationConfig: {
       temperature: options.temperature ?? 0.7,
@@ -195,8 +204,8 @@ export async function callGemini(
     if (res.status === 401)
       return {
         error: useVertex
-          ? "AI request unauthorized — the Vertex AI credentials are invalid or expired."
-          : "AI request unauthorized — GEMINI_API_KEY is invalid or missing. Create one at https://aistudio.google.com/apikey.",
+          ? "AI request unauthorized - the Vertex AI credentials are invalid or expired."
+          : "AI request unauthorized - GEMINI_API_KEY is invalid or missing. Create one at https://aistudio.google.com/apikey.",
       };
     if (res.status === 404)
       return {
@@ -205,8 +214,8 @@ export async function callGemini(
     if (res.status === 429)
       return {
         error: useVertex
-          ? "AI quota exceeded on Vertex AI — check the project's quota."
-          : "AI quota exceeded — this GEMINI_API_KEY's project has no remaining Gemini quota. Enable billing on the key's Google Cloud project, or use a key that has quota.",
+          ? "AI quota exceeded on Vertex AI - check the project's quota."
+          : "AI quota exceeded - this GEMINI_API_KEY's project has no remaining Gemini quota. Enable billing on the key's Google Cloud project, or use a key that has quota.",
       };
     if (res.status >= 500)
       return {
@@ -250,5 +259,5 @@ export async function callGemini(
     outputTokens: usage?.candidatesTokenCount,
     totalTokens: usage?.totalTokenCount,
   });
-  return { text };
+  return { text: hasLongDash(text) ? withoutLongDashes(text) : text };
 }

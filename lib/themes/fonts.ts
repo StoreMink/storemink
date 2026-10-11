@@ -824,7 +824,7 @@ export const DIRECTION_PAIRINGS: Record<string, FontPairingKey[]> = (() => {
 export function describeFontCatalogue(): string {
   return THEME_FONT_FACES.map(
     (face) =>
-      `${DESIGN_FONTS[face.key]} = ${face.label} (${face.category}, ${face.range.min === face.range.max ? `weight ${face.range.min}` : `weights ${face.range.min}–${face.range.max}`}${face.italic ? ", italic" : ""}${face.body ? "" : ", display only — never a body face"})`,
+      `${DESIGN_FONTS[face.key]} = ${face.label} (${face.category}, ${face.range.min === face.range.max ? `weight ${face.range.min}` : `weights ${face.range.min}–${face.range.max}`}${face.italic ? ", italic" : ""}${face.body ? "" : ", display only - never a body face"})`,
   ).join("; ");
 }
 
@@ -832,6 +832,6 @@ export function describeFontCatalogue(): string {
 export function describeFontPairings(): string {
   return FONT_PAIRING_KEYS.map((key) => {
     const pairing = FONT_PAIRINGS[key];
-    return `${key}: ${pairing.label} — ${pairing.moods.join(", ")}`;
+    return `${key}: ${pairing.label} - ${pairing.moods.join(", ")}`;
   }).join("; ");
 }

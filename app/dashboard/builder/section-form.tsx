@@ -338,7 +338,7 @@ function OrderedPicker({
               <span className="flex-1 truncate text-sm">
                 {byId.get(id)?.name ?? (
                   <span className="text-[var(--dash-red)]">
-                    (missing — {id.slice(0, 8)}...)
+                    (missing - {id.slice(0, 8)}...)
                   </span>
                 )}
               </span>
@@ -736,7 +736,7 @@ export function HeroImageFields({
             />
           </button>
           <p className="text-muted-foreground mt-1 text-[11px]">
-            Click the subject. Every crop — wide desktop, tall phone — keeps
+            Click the subject. Every crop - wide desktop, tall phone - keeps
             this point in view.{" "}
             {value.focal_x !== undefined && (
               <button
@@ -1311,9 +1311,9 @@ function TileGridFields({
                 )
               }
             >
-              <option value={2}>2 — mini banners</option>
+              <option value={2}>2 - mini banners</option>
               <option value={3}>3</option>
-              <option value={4}>4 — offer tiles</option>
+              <option value={4}>4 - offer tiles</option>
             </select>
           </div>
           <div>
@@ -1345,7 +1345,7 @@ function TileGridFields({
             }}
           >
             <option value="grid">Even grid</option>
-            <option value="collage">Collage — tiles can span cells</option>
+            <option value="collage">Collage - tiles can span cells</option>
           </select>
         </div>
       </FieldGroup>
@@ -1729,7 +1729,7 @@ function MediaTextFields({
 
       <FieldGroup title="More stories" defaultOpen={stories.length > 0}>
         <p className="text-muted-foreground text-[11px]">
-          Further image-and-copy bands under this one — a process told in three
+          Further image-and-copy bands under this one - a process told in three
           beats, an ingredient per band. Each story chooses its own image side;
           the shape and alignment above apply to all of them.
         </p>
@@ -2030,8 +2030,8 @@ function ComparisonFields({
               set("style", e.target.value as ComparisonConfig["style"])
             }
           >
-            <option value="table">Table — rows and columns</option>
-            <option value="cards">Cards — one card per column</option>
+            <option value="table">Table - rows and columns</option>
+            <option value="cards">Cards - one card per column</option>
           </select>
         </div>
       </FieldGroup>
@@ -2344,7 +2344,7 @@ function MulticolumnFields({
             />
             <div>
               <label className={labelClass}>
-                Picture (optional — replaces the icon)
+                Picture (optional - replaces the icon)
               </label>
               <ImageUpload
                 folder="homepage"
@@ -3581,7 +3581,7 @@ function NewsletterFields({
               className={fieldClass}
               value={config.success_message}
               onChange={(e) => set("success_message", e.target.value)}
-              placeholder="You're on the list — thank you."
+              placeholder="You're on the list - thank you."
             />
           </div>
         </div>
@@ -4008,7 +4008,7 @@ function BlogFields({
           />
           {blogs.length === 0 && (
             <p className="text-muted-foreground mt-1 text-[11px]">
-              No published blogs yet — publish a post first.
+              No published blogs yet - publish a post first.
             </p>
           )}
         </div>
@@ -4052,7 +4052,7 @@ function RichTextFields({
           minHeight="180px"
         />
         <p className="text-muted-foreground mt-1 text-[11px]">
-          Basic HTML — headings, paragraphs, links, lists, images. Unsafe tags
+          Basic HTML - headings, paragraphs, links, lists, images. Unsafe tags
           and scripts are removed automatically.
         </p>
       </div>
@@ -4088,7 +4088,7 @@ function CustomCodeFields({
   return (
     <>
       <div className="rounded-md border border-[var(--dash-amber-border,#f0c67a)] bg-[var(--dash-amber-soft,#fdf6e7)] px-3 py-2 text-[11px] leading-relaxed text-[var(--dash-amber-ink,#8a6d1f)]">
-        Your code runs in a secure sandbox — isolated from the rest of your site
+        Your code runs in a secure sandbox - isolated from the rest of your site
         and from customer accounts. Great for self-contained widgets (carousels,
         embeds, animations).
       </div>

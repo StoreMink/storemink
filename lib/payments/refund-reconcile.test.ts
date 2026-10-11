@@ -36,6 +36,14 @@ vi.mock("@/lib/payments/razorpay", async (importOriginal) => ({
   rzpFetchPaymentRefunds: vi.fn(),
 }));
 
+vi.mock("@/lib/credit/store-credit", () => ({
+  creditReinstatedForOrder: vi.fn(async () => 0),
+  syncOrderCashback: vi.fn(async () => 0),
+}));
+vi.mock("@/lib/notifications/record", () => ({
+  recordEvent: vi.fn(async () => "ev-1"),
+}));
+
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
@@ -47,6 +55,11 @@ import {
   rzpFetchPaymentRefunds,
 } from "@/lib/payments/razorpay";
 import { logError } from "@/lib/observability/logger";
+import { recordEvent } from "@/lib/notifications/record";
+import {
+  creditReinstatedForOrder,
+  syncOrderCashback,
+} from "@/lib/credit/store-credit";
 import {
   reconcileOrderRefunds,
   refundDueForOrder,
@@ -112,8 +125,41 @@ function sqlText(fragment: unknown): string {
  * @param claimed  what the conditional UPDATE ... RETURNING gives back.
  *                 [] models losing the claim to a concurrent reconcile.
  */
-function seed(selects: any[][], claimed: any[] = [{ id: "rf-1" }]) {
-  dbHolder.current = makeDbMock({ selectQueue: selects, returning: claimed });
+function seed(
+  selects: any[][],
+  claimed: any[] = [{ id: "rf-1" }],
+  opts: { legs?: any[] } = {},
+) {
+  // Routed BY TABLE: the pending rows and the settled refunds are both
+  // `order_refunds` reads, the order row an `orders` read, and the counter
+  // payments an `order_payments` read — so a new read cannot shift the rest.
+  const [pending = [], orderRows, settled] = selects;
+  dbHolder.current = makeDbMock({
+    selectByTable: {
+      order_refunds: [pending, ...(settled ? [settled.map(asRefund)] : [])],
+      ...(orderRows ? { orders: [orderRows.map(asOrder)] } : {}),
+      order_payments: [opts.legs ?? []],
+    },
+    returning: claimed,
+  });
+}
+
+/** The old fixtures named the payment status `paid`; the facts reader reads
+ *  the order's full payment state. */
+function asOrder(row: any) {
+  return {
+    storeId: "store-1",
+    storeCreditUsed: 0,
+    paymentMethod: "razorpay",
+    status: "delivered",
+    deliveredAt: null,
+    ...row,
+    paymentStatus: row.paymentStatus ?? row.paid,
+  };
+}
+
+function asRefund(row: any) {
+  return { status: "completed", method: "razorpay", ...row };
 }
 
 beforeEach(() => {
@@ -395,7 +441,12 @@ describe("★ a settled row that loses its claim isn't counted either", () => {
 describe("syncOrderRefundState", () => {
   /** @param settled the `completed` refund rows on the order */
   function seedOrder(order: any, settled: any[]) {
-    seed([[order], settled]);
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        orders: [[asOrder(order)]],
+        order_refunds: [settled.map(asRefund)],
+      },
+    });
   }
 
   it("marks an order fully refunded when the refunds cover it", async () => {
@@ -463,7 +514,7 @@ describe("syncOrderRefundState", () => {
   });
 
   it("writes nothing for an order that doesn't exist", async () => {
-    seed([[], []]);
+    dbHolder.current = makeDbMock({ selectByTable: { orders: [[]] } });
     await syncOrderRefundState("nope");
     expect(dbHolder.current.calls.set).toHaveLength(0);
   });
@@ -480,6 +531,44 @@ describe("syncOrderRefundState", () => {
     expect(dbHolder.current.calls.set[0]).toMatchObject({
       paymentStatus: "refunded",
     });
+  });
+
+  it("★★ counts credit a cancellation reinstated as given back", async () => {
+    // ₹300 card + ₹200 credit, cancelled (₹200 reinstated), card refunded:
+    // everything has gone back, so the order is refunded, not stuck at
+    // "partially refunded" with ₹200 still reading as owed.
+    vi.mocked(creditReinstatedForOrder).mockResolvedValue(200);
+    seedOrder(
+      { total: 500, paid: "partially_refunded", storeCreditUsed: 200 },
+      [{ amount: 300 }],
+    );
+    await syncOrderRefundState("o1");
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      paymentStatus: "refunded",
+    });
+  });
+
+  it("★ never moves an UNPAID order's payment status, even after a credit refund", async () => {
+    // Flipping it to `refunded` would make it read as paid, and the money
+    // caps trust that: the next refund could hand out money nobody paid.
+    seedOrder(
+      {
+        total: 500,
+        paid: "pending",
+        paymentMethod: "cash_on_delivery",
+        status: "processing",
+        storeCreditUsed: 200,
+      },
+      [{ amount: 200, method: "store_credit" }],
+    );
+    await syncOrderRefundState("o1");
+    expect(dbHolder.current.calls.set).toHaveLength(0);
+  });
+
+  it("re-syncs the cashback the order earned", async () => {
+    seedOrder({ total: 500, paid: "paid" }, [{ amount: 500 }]);
+    await syncOrderRefundState("o1");
+    expect(syncOrderCashback).toHaveBeenCalledWith("o1");
   });
 
   it("★ swallows a DB failure — it is never the reason a page breaks", async () => {
@@ -619,6 +708,20 @@ describe("refundDueForOrder", () => {
     ...over,
   });
 
+  /** The due figure reads the order FRESH (so it can net off credit a
+   *  cancellation reinstated); the caller's own fields are ignored. */
+  function seed(rows: any[][], o: Record<string, unknown> = {}): void {
+    const base = order(o);
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        orders: [
+          [asOrder({ total: base.total, paid: base.paymentStatus, ...o })],
+        ],
+        order_refunds: [rows[0] ?? []],
+      },
+    });
+  }
+
   it("owes the whole total when nothing has gone back", async () => {
     seed([[]]);
     expect(await refundDueForOrder(order())).toBe(500);
@@ -647,27 +750,39 @@ describe("refundDueForOrder", () => {
   });
 
   it("still owes the balance on a partially_refunded order", async () => {
-    seed([[{ amount: 200, status: "completed" }]]);
+    seed([[{ amount: 200, status: "completed" }]], {
+      paymentStatus: "partially_refunded",
+    });
     expect(
       await refundDueForOrder(order({ paymentStatus: "partially_refunded" })),
     ).toBe(300);
   });
 
   it.each(["pending", "failed", "refunded", null, undefined, ""])(
-    "★ owes nothing on a %s order, without even asking the DB",
+    "★ owes nothing on a %s order",
     async (status) => {
       // Never captured, or already settled. Inventing an obligation is worse
-      // than missing one, and the early return keeps a cron cheap.
-      seed([[{ amount: 999, status: "completed" }]]);
+      // than missing one.
+      seed([[{ amount: 999, status: "completed" }]], {
+        paymentStatus: status as any,
+      });
       expect(
         await refundDueForOrder(order({ paymentStatus: status as any })),
       ).toBe(0);
-      expect(dbHolder.current.calls.select).toHaveLength(0);
     },
   );
 
+  it("★★ nets off store credit a cancellation already reinstated", async () => {
+    // ₹300 card + ₹200 credit, cancelled: the ₹200 is back in the balance,
+    // so only the ₹300 is still due. Reporting ₹500 sent merchants to refund
+    // the credit a second time.
+    vi.mocked(creditReinstatedForOrder).mockResolvedValue(200);
+    seed([[]], { storeCreditUsed: 200, status: "cancelled" });
+    expect(await refundDueForOrder(order())).toBe(300);
+  });
+
   it("treats a null total as owing nothing", async () => {
-    seed([[]]);
+    seed([[]], { total: null });
     expect(await refundDueForOrder(order({ total: null }))).toBe(0);
   });
 
@@ -714,7 +829,12 @@ describe("★ malformed rows fail safe rather than fail open", () => {
     // A null total makes the threshold zero, so any settled amount clears it.
     // "Partially refunded against an unknown total" would be a worse answer:
     // it implies a balance nobody can compute.
-    seed([[{ total: null, paid: "paid" }], [{ amount: 100 }]]);
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        orders: [[asOrder({ total: null, paid: "paid" })]],
+        order_refunds: [[asRefund({ amount: 100 })]],
+      },
+    });
     await syncOrderRefundState("o1");
     expect(dbHolder.current.calls.set[0]).toMatchObject({
       paymentStatus: "refunded",
@@ -724,7 +844,12 @@ describe("★ malformed rows fail safe rather than fail open", () => {
   it("counts a refund row with no amount as zero, not NaN", async () => {
     // Without the `?? 0` this returns NaN, and every comparison against NaN is
     // false — so the cap would silently stop bounding anything.
-    seed([[{ amount: null, status: "completed" }]]);
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        orders: [[asOrder({ total: 500, paid: "paid" })]],
+        order_refunds: [[{ amount: null, status: "completed" }]],
+      },
+    });
     expect(
       await refundDueForOrder({ id: "o1", total: 500, paymentStatus: "paid" }),
     ).toBe(500);
@@ -739,5 +864,83 @@ describe("★ malformed rows fail safe rather than fail open", () => {
     } as any);
     seed([[pendingRow(), pendingRow({ id: "rf-2" })]]);
     expect(await sweepPendingRefunds()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Till payments, long refund lists, and telling the customer
+// ---------------------------------------------------------------------------
+
+describe("settle — where the payment lives, and who is told", () => {
+  it("★★ finds a till sale's refund through its order_payments leg", async () => {
+    // A counter payment's id lives on order_payments, never on the order, so
+    // looking only at the order left these refunds pending for ever.
+    seed(
+      [
+        [pendingRow({ razorpay_payment_id: null, razorpay_order_id: null })],
+        [{ total: 500, paid: "paid" }],
+        [{ amount: 500 }],
+      ],
+      [{ id: "rf-1" }],
+      { legs: [{ reference: "pay_till_1" }] },
+    );
+    expect(await reconcileOrderRefunds("o1")).toBe(1);
+    expect(rzpFetchPaymentRefunds).toHaveBeenCalledWith(
+      GATEWAY.creds,
+      "pay_till_1",
+      expect.any(Object),
+    );
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      status: "completed",
+    });
+  });
+
+  it("★★ reads past the first page before deciding a refund never landed", async () => {
+    // The list defaults to the newest ten; an older refund on a payment with
+    // many partial refunds was "not found" and, after the grace window,
+    // failed, freeing its money to be refunded again.
+    const fullPage = Array.from({ length: 100 }, (_, i) =>
+      gatewayRefund({ id: `other_${i}`, notes: { sm_refund_key: `k${i}` } }),
+    );
+    vi.mocked(rzpFetchPaymentRefunds)
+      .mockResolvedValueOnce({ ok: true, data: fullPage } as any)
+      .mockResolvedValueOnce({ ok: true, data: [gatewayRefund()] } as any);
+    expect(await reconcileOrderRefunds("o1")).toBe(1);
+    expect(rzpFetchPaymentRefunds).toHaveBeenNthCalledWith(
+      2,
+      GATEWAY.creds,
+      "pay_1",
+      { count: 100, skip: 100 },
+    );
+  });
+
+  it("★ emails the customer once a pending refund settles", async () => {
+    // The refund action announces only refunds that settle while it waits,
+    // so one settled here used to send nothing at all.
+    seed([
+      [{ ...pendingRow(), order_ref: "ORD1", customer_id: "cust-1" }],
+      [{ total: 500, paid: "paid" }],
+      [{ amount: 500 }],
+    ]);
+    await reconcileOrderRefunds("o1");
+    expect(recordEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "order.refund_issued",
+        customerId: "cust-1",
+        payload: expect.objectContaining({
+          amount: 500,
+          paymentMethod: "razorpay",
+        }),
+      }),
+    );
+  });
+
+  it("tells nobody when the gateway says the refund failed", async () => {
+    vi.mocked(rzpFetchPaymentRefunds).mockResolvedValue({
+      ok: true,
+      data: [gatewayRefund({ status: "failed" })],
+    } as any);
+    await reconcileOrderRefunds("o1");
+    expect(recordEvent).not.toHaveBeenCalled();
   });
 });

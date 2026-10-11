@@ -18,7 +18,7 @@ import { AcceptanceEvidence, AcceptanceRunBadge } from "./acceptance-evidence";
 import { AcceptanceRunner } from "./acceptance-runner";
 import { acceptanceRepairDraft } from "@/lib/theme-studio/acceptance-repair";
 
-export const metadata = { title: "Theme acceptance — StoreMink Admin" };
+export const metadata = { title: "Theme acceptance · StoreMink Admin" };
 
 // Automated acceptance for one version: run the gates, read the evidence.
 // Evidence is bound to the version's package digest, its asset bytes and the

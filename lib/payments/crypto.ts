@@ -18,7 +18,7 @@ function credKey(): Buffer {
   const raw = process.env.PAYMENT_CRED_KEY;
   if (!raw) {
     throw new Error(
-      "PAYMENT_CRED_KEY is not set — cannot handle payment credentials.",
+      "PAYMENT_CRED_KEY is not set - cannot handle payment credentials.",
     );
   }
   const key = Buffer.from(raw, "base64");

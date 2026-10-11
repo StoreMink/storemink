@@ -200,7 +200,7 @@ describe("the history line", () => {
         }),
       ),
     ).toEqual({
-      text: "Drawn after a redraw; kept with a different setup from the other products — Different backdrop.",
+      text: "Drawn after a redraw; kept with a different setup from the other products - Different backdrop.",
       tone: "warn",
     });
     expect(

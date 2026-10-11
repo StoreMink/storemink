@@ -1008,6 +1008,10 @@ describe("markCollected — store credit", () => {
         customerId: "cust-1",
         amount: 340,
         orderId: "ord-1",
+        // ★ Its own ref. Checkout may already have spent credit on this
+        // order under the bare order id, and the ledger is unique per
+        // (kind, ref), so reusing it refused the hand-over.
+        ref: "ord-1:collect",
       }),
       expect.anything(),
     );

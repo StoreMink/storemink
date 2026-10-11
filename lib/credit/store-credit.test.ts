@@ -37,11 +37,13 @@ vi.mock("@/lib/db/client", () => ({
 
 import { logError } from "@/lib/observability/logger";
 import {
+  creditReinstatedForOrder,
   getCreditBalance,
   getCreditLedger,
   issueCredit,
   reinstateCreditForOrder,
   spendCredit,
+  syncOrderCashback,
 } from "./store-credit";
 
 const STORE = "store-1";
@@ -607,5 +609,240 @@ describe("getCreditLedger", () => {
       storeId: STORE,
       customerId: CUST,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The refund/cancel integrity additions (migration 0185)
+// ---------------------------------------------------------------------------
+
+describe("issueCredit inside the caller's transaction", () => {
+  it("★ runs on the handle it is given, so a failure rolls the caller back", async () => {
+    // A store-credit refund writes its order_refunds row and this ledger row
+    // in ONE transaction; opening a second one would let the row commit while
+    // the credit did not.
+    seed({ rpc: [[{ ok: true }]] });
+    const { withService } = await import("@/lib/db/client");
+    vi.mocked(withService).mockClear();
+    const res = await issueCredit(
+      {
+        storeId: STORE,
+        customerId: CUST,
+        amount: 100,
+        kind: "refund",
+        ref: "rf-9",
+      },
+      dbHolder.current.db,
+    );
+    expect(res).toEqual({ ok: true });
+    expect(withService).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.execute).toHaveLength(1);
+  });
+});
+
+describe("reinstateCreditForOrder, several spends", () => {
+  it("★ sums two spends by one customer into ONE reinstatement", async () => {
+    // Checkout spent ₹100 and the pickup counter spent ₹50 more. The
+    // reinstate row is keyed on the order, so one row per spend would have
+    // the second collide with the first and silently keep ₹50.
+    seed({
+      selects: [
+        [
+          { customer_id: CUST, delta: -100 },
+          { customer_id: CUST, delta: -50 },
+        ],
+        [{ total: "0" }],
+      ],
+      rpc: [[{ ok: true }]],
+    });
+    expect(await reinstateCreditForOrder(STORE, ORDER)).toBe(150);
+    expect(dbHolder.current.calls.execute).toHaveLength(1);
+    expect(rpcParams(dbHolder.current.calls.execute[0])[2]).toBe(150);
+  });
+
+  it("gives each customer back their own spend", async () => {
+    seed({
+      selects: [
+        [
+          { customer_id: "a", delta: -100 },
+          { customer_id: "b", delta: -40 },
+        ],
+        [{ total: "0" }],
+      ],
+      rpc: [[{ ok: true }], [{ ok: true }]],
+    });
+    expect(await reinstateCreditForOrder(STORE, ORDER)).toBe(140);
+    const params = dbHolder.current.calls.execute.map(rpcParams);
+    expect(params.map((p: unknown[]) => [p[1], p[2]])).toEqual([
+      ["a", 100],
+      ["b", 40],
+    ]);
+  });
+});
+
+describe("creditReinstatedForOrder", () => {
+  it("reports what a cancellation already gave back", async () => {
+    seed({ selects: [[{ total: "120.50" }]] });
+    expect(await creditReinstatedForOrder(STORE, ORDER)).toBe(120.5);
+  });
+
+  it("never reports a negative amount", async () => {
+    seed({ selects: [[{ total: "-5" }]] });
+    expect(await creditReinstatedForOrder(STORE, ORDER)).toBe(0);
+  });
+
+  it("reads through the caller's transaction when given one", async () => {
+    seed({ selects: [[{ total: "30" }]] });
+    const { withService } = await import("@/lib/db/client");
+    vi.mocked(withService).mockClear();
+    expect(
+      await creditReinstatedForOrder(STORE, ORDER, dbHolder.current.db),
+    ).toBe(30);
+    expect(withService).not.toHaveBeenCalled();
+  });
+});
+
+describe("syncOrderCashback", () => {
+  const paidOrder = {
+    storeId: STORE,
+    customerId: CUST,
+    total: 1000,
+    status: "processing",
+    paymentStatus: "paid",
+    paymentMethod: "razorpay",
+    deliveredAt: null,
+    storeCreditUsed: 0,
+  };
+
+  function seedCashback(opts: {
+    order?: Record<string, unknown> | null;
+    ledger?: any[];
+    refunded?: string;
+    taken?: number;
+  }) {
+    const selects: any[][] = [
+      opts.order === null ? [] : [{ ...paidOrder, ...(opts.order ?? {}) }],
+      opts.ledger ?? [],
+    ];
+    if (opts.refunded !== undefined) selects.push([{ total: opts.refunded }]);
+    seed({
+      selects,
+      rpc: [[{ taken: opts.taken ?? 0 }]],
+    });
+  }
+
+  it("does nothing for an order with no customer", async () => {
+    seedCashback({ order: { customerId: null } });
+    expect(await syncOrderCashback(ORDER)).toBe(0);
+    expect(dbHolder.current.calls.execute).toHaveLength(0);
+  });
+
+  it("does nothing when no cashback was ever issued", async () => {
+    seedCashback({ ledger: [] });
+    expect(await syncOrderCashback(ORDER)).toBe(0);
+    expect(dbHolder.current.calls.execute).toHaveLength(0);
+  });
+
+  it("★★ a CANCELLED order takes back all the cashback it earned", async () => {
+    seedCashback({
+      order: { status: "cancelled" },
+      ledger: [{ kind: "cashback", delta: 100 }],
+      taken: 100,
+    });
+    expect(await syncOrderCashback(ORDER)).toBe(100);
+    const call = dbHolder.current.calls.execute[0];
+    expect(rpcText(call)).toContain("reverse_customer_cashback");
+    const params = rpcParams(call);
+    expect(params[2]).toBe(100);
+    // Keyed on the TARGET, so a re-run that wants the same total is a no-op
+    // at the unique index rather than a second deduction.
+    expect(params[3]).toBe(`${ORDER}:10000`);
+    expect(params[4]).toBe("Order cancelled");
+  });
+
+  it("★ a half-refunded order takes back half", async () => {
+    seedCashback({
+      ledger: [{ kind: "cashback", delta: 100 }],
+      refunded: "500",
+      taken: 50,
+    });
+    expect(await syncOrderCashback(ORDER)).toBe(50);
+    expect(rpcParams(dbHolder.current.calls.execute[0])[2]).toBe(50);
+  });
+
+  it("only takes the part not already reversed", async () => {
+    seedCashback({
+      ledger: [
+        { kind: "cashback", delta: 100 },
+        { kind: "cashback_reversal", delta: -50 },
+      ],
+      refunded: "1000",
+      taken: 50,
+    });
+    await syncOrderCashback(ORDER);
+    expect(rpcParams(dbHolder.current.calls.execute[0])[2]).toBe(50);
+  });
+
+  it("does nothing once the reversal has caught up", async () => {
+    seedCashback({
+      ledger: [
+        { kind: "cashback", delta: 100 },
+        { kind: "cashback_reversal", delta: -50 },
+      ],
+      refunded: "500",
+    });
+    expect(await syncOrderCashback(ORDER)).toBe(0);
+    expect(dbHolder.current.calls.execute).toHaveLength(0);
+  });
+
+  it("counts store credit the order was paid with as part of its value", async () => {
+    // ₹1,000 order: ₹600 card + ₹400 credit. Refunding the ₹600 card part
+    // is 60% of the value, so 60% of the cashback comes back.
+    seedCashback({
+      order: { storeCreditUsed: 400 },
+      ledger: [{ kind: "cashback", delta: 100 }],
+      refunded: "600",
+      taken: 60,
+    });
+    await syncOrderCashback(ORDER);
+    expect(rpcParams(dbHolder.current.calls.execute[0])[2]).toBe(60);
+  });
+
+  it("★ logs when the customer already spent the cashback", async () => {
+    seedCashback({
+      order: { status: "cancelled" },
+      ledger: [{ kind: "cashback", delta: 100 }],
+      taken: 30,
+    });
+    expect(await syncOrderCashback(ORDER)).toBe(30);
+    expect(logError).toHaveBeenCalledWith(
+      "credit.cashback_reversal_short",
+      expect.any(Error),
+      expect.objectContaining({ orderId: ORDER, wanted: 100, taken: 30 }),
+    );
+  });
+
+  it("is silent before migration 0185 creates the function", async () => {
+    seedCashback({
+      order: { status: "cancelled" },
+      ledger: [{ kind: "cashback", delta: 100 }],
+    });
+    dbHolder.current.db.execute = vi.fn(async () => {
+      throw Object.assign(new Error("function does not exist"), {
+        code: "42883",
+      });
+    });
+    expect(await syncOrderCashback(ORDER)).toBe(0);
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("★ never throws into the refund or cancel that called it", async () => {
+    brokenDb();
+    expect(await syncOrderCashback(ORDER)).toBe(0);
+    expect(logError).toHaveBeenCalledWith(
+      "credit.cashback_reversal",
+      expect.any(Error),
+      { orderId: ORDER },
+    );
   });
 });

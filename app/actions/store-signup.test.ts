@@ -532,7 +532,7 @@ describe("createStore provisioning", () => {
       return originalInsert(table);
     });
     expect(await createStore(INPUT)).toEqual({
-      error: "That name was just taken — try another.",
+      error: "That name was just taken - try another.",
     });
   });
 

@@ -120,7 +120,7 @@ export async function publishChrome(
 
   const existing = await readRow(storeId);
   if (!existing) {
-    return { error: "Nothing to publish yet — save a change first." };
+    return { error: "Nothing to publish yet - save a change first." };
   }
   if (expectedUpdatedAt && existing.updated_at !== expectedUpdatedAt) {
     return {

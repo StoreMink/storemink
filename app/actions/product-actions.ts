@@ -875,7 +875,7 @@ export async function updateProduct(
 // ---------------------------------------------------------------------------
 
 const PRODUCT_HAS_ORDERS_ERROR =
-  "This product has orders, so it can't be deleted — your order history still needs it. Unpublish it instead to hide it from your store.";
+  "This product has orders, so it can't be deleted - your order history still needs it. Unpublish it instead to hide it from your store.";
 
 /** Which of `ids` are referenced by at least one order line. */
 async function productIdsWithOrders(
@@ -1060,7 +1060,7 @@ export async function bulkDeleteProducts(ids: string[]): Promise<ActionResult> {
       error:
         ids.length === 1
           ? PRODUCT_HAS_ORDERS_ERROR
-          : "None of these products can be deleted because they all have orders — your order history still needs them. Unpublish them instead to hide them from your store.",
+          : "None of these products can be deleted because they all have orders - your order history still needs them. Unpublish them instead to hide them from your store.",
     };
   }
 
@@ -1124,7 +1124,7 @@ export interface DescriptionResult {
 }
 
 // Used if product-desc.md can't be read, so the button never hard-fails.
-const FALLBACK_TASK = `Write ONE product description of roughly 40–60 words in the brand's voice, using only the product details provided. Output only the description text — no preamble, no options, no notes, no quotation marks, no markdown. Lead with the belief or the real ingredients, never a number. If a detail isn't provided, leave it out — never invent a fact.`;
+const FALLBACK_TASK = `Write ONE product description of roughly 40–60 words in the brand's voice, using only the product details provided. Output only the description text - no preamble, no options, no notes, no quotation marks, no markdown. Lead with the belief or the real ingredients, never a number. If a detail isn't provided, leave it out - never invent a fact.`;
 
 // The task layer lives in brand/tasks/ (deployed app content). The /product-desc
 // slash command points to the SAME file, so both surfaces stay in sync.
@@ -1193,7 +1193,7 @@ export async function generateProductDescription(
   const userText = `${taskRules}
 
 ---
-PRODUCT DETAILS — the only source of facts. Never invent anything beyond these:
+PRODUCT DETAILS - the only source of facts. Never invent anything beyond these:
 
 ${facts.join("\n")}`;
 
@@ -1231,7 +1231,7 @@ export interface SeoResult {
   error?: string;
 }
 
-const FALLBACK_SEO_TASK = `Return ONLY a JSON object with two string keys, "seo_title" and "seo_description". seo_title: ~50–60 characters (never over 60), lead with the product name, plain and searchable, no hype or caps. seo_description: ~140–160 characters (never over 160), one or two calm sentences in the brand's voice saying what it is and why it's real, no hard sell, no urgency, no medical claims. Use only the product details provided — never invent a fact or number. Output the raw JSON only: no markdown, no code fences, no extra text.`;
+const FALLBACK_SEO_TASK = `Return ONLY a JSON object with two string keys, "seo_title" and "seo_description". seo_title: ~50–60 characters (never over 60), lead with the product name, plain and searchable, no hype or caps. seo_description: ~140–160 characters (never over 160), one or two calm sentences in the brand's voice saying what it is and why it's real, no hard sell, no urgency, no medical claims. Use only the product details provided - never invent a fact or number. Output the raw JSON only: no markdown, no code fences, no extra text.`;
 
 async function loadSeoTaskRules(): Promise<string> {
   try {
@@ -1279,7 +1279,7 @@ export async function generateProductSeo(input: SeoInput): Promise<SeoResult> {
   const userText = `${taskRules}
 
 ---
-PRODUCT DETAILS — the only source of facts. Never invent anything beyond these:
+PRODUCT DETAILS - the only source of facts. Never invent anything beyond these:
 
 ${facts.join("\n")}`;
 

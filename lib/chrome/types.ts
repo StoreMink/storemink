@@ -268,7 +268,7 @@ export const DEFAULT_CHROME: StoreChrome = {
     newsletter: {
       enabled: true,
       heading: "Stay in the loop",
-      subtext: "New arrivals, offers and stories — no spam.",
+      subtext: "New arrivals, offers and stories - no spam.",
       buttonLabel: "Subscribe",
       consentText: "I agree to receive store news and offers by email.",
     },

@@ -56,7 +56,7 @@ export function BrandingForm({
     <form className="brandingPage" onSubmit={onSubmit}>
       <h1>Branding</h1>
       <p className="lead">
-        How your store looks to customers — logo, name, colours, contact details
+        How your store looks to customers - logo, name, colours, contact details
         and social links.
       </p>
 

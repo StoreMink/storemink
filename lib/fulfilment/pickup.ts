@@ -23,12 +23,7 @@ import { PICKUP_WARN_HOURS } from "@/lib/pos/collection-state";
 
 import { and, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import {
-  inventoryLevels,
-  orders,
-  stockReservations,
-  storeLocations,
-} from "@/drizzle/schema";
+import { inventoryLevels, orders, storeLocations } from "@/drizzle/schema";
 import {
   locationCan,
   normalizeCapabilities,
@@ -42,9 +37,9 @@ import {
   type PickupPaymentPolicy,
 } from "@/lib/fulfilment/payment-policy";
 import { getCurrentStore } from "@/lib/store/resolve";
-import { releaseHold } from "@/lib/inventory/reservations";
 import { recordEvent } from "@/lib/notifications/record";
 import { refundDueForOrder } from "@/lib/payments/refund-reconcile";
+import { releaseCancelledOrder } from "@/lib/orders/cancel";
 import { lineKey, type OrderLineForRouting } from "./resolve";
 
 export interface PickupLocation {
@@ -300,25 +295,22 @@ export async function sweepExpiredPickups(limit = 200): Promise<number> {
   }
 
   for (const order of claimed) {
-    try {
-      const holds = await withService((db) =>
-        db
-          .select({ id: stockReservations.id })
-          .from(stockReservations)
-          .where(
-            and(
-              eq(stockReservations.ownerType, "pickup"),
-              eq(stockReservations.ownerId, order.id),
-              eq(stockReservations.status, "held"),
-            ),
-          ),
-      );
-      for (const h of holds) await releaseHold(h.id);
-    } catch (err) {
-      // The order is already cancelled. A stranded hold still lapses via its
-      // own TTL sweep, so this is recoverable rather than lost stock.
-      console.error("sweepExpiredPickups (holds):", order.id, err);
-    }
+    // ★★ THE SHARED CANCELLATION CLEANUP, not a hand-written subset of it.
+    // This loop used to release the pickup holds and nothing else, so store
+    // credit the order was paid with was never given back: an expired
+    // collection kept the customer's balance. releaseCancelledOrder releases
+    // the holds (a pickup reserved nothing, so there is no stock to return),
+    // reinstates the credit exactly once, and re-syncs what is still owed and
+    // the cashback earned. It never throws; a stranded hold still lapses via
+    // its own TTL sweep.
+    await releaseCancelledOrder(
+      order.store_id,
+      order.id,
+      withService,
+      "pickup_expired",
+    ).catch((err) =>
+      console.error("sweepExpiredPickups (release):", order.id, err),
+    );
 
     // ★ A CRON CANNOT PROMPT, SO IT HAS TO TELL.
     // An expired pickup that was PAID FOR leaves the store holding money for

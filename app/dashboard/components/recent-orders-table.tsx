@@ -40,7 +40,7 @@ export function RecentOrdersTable({ orders }: { orders: RecentOrder[] }) {
       </div>
       {orders.length === 0 ? (
         <div className="px-5 py-10 text-center text-[13px] text-[var(--dash-text-3)]">
-          No orders yet — new orders will show up here.
+          No orders yet - new orders will show up here.
         </div>
       ) : (
         <ResponsiveTable className="dash-table">

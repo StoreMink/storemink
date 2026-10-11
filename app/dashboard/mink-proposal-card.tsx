@@ -1255,7 +1255,7 @@ const UNREACHABLE_MINK_ACTION =
   "StoreMink couldn't reach Mink AI. Check your connection and try again.";
 
 const UNKNOWN_ACTION_OUTCOME =
-  "StoreMink couldn't confirm whether that change was applied, so nothing was assumed either way. Confirm this same approval again — repeating it is safe and reports what actually happened.";
+  "StoreMink couldn't confirm whether that change was applied, so nothing was assumed either way. Confirm this same approval again - repeating it is safe and reports what actually happened.";
 
 /**
  * A failed Mink action request, carrying whether the server actually decided.

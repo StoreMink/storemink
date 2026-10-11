@@ -182,7 +182,7 @@ export function PosLoginClient({
           <h1 className="mt-4 text-lg font-semibold">Set up this device</h1>
           <p className="mt-2 text-sm text-[var(--pos-ink-2)]">
             Your sign-in is correct. For security the register only runs on a
-            device the store owner has approved — enter a pairing code from
+            device the store owner has approved - enter a pairing code from
             Dashboard → POS → Devices to set this one up.
           </p>
 

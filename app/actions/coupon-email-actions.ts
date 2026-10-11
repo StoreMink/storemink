@@ -448,7 +448,7 @@ export async function sendCouponEmail(
     console.error("Failed to enqueue recipients:", err);
     return {
       error:
-        "Could not queue all recipients. Some may not receive the email — check the logs.",
+        "Could not queue all recipients. Some may not receive the email - check the logs.",
     };
   }
 

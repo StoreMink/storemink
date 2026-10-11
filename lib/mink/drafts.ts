@@ -442,7 +442,7 @@ function assertEditableDraft(kind: MinkDraftKind): void {
   ) {
     throw new MinkRequestError(
       "mink_storefront_proposal_immutable",
-      "This storefront proposal is review-only. It cannot be edited, saved or restored — ask Mink for a new one instead.",
+      "This storefront proposal is review-only. It cannot be edited, saved or restored - ask Mink for a new one instead.",
       409,
     );
   }

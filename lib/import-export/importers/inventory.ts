@@ -148,7 +148,7 @@ export async function importInventory(
       targets.set(v.sku.toUpperCase(), {
         productId: v.productId,
         variantId: v.id,
-        label: `${v.productName} — ${v.name}`,
+        label: `${v.productName} - ${v.name}`,
       });
     }
   } catch (error) {
@@ -178,7 +178,7 @@ export async function importInventory(
             record.line,
             "SKU",
             "unknown_sku",
-            `No product or variant in this store has the SKU "${rawSku}". SKUs are issued by StoreMink — export your inventory first to get the right ones.`,
+            `No product or variant in this store has the SKU "${rawSku}". SKUs are issued by StoreMink - export your inventory first to get the right ones.`,
             "error",
             rawSku,
           ),
@@ -285,7 +285,7 @@ export async function importInventory(
 
       await withService((db) =>
         db.execute(
-          sql`select adjust_stock_at(p_store => ${ctx.storeId}, p_location => ${location.id}, p_product => ${target.productId}, p_variant => ${target.variantId}, p_delta => ${delta}, p_reason => ${"import"}, p_note => ${`CSV import — counted ${onHand} at ${location.name}`}, p_actor => ${ctx.admin.uid}) as new_stock`,
+          sql`select adjust_stock_at(p_store => ${ctx.storeId}, p_location => ${location.id}, p_product => ${target.productId}, p_variant => ${target.variantId}, p_delta => ${delta}, p_reason => ${"import"}, p_note => ${`CSV import - counted ${onHand} at ${location.name}`}, p_actor => ${ctx.admin.uid}) as new_stock`,
         ),
       );
 

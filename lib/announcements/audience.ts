@@ -72,7 +72,7 @@ export const CATEGORY_META: Record<
   },
   operational: {
     label: "Operational notice",
-    hint: "Service correspondence about an account they already have — an outage, a policy change, a billing deadline. Reaches everyone, including people who opted out of marketing.",
+    hint: "Service correspondence about an account they already have - an outage, a policy change, a billing deadline. Reaches everyone, including people who opted out of marketing.",
     honoursOptIn: false,
   },
 };

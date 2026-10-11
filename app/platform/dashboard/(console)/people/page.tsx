@@ -6,7 +6,7 @@ import { peopleHref } from "@/lib/platform/people-links";
 import { requireOperator } from "../require-operator";
 import { PeopleSearch } from "./people-search";
 
-export const metadata = { title: "People — StoreMink Admin" };
+export const metadata = { title: "People · StoreMink Admin" };
 
 // ---------------------------------------------------------------------------
 // Who can sign in to a merchant store — across every store.
@@ -70,7 +70,7 @@ export default async function PeoplePage({
             People
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Everyone who can sign in to a merchant store — dashboard admins and
+            Everyone who can sign in to a merchant store - dashboard admins and
             till staff.
           </p>
         </div>
@@ -80,7 +80,7 @@ export default async function PeoplePage({
       {!result.ok ? (
         <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          Couldn&apos;t read the directory — the database query failed.
+          Couldn&apos;t read the directory - the database query failed.
         </div>
       ) : null}
 
@@ -113,7 +113,7 @@ export default async function PeoplePage({
             href="/dashboard/people"
             className="inline-flex items-center rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100"
           >
-            Filtered to one store — clear
+            Filtered to one store - clear
           </Link>
         ) : null}
       </div>
@@ -152,7 +152,7 @@ export default async function PeoplePage({
                     <td className="px-5 py-3.5">
                       <div className="font-medium text-slate-900">
                         {person.name || (
-                          <span className="text-slate-400">—</span>
+                          <span className="text-slate-400">-</span>
                         )}
                       </div>
                       <div className="text-slate-500">{person.email}</div>

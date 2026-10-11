@@ -58,7 +58,7 @@ const STANDARD_ITEMS = [
     icon: Palette,
     number: "03",
     title: "Made to become yours",
-    body: "Change color, type, imagery and sections without code—while the theme keeps the details beautifully coherent.",
+    body: "Change color, type, imagery and sections without code - while the theme keeps the details beautifully coherent.",
   },
 ] as const;
 
@@ -217,7 +217,7 @@ export default async function ThemesPage({
               </h2>
             </div>
             <p>
-              Each theme is a complete point of view—not just a new color
+              Each theme is a complete point of view - not just a new color
               palette. Browse by business, preview the real storefront, then
               customize every surface in StoreMink.
             </p>
@@ -328,8 +328,9 @@ export default async function ThemesPage({
             <p className="themes-overline">The StoreMink standard</p>
             <h2>More than a beautiful first impression.</h2>
             <p>
-              The details people notice—and the ones they don&apos;t have to—are
-              already considered. Your job is to make it feel like your brand.
+              The details people notice - and the ones they don&apos;t have to -
+              are already considered. Your job is to make it feel like your
+              brand.
             </p>
           </div>
           <div className="themes-standard-grid">

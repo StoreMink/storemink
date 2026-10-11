@@ -303,7 +303,7 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
     table: "activity_events",
     days: 365,
     reason:
-      "The audit trail, so it gets the longest life — a year covers 'who changed this?' " +
+      "The audit trail, so it gets the longest life - a year covers 'who changed this?' " +
       "long after the fact. Financial records (orders, refunds, credit notes) live in " +
       "their own tables and are NOT touched by this.",
     deleteBatch: batchDeleter(
@@ -340,8 +340,8 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
     table: "data_job_issues",
     days: 90,
     reason:
-      "The per-ROW error log for an import. It quotes raw cells — for an orders " +
-      "export that means customer addresses — so it gets the same short life as " +
+      "The per-ROW error log for an import. It quotes raw cells - for an orders " +
+      "export that means customer addresses - so it gets the same short life as " +
       "email bodies. 90 days outlasts any 'why did row 40 fail?' question.",
     deleteBatch: batchDeleter(
       dataJobIssues,
@@ -377,7 +377,7 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
     table: "pos_parked_sales",
     days: 7,
     reason:
-      "A park is a note to self for the shift, not a promise — it holds no stock and " +
+      "A park is a note to self for the shift, not a promise - it holds no stock and " +
       "no prices, so a resumed cart re-prices anyway. 7 days covers 'the customer is " +
       "coming back Saturday' and still keeps the 20-per-counter cap usable.",
     deleteBatch: batchDeleter(
@@ -393,7 +393,7 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
     reason:
       "One row per delivery, forever, and nothing read them. They are exactly-once " +
       "markers, so the only risk in deleting one is a REPLAY of that same event " +
-      "being processed twice — and no gateway retries for anything like 90 days " +
+      "being processed twice - and no gateway retries for anything like 90 days " +
       "(Razorpay gives up in hours). Keyed on the provider's event_id and dated " +
       "received_at, not id/created_at.",
     deleteBatch: batchDeleter(

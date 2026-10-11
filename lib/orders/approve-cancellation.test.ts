@@ -113,4 +113,20 @@ describe("approveCancellation", () => {
     expect(res.success).toBe(true);
     expect(res.refundError).toBe("balance too low");
   });
+
+  it("★★ is not a failure when the reinstated credit already settled the order", async () => {
+    // An order paid entirely with store credit gets that credit back from the
+    // cancellation itself, so the refund step finds nothing due. Reporting
+    // that as "refund failed" is wrong, and refunding it again as credit is
+    // how a ₹500 order left its customer holding ₹1,000.
+    vi.mocked(issueRefund).mockResolvedValue({
+      error: "This order has already been fully refunded.",
+      code: "nothing_due",
+    });
+    const res = await approveCancellation(
+      input({ refundDestination: "store_credit" }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.refundError).toBeUndefined();
+  });
 });
