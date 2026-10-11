@@ -55,8 +55,8 @@ The modal closes the popup and shows the number, the display name and its
 review state, the daily sending limit, the quality rating and **Live**. In
 the database the row holds the token and PIN encrypted, `app_subscribed_at`
 and `registered_at` set; `GET /{WABA_ID}/subscribed_apps` with the merchant's
-token lists the StoreMink app. _Not yet verified: needs the Embedded Signup
-configuration (runbook §4.3)._
+token lists the StoreMink app. _Not yet verified: the Dev app's configuration
+exists (2026-10-11, runbook §4.3); waits on the dev deploy carrying its ID._
 
 **WA-1.4 — Cancel is not an error.** Close Meta's popup at any step: no
 toast, no row, the modal is where it was.
@@ -241,13 +241,13 @@ never queued behind one. Signed out, a poll answers 401. _Pinned by
 
 ## Known gaps
 
-| Gap                                                                                                                                                 | Since      | Status                      |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------------------------- |
-| The connect flow has not run against a live Embedded Signup popup — the Dev app's configuration (runbook §4.3) does not exist yet                   | 2026-10-08 | Waiting on the console step |
-| An unreachable database reads as "not connected" on the Channels card (the SMS card's documented gap, shared)                                       | 2026-10-08 | Open                        |
-| Template submission, the status webhook, echoes and media download follow Meta's published shapes but have not run against live Meta                | 2026-10-08 | With the live verification  |
-| Dashboard replies are text only; a photo or file must be sent from the phone                                                                        | 2026-10-08 | Phase 2                     |
-| Coexistence contact/history sync (`smb_app_state_sync`) is recorded, not processed — a thread starts at the first message after connecting          | 2026-10-08 | Phase 2                     |
-| No assignment, labels, notes, canned replies, business hours or search inside messages; the thread shows the latest 200 messages                    | 2026-10-08 | Phase 2                     |
-| A STOP gets no acknowledgement message; the opt-out is recorded silently                                                                            | 2026-10-08 | Phase 2 (auto-replies)      |
-| Inbound media is kept in the public media bucket at an unguessable path, like the Media Library; a customer's photo is as public as a product photo | 2026-10-08 | Open                        |
+| Gap                                                                                                                                                              | Since      | Status                                  |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------------------------------------- |
+| The connect flow has not run against a live Embedded Signup popup — the Dev app's configuration exists (2026-10-11) but the dev deploy does not carry its ID yet | 2026-10-08 | Waiting on `_WHATSAPP_CONFIG_ID` on dev |
+| An unreachable database reads as "not connected" on the Channels card (the SMS card's documented gap, shared)                                                    | 2026-10-08 | Open                                    |
+| Template submission, the status webhook, echoes and media download follow Meta's published shapes but have not run against live Meta                             | 2026-10-08 | With the live verification              |
+| Dashboard replies are text only; a photo or file must be sent from the phone                                                                                     | 2026-10-08 | Phase 2                                 |
+| Coexistence contact/history sync (`smb_app_state_sync`) is recorded, not processed — a thread starts at the first message after connecting                       | 2026-10-08 | Phase 2                                 |
+| No assignment, labels, notes, canned replies, business hours or search inside messages; the thread shows the latest 200 messages                                 | 2026-10-08 | Phase 2                                 |
+| A STOP gets no acknowledgement message; the opt-out is recorded silently                                                                                         | 2026-10-08 | Phase 2 (auto-replies)                  |
+| Inbound media is kept in the public media bucket at an unguessable path, like the Media Library; a customer's photo is as public as a product photo              | 2026-10-08 | Open                                    |
