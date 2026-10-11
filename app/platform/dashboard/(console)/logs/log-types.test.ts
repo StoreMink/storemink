@@ -59,7 +59,9 @@ describe("PLATFORM_LOG_TYPES", () => {
   // feed; those entries would render as rail links to routes that 404.
   it("does not carry the merchant-only log types", () => {
     const platformKeys = new Set(PLATFORM_LOG_TYPES.map((t) => t.key));
-    for (const merchantOnly of ["activity", "imports", "exports"]) {
+    // WhatsApp is merchant-only too: every message goes out on a merchant's
+    // own number, so there is no platform-scoped WhatsApp log to list.
+    for (const merchantOnly of ["activity", "imports", "exports", "whatsapp"]) {
       expect(
         LOG_TYPES.some((t) => t.key === merchantOnly),
         `${merchantOnly} should still exist in the merchant registry`,

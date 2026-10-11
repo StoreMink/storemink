@@ -2052,3 +2052,66 @@
   [data-sm="footer-newsletter"] {
   display: none;
 }
+
+/* ── WhatsApp chat button (slice 3) ─────────────────────────────────────────
+   Rendered by the layout only for a store with a live number and the switch
+   on (lib/whatsapp/storefront.ts). WhatsApp's own green so shoppers read it
+   as WhatsApp, not as a theme button; the label hides on phones, where the
+   glyph alone is the convention. Kept clear of the cart drawer (z-50). */
+.storefront-root .sm-wa-chat {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 35;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 16px 0 12px;
+  border-radius: 999px;
+  background: #25d366;
+  color: #fff;
+  font-family: var(--font-outfit, inherit);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  box-shadow: 0 6px 20px rgba(var(--sm-shadow-rgb, 0, 0, 0), 0.22);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.storefront-root .sm-wa-chat svg {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+.storefront-root .sm-wa-chat:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 26px rgba(var(--sm-shadow-rgb, 0, 0, 0), 0.26);
+}
+.storefront-root .sm-wa-chat:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+@media (max-width: 640px) {
+  .storefront-root .sm-wa-chat {
+    width: 52px;
+    min-height: 52px;
+    padding: 0;
+    justify-content: center;
+  }
+  .storefront-root .sm-wa-chat-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+@media print {
+  .storefront-root .sm-wa-chat {
+    display: none;
+  }
+}

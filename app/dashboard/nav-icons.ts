@@ -12,6 +12,7 @@
 // can import it as long as nothing here forces it client-side. Keep it that way.
 
 import {
+  MessageCircle,
   Bell,
   LayoutGrid,
   Package,
@@ -76,6 +77,7 @@ export const navIcons = {
   inventory: Boxes,
   analytics: BarChart3,
   enquiries: MessageSquare,
+  inbox: MessageCircle,
   blogs: PenLine,
   marketing: Megaphone,
   promotions: Gift,

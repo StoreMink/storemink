@@ -80,6 +80,9 @@ import {
   recordStorePolicyConsent,
   getCheckoutPolicies,
 } from "@/lib/legal/store-consent";
+import { recordWhatsAppConsent } from "@/lib/whatsapp/consent";
+import { storeCanSendWhatsApp } from "@/lib/whatsapp/channel";
+import type { WhatsAppConsentInput } from "@/lib/whatsapp/consent-copy";
 import { summariseItems } from "@/lib/notifications/format";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
 import type { OrderPlacedEvent } from "@/lib/orders/mark-paid";
@@ -669,6 +672,10 @@ export interface CheckoutConfig {
    *  screen reads this to explain instead of rendering a button that always
    *  fails; placeOrder enforces it, so this is a courtesy, not the boundary. */
   demo: boolean;
+  /** True when the store can send WhatsApp updates — the checkout shows the
+   *  opt-in boxes ONLY then (docs/whatsapp-commerce-plan.md §19.2): no consent
+   *  is collected for a channel that cannot deliver. */
+  whatsapp: boolean;
   /** True while the store has not opened and this visitor holds no password
    *  grant; placeOrder refuses in that state. Courtesy only, like `demo`. */
   closed: boolean;
@@ -684,13 +691,17 @@ export async function getCheckoutConfig(): Promise<CheckoutConfig> {
   // amount actually applied is recomputed and deducted atomically in
   // placeOrder, so a stale figure on screen can't overspend a balance.
   const user = await getServerUser();
-  const storeCredit = user ? await getCreditBalance(store.id, user.id) : 0;
+  const [storeCredit, whatsapp] = await Promise.all([
+    user ? getCreditBalance(store.id, user.id) : Promise.resolve(0),
+    storeCanSendWhatsApp(store.id),
+  ]);
   return {
     onlinePayments: !!creds,
     keyId: creds?.keyId ?? null,
     storeName: store.name,
     storeCredit,
     demo: isDemoStore(store),
+    whatsapp,
     closed:
       isStorefrontGated(store) && (await storefrontAccess(store)) === "locked",
   };
@@ -855,6 +866,11 @@ export async function placeOrder(
   /** Displayed amount paired with the selected id. A changed provider quote is
    *  shown again instead of silently charging more than the shopper accepted. */
   selectedShippingRateAmount?: number | null,
+  /** The WhatsApp boxes at checkout: order updates (ticked by default) and
+   *  offers (never by default). Null when the store showed no boxes. Recorded
+   *  against the delivery phone AFTER the order lands, and only when the store
+   *  really can send — the server re-checks, so a forged value writes nothing. */
+  whatsappConsent?: WhatsAppConsentInput | null,
 ): Promise<CheckoutResult> {
   // Authenticate the shopper via the identity seam (session-backed).
   const user = await getServerUser();
@@ -2249,6 +2265,20 @@ export async function placeOrder(
     context: "checkout",
     policies: await getCheckoutPolicies(storeId),
   });
+
+  // The WhatsApp boxes, against the number this order will be updated on.
+  // Same placement and the same best-effort rule as the policy consent above.
+  if (whatsappConsent) {
+    await recordWhatsAppConsent({
+      storeId,
+      phone: form.phone,
+      userId: user.id,
+      consent: {
+        updates: Boolean(whatsappConsent.updates),
+        marketing: Boolean(whatsappConsent.marketing),
+      },
+    });
+  }
 
   // True when money still has to come through the gateway before this order is
   // real. Credit covering the whole total is NOT waiting on anything — the

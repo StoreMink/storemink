@@ -92,6 +92,187 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### WhatsApp Commerce — Phase 1 slice 3: The inbox (2026-10-08)
+
+Plan §11 built: the moment a customer receives "Order confirmed" they reply
+to it, and until now that reply was a `whatsapp_inbound_events` row nobody
+read. **Dashboard → Inbox** (permission section `inbox`, group Workspace,
+view/manage; shown only once a number is connected, with the needs-reply
+count as its badge — a count that demands action and goes away) lists one
+conversation per contact and the open thread beside it, with the customer's
+recent orders, store credit and consent in a strip above the messages.
+★★ ONE CONVERSATION PER CONTACT, FOUND BY UPSERT (migration `20261008_0177`:
+`whatsapp_conversations` UNIQUE on (store, contact); `whatsapp_messages`
+UNIQUE partial on (store, provider*message_id)). `lib/whatsapp/inbox.ts`
+`recordInboundMessage` upserts the contact (wa_id, profile name, `user_id`
+matched through `storedPhoneVariants` with a real account winning over a
+`pos*`row, and`last_inbound_at`— the 24-hour window clock, moved by
+inbound messages ONLY), upserts the conversation, then inserts the message
+with DO NOTHING; only an INSERTED message bumps`unread_count`, reopens the
+conversation as `needs_reply` and rings the bell, so Meta's week-long
+redeliveries change nothing twice. The bell (`whatsapp.message_received`,
+section `inbox`, in-app only) fires for the FIRST message since staff last
+answered, not per message. ★ Media is fetched AFTER the recording
+transaction commits (`storeInboundMedia`: `GET /{media_id}`→ bearer
+download, capped at 25 MB, hosts pinned to Meta's so a forged payload cannot
+make us present the token elsewhere) into`stores/{id}/whatsapp/…` in our
+bucket — Meta's URLs expire and need the token; a failed fetch leaves the
+message with its caption and an error, never lost. ★ COEXISTENCE ECHOES
+(`smb_message_echoes`) are exploded one row per message and filed as
+outbound `source = phone_app`: the merchant answered from the WhatsApp
+Business app, so the conversation becomes `open`, the window clock does
+NOT move, nothing is unread. `smb_app_state_sync` stays unhandled (pending
+rows, pruned at 30 days). The status webhook now also advances the thread's
+copy of a sent message (`applyStatusToMessage`, forward-only rank, outbound
+only). ★ STOP IS A MARKETING OPT-OUT, NOT A SILENCE (plan §10):
+`classifyWhatsAppInbound` (`inbox-intent.ts`, pure; English, Hinglish and
+Devanagari; ≤3 words after a courtesy word; **"cancel" is deliberately NOT
+an opt-out** — on WhatsApp it is about an order) sets `marketing_opt_out_at`;
+order updates continue, and START re-opts-in only a contact who had opted
+in before. `inbox-parse.ts`(pure) turns every Meta message type — text,
+five media kinds, location, contacts, button/interactive replies, catalogue
+orders, reactions, unsupported — into one bounded row (4,096-char body,
+200-char name, 50-item payloads).
+★★ REPLIES GO THROUGH THE SAME CHOKE POINT.`sendWhatsAppText`joins`sendWhatsAppTemplate`in`send.ts`(one log row each;`send-coverage.test.ts`now greps both Graph sends).`app/actions/inbox-actions.ts` re-checks the
+window server-side (`serviceWindow`, 24 h from the contact's
+`last_inbound_at`; the composer's countdown is a hint) and answers
+`window_closed`, after which only an APPROVED customer-audience template may
+be sent, with every `{{n}}`filled by staff; a reply is rate-limited at 60 a
+minute per admin, refused on a paused/lapsed number before any send, and
+filed by`recordOutboundMessage`(sent → the conversation is`open`and
+read; failed → the row carries Meta's reason). Reading is not answering:`markInboxRead`clears unread and leaves status alone;`needs_reply` is
+never set by hand. ★ POLLING IS A ROUTE (`/api/dashboard/inbox/live`,
+`need=list|thread|count`, the `/api/pos/live`rule) riding`usePoll`'s
+visibility/online gates and back-off; a signed-out poll gets a 401, not the
+login page's HTML. Phones get the list and a sheet for the thread.
+Three ways in for customers: `whatsapp.chatButton` (registry, default ON —
+the button renders only on a connected, enabled number, and no store had one
+before this shipped) puts a floating wa.me link on every storefront page
+(`lib/whatsapp/storefront.ts`: switch and plan read off the store row, so a
+store with it off costs no query; never in the builder preview); the
+Channels card shows the same link as a QR (`whatsapp-qr.tsx`, zxing's
+writer, the collection-code precedent); and the shopper's account page gains
+a WhatsApp card (`customer-whatsapp-actions.ts`) that writes through the one
+`recordWhatsAppConsent` with the account page's own words
+(`whatsAppConsentCopy("account")`) — three surfaces, three snapshots. Help:
+`20261008_0178`publishes`reply-to-whatsapp-messages`and edits one
+sentence of the order-updates guide in place. ⚠ Not built: dashboard
+replies with media, assignment/labels/notes, search inside messages, and
+the pending`smb_app_state_sync` handler (Phase 2). ⚠ Not run against live
+Meta: echo and media shapes follow Meta's reference; the inbound text path
+is the one Phase 0 proved end to end.
+
+### WhatsApp Commerce — Phase 1 slice 2: Order updates (2026-10-08)
+
+Plan §8 built: a WhatsApp notification is the SMS channel with a better
+provider, so it rides the same spine — fan-out branch, queue, worker, choke
+point, log, Failures source, log rail — and `lib/notifications/channels.ts`
+flips `whatsapp` to **available** on the same reasoning SMS flipped on: that
+flag is a platform statement, and deliverability per store is resolved at
+fan-out in `lib/whatsapp/channel.ts` by FOUR conditions (SMS has three): a
+connected, enabled number on a plan that still includes WhatsApp; the
+merchant's per-event per-audience switch; an **APPROVED** template for that
+event and audience; and, for a customer, their own opt-in.
+★★ THE TEMPLATE IS THE SWITCH, AND STOREMINK HOLDS IT. Meta approves exact
+wording, so unlike DLT (where the merchant mirrors an approval they obtained
+elsewhere) `lib/whatsapp/template-catalog.ts` is the one place the copy
+lives: 19 UTILITY templates (12 customer, 7 team), positional `{{n}}` bodies
+mapped onto `variableNamesFor` names exactly as `renderDltBody` maps `{#var#}`,
+one example per placeholder for Meta's review, named
+`sm_<event>_<audience>_v1`. `template-catalog.test.ts` pins every rule Meta
+applies at review (lowercase names, sequential never-adjacent placeholders,
+none first or last, ≤1024 chars) because a refused submission is a store
+whose updates silently never send. `templates.ts` bootstraps them on
+connect (best-effort, after the account row lands) and from the card's
+**Set up templates**; Meta's "already exists" (subcode 2388023) reads as
+existing, a dead token (190) stops the loop and marks `needs_reauth`, a
+refusal lands in the new `sync_error` column — distinct from
+`rejection_reason`, which is Meta turning DOWN a template it accepted for
+review. Status comes from Meta only: the create response, `sync` (listing by
+name on Refresh), or the status webhook 0174 already handled.
+★ A CUSTOMER NEEDS THEIR OWN YES (`whatsapp_contacts`, migration 0175): the
+checkout shows two boxes ONLY when `getCheckoutConfig().whatsapp` is true —
+updates ticked by default, offers never (§19.2) — and `placeOrder` records
+them AFTER the order lands via `recordWhatsAppConsent`, which snapshots the
+exact label beside the timestamp (the §25 shape) and re-checks
+`storeCanSendWhatsApp` so a forged field writes nothing for a channel that
+cannot deliver. An untick withdraws only an opt-in currently in force. Staff
+need no opt-in (plan §8). `textablePhone` normalises both sides, so a
+legacy ten-digit `users.phone` still matches the E.164 contact.
+★★ ONE MESSAGE PER PERSON PER EVENT. `whatsapp.updatePrecedence` (registry,
+group WhatsApp, section `channels`; `whatsapp_first` default, `sms_first`,
+`both`) decides at fan-out: `record.ts` queues the first channel for everyone
+it can reach and the second only for whoever the first could not — no
+consent, no approved template, no connection. Phones are looked up ONCE for
+both channels. `record-whatsapp.test.ts` pins all three orders and every
+fallback. ★ `loadWhatsAppSender` reads the precedence and the plan in the same
+query as the token, so a lapsed plan pauses the channel without deleting it.
+★★ THE LOG IS A TIMELINE. `sendWhatsAppTemplate` (`send.ts`, the choke point;
+`send-coverage.test.ts` fails on any other caller of the Graph send or any
+other file naming `graph.facebook.com`) writes `whatsapp_logs` with the
+provider message id, and `inbound.ts` now processes `messages` rows of kind
+`status` — sent/delivered/read/failed — onto that row by id, ranked in SQL so
+a late `delivered` cannot demote a `read`, with Meta's error code and title on
+a failure. Inbound MESSAGE rows stay unprocessed for slice 3. The worker
+(`worker.ts`, on the send-emails heartbeat) re-checks consent at send, refuses
+a template no longer approved or no longer the id queued, treats `unknown` as
+terminal, and retries only Meta's throttle codes (`RETRYABLE_META_CODES`) —
+a number not on WhatsApp is still not on WhatsApp in five minutes.
+Surfaces: a **WhatsApp** tab on each notification (`whatsapp-template-panel.tsx`:
+the approved wording rendered with sample values, Meta's review state and
+advice per state; the switch is refused without a connection, mirroring the
+SMS rule, but NOT on approval — Meta decides that on its own clock and the
+fan-out reads it); `/dashboard/logs/whatsapp-logs` (seventh rail entry,
+`activity` permission, store-scoped only — the platform has no number);
+`whatsapp` in `FAILURE_SOURCES` ordered by `failed_at`; the Channels card's
+template count. Retention: `whatsapp_logs` 90 days, `whatsapp_inbound_events`
+30 days. Migration `20261008_0175` (contacts with `ON UPDATE CASCADE` to
+`users.id` so a claimed till customer carries their consent, queue, log with a
+UNIQUE partial index on `provider_message_id`, template sync columns) and
+`20261008_0176` (one Help guide, `send-order-updates-on-whatsapp`, under
+Marketing). ⚠ Not yet run against live Meta: template submission and the
+status webhook shapes follow Meta's published reference; the first real
+bootstrap on dev is slice 2's live verification, after the Embedded Signup
+configuration exists.
+
+### WhatsApp Commerce — Phase 1 slice 1: Connect (2026-10-08)
+
+Spec `docs/whatsapp-commerce-plan.md`; console runbook `docs/whatsapp-phase0.md`
+(Phase 0's dev gate passed 2026-10-08); stories `docs/whatsapp-acceptance.md`.
+Dashboard → Channels gains a **WhatsApp** card (category Messaging) whose
+modal asks ONE question before Meta's popup — _is this number already on the
+WhatsApp Business app?_ — because Coexistence is a different onboarding flow
+and asking afterwards hands the merchant a Meta error they cannot act on
+(plan §7). `app/dashboard/channels/embedded-signup.ts` loads Meta's JS SDK,
+opens Embedded Signup with the environment's configuration id and joins the
+two things the popup returns by two routes (the CODE from `FB.login`, the WABA
+and phone-number ids from a `message` event — ★ read only from a
+`*.facebook.com` origin). `connectWhatsApp` → `lib/whatsapp/connect.ts`
+exchanges the code server-side with the app secret, ★ PROVES the WABA id
+against the token's `granular_scopes` (a page can post any id), reads the
+WABA and number, ★★ **subscribes our app to the WABA** (Phase 0's finding —
+without it the inbox is silent and nothing reports it), registers the number
+with a generated six-digit PIN (skipped under Coexistence, which the app
+already registered), and upserts `store_whatsapp_accounts` with the token and
+PIN encrypted under `PAYMENT_CRED_KEY`. Nothing is stored until every step
+has passed; an `unknown` Meta outcome says "nothing was saved, try again".
+★ `phone_number_id` is globally UNIQUE because it is the webhook routing key;
+a second store claiming a number is refused by the database and named in the
+error. Plan gates: `PLAN_LIMITS.whatsapp` (Basic+, like `onlinePayments`) and
+`whatsappBroadcasts` (Pro, like `emailCampaigns`); the plan matrix on the
+pricing page deliberately gains no row until the feature is merchant-usable.
+The webhook now persists: one `whatsapp_inbound_events` row per message,
+status or change, idempotent on Meta's ids, routed by phone number id or WABA
+id, acked at once and processed in `after()`; template status/quality/
+category, number quality/name and account events update the account and
+template rows (`PARTNER_REMOVED` → `needs_reauth`), and `messages` rows are
+deliberately left for slices 2–3. Migration `20261008_0174` (three
+service-only tables, RLS forced, app_user revoked), probed against local
+Postgres: unique phone, both CHECKs, template uniqueness, event dedupe, store
+cascade, zero app_user grants. Slice 2 (above) flipped
+`lib/notifications/channels.ts`'s `whatsapp` to available and published the
+Help guide.
+
 ### Mink credit charging — ON by default (2026-09-21)
 
 **★★ THE CHAT PANEL'S CHROME IS THINNER (2026-09-21).** Measured against
@@ -2725,6 +2906,12 @@ wholesip/
 │   │   │                      # route page files export only valid Next entries.
 │   │   │                      # Permission section is still `promotions`
 │   │   ├── enquiries/         # enquiry inbox + @modal detail
+│   │   ├── inbox/             # ★ the WhatsApp inbox (slice 3): page.tsx gates on
+│   │   │                      # `inbox`, inbox-client.tsx = list + thread + composer
+│   │   │                      # (free text inside the 24-hour window, templates after),
+│   │   │                      # polled through /api/dashboard/inbox/live, a sheet on
+│   │   │                      # phones; inbox.css. Shown in the sidebar only once a
+│   │   │                      # number is connected, with the needs-reply badge.
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
 │   │   ├── admins/ roles/     # staff invites + role management
 │   │   ├── storefront/        # ★ Storefront (§11; was themes/ until 2026-10-11 —
@@ -2741,7 +2928,9 @@ wholesip/
 │   │   ├── branding/          # per-store branding editor (logo, colors)
 │   │   ├── billing/           # ★ Invoices & Billing (§17): tax config + tax-class
 │   │   │                      # manager + invoice-template editor (billing.css)
-│   │   ├── channels/          # ★ Channels (§18/§35): connect the store's OWN Razorpay
+│   │   ├── channels/          # ★ Channels (§18/§35/WhatsApp): connect the store's OWN Razorpay,
+│   │                      # Shiprocket, Twilio and WhatsApp (whatsapp-modal.tsx +
+│   │                      # embedded-signup.ts — Meta's popup, Coexistence asked first);
 │   │   │                      # and Shiprocket accounts; pause/resume, sync warehouse
 │   │   │                      # pickup mappings and configure the tracking webhook
 │   │   ├── ai/                # RETIRED as a destination; credit usage lives in plans/
@@ -2756,7 +2945,9 @@ wholesip/
 │   │   │                      # there'd be two navigations for the same six rail views.
 │   │   │                      # page.tsx = activity_events audit feed (§22, day-
 │   │   │                      # grouped); email-logs/ = what was SENT (§24);
-│   │   │                      # ★ import-export/ = CSV job history + [jobId] per-ROW
+│   │   │                      # whatsapp-logs/ = every WhatsApp send with Meta's
+│   │                      # delivery timeline (WhatsApp slice 2);
+│   │                      # ★ import-export/ = CSV job history + [jobId] per-ROW
 │   │   │                      # error log (§31), split into Import/Export by ?kind=;
 │   │   │                      # ★ failures/ = everything that DIDN'T work, read
 │   │   │                      # across the other tables (§33). SIX views, ONE
@@ -3027,6 +3218,21 @@ wholesip/
 │   │   │                      # credentials, rotate webhook tokens, sync warehouses
 │   │   │                      # and expose only safe connection state. Tested across
 │   │   │                      # permissions, validation, rotation and location mapping.
+│   │   ├── whatsapp-provider-actions.ts # ★ Channels → WhatsApp: state (never the
+│   │   │                      # token/PIN), connectWhatsApp (the gate in front of
+│   │   │                      # lib/whatsapp/connect.ts; plan-gated Basic+), pause/
+│   │   │                      # resume, refresh from Meta (+ template sync), disconnect,
+│   │   │                      # setupWhatsAppTemplates, getWhatsAppTemplatesForEvent
+│   │   │                      # (the notification console's WhatsApp tab). Tested.
+│   │   ├── whatsapp-log-actions.ts # ★ the WhatsApp log read (`activity` view, store-
+│   │   │                      # scoped only — the platform has no number of its own)
+│   │   ├── inbox-actions.ts   # ★ the WhatsApp inbox (`inbox` view/manage): list,
+│   │   │                      # thread, mark read, close/reopen, sendInboxReply (window
+│   │   │                      # re-checked server-side) and sendInboxTemplate (approved
+│   │   │                      # customer templates only, every value filled). Tested.
+│   │   ├── customer-whatsapp-actions.ts # ★ the shopper's own WhatsApp choices on the
+│   │   │                      # account page; session phone + host store, written
+│   │   │                      # through recordWhatsAppConsent with the page's own words
 │   │   ├── shipping-actions.ts # ★ §35 Shipping settings + authoritative checkout and
 │   │   │                      # public PDP PIN quotes (stock/origin/parcel/COD aware). Tested.
 │   │   ├── shipment-actions.ts # ★ §35 pack/book/AWB/label/pickup/manifest/tracking/NDR;
@@ -3174,10 +3380,13 @@ wholesip/
 │       │                      # docs/whatsapp-phase0.md). GET answers Meta's handshake
 │       │                      # against WHATSAPP_VERIFY_TOKEN; POST verifies
 │       │                      # X-Hub-Signature-256 over the RAW body with
-│       │                      # WHATSAPP_APP_SECRET, then logs a content-free summary and
-│       │                      # ACTS ON NOTHING. Exists before any table because Meta's
-│       │                      # console cannot be configured without it. Phase 1 routes
-│       │                      # deliveries to stores by metadata.phone_number_id.
+│       │                      # WHATSAPP_APP_SECRET, writes one whatsapp_inbound_events
+│       │                      # row per message/status/change (idempotent on Meta's ids,
+│       │                      # routed to a store by metadata.phone_number_id or the WABA
+│       │                      # id), acks, and processes in after(). 503 only when the
+│       │                      # rows could not be WRITTEN, so Meta retries; a row we hold
+│       │                      # but failed to process is never a retry. The log line is a
+│       │                      # content-free summary — counts and ids, never text/wa_id.
 │       ├── cron/send-emails/  # Minute Cloud Scheduler heartbeat for outbound queues:
 │       │                      # coupon campaigns + notification emails (§22).
 │       │                      # Phase 5E promotes due campaigns atomically and
@@ -3261,6 +3470,9 @@ wholesip/
 │       ├── og/                # Dynamic branded OG card (ImageResponse; ?d=JSON
 │       │                      # {title,subtitle,color}) — default share image for
 │       │                      # homepage/custom pages/platform (lib/seo/og-card.ts)
+│       ├── dashboard/inbox/live/ # ★ the inbox's polls (list, thread, needs-reply
+│       │                  # count) over one authenticated GET — a route, not an
+│       │                  # action, so a refresh never queues ahead of Send
 │       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 2 credits
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
@@ -3342,13 +3554,48 @@ wholesip/
 │   │                          # saving label; never quotes compiled-in prices
 │   ├── shipping/              # ★ §35 checkout policy/types + pure rate translation +
 │   │                          # server-only origin-aware Shiprocket quotation
-│   ├── whatsapp/              # ★ WhatsApp Commerce (docs/whatsapp-commerce-plan.md),
-│   │                          # Phase 0 only: webhook-signature.ts (the two Meta
-│   │                          # verifiers — verify-token handshake and app-secret HMAC,
-│   │                          # constant-time, raw body) and webhook-events.ts (a
-│   │                          # content-free delivery summary: counts and ids, never
-│   │                          # message text or a wa_id, pinned by test). Phase 1 adds
-│   │                          # the SMS-shaped channel/send/worker beside these.
+│   ├── whatsapp/              # ★ WhatsApp Commerce (docs/whatsapp-commerce-plan.md).
+│   │                          # config.ts (the one env reader; app id + config id are
+│   │                          # public, app secret + verify token never leave the
+│   │                          # server), graph.ts (Graph API over fetch with the
+│   │                          # three-way rejected/unknown/ok outcome — the token is an
+│   │                          # argument, never module state, because one process serves
+│   │                          # every merchant's WABA), connect.ts (Embedded Signup's
+│   │                          # server half: exchange code → PROVE the WABA against the
+│   │                          # token's granular_scopes → read WABA/number → ★★ subscribe
+│   │                          # our app to the WABA → register with a generated PIN →
+│   │                          # store encrypted; refresh and disconnect), inbound.ts
+│   │                          # (explodeWebhook → idempotent rows; processPendingInbound-
+│   │                          # Events handles template/number/account fields and, since
+│   │                          # slice 2, delivery STATUSES onto whatsapp_logs; inbound
+│   │                          # messages wait for slice 3), webhook-signature.ts (the two
+│   │                          # Meta verifiers, constant-time, raw body), webhook-events.ts
+│   │                          # (content-free summary, pinned by test).
+│   │                          # Slice 2: template-catalog.ts (PURE, client-safe: the 19
+│   │                          # UTILITY templates StoreMink registers per store, positional
+│   │                          # bodies + examples; every Meta review rule pinned by test),
+│   │                          # templates.ts (bootstrap on connect / Set up templates, sync
+│   │                          # by name on Refresh; "already exists" = existing, 190 =
+│   │                          # needs_reauth), channel.ts (sender + plan + precedence in one
+│   │                          # read, APPROVED-only templates, consent by E.164, the
+│   │                          # fail-closed storeCanSendWhatsApp gate), send.ts (★★ THE
+│   │                          # CHOKE POINT — every send writes whatsapp_logs with Meta's
+│   │                          # message id; send-coverage.test.ts), worker.ts (send-emails
+│   │                          # heartbeat; consent re-checked at send; unknown terminal;
+│   │                          # only throttle codes retried), consent-copy.ts (the exact
+│   │                          # checkout wording, client-safe) + consent.ts (the record,
+│   │                          # written after the order, only for a store that can send).
+│   │                          # Slice 3 (the inbox): inbox-types.ts (wire shapes, pure),
+│   │                          # inbox-parse.ts (every Meta message type → one bounded
+│   │                          # row; echo parse; previews), inbox-intent.ts (STOP/START
+│   │                          # in English, Hinglish, Devanagari — "cancel" is an order,
+│   │                          # not an opt-out), inbox.ts (★★ record inbound/echo/
+│   │                          # outbound by upsert with the dedupe on provider id, the
+│   │                          # 24-hour serviceWindow, media copy into our bucket after
+│   │                          # commit, the sidebar summary), inbox-read.ts (list,
+│   │                          # thread, customer panel, approved reply templates),
+│   │                          # chat-link.ts (wa.me, client-safe) + storefront.ts (the
+│   │                          # chat button's three gates: switch, plan, live number).
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
 │   │                          # positional render, carrier match, 6-char sender header
 │   │                          # and segment cost, plus the one send choke point, queue,
@@ -3508,7 +3755,8 @@ wholesip/
 │   │                          # the permission set, never widens),
 │   │                          # channels.ts (email/web live; SMS configurable only with
 │   │                          # the store's enabled Twilio + mirrored DLT template;
-│   │                          # push/WhatsApp remain locked), config.ts
+│   │                          # WhatsApp only with a connected number + approved template
+│   │                          # + customer opt-in; push remains locked), config.ts
 │   │                          # (registry ← platform definition ← store
 │   │                          # settings), variables.ts + template.ts (merchant
 │   │                          # {{token}} copy, validated at save). Tested,
@@ -4486,7 +4734,16 @@ wholesip/
 │                              # `set constraints all deferred` in its transaction;
 │                              # everywhere else the checks stay immediate, so deleting
 │                              # ONE ordered product is still refused (verified both
-│                              # ways against a copy of production). 0179 edits the
+│                              # ways against a copy of production). 0174 adds the
+│                              # service-only WhatsApp account, template and inbound-event
+│                              # tables (Phase 1 slice 1); 0175 adds contacts with consent,
+│                              # the WhatsApp notification queue, the send log with Meta's
+│                              # delivery timeline and template sync columns; 0176
+│                              # publishes the order-updates Help guide. 0177 adds the
+│                              # inbox (one conversation per contact, every message in
+│                              # both directions); 0178 publishes the inbox Help guide
+│                              # and edits one sentence of the order-updates guide in
+│                              # place. 0179 edits the
 │                              # section guide for nested blocks and the new sections;
 │                              # 0180 edits the branding guide's layout step in place
 │                              # for the page templates (plan Phase 2e) and the
@@ -4503,15 +4760,21 @@ wholesip/
 │                              # store, the five grouped go-live tasks, and a
 │                              # "What your first theme adds" section in the theme
 │                              # guide (a first install follows its own rules).
-│                              # ★★ 0174-0178 BELONG TO THE `whatsapp` BRANCH. This
-│                              # branch's four pending entries were renumbered from
-│                              # 0174/0175/0179/0180 to 0179-0182 (2026-10-10) because
-│                              # the whatsapp branch had already taken 0174-0178. Safe
-│                              # only because no shared database had recorded them.
-│                              # ⚠ When both branches merge, manifest.json conflicts:
-│                              # whichever lands second must append its entries AFTER
-│                              # every applied one and fix `requires`, or the runner's
-│                              # out-of-order check refuses. Next free: 0184.
+│                              # ★★ IN manifest.json 0174-0178 COME AFTER 0179-0183,
+│                              # out of number order, and that is deliberate. The
+│                              # `whatsapp` branch took 0174-0178 while `main`'s four
+│                              # pending entries were renumbered 0179-0182 to avoid the
+│                              # clash (2026-10-10); 0183 followed, and all five reached
+│                              # production and staging first (by 2026-10-11). Merging
+│                              # main into whatsapp therefore appended the WhatsApp block
+│                              # after them: an applied entry listed after a pending one
+│                              # is what the runner refuses as out_of_order. `requires`
+│                              # was not rewired — both blocks hang off 0173 in the shared
+│                              # base, and `requires` is part of each entry's checksum.
+│                              # ⚠ Do not reorder for a local database: one that applied
+│                              # 0174-0178 before 0183 reports them out_of_order until it
+│                              # applies 0183 (from `main`, with `--allow-unknown local`).
+│                              # Next free: 0184.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -17127,19 +17390,21 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   different secrets for two different proofs — the token proves we own the
   URL, the secret proves a delivery came from Meta — and both are per
   environment, since a Meta app has exactly one callback URL (dev and prod are
-  two Meta apps). With the token unset the handshake answers 503; with the
-  secret unset deliveries are acked 200 and logged as ignored (the Resend
-  precedent) because Phase 0 processes nothing — Phase 1 flips that to 503 the
-  moment a delivery carries data. Wired in `cloudbuild.yaml` since 2026-10-08
+  two Meta apps). With either unset the route answers 503 — deliveries carry
+  data (orders, opt-outs, statuses) a silent ack would lose, so Meta is told
+  to retry. Wired in `cloudbuild.yaml` since 2026-10-08
   (`_WHATSAPP_APP_SECRET_SECRET`, `_WHATSAPP_VERIFY_TOKEN_SECRET`, defaults
   `*_STAGING`; the prod trigger overrides to `*_PROD`) — the Secret Manager
   entries were created FIRST because Cloud Run refuses a revision whose
   `--set-secrets` names a missing secret. Dev and prod are two Meta apps
   (`1045672501851798` / `2663634187475548`), so **`WHATSAPP_APP_ID`** and
-  **`WHATSAPP_CONFIG_ID`** (Embedded Signup; empty until it exists) are public
-  identifiers riding as plain substitutions. `npm run whatsapp:smoke`
+  **`WHATSAPP_CONFIG_ID`** (Embedded Signup; empty until runbook §4.3 is
+  done) are public identifiers riding as plain substitutions.
+  `whatsappConnectConfigured()` needs app id + secret + config id, and the
+  Channels card disables Connect without all three rather than opening a
+  popup the server cannot finish. `npm run whatsapp:smoke`
   takes `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` from the shell
-  only, never from `.env`; `WHATSAPP_GRAPH_VERSION` defaults to `v25.0`.
+  only, never from `.env`; `WHATSAPP_GRAPH_VERSION` defaults to `v26.0`.
 - **POS** (§22): the `/pos` device + operator cookies are HMAC-signed with env
   **`POS_SESSION_SECRET`** (any high-entropy string; `openssl rand -base64 32`).
   Required for the register to work; when unset, cookie VERIFY returns null

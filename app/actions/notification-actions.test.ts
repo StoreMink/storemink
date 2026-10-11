@@ -521,6 +521,16 @@ describe("saving notification configuration", () => {
       ).error,
     ).toMatch(/Connect Twilio in Channels/i);
 
+    // ★ WhatsApp follows the SMS rule: available platform-wide, refused per
+    // store until a number is connected.
+    expect(
+      (
+        await saveNotificationConfig("order.placed", {
+          audiences: { customer: { channels: { whatsapp: true } } },
+        })
+      ).error,
+    ).toMatch(/Connect your WhatsApp number in Channels/i);
+
     // Push has no per-store connection at all, so it keeps the old refusal.
     expect(
       (

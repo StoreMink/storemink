@@ -29,6 +29,7 @@ import {
   activityEvents,
   notificationEmailQueue,
   notificationSmsQueue,
+  notificationWhatsappQueue,
   notificationPreferences,
   notifications,
   users,
@@ -51,6 +52,12 @@ import {
   phonesForRecipients,
 } from "@/lib/sms/channel";
 import { renderDltBody } from "@/lib/sms/dlt";
+import {
+  loadWhatsAppSender,
+  loadWhatsAppTemplates,
+  whatsAppConsentFor,
+} from "@/lib/whatsapp/channel";
+import { textablePhone } from "@/lib/phone";
 import { selectRecipients } from "./routing";
 import { resolveNotification, type AudienceKey } from "./config";
 import { renderTemplate, templateValues } from "./template";
@@ -526,11 +533,14 @@ async function fanOut(
   const rows: (typeof notifications.$inferInsert)[] = [];
   const mail: (typeof notificationEmailQueue.$inferInsert)[] = [];
   const sms: (typeof notificationSmsQueue.$inferInsert)[] = [];
+  const whatsapp: (typeof notificationWhatsappQueue.$inferInsert)[] = [];
   // Gathered in the recipient loop, resolved once after it — see below.
-  const smsCandidates: {
+  type PhoneCandidate = {
     recipient: (typeof unique)[number];
     audienceKey: string;
-  }[] = [];
+  };
+  const smsCandidates: PhoneCandidate[] = [];
+  const whatsappCandidates: PhoneCandidate[] = [];
   // Only resolved lazily, and only if someone actually wants email — a
   // customer's address is a query we shouldn't pay for on every event.
   let customerEmail: string | null | undefined;
@@ -634,77 +644,184 @@ async function fanOut(
     if (audienceConfig?.channels.sms && audienceKey) {
       smsCandidates.push({ recipient, audienceKey });
     }
+    // ── WhatsApp ────────────────────────────────────────────────────────────
+    // The same shape, with a fourth condition resolved below: a customer's own
+    // opt-in. Gathered here, decided once per event, like SMS.
+    if (audienceConfig?.channels.whatsapp && audienceKey) {
+      whatsappCandidates.push({ recipient, audienceKey });
+    }
   }
 
-  // ★ RESOLVED ONCE PER EVENT, NOT PER RECIPIENT. Three round trips at most —
-  // sender, templates, phones — and only when a switch is actually on.
-  if (smsCandidates.length > 0 && input.storeId) {
-    const sender = await loadSmsSender(db, input.storeId);
-    if (sender) {
-      const templates = await loadSmsTemplates(db, input.storeId, key);
-      // Nothing to send without a mirrored template: the carrier would drop it.
-      const wanted = smsCandidates.filter((c) => templates.has(c.audienceKey));
-      if (wanted.length > 0) {
-        const phones = await phonesForRecipients(
-          db,
-          wanted.map((c) => ({ id: c.recipient.id, type: c.recipient.type })),
-        );
-        for (const c of wanted) {
-          const phone = phones.get(c.recipient.id);
-          // No number on file = nothing to send to. Not an error: admins.phone
-          // is nullable and mostly empty.
-          if (!phone) continue;
-          const template = templates.get(c.audienceKey);
-          if (!template) continue;
+  // ★ RESOLVED ONCE PER EVENT, NOT PER RECIPIENT. A handful of round trips at
+  // most — sender, templates, phones, consent — and only when a switch is
+  // actually on, so a store that never touches either channel pays nothing.
+  //
+  // ── ★★ ONE MESSAGE PER PERSON PER EVENT, AND THE MERCHANT SAYS WHICH ────
+  // A customer reachable on both channels gets ONE update
+  // (docs/whatsapp-commerce-plan.md §8, §19.3). `whatsapp.updatePrecedence`
+  // decides: the first channel queues for everyone it can reach, and the
+  // second queues only for whoever the first could not — no consent, no
+  // approved template, no connection. `both` is the deliberate duplicate.
+  if (
+    input.storeId &&
+    (smsCandidates.length > 0 || whatsappCandidates.length > 0)
+  ) {
+    const storeId = input.storeId;
+    const envelope = {
+      storeName: config?.storeName ?? null,
+      actorLabel: input.actor?.label ?? null,
+      subjectLabel: input.subject?.label ?? null,
+      eventName: def?.label ?? key,
+      // ISO for the reason the web/email paths give above: every value goes
+      // through formatVariable exactly once, and a pre-formatted date gets
+      // misread on the second pass.
+      date: new Date().toISOString(),
+      link: null,
+    };
+    const recipientKey = (c: PhoneCandidate) =>
+      `${c.recipient.type}:${c.recipient.id}`;
 
-          // ★ RENDERED AT ENQUEUE, not at send. The values are snapshotted like
-          // the email queue's title/body, so a receipt keeps what it was written
-          // with — and a template whose mapping no longer fits is caught HERE,
-          // where it can be logged against the event, rather than in a worker
-          // retry loop.
-          const resolved = templateValues(
-            key,
-            {
-              storeName: config?.storeName ?? null,
-              actorLabel: input.actor?.label ?? null,
-              subjectLabel: input.subject?.label ?? null,
-              eventName: def?.label ?? key,
-              // ISO for the reason the web/email paths give above: every value
-              // goes through formatVariable exactly once, and a pre-formatted
-              // date gets misread on the second pass.
-              date: new Date().toISOString(),
-              link: null,
-            },
-            input.payload ?? null,
-          );
-          const values = template.variables.map((name) =>
-            String(resolved[name] ?? ""),
-          );
-          const rendered = renderDltBody(
-            { templateId: template.dltTemplateId, body: template.body },
-            values,
-          );
-          if (!rendered.ok) {
-            logWarn("sms: template no longer fits its mapping", {
-              storeId: input.storeId,
-              event: key,
-              audience: c.audienceKey,
-              reason: rendered.error,
-            });
-            continue;
-          }
-
-          sms.push({
-            storeId: input.storeId,
-            eventId,
-            recipientId: c.recipient.id,
-            recipientType: c.recipient.type,
-            phone,
-            eventKey: key,
-            values,
-          });
-        }
+    // Phones for the union, one query per table (lib/sms/channel.ts).
+    let phones: Map<string, string> | null = null;
+    const phonesFor = async () => {
+      if (phones) return phones;
+      const all = new Map<string, { id: string; type: string }>();
+      for (const c of [...smsCandidates, ...whatsappCandidates]) {
+        all.set(recipientKey(c), {
+          id: c.recipient.id,
+          type: c.recipient.type,
+        });
       }
+      phones = await phonesForRecipients(db, [...all.values()]);
+      return phones;
+    };
+
+    const queueSms = async (skip: Set<string>): Promise<Set<string>> => {
+      const queued = new Set<string>();
+      const candidates = smsCandidates.filter(
+        (c) => !skip.has(recipientKey(c)),
+      );
+      if (candidates.length === 0) return queued;
+      const sender = await loadSmsSender(db, storeId);
+      if (!sender) return queued;
+      const templates = await loadSmsTemplates(db, storeId, key);
+      // Nothing to send without a mirrored template: the carrier would drop it.
+      const wanted = candidates.filter((c) => templates.has(c.audienceKey));
+      if (wanted.length === 0) return queued;
+      const numbers = await phonesFor();
+      for (const c of wanted) {
+        const phone = numbers.get(c.recipient.id);
+        // No number on file = nothing to send to. Not an error: admins.phone
+        // is nullable and mostly empty.
+        if (!phone) continue;
+        const template = templates.get(c.audienceKey);
+        if (!template) continue;
+
+        // ★ RENDERED AT ENQUEUE, not at send. The values are snapshotted like
+        // the email queue's title/body, so a receipt keeps what it was written
+        // with — and a template whose mapping no longer fits is caught HERE,
+        // where it can be logged against the event, rather than in a worker
+        // retry loop.
+        const resolved = templateValues(key, envelope, input.payload ?? null);
+        const values = template.variables.map((name) =>
+          String(resolved[name] ?? ""),
+        );
+        const rendered = renderDltBody(
+          { templateId: template.dltTemplateId, body: template.body },
+          values,
+        );
+        if (!rendered.ok) {
+          logWarn("sms: template no longer fits its mapping", {
+            storeId,
+            event: key,
+            audience: c.audienceKey,
+            reason: rendered.error,
+          });
+          continue;
+        }
+
+        sms.push({
+          storeId,
+          eventId,
+          recipientId: c.recipient.id,
+          recipientType: c.recipient.type,
+          phone,
+          eventKey: key,
+          values,
+        });
+        queued.add(recipientKey(c));
+      }
+      return queued;
+    };
+
+    const queueWhatsApp = async (
+      sender: Awaited<ReturnType<typeof loadWhatsAppSender>>,
+      skip: Set<string>,
+    ): Promise<Set<string>> => {
+      const queued = new Set<string>();
+      if (!sender) return queued;
+      const candidates = whatsappCandidates.filter(
+        (c) => !skip.has(recipientKey(c)),
+      );
+      if (candidates.length === 0) return queued;
+      // ★ STATUS IS THE SWITCH: only an APPROVED template comes back here, so
+      // a paused or rejected one queues nothing rather than failing later.
+      const templates = await loadWhatsAppTemplates(db, storeId, key);
+      const wanted = candidates.filter((c) => templates.has(c.audienceKey));
+      if (wanted.length === 0) return queued;
+      const numbers = await phonesFor();
+      // ★ A CUSTOMER NEEDS THEIR OWN YES. Staff do not (plan §8).
+      const customerPhones = wanted
+        .filter((c) => c.audienceKey === "customer")
+        .map((c) => numbers.get(c.recipient.id))
+        .filter((p): p is string => Boolean(p));
+      const consent =
+        customerPhones.length > 0
+          ? await whatsAppConsentFor(db, storeId, customerPhones)
+          : new Map();
+      const resolved = templateValues(key, envelope, input.payload ?? null);
+      for (const c of wanted) {
+        const raw = numbers.get(c.recipient.id);
+        const phone = textablePhone(raw);
+        if (!phone) continue;
+        if (c.audienceKey === "customer" && !consent.get(phone)?.updates) {
+          continue;
+        }
+        const template = templates.get(c.audienceKey);
+        if (!template) continue;
+        whatsapp.push({
+          storeId,
+          eventId,
+          recipientId: c.recipient.id,
+          recipientType: c.recipient.type,
+          phone,
+          eventKey: key,
+          audience: c.audienceKey,
+          templateId: template.id,
+          values: template.variables.map((name) =>
+            String(resolved[name] ?? ""),
+          ),
+        });
+        queued.add(recipientKey(c));
+      }
+      return queued;
+    };
+
+    const waSender =
+      whatsappCandidates.length > 0
+        ? await loadWhatsAppSender(db, storeId)
+        : null;
+    const precedence = waSender?.precedence ?? "whatsapp_first";
+    const none = new Set<string>();
+    if (precedence === "sms_first") {
+      const got = await queueSms(none);
+      await queueWhatsApp(waSender, got);
+    } else if (precedence === "both") {
+      await queueWhatsApp(waSender, none);
+      await queueSms(none);
+    } else {
+      const got = await queueWhatsApp(waSender, none);
+      await queueSms(got);
     }
   }
 
@@ -721,6 +838,12 @@ async function fanOut(
     // Enqueue only, for the email queue's reason: a provider round trip has no
     // business sitting on a checkout's code path.
     await db.insert(notificationSmsQueue).values(sms).onConflictDoNothing();
+  }
+  if (whatsapp.length > 0) {
+    await db
+      .insert(notificationWhatsappQueue)
+      .values(whatsapp)
+      .onConflictDoNothing();
   }
   return mail.some((m) => m.digest === "instant");
 }

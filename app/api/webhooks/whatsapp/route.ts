@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import {
   answerVerifyChallenge,
   verifyMetaSignature,
@@ -7,21 +7,19 @@ import {
   isWhatsAppWebhook,
   summarizeWebhook,
 } from "@/lib/whatsapp/webhook-events";
-import { logInfo, logWarn } from "@/lib/observability/logger";
+import {
+  processPendingInboundEvents,
+  recordWebhookDelivery,
+} from "@/lib/whatsapp/inbound";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 
 /**
- * WhatsApp Cloud API webhook — Phase 0: verified, summarised, ACTING ON NOTHING.
+ * WhatsApp Cloud API webhook — ONE URL for every merchant.
  *
- * ★ ONE URL FOR EVERY MERCHANT. Meta posts every WABA onboarded through the
- * StoreMink app to this single endpoint; Phase 1 routes each delivery to a
- * store by `metadata.phone_number_id` (docs/whatsapp-commerce-plan.md §9).
- * Nothing here is per-store, which is why there is no `[storeId]` segment.
- *
- * ★ IT EXISTS BEFORE ANY TABLE DOES because Meta's app configuration cannot be
- * finished without it: registering a callback URL triggers the GET handshake
- * below, and App Review's demo video needs an inbound message to arrive
- * somewhere. So Phase 0's "no merchant code" rule has exactly this exception —
- * the two things Meta's console requires in order to proceed.
+ * Meta posts every WABA onboarded through the StoreMink app here; each
+ * delivery is routed to a store by `metadata.phone_number_id`
+ * (docs/whatsapp-commerce-plan.md §9), which is why there is no `[storeId]`
+ * segment and why that column is globally unique.
  *
  * Security is the two-webhook pattern this codebase already runs:
  *   • GET  — Meta proves we own the URL: `hub.verify_token` must equal
@@ -29,14 +27,19 @@ import { logInfo, logWarn } from "@/lib/observability/logger";
  *   • POST — Meta proves it is Meta: `X-Hub-Signature-256` is HMAC-SHA256 over
  *            the RAW body with WHATSAPP_APP_SECRET, checked before parsing.
  *
+ * ★ ACK FAST, WORK LATER. The handler writes raw rows (idempotent on Meta's
+ * ids, so a redelivery is a no-op) and answers; processing runs in `after()`
+ * and on the heartbeat. Meta retries any non-2xx for days, so a 503 here is
+ * a deliberate "ask again" — used only when the rows could not be WRITTEN,
+ * never for a row we have and merely failed to process.
+ *
  * ★ `/api` BYPASSES proxy.ts (its matcher excludes it), so this route owns its
  * whole gate; there is no session and no store to fall back on.
  *
- * ⚠ NOTHING IS PERSISTED. The log line is a content-free summary (counts and
- * ids — never message text, never a `wa_id`). An unconfigured secret therefore
- * acks with 200 like the Resend route, because a delivery nobody processes is
- * not worth a retry storm; Phase 1 flips that to 503 the moment deliveries
- * carry data we would lose (orders, opt-outs, delivery statuses).
+ * ⚠ The log line is a content-free summary (counts and ids — never message
+ * text, never a `wa_id`). An unconfigured app secret now answers 503, not
+ * 200: deliveries carry data (orders, opt-outs, statuses) that a silent ack
+ * would lose for good.
  */
 
 export const runtime = "nodejs";
@@ -56,7 +59,7 @@ export async function GET(request: Request) {
     });
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
-  logInfo("whatsapp webhook: handshake verified");
+  logInfo("whatsapp webhook: handshake verified", { ok: true });
   // The bare challenge, no JSON, no quotes — Meta compares it byte for byte.
   return new Response(challenge, {
     status: 200,
@@ -67,8 +70,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const appSecret = process.env.WHATSAPP_APP_SECRET ?? "";
   if (!appSecret) {
-    logWarn("whatsapp webhook: WHATSAPP_APP_SECRET not set; delivery ignored");
-    return NextResponse.json({ ok: false, reason: "not configured" });
+    logWarn("whatsapp webhook: WHATSAPP_APP_SECRET not set; delivery refused");
+    return NextResponse.json({ error: "not configured" }, { status: 503 });
   }
 
   const raw = await request.text();
@@ -101,10 +104,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, ignored: true });
   }
 
-  // Recorded in the log, not acted on. Phase 1 replaces this with the inbound
-  // events table + worker (plan §9); the summary stays as the log line.
   const summary = summarizeWebhook(body);
-  logInfo("whatsapp webhook received", { ...summary, acted: false });
+  let recorded;
+  try {
+    recorded = await recordWebhookDelivery(body);
+  } catch (err) {
+    // Could not WRITE the rows: Meta must retry, so this is the one 503.
+    logError("whatsapp webhook: record failed", err, { ...summary });
+    return NextResponse.json({ error: "try again" }, { status: 503 });
+  }
 
-  return NextResponse.json({ ok: true, acknowledged: true, acted: false });
+  logInfo("whatsapp webhook received", { ...summary, ...recorded });
+
+  if (recorded.inserted > 0) {
+    // Processing after the response, so Meta's deadline is never spent on
+    // our database; the heartbeat drains anything this misses.
+    after(async () => {
+      try {
+        await processPendingInboundEvents();
+      } catch (err) {
+        logError("whatsapp webhook: deferred processing failed", err);
+      }
+    });
+  }
+
+  return NextResponse.json({ ok: true, acknowledged: true, ...recorded });
 }

@@ -66,10 +66,15 @@ export const CHANNELS: readonly ChannelDef[] = [
     note: "Push notifications aren't set up yet.",
   },
   {
+    // ★★ THE SAME PLATFORM STATEMENT AS SMS, flipped on the same day all four
+    // per-store conditions existed (docs/whatsapp-commerce-plan.md §8): a
+    // connected number in Channels, this switch, an APPROVED template for the
+    // event and audience, and — for a customer — their own opt-in from the
+    // checkout box. lib/whatsapp/channel.ts resolves every one at fan-out.
     key: "whatsapp",
     label: "WhatsApp",
-    available: false,
-    note: "WhatsApp Business isn't connected yet.",
+    available: true,
+    note: "Needs your own WhatsApp number connected in Channels, an approved template for this message, and the customer's opt-in at checkout.",
   },
 ];
 

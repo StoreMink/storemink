@@ -729,6 +729,8 @@ and never wired to anything:
 | `email_logs`                     | 90 days                  | Holds rendered message BODIES, so it is much the heaviest of the three and gets the shortest window.      |
 | `store_search_metrics`           | 488 days                 | Matches the source product's roughly 16-month Search Console history window.                              |
 | `theme_studio_image_checkpoints` | 30 days after settlement | Private raw originals; queued/running retry ancestors are protected. Run usage and settled assets remain. |
+| `whatsapp_logs`                  | 90 days                  | Rendered WhatsApp message bodies with Meta's delivery timeline — email_logs' window, for its reason.      |
+| `whatsapp_inbound_events`        | 30 days                  | Raw webhook payloads (customer text); the facts they produced live on the account, template and log rows. |
 
 `supabase/email_logs.sql` documented the 90-day intent and even carries an
 `email_logs_created_idx` built "for retention sweeps". `pruneNotifications` had

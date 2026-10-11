@@ -56,6 +56,8 @@ import { ScrollReveal } from "@/app/(storefront)/components/scroll-reveal";
 import { typographyRootClasses } from "@/lib/themes/typography";
 import "./storefront-theme.css";
 import { StorefrontRefresh } from "./components/storefront-refresh";
+import { WhatsAppChatButton } from "./components/whatsapp-chat-button";
+import { getStorefrontWhatsAppChat } from "@/lib/whatsapp/storefront";
 
 // Storefront requests always read current tenant content across Cloud Run instances.
 export const dynamic = "force-dynamic";
@@ -185,7 +187,13 @@ export default async function StorefrontLayout({
   // only --brand-primary — the globals.css defaults ARE the WholeSip look, so
   // it stays exactly as today.
   const themeSelection = readThemeSelection(store.settings);
-  const theme = await resolveInstalledThemeDefinition(themeSelection);
+  // The WhatsApp chat button: the switch and plan are read off the store row
+  // the layout already holds, so a store with it off costs no query. Never in
+  // the builder preview, where a floating link over the canvas is in the way.
+  const [theme, whatsappChat] = await Promise.all([
+    resolveInstalledThemeDefinition(themeSelection),
+    previewing ? Promise.resolve(null) : getStorefrontWhatsAppChat(store),
+  ]);
   const design = theme?.preset.design ?? null;
   const chrome = withThemeAnnouncement(
     withThemeNewsletter(draftChrome ?? publishedChrome, theme),
@@ -308,6 +316,9 @@ export default async function StorefrontLayout({
                   <StorefrontRefresh />
                   {children}
                   <Footer />
+                  {whatsappChat ? (
+                    <WhatsAppChatButton href={whatsappChat.href} />
+                  ) : null}
                 </div>
                 {!previewing && revealsOnScroll(design?.motion) ? (
                   <ScrollReveal />

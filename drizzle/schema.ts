@@ -8727,3 +8727,261 @@ export const storeAccess = pgTable("store_access", {
     .defaultNow()
     .notNull(),
 });
+
+// ---------------------------------------------------------------------------
+// WhatsApp Commerce (docs/whatsapp-commerce-plan.md; migration 0174).
+// Service-only: RLS on, no policies, app_user revoked.
+// ---------------------------------------------------------------------------
+
+export const storeWhatsappAccounts = pgTable("store_whatsapp_accounts", {
+  storeId: uuid("store_id").primaryKey().notNull(),
+  wabaId: text("waba_id").notNull(),
+  // ★ Globally UNIQUE — the routing key for every webhook delivery.
+  phoneNumberId: text("phone_number_id").notNull(),
+  displayPhone: text("display_phone").notNull(),
+  verifiedName: text("verified_name"),
+  nameStatus: text("name_status"),
+  // AES-256-GCM under PAYMENT_CRED_KEY. Presented to Meta on every request.
+  businessTokenEnc: text("business_token_enc").notNull(),
+  twoFaPinEnc: text("two_fa_pin_enc").notNull(),
+  coexistence: boolean().default(false).notNull(),
+  messagingTier: text("messaging_tier"),
+  qualityRating: text("quality_rating"),
+  wabaName: text("waba_name"),
+  wabaReviewStatus: text("waba_review_status"),
+  appSubscribedAt: timestamp("app_subscribed_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  registeredAt: timestamp("registered_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  status: text().default("connected").notNull(),
+  enabled: boolean().default(true).notNull(),
+  sendRatePerSec: integer("send_rate_per_sec").default(80).notNull(),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+export const whatsappTemplates = pgTable("whatsapp_templates", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  wabaId: text("waba_id").notNull(),
+  eventKey: text("event_key"),
+  audience: text(),
+  name: text().notNull(),
+  language: text().default("en").notNull(),
+  category: text().notNull(),
+  components: jsonb().default([]).notNull(),
+  variables: jsonb().default([]).notNull(),
+  providerTemplateId: text("provider_template_id"),
+  // What Meta last told us; the fan-out queues only APPROVED.
+  status: text().default("PENDING").notNull(),
+  rejectionReason: text("rejection_reason"),
+  quality: text(),
+  enabled: boolean().default(true).notNull(),
+  // Why a SUBMISSION was refused — distinct from Meta rejecting a template it
+  // accepted for review (rejection_reason, status REJECTED).
+  syncError: text("sync_error"),
+  lastSyncedAt: timestamp("last_synced_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+// ---------------------------------------------------------------------------
+// WhatsApp slice 2 (migration 0175): consent, the queue and the send log.
+// Service-only, like every whatsapp_* table.
+// ---------------------------------------------------------------------------
+
+export const whatsappContacts = pgTable("whatsapp_contacts", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  // E.164; UNIQUE with store_id.
+  phone: text().notNull(),
+  waId: text("wa_id"),
+  profileName: text("profile_name"),
+  userId: text("user_id"),
+  updatesOptInAt: timestamp("updates_opt_in_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  updatesConsentText: text("updates_consent_text"),
+  updatesOptOutAt: timestamp("updates_opt_out_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  marketingOptInAt: timestamp("marketing_opt_in_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  marketingConsentText: text("marketing_consent_text"),
+  marketingOptOutAt: timestamp("marketing_opt_out_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  lastInboundAt: timestamp("last_inbound_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  referral: jsonb(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+export const notificationWhatsappQueue = pgTable(
+  "notification_whatsapp_queue",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    storeId: uuid("store_id").notNull(),
+    eventId: uuid("event_id"),
+    recipientId: text("recipient_id").notNull(),
+    recipientType: text("recipient_type").notNull(),
+    phone: text().notNull(),
+    eventKey: text("event_key").notNull(),
+    audience: text().notNull(),
+    templateId: uuid("template_id").notNull(),
+    values: jsonb().default([]).notNull(),
+    status: text().default("pending").notNull(),
+    attempts: integer().default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", {
+      withTimezone: true,
+      mode: "string",
+    })
+      .defaultNow()
+      .notNull(),
+    error: text(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true, mode: "string" }),
+  },
+);
+
+export const whatsappLogs = pgTable("whatsapp_logs", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  toPhone: text("to_phone").notNull(),
+  eventKey: text("event_key"),
+  templateName: text("template_name"),
+  templateId: uuid("template_id"),
+  category: text(),
+  body: text(),
+  // sent | delivered | read | failed | skipped — advanced by the status webhook.
+  status: text().notNull(),
+  error: text(),
+  errorCode: integer("error_code"),
+  providerMessageId: text("provider_message_id"),
+  conversationId: text("conversation_id"),
+  pricingCategory: text("pricing_category"),
+  billable: boolean(),
+  sentAt: timestamp("sent_at", { withTimezone: true, mode: "string" }),
+  deliveredAt: timestamp("delivered_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  readAt: timestamp("read_at", { withTimezone: true, mode: "string" }),
+  failedAt: timestamp("failed_at", { withTimezone: true, mode: "string" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+export const whatsappInboundEvents = pgTable("whatsapp_inbound_events", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  // Nullable: a delivery for a number no store holds is still recorded.
+  storeId: uuid("store_id"),
+  wabaId: text("waba_id"),
+  phoneNumberId: text("phone_number_id"),
+  field: text().notNull(),
+  // UNIQUE with (phone_number_id, field): Meta redelivers, this makes it a no-op.
+  eventId: text("event_id").notNull(),
+  payload: jsonb().notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  processedAt: timestamp("processed_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  error: text(),
+});
+
+// Slice 3 (migration 0177): the inbox. One conversation per contact; every
+// message in both directions. Service-only like the rest.
+export const whatsappConversations = pgTable("whatsapp_conversations", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  // UNIQUE with store_id: WhatsApp has no threads.
+  contactId: uuid("contact_id").notNull(),
+  // needs_reply | open | closed
+  status: text().default("needs_reply").notNull(),
+  assignedAdminId: text("assigned_admin_id"),
+  unreadCount: integer("unread_count").default(0).notNull(),
+  lastMessageAt: timestamp("last_message_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  lastInboundAt: timestamp("last_inbound_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  lastOutboundAt: timestamp("last_outbound_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  lastPreview: text("last_preview"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+export const whatsappMessages = pgTable("whatsapp_messages", {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  // in | out
+  direction: text().notNull(),
+  // customer | dashboard | phone_app | template | automation
+  source: text().notNull(),
+  kind: text().notNull(),
+  body: text(),
+  // A copy in OUR bucket under stores/{id}/whatsapp/; never Meta's URL.
+  mediaPath: text("media_path"),
+  mediaMime: text("media_mime"),
+  mediaName: text("media_name"),
+  payload: jsonb(),
+  quotedProviderId: text("quoted_provider_id"),
+  // UNIQUE with store_id where not null — the message-level idempotency key.
+  providerMessageId: text("provider_message_id"),
+  // received | sent | delivered | read | failed
+  status: text().notNull(),
+  error: text(),
+  sentByAdminId: text("sent_by_admin_id"),
+  templateId: uuid("template_id"),
+  sentAt: timestamp("sent_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
