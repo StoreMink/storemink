@@ -3,16 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
+import { MARKETING_PAGES } from "./marketing-routes";
 
 export function HomepageMobileNav({
   posUrl,
   themesUrl,
-  anchorBase = "",
 }: {
   posUrl: string;
   themesUrl: string;
-  /** "" on the homepage, "/" anywhere the sections are on another route. */
-  anchorBase?: string;
 }) {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
@@ -30,17 +28,23 @@ export function HomepageMobileNav({
       </button>
       {open && (
         <div className="smh-mobile-menu-panel" id="smh-mobile-navigation">
-          <a href={`${anchorBase}#platform`} onClick={close}>
-            Platform
-          </a>
+          {MARKETING_PAGES.map((page) => (
+            <Link
+              key={page.path}
+              href={page.path}
+              onClick={close}
+              className={
+                page.path.startsWith("/products/") ? "is-sub" : undefined
+              }
+            >
+              {page.label}
+            </Link>
+          ))}
           <Link href={posUrl} onClick={close}>
             Point of Sale
           </Link>
           <a href={themesUrl} onClick={close}>
             Themes
-          </a>
-          <a href={`${anchorBase}#pricing`} onClick={close}>
-            Pricing
           </a>
           <a href="https://help.storemink.com" onClick={close}>
             Help Centre
@@ -53,7 +57,7 @@ export function HomepageMobileNav({
             className="smh-button smh-button-dark"
             onClick={close}
           >
-            Start free
+            Start for free
           </Link>
         </div>
       )}

@@ -344,7 +344,10 @@ export async function runThemeImageGeneration(
   const drawReviewed = async (args: {
     briefId: string;
     purpose: ThemeImagePurpose;
-    brief: Pick<ThemeImageBrief, "subject" | "artDirection" | "aspectRatio">;
+    brief: Pick<
+      ThemeImageBrief,
+      "subject" | "artDirection" | "aspectRatio" | "people"
+    >;
     request: (retake?: ThemeImageRetake) => ThemeImageRequest;
     target: { width: number; height: number; aspect: number };
     byteLimit: number;
@@ -407,7 +410,17 @@ export async function runThemeImageGeneration(
           });
         }
         lastRefusal = { reason: result.reason };
-        retake = { problems: [refusalRetakeText(result.reason)], note: "" };
+        retake = {
+          problems: [
+            refusalRetakeText(
+              result.reason,
+              args.purpose !== "product" && args.brief.people === "adults"
+                ? "adults"
+                : "none",
+            ),
+          ],
+          note: "",
+        };
         continue;
       }
       if (result.kind === "error") {

@@ -3,6 +3,7 @@
  * Run: node scripts/product-card-layout-check.mjs
  * --css-ref=<git revision> checks older CSS against the current markup; --screenshots=<dir>
  * saves representative phone fixtures. These are not live theme screenshots.
+ * Eight skins since 2026-10-09: the five originals plus centered, soft and wide.
  */
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -68,6 +69,10 @@ const variants = {
   grocery: "sm-storefront-grocery sm-card-grocery sm-card-quickadd",
   framed: "sm-card-framed",
   overlay: "sm-card-overlay",
+  // Plan Phase 2d (2026-10-09): three more photo-is-the-card styles.
+  centered: "sm-card-centered",
+  soft: "sm-card-soft",
+  wide: "sm-card-wide",
 };
 function html(skin, surface, order, fixture) {
   return `<!doctype html><html><head><style>

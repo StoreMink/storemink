@@ -543,3 +543,123 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Phase 2d footer variants (2026-10-09). The same rule as above: every
+   block the merchant switched on still renders; only its arrangement
+   changes. */
+
+/* centered — everything stacked and centred: the brand, its tagline,
+   contact and social marks, then each link column as one wrapping row,
+   the newsletter form centred under its own copy. */
+:global(.sm-footer-centered) .mainGrid {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  text-align: center;
+  gap: 28px;
+  padding-block: 48px 24px;
+}
+:global(.sm-footer-centered) .brandCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+:global(.sm-footer-centered) .tagline {
+  max-width: 440px;
+}
+:global(.sm-footer-centered) .contactBlock {
+  align-items: center;
+  margin-bottom: 0;
+}
+:global(.sm-footer-centered) .columnTitle {
+  margin-bottom: 10px;
+}
+:global(.sm-footer-centered) .linkList {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 22px;
+}
+:global(.sm-footer-centered) .linkList a {
+  width: auto;
+}
+:global(.sm-footer-centered) .linkList a:hover {
+  transform: none;
+}
+:global(.sm-footer-centered) .newsletterInner {
+  flex-direction: column;
+  text-align: center;
+  gap: 18px;
+}
+:global(.sm-footer-centered) .newsletterForm {
+  align-items: center;
+}
+:global(.sm-footer-centered) .legalRow {
+  justify-content: center;
+  text-align: center;
+}
+
+/* compact — one slim band: the brand and its tagline, the link columns
+   beside it, contact lines in a row, a thin newsletter bar and bottom row.
+   For a store whose footer is a formality rather than a destination. */
+:global(.sm-footer-compact) .mainGrid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 24px 48px;
+  padding-block: 28px 16px;
+}
+:global(.sm-footer-compact) .brandCol {
+  flex: 1 1 260px;
+}
+:global(.sm-footer-compact) .linkCol {
+  flex: 0 1 auto;
+}
+:global(.sm-footer-compact) .tagline {
+  max-width: 300px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+:global(.sm-footer-compact) .contactBlock {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-bottom: 12px;
+}
+:global(.sm-footer-compact) .columnTitle {
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+:global(.sm-footer-compact) .linkList {
+  gap: 6px;
+}
+:global(.sm-footer-compact) .linkList a {
+  font-size: 13px;
+}
+:global(.sm-footer-compact) .newsletterBar {
+  margin-bottom: 0;
+  padding-block: 16px;
+}
+:global(.sm-footer-compact) .newsletterInner {
+  gap: 20px;
+}
+:global(.sm-footer-compact) .newsletterLabel {
+  font-size: 18px;
+  margin-bottom: 2px;
+}
+:global(.sm-footer-compact) .bottomSection {
+  padding-block: 10px;
+}
+:global(.sm-footer-compact) .legalRow {
+  margin-bottom: 6px;
+}
+:global(.sm-footer-compact) .credit {
+  margin-top: 4px;
+  padding-bottom: 10px;
+}
+@media (max-width: 600px) {
+  :global(.sm-footer-compact) .mainGrid {
+    flex-direction: column;
+    gap: 20px;
+  }
+}

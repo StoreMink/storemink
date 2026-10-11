@@ -17,7 +17,13 @@
 // draft → publish safety that page sections and chrome already have.
 // ---------------------------------------------------------------------------
 
+import { defaultTemplates, type ThemeTemplates } from "@/lib/themes/templates";
 import type { ThemeDesign, ThemePalette } from "@/lib/themes/types";
+import {
+  DESIGN_FONTS,
+  DESIGN_FONT_NAMES,
+  type DesignFont,
+} from "@/lib/themes/fonts";
 
 /**
  * The palette tokens a store may override.
@@ -43,29 +49,12 @@ export const DESIGN_PALETTE_TOKENS = [
 export type DesignPaletteToken = (typeof DESIGN_PALETTE_TOKENS)[number];
 
 /**
- * Typefaces already loaded by the root layout, keyed to their CSS variables.
- *
- * ★ AN ALLOWLIST, NOT A FREE STRING. The resolved value is written into an
- * inline `style` attribute on `.storefront-root`, so an arbitrary font value
- * is an injection surface — the same reason `SectionStyle.background` is
- * `safeColor`-only. It is also the truth: `app/layout.tsx` loads exactly these
- * with `preload: false`, and naming one it does not load renders the fallback
- * stack with no error to explain why.
+ * Typefaces loaded by the root layout, keyed to their CSS variables. The
+ * catalogue lives in `lib/themes/fonts.ts` (one list for the override
+ * allowlist, the faux-bold check, Theme Studio and Mink); this module
+ * re-exports it so every existing import keeps working.
  */
-export const DESIGN_FONTS = {
-  inter: "var(--font-inter)",
-  fraunces: "var(--font-fraunces)",
-  spaceGrotesk: "var(--font-space-grotesk)",
-  jakarta: "var(--font-jakarta)",
-  jost: "var(--font-jost)",
-  instrumentSerif: "var(--font-instrument-serif)",
-  outfit: "var(--font-outfit)",
-  roboto: "var(--font-roboto)",
-  stickNoBills: "var(--font-stick-no-bills)",
-} as const;
-
-export type DesignFont = keyof typeof DESIGN_FONTS;
-export const DESIGN_FONT_NAMES = Object.keys(DESIGN_FONTS) as DesignFont[];
+export { DESIGN_FONTS, DESIGN_FONT_NAMES, type DesignFont };
 
 /** Corner radii, in px. A slider, not a text box. */
 export const DESIGN_SHAPE_KEYS = ["card", "control", "sm", "pill"] as const;
@@ -338,6 +327,9 @@ export interface ThemeDesignDefaults {
   palette: Partial<Record<DesignPaletteToken, string>>;
   fonts: { body: string | null; display: string | null };
   shape: Partial<Record<DesignShapeKey, number>>;
+  /** The templates the theme renders (plan Phase 2e), so the builder can
+   *  start a merchant override from them and show what "theme" means. */
+  templates: ThemeTemplates;
 }
 
 /** Radii are authored as CSS lengths ("20px"); the panel edits numbers. */
@@ -348,6 +340,7 @@ function pxNumber(value: unknown): number | undefined {
 
 export function themeDesignDefaults(
   theme: ThemeDesign | null,
+  templates?: ThemeTemplates,
 ): ThemeDesignDefaults {
   const palette: Partial<Record<DesignPaletteToken, string>> = {};
   for (const token of DESIGN_PALETTE_TOKENS) {
@@ -366,5 +359,6 @@ export function themeDesignDefaults(
       display: theme?.fonts?.display ?? null,
     },
     shape,
+    templates: templates ?? defaultTemplates(theme?.layout),
   };
 }

@@ -7,6 +7,13 @@
 > on 2026-10-01), both jobs run the image built from merge commit `621ee75`,
 > both web services have capture and automatic QA enabled, and the first
 > one-minute executions completed successfully.
+>
+> **2026-10-10:** those schedules were 97% of the Cloud Run bill. The web app
+> now starts the job only when a capture is waiting; see
+> [Start it on demand instead](#start-it-on-demand-instead-2026-10-10) for the
+> permission, deploy and pause steps. Dev has no schedules at all and Theme
+> Studio is switched off there (owner decision; themes are never built on dev,
+> see `docs/gcp-ci-cd.md`).
 
 Publication needs a theme's catalog card and two screenshots, and an image
 model cannot draw them: they are pictures of the storefront itself. The
@@ -122,11 +129,51 @@ gcloud scheduler jobs create http storemink-theme-studio-capture \
 ```
 
 The invoker needs `roles/run.invoker` on the job. An execution with nothing
-queued exits in a few seconds.
+queued exits in a few seconds, **but it is billed for a full minute**: a Cloud
+Run job is charged a one-minute minimum per execution.
 
 For an existing schedule, use `gcloud scheduler jobs update http` with the
 same job name and `--schedule "* * * * *"` (and the environment's location/project).
 Dev uses its own job name and origin.
+
+## Start it on demand instead (2026-10-10)
+
+The two every-minute schedules were 97% of Cloud Run's bill: "Jobs CPU" and
+"Jobs Memory" came to ₹5,819 of ₹5,972 for 1–10 October 2026, which is
+2,880 one-minute executions of 2 vCPU / 2 GiB a day, nearly all of them idle.
+Since that deploy, the per-minute Theme Studio QA and runs routes start the job
+only when a capture is claimable (`lib/theme-studio/capture-start.ts`), so the
+job's own schedule is no longer needed. Roll it out in this order, or captures
+stop:
+
+1. Let the runtime service account start each job:
+
+   ```bash
+   for job in storemink-theme-studio-capture storemink-theme-studio-capture-dev; do
+     gcloud run jobs add-iam-policy-binding "$job" \
+       --project storemink-prod --region asia-south1 \
+       --member serviceAccount:storemink-run@storemink-prod.iam.gserviceaccount.com \
+       --role roles/run.invoker
+   done
+   ```
+
+2. Deploy the web service (merge to `dev` / `main`).
+3. Queue one capture and check Cloud Logging for
+   `theme_studio.capture_job_started` (a refusal logs
+   `theme_studio.capture_job_start_failed` with the HTTP status; 403 means
+   step 1 is missing).
+4. Pause the production schedule. `resume` brings it back as a fallback.
+   Dev has no schedule at all (owner decision, 2026-10-10).
+
+   ```bash
+   gcloud scheduler jobs pause storemink-theme-studio-capture \
+     --project storemink-prod --location asia-south1
+   ```
+
+A capture now starts within about a minute of being queued (the next QA or
+runs call). Failed attempts and lapsed leases start the job the same way. A
+capture still waiting after 6 hours stops starting it, so a broken job cannot
+be started every 90 seconds for ever.
 
 For an automatic claim the same execution also visits every available home,
 shop, product, cart, content and not-found surface at 360, 390, 768, 1024 and

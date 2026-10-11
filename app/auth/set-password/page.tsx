@@ -12,6 +12,13 @@ import {
   establishSession,
   phoneLinkErrorMessage,
 } from "@/lib/auth/firebase-client";
+import {
+  checkPhoneSend,
+  isTooManyRequests,
+  phoneSendErrorMessage,
+  recordPhoneSend,
+  recordPhoneSendFailure,
+} from "@/lib/auth/phone-send-guard";
 import { setPassword, getSetPasswordProfile } from "@/app/actions/set-password";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,6 +66,13 @@ export default function SetPasswordPage() {
   const recaptchaRef = useRef<HTMLDivElement | null>(null);
   const verifierRef = useRef<RecaptchaVerifier | null>(null);
   const verificationIdRef = useRef<string | null>(null);
+  // The number that verificationId was sent to. Edit keeps both, so returning
+  // to the same number inside the cooldown resumes the code step instead of
+  // texting a second code (lib/auth/phone-send-guard).
+  const verificationNumberRef = useRef<string | null>(null);
+  // ★ Synchronous re-entrancy guard: `loadingOtp` disables the button only
+  // after a re-render, so a double tap can start a second send before then.
+  const sendingRef = useRef(false);
 
   const strength = getPasswordStrength(password);
   const mismatch = confirmPassword.length > 0 && password !== confirmPassword;
@@ -93,27 +107,56 @@ export default function SetPasswordPage() {
   }, []);
 
   const handleSendOtp = async () => {
-    if (!phone || phone.length < 10) {
-      setOtpError("Please enter a valid phone number.");
-      return;
-    }
-
-    setOtpError("");
-    setLoadingOtp(true);
-
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     try {
-      // Start a phone-verification challenge for the signed-in user.
-      const provider = new PhoneAuthProvider(getFirebaseAuth());
-      verificationIdRef.current = await provider.verifyPhoneNumber(
-        fullPhone,
-        getVerifier(),
-      );
-      setOtpSent(true);
+      if (!phone || phone.length < 10) {
+        setOtpError("Please enter a valid phone number.");
+        return;
+      }
+
+      const check = checkPhoneSend(fullPhone);
+      if (!check.ok) {
+        // A code went to this number moments ago and is still usable.
+        if (
+          check.reason === "cooldown" &&
+          verificationIdRef.current &&
+          verificationNumberRef.current === fullPhone
+        ) {
+          setOtpError("");
+          setOtpSent(true);
+          return;
+        }
+        setOtpError(check.message);
+        return;
+      }
+
       setOtpError("");
-    } catch (err) {
-      setOtpError(phoneLinkErrorMessage(err));
+      setLoadingOtp(true);
+
+      try {
+        // Start a phone-verification challenge for the signed-in user.
+        const provider = new PhoneAuthProvider(getFirebaseAuth());
+        verificationIdRef.current = await provider.verifyPhoneNumber(
+          fullPhone,
+          getVerifier(),
+        );
+        recordPhoneSend(fullPhone);
+        verificationNumberRef.current = fullPhone;
+        setOtpSent(true);
+        setOtpError("");
+      } catch (err) {
+        recordPhoneSendFailure(fullPhone, err);
+        setOtpError(
+          isTooManyRequests(err)
+            ? phoneSendErrorMessage(fullPhone, err)
+            : phoneLinkErrorMessage(err),
+        );
+      }
+      setLoadingOtp(false);
+    } finally {
+      sendingRef.current = false;
     }
-    setLoadingOtp(false);
   };
 
   const handleVerifyOtp = async () => {

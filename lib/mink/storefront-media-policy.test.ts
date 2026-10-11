@@ -155,6 +155,9 @@ describe("the naming rule the guard rests on", () => {
       "poster_alt",
       "promo_banner",
       "video",
+      "image_marquee",
+      "image_hotspots",
+      "logo_strip",
     ]);
     const missed = [...declared].filter(
       (name) =>

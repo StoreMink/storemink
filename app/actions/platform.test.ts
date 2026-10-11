@@ -42,6 +42,9 @@ vi.mock("@/lib/auth/firebase-users", () => ({
 vi.mock("@/lib/auth/firebase-admin", () => ({
   isFirebaseAdminConfigured: vi.fn(() => true),
 }));
+vi.mock("@/lib/auth/authorized-domains", () => ({
+  removeAuthorizedHosts: vi.fn(async () => ({ removed: [] })),
+}));
 
 // The ported data layer: with* runners invoke the callback with the mock db.
 // getPlatformViewer reads platform_admins (select #1), then the action's own
@@ -68,6 +71,9 @@ import { isFirebaseAdminConfigured } from "@/lib/auth/firebase-admin";
 import { deleteStorageUrls } from "@/lib/storage/cleanup";
 import { gcsDeletePrefix } from "@/lib/storage/gcs";
 import { cleanupDetachedDomain } from "@/lib/domains/cleanup";
+import { removeAuthorizedHosts } from "@/lib/auth/authorized-domains";
+import { ROOT_DOMAIN } from "@/lib/store/host";
+import { stores } from "@/drizzle/schema";
 import { revalidateTag } from "next/cache";
 
 const OPERATOR_EMAIL = "op@storemink.com";
@@ -342,7 +348,13 @@ describe("deleteStore", () => {
 
     const res = await deleteStore("s1");
 
-    expect(res).toEqual({ success: true });
+    expect(res.success).toBe(true);
+    // A kept login is named, so the operator knows its email will not sign
+    // up as new — the deletion otherwise reads as a complete purge.
+    expect(res.warning).toBe(
+      `Kept 2 logins that another store or the operator console still uses (owner@example.com, ${OPERATOR_EMAIL}). Signing up with those emails reuses the existing account.`,
+    );
+    expect(res.warning).not.toMatch(/cleanup still needs attention/);
     expect(vi.mocked(deleteAuthUser).mock.calls.map(([uid]) => uid)).toEqual([
       "orphan-pos",
     ]);
@@ -418,6 +430,135 @@ describe("deleteStore", () => {
       "deleteStore",
       "legacy-resend-1",
     );
+  });
+
+  // Phone sign-in needs each store's EXACT subdomain host in Identity
+  // Platform's authorizedDomains, so deleting a store must take its host out.
+  describe("the store's own sign-in host", () => {
+    const HOST = `acme.${ROOT_DOMAIN}`;
+
+    function storeRows(failDelete = false) {
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          viewer(),
+          [{ id: "s1", slug: "acme", settings: {}, custom_domain: null }],
+          [],
+          [],
+          [],
+          ...Array.from({ length: 15 }, () => []),
+        ],
+        failDeleteFor: failDelete ? [stores] : [],
+      });
+    }
+
+    it("is removed exactly, and only after the store row is gone", async () => {
+      storeRows();
+
+      expect(await deleteStore("s1")).toEqual({ success: true });
+
+      expect(removeAuthorizedHosts).toHaveBeenCalledWith([HOST], ROOT_DOMAIN);
+      const deleted = vi.mocked(dbHolder.current.db.delete).mock
+        .invocationCallOrder[0];
+      const removed = vi.mocked(removeAuthorizedHosts).mock
+        .invocationCallOrder[0];
+      expect(deleted).toBeLessThan(removed!);
+    });
+
+    it("★ is removed BEFORE the slow media and storage cleanup", async () => {
+      // The slug is free once the row is gone; a store re-created on it while
+      // a large purge ran would otherwise lose its freshly added host.
+      storeRows();
+
+      await deleteStore("s1");
+
+      const removed = vi.mocked(removeAuthorizedHosts).mock
+        .invocationCallOrder[0]!;
+      expect(removed).toBeLessThan(
+        vi.mocked(deleteStorageUrls).mock.invocationCallOrder[0]!,
+      );
+      expect(removed).toBeLessThan(
+        vi.mocked(gcsDeletePrefix).mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("surfaces a failed removal as cleanup that needs attention", async () => {
+      vi.mocked(removeAuthorizedHosts).mockResolvedValueOnce({
+        removed: [],
+        error: "PERMISSION_DENIED",
+      });
+      storeRows();
+
+      const res = await deleteStore("s1");
+
+      expect(res.success).toBe(true);
+      expect(res.warning).toBe(
+        `The store data was deleted, but cleanup still needs attention: Identity Platform authorized domain ${HOST}.`,
+      );
+    });
+
+    it("a thrown removal is still a warning, never a failed delete", async () => {
+      vi.mocked(removeAuthorizedHosts).mockRejectedValueOnce(
+        new Error("socket hang up"),
+      );
+      storeRows();
+
+      const res = await deleteStore("s1");
+
+      expect(res.success).toBe(true);
+      expect(res.warning).toMatch(/Identity Platform authorized domain/);
+    });
+
+    it("is kept when the database delete fails, because the store still exists", async () => {
+      storeRows(true);
+
+      expect(await deleteStore("s1")).toEqual({
+        error: "Could not delete the store. Please try again.",
+      });
+      expect(removeAuthorizedHosts).not.toHaveBeenCalled();
+    });
+
+    it("is untouched for a store that was not found", async () => {
+      setup([viewer(), []]);
+
+      expect(await deleteStore("missing")).toEqual({
+        error: "Store not found.",
+      });
+      expect(removeAuthorizedHosts).not.toHaveBeenCalled();
+    });
+
+    it("goes alongside a custom domain's cleanup, which owns that domain's hosts", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          viewer(),
+          [
+            {
+              id: "s1",
+              slug: "acme",
+              settings: {},
+              custom_domain: "shop.example.com",
+            },
+          ],
+          [],
+          [],
+          [],
+          ...Array.from({ length: 15 }, () => []),
+        ],
+      });
+
+      expect(await deleteStore("s1")).toEqual({ success: true });
+      expect(cleanupDetachedDomain).toHaveBeenCalledWith(
+        "shop.example.com",
+        "deleteStore",
+        null,
+      );
+      expect(removeAuthorizedHosts).toHaveBeenCalledWith([HOST], ROOT_DOMAIN);
+      // The subdomain host does not wait on certificate deprovisioning.
+      expect(
+        vi.mocked(removeAuthorizedHosts).mock.invocationCallOrder[0]!,
+      ).toBeLessThan(
+        vi.mocked(cleanupDetachedDomain).mock.invocationCallOrder[0]!,
+      );
+    });
   });
 
   it("warns instead of claiming auth cleanup succeeded when Identity Platform is unavailable", async () => {

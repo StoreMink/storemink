@@ -21,9 +21,27 @@ import { TestimonialsSection } from "../sections/testimonials-section";
 import { VideoSection } from "../sections/video-section";
 import { NewsletterSection } from "../sections/newsletter-section";
 import { FaqAccordionSection } from "../sections/faq-accordion-section";
+import { AccordionSection } from "../sections/accordion-section";
+import { ComparisonSection } from "../sections/comparison-section";
+import { MulticolumnSection } from "../sections/multicolumn-section";
+import { ImageMarqueeSection } from "../sections/image-marquee-section";
+import { ImageHotspotsSection } from "../sections/image-hotspots-section";
+import { BeforeAfterSection } from "../sections/before-after-section";
+import { ProductSpotlightSection } from "../sections/product-spotlight-section";
+import { LogoStripSection } from "../sections/logo-strip-section";
+import { CountdownSection } from "../sections/countdown-section";
 import type {
+  AccordionConfig,
   AnySectionConfig,
+  BeforeAfterConfig,
+  ComparisonConfig,
+  CountdownConfig,
   CustomCodeConfig,
+  ImageHotspotsConfig,
+  ImageMarqueeConfig,
+  LogoStripConfig,
+  MulticolumnConfig,
+  ProductSpotlightConfig,
   FaqAccordionConfig,
   FeaturedProductsConfig,
   GalleryConfig,
@@ -150,6 +168,70 @@ function SectionBody({
         <FaqAccordionSection
           {...shell}
           config={section.config as FaqAccordionConfig}
+        />
+      );
+    case "accordion":
+      return (
+        <AccordionSection
+          {...shell}
+          config={section.config as AccordionConfig}
+        />
+      );
+    case "comparison":
+      return (
+        <ComparisonSection
+          {...shell}
+          config={section.config as ComparisonConfig}
+        />
+      );
+    case "multicolumn":
+      return (
+        <MulticolumnSection
+          {...shell}
+          config={section.config as MulticolumnConfig}
+        />
+      );
+    case "image_marquee":
+      return (
+        <ImageMarqueeSection
+          {...shell}
+          config={section.config as ImageMarqueeConfig}
+        />
+      );
+    case "image_hotspots":
+      return (
+        <ImageHotspotsSection
+          {...shell}
+          config={section.config as ImageHotspotsConfig}
+        />
+      );
+    case "before_after":
+      return (
+        <BeforeAfterSection
+          {...shell}
+          config={section.config as BeforeAfterConfig}
+        />
+      );
+    case "product_spotlight":
+      return (
+        <ProductSpotlightSection
+          {...shell}
+          config={section.config as ProductSpotlightConfig}
+          product={resolved.productsBySection.get(section.id)?.[0] ?? null}
+        />
+      );
+    case "logo_strip":
+      return (
+        <LogoStripSection
+          {...shell}
+          config={section.config as LogoStripConfig}
+        />
+      );
+    case "countdown":
+      return (
+        <CountdownSection
+          {...shell}
+          config={section.config as CountdownConfig}
         />
       );
     case "featured_products":

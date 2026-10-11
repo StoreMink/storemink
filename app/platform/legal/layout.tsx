@@ -17,9 +17,9 @@ export default function LegalLayout({
 }) {
   return (
     <div className="smh">
-      <SiteHeader anchorBase="/" />
+      <SiteHeader />
       {children}
-      <SiteFooter anchorBase="/" />
+      <SiteFooter />
     </div>
   );
 }

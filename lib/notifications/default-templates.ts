@@ -373,10 +373,11 @@ const BESPOKE: Record<string, { subject: string; body: string[] }> = {
   // The first email a merchant ever gets from us. It answers the two things
   // they want to know (where is my store, and what do I do next) and nothing
   // else. The checklist is the REQUIRED half of the go-live checklist
-  // (lib/store/launch-checklist-rules.ts), one row per destination: the four
-  // policies share one editor, so they share one row. The last row is the Go
-  // live button itself, on dashboard Home. template.test.ts pins these links
-  // to the rules, so a route that moves there fails here.
+  // (lib/store/launch-checklist-rules.ts), one row per task in the same order
+  // as dashboard Home: five tasks, then the Go live button itself. A grouped
+  // task links each of its pages: business details in the title, delivery
+  // charges inside the sentence under it. template.test.ts pins every link to
+  // the rules' tasks and steps, so a route that moves there fails here.
   //
   // Every link is built on {{store_url}}: a new store's dashboard lives on the
   // same host as its storefront ({slug}.storemink.com), and a link in an email
@@ -384,15 +385,16 @@ const BESPOKE: Record<string, { subject: string; body: string[] }> = {
   "store.created": {
     subject: "Finish setting up {{subject_label}}",
     body: [
-      '<p class="email-lead">Welcome to StoreMink. Your store already has its own address, <a href="{{store_url}}">{{store_url}}</a>, and it stays private behind a password page until you press <strong>Go live</strong>. The password is on your dashboard Home, so you can look around your shop before anyone else does.</p>',
-      "<p>Before you open, four things need to be in place. Each one takes a few minutes, and your dashboard Home keeps track of what is left.</p>",
+      '<p class="email-lead">Welcome to StoreMink. Your store already has its own address, <a href="{{store_url}}">{{store_url}}</a>, and it stays private behind a password page until you press <strong>Go live</strong>. The password is on your dashboard Home. Until you choose a theme, your address shows a store-in-progress page. After that you can look around your shop before anyone else does.</p>',
+      "<p>Before you open, five things need to be in place. Each one takes a few minutes, and your dashboard Home keeps track of what is left.</p>",
       "<h2>Your setup checklist</h2>",
       '<ul class="email-checklist">',
-      `  <li><a href="{{store_url}}/dashboard/products">Add your first product</a><br />Publish at least one product of your own. The theme's sample products are drafts your customers never see.</li>`,
-      '  <li><a href="{{store_url}}/dashboard/billing">Complete your business details</a><br />Your trading name, address, email and mobile number appear on every invoice you send.</li>',
+      '  <li><a href="{{store_url}}/dashboard/settings/account?focus=phone">Verify your mobile number</a><br />We text you a six-digit code. It takes a few seconds and confirms a real person runs your store.</li>',
+      '  <li><a href="{{store_url}}/dashboard/storefront">Choose your storefront theme</a><br />Until you pick one, your storefront shows a store-in-progress page. You can change it any time.</li>',
+      '  <li><a href="{{store_url}}/dashboard/products">Add your first product</a><br />Publish at least one product of your own. Any sample products your theme adds are drafts your customers never see.</li>',
+      '  <li><a href="{{store_url}}/dashboard/billing">Add your business and delivery details</a><br />Your trading name, address, email and mobile number appear on every invoice. Then <a href="{{store_url}}/dashboard/settings/shipping">set your delivery charges</a> so checkout shows prices you chose.</li>',
       '  <li><a href="{{store_url}}/dashboard/settings/policies">Publish your store policies</a><br />Terms, refunds, shipping and privacy. Shoppers can read all four before they pay.</li>',
-      '  <li><a href="{{store_url}}/dashboard/settings/shipping">Set your delivery charges</a><br />Choose what customers pay for delivery and how long it takes to arrive.</li>',
-      '  <li><a href="{{store_url}}/dashboard">Press Go live</a><br />Once the four steps above are done, the Go live button on your dashboard Home opens your shop to customers.</li>',
+      '  <li><a href="{{store_url}}/dashboard">Press Go live</a><br />Once the steps above are done, the Go live button on your dashboard Home opens your shop to customers.</li>',
       "</ul>",
       '<p class="email-note">Everything is editable later, including the store name.</p>',
     ],

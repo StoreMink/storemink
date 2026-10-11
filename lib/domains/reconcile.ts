@@ -386,21 +386,28 @@ export async function reconcileDomainForStore(
   await saveDomainSettings(storeId, next);
   revalidateTag(STORE_TAG, "max");
 
-  // ★ AUTHORISE THE DOMAIN FOR GOOGLE SIGN-IN. `/dashboard` and `/auth` are
-  // served on the custom domain too, but `signInWithPopup` refuses to run on an
-  // origin missing from Identity Platform's authorizedDomains — so "Continue
-  // with Google" was dead there while email+password worked, because password
-  // sign-in is a plain REST call and is not origin-gated. Firebase accepts no
-  // wildcard, so the list has to be maintained per domain, here.
+  // ★ AUTHORISE THE DOMAIN'S SIGN-IN HOSTS. The storefront, `/auth` and
+  // `/dashboard` are served on the custom domain, and Identity Platform gates
+  // two sign-in methods on its authorizedDomains list differently: a Google
+  // popup accepts any entry covering the host, but a phone code needs the
+  // EXACT host listed (verified 2026-10-10; lib/auth/authorized-domains.ts).
+  // So ensureAuthorizedDomain writes the exact apex + www hosts, which serve
+  // both, and never the registrable domain: that would be `eu.org` for
+  // `acme.eu.org`, authorising every site under the suffix. Firebase accepts
+  // no wildcard.
   //
-  // Best effort by design: a failure leaves the merchant with password sign-in
-  // and the next reconcile retries. It must never un-verify a live domain.
+  // ★ Only on the live edge. Retries and domains that went live before exact
+  // hosts were tracked are the hourly cron's job (syncStoreAuthHosts, one write
+  // for every store, right after this sweep). Calling it on every healthy pass
+  // as well put up to 30 s of Identity Platform latency per live domain inside
+  // the sweep's 300 s budget, where a slow auth API could push certificate and
+  // health work past Cloud Scheduler's deadline. Best effort: never un-verifies.
   if (!wasVerified) {
     const authz = await ensureAuthorizedDomain(domain).catch((err) => ({
       error: err instanceof Error ? err.message : "authorize threw",
     }));
     if (authz.error) {
-      logWarn("custom domain live but Google sign-in not authorised", {
+      logWarn("custom domain live but sign-in hosts not authorised", {
         storeId,
         domain,
         error: authz.error,

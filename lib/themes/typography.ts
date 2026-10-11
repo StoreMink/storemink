@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ThemeFonts } from "./types";
+import { fontWeightRange } from "./fonts";
 
 export const HEADING_FONTS = ["body", "display"] as const;
 export const HEADING_SCALES = ["small", "medium", "large", "xlarge"] as const;
@@ -188,22 +189,6 @@ export function typographyRootClasses(
   return classes;
 }
 
-/**
- * The weights each loaded face really has (app/layout.tsx). A variable font
- * is a range; a static font is its list.
- */
-const FONT_WEIGHTS: Record<string, { min: number; max: number }> = {
-  "var(--font-outfit)": { min: 100, max: 900 },
-  "var(--font-roboto)": { min: 400, max: 700 },
-  "var(--font-stick-no-bills)": { min: 800, max: 800 },
-  "var(--font-inter)": { min: 100, max: 900 },
-  "var(--font-fraunces)": { min: 100, max: 900 },
-  "var(--font-space-grotesk)": { min: 300, max: 700 },
-  "var(--font-jakarta)": { min: 200, max: 800 },
-  "var(--font-jost)": { min: 300, max: 500 },
-  "var(--font-instrument-serif)": { min: 400, max: 400 },
-};
-
 /** The weights storefront headings use today, when a theme sets none. */
 const DEFAULT_HEADING_WEIGHTS = [600, 650, 700, 800];
 
@@ -216,7 +201,9 @@ const DEFAULT_HEADING_WEIGHTS = [600, 650, 700, 800];
  * real weight.
  */
 export function fakesBold(fontValue: string, weight: number): boolean {
-  const range = FONT_WEIGHTS[fontValue.trim()];
+  // The weights each loaded face really has come from the catalogue
+  // (lib/themes/fonts.ts), which fonts.test.ts holds to app/layout.tsx.
+  const range = fontWeightRange(fontValue);
   if (!range) return false;
   return weight >= 600 && range.max < 600;
 }

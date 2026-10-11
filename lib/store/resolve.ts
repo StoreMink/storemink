@@ -10,8 +10,11 @@ import { studioPreviewMarker } from "@/lib/theme-studio/preview-store";
 
 // Re-exported so existing importers (and resolve.test.ts) keep working.
 export { parseHost, type HostKind } from "@/lib/store/host";
-import { isStorefrontGated } from "@/lib/store/launch-state";
-import { STOREFRONT_PASSWORD_PATH } from "@/lib/store/launch-copy";
+import { isStorefrontGated, isThemePending } from "@/lib/store/launch-state";
+import {
+  STOREFRONT_IN_PROGRESS_PATH,
+  STOREFRONT_PASSWORD_PATH,
+} from "@/lib/store/launch-copy";
 
 // ---------------------------------------------------------------------------
 // Tenant resolution.
@@ -251,6 +254,13 @@ export async function requireStorefrontStore(): Promise<Store> {
       redirect(STOREFRONT_PASSWORD_PATH);
     }
   }
+  // ★ AFTER the password, never before: a locked visitor must not learn that
+  // the store has no theme yet, so the password page always comes first. Past
+  // it, a store whose owner has not chosen a theme has no storefront to show,
+  // so every page sends everyone to the in-progress page — the owner included,
+  // and the builder preview too (the builder is blocked while pending). That
+  // page does not call this function, so it cannot loop.
+  if (isThemePending(store)) redirect(STOREFRONT_IN_PROGRESS_PATH);
   return store;
 }
 

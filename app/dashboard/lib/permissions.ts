@@ -9,10 +9,14 @@ import type { NavIconKey } from "../nav-icons";
 
 export type PermissionAction = "view" | "manage";
 
+// ★ The group that holds the storefront's pages is "Online store", not
+// "Storefront": since 2026-10-11 "Storefront" is the name of the theme page
+// inside it, and a sidebar heading that repeats one of its own items reads as
+// a mistake.
 export type SectionGroup =
   | "Workspace"
   | "Sell in person"
-  | "Storefront"
+  | "Online store"
   | "Marketing"
   | "Settings";
 
@@ -48,6 +52,12 @@ export interface DashboardSection {
   children?: DashboardSectionChild[];
   /** Open the link in a new tab (e.g. the full-screen Website Builder). */
   openInNewTab?: boolean;
+  /**
+   * Extra words the dashboard search (⌘K) matches for this section, for a
+   * page that was renamed: people keep typing the old name, and the Help
+   * Centre and emails may still use it for what the page does.
+   */
+  searchAliases?: string[];
   /**
    * Keep this section OUT of the sidebar while leaving its permission key
    * intact. For an area that has been folded into another screen: removing the
@@ -255,13 +265,35 @@ export const SECTIONS: DashboardSection[] = [
     ],
   },
 
-  // --- Storefront: everything a visitor sees --------------------------------
+  // --- Online store: everything a visitor sees ------------------------------
+  {
+    // Choosing the store's theme moved here from signup (2026-10-10), and
+    // since 2026-10-11 a new store has NO theme until its owner picks one on
+    // this page (its storefront shows "store in progress" until then). Its
+    // own key, not `builder`'s: installing or switching re-skins the whole
+    // storefront and may replace the homepage, a different grant from editing
+    // a page.
+    //
+    // ★ THE KEY STAYS `themes` THOUGH THE PAGE IS NOW "Storefront" at
+    // /dashboard/storefront. Roles store the KEY, so renaming it would
+    // silently revoke the grant on every saved role (the `promotions` and
+    // `activity` precedent). /dashboard/themes redirects here (next.config.ts).
+    key: "themes",
+    label: "Storefront",
+    // The page was "Themes" until 2026-10-11, and choosing a theme is still
+    // what it is for.
+    searchAliases: ["theme", "themes"],
+    href: "/dashboard/storefront",
+    icon: "themes",
+    group: "Online store",
+    actions: ["view", "manage"],
+  },
   {
     key: "builder",
     label: "Website Builder",
     href: "/dashboard/builder",
     icon: "homepage",
-    group: "Storefront",
+    group: "Online store",
     actions: ["view", "manage"],
     // Opens the full-screen builder in a new tab.
     openInNewTab: true,
@@ -278,7 +310,7 @@ export const SECTIONS: DashboardSection[] = [
     href: "/dashboard/builder",
     icon: "globe",
     hiddenInNav: true,
-    group: "Storefront",
+    group: "Online store",
     actions: ["view", "manage"],
   },
   {
@@ -286,7 +318,7 @@ export const SECTIONS: DashboardSection[] = [
     label: "Blogs",
     href: "/dashboard/blogs",
     icon: "blogs",
-    group: "Storefront",
+    group: "Online store",
     actions: ["view", "manage"],
     children: [
       {
@@ -308,7 +340,7 @@ export const SECTIONS: DashboardSection[] = [
     label: "Branding",
     href: "/dashboard/branding",
     icon: "colors",
-    group: "Storefront",
+    group: "Online store",
     actions: ["view", "manage"],
   },
   {
@@ -317,7 +349,7 @@ export const SECTIONS: DashboardSection[] = [
     label: "Media",
     href: "/dashboard/media",
     icon: "media",
-    group: "Storefront",
+    group: "Online store",
     actions: ["view", "manage"],
   },
 
@@ -519,7 +551,7 @@ export const SECTIONS: DashboardSection[] = [
 export const SECTION_GROUPS: SectionGroup[] = [
   "Workspace",
   "Sell in person",
-  "Storefront",
+  "Online store",
   "Marketing",
   "Settings",
 ];

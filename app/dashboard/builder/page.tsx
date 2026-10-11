@@ -7,19 +7,47 @@ import { getStoreBrand } from "@/lib/store/brand";
 import { getDraftChromeForEditor } from "@/lib/chrome/queries";
 import { DEFAULT_CHROME } from "@/lib/chrome/types";
 import { themeDesignDefaults } from "@/lib/chrome/design";
+import { themeTemplates } from "@/lib/themes/templates";
 import { resolveInstalledThemeDefinition } from "@/lib/themes/runtime-registry";
 import { readThemeSelection } from "@/lib/themes/meta";
 import { schemeDesignFor } from "@/lib/themes/schemes";
+import { isThemePending } from "@/lib/store/launch-state";
 import { BuilderClient } from "./builder-client";
+import { ChooseThemeFirst } from "./choose-theme-first";
 import type { BlogOption, CategoryOption, ProductOption } from "./section-form";
 import "./builder.css";
 
 // The website builder is a full-viewport experience opened in a new tab. It
 // still lives under /dashboard so the proxy auth gate applies.
 export default async function BuilderPage() {
-  await requireSectionAccess("builder", "view");
+  const access = await requireSectionAccess("builder", "view");
 
   const storeId = await getActingStoreId();
+
+  // Read first: the store's settings decide whether there is anything to edit
+  // at all. (Moved up from below the loaders, so no extra sequential step.)
+  const [storeRow] = await withService((db) =>
+    db
+      .select({ settings: stores.settings })
+      .from(stores)
+      .where(eq(stores.id, storeId))
+      .limit(1),
+  );
+
+  // ★ A store with no theme yet gets a prompt, not the editor — and the check
+  // comes BEFORE ensureHomepage, which would otherwise create a blank homepage
+  // row on a store whose first theme is about to install one. The storefront
+  // shows a store-in-progress page until a theme is chosen, so the builder's
+  // preview would have nothing to show either.
+  // The column is untyped jsonb; isThemePending reads one key, null-safely.
+  const settings = storeRow?.settings as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  if (isThemePending({ settings })) {
+    // Only offer the button to someone who can open the Storefront page.
+    return <ChooseThemeFirst canChoose={access.can("themes", "view")} />;
+  }
 
   const [homepage, pages, storeData, brand] = await Promise.all([
     ensureHomepage(),
@@ -69,17 +97,11 @@ export default async function BuilderPage() {
   // panel needs it to show a real fallback rather than an empty box — a colour
   // input has no null, so without this a merchant cannot tell "I have not
   // chosen" from "I chose exactly this".
-  const [storeRow] = await withService((db) =>
-    db
-      .select({ settings: stores.settings })
-      .from(stores)
-      .where(eq(stores.id, storeId))
-      .limit(1),
-  );
   const themeSelection = readThemeSelection(storeRow?.settings);
   const themeDefinition = await resolveInstalledThemeDefinition(themeSelection);
   const themeDefaults = themeDesignDefaults(
     themeDefinition?.preset.design ?? null,
+    themeDefinition ? themeTemplates(themeDefinition.preset) : undefined,
   );
   // The colours each section scheme is built from, so the Style tab can show
   // real swatches. The merchant's own palette edits are layered on in the

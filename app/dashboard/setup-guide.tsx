@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -21,6 +22,13 @@ import {
 } from "@/app/actions/launch-actions";
 import type { LaunchChecklistItem } from "@/lib/store/launch-checklist-rules";
 
+// The phone library and Firebase's phone sign-in load only when somebody opens
+// the mobile task, never with Dashboard Home itself.
+const VerifyPhoneForm = dynamic(
+  () => import("./components/verify-phone-form").then((m) => m.VerifyPhoneForm),
+  { ssr: false, loading: () => <div className="h-24" aria-hidden /> },
+);
+
 /**
  * The Shopify-shaped setup guide: ONE card. Its head carries what the owner
  * is waiting on (the password that keeps the shop private, and Go live); its
@@ -28,6 +36,11 @@ import type { LaunchChecklistItem } from "@/lib/store/launch-checklist-rules";
  * first unfinished one — is open, showing what to do and a button that goes
  * there. Recommended tasks exist only once the required ones are all done,
  * and fold away so the card never reads as a wall.
+ *
+ * ★ A grouped task (business + delivery, the four policies) is ONE row with
+ * its steps listed inside, each with its own tick, so the card stays five
+ * rows long without hiding a single requirement. Steps that share a page
+ * share one button; steps on different pages each get their own.
  *
  * Every tick is computed server-side from the store's own rows and handed in;
  * the client decides nothing about completion. Everything it DOES goes through
@@ -41,6 +54,7 @@ export function SetupGuide({
   ready,
   missing,
   canLaunch,
+  ownerCanVerifyPhone = false,
   password,
   previewUrl,
 }: {
@@ -50,9 +64,12 @@ export function SetupGuide({
   ready: boolean;
   missing: string[];
   canLaunch: boolean;
+  /** The viewer is this store's owner, so the mobile task verifies in place. */
+  ownerCanVerifyPhone?: boolean;
   password: string | null;
   previewUrl: string;
 }) {
+  const router = useRouter();
   const required = items.filter((i) => i.required);
   const recommended = items.filter((i) => !i.required);
   const recommendedDone = recommended.filter((i) => i.done).length;
@@ -102,6 +119,23 @@ export function SetupGuide({
             item={item}
             open={open === item.key}
             onToggle={() => setOpen(open === item.key ? null : item.key)}
+            phone={
+              item.key === "phone"
+                ? {
+                    canVerify: ownerCanVerifyPhone,
+                    onVerified: () => {
+                      toast.success("Mobile number verified");
+                      // Move on to the next task while the refreshed list
+                      // (with this one ticked) is on its way.
+                      setOpen(
+                        required.find((i) => !i.done && i.key !== "phone")
+                          ?.key ?? null,
+                      );
+                      router.refresh();
+                    },
+                  }
+                : undefined
+            }
           />
         ))}
       </ul>
@@ -151,11 +185,16 @@ function TaskRow({
   item,
   open,
   onToggle,
+  phone,
 }: {
   item: LaunchChecklistItem;
   open: boolean;
   onToggle: () => void;
+  /** Present only for the mobile task, which is done inline, not elsewhere. */
+  phone?: { canVerify: boolean; onVerified: () => void };
 }) {
+  const steps = item.steps ?? [];
+  const stepsDone = steps.filter((s) => s.done).length;
   return (
     <li className="border-t border-[var(--dash-border)]">
       <button
@@ -187,6 +226,11 @@ function TaskRow({
         >
           {item.title}
         </span>
+        {steps.length > 0 && !item.done && (
+          <span className="mt-px shrink-0 text-[12px] font-medium text-[var(--dash-text-3)]">
+            {stepsDone} of {steps.length}
+          </span>
+        )}
         <ChevronRight
           className={`mt-0.5 h-4 w-4 shrink-0 text-[var(--dash-text-3)] transition-transform ${
             open ? "rotate-90" : ""
@@ -198,17 +242,118 @@ function TaskRow({
           <p className="text-[13px] leading-snug text-[var(--dash-text-2)]">
             {item.description}
           </p>
-          <div>
-            <Link
-              href={item.href}
-              className={`dash-btn dash-btn-sm ${item.done ? "dash-btn-ghost" : "dash-btn-primary"}`}
-            >
-              {item.done ? "Review" : item.action}
-            </Link>
-          </div>
+          {phone && !item.done ? (
+            phone.canVerify ? (
+              <VerifyPhoneForm onVerified={phone.onVerified} />
+            ) : (
+              // Anyone else verifying THEIR number would not finish the
+              // owner's task, so there is nothing to press here.
+              <p className="text-[12.5px] text-[var(--dash-text-3)]">
+                The store owner verifies their own mobile number, from this card
+                or from their account settings.
+              </p>
+            )
+          ) : steps.length > 0 ? (
+            <StepList item={item} steps={steps} />
+          ) : (
+            <div>
+              <TaskLink
+                href={item.href}
+                done={item.done}
+                action={item.action}
+              />
+            </div>
+          )}
         </div>
       )}
     </li>
+  );
+}
+
+/** The button under a task or a step: its action until it is done, then a
+ *  quieter Review, the same rule for both. */
+function TaskLink({
+  href,
+  done,
+  action,
+  label,
+}: {
+  href: string;
+  done: boolean;
+  action: string;
+  /** What a Review button reviews, when several sit side by side. */
+  label?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-label={done && label ? `Review ${label}` : undefined}
+      className={`dash-btn dash-btn-sm ${done ? "dash-btn-ghost" : "dash-btn-primary"}`}
+    >
+      {done ? "Review" : action}
+    </Link>
+  );
+}
+
+function StepList({
+  item,
+  steps,
+}: {
+  item: LaunchChecklistItem;
+  steps: NonNullable<LaunchChecklistItem["steps"]>;
+}) {
+  // ★ One page, one button: four "Write policy" buttons to the same editor
+  // would read as four separate chores.
+  const shared = steps.every((s) => s.href === steps[0].href);
+  return (
+    <div className="flex flex-col gap-3">
+      <ul className="flex flex-col gap-2" aria-label={`${item.title}: steps`}>
+        {steps.map((step) => (
+          <li
+            key={step.key}
+            className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5"
+          >
+            <span
+              aria-hidden
+              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                step.done
+                  ? "border-[var(--dash-green)] bg-[var(--dash-green)] text-white"
+                  : "border-dashed border-[var(--dash-text-3)]"
+              }`}
+            >
+              {step.done && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
+            </span>
+            <span className="min-w-0 flex-1 text-[13px]">
+              <span className="sr-only">
+                {step.done ? "Done: " : "To do: "}
+              </span>
+              <span
+                className={
+                  step.done
+                    ? "text-[var(--dash-text-3)] line-through decoration-[var(--dash-border)]"
+                    : "font-medium text-[var(--dash-text)]"
+                }
+              >
+                {step.title}
+              </span>
+            </span>
+            {!shared && (
+              <TaskLink
+                href={step.href}
+                done={step.done}
+                action={step.action}
+                label={step.title}
+              />
+            )}
+          </li>
+        ))}
+      </ul>
+      {shared && (
+        <div>
+          <TaskLink href={item.href} done={item.done} action={item.action} />
+        </div>
+      )}
+    </div>
   );
 }
 

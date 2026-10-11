@@ -653,7 +653,7 @@ export async function confirmLocationPurchase(input: {
     return {
       ok: false,
       error:
-        "Your payment went through but we couldn't add the location. Contact support — don't pay again.",
+        "Your payment went through but we couldn't add the location. Contact support, and please don't pay again.",
     };
   }
   return { ok: true, data: { billedLocations: found.target } };

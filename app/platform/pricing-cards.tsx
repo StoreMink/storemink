@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Check } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // The pricing cards, with the monthly/yearly switch.
@@ -11,11 +10,16 @@ import { Check } from "lucide-react";
 // one we want anchored in someone's head, and it is what Claude, Hostinger and
 // most SaaS pricing pages do.
 //
-// A yearly plan is quoted PER MONTH ("₹1,250 /month, billed annually") because
+// A yearly plan is quoted PER MONTH ("₹1,250 /mo, billed annually") because
 // that is the number a buyer compares against a competitor's monthly price.
-// The full amount they will actually be charged is stated on the same card —
-// quoting only the per-month figure and surprising someone at checkout is the
+// The full amount they will actually be charged is stated on the same card.
+// Quoting only the per-month figure and surprising someone at checkout is the
 // oldest trick on a pricing page and we are not doing it.
+//
+// The card is shopify.com/pricing's shape: the name and a short tagline on the
+// left with the price on the right, one outline button, then a list of short
+// rows separated by hairlines, with no icons. The copy in PLANS is written to
+// fit one line per row.
 //
 // Prices arrive resolved from the server (lib/plans/pricing.ts): code defaults
 // with any operator override folded in. This component never computes a price,
@@ -38,8 +42,16 @@ export interface PricingCard {
 
 const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
 
-export function PricingCards({ plans }: { plans: PricingCard[] }) {
+export function PricingCards({
+  plans,
+  aside,
+}: {
+  plans: PricingCard[];
+  /** Rendered at the right of the billing switch, e.g. a compare link. */
+  aside?: ReactNode;
+}) {
   const [yearly, setYearly] = useState(true);
+  const switchLabelId = useId();
 
   // Only worth showing the switch if something actually differs. On an
   // all-free catalogue a toggle that changes nothing is just a control that
@@ -48,36 +60,34 @@ export function PricingCards({ plans }: { plans: PricingCard[] }) {
 
   return (
     <>
-      {hasPaid && (
-        <div
-          className="stq-billing-switch"
-          role="group"
-          aria-label="Billing period"
-        >
-          <button
-            type="button"
-            onClick={() => setYearly(false)}
-            aria-pressed={!yearly}
-            className={!yearly ? "is-on" : undefined}
-          >
-            Monthly
-          </button>
-          <button
-            type="button"
-            onClick={() => setYearly(true)}
-            aria-pressed={yearly}
-            className={yearly ? "is-on" : undefined}
-          >
-            Yearly <span>· 2 months free</span>
-          </button>
+      {(hasPaid || aside) && (
+        <div className="stq-pricing-bar">
+          {hasPaid && (
+            <div className="stq-billing-switch">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={yearly}
+                aria-labelledby={switchLabelId}
+                onClick={() => setYearly((on) => !on)}
+                className={`stq-switch${yearly ? " is-on" : ""}`}
+              >
+                <span />
+              </button>
+              <span id={switchLabelId}>
+                Pay yearly <small>2 months free</small>
+              </span>
+            </div>
+          )}
+          {aside && <div className="stq-pricing-aside">{aside}</div>}
         </div>
       )}
 
       <div className="stq-pricing">
         {plans.map((p) => {
           const free = p.monthlyInr === 0 && p.yearlyInr === 0;
-          // The headline is always a MONTHLY figure — on yearly it is the
-          // annual total divided by twelve, so the two tabs are comparable.
+          // The headline is always a MONTHLY figure: on yearly it is the
+          // annual total divided by twelve, so the two states are comparable.
           const shown = free
             ? 0
             : yearly
@@ -96,38 +106,30 @@ export function PricingCards({ plans }: { plans: PricingCard[] }) {
               className={`stq-price-card${p.popular ? " popular" : ""}`}
               key={p.id}
             >
-              {p.popular && (
-                <span className="stq-price-flag">Most popular</span>
-              )}
-              <h3>{p.name}</h3>
-              <p className="who">{p.who}</p>
-
-              <div className="stq-price">
-                {shownBase !== null && (
-                  <s aria-label={`Was ${inr(shownBase)} per month`}>
-                    {inr(shownBase)}
-                  </s>
-                )}
-                <b>{inr(shown)}</b>
-                <sub>/month</sub>
+              <div className="stq-price-top">
+                <div>
+                  <h3>{p.name}</h3>
+                  <p className="who">{p.who}</p>
+                </div>
+                <div className="stq-price">
+                  {shownBase !== null && (
+                    <s aria-label={`Was ${inr(shownBase)} per month`}>
+                      {inr(shownBase)}
+                    </s>
+                  )}
+                  <b>{inr(shown)}</b>
+                  <sub>/mo</sub>
+                </div>
               </div>
 
               {/* What they are actually charged, and when. */}
               <p className="stq-card-note">
                 {free
-                  ? "Free forever. No card needed."
+                  ? "No card needed"
                   : yearly
                     ? `${inr(p.yearlyInr)} billed once a year`
                     : `${inr(p.monthlyInr)} billed every month`}
               </p>
-
-              <ul>
-                {p.features.map((f) => (
-                  <li key={f}>
-                    <Check size={16} /> {f}
-                  </li>
-                ))}
-              </ul>
 
               <Link
                 href="/signup"
@@ -137,6 +139,12 @@ export function PricingCards({ plans }: { plans: PricingCard[] }) {
               >
                 {p.cta}
               </Link>
+
+              <ul>
+                {p.features.map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+              </ul>
             </div>
           );
         })}

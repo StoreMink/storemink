@@ -19,7 +19,7 @@ import {
 // one asset brief, through the executable prompt in
 // docs/theme-studio-image-prompt.md.
 //
-// ★ ONE PASS OVER THE TEMPLATE. The four placeholders are filled by a single
+// ★ ONE PASS OVER THE TEMPLATE. The five placeholders are filled by a single
 // replace, so a brief that happens to contain "{{composition}}" is inserted as
 // text and never expanded again — the brief is model-written from operator
 // input, and a second pass would let it rewrite the prompt around it.
@@ -43,7 +43,22 @@ export const THEME_IMAGE_PLACEHOLDERS = [
   "asset_brief",
   "composition",
   "reference_guidance",
+  "people",
 ] as const;
+
+export type ThemeImagePeople = "none" | "adults";
+
+/**
+ * The output rule about people, chosen by the brief (prompt v28). "none" is
+ * the pre-v28 rule byte for byte, so an older brief renders the prompt it
+ * always did; "adults" lets the picture show the product worn or used, with
+ * the limits the provider also enforces (image-vertex.ts).
+ */
+export function peopleRule(people: ThemeImagePeople = "none"): string {
+  return people === "adults"
+    ? "- This image may include one or two adults where THIS IMAGE calls for them: a model wearing the garment, a hand holding the product, a person using it in the scene. Adults only, never a child. No real, famous or recognisable person and no celebrity likeness; faces are natural, calm and never a logo or brand mark; no nudity or suggestive posing. The product stays the subject and the person serves it. If THIS IMAGE does not call for a person, show none."
+    : "- No people, faces, hands or body parts, and no mannequins or forms with faces. If THIS IMAGE mentions a model, a person, hands or someone wearing the product, show the product on its own instead: garments flat-lay, on a hanger, folded or draped; footwear and bags on a plinth or step; lifestyle scenes as empty, styled rooms and places where the products are the subject.";
+}
 type Placeholder = (typeof THEME_IMAGE_PLACEHOLDERS)[number];
 
 let productionTemplate: string | null = null;
@@ -139,6 +154,8 @@ export interface ThemeImageBrief {
   subject: string;
   artDirection: string;
   aspectRatio: string;
+  /** Whether adults may appear (the Stage A brief's choice, prompt v28). */
+  people?: ThemeImagePeople;
 }
 
 /** The theme-wide direction, read from the Stage A intent and the compiled
@@ -320,6 +337,9 @@ export function buildAnchorRequest(
         asset_brief: briefText("anchor", brief, retake),
         composition: compositionFor("anchor", ANCHOR_ASPECT_RATIO),
         reference_guidance: referenceText([]),
+        // The anchor is a still life that sets light and grade; it never
+        // needs a person, whatever the hero it follows asks for.
+        people: peopleRule("none"),
       },
       template,
     ),
@@ -363,6 +383,10 @@ export function buildAssetRequest(
 ): ThemeImageRequest {
   const aspectRatio = supportedRatio(brief.aspectRatio);
   const refs = orderedReferences(references);
+  // A pack shot never shows a person, whatever its range brief says: the
+  // catalogue stays on-form, flat-lay or draped.
+  const people: ThemeImagePeople =
+    purpose !== "product" && brief.people === "adults" ? "adults" : "none";
   const request: ThemeImageRequest = {
     purpose,
     briefId: brief.id,
@@ -373,10 +397,12 @@ export function buildAssetRequest(
         asset_brief: briefText(purpose, brief, retake),
         composition: compositionFor(purpose, aspectRatio),
         reference_guidance: referenceText(refs),
+        people: peopleRule(people),
       },
       template,
     ),
     references: refs,
+    ...(people === "adults" ? { people } : {}),
   };
   assertThemeImageRequest(request);
   return request;

@@ -1,4 +1,12 @@
 import { sanitizeMenusForSave } from "@/lib/menus";
+import {
+  FONT_PAIRING_KEYS,
+  THEME_FONT_VALUES,
+  fontFace,
+  isFontPairingKey,
+  isThemeFontValue,
+  pairingFonts,
+} from "@/lib/themes/fonts";
 import { explicitDraftStyleIssues } from "./style-choices";
 import { paletteFamilyIssues } from "./fingerprint";
 import type { PageSectionItem } from "@/lib/sections/registry";
@@ -28,6 +36,8 @@ import {
 } from "./contracts";
 import type { ThemeStudioModelKey } from "./models";
 import { validateSectionStyle } from "@/lib/homepage/section-types";
+import { defaultTemplates, normalizeTemplates } from "@/lib/themes/templates";
+import { normalizeAnnouncement } from "@/lib/themes/announcement";
 import {
   isSectionScheme,
   SCHEMELESS_SECTION_TYPES,
@@ -38,12 +48,12 @@ import {
 import { PALETTE_KEYS, THEME_STUDIO_SECTION_TYPES } from "./schemas";
 import { resolveOptionRows, type ProductOption } from "@/lib/products/options";
 import {
-  validateThemeDesign,
   validateThemeHomepage,
   validateThemeLinks,
   validateThemePages,
   validateThemeSampleData,
   validateThemeCopy,
+  validateStudioDesign,
 } from "@/lib/themes/validation";
 
 // ---------------------------------------------------------------------------
@@ -287,7 +297,47 @@ function normalizeGaps(value: unknown): ThemeCapabilityGap[] {
   });
 }
 
-function buildDesign(raw: unknown, issues: string[]): ThemeDesign | null {
+/**
+ * The two stored faces. A pairing (prompt v25+) WINS over the draft's own
+ * fonts: it is the choice the model made deliberately, and the two faces it
+ * also wrote are the pairing spelled out. A null pairing is a free choice
+ * from the catalogue, for a brief that names a typeface; the package
+ * contract refuses anything the catalogue lacks.
+ */
+function chosenFonts(
+  raw: Record<string, unknown>,
+  fontPairing: unknown,
+  issues: string[],
+): { body: string; display: string } {
+  if (fontPairing !== undefined && fontPairing !== null) {
+    if (isFontPairingKey(fontPairing)) return pairingFonts(fontPairing);
+    issues.push(
+      `fontPairing must be null or one of: ${FONT_PAIRING_KEYS.join(", ")}.`,
+    );
+  }
+  const fonts = { body: text(raw.body), display: text(raw.display) };
+  for (const key of ["body", "display"] as const) {
+    if (!isThemeFontValue(fonts[key])) {
+      issues.push(
+        `design.fonts.${key} must be one of the loaded font values: ${THEME_FONT_VALUES.join(", ")}.`,
+      );
+    }
+  }
+  // A free choice may still not put a poster face on body copy.
+  const body = fontFace(fonts.body);
+  if (body && !body.body) {
+    issues.push(
+      `design.fonts.body must be a face suited to body copy; ${body.label} is display only.`,
+    );
+  }
+  return fonts;
+}
+
+function buildDesign(
+  raw: unknown,
+  issues: string[],
+  fontPairing?: unknown,
+): ThemeDesign | null {
   if (
     !isRec(raw) ||
     !isRec(raw.palette) ||
@@ -360,7 +410,7 @@ function buildDesign(raw: unknown, issues: string[]): ThemeDesign | null {
   }
   return {
     palette: palette as unknown as ThemeDesign["palette"],
-    fonts: { body: text(raw.fonts.body), display: text(raw.fonts.display) },
+    fonts: chosenFonts(raw.fonts, fontPairing, issues),
     shape: {
       card: text(raw.shape.card),
       control: text(raw.shape.control),
@@ -454,6 +504,14 @@ function buildPages(
         }
         if (section.type === "shop_by_category" && config.source !== "all") {
           issues.push(`${where}: shop_by_category must use source "all".`);
+        }
+        if (
+          section.type === "product_spotlight" &&
+          (config.source !== "featured" || config.product_id)
+        ) {
+          issues.push(
+            `${where}: product_spotlight must use source "featured" with product_id null (ids are assigned at install).`,
+          );
         }
         const style = buildSectionStyle(section.style, String(section.type));
         return [
@@ -744,7 +802,7 @@ export function prepareDraft(
   const briefIds = new Set(intent.assetBriefs.map((b) => b.id));
   const used = new Set<string>(Object.keys(SYSTEM_SLOTS));
   const productSlots = new Map<string, ProductSlot>();
-  const design = buildDesign(draftInput.design, issues);
+  const design = buildDesign(draftInput.design, issues, draftInput.fontPairing);
   if (intent.schemaVersion === 2 && design)
     issues.push(
       ...paletteFamilyIssues(intent.paletteFamily, design.palette.cream),
@@ -791,6 +849,12 @@ export function prepareDraft(
   links.forEach((link, i) => {
     if (isRec(link)) checkLink(text(link.href), `menus link ${i + 1}`, issues);
   });
+  // v32: the announcement bar's link, held to the same rule as a menu link;
+  // its text is bounded by the renderer's normaliser at assembly.
+  if (isRec(draftInput.announcement)) {
+    const href = text(draftInput.announcement.href);
+    if (href) checkLink(href, "announcement.href", issues);
+  }
 
   return {
     parts: { draft: draftInput, design, pages, catalogue, productSlots },
@@ -902,6 +966,22 @@ export function assemblePackage(
       pages: withSeoDescriptions(pages, text(draft.description), facts.name),
       menus,
       sampleData: catalogue,
+      // v32 (plan Phase 2e): the page templates the draft wrote, completed
+      // and bounded by the renderer's own normaliser so the contract's strict
+      // report has nothing to object to. A pre-v32 draft carries none, and
+      // the storefront then composes the pages its layout implies.
+      ...(isRec(draft.templates)
+        ? {
+            templates: normalizeTemplates(
+              draft.templates,
+              defaultTemplates(design?.layout),
+            ),
+          }
+        : {}),
+      // v32: the announcement bar, or nothing when the draft wrote text "".
+      ...(normalizeAnnouncement(draft.announcement)
+        ? { announcement: normalizeAnnouncement(draft.announcement) }
+        : {}),
     },
   };
 
@@ -944,7 +1024,7 @@ export function contentFloorIssues(pkg: ThemePackageV2): string[] {
     ...validateThemeHomepage(theme),
     ...validateThemeSampleData(theme),
     ...validateThemeLinks(theme),
-    ...validateThemeDesign(theme),
+    ...validateStudioDesign(theme),
     ...validateThemeCopy(theme),
   ].map((finding) => finding.message);
 }

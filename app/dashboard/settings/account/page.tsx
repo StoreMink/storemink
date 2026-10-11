@@ -25,6 +25,7 @@ export default async function SettingsPage({
         role: admins.role,
         email: admins.email,
         phone: admins.phone,
+        phone_verified_at: admins.phoneVerifiedAt,
       })
       .from(admins)
       .where(eq(admins.id, user.id))
@@ -32,7 +33,11 @@ export default async function SettingsPage({
   ).catch(() => []);
   const profile = rows[0];
 
-  const initialTab: Tab = tab === "security" ? "security" : "profile";
+  // `focus=phone` lives on the Security tab, so it opens that tab by itself.
+  const initialTab: Tab =
+    tab === "security" || focus === "phone" || focus === "password"
+      ? "security"
+      : "profile";
 
   return (
     <AccountSettingsView
@@ -40,7 +45,10 @@ export default async function SettingsPage({
       role={profile?.role ?? ""}
       firstName={profile?.first_name ?? ""}
       lastName={profile?.last_name ?? ""}
-      phone={profile?.phone ?? (user.phone ? `+${user.phone}` : "")}
+      // admins.phone alone proves nothing (invited staff type theirs on the
+      // password screen); only phone_verified_at says a code confirmed it.
+      phone={profile?.phone ?? ""}
+      phoneVerified={!!profile?.phone_verified_at}
       initialTab={initialTab}
       initialFocus={
         focus === "phone" ? "phone" : focus === "password" ? "password" : null

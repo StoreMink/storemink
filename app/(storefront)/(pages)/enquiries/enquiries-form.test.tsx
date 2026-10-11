@@ -2,7 +2,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 
 // Auth context: mock useAuth itself so AuthProvider's Supabase internals never
@@ -33,11 +39,14 @@ vi.mock("firebase/auth", () => ({
 vi.mock("@/lib/auth/firebase-client", () => ({
   getSecondaryFirebaseAuth: vi.fn(() => ({ signOut: secondarySignOut })),
   firebaseAuthErrorMessage: vi.fn(() => "Something went wrong."),
+  firebaseAuthErrorCode: vi.fn((err: any) => err?.code ?? "unknown"),
 }));
 
 import EnquiriesForm from "./enquiries-form";
 import { useAuth } from "@/app/(storefront)/components/auth/AuthProvider";
 import { submitEnquiry } from "@/app/actions/enquiry-actions";
+import { resetPhoneSendGuard } from "@/lib/auth/phone-send-guard";
+import { MAX_VERIFY_ATTEMPTS } from "@/lib/use-otp-throttle";
 
 const mockedUseAuth = vi.mocked(useAuth);
 const mockedSubmit = vi.mocked(submitEnquiry);
@@ -55,6 +64,8 @@ const SIGNED_IN = {
 describe("EnquiriesForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The send ledger is module-scoped, so it would leak between tests.
+    resetPhoneSendGuard();
     setAuth(LOGGED_OUT);
     confirm.mockResolvedValue({});
     signInWithPhoneNumber.mockResolvedValue({ confirm });
@@ -267,5 +278,186 @@ describe("EnquiriesForm", () => {
     // Back on the form.
     expect(await screen.findByText("Get in touch")).toBeTruthy();
     expect(screen.getByLabelText(/message/i)).toBeTruthy();
+  });
+  // ------------------------------------------------------- phone send guard
+  describe("phone send guard", () => {
+    const CODE_STEP = /Enter the 6-digit code/;
+    const verifyButton = () =>
+      screen.getByRole("button", { name: /^verify$/i }) as HTMLButtonElement;
+    const changeButton = () =>
+      screen.getByRole("button", { name: /^change$/i });
+    const phoneField = () => screen.getByPlaceholderText(/mobile number/i);
+
+    async function enterPhone(
+      user: ReturnType<typeof userEvent.setup>,
+      digits = "9876543210",
+    ) {
+      await user.clear(phoneField());
+      await user.type(phoneField(), digits);
+    }
+
+    beforeEach(() => {
+      setAuth(LOGGED_OUT);
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+
+    it("a second tap while the first send is in flight does not call Firebase twice", async () => {
+      const user = userEvent.setup();
+      let resolveSend!: (value: unknown) => void;
+      signInWithPhoneNumber.mockImplementation(
+        () => new Promise((resolve) => (resolveSend = resolve)),
+      );
+      render(<EnquiriesForm />);
+      await enterPhone(user);
+
+      // Both taps land before React re-renders the button as disabled, so only
+      // the synchronous in-flight ref can stop the second one.
+      const btn = verifyButton();
+      act(() => {
+        btn.click();
+        btn.click();
+      });
+      expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
+
+      await act(async () => resolveSend({ confirm }));
+      expect(await screen.findByText(CODE_STEP)).toBeTruthy();
+      expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
+    });
+
+    it("after too-many-requests, a further tap stays off Firebase and names a time", async () => {
+      const user = userEvent.setup();
+      signInWithPhoneNumber.mockRejectedValueOnce({
+        code: "auth/too-many-requests",
+      });
+      render(<EnquiriesForm />);
+      await enterPhone(user);
+
+      await user.click(verifyButton());
+      expect(await screen.findByText(/try again after/i)).toBeTruthy();
+      expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
+
+      await user.click(verifyButton());
+      expect(screen.getByText(/try again after/i)).toBeTruthy();
+      expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
+    });
+
+    it("Change, then the same number inside the cooldown, resumes the live code", async () => {
+      const user = userEvent.setup();
+      render(<EnquiriesForm />);
+      await enterPhone(user);
+      await user.click(verifyButton());
+      expect(await screen.findByText(CODE_STEP)).toBeTruthy();
+
+      await user.click(changeButton());
+      expect(screen.queryByText(CODE_STEP)).toBeNull();
+
+      await user.click(verifyButton());
+      expect(await screen.findByText(CODE_STEP)).toBeTruthy();
+      expect(screen.queryByText(/a code was just sent/i)).toBeNull();
+      expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
+
+      // The resumed code is the one on their phone, and it still verifies.
+      for (let i = 1; i <= 6; i++) {
+        fireEvent.change(screen.getByLabelText(`Digit ${i}`), {
+          target: { value: String(i) },
+        });
+      }
+      expect(
+        await screen.findByText(/· verified/, undefined, { timeout: 3000 }),
+      ).toBeTruthy();
+      expect(confirm).toHaveBeenCalledWith("123456");
+    });
+
+    it("a remounted form does not re-send to the same number inside the cooldown", async () => {
+      const user = userEvent.setup();
+      const { unmount } = render(<EnquiriesForm />);
+      await enterPhone(user);
+      await user.click(verifyButton());
+      await screen.findByText(CODE_STEP);
+      unmount();
+
+      render(<EnquiriesForm />);
+      await enterPhone(user);
+      await user.click(verifyButton());
+      expect(
+        await screen.findByText(/a code was just sent to this number/i),
+      ).toBeTruthy();
+      expect(screen.queryByText(CODE_STEP)).toBeNull();
+      expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
+    });
+
+    it("a send to a different number replaces the live code", async () => {
+      const user = userEvent.setup();
+      render(<EnquiriesForm />);
+      await enterPhone(user, "9876543210");
+      await user.click(verifyButton());
+      await screen.findByText(CODE_STEP);
+
+      await user.click(changeButton());
+      await enterPhone(user, "9123456789");
+      await user.click(verifyButton());
+      await screen.findByText(CODE_STEP);
+      expect(signInWithPhoneNumber).toHaveBeenCalledTimes(2);
+      expect(signInWithPhoneNumber.mock.calls[0][1]).toBe("+919876543210");
+      expect(signInWithPhoneNumber.mock.calls[1][1]).toBe("+919123456789");
+
+      // Back to the first number: still in its cooldown, but its code is gone.
+      await user.click(changeButton());
+      await enterPhone(user, "9876543210");
+      await user.click(verifyButton());
+      expect(
+        await screen.findByText(/a code was just sent to this number/i),
+      ).toBeTruthy();
+      expect(screen.queryByText(CODE_STEP)).toBeNull();
+      expect(signInWithPhoneNumber).toHaveBeenCalledTimes(2);
+    });
+
+    it("Change cannot reset the wrong-code cap by resuming the same code", async () => {
+      const user = userEvent.setup();
+      confirm.mockRejectedValue({ code: "auth/invalid-verification-code" });
+      render(<EnquiriesForm />);
+      await enterPhone(user);
+      await user.click(verifyButton());
+      await screen.findByText(CODE_STEP);
+
+      for (let i = 1; i <= 5; i++) {
+        fireEvent.change(screen.getByLabelText(`Digit ${i}`), {
+          target: { value: "1" },
+        });
+      }
+      for (let attempt = 1; attempt <= MAX_VERIFY_ATTEMPTS; attempt++) {
+        fireEvent.change(screen.getByLabelText("Digit 6"), {
+          target: { value: String(attempt) },
+        });
+        await waitFor(() => expect(confirm).toHaveBeenCalledTimes(attempt));
+        await waitFor(() =>
+          expect(screen.queryByText("Verifying…")).toBeNull(),
+        );
+      }
+
+      await user.click(changeButton());
+      await user.click(verifyButton());
+      expect(
+        await screen.findByText(/a code was just sent to this number/i),
+      ).toBeTruthy();
+      expect(screen.queryByText(CODE_STEP)).toBeNull();
+      expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
+    });
+
+    it("a non-rate-limit failure does not lock the number", async () => {
+      const user = userEvent.setup();
+      signInWithPhoneNumber.mockRejectedValueOnce({
+        code: "auth/invalid-app-credential",
+      });
+      render(<EnquiriesForm />);
+      await enterPhone(user);
+
+      await user.click(verifyButton());
+      expect(await screen.findByText("Something went wrong.")).toBeTruthy();
+
+      await user.click(verifyButton());
+      expect(await screen.findByText(CODE_STEP)).toBeTruthy();
+      expect(signInWithPhoneNumber).toHaveBeenCalledTimes(2);
+    });
   });
 });

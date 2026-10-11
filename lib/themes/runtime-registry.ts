@@ -28,6 +28,36 @@ import {
   type ThemeSelection,
 } from "./meta";
 import type { ThemeDefinition } from "./types";
+import { logWarn } from "@/lib/observability/logger";
+
+/** The renderer version this build carries per engine: the bundled
+ *  definitions are rendered by this build, so the version each declares is
+ *  what the renderer implements (the highest, when releases differ). A
+ *  stored package asking for more than that (`renderer.minVersion`, plan
+ *  Phase 2e) is refused the way a bad digest is, never served half-rendered. */
+export const RENDERER_ENGINE_VERSIONS: Readonly<Record<string, number>> =
+  Object.fromEntries(
+    THEME_DEFINITIONS.map((theme) => [
+      theme.engine.id,
+      Math.max(
+        theme.engine.version,
+        ...THEME_DEFINITIONS.filter((t) => t.engine.id === theme.engine.id).map(
+          (t) => t.engine.version,
+        ),
+      ),
+    ]),
+  );
+
+/** Whether this build can render a package: its engine's renderer here is at
+ *  least the version the package needs. An engine this build does not bundle
+ *  is left to the package's own say-so, as before. */
+export function rendererSupports(pkg: {
+  definition: { engine: { id: string } };
+  renderer: { minVersion: number };
+}): boolean {
+  const supported = RENDERER_ENGINE_VERSIONS[pkg.definition.engine.id];
+  return supported === undefined || pkg.renderer.minVersion <= supported;
+}
 
 export const THEME_REGISTRY_TAG = "theme-runtime-registry";
 const THEME_REGISTRY_REVALIDATE_SECONDS = 300;
@@ -145,6 +175,16 @@ function parseRelease(row: StoredReleaseRow): RuntimeThemeRelease | null {
     definition.release.status !== row.releaseStatus ||
     digestThemePackage(parsed.value) !== row.manifestDigest
   ) {
+    return null;
+  }
+  if (!rendererSupports(parsed.value)) {
+    logWarn("theme_registry.renderer_too_old", {
+      themeId: row.themeId,
+      version: row.version,
+      engine: definition.engine.id,
+      minVersion: parsed.value.renderer.minVersion,
+      supported: RENDERER_ENGINE_VERSIONS[definition.engine.id],
+    });
     return null;
   }
   return {

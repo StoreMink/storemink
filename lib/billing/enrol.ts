@@ -1026,7 +1026,7 @@ export async function confirmEnrolment(input: {
     return {
       ok: false,
       error:
-        "Your payment went through but we couldn't switch your plan over. Contact support — don't pay again.",
+        "Your payment went through but we couldn't switch your plan over. Contact support, and please don't pay again.",
     };
   }
 

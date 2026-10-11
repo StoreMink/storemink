@@ -33,6 +33,8 @@ export interface DashboardSearchGroup {
     label: string;
     href: string;
     openInNewTab?: boolean;
+    /** Extra words this destination should match (a renamed page's old name). */
+    searchAliases?: string[];
     children?: { label: string; href: string }[];
   }[];
 }
@@ -60,9 +62,10 @@ function searchItemsFor(groups: DashboardSearchGroup[]): DashboardSearchItem[] {
     href: string;
     context: string;
     openInNewTab?: boolean;
+    aliases?: string[];
   }) => {
     const alias =
-      `${input.label} ${input.context} ${input.href.replaceAll("/", " ")}`.toLocaleLowerCase();
+      `${input.label} ${input.context} ${input.href.replaceAll("/", " ")} ${(input.aliases ?? []).join(" ")}`.toLocaleLowerCase();
     const existing = byHref.get(input.href);
     if (existing) {
       existing.searchText += ` ${alias}`;
@@ -84,6 +87,7 @@ function searchItemsFor(groups: DashboardSearchGroup[]): DashboardSearchItem[] {
         href: item.href,
         context: group.group,
         openInNewTab: item.openInNewTab,
+        aliases: item.searchAliases,
       });
       for (const child of item.children ?? []) {
         add({

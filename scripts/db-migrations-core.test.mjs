@@ -9,6 +9,7 @@ import {
   loadManifest,
   migrationPlan,
   parseCli,
+  toleratesUnknownMigrations,
   sha256,
   validateEnvironment,
   classifyDrift,
@@ -1132,6 +1133,49 @@ describe("database migration controls", () => {
     expect(() => parseCli(["destroy", "--environment", "local"])).toThrow(
       "Usage",
     );
+  });
+
+  it("★ tolerates another branch's ledger rows ONLY on a named local database", () => {
+    const local = parseCli([
+      "apply",
+      "--environment",
+      "local",
+      "--allow-unknown",
+      "local",
+    ]);
+    expect(toleratesUnknownMigrations(local)).toBe(true);
+    expect(
+      toleratesUnknownMigrations(
+        parseCli(["status", "--environment", "local"]),
+      ),
+    ).toBe(false);
+    // Shared databases keep the refusal: there an unknown row means the code
+    // is older than the database.
+    for (const environment of ["staging", "production"]) {
+      expect(() =>
+        parseCli([
+          "apply",
+          "--environment",
+          environment,
+          "--allow-unknown",
+          environment,
+        ]),
+      ).toThrow("only for a local database");
+    }
+    // It must name the database, the shape --update-baseline uses.
+    expect(() =>
+      parseCli(["verify", "--environment", "local", "--allow-unknown", "yes"]),
+    ).toThrow("must name it");
+    // Never on a command that records or adopts history.
+    expect(() =>
+      parseCli([
+        "baseline",
+        "--environment",
+        "local",
+        "--allow-unknown",
+        "local",
+      ]),
+    ).toThrow("Unknown flag");
   });
 
   it("fingerprints public aggregates without decompiling them as functions", async () => {

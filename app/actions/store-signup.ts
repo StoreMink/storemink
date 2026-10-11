@@ -1,19 +1,29 @@
 "use server";
 
 import { updateTag } from "next/cache";
-import { eq } from "drizzle-orm";
+import { headers } from "next/headers";
+import { after } from "next/server";
+import { eq, sql } from "drizzle-orm";
+import { getFirebaseAdminAuth } from "@/lib/auth/firebase-admin";
+import { authErrorCode, deleteAuthUser } from "@/lib/auth/firebase-users";
+import { authIdsInUse } from "@/lib/auth/identity-usage";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
+import { ensureAuthorizedHosts } from "@/lib/auth/authorized-domains";
+import {
+  storeAuthHosts,
+  type StoreAuthHostInput,
+} from "@/lib/auth/store-auth-hosts";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { withService } from "@/lib/db/client";
 import { isUniqueViolation } from "@/lib/db/errors";
 import { admins, storeBillingSettings, stores } from "@/drizzle/schema";
 import { getServerUser } from "@/lib/auth/server-user";
+import { emailVerifiedNow } from "@/lib/auth/email-verified";
 import { STORE_TAG } from "@/lib/store/resolve";
 import { ROOT_DOMAIN } from "@/lib/store/host";
 import { slugify } from "@/lib/slug";
 import { emitEvent } from "@/lib/notifications/record";
 import { recordSignupConsent } from "@/lib/legal/store";
-import { applyTheme } from "@/lib/themes/apply";
-import { DEFAULT_THEME_ID, isThemeSelectable } from "@/lib/themes/meta";
-import { getThemeCatalog } from "@/lib/themes/runtime-registry";
 import { COUNTRIES, DEFAULT_COUNTRY } from "@/lib/countries";
 
 // Subdomains we can never hand out (platform-reserved or operational).
@@ -114,8 +124,9 @@ export interface SignupResume {
   hasStore: boolean;
   /** The owned store's slug, when hasStore. */
   slug?: string;
-  /** Whether the account's phone is OTP-verified already. */
-  phoneConfirmed: boolean;
+  /** The owner's mobile is verified (admins.phone_verified_at), when
+   *  hasStore — a paid plan needs it before payment. */
+  phoneVerified?: boolean;
   /** Google verifies this itself; password signup verifies it with our OTP. */
   emailConfirmed: boolean;
   email?: string;
@@ -127,7 +138,7 @@ export interface SignupResume {
 /**
  * What the signup wizard needs on load to resume: after a Google redirect (or a
  * refreshed tab), an account may already have a session — and possibly a store.
- * Lets the client jump straight to the phone/name step (prefilling the Google
+ * Lets the client jump straight to the store step (prefilling the Google
  * name), or bounce a finished account to its dashboard.
  */
 export async function getSignupResumeInfo(): Promise<SignupResume> {
@@ -136,22 +147,26 @@ export async function getSignupResumeInfo(): Promise<SignupResume> {
     return {
       authenticated: false,
       hasStore: false,
-      phoneConfirmed: false,
       emailConfirmed: false,
     };
   }
 
   let storeIdOwned: string | undefined;
   let slug: string | undefined;
+  let phoneVerified = false;
   try {
     const existing = await withService((db) =>
       db
-        .select({ store_id: admins.storeId })
+        .select({
+          store_id: admins.storeId,
+          phone_verified_at: admins.phoneVerifiedAt,
+        })
         .from(admins)
         .where(eq(admins.id, user.id))
         .limit(1),
     );
     storeIdOwned = existing[0]?.store_id ?? undefined;
+    phoneVerified = Boolean(existing[0]?.phone_verified_at);
 
     if (storeIdOwned) {
       const storeRows = await withService((db) =>
@@ -180,26 +195,128 @@ export async function getSignupResumeInfo(): Promise<SignupResume> {
     authenticated: true,
     hasStore: !!storeIdOwned,
     slug,
-    phoneConfirmed: user.phoneConfirmed,
-    emailConfirmed: user.emailConfirmed,
+    ...(storeIdOwned ? { phoneVerified } : {}),
+    // The record when the cookie still says unverified: a resumed tab whose
+    // code was accepted goes on to the store step, never back to a new code.
+    emailConfirmed: await emailVerifiedNow(user),
     email: user.email ?? undefined,
     firstName,
     lastName,
   };
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Free an email whose login holds no StoreMink role, so signup can create the
+ * account afresh. Called by the wizard only after Firebase answered
+ * `auth/email-already-in-use` AND the typed password did not sign in.
+ *
+ * Two things leave such a login behind: a deleted store whose owner login
+ * `deleteStore` could not remove, and an abandoned signup — the password step
+ * creates the Firebase account before the email is verified, so a half-finished
+ * attempt (or somebody typing another person's address) holds the email with a
+ * password its real owner does not know. Either way signup dead-ended on
+ * "An account with this email already exists", and the platform login asks for
+ * a store address this person does not have.
+ *
+ * ★ A login that still holds a role anywhere — store admin, storefront
+ * customer, POS operator, platform operator — is never touched: that is a real
+ * account, and its owner signs in with its own password. Deleting a role-less
+ * login loses nothing, and the new account must still prove the address with
+ * the emailed code before it can create a store.
+ */
+export async function reclaimUnusedSignupEmail(
+  email: string,
+): Promise<{ reclaimed: boolean }> {
+  const address = String(email ?? "")
+    .trim()
+    .toLowerCase();
+  if (!EMAIL_RE.test(address)) return { reclaimed: false };
+
+  // A deletion endpoint anyone can call: bounded per IP, generous enough for
+  // a shared office connection.
+  const { allowed } = await rateLimit(
+    `signup-reclaim:${clientIp(await headers())}`,
+    { max: 10, windowSeconds: 3600 },
+  );
+  if (!allowed) return { reclaimed: false };
+
+  const auth = getFirebaseAdminAuth();
+  if (!auth) return { reclaimed: false };
+
+  let uid: string;
+  const emails = new Set([address]);
+  try {
+    const record = await auth.getUserByEmail(address);
+    uid = record.uid;
+    if (record.email) emails.add(record.email.trim().toLowerCase());
+  } catch (err) {
+    // Already gone (deleted between the client's attempt and now): the email
+    // is free, so the wizard may simply try again.
+    if (authErrorCode(err) === "auth/user-not-found")
+      return { reclaimed: true };
+    logError("reclaimUnusedSignupEmail (lookup)", err);
+    return { reclaimed: false };
+  }
+
+  try {
+    // Fails closed: an unanswerable check throws, and "unknown" is "in use".
+    const inUse = await authIdsInUse(new Map([[uid, emails]]));
+    if (inUse.has(uid)) return { reclaimed: false };
+    await deleteAuthUser(uid);
+  } catch (err) {
+    logError("reclaimUnusedSignupEmail", err, { uid });
+    return { reclaimed: false };
+  }
+  logInfo("signup: removed a login with no StoreMink role", { uid });
+  return { reclaimed: true };
+}
+
+/**
+ * Add a new store's exact host(s) to Identity Platform's authorized domains,
+ * after the response is sent. ★ It must never fail or slow signup: the store is
+ * already committed, a Google API round trip has no place in front of the
+ * merchant, and the hourly sweep (syncStoreAuthHosts) re-adds anything missed.
+ * So every failure, including `after()` itself throwing outside a request
+ * scope, is a logged warning and nothing more.
+ */
+function registerStoreAuthHosts(
+  storeId: string,
+  store: StoreAuthHostInput,
+): void {
+  const warn = (err: unknown) =>
+    logWarn("createStore: could not authorize the store's sign-in hosts", {
+      storeId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  try {
+    after(async () => {
+      try {
+        // Empty for a demo/preview store or a local root: nothing to register.
+        const hosts = storeAuthHosts(store, ROOT_DOMAIN);
+        if (hosts.length === 0) return;
+        const result = await ensureAuthorizedHosts(hosts);
+        if (result.error) warn(result.error);
+      } catch (err) {
+        warn(err);
+      }
+    });
+  } catch (err) {
+    warn(err);
+  }
+}
+
 export interface CreateStoreInput {
   /** Store display name (also seeds the subdomain slug). */
   name: string;
-  /** Chosen theme/template id (see lib/themes/meta). */
-  template?: string;
   /** Owner's first name (written to admins.first_name). */
   firstName?: string;
   /** Owner's last name (admins.last_name; optional). */
   lastName?: string;
   /** ISO country code the merchant sells from (settings.business.country).
-   *  Defaults to the platform's home country when absent — the wizard
-   *  pre-fills it from the verified phone's dial code. */
+   *  Defaults to the platform's home country when absent; the wizard offers
+   *  the same default and lets the merchant change it. */
   country?: string;
   /**
    * The business address. ★ OPTIONAL AT SIGNUP since 2026-10-07: it prints on
@@ -222,16 +339,26 @@ export interface CreateStoreInput {
 export interface CreateStoreResult {
   slug?: string;
   storeId?: string;
+  /** The owner's mobile is already verified, so a paid plan chosen during
+   *  signup can go straight to payment (Razorpay autopay needs a mobile). */
+  phoneVerified?: boolean;
   error?: string;
 }
 
 /**
- * Provision a new store. Called AFTER the owner has phone-OTP-verified (so
+ * Provision a new store. Called AFTER the owner has verified their email (so
  * there's an authenticated session — see the signup wizard). Creates the store,
  * makes the caller its superadmin (recording their name + selling country),
  * seeds the invoice profile, and returns the slug + id. Runs the writes via the
  * service role because a brand-new owner isn't yet a superadmin of any store
  * (so RLS would block them).
+ *
+ * ★★ IT INSTALLS NO THEME (owner, 2026-10-11). The store is created with
+ * `settings.themePending: true` and nothing seeded: no pages, menus or sample
+ * products. Its owner chooses a theme on Dashboard → Storefront, which
+ * installs it and clears the flag (lib/themes/switch.ts); until then the
+ * storefront shows a "store in progress" page behind the password, and the
+ * go-live checklist keeps the store closed.
  *
  * ★★ THE THREE ROWS ARE ONE TRANSACTION. They used to be three `withService`
  * calls with a hand-written rollback (delete the store if the admin or billing
@@ -245,30 +372,27 @@ export async function createStore(
   input: CreateStoreInput,
 ): Promise<CreateStoreResult> {
   const rawName = input.name;
-  const requestedTheme = input.template || DEFAULT_THEME_ID;
-  const themeMeta = (await getThemeCatalog()).find(
-    (theme) => theme.id === requestedTheme,
-  );
-  if (!themeMeta || !isThemeSelectable(themeMeta)) {
-    return { error: "That store theme is not available." };
-  }
-  const template = themeMeta.id;
 
   const user = await getServerUser();
   if (!user) {
     return { error: "Please sign in before creating a store." };
   }
-  // Client steps are an affordance, never the security boundary. Both contact
-  // channels are authoritative server-side requirements: Google supplies a
-  // verified email claim; password signup earns it through signup-email-otp.
-  if (!user.emailConfirmed) {
+  // Client steps are an affordance, never the security boundary. A verified
+  // email is an authoritative server-side requirement: Google supplies the
+  // claim; password signup earns it through signup-email-otp.
+  //
+  // ★ THE PHONE IS NOT. It moved to the go-live checklist (2026-10-10): the
+  // store opens closed, and Go live refuses until the owner has proven their
+  // mobile with a code (lib/store/launch-checklist-rules.ts). Asking at signup
+  // put a second code in front of a store that cannot take an order yet, and
+  // linking the number to the login refused every merchant who had ever
+  // shopped on a StoreMink store with that mobile.
+  // ★ The account record, not only the cookie: the code may have been
+  // accepted in a tab that could not re-mint its session afterwards
+  // (lib/auth/email-verified.ts).
+  if (!(await emailVerifiedNow(user))) {
     return {
       error: "Please verify your email address before creating a store.",
-    };
-  }
-  if (!user.phoneConfirmed) {
-    return {
-      error: "Please verify your phone number before creating a store.",
     };
   }
 
@@ -355,6 +479,26 @@ export async function createStore(
     (user.email ? user.email.split("@")[0] : "Owner");
   const lastName = (input.lastName || "").trim() || null;
 
+  const storeSettings = {
+    // The brand NAME is the merchant's and is stored here and on stores.name;
+    // the brand colour, tagline and blurb arrive with their first theme, and
+    // only where they are still empty (lib/themes/switch.ts).
+    brand: { name: rawName.trim() },
+    // CLOSED until the owner completes the go-live checklist and presses Go
+    // live: visitors see a password page, nothing is indexed, and every public
+    // write is refused. Written EXPLICITLY false because absence means
+    // "launched" — stores created before this flag existed are already trading
+    // and in Google, and treating a missing value as unlaunched would put a
+    // password page in front of live shops. See lib/store/launch-state.ts.
+    launched: false,
+    // ★ No theme yet: see isThemePending (lib/store/launch-state.ts). Written
+    // explicitly true because only an explicit true counts; every store made
+    // before this flag existed has a theme and must not show the
+    // store-in-progress page.
+    themePending: true,
+    business,
+  };
+
   // Create the store, its owner and its invoice profile — one transaction.
   let store: { id: string; slug: string };
   try {
@@ -366,19 +510,7 @@ export async function createStore(
           name: rawName.trim(),
           status: "active",
           plan: "free",
-          settings: {
-            template,
-            brand: { name: rawName.trim() },
-            // CLOSED until the owner completes the go-live checklist and
-            // presses Go live: visitors see a password page, nothing is
-            // indexed, and every public write is refused. Written EXPLICITLY
-            // false because absence means "launched" — stores created before
-            // this flag existed are already trading and in Google, and treating
-            // a missing value as unlaunched would put a password page in front
-            // of live shops. See lib/store/launch-state.ts.
-            launched: false,
-            business,
-          },
+          settings: storeSettings,
         })
         .returning({ id: stores.id, slug: stores.slug });
 
@@ -389,16 +521,16 @@ export async function createStore(
         storeId: created.id,
         firstName: firstName.slice(0, 80),
         lastName: lastName ? lastName.slice(0, 80) : null,
-        // ★★ THE VERIFIED NUMBER MUST LAND HERE, NOT ONLY ON THE INVOICE
-        // PROFILE. `createStore` runs only after phone OTP (see the
-        // phoneConfirmed gate above), and `admins.phone` is where every server
-        // reader looks for a billing contact — `resolveBillingEmail`, and
-        // therefore `startEnrolment`, which needs BOTH an email and a phone to
-        // register a Razorpay mandate. Writing it to store_billing_settings
-        // alone left `admins.phone` NULL on every wizard-created store, so
-        // Subscribe answered "We couldn't prepare autopay" before a single
-        // gateway call. Same value setVerifiedPhone stores.
+        // ★★ A VERIFIED NUMBER MUST LAND HERE, NOT ONLY ON THE INVOICE
+        // PROFILE. `admins.phone` is where every server reader looks for a
+        // billing contact — `resolveBillingEmail`, and therefore
+        // `startEnrolment`, which needs BOTH an email and a phone to register
+        // a Razorpay mandate. Signup no longer asks for a phone, so this is
+        // usually null now and the owner adds it from the go-live checklist
+        // (`confirmVerifiedPhone`). A login that already carries one (an older
+        // half-finished signup linked it) is Firebase-verified, so it counts.
         phone: user.phone ?? null,
+        phoneVerifiedAt: user.phone ? sql`now()` : null,
         // The owner set their own password during signup — the admins column
         // defaults force_password_reset=true (that's for INVITED staff who get
         // a temporary password), so override it here or the owner is bounced to
@@ -433,18 +565,20 @@ export async function createStore(
     return { error: "Could not create your store. Please try again." };
   }
 
-  // Seed the chosen theme: homepage + content pages (published), menus, brand
-  // accents, and clearly-labeled sample products/categories — the merchant
-  // starts by EDITING a real website, not building from a blank canvas.
-  // Best-effort: a partial seed still leaves a working store, and applyTheme
-  // is idempotent (upserts by store_id+slug) so it can be re-run.
-  const seeded = await applyTheme(store.id, template, {
-    publish: true,
-    actorUserId: user.id,
+  // ★ Phone codes need this store's EXACT host in Identity Platform's
+  // authorized domains (storemink.com alone does not cover a subdomain for
+  // phone sign-in; lib/auth/authorized-domains.ts). Registered now so
+  // storefront sign-in, enquiries, POS and the dashboard mobile check work from
+  // the first minute instead of after the hourly sweep. Right after the commit,
+  // so a later failure in this action still leaves the host registered.
+  registerStoreAuthHosts(store.id, {
+    slug: store.slug,
+    settings: storeSettings,
   });
-  if (!seeded.success) {
-    console.error("createStore (theme seed):", seeded.errors.join(" | "));
-  }
+
+  // Nothing is seeded here any more: the owner's first theme choice seeds the
+  // homepage, the theme's pages, its sample catalogue and its menus, without
+  // overwriting anything they have made in the meantime (lib/themes/switch.ts).
 
   // New store row must be resolvable on the VERY NEXT request. `revalidateTag`
   // with the `max` profile is stale-while-revalidate: the first dashboard load
@@ -456,13 +590,12 @@ export async function createStore(
 
   // NOTE: search engines are deliberately NOT notified here any more.
   //
-  // A store at this instant is pure theme seed — the same homepage, the same
-  // ~17 content pages and the same sample catalogue as every other store on
-  // this template. Submitting that to Google and IndexNow the moment it exists
-  // meant the platform repeatedly showed search engines thin, near-duplicate
-  // content, and the reputational cost lands on the whole *.storemink.com
-  // domain — including the stores that did the work. `robots.txt` cannot undo
-  // it either: Disallow stops future crawling, it does not deindex.
+  // A store at this instant has nothing of its own: no theme, no pages, no
+  // products. Submitting that to Google and IndexNow the moment it exists
+  // would show search engines an empty shop, and the reputational cost lands
+  // on the whole *.storemink.com domain — including the stores that did the
+  // work. `robots.txt` cannot undo it either: Disallow stops future crawling,
+  // it does not deindex.
   //
   // The store is submitted when its owner completes the go-live checklist and
   // presses Go live (app/actions/launch-actions.ts), which is the one place
@@ -503,8 +636,12 @@ export async function createStore(
     storeId: null,
     actor: { type: "admin", id: user.id, label: user.email ?? null },
     subject: { type: "store", id: store.id, label: rawName.trim() },
-    payload: { slug: store.slug, template },
+    payload: { slug: store.slug },
   });
 
-  return { slug: store.slug, storeId: store.id };
+  return {
+    slug: store.slug,
+    storeId: store.id,
+    phoneVerified: Boolean(user.phone),
+  };
 }

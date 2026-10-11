@@ -59,7 +59,7 @@ export function buildPosStructuredData(input: {
         featureList: [...POS_FEATURES],
         offers: {
           "@type": "Offer",
-          name: "StoreMink Pro — annual billing",
+          name: "StoreMink Pro, annual billing",
           description:
             "Point of Sale is included with StoreMink Pro for two locations.",
           price: input.proMonthlyEquivalentInr,

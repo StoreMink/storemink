@@ -16,6 +16,7 @@ import {
   validateThemeLinks,
   validateThemePages,
   validateThemeSampleData,
+  validateStudioDesign,
 } from "./validation";
 
 // The bundled themes are the positive cases (themes.test.ts asserts each
@@ -155,6 +156,15 @@ describe("theme validation", () => {
     } as never);
     expect(collectThemeHrefs(theme)).toContain("/shop/ghost");
     expect(codes(validateThemeLinks(theme))).toEqual(["product"]);
+  });
+
+  it("links: the announcement bar's link is checked like a menu link", () => {
+    const theme = clone();
+    theme.preset.announcement = { text: "Sale on now", href: "/shop/ghost" };
+    expect(collectThemeHrefs(theme)).toContain("/shop/ghost");
+    expect(codes(validateThemeLinks(theme))).toEqual(["product"]);
+    theme.preset.announcement = { text: "Sale on now" };
+    expect(codes(validateThemeLinks(theme))).toEqual([]);
   });
 
   it("links: a nested header link is checked, a heading without one is not", () => {
@@ -435,5 +445,161 @@ describe("theme copy floors", () => {
     const found = validateThemeCopy(theme);
     expect(codes(found)).toEqual(["image_alt"]);
     expect(found[0].message).toContain("item 1");
+  });
+
+  // Nested blocks: a media_text story and an accordion "image" row render
+  // their pictures as content too, so the same rule reaches them.
+  it("reaches a media_text story's image and an accordion image row", () => {
+    const theme = clone();
+    const home = homepage(theme);
+    home.sections.splice(
+      1,
+      0,
+      {
+        id: "story",
+        type: "media_text",
+        enabled: true,
+        config: {
+          eyebrow: "",
+          heading: "Made slowly",
+          body: "",
+          cta_label: "",
+          cta_href: "",
+          image_url: "",
+          image_alt: "",
+          media_position: "left",
+          media_ratio: "portrait",
+          alignment: "left",
+          stories: [
+            {
+              eyebrow: "",
+              heading: "Sourced",
+              body: "",
+              cta_label: "",
+              cta_href: "",
+              image_url: "/themes/x/valley.webp",
+              image_alt: "",
+              media_position: "right",
+            },
+          ],
+        },
+      } as unknown as (typeof home.sections)[number],
+      {
+        id: "rows",
+        type: "accordion",
+        enabled: true,
+        config: {
+          heading: "Good to know",
+          subheading: "",
+          items: [
+            {
+              type: "image",
+              heading: "Care",
+              body: "Wipe clean.",
+              image_url: "/themes/x/care.webp",
+              image_alt: "",
+            },
+            {
+              type: "text",
+              heading: "Shipping",
+              body: "A few days.",
+              image_url: "",
+              image_alt: "",
+            },
+          ],
+          open_first: true,
+          allow_multiple: false,
+        },
+      } as unknown as (typeof home.sections)[number],
+    );
+    const found = validateThemeCopy(theme);
+    expect(codes(found)).toEqual(["image_alt", "image_alt"]);
+    expect(found[0].message).toContain("(media_text) item 1");
+    expect(found[1].message).toContain("(accordion) item 1");
+  });
+
+  it("reaches both sides of a before/after and a hotspot scene", () => {
+    const theme = clone();
+    const home = homepage(theme);
+    home.sections.splice(
+      1,
+      0,
+      {
+        id: "ba",
+        type: "before_after",
+        enabled: true,
+        config: {
+          eyebrow: "",
+          heading: "",
+          subheading: "",
+          before: {
+            image_url: "/themes/x/b.webp",
+            image_alt: "",
+            label: "Before",
+          },
+          after: {
+            image_url: "/themes/x/a.webp",
+            image_alt: "After",
+            label: "After",
+          },
+          image_ratio: "landscape",
+          start: 50,
+        },
+      } as unknown as (typeof home.sections)[number],
+      {
+        id: "hs",
+        type: "image_hotspots",
+        enabled: true,
+        config: {
+          eyebrow: "",
+          heading: "Shop the look",
+          subheading: "",
+          image_url: "/themes/x/scene.webp",
+          image_alt: "",
+          image_ratio: "landscape",
+          hotspots: [
+            { x: 10, y: 10, title: "Jug", body: "", href: "", cta_label: "" },
+          ],
+        },
+      } as unknown as (typeof home.sections)[number],
+    );
+    const found = validateThemeCopy(theme);
+    expect(codes(found)).toEqual(["image_alt", "image_alt"]);
+    expect(found[0].message).toContain("(before_after)");
+    expect(found[1].message).toContain("(image_hotspots)");
+  });
+});
+
+// The Studio's stricter design floor (2026-10-10): a button label is small
+// text, so on-accent must read on the accent at 4.5:1, where the shared
+// contract (and the bundled themes) stop at the 3:1 fill floor.
+describe("validateStudioDesign", () => {
+  const codes = (theme: ThemeDefinition) =>
+    validateStudioDesign(theme).map((f) => `${f.code}: ${f.message}`);
+  it("refuses a brand colour whose label reads at 3:1 and accepts a deeper one", () => {
+    const theme = structuredClone(THEME_DEFINITIONS[0]);
+    expect(validateThemeDesign(theme)).toEqual([]);
+    const issues = codes(theme);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("button_label_contrast");
+    expect(issues[0]).toContain("brand.primaryColor #ef5a2a read at 3.41:1");
+    theme.preset.brand.primaryColor = "#c2410c";
+    expect(codes(theme)).toEqual([]);
+  });
+  it("judges a declared scheme's own accent pair the same way", () => {
+    const theme = structuredClone(THEME_DEFINITIONS[0]);
+    theme.preset.brand.primaryColor = "#c2410c";
+    theme.preset.design.schemes = {
+      accent: {
+        background: "#1f2937",
+        text: "#ffffff",
+        accent: "#ef5a2a",
+        onAccent: "#ffffff",
+      },
+    };
+    const issues = codes(theme);
+    expect(
+      issues.some((i) => i.includes("schemes.accent: button labels")),
+    ).toBe(true);
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import type { BlogIndexLayout } from "@/lib/themes/templates";
 import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
@@ -34,6 +35,9 @@ interface BlogListingClientProps {
   allTags: string[];
   /** Store feature setting — when false the write/submissions CTAs are hidden. */
   allowSubmissions: boolean;
+  /** The blog template's index layout (plan Phase 2e): a grid of cards, a
+   *  list of rows, or a featured first post above the grid. */
+  index?: BlogIndexLayout;
 }
 
 function formatDate(dateStr: string | null): string {
@@ -128,6 +132,7 @@ export default function BlogListingClient({
   categories,
   allTags,
   allowSubmissions,
+  index = "grid",
 }: BlogListingClientProps) {
   const { user, customer, isAuthModalOpen, openAuthModal } = useAuth();
   const router = useRouter();
@@ -432,7 +437,7 @@ export default function BlogListingClient({
 
             {filteredBlogs.length > 0 ? (
               <>
-                <div className="blog-grid" id="blog-grid">
+                <div className={`blog-grid layout-${index}`} id="blog-grid">
                   {paginatedBlogs.map((blog) => (
                     <BlogCard key={blog.id} blog={blog} />
                   ))}

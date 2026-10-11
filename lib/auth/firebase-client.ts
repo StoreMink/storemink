@@ -11,6 +11,7 @@ import {
   initializeAuth,
   inMemoryPersistence,
   type Auth,
+  type User,
 } from "firebase/auth";
 
 const firebaseConfig = {
@@ -33,6 +34,28 @@ function getFirebaseApp(): FirebaseApp {
 /** The client-side Firebase Auth instance (browser only). */
 export function getFirebaseAuth(): Auth {
   return getAuth(getFirebaseApp());
+}
+
+/**
+ * The signed-in browser user, once Firebase has finished restoring it.
+ *
+ * ★★ `auth.currentUser` IS NULL UNTIL THE SAVED SIGN-IN HAS BEEN READ BACK,
+ * and that read is asynchronous. A page that resumes from the server session
+ * (a reloaded signup tab) creates the Auth instance only when it first needs
+ * one, so a synchronous `currentUser` there reported a signed-in merchant as
+ * signed out, right after the server had accepted their email code: "You're
+ * not signed in. Please try again." Read the user through this instead of
+ * `getFirebaseAuth().currentUser` anywhere a page may not have signed in
+ * itself first.
+ */
+export async function getCurrentFirebaseUser(): Promise<User | null> {
+  const auth = getFirebaseAuth();
+  try {
+    await auth.authStateReady();
+  } catch {
+    // Storage the browser refuses to keep: answer from what has loaded.
+  }
+  return auth.currentUser;
 }
 
 const SECONDARY_APP = "sm-otp";
@@ -60,7 +83,7 @@ export function getSecondaryFirebaseAuth(): Auth {
 export async function establishSession(
   forceRefresh = false,
 ): Promise<string | null> {
-  const user = getFirebaseAuth().currentUser;
+  const user = await getCurrentFirebaseUser();
   if (!user) return "You're not signed in. Please try again.";
   try {
     const idToken = await user.getIdToken(forceRefresh);
@@ -74,6 +97,22 @@ export async function establishSession(
   } catch {
     return "Could not establish a session. Please try again.";
   }
+}
+
+/**
+ * What actually failed, for a console line: the Firebase code
+ * ("auth/invalid-app-credential"), or the error's own message when it has none.
+ * The person sees the mapped sentence below, which deliberately hides the
+ * cause; whoever opens DevTools on a failing page needs the cause. Carries no
+ * phone number.
+ */
+export function firebaseAuthErrorCode(err: unknown): string {
+  if (err && typeof err === "object") {
+    const { code, message } = err as { code?: unknown; message?: unknown };
+    if (typeof code === "string" && code) return code;
+    if (typeof message === "string" && message) return message.slice(0, 200);
+  }
+  return String(err).slice(0, 200);
 }
 
 /**
@@ -93,7 +132,7 @@ export function firebaseAuthErrorMessage(err: unknown): string {
     case "auth/invalid-email":
       return "Please enter a valid email address.";
     case "auth/too-many-requests":
-      return "Too many attempts. Please wait a moment and try again.";
+      return "Too many attempts. Please wait a few minutes and try again.";
     case "auth/user-disabled":
       return "This account has been disabled.";
     case "auth/email-already-in-use":
@@ -115,7 +154,9 @@ export function firebaseAuthErrorMessage(err: unknown): string {
     case "auth/captcha-check-failed":
     case "auth/missing-app-credential":
     case "auth/invalid-app-credential":
-      return "The security check didn't complete. Please close this and try again.";
+      return "The security check didn't complete. Please try again.";
+    case "auth/network-request-failed":
+      return "We couldn't reach the sign-in service. Check your connection and try again.";
     case "auth/operation-not-allowed":
       return "Mobile sign-in isn't enabled for this store.";
     case "auth/session-expired":
@@ -139,8 +180,11 @@ export function firebaseAuthErrorMessage(err: unknown): string {
 }
 
 /**
- * The same mapper, for the two screens that LINK a phone to an existing
- * account (`updatePhoneNumber`): signup's phone step and set-password's.
+ * The same mapper, for the screen that still LINKS a phone to an existing
+ * account (`updatePhoneNumber`): set-password's. Store owners no longer link
+ * one; they prove it on the secondary app instead
+ * (app/dashboard/components/verify-phone-form.tsx), because a number linked to
+ * a shopper's login can never be linked to a second one.
  *
  * ★ THE SHARED MESSAGE IS WRONG IN THIS CONTEXT, WHICH IS WHY THIS EXISTS.
  * "An account already exists with a different sign-in method" is Google-popup

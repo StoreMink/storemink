@@ -130,7 +130,7 @@ const OPERATIONS = [
   {
     icon: Smartphone,
     title: "Your hardware, your choice",
-    body: "Use a modern browser on desktop, tablet or phone—there is no StoreMink terminal to buy.",
+    body: "Use a modern browser on desktop, tablet or phone. There is no StoreMink terminal to buy.",
   },
   {
     icon: Users,
@@ -174,7 +174,7 @@ const FAQS = [
   },
   {
     q: "What hardware do I need?",
-    a: "Anything with a modern browser—a desktop, tablet or phone. A USB or Bluetooth barcode scanner works because it behaves like a keyboard, and any 80mm thermal printer your browser can print to can produce the receipt. There is no StoreMink terminal to buy.",
+    a: "Anything with a modern browser: a desktop, tablet or phone. A USB or Bluetooth barcode scanner works because it behaves like a keyboard, and any 80mm thermal printer your browser can print to can produce the receipt. There is no StoreMink terminal to buy.",
   },
   {
     q: "Do I have to use StoreMink for payments?",
@@ -425,7 +425,7 @@ export default async function PosMarketingPage() {
             </h1>
             <p className="posx-rise posx-rise-2">
               StoreMink POS turns the devices you already own into a fast retail
-              register—and keeps every checkout, pickup, return and stock
+              register, and keeps every checkout, pickup, return and stock
               movement in the same system as your website.
             </p>
             <div className="posx-hero-actions posx-rise posx-rise-3">

@@ -8,8 +8,15 @@ import {
 } from "firebase/auth";
 import {
   getSecondaryFirebaseAuth,
+  firebaseAuthErrorCode,
   firebaseAuthErrorMessage,
 } from "@/lib/auth/firebase-client";
+import {
+  checkPhoneSend,
+  phoneSendErrorMessage,
+  recordPhoneSend,
+  recordPhoneSendFailure,
+} from "@/lib/auth/phone-send-guard";
 import { useAuth } from "../../components/auth/AuthProvider";
 import { submitEnquiry } from "@/app/actions/enquiry-actions";
 import styles from "./enquiries.module.css";
@@ -87,6 +94,13 @@ export default function EnquiriesForm({
   const recaptchaRef = useRef<HTMLDivElement | null>(null);
   const verifierRef = useRef<RecaptchaVerifier | null>(null);
   const confirmationRef = useRef<ConfirmationResult | null>(null);
+  // ★ The number the live confirmation was sent to: "Change" keeps the code
+  // alive, so returning to the SAME number inside the send cooldown resumes
+  // the code step instead of asking Firebase for another one.
+  const confirmationPhoneRef = useRef("");
+  // ★ Set synchronously, so a second tap in the same tick (before the
+  // disabled state renders) cannot start a second Firebase send.
+  const sendInFlightRef = useRef(false);
 
   const getVerifier = (): RecaptchaVerifier => {
     if (!verifierRef.current) {
@@ -135,40 +149,76 @@ export default function EnquiriesForm({
 
   // ---- Phone: send the OTP ----
   const sendOtp = async () => {
-    if (demoStore) {
-      setError(DEMO_FORM_MESSAGE);
-      return;
-    }
-    if (!phone || phone.trim().length < 10) {
-      setError("Please enter a valid 10-digit phone number.");
-      return;
-    }
-    // A send while a code is already out is a "resend" — cap those.
-    const isResend = otpSent;
-    if (isResend && resendBlocked) {
-      setError("Too many code requests. Please try again later.");
-      return;
-    }
-    setError("");
-    setSendingOtp(true);
+    if (sendInFlightRef.current) return;
+    sendInFlightRef.current = true;
     try {
-      confirmationRef.current = await signInWithPhoneNumber(
-        getSecondaryFirebaseAuth(),
-        fullPhone,
-        getVerifier(),
-      );
-      if (isResend) registerResend();
-      setOtp(Array(OTP_LENGTH).fill(""));
-      setOtpSent(true);
-      setResendTimer(RESEND_COOLDOWN);
-      setSendingOtp(false);
-      setTimeout(() => otpRefs.current[0]?.focus(), 100);
-    } catch (err) {
-      setError(
-        firebaseAuthErrorMessage(err) ||
-          "Something went wrong sending the code. Please try again.",
-      );
-      setSendingOtp(false);
+      if (demoStore) {
+        setError(DEMO_FORM_MESSAGE);
+        return;
+      }
+      if (!phone || phone.trim().length < 10) {
+        setError("Please enter a valid 10-digit phone number.");
+        return;
+      }
+      // A send while a code is already out is a "resend" — cap those.
+      const isResend = otpSent;
+      if (isResend && resendBlocked) {
+        setError("Too many code requests. Please try again later.");
+        return;
+      }
+      // ★ Ask the shared guard BEFORE reCAPTCHA or Firebase: a refused request
+      // still extends Firebase's block on this number (lib/auth/phone-send-guard).
+      const check = checkPhoneSend(fullPhone);
+      if (!check.ok) {
+        if (
+          check.reason === "cooldown" &&
+          !verifyBlocked &&
+          confirmationRef.current &&
+          confirmationPhoneRef.current === fullPhone
+        ) {
+          // The code already on their phone is still usable: resume it.
+          const waitSeconds = Math.ceil((check.retryAt - Date.now()) / 1000);
+          setError("");
+          setOtpSent(true);
+          setResendTimer((t) => Math.max(t, waitSeconds));
+          setTimeout(() => otpRefs.current[0]?.focus(), 100);
+          return;
+        }
+        setError(check.message);
+        return;
+      }
+      setError("");
+      setSendingOtp(true);
+      try {
+        const confirmation = await signInWithPhoneNumber(
+          getSecondaryFirebaseAuth(),
+          fullPhone,
+          getVerifier(),
+        );
+        recordPhoneSend(fullPhone);
+        confirmationRef.current = confirmation;
+        confirmationPhoneRef.current = fullPhone;
+        // ★ The throttle follows the live code, not the screen: a fresh code
+        // starts a clean tally, so "Change" cannot reset the wrong-code cap
+        // on a code it resumes.
+        if (isResend) registerResend();
+        else resetOtpThrottle();
+        setOtp(Array(OTP_LENGTH).fill(""));
+        setOtpSent(true);
+        setResendTimer(RESEND_COOLDOWN);
+        setSendingOtp(false);
+        setTimeout(() => otpRefs.current[0]?.focus(), 100);
+      } catch (err) {
+        console.warn("Enquiry code not sent:", firebaseAuthErrorCode(err));
+        recordPhoneSendFailure(fullPhone, err);
+        setError(
+          phoneSendErrorMessage(fullPhone, err) ||
+            "Something went wrong sending the code. Please try again.",
+        );
+        setSendingOtp(false);
+      }
+    } finally {
+      sendInFlightRef.current = false;
     }
   };
 
@@ -204,11 +254,12 @@ export default function EnquiriesForm({
     [fullPhone, verifyBlocked, registerFailedVerify],
   );
 
+  // "Change" keeps the pending confirmation (and the throttle that belongs to
+  // it), so re-verifying the same number inside the cooldown resumes the code.
   const resetPhone = () => {
     setOtpSent(false);
     setOtp(Array(OTP_LENGTH).fill(""));
     setError("");
-    resetOtpThrottle();
   };
 
   // ---- OTP input handlers ----

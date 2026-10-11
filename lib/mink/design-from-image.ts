@@ -103,14 +103,24 @@ export const DESIGN_LAYOUT_MAX_SECTIONS = 12;
  */
 const LAYOUT_ALIGNMENTS = ["left", "center", "right"] as const;
 const LAYOUT_THEMES = ["light", "dark"] as const;
-const LAYOUT_VARIANTS = ["banner", "split", "minimal"] as const;
+const LAYOUT_VARIANTS = [
+  "banner",
+  "split",
+  "minimal",
+  "fullbleed",
+  "stacked",
+  "offset",
+] as const;
 const LAYOUT_MEDIA_POSITIONS = ["left", "right"] as const;
 const LAYOUT_RATIOS = ["portrait", "square", "landscape"] as const;
 const LAYOUT_COLUMNS = [2, 3, 4] as const;
 
 export interface DesignLayoutSection {
   type: DesignLayoutSectionType;
-  /** Hero shape: a full-bleed banner, an image/copy split, or plain type. */
+  /** Hero shape: an inset banner, an image/copy split, plain type, a
+   *  photograph filling the band with the copy over it (fullbleed), the copy
+   *  above a full-width photograph (stacked), or a copy card over the
+   *  photograph (offset). */
   variant?: (typeof LAYOUT_VARIANTS)[number];
   /** Items across, for a grid, tile row, gallery or testimonial band. */
   columns?: (typeof LAYOUT_COLUMNS)[number];

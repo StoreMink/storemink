@@ -213,6 +213,250 @@ const THUMBS: Record<HomepageSectionType, React.ReactNode> = {
       ))}
     </Svg>
   ),
+  accordion: (
+    <Svg>
+      {/* an open row with a picture beside its copy, two closed rows */}
+      <rect x="10" y="8" width="100" height="36" rx="4" fill={M} />
+      <rect
+        x="16"
+        y="14"
+        width="40"
+        height="4"
+        rx="2"
+        fill="#fff"
+        opacity="0.9"
+      />
+      <rect
+        x="16"
+        y="24"
+        width="36"
+        height="3"
+        rx="1.5"
+        fill="#fff"
+        opacity="0.7"
+      />
+      <rect
+        x="16"
+        y="31"
+        width="30"
+        height="3"
+        rx="1.5"
+        fill="#fff"
+        opacity="0.7"
+      />
+      <rect
+        x="70"
+        y="14"
+        width="34"
+        height="24"
+        rx="3"
+        fill={A}
+        opacity="0.85"
+      />
+      <path
+        d="M 97 12 h 6"
+        stroke="#fff"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      {[50, 64].map((y) => (
+        <g key={y}>
+          <rect x="10" y={y} width="100" height="10" rx="3" fill={S} />
+          <rect x="16" y={y + 3.5} width="44" height="3" rx="1.5" fill={M} />
+          <path
+            d={`M ${99} ${y + 2} v 6 M ${96} ${y + 5} h 6`}
+            stroke={M}
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+        </g>
+      ))}
+    </Svg>
+  ),
+  comparison: (
+    <Svg>
+      {/* a feature column and three option columns, the middle one highlighted */}
+      <rect
+        x="44"
+        y="8"
+        width="24"
+        height="64"
+        rx="4"
+        fill={A}
+        opacity="0.14"
+      />
+      <rect x="44" y="8" width="24" height="3" rx="1.5" fill={A} />
+      {[14, 30, 46, 62].map((y, i) => (
+        <g key={y}>
+          <rect
+            x="10"
+            y={y}
+            width="26"
+            height="4"
+            rx="2"
+            fill={i === 0 ? M : S}
+          />
+          {[48, 76, 100].map((x) => (
+            <g key={x}>
+              {i === 0 ? (
+                <rect x={x} y={y - 1} width="14" height="5" rx="2" fill={M} />
+              ) : (
+                <circle
+                  cx={x + 6}
+                  cy={y + 2}
+                  r="4"
+                  fill={i === 2 && x === 100 ? S : M}
+                />
+              )}
+            </g>
+          ))}
+          {i > 0 && (
+            <path
+              d={`M 51 ${y + 2} l 2 2 l 4 -4`}
+              stroke="#fff"
+              strokeWidth="1.4"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+        </g>
+      ))}
+    </Svg>
+  ),
+  multicolumn: (
+    <Svg>
+      {[10, 46, 82].map((x) => (
+        <g key={x}>
+          <circle cx={x + 14} cy="20" r="7" fill={A} opacity="0.85" />
+          <rect x={x} y="34" width="28" height="5" rx="2.5" fill={M} />
+          <rect x={x} y="44" width="28" height="3" rx="1.5" fill={S} />
+          <rect x={x} y="51" width="22" height="3" rx="1.5" fill={S} />
+          <rect x={x} y="60" width="14" height="3" rx="1.5" fill={M} />
+        </g>
+      ))}
+    </Svg>
+  ),
+  image_marquee: (
+    <Svg>
+      {[-14, 18, 50, 82, 114].map((x, i) => (
+        <rect
+          key={x}
+          x={x}
+          y="20"
+          width="28"
+          height="40"
+          rx="4"
+          fill={i === 2 ? A : i % 2 ? M : S}
+          opacity={i === 2 ? 0.85 : 1}
+        />
+      ))}
+      <path
+        d="M 12 70 h 10 M 98 70 h 10"
+        stroke={M}
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </Svg>
+  ),
+  image_hotspots: (
+    <Svg>
+      <rect x="8" y="8" width="104" height="64" rx="6" fill={M} />
+      {[
+        [38, 30],
+        [74, 48],
+      ].map(([cx, cy]) => (
+        <g key={cx}>
+          <circle cx={cx} cy={cy} r="9" fill="#fff" opacity="0.9" />
+          <circle cx={cx} cy={cy} r="3.5" fill={A} />
+        </g>
+      ))}
+      <rect
+        x="78"
+        y="14"
+        width="30"
+        height="22"
+        rx="4"
+        fill="#fff"
+        opacity="0.95"
+      />
+      <rect x="82" y="19" width="18" height="3" rx="1.5" fill={A} />
+      <rect x="82" y="26" width="22" height="3" rx="1.5" fill={M} />
+    </Svg>
+  ),
+  before_after: (
+    <Svg>
+      <rect x="8" y="10" width="104" height="60" rx="6" fill={S} />
+      <path
+        d="M 8 16 a 6 6 0 0 1 6 -6 h 46 v 60 h -46 a 6 6 0 0 1 -6 -6 z"
+        fill={M}
+      />
+      <rect x="59" y="10" width="2" height="60" fill="#fff" />
+      <circle cx="60" cy="40" r="9" fill="#fff" />
+      <path
+        d="M 56 40 l -3 0 M 64 40 l 3 0"
+        stroke={A}
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </Svg>
+  ),
+  product_spotlight: (
+    <Svg>
+      <rect x="8" y="8" width="48" height="64" rx="6" fill={M} />
+      <rect x="66" y="18" width="40" height="7" rx="3.5" fill={A} />
+      <rect x="66" y="31" width="26" height="4" rx="2" fill={M} />
+      <rect x="66" y="40" width="44" height="3" rx="1.5" fill={S} />
+      <rect x="66" y="47" width="38" height="3" rx="1.5" fill={S} />
+      <rect x="66" y="58" width="24" height="9" rx="4.5" fill={M} />
+    </Svg>
+  ),
+  logo_strip: (
+    <Svg>
+      <rect x="40" y="14" width="40" height="4" rx="2" fill={S} />
+      {[10, 36, 62, 88].map((x, i) => (
+        <rect
+          key={x}
+          x={x}
+          y="34"
+          width="22"
+          height="14"
+          rx="3"
+          fill={i === 1 ? A : M}
+          opacity={i === 1 ? 0.8 : 1}
+        />
+      ))}
+      <rect x="22" y="58" width="76" height="3" rx="1.5" fill={S} />
+    </Svg>
+  ),
+  countdown: (
+    <Svg>
+      <rect x="30" y="12" width="60" height="6" rx="3" fill={M} />
+      {[14, 40, 66, 92].map((x, i) => (
+        <g key={x}>
+          <rect
+            x={x}
+            y="28"
+            width="18"
+            height="24"
+            rx="4"
+            fill={i === 0 ? A : S}
+            opacity={i === 0 ? 0.85 : 1}
+          />
+          <rect
+            x={x + 4}
+            y="36"
+            width="10"
+            height="8"
+            rx="2"
+            fill={i === 0 ? "#fff" : M}
+            opacity="0.9"
+          />
+          <rect x={x + 3} y="56" width="12" height="3" rx="1.5" fill={M} />
+        </g>
+      ))}
+    </Svg>
+  ),
   latest_blogs: (
     <Svg>
       {[8, 46, 84].map((x, i) => (

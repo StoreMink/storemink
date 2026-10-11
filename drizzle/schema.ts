@@ -51,6 +51,12 @@ export const admins = pgTable(
     firstName: text("first_name").default("").notNull(),
     lastName: text("last_name"),
     phone: text(),
+    // When `phone` was proven by a one-time code. `phone` alone proves
+    // nothing: the invited-staff password screen writes a typed value.
+    phoneVerifiedAt: timestamp("phone_verified_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
     storeId: uuid("store_id").notNull(),
   },
   (table) => [

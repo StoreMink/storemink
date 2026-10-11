@@ -61,6 +61,22 @@ export function isStoreSearchIndexable(
 }
 
 /**
+ * Has this store still to choose its storefront theme?
+ *
+ * ★★ SIGNUP NO LONGER INSTALLS A THEME (owner, 2026-10-11). A new store is
+ * created with `settings.themePending: true` and nothing seeded; its owner
+ * picks a theme from Dashboard → Storefront, which installs it and deletes the
+ * flag. While it is set, the storefront shows a "store in progress" page to
+ * everyone who gets past the password, and the go-live checklist holds the
+ * store closed. Only an explicit `true` counts: every store created before the
+ * flag existed already has a theme (or, like the fallback store, renders
+ * without one on purpose), and must never start showing that page.
+ */
+export function isThemePending(store: SettingsOnly | undefined): boolean {
+  return store?.settings?.themePending === true;
+}
+
+/**
  * Does the public need a password to see this storefront?
  *
  * A demo store is never gated — it is a public showcase by definition and

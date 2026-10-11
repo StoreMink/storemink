@@ -1,4 +1,18 @@
-import { DESIGN_FONTS } from "@/lib/chrome/design";
+import { USP_ICONS } from "@/lib/homepage/section-types";
+import {
+  ACCOUNT_LAYOUTS,
+  BLOG_ARTICLE_LAYOUTS,
+  BLOG_INDEX_LAYOUTS,
+  COLLECTION_FILTERS,
+  COLLECTION_PAGINATIONS,
+  PRODUCT_BLOCK_TYPES,
+  PRODUCT_GALLERIES,
+} from "@/lib/themes/templates";
+import {
+  DESIGN_FONTS,
+  FONT_PAIRING_KEYS,
+  LEGACY_DESIGN_FONT_VALUES,
+} from "@/lib/themes/fonts";
 import { HOMEPAGE_SECTION_TYPES } from "@/lib/homepage/section-types";
 import { SECTION_SCHEMES } from "@/lib/themes/schemes";
 import {
@@ -58,7 +72,55 @@ import {
  * be empty — a request for one is a capability gap). */
 export const THEME_STUDIO_SECTION_TYPES = HOMEPAGE_SECTION_TYPES.filter(
   (type) =>
-    type !== "custom_code" && type !== "latest_blogs" && type !== "video",
+    type !== "custom_code" &&
+    type !== "latest_blogs" &&
+    type !== "video" &&
+    // Builder-only: the image model draws no real press marks (and a mark
+    // would be somebody's brand), and a model cannot know a real end date.
+    type !== "logo_strip" &&
+    type !== "countdown",
+);
+
+/** The sections each prompt revision added; a request before that revision
+ * never saw them. */
+const SECTIONS_BY_REVISION = {
+  nestedBlocks: ["accordion", "comparison"],
+  moreSections: [
+    "multicolumn",
+    "image_marquee",
+    "image_hotspots",
+    "before_after",
+    "product_spotlight",
+  ],
+} as const;
+
+const SECTION_TYPES_BY_FLAGS = new Map<string, typeof HOMEPAGE_SECTION_TYPES>();
+
+/** The section vocabulary a prompt revision prints and its schemas admit,
+ * one list per flag pair so callers can compare lists by reference. */
+export function themeStudioSectionTypes(
+  nestedBlocks: boolean,
+  moreSections = false,
+) {
+  const key = `${nestedBlocks}:${moreSections}`;
+  let list = SECTION_TYPES_BY_FLAGS.get(key);
+  if (!list) {
+    const hidden = new Set<string>([
+      ...(nestedBlocks ? [] : SECTIONS_BY_REVISION.nestedBlocks),
+      ...(moreSections ? [] : SECTIONS_BY_REVISION.moreSections),
+    ]);
+    list = hidden.size
+      ? THEME_STUDIO_SECTION_TYPES.filter((type) => !hidden.has(type))
+      : THEME_STUDIO_SECTION_TYPES;
+    SECTION_TYPES_BY_FLAGS.set(key, list);
+  }
+  return list;
+}
+
+/** The section types every request before prompt v29 was keyed on. */
+export const LEGACY_THEME_STUDIO_SECTION_TYPES = themeStudioSectionTypes(
+  false,
+  false,
 );
 
 export const THEME_STUDIO_FONT_VALUES = Object.values(DESIGN_FONTS);
@@ -77,6 +139,40 @@ type Schema = Record<string, unknown>;
 
 const str: Schema = { type: "string" };
 const strList: Schema = { type: "array", items: str };
+/** The header, card and footer layouts a Stage B draft may choose. v31
+ * (plan Phase 2d) added transparent, hamburger, stacked and utility headers,
+ * centered, soft and wide cards, and centered and compact footers; a request
+ * before it is keyed on the shorter lists, which `stageBSchemaFor` narrows
+ * every earlier revision's twin back to. */
+export const LAYOUT_VARIANT_ENUMS = {
+  header: [
+    "classic",
+    "market",
+    "centered",
+    "minimal",
+    "transparent",
+    "hamburger",
+    "stacked",
+    "utility",
+  ],
+  card: [
+    "classic",
+    "quick_add",
+    "overlay",
+    "framed",
+    "grocery",
+    "centered",
+    "soft",
+    "wide",
+  ],
+  footer: ["rich", "minimal", "editorial", "centered", "compact"],
+} as const;
+export const LEGACY_LAYOUT_VARIANT_ENUMS = {
+  header: ["classic", "market", "centered", "minimal"],
+  card: ["classic", "quick_add", "overlay", "framed", "grocery"],
+  footer: ["rich", "minimal", "editorial"],
+} as const;
+
 const nullable = (schema: Schema): Schema => ({
   anyOf: [schema, { type: "null" }],
 });
@@ -180,6 +276,8 @@ export const STAGE_A_INTENT_SCHEMA: Schema = obj({
       ]),
       artDirection: str,
       source: enumOf(["operator", "curated", "generate"]),
+      // v28+: whether this picture may show adults (prompt-features.ts).
+      people: enumOf(["none", "adults"]),
     }),
   },
   referenceAnalysis: { type: "array", items: referenceAnalysis },
@@ -260,9 +358,81 @@ const colorScheme = obj({
   onAccent: nullable(hex),
 });
 
+/** The product-page layouts a Stage B draft may choose. v32 (plan Phase
+ * 2e) added "stacked"; `withoutTemplates` narrows every earlier twin back. */
+export const PRODUCT_DETAIL_ENUM = [
+  "classic",
+  "grocery",
+  "editorial",
+  "stacked",
+] as const;
+export const LEGACY_PRODUCT_DETAIL_ENUM = [
+  "classic",
+  "grocery",
+  "editorial",
+] as const;
+
+/** v32 (plan Phase 2e): the product and collection page templates
+ * (lib/themes/templates.ts). Top level like `fontPairing`, so a targeted
+ * repair never edits it; the compiler normalises it into preset.templates.
+ * Every block carries every field (a closed schema), unused ones empty. */
+const TEMPLATES_SCHEMA: Schema = obj({
+  product: obj({
+    gallery: enumOf(PRODUCT_GALLERIES),
+    blocks: {
+      type: "array",
+      items: obj({
+        type: enumOf(PRODUCT_BLOCK_TYPES),
+        items: {
+          type: "array",
+          items: obj({ icon: enumOf(USP_ICONS), label: str }),
+        },
+        rows: { type: "array", items: obj({ heading: str, body: str }) },
+        columns: strList,
+        sizes: { type: "array", items: obj({ label: str, values: strList }) },
+        html: str,
+      }),
+    },
+  }),
+  collection: obj({
+    filters: enumOf(COLLECTION_FILTERS),
+    pagination: enumOf(COLLECTION_PAGINATIONS),
+    promoTiles: {
+      type: "array",
+      items: obj({
+        afterIndex: { type: "integer" },
+        heading: str,
+        body: str,
+        cta_label: str,
+        href: str,
+        theme: enumOf(["dark", "light"]),
+        background: nullable(hex),
+      }),
+    },
+  }),
+  blog: obj({
+    index: enumOf(BLOG_INDEX_LAYOUTS),
+    article: enumOf(BLOG_ARTICLE_LAYOUTS),
+  }),
+  account: obj({
+    layout: enumOf(ACCOUNT_LAYOUTS),
+    scheme: nullable(enumOf(SECTION_SCHEMES)),
+  }),
+});
+
 export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
   description: str,
   keywords: strList,
+  // v25: the pairing Stage B chose (lib/themes/fonts.ts); null is a free
+  // choice of two catalogue faces for a brief that names a typeface. The
+  // compiler resolves it into design.fonts; it is never stored. Top level,
+  // not under design, so it is not offered as a repair target.
+  fontPairing: nullable(enumOf(FONT_PAIRING_KEYS)),
+  templates: TEMPLATES_SCHEMA,
+  // v32 (plan Phase 2c's last chrome candidate): the announcement bar above
+  // the header, one line and an optional site path; "" for text means none.
+  // Top level like `templates`, so it is never a repair target.
+  announcement: obj({ text: str, href: str }),
   features: { type: "array", items: enumOf(THEME_STUDIO_FEATURES) },
   brand: obj({ primaryColor: hex, tagline: str, blurb: str }),
   design: obj({
@@ -278,21 +448,19 @@ export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
     }),
     shape: obj({ card: str, control: str, sm: str, pill: str }),
     layout: obj({
-      header: nullable(enumOf(["classic", "market", "centered", "minimal"])),
+      header: nullable(enumOf(LAYOUT_VARIANT_ENUMS.header)),
       headerBackground: nullable(hex),
       headerForeground: nullable(hex),
-      card: nullable(
-        enumOf(["classic", "quick_add", "overlay", "framed", "grocery"]),
-      ),
+      card: nullable(enumOf(LAYOUT_VARIANT_ENUMS.card)),
       cardHoverImage: nullable({ type: "boolean" }),
       stickyAddToCart: nullable({ type: "boolean" }),
       gridColumnsMobile: nullable({ type: "integer", enum: [1, 2] }),
       gridColumnsDesktop: nullable({ type: "integer", enum: [3, 4, 5] }),
       shopFilters: nullable({ type: "boolean" }),
       collectionBanner: nullable({ type: "boolean" }),
-      productDetail: nullable(enumOf(["classic", "grocery", "editorial"])),
+      productDetail: nullable(enumOf(PRODUCT_DETAIL_ENUM)),
       cart: nullable(enumOf(["classic", "grocery", "compact"])),
-      footer: nullable(enumOf(["rich", "minimal", "editorial"])),
+      footer: nullable(enumOf(LAYOUT_VARIANT_ENUMS.footer)),
       storefront: nullable(enumOf(["classic", "grocery"])),
     }),
     schemes: obj(
@@ -460,3 +628,192 @@ export const STAGE_B_VARIETY_INITIAL_SCHEMA: Schema = (() => {
   schema.required = Object.keys(fields);
   return schema;
 })();
+
+/**
+ * The pre-v25 shape of a Stage B schema: no `fontPairing`, and `design.fonts`
+ * drawn from the nine faces those prompts enumerated. A persisted paid
+ * request is keyed on its exact schema (generation-recovery.ts), so a run
+ * recorded under an older prompt revision must be rebuilt byte for byte.
+ */
+function legacyFontSchema(schema: Schema): Schema {
+  const legacy = structuredClone(schema);
+  const properties = legacy.properties as Record<string, Schema>;
+  delete properties.fontPairing;
+  legacy.required = Object.keys(properties);
+  const fonts = (properties.design.properties as Record<string, Schema>).fonts
+    .properties as Record<string, Schema>;
+  fonts.body = enumOf(LEGACY_DESIGN_FONT_VALUES);
+  fonts.display = enumOf(LEGACY_DESIGN_FONT_VALUES);
+  return legacy;
+}
+
+/** The same schema with every section-type enum narrowed to an earlier
+ * revision's list, wherever it appears (Stage A page plans, Stage B
+ * sections). Matched by value, so the enum helper's shape is not assumed. */
+function withSectionTypes(schema: Schema, types: readonly string[]): Schema {
+  const twin = structuredClone(schema);
+  const full = JSON.stringify(THEME_STUDIO_SECTION_TYPES);
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (Array.isArray(record.enum) && JSON.stringify(record.enum) === full)
+      record.enum = [...types];
+    Object.values(record).forEach(walk);
+  };
+  walk(twin);
+  return twin;
+}
+
+/** The same schema with the three layout enums narrowed to the pre-v31
+ * lists, wherever they appear. Matched by value, like `withSectionTypes`. */
+function withLegacyLayoutVariants(schema: Schema): Schema {
+  const twin = structuredClone(schema);
+  const lists = (
+    Object.keys(LAYOUT_VARIANT_ENUMS) as (keyof typeof LAYOUT_VARIANT_ENUMS)[]
+  ).map((key) => ({
+    full: JSON.stringify(LAYOUT_VARIANT_ENUMS[key]),
+    legacy: [...LEGACY_LAYOUT_VARIANT_ENUMS[key]],
+  }));
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (Array.isArray(record.enum)) {
+      const current = JSON.stringify(record.enum);
+      const match = lists.find((list) => list.full === current);
+      if (match) record.enum = match.legacy;
+    }
+    Object.values(record).forEach(walk);
+  };
+  walk(twin);
+  return twin;
+}
+
+const STAGE_B_SCHEMAS = [
+  STAGE_B_DRAFT_SCHEMA,
+  STAGE_B_INITIAL_DRAFT_SCHEMA,
+  STAGE_B_VARIETY_DRAFT_SCHEMA,
+  STAGE_B_VARIETY_INITIAL_SCHEMA,
+];
+/** Twins keyed by schema and the capabilities that reshape it, built once: a
+ * persisted paid request is keyed on the exact schema it was sent. */
+const STAGE_B_TWINS = new Map<string, Schema>();
+
+/** The Stage A schema without the brief's `people` field: the shape every
+ * request before prompt v28 was keyed on. */
+function withoutBriefPeople(schema: Schema): Schema {
+  const legacy = structuredClone(schema);
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    const properties = record.properties as Record<string, unknown> | undefined;
+    if (properties && "people" in properties && "artDirection" in properties) {
+      delete properties.people;
+      if (Array.isArray(record.required))
+        record.required = record.required.filter((k) => k !== "people");
+    }
+    Object.values(record).forEach(walk);
+  };
+  walk(legacy);
+  return legacy;
+}
+
+const STAGE_A_SCHEMAS = [STAGE_A_ENVELOPE_SCHEMA, STAGE_A_VARIETY_SCHEMA];
+const STAGE_A_TWINS = new Map<string, Schema>();
+
+/** The Stage A schema a run of this prompt revision sends: the current one,
+ * or a twin without the brief's `people` field (pre-v28) and/or without the
+ * nested-block sections (pre-v29), whichever the revision predates. */
+export function stageASchemaFor(
+  schema: Schema,
+  peopleInImagery: boolean,
+  nestedBlocks = true,
+  moreSections = true,
+): Schema {
+  if (peopleInImagery && nestedBlocks && moreSections) return schema;
+  const index = STAGE_A_SCHEMAS.indexOf(schema);
+  if (index < 0) throw new Error("Unknown Stage A schema.");
+  const key = `${index}:${peopleInImagery}:${nestedBlocks}:${moreSections}`;
+  let twin = STAGE_A_TWINS.get(key);
+  if (!twin) {
+    twin = schema;
+    if (!nestedBlocks || !moreSections)
+      twin = withSectionTypes(
+        twin,
+        themeStudioSectionTypes(nestedBlocks, moreSections),
+      );
+    if (!peopleInImagery) twin = withoutBriefPeople(twin);
+    STAGE_A_TWINS.set(key, twin);
+  }
+  return twin;
+}
+
+/** The pre-v32 shape of a Stage B schema: no top-level `templates` or
+ * `announcement`, and design.layout.productDetail without "stacked".
+ * Matched by value like the other twins; the initial schemas carry no layout
+ * enum and lose only the objects. */
+function withoutTemplates(schema: Schema): Schema {
+  const twin = structuredClone(schema);
+  const properties = twin.properties as Record<string, Schema>;
+  delete properties.templates;
+  delete properties.announcement;
+  twin.required = Object.keys(properties);
+  const full = JSON.stringify(PRODUCT_DETAIL_ENUM);
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (Array.isArray(record.enum) && JSON.stringify(record.enum) === full)
+      record.enum = [...LEGACY_PRODUCT_DETAIL_ENUM];
+    Object.values(record).forEach(walk);
+  };
+  walk(twin);
+  return twin;
+}
+
+/** The schema a run of this prompt revision sends: the current one, or a
+ * twin without font pairings (pre-v25), without the nested-block sections
+ * (pre-v29), the v30 sections, the v31 layout variants and/or the v32
+ * templates, whichever the revision predates. */
+export function stageBSchemaFor(
+  schema: Schema,
+  fontPairings: boolean,
+  nestedBlocks = true,
+  moreSections = true,
+  moreVariants = true,
+  templates = true,
+): Schema {
+  if (fontPairings && nestedBlocks && moreSections && moreVariants && templates)
+    return schema;
+  const index = STAGE_B_SCHEMAS.indexOf(schema);
+  if (index < 0) throw new Error("Unknown Stage B schema.");
+  const key = `${index}:${fontPairings}:${nestedBlocks}:${moreSections}:${moreVariants}:${templates}`;
+  let twin = STAGE_B_TWINS.get(key);
+  if (!twin) {
+    twin = schema;
+    if (!templates) twin = withoutTemplates(twin);
+    if (!nestedBlocks || !moreSections)
+      twin = withSectionTypes(
+        twin,
+        themeStudioSectionTypes(nestedBlocks, moreSections),
+      );
+    if (!moreVariants) twin = withLegacyLayoutVariants(twin);
+    if (!fontPairings) twin = legacyFontSchema(twin);
+    STAGE_B_TWINS.set(key, twin);
+  }
+  return twin;
+}

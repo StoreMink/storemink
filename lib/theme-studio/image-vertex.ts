@@ -44,9 +44,11 @@ import {
 // charge twice.
 //
 // ★ THE SAFETY SETTINGS ARE FIXED HERE, NOT PASSED IN, and match Mink's
-// verified call exactly: four harm filters at BLOCK_LOW_AND_ABOVE, no people at
-// all, prominent people blocked, one candidate, 2K JPEG. A theme's demo images
-// must meet the same bar as a merchant's, and no request can weaken it.
+// verified call: four harm filters at BLOCK_LOW_AND_ABOVE, prominent people
+// blocked, one candidate, 2K JPEG. The one per-request value is whether
+// ADULTS may appear (request.people, chosen by the Stage A brief under prompt
+// v28, the setting Mink's Refine already uses); children are never allowed.
+// A theme's demo images must meet the same bar as a merchant's.
 // Gemini-generated images carry SynthID by default on Vertex.
 //
 // ★ A REFUSAL IS A NORMAL OUTCOME, NOT AN ERROR, and there is no fallback to
@@ -86,7 +88,10 @@ export function themeImageConfig(
     imageConfig: {
       aspectRatio: request.aspectRatio,
       imageSize: "2K",
-      personGeneration: "ALLOW_NONE",
+      // Adults only when the brief asked for them (request.people, prompt
+      // v28); never children, and prominent people stay blocked either way.
+      personGeneration:
+        request.people === "adults" ? "ALLOW_ADULT" : "ALLOW_NONE",
       prominentPeople: ProminentPeople.BLOCK_PROMINENT_PEOPLE,
       outputMimeType: "image/jpeg",
       outputCompressionQuality: 95,

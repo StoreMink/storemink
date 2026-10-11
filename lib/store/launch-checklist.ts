@@ -1,7 +1,8 @@
 import "server-only";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
+  admins,
   products,
   storeBillingSettings,
   storePages,
@@ -11,7 +12,9 @@ import {
 import { withService } from "@/lib/db/client";
 import { effectivePlan } from "@/lib/plans";
 import type { Store } from "@/lib/store/resolve";
+import { isThemePending } from "@/lib/store/launch-state";
 import { policyBodyHtml } from "@/lib/legal/policy-text";
+import { homepageEditedSinceSeed } from "@/lib/themes/switch-rules";
 import {
   LAUNCH_POLICY_SLUGS,
   evaluateLaunchChecklist,
@@ -34,17 +37,12 @@ import {
  *  merchant to replace. */
 const SAMPLE_MARK = "%(Sample)%";
 
-/** How long after seeding a homepage save counts as the merchant's own edit.
- *  `applyTheme` publishes the seeded homepage in the same second it creates
- *  the row, so the two timestamps sit well inside this window. */
-const SEED_WINDOW_MS = 60_000;
-
 export async function buildLaunchChecklist(
   store: Store,
 ): Promise<LaunchChecklist> {
   const storeId = store.id;
-  const [productCounts, billing, pages, shipping, payments] = await Promise.all(
-    [
+  const [productCounts, billing, pages, shipping, payments, verifiedOwners] =
+    await Promise.all([
       withService((db) =>
         db
           .select({
@@ -105,8 +103,22 @@ export async function buildLaunchChecklist(
           )
           .limit(1),
       ),
-    ],
-  );
+      // A store owner who proved their mobile with a texted code. The
+      // TIMESTAMP, not `phone`: invited staff type a number nobody checked.
+      withService((db) =>
+        db
+          .select({ id: admins.id })
+          .from(admins)
+          .where(
+            and(
+              eq(admins.storeId, storeId),
+              eq(admins.role, "superadmin"),
+              isNotNull(admins.phoneVerifiedAt),
+            ),
+          )
+          .limit(1),
+      ),
+    ]);
 
   const counts = productCounts[0] ?? { published: 0, samples: 0 };
   const b = billing[0];
@@ -124,16 +136,22 @@ export async function buildLaunchChecklist(
         .trim().length > 0;
   }
 
+  // ★ Measured from when the THEME last wrote the homepage, not from when
+  // the row was created: a theme switch from the Storefront page rewrites the
+  // seed, and counting that as the merchant's edit would tick this task for
+  // them (lib/themes/switch-rules.ts).
   const home = pages.find((p) => p.slug === "");
-  const homepageEdited =
-    !!home &&
-    Math.abs(Date.parse(home.updatedAt) - Date.parse(home.createdAt)) >
-      SEED_WINDOW_MS;
+  const homepageEdited = homepageEditedSinceSeed(store.settings, home);
 
   const brand = (store.settings?.brand ?? {}) as { logoUrl?: unknown };
 
   const facts: LaunchFacts = {
     plan: effectivePlan(store),
+    ownerPhoneVerified: verifiedOwners.length > 0,
+    // Read from the store row already in hand, so the theme task costs no
+    // query; switchStoreTheme refreshes STORE_TAG on a first install, so a
+    // freshly chosen theme is seen on the next read (launchStore included).
+    themeChosen: !isThemePending(store),
     publishedProducts: Number(counts.published) || 0,
     sampleProducts: Number(counts.samples) || 0,
     business: {

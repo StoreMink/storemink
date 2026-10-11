@@ -12,7 +12,7 @@ import { buttonIssues, buttonsDrawColourAsText } from "./buttons";
 import { motionIssues } from "./motion";
 import { pageIssues } from "./page";
 import { typographyIssues } from "./typography";
-import { heroContrastIssues } from "./hero-contrast";
+import { heroContrastIssues, promoTileContrastIssues } from "./hero-contrast";
 import { normalizeMenus } from "@/lib/menus";
 import { flattenNav } from "@/lib/chrome/nav";
 import { STORE_POLICY_SLUGS } from "@/lib/legal/store-policies";
@@ -89,6 +89,12 @@ const FONT_VAR_RE = /^var\(--font-[a-z-]+\)$/;
 
 export const THEME_IMAGE_RULES = {
   maxBytes: 500 * 1024,
+  /** A wide image (16:9 and wider: heroes, banners, slides) may be twice the
+   *  size: it is served at up to 2400px across a desktop screen, where 1600px
+   *  reads soft on a retina display (owner, 2026-10-09). */
+  maxWideBytes: 1000 * 1024,
+  /** The aspect ratio from which an image counts as wide. */
+  wideAspect: 16 / 9 - 0.02,
   maxPreviewBytes: 250 * 1024,
   minWidth: 800,
   minPreviewHeight: 600,
@@ -102,11 +108,29 @@ export const THEME_TEXT_CONTRAST = 4.5;
 export const THEME_UI_CONTRAST = 3;
 
 const LAYOUT_VARIANTS = {
-  header: ["classic", "market", "centered", "minimal"],
-  card: ["classic", "quick_add", "overlay", "framed", "grocery"],
-  productDetail: ["classic", "grocery", "editorial"],
+  header: [
+    "classic",
+    "market",
+    "centered",
+    "minimal",
+    "transparent",
+    "hamburger",
+    "stacked",
+    "utility",
+  ],
+  card: [
+    "classic",
+    "quick_add",
+    "overlay",
+    "framed",
+    "grocery",
+    "centered",
+    "soft",
+    "wide",
+  ],
+  productDetail: ["classic", "grocery", "editorial", "stacked"],
   cart: ["classic", "grocery", "compact"],
-  footer: ["rich", "minimal", "editorial"],
+  footer: ["rich", "minimal", "editorial", "centered", "compact"],
 } as const;
 
 function finding(
@@ -173,6 +197,9 @@ export function collectThemeHrefs(theme: ThemeDefinition): string[] {
     for (const link of group.links) hrefs.push(link.href);
   }
   for (const link of footerLegal) hrefs.push(link.href);
+  // The announcement bar is a link on every page when it carries one.
+  if (theme.preset.announcement?.href)
+    hrefs.push(theme.preset.announcement.href);
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) {
       for (const item of value) visit(item);
@@ -402,13 +429,26 @@ const AUTHORING_NOTE_RE = /\b(?:TODO|TBD|FIXME)\b/;
 
 /** `<thing>_url` → `<thing>_alt` pairs an author must fill. Hero, promo and
  * tile images carry their headline as the accessible text, so they are not
- * listed; these four render the image as content in its own right. */
+ * listed; these sections render the image as content in its own right
+ * (a media_text story and an accordion "image" row included). */
 const ALT_TEXT_PAIRS: Readonly<
   Record<string, readonly { url: string; alt: string; items?: string }[]>
 > = {
-  media_text: [{ url: "image_url", alt: "image_alt" }],
+  media_text: [
+    { url: "image_url", alt: "image_alt" },
+    { url: "image_url", alt: "image_alt", items: "stories" },
+  ],
   gallery: [{ url: "image_url", alt: "image_alt", items: "items" }],
   testimonials: [{ url: "logo_url", alt: "logo_alt", items: "items" }],
+  accordion: [{ url: "image_url", alt: "image_alt", items: "items" }],
+  multicolumn: [{ url: "image_url", alt: "image_alt", items: "items" }],
+  image_marquee: [{ url: "image_url", alt: "image_alt", items: "items" }],
+  image_hotspots: [{ url: "image_url", alt: "image_alt" }],
+  before_after: [
+    { url: "image_url", alt: "image_alt", items: "before" },
+    { url: "image_url", alt: "image_alt", items: "after" },
+  ],
+  logo_strip: [{ url: "image_url", alt: "image_alt", items: "items" }],
   video: [{ url: "poster_url", alt: "poster_alt" }],
 };
 
@@ -489,11 +529,14 @@ export function validateThemeCopy(theme: ThemeDefinition): ThemeFinding[] {
     enabled.forEach((section, i) => {
       const config = section.config as unknown as Record<string, unknown>;
       for (const pair of ALT_TEXT_PAIRS[section.type] ?? []) {
-        const targets = pair.items
-          ? Array.isArray(config[pair.items])
-            ? config[pair.items]
-            : []
-          : [config];
+        // `items` names a block list, or one nested object (a before/after
+        // side); the config itself otherwise.
+        const container = pair.items ? config[pair.items] : config;
+        const targets = Array.isArray(container)
+          ? container
+          : container && typeof container === "object"
+            ? [container]
+            : [];
         (targets as unknown[]).forEach((target, j) => {
           if (!target || typeof target !== "object") return;
           const t = target as Record<string, unknown>;
@@ -608,6 +651,7 @@ export const STOREFRONT_CODE_ROUTES: ReadonlySet<string> = new Set([
   // Only /collections/<slug> is a page; a bare /collections is refused below.
   "collections",
   "enquiries",
+  "in-progress",
   "notifications",
   "orders",
   "password",
@@ -738,6 +782,8 @@ export function validateThemeDesign(theme: ThemeDefinition): ThemeFinding[] {
     out.push(finding("design", code, message));
   for (const message of heroContrastIssues(theme))
     issue("hero_contrast", message);
+  for (const message of promoTileContrastIssues(theme))
+    issue("promo_tile_contrast", message);
   const palette = design.palette as unknown as Record<string, unknown>;
   for (const key of REQUIRED_PALETTE_KEYS) {
     const value = palette[key];
@@ -1023,9 +1069,13 @@ export function validateThemeImage(
       `${label}: must be at least ${rules.minWidth}px wide (is ${facts.width ?? 0}px).`,
     );
   }
-  if (facts.bytes > rules.maxBytes) {
+  const wide =
+    (facts.width ?? 0) / (facts.height || 1) >= rules.wideAspect &&
+    !options.preview;
+  const maxBytes = wide ? rules.maxWideBytes : rules.maxBytes;
+  if (facts.bytes > maxBytes) {
     issues.push(
-      `${label}: must be at most 500 KiB (is ${Math.ceil(facts.bytes / 1024)} KiB).`,
+      `${label}: must be at most ${Math.round(maxBytes / 1024)} KiB (is ${Math.ceil(facts.bytes / 1024)} KiB).`,
     );
   }
   if (options.preview) {
@@ -1043,4 +1093,61 @@ export function validateThemeImage(
     }
   }
   return issues;
+}
+
+/** The Studio's design floor: everything `validateThemeDesign` holds, plus
+ *  button LABELS at text contrast. The shared contract holds on-accent to
+ *  3:1 on the accent, the non-text floor for a button's fill, and bundled
+ *  themes were published against it; but the storefront's button labels are
+ *  13–16px at normal or medium weight, which axe judges as small text at
+ *  4.5:1, so a candidate whose on-accent reads at 3–4.5:1 fails the browser
+ *  stage on every page that has a solid button (the playful exemplar's
+ *  white on #d6451d, 4.44:1, 2026-10-10). Compile-time for Studio output
+ *  and the acceptance package gate only; a bundled theme is never judged by
+ *  it. The brand colour is checked too, because the storefront paints the
+ *  accent from the store's brand primary, which a seeded store copies from
+ *  the preset. */
+export function validateStudioDesign(theme: ThemeDefinition): ThemeFinding[] {
+  const out = validateThemeDesign(theme);
+  const design = theme.preset.design;
+  const palette = design.palette as unknown as Record<string, unknown>;
+  const hex = (value: unknown): string | null =>
+    typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value)
+      ? value.toLowerCase()
+      : null;
+  const onAccent = hex(palette.onAccent);
+  const fields: [string, unknown][] = [
+    ["design.palette.accent", design.palette.accent],
+    ["brand.primaryColor", theme.preset.brand.primaryColor],
+  ];
+  const seen = new Set<string>();
+  for (const [name, value] of fields) {
+    const field = hex(value);
+    if (!onAccent || !field || seen.has(field)) continue;
+    seen.add(field);
+    const ratio = contrastRatio(onAccent, field);
+    if (ratio < THEME_TEXT_CONTRAST)
+      out.push(
+        finding(
+          "design",
+          "button_label_contrast",
+          `Button labels (onAccent ${onAccent}) on ${name} ${field} read at ${ratio.toFixed(2)}:1; a label is small text and needs ${THEME_TEXT_CONTRAST}:1, which the browser stage measures on every solid button. Deepen the accent or change onAccent.`,
+        ),
+      );
+  }
+  for (const [id, scheme] of Object.entries(design.schemes ?? {})) {
+    const accent = hex(scheme?.accent);
+    const label = hex(scheme?.onAccent);
+    if (!accent || !label) continue;
+    const ratio = contrastRatio(label, accent);
+    if (ratio < THEME_TEXT_CONTRAST)
+      out.push(
+        finding(
+          "design",
+          "button_label_contrast",
+          `schemes.${id}: button labels (onAccent ${label}) on its accent ${accent} read at ${ratio.toFixed(2)}:1; needs ${THEME_TEXT_CONTRAST}:1.`,
+        ),
+      );
+  }
+  return out;
 }

@@ -6,7 +6,7 @@ import type { Metadata } from "next";
 // a Disallow only stops crawling: a linked URL can still be indexed from its
 // anchors alone. The noindex here is what actually keeps it out.
 export const metadata: Metadata = {
-  title: "Sign in — StoreMink",
+  title: "Sign in · StoreMink",
   robots: { index: false, follow: false },
   alternates: { canonical: "/login" },
 };

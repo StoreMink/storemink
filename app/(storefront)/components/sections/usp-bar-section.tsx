@@ -1,41 +1,10 @@
-import {
-  Star,
-  BadgeCheck,
-  Truck,
-  ShieldCheck,
-  Leaf,
-  Gift,
-  Lock,
-  RefreshCcw,
-  Clock,
-  Heart,
-  Headphones,
-  Sparkles,
-  type LucideIcon,
-} from "lucide-react";
-import type {
-  SectionStyle,
-  UspBarConfig,
-  UspIcon,
-} from "@/lib/homepage/section-types";
+import type { SectionStyle, UspBarConfig } from "@/lib/homepage/section-types";
 import { SectionShell } from "./section-shell";
+import { USP_ICON_COMPONENTS } from "./usp-icons";
 
 // Icon names are a fixed catalog (USP_ICONS, enforced by validateConfig) so
-// this map is exhaustive and merchants can never inject markup.
-const ICONS: Record<UspIcon, LucideIcon> = {
-  star: Star,
-  "badge-check": BadgeCheck,
-  truck: Truck,
-  shield: ShieldCheck,
-  leaf: Leaf,
-  gift: Gift,
-  lock: Lock,
-  refresh: RefreshCcw,
-  clock: Clock,
-  heart: Heart,
-  headphones: Headphones,
-  sparkles: Sparkles,
-};
+// the shared map is exhaustive and merchants can never inject markup.
+const ICONS = USP_ICON_COMPONENTS;
 
 // Icon + label promise strip. theme = TEXT colour ("dark" ink on light
 // backgrounds, "light" on dark ones — pair with the section Style background).
@@ -54,7 +23,7 @@ export function UspBarSection({
     <SectionShell sectionId={sectionId} style={style}>
       <div className={`home-usp theme-${config.theme}`}>
         {config.items.map((item, i) => {
-          const Icon = ICONS[item.icon] ?? Star;
+          const Icon = ICONS[item.icon] ?? USP_ICON_COMPONENTS.star;
           return (
             <div className="home-usp-item" key={i}>
               <Icon className="home-usp-icon" aria-hidden="true" />

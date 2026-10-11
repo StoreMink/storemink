@@ -379,3 +379,20 @@ it("enforces the image attempt deadline even when the SDK ignores abort", async 
     timer.mockRestore();
   }
 });
+
+it("allows adults only for a request whose brief asked for them, with prominent people still blocked", async () => {
+  const { themeImageConfig } = await import("./image-vertex");
+  const base = {
+    purpose: "hero" as const,
+    briefId: "hero",
+    aspectRatio: "16:9" as const,
+    prompt: "A scene",
+    references: [],
+  };
+  expect(themeImageConfig(base).imageConfig?.personGeneration).toBe(
+    "ALLOW_NONE",
+  );
+  const adults = themeImageConfig({ ...base, people: "adults" }).imageConfig;
+  expect(adults?.personGeneration).toBe("ALLOW_ADULT");
+  expect(String(adults?.prominentPeople)).toMatch(/BLOCK_PROMINENT_PEOPLE/);
+});

@@ -143,3 +143,158 @@ describe("reserved catalog slot names", () => {
     expect(slotSpec("constructor", intent).aspectRatio).toBe("21:9");
   });
 });
+
+describe("font pairings (prompt v25)", () => {
+  const input = {
+    name: "Clay & Co",
+    brief: "A calm ceramics shop.",
+    industries: ["home" as const],
+    catalogSizes: ["small" as const],
+    requiredFeatures: [],
+    referenceCount: 0,
+  };
+  async function draftAndIntent() {
+    const intent = runFakeProvider(input);
+    if (!intent.ok) throw new Error("fake intent failed");
+    const result = await createFakeModelClient(input).generate(
+      { stage: "draft", content: [] } as never,
+      new AbortController().signal,
+    );
+    if (result.kind !== "ok") throw new Error("fake draft failed");
+    return {
+      intent: intent.value as ThemeIntent,
+      draft: structuredClone(result.value) as Record<string, unknown>,
+    };
+  }
+  const fontsOf = (parts: ReturnType<typeof prepareDraft>["parts"]) =>
+    parts?.design?.fonts;
+
+  it("the offline draft names the pairing its faces came from", async () => {
+    const { intent, draft } = await draftAndIntent();
+    expect(draft.fontPairing).toBe("editorial-fraunces");
+    const { issues, parts } = prepareDraft(draft, intent);
+    expect(issues).toEqual([]);
+    expect(fontsOf(parts)).toEqual({
+      body: "var(--font-inter)",
+      display: "var(--font-fraunces)",
+    });
+  });
+
+  it("a pairing wins over the two faces the model also wrote", async () => {
+    const { intent, draft } = await draftAndIntent();
+    draft.fontPairing = "quiet-serif";
+    const { issues, parts } = prepareDraft(draft, intent);
+    expect(issues).toEqual([]);
+    expect(fontsOf(parts)).toEqual({
+      body: "var(--font-jost)",
+      display: "var(--font-instrument-serif)",
+    });
+  });
+
+  it("an unknown pairing is a repair that names the choices; a null one is a free choice", async () => {
+    const { intent, draft } = await draftAndIntent();
+    draft.fontPairing = "comic-sans-forever";
+    expect(prepareDraft(draft, intent).issues).toEqual([
+      expect.stringContaining(
+        "fontPairing must be null or one of: editorial-fraunces",
+      ),
+    ]);
+    draft.fontPairing = null;
+    (draft.design as { fonts: Record<string, string> }).fonts = {
+      body: "var(--font-work-sans)",
+      display: "var(--font-bebas-neue)",
+    };
+    const free = prepareDraft(draft, intent);
+    expect(free.issues).toEqual([]);
+    expect(fontsOf(free.parts)).toEqual({
+      body: "var(--font-work-sans)",
+      display: "var(--font-bebas-neue)",
+    });
+  });
+
+  it("refuses a display-only face as the body face, and a face the catalogue lacks", async () => {
+    const { intent, draft } = await draftAndIntent();
+    draft.fontPairing = null;
+    (draft.design as { fonts: Record<string, string> }).fonts = {
+      body: "var(--font-bebas-neue)",
+      display: "var(--font-bebas-neue)",
+    };
+    expect(prepareDraft(draft, intent).issues).toEqual([
+      "design.fonts.body must be a face suited to body copy; Bebas Neue is display only.",
+    ]);
+    (draft.design as { fonts: Record<string, string> }).fonts = {
+      body: "var(--font-comic)",
+      display: "var(--font-fraunces)",
+    };
+    expect(prepareDraft(draft, intent).issues).toEqual([
+      expect.stringContaining(
+        "design.fonts.body must be one of the loaded font values: var(--font-inter)",
+      ),
+    ]);
+  });
+
+  it("a draft from before v25 carries no pairing and keeps its faces", async () => {
+    const { intent, draft } = await draftAndIntent();
+    delete draft.fontPairing;
+    const { issues, parts } = prepareDraft(draft, intent);
+    expect(issues).toEqual([]);
+    expect(fontsOf(parts)).toEqual({
+      body: "var(--font-inter)",
+      display: "var(--font-fraunces)",
+    });
+  });
+});
+
+// Plan Phase 2e: the offline provider writes the page templates only when the
+// request's schema carries them, so a pre-v32 replay gets a pre-v32 answer;
+// what the compiler makes of them is proved end to end in pipeline.test.ts.
+describe("page templates in the offline draft (prompt v32)", () => {
+  const input = {
+    name: "Clay & Co",
+    brief: "A calm ceramics shop.",
+    industries: ["home" as const],
+    catalogSizes: ["small" as const],
+    requiredFeatures: [],
+    referenceCount: 0,
+  };
+  const draftFor = async (schema: unknown) => {
+    const result = await createFakeModelClient(input).generate(
+      { stage: "draft", content: [], schema } as never,
+      new AbortController().signal,
+    );
+    if (result.kind !== "ok") throw new Error("fake draft failed");
+    return result.value as Record<string, unknown>;
+  };
+
+  it("writes templates for a v32 schema and none for an earlier one", async () => {
+    const { STAGE_B_DRAFT_SCHEMA, stageBSchemaFor } = await import("./schemas");
+    const v32 = await draftFor(STAGE_B_DRAFT_SCHEMA);
+    expect(v32.templates).toMatchObject({
+      product: { gallery: "thumbs-left" },
+      collection: { filters: "top-bar", pagination: "paged" },
+    });
+    // The announcement bar rides the same flag.
+    expect(v32.announcement).toEqual({
+      text: "Free delivery on orders over ₹999, easy 14-day returns",
+      href: "/shop",
+    });
+    const v31 = await draftFor(
+      stageBSchemaFor(STAGE_B_DRAFT_SCHEMA, true, true, true, true, false),
+    );
+    expect(v31.templates).toBeUndefined();
+    expect(v31.announcement).toBeUndefined();
+    // The draft still prepares the same way either side of the flag.
+    const intent = runFakeProvider(input);
+    if (!intent.ok) throw new Error("fake intent failed");
+    expect(prepareDraft(v32, intent.value as ThemeIntent).issues).toEqual([]);
+    expect(prepareDraft(v31, intent.value as ThemeIntent).issues).toEqual([]);
+    // An off-site announcement link is a repair issue, like a menu link.
+    const offsite = {
+      ...v32,
+      announcement: { text: "Sale on now", href: "https://example.com" },
+    };
+    expect(prepareDraft(offsite, intent.value as ThemeIntent).issues).toEqual([
+      'announcement.href must be a site path starting with "/".',
+    ]);
+  });
+});

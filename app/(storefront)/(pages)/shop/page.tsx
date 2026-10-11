@@ -76,6 +76,7 @@ export default async function ShopPage({
       grocery={view.layout.card === "grocery"}
       shopFilters={view.layout.shopFilters}
       productCards={view.layout.productCards}
+      collectionTemplate={view.layout.templates.collection}
       storeLowStockThreshold={view.lowStockThreshold}
       offerBadges={view.offerBadges}
     />

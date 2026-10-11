@@ -14,6 +14,64 @@
     box-shadow 0.3s ease;
 }
 
+/* ---- Announcement bar (lib/themes/announcement.ts) ----
+   One line above the header. The root's sm-announce class (painted by the
+   layout, kept live by the bar itself) gives the fixed header a transparent
+   top border the bar's height tall, and the bar sits in that border. The
+   border is part of the header's box, so the height useHeaderFit publishes
+   as --sm-header-h includes the bar, and the header's own padding, which
+   every variant sets differently, never enters into it. One line always:
+   the copy ellipsises rather than wrapping, so the bar's height is a
+   constant storefront-theme.css knows before hydration. */
+:global(.sm-announce) .header {
+  border-top: var(--sm-announce-h, 36px) solid transparent;
+}
+.announcement {
+  position: absolute;
+  top: calc(-1 * var(--sm-announce-h, 36px));
+  left: 0;
+  right: 0;
+  height: var(--sm-announce-h, 36px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  background: var(--sm-ink);
+  color: var(--sm-on-ink);
+  font-family: var(--font-outfit), sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  text-align: center;
+  z-index: 1;
+}
+.announcementText {
+  margin: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.announcementLink {
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+  height: 100%;
+  min-height: 24px;
+  color: inherit;
+  text-decoration: none;
+}
+.announcementLink:hover,
+.announcementLink:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.announcementLink:focus-visible {
+  outline: 2px solid var(--sm-on-ink);
+  outline-offset: -4px;
+}
+
 .headerScrolled {
   background-color: color-mix(in srgb, var(--sm-cream) 92%, transparent);
   backdrop-filter: blur(8px);
@@ -330,12 +388,21 @@
   justify-content: center;
   color: var(--sm-ink-faint);
   cursor: pointer;
-  margin-left: 8px;
+  margin-left: 4px;
   transition: color 0.2s ease;
-  /* It's a submit button now — keep the old icon-only look. */
+  /* It's a submit button now — keep the old icon-only look, on a hit area
+     the acceptance probe accepts: the 18px glyph alone was the 18×18 target
+     flagged in every theme's search sheet (2026-10-09). The box fills the
+     38px bar, and the negative right margin keeps the glyph where the pill's
+     padding used to put it. */
   background: transparent;
   border: none;
   padding: 0;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  margin-right: -10px;
+  border-radius: 999px;
 }
 
 .searchBar:focus-within .searchIcon {
@@ -552,7 +619,10 @@
 .profileDropdownLoginSub {
   font-family: var(--font-outfit), sans-serif;
   font-size: 11.5px;
-  color: var(--sm-ink-faint);
+  /* Readable copy on the menu's surface: ink-soft, which the design contract
+     holds to 4.5:1 there; ink-faint (2.96:1 on the exemplar run) is for
+     placeholders. The sign-in dialog's rule. */
+  color: var(--sm-ink-soft);
 }
 
 .profileDropdownLoginBtn {
@@ -1174,6 +1244,177 @@
     border-radius: 0;
     background: transparent;
     box-shadow: none;
+  }
+}
+
+/* ---- "transparent" header variant (theme layout.header = "transparent") ----
+   The Shopify transparent header: nothing behind the bar while the page is
+   at the top, so the opening photograph runs under it (homepage.css drops
+   the reserve for a hero- or carousel-led page), and the controls take the
+   colour that reads over that photograph. Which colour is NOT decided here:
+   MediaTone (sections/media-tone.tsx) settles `theme-light` or `theme-dark`
+   on the first hero, or on the carousel's active slide, from the pixels
+   behind the copy, and this rule follows it with :has(). Scrolled, the bar
+   is the classic cream bar with ink controls. Every class inside :has() is
+   wrapped in :global() on its own, because the offline header checks strip
+   `:global(...)` with a regex that cannot see past nested parentheses. */
+:global(.sm-header-transparent) .header {
+  box-shadow: none;
+}
+:global(.sm-header-transparent):has(
+    :global(.home-sections)
+      > :global(.home-section):first-child
+      > :global(.home-hero):global(.theme-light),
+    :global(.home-sections)
+      > :global(.home-section):first-child
+      > :global(.home-carousel)
+      :global(.home-carousel-slide):global(.is-active):global(.theme-light)
+  )
+  .header:not(.headerScrolled)
+  :is(
+    .brandNameText,
+    .navLinks a,
+    .navTrigger,
+    .userIcon,
+    .cartBtn,
+    .hamburgerBtn,
+    .phoneSearchBtn,
+    [data-delivery-control] > button,
+    [data-delivery-control] > button small,
+    [data-delivery-control] > button strong
+  ):not(.mobileDrawer *) {
+  /* The drawer is excluded HERE, not only overridden below: :has() carries
+     the specificity of its most specific argument, so this rule outranked
+     the drawer's page-ink rule and painted the drawer's brand name on-ink,
+     which on a dark palette is near-black on a near-black surface (1.07:1,
+     the bold-and-loud exemplar, 2026-10-10). */
+  color: var(--sm-on-ink);
+}
+:global(.sm-header-transparent):has(
+    :global(.home-sections)
+      > :global(.home-section):first-child
+      > :global(.home-hero):global(.theme-light),
+    :global(.home-sections)
+      > :global(.home-section):first-child
+      > :global(.home-carousel)
+      :global(.home-carousel-slide):global(.is-active):global(.theme-light)
+  )
+  .header:not(.headerScrolled)
+  [data-delivery-control]:not(.mobileDrawer *)
+  > button {
+  border-color: color-mix(in srgb, var(--sm-on-ink) 32%, transparent);
+  background: color-mix(in srgb, var(--sm-on-ink) 12%, transparent);
+}
+/* The drawer and the account menu are page surfaces whatever sits behind
+   the bar: their text keeps the page ink (the market rule, for its reason). */
+:global(.sm-header-transparent) .mobileDrawer .brandNameText,
+:global(.sm-header-transparent) .mobileDrawer .hamburgerBtn {
+  color: var(--sm-ink);
+}
+
+/* ---- "hamburger" header variant (theme layout.header = "hamburger") ----
+   Every link lives behind the menu button at every width, so the drawer is
+   THE navigation (nested menus drill down there already) and the bar is
+   logo, search and the icons: the logo page-centred between two equal
+   columns above phone width, the phone row unchanged. */
+:global(.sm-header-hamburger) .navLinks {
+  display: none;
+}
+:global(.sm-header-hamburger) .hamburgerBtn {
+  display: flex;
+}
+@media (min-width: 769px) {
+  :global(.sm-header-hamburger) .header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    column-gap: 24px;
+  }
+  :global(.sm-header-hamburger) .headerLeft {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+  }
+  :global(.sm-header-hamburger) .headerRight {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+  }
+}
+
+/* ---- "stacked" header variant (theme layout.header = "stacked") ----
+   The logo centred on the first row with the controls to its right, the
+   menu centred on a row of its own beneath: the classic "logo centre, menu
+   below" boutique header. Desktop only; tablets and phones keep the proven
+   row. useHeaderFit judges the menu's row on its own (header-fit.ts
+   groups items into rows), so a wide menu still folds into the drawer only
+   when its own row runs out of room. */
+@media (min-width: 1025px) {
+  :global(.sm-header-stacked) .header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    row-gap: 12px;
+    column-gap: 24px;
+    padding-block: 14px 12px;
+  }
+  :global(.sm-header-stacked) .headerLeft {
+    display: contents;
+  }
+  :global(.sm-header-stacked) .logo {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  :global(.sm-header-stacked) .navLinks {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: clamp(18px, 2.4vw, 36px);
+  }
+  :global(.sm-header-stacked) .headerRight {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    gap: 20px;
+  }
+  :global(.sm-header-stacked) .searchBar {
+    width: clamp(170px, 18vw, 260px);
+  }
+
+  /* ---- "utility" header variant (theme layout.header = "utility") ----
+     A slim utility bar across the top, delivery on its left and search,
+     account and cart on its right under a hairline, then the brand row of
+     logo and menu: the double-row department-store header. Desktop only,
+     like stacked. */
+  :global(.sm-header-utility) .header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    row-gap: 0;
+    padding-top: 4px;
+    padding-bottom: 14px;
+  }
+  /* The bar's controls keep 12px clear of the header's top edge (the
+     clearance every header variant gives its controls). */
+  :global(.sm-header-utility) .headerRight {
+    grid-row: 1;
+    width: 100%;
+    justify-content: flex-end;
+    gap: 20px;
+    padding: 10px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--sm-ink) 12%, transparent);
+  }
+  :global(.sm-header-utility) .headerRight > [data-delivery-control] {
+    margin-right: auto;
+  }
+  :global(.sm-header-utility) .headerLeft {
+    grid-row: 2;
+    padding-top: 12px;
+    gap: clamp(24px, 3vw, 48px);
+  }
+  :global(.sm-header-utility) .searchBar {
+    height: 34px;
+    width: clamp(170px, 18vw, 260px);
   }
 }
 

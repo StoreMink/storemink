@@ -24,6 +24,13 @@
 // subdomain now redirects to them — an unwatched broken domain is a lock-out, not
 // a cosmetic problem. Still cheap: shouldHealthCheck returns early for a live
 // domain checked in the last 6 hours, so the hourly run does almost nothing.
+//
+// ★ AND IT KEEPS PHONE SIGN-IN WORKING ON EVERY STORE HOST (`authHostsPass`).
+// Phone codes are checked against the EXACT hostname in Identity Platform's
+// authorizedDomains (lib/auth/store-auth-hosts.ts), so a store whose host is
+// missing cannot send a single code. The pass is add-only and idempotent, so an
+// hourly run repairs any miss within the hour and, on the first run after a
+// deploy, backfills every existing store.
 // ---------------------------------------------------------------------------
 
 import { sweepPendingDomains } from "@/lib/domains/reconcile";
@@ -33,6 +40,10 @@ import { logError } from "@/lib/observability/logger";
 import { after } from "next/server";
 import { ensureGoogleCoverageForStore } from "@/lib/seo/store-indexing";
 import { reconcileStoreSearchSource } from "@/lib/seo/search-metrics";
+import {
+  syncStoreAuthHosts,
+  type StoreAuthHostSyncResult,
+} from "@/lib/auth/store-auth-hosts-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +61,51 @@ async function handle(request: Request): Promise<Response> {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const domains = await reconcileDomains();
+
+  // ★ AFTER the domain work, never beside it. The sweep's ensureAuthorizedDomain
+  // (a domain that just went live) and this pass both read-modify-write the
+  // same project-global list, so running them together can lose a write; in
+  // sequence, a domain that just went live is read back as verified here and a
+  // failed add on that edge is repaired in the same run. It runs even when the
+  // sweep threw: its input is the stores table, not the sweep, so a Certificate
+  // Manager outage must not also stop phone sign-in repairs.
+  //
+  // ★ ITS FAILURE NEVER CHANGES THE STATUS. The status is Cloud Scheduler's
+  // retry signal for the DOMAIN sweep: a 500 for an Identity Platform or IAM
+  // error would re-run certificate and health work three times for a problem
+  // no retry fixes, then keep the job red every hour (the permanently-red-job
+  // lesson below). The failure is logged for Error Reporting (by the sync, or
+  // by authHostsPass if it throws) and named in the body.
+  const authHosts = await authHostsPass();
+
+  return Response.json(
+    { ...domains.body, authHosts },
+    { status: domains.status },
+  );
+}
+
+/** Add every active store's missing exact hosts. Never throws. */
+async function authHostsPass(): Promise<StoreAuthHostSyncResult> {
+  try {
+    return await syncStoreAuthHosts();
+  } catch (err) {
+    // The sync promises never to throw and logs its own failures, so only a
+    // broken promise reaches here; log it, or it would be silent.
+    logError("domain-reconcile auth-host sync failed", err);
+    return {
+      stores: 0,
+      expected: 0,
+      added: [],
+      error: err instanceof Error ? err.message : "auth host sync failed",
+    };
+  }
+}
+
+async function reconcileDomains(): Promise<{
+  status: number;
+  body: Record<string, unknown>;
+}> {
   try {
     const result = await sweepPendingDomains();
 
@@ -123,30 +179,34 @@ async function handle(request: Request): Promise<Response> {
     // are wanted — the overwhelmingly common "failure" here is a merchant who
     // hasn't added their DNS records yet. Retrying that within the hour cannot
     // help, and a permanently-red job is a job nobody looks at.
-    return Response.json({
-      ok: true,
-      pending: result.pending,
-      live: result.live,
-      becameLive: result.becameLive.map((s) => s.domain),
-      // Previously-live domains that failed repeated checks and were moved back
-      // to their subdomain. Should be rare; if it is not, look at the health
-      // thresholds in reissue/health.ts before assuming the domains are at fault.
-      reverted: result.reverted.map((s) => s.domain),
-      // Hosts whose certificate was reset to escape Google's retry backoff. If
-      // this is ever non-empty on consecutive runs for the same host, the
-      // cooldown in reissue.ts is not doing its job — look there first.
-      reissued: result.reissued,
-      waiting: result.failures,
-    });
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        pending: result.pending,
+        live: result.live,
+        becameLive: result.becameLive.map((s) => s.domain),
+        // Previously-live domains that failed repeated checks and were moved
+        // back to their subdomain. Should be rare; if it is not, look at the
+        // health thresholds in reissue/health.ts before assuming the domains
+        // are at fault.
+        reverted: result.reverted.map((s) => s.domain),
+        // Hosts whose certificate was reset to escape Google's retry backoff.
+        // If this is ever non-empty on consecutive runs for the same host, the
+        // cooldown in reissue.ts is not doing its job — look there first.
+        reissued: result.reissued,
+        waiting: result.failures,
+      },
+    };
   } catch (err) {
     logError("domain-reconcile cron failed", err);
-    return Response.json(
-      {
+    return {
+      status: 500,
+      body: {
         ok: false,
         error: err instanceof Error ? err.message : "domain reconcile failed",
       },
-      { status: 500 },
-    );
+    };
   }
 }
 

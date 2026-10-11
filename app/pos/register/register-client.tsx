@@ -17,6 +17,12 @@ import {
   establishSession,
   firebaseAuthErrorMessage,
 } from "@/lib/auth/firebase-client";
+import {
+  checkPhoneSend,
+  phoneSendErrorMessage,
+  recordPhoneSend,
+  recordPhoneSendFailure,
+} from "@/lib/auth/phone-send-guard";
 import { completeStaffRegistration } from "@/app/actions/pos-staff-actions";
 
 type Step = "password" | "phone" | "pin" | "done";
@@ -38,6 +44,13 @@ export function RegisterClient({
   const recaptchaRef = useRef<HTMLDivElement | null>(null);
   const verifierRef = useRef<RecaptchaVerifier | null>(null);
   const verificationIdRef = useRef<string | null>(null);
+  // The number the live verificationId was sent to. "Use a different number"
+  // keeps both, so returning to the same number inside the cooldown resumes
+  // the code step instead of texting a second code (lib/auth/phone-send-guard).
+  const verificationNumberRef = useRef<string | null>(null);
+  // ★ Synchronous re-entrancy guard: `busy` disables the button only after a
+  // re-render, so a double tap can start a second send before then.
+  const sendingRef = useRef(false);
 
   const getVerifier = useCallback((): RecaptchaVerifier => {
     if (!verifierRef.current) {
@@ -122,21 +135,44 @@ export function RegisterClient({
 
   // Step 2 — phone OTP → link to the account.
   async function handleSendOtp() {
-    if (!phone || !isValidPhoneNumber(phone))
-      return setError("Enter a valid phone number.");
-    setBusy(true);
-    setError("");
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     try {
-      const provider = new PhoneAuthProvider(getFirebaseAuth());
-      verificationIdRef.current = await provider.verifyPhoneNumber(
-        phone,
-        getVerifier(),
-      );
-      setPhoneSent(true);
-    } catch (err) {
-      setError(firebaseAuthErrorMessage(err));
+      if (!phone || !isValidPhoneNumber(phone))
+        return setError("Enter a valid phone number.");
+      const check = checkPhoneSend(phone);
+      if (!check.ok) {
+        // A code went to this number moments ago and is still usable.
+        if (
+          check.reason === "cooldown" &&
+          verificationIdRef.current &&
+          verificationNumberRef.current === phone
+        ) {
+          setError("");
+          setPhoneSent(true);
+          return;
+        }
+        return setError(check.message);
+      }
+      setBusy(true);
+      setError("");
+      try {
+        const provider = new PhoneAuthProvider(getFirebaseAuth());
+        verificationIdRef.current = await provider.verifyPhoneNumber(
+          phone,
+          getVerifier(),
+        );
+        recordPhoneSend(phone);
+        verificationNumberRef.current = phone;
+        setPhoneSent(true);
+      } catch (err) {
+        recordPhoneSendFailure(phone, err);
+        setError(phoneSendErrorMessage(phone, err));
+      }
+      setBusy(false);
+    } finally {
+      sendingRef.current = false;
     }
-    setBusy(false);
   }
 
   async function handleVerifyOtp() {

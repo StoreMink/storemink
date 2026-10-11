@@ -2,6 +2,7 @@ import {
   clampLimit,
   type FeaturedProductsConfig,
   type LatestBlogsConfig,
+  type ProductSpotlightConfig,
   type ShopByCategoryConfig,
 } from "@/lib/homepage/section-types";
 import type {
@@ -67,6 +68,18 @@ export function mapSectionData(
           .slice(0, clampLimit(c.limit));
       }
       productsBySection.set(s.id, rows);
+    } else if (s.type === "product_spotlight") {
+      // One product: the chosen id, or the first featured product, else the
+      // first product at all — so a theme can carry the section before any
+      // product has been marked featured. Absent → the section renders nothing.
+      const c = s.config as ProductSpotlightConfig;
+      const chosen =
+        c.source === "manual"
+          ? c.product_id
+            ? productById.get(c.product_id)
+            : undefined
+          : (allProducts.find((p) => p.featured) ?? allProducts[0]);
+      productsBySection.set(s.id, chosen ? [chosen] : []);
     } else if (s.type === "shop_by_category") {
       const c = s.config as ShopByCategoryConfig;
       const rows =

@@ -26,6 +26,17 @@ vi.mock("@/lib/auth/server-user", () => ({
   getServerUser: () => getServerUser(),
 }));
 
+// The account record behind the session. By default it agrees with the
+// session's own snapshot; a test overrides it to model a code that was
+// accepted in a tab that could not refresh its session afterwards.
+const emailVerifiedNow = vi.fn(
+  async (user: { emailConfirmed: boolean }) => user.emailConfirmed,
+);
+vi.mock("@/lib/auth/email-verified", () => ({
+  emailVerifiedNow: (user: { emailConfirmed: boolean }) =>
+    emailVerifiedNow(user),
+}));
+
 const updateAuthUser = vi.fn();
 vi.mock("@/lib/auth/firebase-users", () => ({
   authErrorCode: (error: unknown) =>
@@ -133,6 +144,20 @@ describe("requestSignupEmailOtp", () => {
     expect(sendSignupOtpEmail).not.toHaveBeenCalled();
   });
 
+  it("★ never sends a new code for an address the account already has verified", async () => {
+    // The session still carries its pre-verification snapshot; the account
+    // record was verified by a code accepted in a tab that then could not
+    // refresh its session. Sending another code here is the loop.
+    emailVerifiedNow.mockImplementation(async () => true);
+
+    expect(await requestSignupEmailOtp()).toEqual({
+      ok: true,
+      alreadyVerified: true,
+    });
+    expect(sendSignupOtpEmail).not.toHaveBeenCalled();
+    expect(emailVerifiedNow).toHaveBeenCalledWith(USER);
+  });
+
   it("rate limits code requests", async () => {
     rateLimit.mockResolvedValue({ allowed: false });
     const result = await requestSignupEmailOtp();
@@ -170,6 +195,13 @@ describe("verifySignupEmailOtp", () => {
 
     const result = await verifySignupEmailOtp(sentCode);
     expect(result.error).toMatch(/No active code/);
+    expect(updateAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("★ succeeds without a code once the account is verified, so a retry is not refused", async () => {
+    // The first, correct code consumed the cookie; the retry has none.
+    emailVerifiedNow.mockImplementation(async () => true);
+    expect(await verifySignupEmailOtp("123456")).toEqual({ ok: true });
     expect(updateAuthUser).not.toHaveBeenCalled();
   });
 

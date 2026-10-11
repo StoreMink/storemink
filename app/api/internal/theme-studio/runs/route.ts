@@ -5,6 +5,7 @@ import { runThemeStudioVisualQaWorker } from "@/lib/theme-studio/visual-qa";
 import { cronAuthorized } from "../captures/auth";
 import { drainWorkerLanes } from "@/lib/theme-studio/worker-lanes";
 import { configureWorkerImages } from "@/lib/theme-studio/worker-runtime";
+import { startCaptureJobIfWaiting } from "@/lib/theme-studio/capture-start";
 
 // The dedicated Theme Studio model worker.
 //
@@ -36,6 +37,9 @@ async function handle(request: Request) {
   if (isolated && process.env.THEME_STUDIO_WORKER_ROLE !== "generation")
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   configureWorkerImages();
+  // Start the capture job when a capture is waiting (lib/theme-studio/
+  // capture-start.ts); it never throws and is awaited before responding.
+  const captureJob = startCaptureJobIfWaiting();
   try {
     // Cloud Scheduler does not overlap executions of the same schedule. A
     // single long run used to leave the second theme queued behind it, and
@@ -84,9 +88,11 @@ async function handle(request: Request) {
       ...totals,
       runs,
       qa: lanes[1].status === "fulfilled" ? lanes[1].value : null,
+      captureJob: await captureJob,
     });
   } catch (error) {
     logError("theme studio worker route failed", error);
+    await captureJob;
     return NextResponse.json(
       { ok: false, error: "Theme Studio worker failed." },
       { status: 503 },

@@ -11,6 +11,7 @@ import { requireStorefrontStoreId } from "@/lib/store/resolve";
 import { getStoreBrand } from "@/lib/store/brand";
 import { getStoreUrl } from "@/lib/site";
 import { getStoreSetting } from "@/lib/settings/resolve";
+import { getStorefrontLayout } from "@/lib/store/storefront-layout";
 import { sanitizeBlogContent } from "@/lib/sanitize";
 import { getOgImageUrl } from "@/lib/og-image";
 import { articleSchema, breadcrumbSchema } from "@/lib/seo/schema";
@@ -288,6 +289,7 @@ export default async function BlogDetailPage({ params }: Props) {
     allowSubmissions,
     brand,
     siteUrl,
+    layout,
   ] = await Promise.all([
     getRelatedBlogs(blog, storeId),
     getBlogReactionCounts(blog.id),
@@ -295,7 +297,11 @@ export default async function BlogDetailPage({ params }: Props) {
     getStoreSetting("blogs.customerSubmissions"),
     getStoreBrand(),
     getStoreUrl(),
+    getStorefrontLayout(),
   ]);
+  // The blog template's article layout (plan Phase 2e): the reading column
+  // as it was, a wider one, or the column with an aside of related posts.
+  const article = layout.templates.blog.article;
   // Never trust stored HTML at the render boundary — sanitize even though the
   // write path also sanitizes (defense in depth).
   const sanitizedContent = sanitizeBlogContent(blog.content);
@@ -332,8 +338,20 @@ export default async function BlogDetailPage({ params }: Props) {
   return (
     <main>
       {articleLd && breadcrumbLd && <JsonLd data={[articleLd, breadcrumbLd]} />}
-      <section className="blog-detail-page-section">
+      <section className={`blog-detail-page-section article-${article}`}>
         <div className="blog-detail-content-container">
+          {article === "sidebar" && relatedBlogs.length > 0 && (
+            <aside className="blog-article-aside" aria-label="Keep reading">
+              <p className="blog-article-aside-kicker">Keep reading</p>
+              <ul className="blog-article-aside-list">
+                {relatedBlogs.map((related) => (
+                  <li key={related.id}>
+                    <Link href={`/blogs/${related.slug}`}>{related.title}</Link>
+                  </li>
+                ))}
+              </ul>
+            </aside>
+          )}
           {isPreview && (
             <div
               style={{
