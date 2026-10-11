@@ -112,7 +112,13 @@ const WHATSAPP_CHANNEL: ChannelDef = {
   category: "messaging",
   tagline: "Order updates, chat and ordering on your own number",
   accent: "#25D366",
+  // Fallback only — the glyph below wins whenever it loads.
   icon: MessageCircle,
+  // Meta's own inline logo (Digital_Inline_Green_RGB_2026.svg from the WhatsApp
+  // Brand Resource Center logo pack), byte for byte: Meta's guidelines forbid
+  // modifying it. The artwork fills its viewBox, so the aspect is the viewBox's.
+  logo: "/channels/whatsapp.svg",
+  logoAspect: 1487.13 / 346,
 };
 
 const CHANNELS: ChannelDef[] = [

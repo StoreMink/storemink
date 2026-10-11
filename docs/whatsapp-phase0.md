@@ -137,20 +137,31 @@ nothing failing anywhere, which is exactly what this looked like.
 
 ### 4.3 Embedded Signup configuration
 
-Where: app dashboard → **Facebook Login for Business → Configurations →
-Create configuration**.
+Where: app dashboard → **Use cases → Connect with customers through
+WhatsApp → Customize → Become a Partner → Embedded Signup Builder**.
 
-1. Login variation: **WhatsApp Embedded Signup**.
-2. Choose the Coexistence-capable flow (Meta labels it as onboarding a number
-   "already in use on the WhatsApp Business app"; the JS SDK call later passes
-   `featureType` for it). Enable the **phone-number-first** variant (Embedded
-   Signup v4) if the console offers it — it verifies the number earlier and
-   loses fewer merchants.
-3. Permissions/assets: `whatsapp_business_management`,
-   `whatsapp_business_messaging`, `business_management`, and the WABA +
-   phone-number assets.
+★ **Not** Facebook Login for Business → Configurations → Create
+configuration: on these use-case apps that wizard offers only the
+**General** login variation, which cannot ask for a WhatsApp account
+(found 2026-10-11). The builder's own **Create configuration** button
+creates the WhatsApp one.
+
+1. **App Setup → Manage Domains:** list every host that opens the popup and
+   enable Login with the JavaScript SDK (Facebook Login for Business →
+   Settings → Client OAuth settings). Meta returns the WABA and number only to
+   a listed domain, and every store's dashboard runs on its own subdomain, so
+   the dev app lists the test store's host (`https://echoss.dev.storemink.com/`).
+   Whether an unlisted store subdomain also works is not yet verified.
+2. **App Setup → Facebook Login for Business Configurations → Create
+   configuration:** system-user access token expiring **Never** (StoreMink
+   does not renew tokens), WhatsApp Cloud API, WhatsApp accounts,
+   `whatsapp_business_management`, `whatsapp_business_messaging`,
+   `business_management`. Coexistence needs no separate configuration: the
+   connect button passes `featureType` for it (not yet verified live).
+3. **App Setup → App Roles:** in Development mode only app admins, developers
+   and testers can complete the flow.
 4. Record the **Configuration ID** (§8). Phase 1's connect button passes it
-   to `FB.login`.
+   to `FB.login`; the deploy reads it from `_WHATSAPP_CONFIG_ID`.
 
 ---
 
@@ -293,20 +304,20 @@ on the production app (§6).
 
 ## 8. Record of ids (fill in)
 
-| Item                                    | Dev                                                       | Prod                              |
-| --------------------------------------- | --------------------------------------------------------- | --------------------------------- |
-| Business portfolio id                   | `790150064187400` (StoreMink)                             | same                              |
-| Business Verification status + date     | Approved (found already verified, 2026-10-08)             | same portfolio                    |
-| App ID                                  | `1045672501851798` (StoreMink Dev)                        | `2663634187475548` (StoreMink)    |
-| App Secret → Secret Manager name        | `WHATSAPP_APP_SECRET_STAGING`                             | `WHATSAPP_APP_SECRET_PROD`        |
-| Verify token → Secret Manager name      | `WHATSAPP_VERIFY_TOKEN_STAGING`                           | `WHATSAPP_VERIFY_TOKEN_PROD`      |
-| Embedded Signup Configuration ID        |                                                           |                                   |
-| Test number: phone number id / WABA id  | `1280649011808874` / `2323545385144849` (+1 555 652-2797) |                                   |
-| System user token → Secret Manager      | `WHATSAPP_SYSTEM_USER_TOKEN_STAGING`                      | `WHATSAPP_SYSTEM_USER_TOKEN_PROD` |
-| Webhook verified (date)                 | 2026-10-08 13:06 UTC                                      |                                   |
-| App Review: submitted / granted (dates) | —                                                         |                                   |
-| Access Verification granted (date)      | —                                                         |                                   |
-| Smoke test passed (date, message id)    | 2026-10-08 (send 19:20 IST, inbound logged 14:10:26 UTC)  | —                                 |
+| Item                                    | Dev                                                         | Prod                              |
+| --------------------------------------- | ----------------------------------------------------------- | --------------------------------- |
+| Business portfolio id                   | `790150064187400` (StoreMink)                               | same                              |
+| Business Verification status + date     | Approved (found already verified, 2026-10-08)               | same portfolio                    |
+| App ID                                  | `1045672501851798` (StoreMink Dev)                          | `2663634187475548` (StoreMink)    |
+| App Secret → Secret Manager name        | `WHATSAPP_APP_SECRET_STAGING`                               | `WHATSAPP_APP_SECRET_PROD`        |
+| Verify token → Secret Manager name      | `WHATSAPP_VERIFY_TOKEN_STAGING`                             | `WHATSAPP_VERIFY_TOKEN_PROD`      |
+| Embedded Signup Configuration ID        | `1080489094597122` ("ES Config", never expires, 2026-10-11) |                                   |
+| Test number: phone number id / WABA id  | `1280649011808874` / `2323545385144849` (+1 555 652-2797)   |                                   |
+| System user token → Secret Manager      | `WHATSAPP_SYSTEM_USER_TOKEN_STAGING`                        | `WHATSAPP_SYSTEM_USER_TOKEN_PROD` |
+| Webhook verified (date)                 | 2026-10-08 13:06 UTC                                        |                                   |
+| App Review: submitted / granted (dates) | —                                                           |                                   |
+| Access Verification granted (date)      | —                                                           |                                   |
+| Smoke test passed (date, message id)    | 2026-10-08 (send 19:20 IST, inbound logged 14:10:26 UTC)    | —                                 |
 
 ---
 

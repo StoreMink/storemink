@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -183,8 +184,17 @@ export function WhatsAppModal({
       >
         <div className="flex items-center justify-between border-b border-[rgba(17,24,39,0.08)] p-5">
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#25D366] text-white">
-              <MessageCircle className="h-5 w-5" />
+            <span className="flex h-10 w-[7.5rem] items-center justify-center">
+              {/* The logo the card shows, sized like the Shiprocket and Twilio
+                  dialogs' (24px tall). An SVG must skip the optimizer
+                  (ChannelLogo explains why). */}
+              <Image
+                src="/channels/whatsapp.svg"
+                alt=""
+                width={103}
+                height={24}
+                unoptimized
+              />
             </span>
             <div>
               <h2 className="text-base font-semibold text-[#111827]">
