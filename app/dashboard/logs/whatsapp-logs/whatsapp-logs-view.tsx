@@ -199,9 +199,9 @@ export function WhatsAppLogsView({
                     className="cursor-pointer"
                   >
                     <td className="font-mono text-[12px]">{row.to_phone}</td>
-                    <td>{row.event_key ?? "—"}</td>
+                    <td>{row.event_key ?? "-"}</td>
                     <td className="font-mono text-[12px]">
-                      {row.template_name ?? "—"}
+                      {row.template_name ?? "-"}
                     </td>
                     <td>
                       <span

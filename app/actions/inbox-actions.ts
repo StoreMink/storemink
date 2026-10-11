@@ -227,7 +227,7 @@ async function sendGate(conversationId: string): Promise<
   if (!allowed.allowed) {
     return {
       ok: false,
-      result: { ok: false, error: "Slow down — too many messages at once." },
+      result: { ok: false, error: "Slow down - too many messages at once." },
     };
   }
   const core = await loadConversation(g.storeId, conversationId);

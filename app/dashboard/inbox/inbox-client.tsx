@@ -395,7 +395,7 @@ function ConversationRow({
           </span>
         </span>
         <span className="inbox-row-bottom">
-          <span className="inbox-row-preview">{row.lastPreview ?? "—"}</span>
+          <span className="inbox-row-preview">{row.lastPreview ?? "-"}</span>
           {row.unreadCount > 0 ? (
             <span className="inbox-row-unread">{row.unreadCount}</span>
           ) : row.status === "closed" ? (

@@ -328,7 +328,7 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
     table: "whatsapp_logs",
     days: 90,
     reason:
-      "Holds rendered message bodies, like email_logs, and gets the same 90 days — " +
+      "Holds rendered message bodies, like email_logs, and gets the same 90 days - " +
       "long enough to answer 'did last quarter's order update reach them?'.",
     deleteBatch: batchDeleter(
       whatsappLogs,

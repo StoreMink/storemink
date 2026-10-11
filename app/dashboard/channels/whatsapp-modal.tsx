@@ -147,7 +147,7 @@ export function WhatsAppModal({
   async function handleDisconnect() {
     if (
       !window.confirm(
-        "Disconnect WhatsApp? Order updates and the inbox stop for this number. Your Meta account and number are untouched — you can reconnect any time.",
+        "Disconnect WhatsApp? Order updates and the inbox stop for this number. Your Meta account and number are untouched - you can reconnect any time.",
       )
     )
       return;
@@ -492,7 +492,7 @@ function ConnectView({
           />
           <span className="text-sm">
             <span className="font-medium text-[#111827]">
-              Yes — I use the app on my phone
+              Yes - I use the app on my phone
             </span>
             <span className="mt-0.5 block text-xs text-[#5b6472]">
               Keep replying from your phone; StoreMink sends updates and shows
@@ -510,7 +510,7 @@ function ConnectView({
           />
           <span className="text-sm">
             <span className="font-medium text-[#111827]">
-              No — it&apos;s a new number, or not on WhatsApp
+              No - it&apos;s a new number, or not on WhatsApp
             </span>
             <span className="mt-0.5 block text-xs text-[#5b6472]">
               The number is used through StoreMink only. A number already on the

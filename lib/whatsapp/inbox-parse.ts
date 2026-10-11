@@ -272,7 +272,7 @@ export function parseInboundMessage(
         ...base,
         kind: "order",
         body: clip(
-          `🛒 Sent a cart with ${count} item${count === 1 ? "" : "s"}${str(o.text) ? ` — ${str(o.text)}` : ""}`,
+          `🛒 Sent a cart with ${count} item${count === 1 ? "" : "s"}${str(o.text) ? ` - ${str(o.text)}` : ""}`,
           MAX_BODY_CHARS,
         ),
         payload: {

@@ -31,7 +31,7 @@ const STATUS_COPY: Record<
   PENDING: {
     label: "In review",
     tone: "text-amber-700 bg-amber-50 dark:bg-amber-950/30",
-    note: "Meta is reviewing the wording — usually within a day. Nothing sends until it is approved.",
+    note: "Meta is reviewing the wording - usually within a day. Nothing sends until it is approved.",
   },
   IN_APPEAL: {
     label: "In appeal",

@@ -54,7 +54,7 @@ export type ConnectResult =
 function friendly<T>(step: string, r: GraphResult<T>): string {
   if (r.ok) return "";
   return r.outcome === "unknown"
-    ? `Meta didn't answer while ${step}. Nothing was saved — try again in a minute.`
+    ? `Meta didn't answer while ${step}. Nothing was saved - try again in a minute.`
     : `Meta refused while ${step}: ${r.error}`;
 }
 
