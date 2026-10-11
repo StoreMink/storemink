@@ -205,9 +205,7 @@ export interface InboxSendResult {
   error?: string;
 }
 
-async function sendGate(
-  conversationId: string,
-): Promise<
+async function sendGate(conversationId: string): Promise<
   | {
       ok: true;
       storeId: string;
