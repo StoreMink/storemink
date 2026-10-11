@@ -20,8 +20,8 @@ export const metadata: Metadata = {
   },
 };
 
-// Signup no longer offers themes (every store starts on the default and its
-// owner chooses another from the dashboard's Themes page), so this layout has
+// Signup no longer offers themes (a store starts with none, and its owner
+// chooses one from the dashboard's Storefront page), so this layout has
 // nothing to load: the wizard's only server state, the live plan prices, is
 // read by the Plan step itself from /api/plans/pricing.
 export default function SignupLayout({

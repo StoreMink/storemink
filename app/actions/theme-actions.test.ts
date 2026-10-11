@@ -1,7 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+  updateTag: vi.fn(),
+}));
+vi.mock("@/lib/store/resolve", () => ({ STORE_TAG: "stores" }));
 vi.mock("@/app/dashboard/lib/access", () => ({
   getManagerIdentity: vi.fn(async () => ({
     uid: "owner-1",
@@ -48,6 +52,7 @@ vi.mock("@/lib/themes/switch", () => ({
   switchStoreThemeTo: vi.fn(async () => ({
     ok: true,
     plan: {
+      firstTheme: false,
       homepage: "replace",
       addMissingPages: true,
       catalogue: "swap-samples",
@@ -58,7 +63,7 @@ vi.mock("@/lib/themes/switch", () => ({
   })),
 }));
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { getManagerIdentity } from "@/app/dashboard/lib/access";
 import { emitEvent } from "@/lib/notifications/record";
 import { resolveThemeDefinition } from "@/lib/themes/runtime-registry";
@@ -116,6 +121,17 @@ describe("switchStoreTheme", () => {
     expect(switchStoreThemeTo).not.toHaveBeenCalled();
   });
 
+  it("passes what the dialog described only when it is a real boolean", async () => {
+    await switchStoreTheme("luxe", { expectFirstTheme: true });
+    expect(switchStoreThemeTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ expectFirstTheme: true }),
+    );
+    await switchStoreTheme("luxe", { expectFirstTheme: "yes" });
+    expect(
+      vi.mocked(switchStoreThemeTo).mock.calls.at(-1)?.[0].expectFirstTheme,
+    ).toBeUndefined();
+  });
+
   it("switches the acting store, passing the theme's plan gate and the actor", async () => {
     const result = await switchStoreTheme("luxe");
     expect(switchStoreThemeTo).toHaveBeenCalledWith({
@@ -126,13 +142,39 @@ describe("switchStoreTheme", () => {
       actorUserId: "owner-1",
     });
     expect(result).toMatchObject({ ok: true, themeName: "Luxe", warnings: [] });
-    expect(revalidatePath).toHaveBeenCalledWith("/dashboard/themes");
+    expect(revalidatePath).toHaveBeenCalledWith("/dashboard/storefront");
+    expect(revalidatePath).toHaveBeenCalledWith("/dashboard/builder");
+    // A switch on a store that already has a theme keeps the existing
+    // stale-while-revalidate refresh (revalidateThemeSeed).
+    expect(updateTag).not.toHaveBeenCalled();
     expect(emitEvent).toHaveBeenCalledWith({
       type: "settings.changed",
       storeId: "store-1",
       actor: { type: "admin", id: "owner-1" },
       payload: { settings: "Theme (Luxe)", count: 1 },
     });
+  });
+
+  it("★ a first install expires the store cache at once, so the storefront stops showing the in-progress page", async () => {
+    vi.mocked(switchStoreThemeTo).mockImplementation(async () => ({
+      ok: true,
+      plan: {
+        firstTheme: true,
+        homepage: "replace",
+        addMissingPages: true,
+        catalogue: "seed-samples",
+        menus: "replace",
+        brandColor: "theme",
+      },
+      warnings: [],
+    }));
+    const result = await switchStoreTheme("vitrine");
+    expect(result).toMatchObject({
+      ok: true,
+      themeName: "Vitrine",
+      plan: { firstTheme: true },
+    });
+    expect(updateTag).toHaveBeenCalledWith("stores");
   });
 
   it("replaces an edited homepage only when asked with exactly true", async () => {
@@ -156,6 +198,7 @@ describe("switchStoreTheme", () => {
       error: "Vitrine is already your theme.",
     });
     expect(revalidatePath).not.toHaveBeenCalled();
+    expect(updateTag).not.toHaveBeenCalled();
     expect(emitEvent).not.toHaveBeenCalled();
   });
 });

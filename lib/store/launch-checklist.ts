@@ -12,6 +12,7 @@ import {
 import { withService } from "@/lib/db/client";
 import { effectivePlan } from "@/lib/plans";
 import type { Store } from "@/lib/store/resolve";
+import { isThemePending } from "@/lib/store/launch-state";
 import { policyBodyHtml } from "@/lib/legal/policy-text";
 import { homepageEditedSinceSeed } from "@/lib/themes/switch-rules";
 import {
@@ -136,7 +137,7 @@ export async function buildLaunchChecklist(
   }
 
   // ★ Measured from when the THEME last wrote the homepage, not from when
-  // the row was created: a theme switch from the Themes page rewrites the
+  // the row was created: a theme switch from the Storefront page rewrites the
   // seed, and counting that as the merchant's edit would tick this task for
   // them (lib/themes/switch-rules.ts).
   const home = pages.find((p) => p.slug === "");
@@ -147,6 +148,10 @@ export async function buildLaunchChecklist(
   const facts: LaunchFacts = {
     plan: effectivePlan(store),
     ownerPhoneVerified: verifiedOwners.length > 0,
+    // Read from the store row already in hand, so the theme task costs no
+    // query; switchStoreTheme refreshes STORE_TAG on a first install, so a
+    // freshly chosen theme is seen on the next read (launchStore included).
+    themeChosen: !isThemePending(store),
     publishedProducts: Number(counts.published) || 0,
     sampleProducts: Number(counts.samples) || 0,
     business: {

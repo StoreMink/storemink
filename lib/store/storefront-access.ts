@@ -7,7 +7,7 @@ import { admins, platformAdmins, storeAccess } from "@/drizzle/schema";
 import { withService } from "@/lib/db/client";
 import { getServerUser } from "@/lib/auth/server-user";
 import { getCurrentStoreOrNull, type Store } from "@/lib/store/resolve";
-import { isStorefrontGated } from "@/lib/store/launch-state";
+import { isStorefrontGated, isThemePending } from "@/lib/store/launch-state";
 import { STORE_CLOSED_MESSAGE } from "@/lib/store/launch-copy";
 import { logError } from "@/lib/observability/logger";
 import {
@@ -163,8 +163,9 @@ const viewerIsStoreStaff = cache(async (storeId: string): Promise<boolean> => {
 /**
  * Request-memoized: the resolver runs several times per render (layout,
  * metadata, the page itself), and each would otherwise re-read the cookie and
- * the password row. Only ever called for a GATED store — a launched store
- * never pays for any of this.
+ * the password row. The layout asks it for every store, but an ungated
+ * (launched or demo) store gets "open" before any cookie or database read, so
+ * a launched store never pays for any of this.
  */
 export const storefrontAccess = cache(
   async (store: Pick<Store, "id" | "settings">): Promise<StorefrontAccess> => {
@@ -203,6 +204,32 @@ export const storefrontAccess = cache(
     }
   },
 );
+
+export type StorefrontShell = "bare" | "full";
+
+/**
+ * Which shell the storefront layout wraps the page in.
+ *
+ * "bare" is the brand and theme colours around the page and nothing else: no
+ * header, footer, cart or sign-in. It is for the two cases where the only page
+ * a visitor can reach is a gate's own page, so the shop's menus, cart and
+ * sign-in would all lead straight back to it:
+ *
+ *   - a LOCKED visitor, who only ever sees /password;
+ *   - a store whose owner has not chosen a theme (isThemePending), where
+ *     everyone past the password only ever sees /in-progress — whatever
+ *     `access` is, the owner included.
+ *
+ * Everything else, including legacy and fallback stores with no
+ * `themePending` key, gets the full shop. Pure, so the layout's choice is
+ * tested here rather than by reading the layout's source.
+ */
+export function storefrontShell(
+  store: { settings?: Record<string, unknown> | null },
+  access: StorefrontAccess,
+): StorefrontShell {
+  return access === "locked" || isThemePending(store) ? "bare" : "full";
+}
 
 /**
  * The refusal for a public storefront WRITE on a store that has not opened,

@@ -20,12 +20,20 @@ vi.mock("@/lib/observability/logger", () => ({
 }));
 vi.mock("@/lib/seo/store-indexing", () => ({ ensureGoogleCoverageForStore }));
 vi.mock("@/lib/seo/search-metrics", () => ({ reconcileStoreSearchSource }));
+vi.mock("@/lib/auth/store-auth-hosts-sync", () => ({
+  syncStoreAuthHosts: vi.fn(async () => ({
+    stores: 0,
+    expected: 0,
+    added: [],
+  })),
+}));
 
 import { GET, POST } from "./route";
 import { sweepPendingDomains } from "@/lib/domains/reconcile";
 import { recordEvent } from "@/lib/notifications/record";
 import { getStoreOriginById } from "@/lib/site";
 import { logError } from "@/lib/observability/logger";
+import { syncStoreAuthHosts } from "@/lib/auth/store-auth-hosts-sync";
 
 function req(auth?: string): Request {
   return new Request("https://storemink.com/api/cron/domain-reconcile", {
@@ -42,6 +50,12 @@ const EMPTY = {
   failures: [] as any[],
 };
 
+const SYNCED = {
+  stores: 3,
+  expected: 4,
+  added: ["echoss.storemink.com", "www.wholesip.com"],
+};
+
 // The custom-domain backstop (§30). Connecting a domain cannot complete in one
 // sitting, so without this the certificate reaches ACTIVE at Google and nothing
 // ever attaches it — the domain never serves and the dashboard still says
@@ -53,6 +67,7 @@ describe("/api/cron/domain-reconcile", () => {
     vi.clearAllMocks();
     process.env.CRON_SECRET = "s3cret";
     vi.mocked(sweepPendingDomains).mockResolvedValue({ ...EMPTY } as any);
+    vi.mocked(syncStoreAuthHosts).mockResolvedValue({ ...SYNCED });
   });
 
   afterEach(() => {
@@ -65,11 +80,13 @@ describe("/api/cron/domain-reconcile", () => {
 
     expect(res.status).toBe(401);
     expect(sweepPendingDomains).not.toHaveBeenCalled();
+    expect(syncStoreAuthHosts).not.toHaveBeenCalled();
   });
 
   it("refuses a wrong secret", async () => {
     expect((await GET(req("Bearer nope"))).status).toBe(401);
     expect(sweepPendingDomains).not.toHaveBeenCalled();
+    expect(syncStoreAuthHosts).not.toHaveBeenCalled();
   });
 
   it("refuses everything when CRON_SECRET is unset", async () => {
@@ -287,7 +304,11 @@ describe("/api/cron/domain-reconcile", () => {
     const res = await GET(req("Bearer s3cret"));
 
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ ok: false, error: "GCP 503" });
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "GCP 503",
+      authHosts: SYNCED,
+    });
     expect(logError).toHaveBeenCalledWith(
       "domain-reconcile cron failed",
       expect.anything(),
@@ -303,6 +324,7 @@ describe("/api/cron/domain-reconcile", () => {
     expect(await res.json()).toEqual({
       ok: false,
       error: "domain reconcile failed",
+      authHosts: SYNCED,
     });
   });
 
@@ -315,5 +337,170 @@ describe("/api/cron/domain-reconcile", () => {
 
   it("refuses an unauthorized POST too", async () => {
     expect((await POST(req())).status).toBe(401);
+  });
+});
+
+// Phone sign-in needs every store's EXACT host in Identity Platform's
+// authorizedDomains, so the hourly sweep also repairs (and on its first run
+// after deploy, backfills) that list. It must never cost the domain work.
+describe("/api/cron/domain-reconcile auth-host pass", () => {
+  const OLD = process.env.CRON_SECRET;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CRON_SECRET = "s3cret";
+    vi.mocked(sweepPendingDomains).mockResolvedValue({ ...EMPTY } as any);
+    vi.mocked(syncStoreAuthHosts).mockResolvedValue({ ...SYNCED });
+  });
+
+  afterEach(() => {
+    if (OLD === undefined) delete process.env.CRON_SECRET;
+    else process.env.CRON_SECRET = OLD;
+  });
+
+  it("syncs once and reports the tally beside the domain tallies", async () => {
+    vi.mocked(sweepPendingDomains).mockResolvedValue({
+      ...EMPTY,
+      pending: 2,
+      live: 7,
+    } as any);
+
+    const res = await GET(req("Bearer s3cret"));
+
+    expect(res.status).toBe(200);
+    expect(syncStoreAuthHosts).toHaveBeenCalledOnce();
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      pending: 2,
+      live: 7,
+      authHosts: SYNCED,
+    });
+  });
+
+  it("★ runs only after the domain work, events included, has finished", async () => {
+    // Concurrently, the sweep's own authorized-domain write for a domain that
+    // just went live and this pass's write could overwrite one another.
+    let sweepSettled = false;
+    vi.mocked(sweepPendingDomains).mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      sweepSettled = true;
+      return {
+        ...EMPTY,
+        becameLive: [{ storeId: "store-1", domain: "acme.com" }],
+      } as any;
+    });
+    let sweptBeforeSync = false;
+    vi.mocked(syncStoreAuthHosts).mockImplementation(async () => {
+      sweptBeforeSync = sweepSettled;
+      return { ...SYNCED };
+    });
+
+    await GET(req("Bearer s3cret"));
+
+    expect(sweptBeforeSync).toBe(true);
+    const syncOrder = vi.mocked(syncStoreAuthHosts).mock.invocationCallOrder[0];
+    const eventOrders = vi.mocked(recordEvent).mock.invocationCallOrder;
+    expect(eventOrders).toHaveLength(2);
+    expect(Math.max(...eventOrders)).toBeLessThan(syncOrder);
+  });
+
+  it("★ a failed sync is named in the body but keeps the response 200", async () => {
+    // The status drives Scheduler's retries of the DOMAIN sweep; an IAM error
+    // on the authorized-domain list is not something a retry fixes.
+    vi.mocked(syncStoreAuthHosts).mockResolvedValue({
+      stores: 3,
+      expected: 4,
+      added: [],
+      error: "PERMISSION_DENIED",
+    });
+
+    const res = await GET(req("Bearer s3cret"));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      authHosts: {
+        stores: 3,
+        expected: 4,
+        added: [],
+        error: "PERMISSION_DENIED",
+      },
+    });
+    // syncStoreAuthHosts logs a returned error itself; a second entry here
+    // would split one failure across two Error Reporting groups.
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("★ a sync that throws is caught, logged and reported; still 200", async () => {
+    vi.mocked(sweepPendingDomains).mockResolvedValue({
+      ...EMPTY,
+      live: 4,
+    } as any);
+    vi.mocked(syncStoreAuthHosts).mockRejectedValue(new Error("pool gone"));
+
+    const res = await GET(req("Bearer s3cret"));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      live: 4,
+      authHosts: { stores: 0, expected: 0, added: [], error: "pool gone" },
+    });
+    expect(logError).toHaveBeenCalledWith(
+      "domain-reconcile auth-host sync failed",
+      expect.any(Error),
+    );
+  });
+
+  it("reports a non-Error throw from the sync with a usable message", async () => {
+    vi.mocked(syncStoreAuthHosts).mockRejectedValue("boom");
+
+    const res = await GET(req("Bearer s3cret"));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).authHosts).toEqual({
+      stores: 0,
+      expected: 0,
+      added: [],
+      error: "auth host sync failed",
+    });
+  });
+
+  it("★ still syncs when the domain sweep throws, and keeps its 500", async () => {
+    // Its input is the stores table, not the sweep: a Certificate Manager
+    // outage must not also stop phone sign-in repairs.
+    vi.mocked(sweepPendingDomains).mockRejectedValue(new Error("GCP 503"));
+
+    const res = await GET(req("Bearer s3cret"));
+
+    expect(res.status).toBe(500);
+    expect(syncStoreAuthHosts).toHaveBeenCalledOnce();
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      error: "GCP 503",
+      authHosts: SYNCED,
+    });
+  });
+
+  it("a failing sync never turns a failed sweep into a success", async () => {
+    vi.mocked(sweepPendingDomains).mockRejectedValue(new Error("GCP 503"));
+    vi.mocked(syncStoreAuthHosts).mockRejectedValue(new Error("pool gone"));
+
+    const res = await GET(req("Bearer s3cret"));
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      error: "GCP 503",
+      authHosts: { error: "pool gone" },
+    });
+  });
+
+  it("serves the pass on POST as well", async () => {
+    const res = await POST(req("Bearer s3cret"));
+
+    expect(res.status).toBe(200);
+    expect(syncStoreAuthHosts).toHaveBeenCalledOnce();
+    expect((await res.json()).authHosts).toEqual(SYNCED);
   });
 });

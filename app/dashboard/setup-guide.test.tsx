@@ -1,8 +1,21 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { toast } from "sonner";
+import { launchStore } from "@/app/actions/launch-actions";
 import { SetupGuide } from "./setup-guide";
-import type { LaunchChecklistItem } from "@/lib/store/launch-checklist-rules";
+import {
+  evaluateLaunchChecklist,
+  type LaunchChecklistItem,
+  type LaunchChecklistStep,
+  type LaunchFacts,
+} from "@/lib/store/launch-checklist-rules";
 
 const refresh = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
@@ -42,6 +55,30 @@ const item = (
   action: `Go ${key}`,
   required,
   done,
+});
+
+const step = (
+  key: string,
+  done: boolean,
+  href = `/dashboard/${key}`,
+): LaunchChecklistStep => ({
+  key,
+  title: `Step ${key}`,
+  done,
+  href,
+  action: `Do step ${key}`,
+});
+
+const grouped = (
+  key: string,
+  steps: LaunchChecklistStep[],
+): LaunchChecklistItem => ({
+  ...item(
+    key,
+    true,
+    steps.every((s) => s.done),
+  ),
+  steps,
 });
 
 function renderGuide(items: LaunchChecklistItem[], overrides = {}) {
@@ -145,5 +182,137 @@ describe("SetupGuide", () => {
     fireEvent.click(screen.getByRole("button", { name: /Task phone/ }));
     expect(screen.getByRole("link", { name: "Review" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Stub verify" })).toBeNull();
+  });
+
+  it("★ a grouped task shows n of m, a mark per step and ONE shared button", () => {
+    renderGuide([
+      grouped("policies", [
+        step("terms", true, "/dashboard/settings/policies"),
+        step("refund", false, "/dashboard/settings/policies"),
+        step("shipping", true, "/dashboard/settings/policies"),
+        step("privacy", false, "/dashboard/settings/policies"),
+      ]),
+    ]);
+    const row = screen.getByRole("button", { name: /Task policies/ });
+    expect(row.textContent).toContain("2 of 4");
+    const steps = within(screen.getByRole("list", { name: /steps/ }));
+    expect(steps.getAllByRole("listitem")).toHaveLength(4);
+    // Each step says whether it is done, not just how it looks.
+    expect(steps.getByText("Step terms").parentElement?.textContent).toBe(
+      "Done: Step terms",
+    );
+    expect(steps.getByText("Step refund").parentElement?.textContent).toBe(
+      "To do: Step refund",
+    );
+    // One page, one button: the task's own action, not four step buttons.
+    expect(steps.queryAllByRole("link")).toHaveLength(0);
+    const link = screen.getByRole("link", { name: "Go policies" });
+    expect(link.getAttribute("href")).toBe("/dashboard/policies");
+  });
+
+  it("steps on different pages each get their own button, Review once done", () => {
+    renderGuide([
+      grouped("business", [
+        step("details", true, "/dashboard/billing"),
+        step("delivery", false, "/dashboard/settings/shipping"),
+      ]),
+    ]);
+    const steps = within(screen.getByRole("list", { name: /steps/ }));
+    expect(
+      steps.getByRole("link", { name: "Review Step details" }).textContent,
+    ).toBe("Review");
+    expect(
+      steps
+        .getByRole("link", { name: "Do step delivery" })
+        .getAttribute("href"),
+    ).toBe("/dashboard/settings/shipping");
+    // No extra task-level button when the steps carry their own.
+    expect(screen.queryByRole("link", { name: "Go business" })).toBeNull();
+  });
+
+  it("a finished grouped task drops its count and still lists its steps", () => {
+    renderGuide([
+      grouped("policies", [step("terms", true), step("refund", true)]),
+      item("b", true, false),
+    ]);
+    const row = screen.getByRole("button", { name: /Task policies/ });
+    expect(row.textContent).not.toMatch(/of 2/);
+    fireEvent.click(row);
+    expect(screen.getByText("Step refund")).toBeTruthy();
+  });
+
+  it("★ the first unfinished task opens even when it is a grouped one", () => {
+    renderGuide([
+      item("phone", true, true),
+      grouped("business", [step("details", false), step("delivery", false)]),
+      item("c", true, false),
+    ]);
+    expect(screen.getByText("Do business")).toBeTruthy();
+    expect(screen.queryByText("Do c")).toBeNull();
+  });
+
+  // The guide renders what the rules produce, so wire the two together once:
+  // five rows, "x of 5 done", and the theme task linking to Storefront.
+  it("★ with the real rules: five rows, x of 5 done, theme task first open after the mobile", () => {
+    const facts: LaunchFacts = {
+      plan: "free",
+      ownerPhoneVerified: true,
+      themeChosen: false,
+      publishedProducts: 2,
+      sampleProducts: 0,
+      business: { name: true, address: true, email: true, phone: true },
+      policies: { terms: true },
+      shippingSaved: false,
+      homepageEdited: false,
+      logo: false,
+      paymentsConnected: false,
+      gstin: false,
+      customDomainLive: false,
+    };
+    const c = evaluateLaunchChecklist(facts);
+    render(
+      <SetupGuide
+        items={c.items}
+        requiredDone={c.requiredDone}
+        requiredTotal={c.requiredTotal}
+        ready={c.ready}
+        missing={c.missing}
+        canLaunch
+        password="bsjchm49"
+        previewUrl="https://acme.storemink.com/password"
+      />,
+    );
+    expect(screen.getByText("2 of 5 done")).toBeTruthy();
+    expect(
+      screen.getAllByRole("button", { expanded: false }).length +
+        screen.getAllByRole("button", { expanded: true }).length,
+    ).toBe(5);
+    expect(
+      screen.getByRole("link", { name: "Choose a theme" }).getAttribute("href"),
+    ).toBe("/dashboard/storefront");
+    expect(
+      screen.getByRole("button", { name: /Publish your store policies/ })
+        .textContent,
+    ).toContain("1 of 4");
+    expect(
+      screen.getByRole("button", { name: /Go live/ }).getAttribute("title"),
+    ).toContain("Publish your store policies (Refund & Cancellation");
+  });
+
+  it("★ a server refusal names the outstanding steps in the toast", async () => {
+    vi.mocked(launchStore).mockResolvedValueOnce({
+      error: "Finish the required steps before going live.",
+      missing: [
+        "Choose your storefront theme",
+        "Publish your store policies (Refund & Cancellation, Privacy)",
+      ],
+    });
+    renderGuide([item("a", true, true)]);
+    fireEvent.click(screen.getByRole("button", { name: /Go live/ }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toBe(
+      "Finish the required steps before going live. Still to do: Choose your storefront theme, Publish your store policies (Refund & Cancellation, Privacy).",
+    );
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

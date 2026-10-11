@@ -10,9 +10,9 @@ import {
 } from "@/lib/themes/meta";
 import { getThemeCatalog } from "@/lib/themes/runtime-registry";
 import { loadThemeSwitchContext } from "@/lib/themes/switch";
-import { ThemesClient, type ThemeCard } from "./themes-client";
+import { StorefrontClient, type ThemeCard } from "./storefront-client";
 
-export const metadata = { title: "Themes" };
+export const metadata = { title: "Storefront" };
 
 function toCard(theme: ThemeMeta, plan: Plan): ThemeCard {
   const minPlan = theme.catalog.minPlan;
@@ -31,12 +31,14 @@ function toCard(theme: ThemeMeta, plan: Plan): ThemeCard {
   };
 }
 
-// Online Store → Themes, StoreMink's version. Every store starts on the
-// platform default (signup no longer asks); this is where its owner picks the
-// theme that fits, previews it on its demo store, and switches. What a switch
-// may change is decided in lib/themes/switch-rules.ts, and the confirm dialog
-// shows those exact rules before anything happens.
-export default async function ThemesPage() {
+// Dashboard → Storefront (was "Themes" at /dashboard/themes, which now
+// redirects here; the permission key is still `themes`). A new store starts
+// with NO theme (settings.themePending) and its storefront shows a "store in
+// progress" page until its owner picks one here; older stores switch from the
+// theme they have. What an install or switch may change is decided in
+// lib/themes/switch-rules.ts, and the confirm dialog shows those exact rules
+// before anything happens.
+export default async function StorefrontPage() {
   const access = await requireSectionAccess("themes", "view");
   const canManage = access.can("themes", "manage");
   const storeId = await getActingStoreId();
@@ -49,7 +51,13 @@ export default async function ThemesPage() {
     }),
   ]);
   const plan: Plan = context?.plan ?? "free";
-  const currentId = context ? readThemeSelection(context.settings)?.id : null;
+  // ★ A pending store has no current theme, whatever `settings.theme` says: a
+  // stray key must not render an "In use" card or hide that theme from the
+  // library the owner is about to choose from.
+  const currentId =
+    context && !context.facts.firstTheme
+      ? (readThemeSelection(context.settings)?.id ?? null)
+      : null;
   const currentMeta = currentId
     ? (catalog.find((theme) => theme.id === currentId) ?? null)
     : null;
@@ -64,9 +72,9 @@ export default async function ThemesPage() {
   );
 
   return (
-    <ThemesClient
+    <StorefrontClient
       current={currentMeta ? toCard(currentMeta, plan) : null}
-      currentId={currentId ?? null}
+      currentId={currentId}
       library={library.map((theme) => toCard(theme, plan))}
       categories={themeCategoriesFor(library)}
       facts={context?.facts ?? null}

@@ -15,6 +15,8 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { deleteAuthUser } from "@/lib/auth/firebase-users";
 import { isFirebaseAdminConfigured } from "@/lib/auth/firebase-admin";
 import { authIdsInUse } from "@/lib/auth/identity-usage";
+import { removeAuthorizedHosts } from "@/lib/auth/authorized-domains";
+import { storeAuthHosts } from "@/lib/auth/store-auth-hosts";
 import { logError } from "@/lib/observability/logger";
 import { getServerUser } from "@/lib/auth/server-user";
 import { withService } from "@/lib/db/client";
@@ -77,6 +79,7 @@ import { deleteStorageUrls } from "@/lib/storage/cleanup";
 import { gcsDeletePrefix } from "@/lib/storage/gcs";
 import { storeStoragePrefix } from "@/lib/storage/paths";
 import { cleanupDetachedDomain } from "@/lib/domains/cleanup";
+import { ROOT_DOMAIN } from "@/lib/store/host";
 import { PLAN_IDS, PLAN_META, normalizePlan, type Plan } from "@/lib/plans";
 import {
   EXTRA_LOCATION_KEY,
@@ -665,7 +668,8 @@ const MEDIA_TABLES = [
 // PERMANENTLY delete a store and everything belonging to it (platform
 // superadmin only). Irreversible. Every store-scoped table FKs stores(id) with
 // ON DELETE CASCADE, so one DELETE removes all DB rows; we additionally purge
-// the store's uploaded media, custom-domain control-plane resources and login
+// the store's uploaded media, custom-domain control-plane resources, its
+// sign-in hosts in Identity Platform's authorized-domain list and login
 // accounts that are no longer attached to any other StoreMink role (none of
 // those external resources cascade from the stores table).
 export async function deleteStore(storeId: string): Promise<ActionResult> {
@@ -683,6 +687,7 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   const authUserIds = new Set<string>();
   const authEmailsById = new Map<string, Set<string>>();
   let customDomain: string | null = null;
+  let storeSlug: string | null = null;
   let legacyResendDomainId: string | null = null;
   const addAuthCandidate = (id: string | null, email?: string | null) => {
     if (!id) return;
@@ -702,6 +707,7 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
       const storeRows = await db
         .select({
           id: stores.id,
+          slug: stores.slug,
           settings: stores.settings,
           custom_domain: stores.customDomain,
         })
@@ -711,6 +717,7 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
       if (!storeRows[0]) return null;
       scan(storeRows[0].settings);
       customDomain = storeRows[0].custom_domain;
+      storeSlug = storeRows[0].slug;
       const settings = (storeRows[0].settings ?? {}) as Record<string, unknown>;
       legacyResendDomainId =
         typeof settings.resend_domain_id === "string"
@@ -783,6 +790,37 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   // are idempotent, and any partial failure is surfaced to the operator instead
   // of silently pretending the purge was complete.
   const cleanupFailures: string[] = [];
+
+  // ★ THE SUBDOMAIN'S OWN SIGN-IN HOST, removed straight after the row
+  // delete. Phone sign-in needs `{slug}.{root}` listed EXACTLY
+  // (lib/auth/store-auth-hosts.ts), so every store has its own
+  // authorizedDomains entry and nothing else removes it. ★ BEFORE the media and
+  // certificate cleanup, which can take minutes: the slug is free from the
+  // moment the row is gone, and a store re-created on it in that window would
+  // have its new host removed. removeAuthorizedHosts also skips a host a store
+  // still serves, re-read just before its write. Settings are left out on
+  // purpose, so no demo/preview flag can skip the removal (a host that was
+  // never listed costs one read); a local dev root yields no host at all. The
+  // custom domain's hosts go with cleanupDetachedDomain below.
+  const authHosts = storeSlug
+    ? storeAuthHosts({ slug: storeSlug }, ROOT_DOMAIN)
+    : [];
+  if (authHosts.length > 0) {
+    const deauth = await removeAuthorizedHosts(authHosts, ROOT_DOMAIN).catch(
+      (err): { error: string } => ({
+        error: err instanceof Error ? err.message : "remove threw",
+      }),
+    );
+    if (deauth.error) {
+      logError("deleteStore (authorized host)", deauth.error, {
+        storeId,
+        hosts: authHosts,
+      });
+      cleanupFailures.push(
+        `Identity Platform authorized domain ${authHosts.join(", ")}`,
+      );
+    }
+  }
 
   const urlCleanup = await deleteStorageUrls(Array.from(mediaUrls));
   if ((urlCleanup?.failed ?? 0) > 0) {

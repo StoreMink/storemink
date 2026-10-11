@@ -651,6 +651,7 @@ export const STOREFRONT_CODE_ROUTES: ReadonlySet<string> = new Set([
   // Only /collections/<slug> is a page; a bare /collections is refused below.
   "collections",
   "enquiries",
+  "in-progress",
   "notifications",
   "orders",
   "password",
