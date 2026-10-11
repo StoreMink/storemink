@@ -67,8 +67,11 @@ export const IS_PRODUCTION_PLATFORM = ROOT_DOMAIN === "storemink.com";
  * `cookieDomainForHost` shares the session across its subdomains exactly as
  * `.storemink.com` does in production.
  *
- * The staging Identity Platform project lists it as an authorized domain
- * (one entry covers every subdomain). Production never sees this host.
+ * The staging Identity Platform project lists it as an authorized domain.
+ * That one entry covers every subdomain for Google popups, but NOT for phone
+ * codes, which need each exact host listed (lib/auth/authorized-domains.ts):
+ * test phone sign-in on `localtest.me` itself, or add `{slug}.localtest.me`
+ * to staging's list by hand. Production never sees this host.
  */
 export const LOCAL_DEV_ROOT = (
   process.env.NEXT_PUBLIC_LOCAL_DEV_ROOT || "localtest.me"

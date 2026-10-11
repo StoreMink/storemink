@@ -215,6 +215,9 @@ export const RESERVED_PAGE_SLUGS: ReadonlySet<string> = new Set([
   // renders, because there is no collections/page.tsx to shadow it.
   "collections",
   "enquiries",
+  // The page a store shows, past its password, until its owner chooses a
+  // theme (lib/store/launch-copy.ts STOREFRONT_IN_PROGRESS_PATH).
+  "in-progress",
   "notifications",
   "orders",
   // The password page a store shows before it opens (lib/store/launch-copy.ts).

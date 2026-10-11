@@ -486,12 +486,45 @@ describe("the welcome email (store.created)", () => {
     );
   }
 
+  /** Each checklist row's title: the text of its first link. */
+  function checklistTitles(body: string): string[] {
+    const list = body.match(
+      /<ul class="email-checklist">([\s\S]*?)<\/ul>/,
+    )?.[1];
+    return [...(list ?? "").matchAll(/<li><a [^>]*>([^<]*)<\/a>/g)].map(
+      (m) => m[1],
+    );
+  }
+
+  /** The go-live checklist for a store the minute signup finishes. */
+  const freshChecklist = () =>
+    evaluateLaunchChecklist({
+      plan: "free",
+      ownerPhoneVerified: false,
+      themeChosen: false,
+      publishedProducts: 0,
+      sampleProducts: 0,
+      business: { name: false, address: false, email: false, phone: false },
+      policies: {},
+      shippingSaved: false,
+      homepageEdited: false,
+      logo: false,
+      paymentsConnected: false,
+      gstin: false,
+      customDomainLive: false,
+    });
+
   it("gives the address and says it stays private until Go live", () => {
     const lead = template.body.split("\n")[0];
     expect(lead).toMatch(/^<p class="email-lead">/);
     expect(lead).toContain('<a href="{{store_url}}">{{store_url}}</a>');
     expect(lead).toContain("password page");
     expect(lead).toContain("Go live");
+    // A new store has no theme yet, so behind the password the owner sees the
+    // store-in-progress page; the lead must not promise a shop before that.
+    expect(lead).toContain(
+      "Until you choose a theme, your address shows a store-in-progress page.",
+    );
   });
 
   it("has a setup checklist and ends on the reassurance", () => {
@@ -505,28 +538,37 @@ describe("the welcome email (store.created)", () => {
   // ★ The checklist IS the go-live checklist's required half. If a route
   // moves in lib/store/launch-checklist-rules.ts, the welcome email must not
   // keep sending people to the old one.
-  it("links every REQUIRED go-live item, at its real route, and nothing else", () => {
-    const rules = evaluateLaunchChecklist({
-      plan: "free",
-      ownerPhoneVerified: false,
-      publishedProducts: 0,
-      sampleProducts: 0,
-      business: { name: false, address: false, email: false, phone: false },
-      policies: {},
-      shippingSaved: false,
-      homepageEdited: false,
-      logo: false,
-      paymentsConnected: false,
-      gstin: false,
-      customDomainLive: false,
-    });
+  it("links every REQUIRED go-live task and step, at its real route, and nothing else", () => {
+    // A grouped task contributes each of its pages; a plain task its own.
     const required = [
-      ...new Set(rules.items.filter((i) => i.required).map((i) => i.href)),
+      ...new Set(
+        freshChecklist()
+          .items.filter((i) => i.required)
+          .flatMap((i) =>
+            i.steps?.length ? i.steps.map((s) => s.href) : i.href,
+          ),
+      ),
     ];
     const routes = checklistRoutes(template.body);
     // The last row is the Go live button itself, on dashboard Home.
     expect(routes.at(-1)).toBe("/dashboard");
     expect(routes.slice(0, -1)).toEqual(required);
+    // The theme task points at the renamed Storefront page.
+    expect(routes).toContain("/dashboard/storefront");
+  });
+
+  it("★ lists the same five tasks as dashboard Home, in the same order, then Go live", () => {
+    const required = freshChecklist()
+      .items.filter((i) => i.required)
+      .map((i) => i.title);
+    expect(required).toHaveLength(5);
+    expect(checklistTitles(template.body)).toEqual([
+      ...required,
+      "Press Go live",
+    ]);
+    expect(template.body).toContain(
+      "<p>Before you open, five things need to be in place.",
+    );
   });
 
   it("substitutes the address into every link, escaped", () => {
@@ -547,10 +589,10 @@ describe("the welcome email (store.created)", () => {
       renderTemplate(template.body, sampleValuesFor("store.created"), "html"),
     );
     for (const route of [
+      "/dashboard/storefront",
       "/dashboard/products",
       "/dashboard/billing",
       "/dashboard/settings/policies",
-      "/dashboard/settings/shipping",
     ]) {
       expect(sent).toMatch(
         new RegExp(
@@ -558,6 +600,10 @@ describe("the welcome email (store.created)", () => {
         ),
       );
     }
+    // Delivery charges is a step of the business task, linked in its sentence.
+    expect(sent).toMatch(
+      /<a href="https:\/\/acme\.storemink\.com\/dashboard\/settings\/shipping" style="[^"]*">set your delivery charges<\/a>/,
+    );
     expect(sent).not.toContain("<ul");
     expect(inlineEmailStyles(html)).not.toContain("<script>");
   });

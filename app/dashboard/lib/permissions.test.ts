@@ -98,7 +98,22 @@ describe("getSection", () => {
   // Happy path — known keys resolve to their config.
   it("returns the matching section by key", () => {
     expect(getSection("products")?.label).toBe("Products");
-    expect(getSection("blogs")?.group).toBe("Storefront");
+    expect(getSection("blogs")?.group).toBe("Online store");
+  });
+
+  // The theme page is "Storefront" now, and the group that used to carry that
+  // name is "Online store" so a heading never repeats one of its own items.
+  it("★ the theme page is Storefront, under Online store, on the `themes` key", () => {
+    const section = getSection("themes");
+    expect(section?.label).toBe("Storefront");
+    expect(section?.href).toBe("/dashboard/storefront");
+    expect(section?.group).toBe("Online store");
+    // Roles store the KEY: renaming it would revoke every saved grant.
+    expect(section?.actions).toEqual(["view", "manage"]);
+    expect(SECTIONS.some((s) => s.href === "/dashboard/themes")).toBe(false);
+    expect(SECTIONS.some((s) => (s.group as string) === "Storefront")).toBe(
+      false,
+    );
   });
 
   // Unknown keys must not crash callers; return undefined.

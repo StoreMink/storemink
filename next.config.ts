@@ -287,9 +287,64 @@ const nextConfig: NextConfig = {
         destination: "/dashboard/logs/failures",
         permanent: false,
       },
+      // The store dashboard's theme page is "Storefront" now
+      // (/dashboard/storefront); the old address keeps working for bookmarks
+      // and sent links. 307 for the reason the redirects above give.
+      //
+      // ★★ STORE HOSTS ONLY. Unlike the log paths above, `/dashboard/themes`
+      // is ALSO a live platform route: the operator console's theme catalogue
+      // and Theme Studio (app/platform/dashboard/(console)/themes). Redirects
+      // run BEFORE proxy.ts rewrites the platform host into /platform/*, so a
+      // global rule would send operators to a /dashboard/storefront the
+      // platform does not have. `missing` keeps it off every host parseHost
+      // calls "platform"; next-redirects.test.ts checks the two agree.
+      // Exact path only: the store dashboard never had /dashboard/themes/*,
+      // while the platform's Theme Studio lives under it.
+      {
+        source: "/dashboard/themes",
+        destination: "/dashboard/storefront",
+        permanent: false,
+        missing: [{ type: "host" as const, value: platformHostPattern() }],
+      },
     ];
   },
 };
+
+/**
+ * Hosts lib/store/host.ts `parseHost` classifies as the PLATFORM, as one
+ * anchored regex for a redirect's `has`/`missing` host matcher.
+ *
+ * Duplicated rather than imported for the reason `headers()` gives: this file
+ * is evaluated outside the app's module graph. Next matches it against the
+ * lower-cased host with the port stripped, so the root domain's own port
+ * ("localhost:3000" in dev) comes off here too.
+ */
+function platformHostPattern(): string {
+  const esc = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const root = esc(
+    (process.env.NEXT_PUBLIC_ROOT_DOMAIN || "storemink.com")
+      .trim()
+      .toLowerCase()
+      .split(":", 1)[0],
+  );
+  const devRoot = esc(
+    (process.env.NEXT_PUBLIC_LOCAL_DEV_ROOT || "localtest.me")
+      .trim()
+      .toLowerCase(),
+  );
+  const hosts = [
+    "localhost",
+    "127\\.0\\.0\\.1",
+    "pos\\.localhost",
+    devRoot,
+    `pos\\.${devRoot}`,
+    ".+\\.vercel\\.app",
+    root,
+    `(?:www|app|pos|themes)\\.${root}`,
+  ];
+  // Grouped, so Next's `^…$` anchors bind to every alternative.
+  return `(?:${hosts.join("|")})`;
+}
 
 export default function configForPhase(phase: string): NextConfig {
   if (phase !== PHASE_DEVELOPMENT_SERVER) {

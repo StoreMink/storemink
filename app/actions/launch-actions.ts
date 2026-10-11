@@ -34,8 +34,11 @@ import { logError } from "@/lib/observability/logger";
 // ★★ GO LIVE IS THE ONLY THING THAT SETS `launched`, AND IT RE-RUNS THE
 // CHECKLIST FIRST. The dashboard card is a courtesy; a merchant could call
 // this action directly, so the decision is made here, from the store's own
-// rows, at the moment of pressing. A store with no refund policy cannot be
-// opened by anybody, through any UI.
+// rows, at the moment of pressing. A store with no refund policy, or no
+// storefront theme yet (it would open onto the store-in-progress page), cannot
+// be opened by anybody, through any UI. Grouping the checklist into five tasks
+// changed how it reads, not what this re-check demands: every step is still
+// its own predicate.
 //
 // ★ THE OWNER'S CALL. Opening a shop to the public and dropping its password
 // is the SUPERADMIN's decision (the owner-only rule CODEBASE.md §22 applies to
@@ -127,7 +130,8 @@ export interface LaunchResult {
   success?: boolean;
   storeUrl?: string;
   error?: string;
-  /** Required items still outstanding, when refused for that reason. */
+  /** Required tasks still outstanding, when refused for that reason. A
+   *  grouped task names its outstanding steps in brackets. */
   missing?: string[];
 }
 

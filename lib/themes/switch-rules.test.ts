@@ -10,9 +10,23 @@ import {
 } from "./switch-rules";
 
 const FRESH: ThemeSwitchFacts = {
+  firstTheme: false,
   launched: false,
   homepage: "seeded",
   catalogueIsSampleOnly: true,
+  catalogueIsEmpty: false,
+  hasBuilderChrome: false,
+  brandColorIsTheme: true,
+  hasDesignOverrides: false,
+};
+
+/** A store created after 2026-10-11, before its owner has chosen a theme. */
+const FIRST: ThemeSwitchFacts = {
+  firstTheme: true,
+  launched: false,
+  homepage: "missing",
+  catalogueIsSampleOnly: false,
+  catalogueIsEmpty: true,
   hasBuilderChrome: false,
   brandColorIsTheme: true,
   hasDesignOverrides: false,
@@ -74,6 +88,7 @@ describe("homepage seed detection", () => {
 describe("planThemeSwitch", () => {
   it("a fresh store takes the new theme's starting content wholesale", () => {
     expect(planThemeSwitch(FRESH, { replaceEditedHomepage: false })).toEqual({
+      firstTheme: false,
       homepage: "replace",
       addMissingPages: true,
       catalogue: "swap-samples",
@@ -127,7 +142,113 @@ describe("planThemeSwitch", () => {
   });
 });
 
+describe("planThemeSwitch on a first install", () => {
+  it("★ an empty store takes the theme's homepage, pages, samples, menus and colour", () => {
+    expect(planThemeSwitch(FIRST, { replaceEditedHomepage: false })).toEqual({
+      firstTheme: true,
+      homepage: "replace",
+      addMissingPages: true,
+      catalogue: "seed-samples",
+      menus: "replace",
+      brandColor: "theme",
+    });
+  });
+
+  it("★ a store with products, categories or an order gets no samples and no menus", () => {
+    expect(
+      planThemeSwitch(
+        { ...FIRST, catalogueIsEmpty: false },
+        { replaceEditedHomepage: false },
+      ),
+    ).toMatchObject({ catalogue: "keep", menus: "keep" });
+  });
+
+  it("★ a Builder header and footer means no samples and no menus either", () => {
+    expect(
+      planThemeSwitch(
+        { ...FIRST, hasBuilderChrome: true },
+        { replaceEditedHomepage: false },
+      ),
+    ).toMatchObject({ catalogue: "keep", menus: "keep" });
+  });
+
+  it("never swaps samples on a first install, whatever the sample fact says", () => {
+    expect(
+      planThemeSwitch(
+        { ...FIRST, catalogueIsSampleOnly: true, catalogueIsEmpty: false },
+        { replaceEditedHomepage: false },
+      ).catalogue,
+    ).toBe("keep");
+  });
+
+  it("★ a homepage the merchant built is kept unless they ask, and the theme's pages still fill free slugs", () => {
+    const built = { ...FIRST, homepage: "edited" as const };
+    expect(
+      planThemeSwitch(built, { replaceEditedHomepage: false }),
+    ).toMatchObject({ homepage: "keep", addMissingPages: true });
+    expect(
+      planThemeSwitch(built, { replaceEditedHomepage: true }),
+    ).toMatchObject({ homepage: "backup-and-replace", addMissingPages: true });
+  });
+
+  it("a brand colour the merchant already set stays", () => {
+    expect(
+      planThemeSwitch(
+        { ...FIRST, brandColorIsTheme: false },
+        { replaceEditedHomepage: false },
+      ).brandColor,
+    ).toBe("keep");
+  });
+});
+
 describe("describeThemeSwitch", () => {
+  it("★ says what a first install does, in place of a switch", () => {
+    const lines = describeThemeSwitch(
+      "Vitrine",
+      FIRST,
+      planThemeSwitch(FIRST, { replaceEditedHomepage: false }),
+    );
+    expect(lines).toEqual([
+      "Your storefront gets Vitrine's colours, fonts and layout, and stops showing the store-in-progress page.",
+      "Your homepage is created from Vitrine's starting design.",
+      "Vitrine's starting pages are added where your store doesn't have a page yet. Pages you've already written, like your policies, are not changed.",
+      "Vitrine's sample products and categories are added as examples. The products are drafts, so customers don't see them.",
+      "Your header and footer menus are set up from Vitrine's.",
+      "Your brand colour starts as Vitrine's. You can change it any time.",
+      "You can switch to another theme any time.",
+    ]);
+    // A first install is not a switch: nothing says "change to".
+    expect(lines.join(" ")).not.toMatch(/change to Vitrine/);
+  });
+
+  it("a first install over the merchant's own work says what stays", () => {
+    const facts: ThemeSwitchFacts = {
+      ...FIRST,
+      homepage: "edited",
+      catalogueIsEmpty: false,
+      hasBuilderChrome: true,
+      brandColorIsTheme: false,
+    };
+    const lines = describeThemeSwitch(
+      "Studio",
+      facts,
+      planThemeSwitch(facts, { replaceEditedHomepage: false }),
+    );
+    expect(lines).toContain(
+      "Your homepage keeps its sections and their new look. Redesign it any time in the Website Builder.",
+    );
+    expect(lines).toContain(
+      "Your products and categories are not changed, and no samples are added.",
+    );
+    expect(lines).toContain(
+      "Your header and footer stay as you set them in the Website Builder.",
+    );
+    expect(lines).toContain("Your brand colour stays as you chose it.");
+    expect(lines).toContain(
+      "Studio's starting pages are added where your store doesn't have a page yet. Pages you've already written, like your policies, are not changed.",
+    );
+  });
+
   it("names every change for a fresh store", () => {
     const lines = describeThemeSwitch(
       "Vitrine",
@@ -145,9 +266,11 @@ describe("describeThemeSwitch", () => {
 
   it("says what stays for an established, open store", () => {
     const facts: ThemeSwitchFacts = {
+      firstTheme: false,
       launched: true,
       homepage: "edited",
       catalogueIsSampleOnly: false,
+      catalogueIsEmpty: false,
       hasBuilderChrome: true,
       brandColorIsTheme: false,
       hasDesignOverrides: true,
@@ -190,13 +313,17 @@ describe("describeThemeSwitch", () => {
     for (const facts of [
       FRESH,
       {
+        firstTheme: false,
         launched: true,
         homepage: "edited" as const,
         catalogueIsSampleOnly: false,
+        catalogueIsEmpty: false,
         hasBuilderChrome: true,
         brandColorIsTheme: false,
         hasDesignOverrides: true,
       },
+      FIRST,
+      { ...FIRST, homepage: "edited" as const, catalogueIsEmpty: false },
     ]) {
       for (const replace of [false, true]) {
         const text = describeThemeSwitch(

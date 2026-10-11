@@ -173,9 +173,78 @@ project needs Maps JavaScript and Geocoding APIs enabled. Signup remains usable
 without either service, but only locality suggestions are available and the
 form explicitly asks for unresolved street/building and PIN details.
 
+## Where the repository lives
+
+The repo is **`github.com/StoreMink/storemink`**, a private repo in the
+StoreMink GitHub organization. It was moved there from the personal account
+`Vansh44` on 2026-10-11. GitHub redirects the old URL for clones, fetches and
+links, but only while nobody creates a new repo called `storemink` under
+`Vansh44`; doing that breaks the redirect.
+
+GitHub's transfer moves the code, issues, pull requests and Actions secrets.
+It does **not** update anything on the Google Cloud side, so these were
+repointed by hand on the same day:
+
+| What                     | Where                                                                                              | Now names                                                   |
+| ------------------------ | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Cloud Build GitHub App   | Installed on the **StoreMink** organization, "Only select repositories"                            | `storemink` only                                            |
+| `storemink-web-dev`      | Trigger `af55172c-aa51-48c9-b4a6-0966f0969450`                                                     | `github.owner: StoreMink`                                   |
+| `storemink-web-prod`     | Trigger `c6321fe2-41c9-4972-9d71-fe88c30e3b29`                                                     | `github.owner: StoreMink`                                   |
+| `storemink-schema-drift` | Trigger `c10f45a2-bbc3-4e42-a069-3767e6057c48`                                                     | both repo URIs `https://github.com/StoreMink/storemink`     |
+| GitHub Actions identity  | Provider `github-actions-provider` in pool `github-actions-pool`, project `storemink-prod`         | `assertion.repository == 'StoreMink/storemink'`             |
+| GitHub Actions identity  | `github-actions-deployer@storemink-prod.iam.gserviceaccount.com`, `roles/iam.workloadIdentityUser` | `principalSet://…/attribute.repository/StoreMink/storemink` |
+
+★ **All three triggers were updated in place, so their IDs did not change.**
+That matters for `storemink-schema-drift`: Cloud Scheduler calls it by ID
+(`docs/cron-jobs.md`), and a recreated trigger would leave the schedule calling
+one that no longer exists. Every substitution on the dev and prod triggers was
+kept, verified by count after the update.
+
+★ **A new repo that should deploy must be added to the GitHub App first.** The
+installation is limited to `storemink` on purpose. Add a repo under the
+organization's Settings, then GitHub Apps, then Google Cloud Build, before
+pointing a trigger at it.
+
+⚠ **The GitHub Actions identity names the repo twice.** The provider's
+condition and the service-account binding both carry `StoreMink/storemink`, so a
+future rename or move must change BOTH, or Actions cannot sign in to Google
+Cloud. Nothing uses it today: `ci.yml` references no secrets, although the repo
+still holds `GCP_SERVICE_ACCOUNT` and `GCP_WORKLOAD_IDENTITY_PROVIDER`.
+
+### Repointing a trigger without retyping it
+
+The installed gcloud has no `builds triggers export`, but `describe` writes the
+same YAML, and `import` updates the trigger whose `id` the file carries. That
+keeps the ID and every substitution, which retyping a long `--substitutions`
+line by hand does not.
+
+⚠ **Write the file outside the repo and delete it afterwards.** The prod
+trigger's substitutions include the Firebase web keys and the Sarvam API key.
+
+```bash
+gcloud builds triggers describe storemink-web-dev --project=storemink-prod --region=global --format=yaml > /tmp/storemink-web-dev.yaml
+```
+
+Edit the `github.owner` line (or, for the drift trigger, both `uri` lines), then:
+
+```bash
+gcloud builds triggers import --project=storemink-prod --region=global --source=/tmp/storemink-web-dev.yaml
+```
+
+Check the ID and owner afterwards; the trigger list should still hold the same
+number of triggers:
+
+```bash
+gcloud builds triggers list --project=storemink-prod --region=global --format="table(name,id,github.owner,sourceToBuild.uri)"
+```
+
+⚠ **Not yet verified when this was written:** a build started by a push to the
+new repo. If a merge to `dev` or `main` does not start a build, check the GitHub
+App installation first; that is the link the transfer can break.
+
 ## Create the three triggers
 
-The repo uses a 1st-gen GitHub App connection (`Vansh44/storemink`), so plain
+The repo uses a 1st-gen GitHub App connection (`StoreMink/storemink`), so plain
 `gcloud builds triggers create github` works.
 
 > **`<STAGING_WEB_API_KEY>` / `<PROD_WEB_API_KEY>`** — the Firebase **web**
@@ -211,7 +280,7 @@ _not_ follow the "override every secret" rule the prod trigger must.
 gcloud builds triggers create github \
   --project=storemink-prod --region=global \
   --name=storemink-web-dev \
-  --repo-owner=Vansh44 --repo-name=storemink \
+  --repo-owner=StoreMink --repo-name=storemink \
   --branch-pattern='^dev$' \
   --build-config=cloudbuild.yaml \
   --service-account=projects/storemink-prod/serviceAccounts/705863961054-compute@developer.gserviceaccount.com \
@@ -329,7 +398,7 @@ pass the full set so the trigger is self-documenting:
 gcloud builds triggers create github \
   --project=storemink-prod --region=global \
   --name=storemink-web-staging \
-  --repo-owner=Vansh44 --repo-name=storemink \
+  --repo-owner=StoreMink --repo-name=storemink \
   --branch-pattern='^staging$' \
   --build-config=cloudbuild.yaml \
   --service-account=projects/storemink-prod/serviceAccounts/705863961054-compute@developer.gserviceaccount.com \
@@ -342,7 +411,7 @@ gcloud builds triggers create github \
 gcloud builds triggers create github \
   --project=storemink-prod --region=global \
   --name=storemink-web-prod \
-  --repo-owner=Vansh44 --repo-name=storemink \
+  --repo-owner=StoreMink --repo-name=storemink \
   --branch-pattern='^main$' \
   --build-config=cloudbuild.yaml \
   --service-account=projects/storemink-prod/serviceAccounts/705863961054-compute@developer.gserviceaccount.com \
@@ -366,6 +435,12 @@ gcloud builds triggers create github \
 ---
 
 ## Delete the broken built-in trigger
+
+Already done: this trigger no longer exists (checked 2026-10-11, when the
+project held only the three triggers above). The command is kept as a record.
+Its name still carries `Vansh44` because Cloud Run generated it while the repo
+lived in that account; it is the real name of a deleted resource, not a
+reference to update.
 
 ```bash
 gcloud builds triggers delete rmgpgab-storemink-web-asia-south1-Vansh44-storemink--stagiufd \

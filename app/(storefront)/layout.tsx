@@ -15,12 +15,11 @@ import { getStoreBrand } from "@/lib/store/brand";
 import { getStoreChrome, getDraftChromeForPreview } from "@/lib/chrome/queries";
 import { resolveStorefrontAppearance } from "@/lib/chrome/types";
 import { getCurrentStoreOrNull } from "@/lib/store/resolve";
+import { isDemoStore, isStoreSearchIndexable } from "@/lib/store/launch";
 import {
-  isDemoStore,
-  isStoreSearchIndexable,
-  isStorefrontGated,
-} from "@/lib/store/launch";
-import { storefrontAccess } from "@/lib/store/storefront-access";
+  storefrontAccess,
+  storefrontShell,
+} from "@/lib/store/storefront-access";
 import { getStoreUrl } from "@/lib/site";
 import { resolveInstalledThemeDefinition } from "@/lib/themes/runtime-registry";
 import { readThemeSelection } from "@/lib/themes/meta";
@@ -122,8 +121,17 @@ export default async function StorefrontLayout({
   // the shop's header, menus and cart, which would all lead straight back to
   // the password page. Admins and password holders are "unlocked" and see the
   // ordinary layout.
-  const locked =
-    isStorefrontGated(store) && (await storefrontAccess(store)) === "locked";
+  //
+  // A store whose owner has not chosen a theme yet is the same case one step
+  // later: past the password every page redirects itself to the in-progress
+  // page (requireStorefrontStore), so that page, or /password before it, is
+  // the only child, and it gets the same bare shell.
+  //
+  // The choice itself is storefrontShell() (lib/store/storefront-access.ts).
+  // storefrontAccess() answers "open" at once for a store that is not gated,
+  // so a launched store pays nothing for asking.
+  const bareShell =
+    storefrontShell(store, await storefrontAccess(store)) === "bare";
 
   // Anonymous storefronts do not need Firebase's browser SDK on their initial
   // route. A server cookie means identity must be restored immediately; with
@@ -268,7 +276,7 @@ export default async function StorefrontLayout({
     .filter(Boolean)
     .join(" ");
 
-  if (locked) {
+  if (bareShell) {
     return (
       <BrandProvider brand={brand}>
         <div className={rootClass} style={themeVars as CSSProperties}>

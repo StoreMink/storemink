@@ -14,6 +14,7 @@ export {
   isStoreLaunched,
   isStoreSearchIndexable,
   isStorefrontGated,
+  isThemePending,
 } from "@/lib/store/launch-state";
 
 /**

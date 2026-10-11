@@ -31,8 +31,10 @@ import type { ThemeDefinition } from "./types";
 // Design:
 //  • SERVICE-ROLE scope (withService, BYPASSRLS), every write explicitly
 //    store-scoped (same trust model as page-actions). Callers are trusted
-//    server code only: createStore at signup, and the platform-operator
-//    seedDemoStore action.
+//    server code only: the platform-operator seedDemoStore action and Theme
+//    Studio publication. Signup installs no theme (2026-10-11); a store's
+//    first theme goes through lib/themes/switch.ts, which composes this
+//    module's exports so nothing the seller already made is overwritten.
 //  • BEST-EFFORT per entity with an errors accumulator — entities are
 //    independent (a store with products but a failed page is still coherent),
 //    and every write is an idempotent upsert keyed on (store_id, slug), so

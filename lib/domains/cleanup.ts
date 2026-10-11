@@ -38,7 +38,12 @@ export async function cleanupDetachedDomain(
       }
     }
 
-    // Stop trusting a hostname we no longer serve for Google sign-in.
+    // Stop trusting hosts we no longer serve for sign-in: one write removes
+    // the exact apex + www hosts and any legacy registrable entry. ★ A host
+    // another store still serves stays (one store on acme.com, another
+    // detaching shop.acme.com), so this runs after the caller's own row has
+    // dropped the domain. The store's subdomain host is untouched; deleteStore
+    // removes that separately.
     const deauth = await removeAuthorizedDomain(domain, ROOT_DOMAIN);
     if (deauth.error) {
       failures.push("Identity Platform authorized domain");
