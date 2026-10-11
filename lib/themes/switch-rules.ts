@@ -1,16 +1,17 @@
 // ---------------------------------------------------------------------------
-// Switching a live store to another theme: WHAT is allowed to change.
+// Installing or switching a store's theme: WHAT is allowed to change.
 //
 // Pure. `lib/themes/switch.ts` reads the facts and writes the result; the
 // dashboard's confirm dialog shows `describeThemeSwitch` so the merchant reads
 // exactly what the server will do. Both call `planThemeSwitch`, so the dialog
 // cannot promise one thing while the server does another.
 //
-// ★★ A THEME IS A DESIGN; THE STORE'S CONTENT IS THE MERCHANT'S. Since signup
-// stopped asking for a theme (2026-10-10), every store starts on the platform
-// default and its owner picks the real one here, usually within minutes, while
-// everything except the design is still the old theme's starting copy. So a
-// switch carries a theme's starting content with it ONLY where nothing of the
+// ★★ A THEME IS A DESIGN; THE STORE'S CONTENT IS THE MERCHANT'S. Since
+// 2026-10-11 signup installs no theme at all (settings.themePending): the
+// owner's FIRST choice on Dashboard → Storefront installs one, and only then
+// does the storefront stop showing its "store in progress" page. Stores made
+// before that started on the platform default and switch from it here. Either
+// way a theme's starting content comes with it ONLY where nothing of the
 // merchant's would be lost:
 //
 //   • the design (colours, fonts, layout) always changes;
@@ -21,6 +22,12 @@
 //   • the menus follow the catalogue, because they link to its categories, and
 //     never replace a header and footer edited in the Website Builder;
 //   • the brand colour follows the theme only while it is still the theme's.
+//
+// A FIRST install (no theme yet) follows the same rule from an empty start:
+// the homepage is created unless the merchant already built one, the theme's
+// pages fill only free slugs (policies written in Settings → Policies live at
+// those slugs and stay), and samples and menus arrive only in a store with no
+// catalogue, no orders and no Website Builder header or footer.
 //
 // Products, categories, pages and menus the merchant made are never touched.
 // ---------------------------------------------------------------------------
@@ -83,8 +90,19 @@ export function homepageEditedSinceSeed(
 }
 
 export interface ThemeSwitchFacts {
+  /**
+   * The store has no theme yet (`isThemePending`: settings.themePending), so
+   * this is its FIRST install, and the storefront shows a "store in progress"
+   * page until it lands.
+   */
+  firstTheme: boolean;
   /** The store has opened (settings.launched), so shoppers see changes now. */
   launched: boolean;
+  /**
+   * On a first install no theme ever wrote the homepage, so a row with any
+   * sections is the merchant's ("edited") and an empty one, such as the
+   * blank draft the Website Builder opens, counts as "missing".
+   */
   homepage: "missing" | "seeded" | "edited";
   /**
    * Every product and category in the store is one of the CURRENT theme's
@@ -92,10 +110,14 @@ export interface ThemeSwitchFacts {
    * starting catalogue be swapped for the new theme's.
    */
   catalogueIsSampleOnly: boolean;
+  /** No products, no categories, and never an order. A first install seeds
+   *  the theme's samples only into a store like this. */
+  catalogueIsEmpty: boolean;
   /** The header and footer are edited in the Website Builder (a
    *  `store_chrome` row), so the theme's menus would not show anyway. */
   hasBuilderChrome: boolean;
-  /** `brand.primaryColor` is unset or still the current theme's accent. */
+  /** `brand.primaryColor` is unset or still the current theme's accent. With
+   *  no theme yet (a first install) that means unset. */
   brandColorIsTheme: boolean;
   /** Colours, fonts or layout chosen in the Website Builder, which stay on
    *  top of any theme. Said in the dialog, never cleared by a switch. */
@@ -108,11 +130,18 @@ export interface ThemeSwitchOptions {
 }
 
 export interface ThemeSwitchPlan {
+  /** The store's first theme: the same write that pins it deletes
+   *  settings.themePending, which ends the "store in progress" page. */
+  firstTheme: boolean;
   homepage: "replace" | "backup-and-replace" | "keep";
-  /** Add the theme's pages the store does not have yet. Only alongside a
-   *  replaced homepage, whose links may point at them. Never overwrites. */
+  /** Add the theme's pages the store does not have yet. Alongside a replaced
+   *  homepage, whose links may point at them, and always on a first install,
+   *  which has none of them. Never overwrites a page. */
   addMissingPages: boolean;
-  catalogue: "swap-samples" | "keep";
+  /** "seed-samples" adds the theme's samples (products as drafts) to an empty
+   *  store on its first install; "swap-samples" replaces the current theme's
+   *  untouched samples with the new theme's. */
+  catalogue: "seed-samples" | "swap-samples" | "keep";
   menus: "replace" | "keep";
   brandColor: "theme" | "keep";
 }
@@ -127,8 +156,27 @@ export function planThemeSwitch(
         ? "backup-and-replace"
         : "keep"
       : "replace";
+  if (facts.firstTheme) {
+    // ★ Samples and menus only into a store with nothing of its own: no
+    // product, no category, no order, and no Builder header and footer. The
+    // theme's menus link to its sample categories, so the two arrive together
+    // or not at all, and a Builder header is the merchant's.
+    const catalogue =
+      facts.catalogueIsEmpty && !facts.hasBuilderChrome
+        ? "seed-samples"
+        : "keep";
+    return {
+      firstTheme: true,
+      homepage,
+      addMissingPages: true,
+      catalogue,
+      menus: catalogue === "seed-samples" ? "replace" : "keep",
+      brandColor: facts.brandColorIsTheme ? "theme" : "keep",
+    };
+  }
   const catalogue = facts.catalogueIsSampleOnly ? "swap-samples" : "keep";
   return {
+    firstTheme: false,
     homepage,
     addMissingPages: homepage !== "keep",
     catalogue,
@@ -152,8 +200,11 @@ export function describeThemeSwitch(
   facts: ThemeSwitchFacts,
   plan: ThemeSwitchPlan,
 ): string[] {
+  const first = plan.firstTheme;
   const lines = [
-    `Your storefront's colours, fonts and layout change to ${themeName}.`,
+    first
+      ? `Your storefront gets ${themeName}'s colours, fonts and layout, and stops showing the store-in-progress page.`
+      : `Your storefront's colours, fonts and layout change to ${themeName}.`,
   ];
   if (facts.hasDesignOverrides) {
     lines.push(
@@ -177,16 +228,26 @@ export function describeThemeSwitch(
   }
   if (plan.addMissingPages) {
     lines.push(
-      `${themeName}'s other starting pages are added where your store doesn't have one. Your existing pages are not changed.`,
+      first
+        ? `${themeName}'s starting pages are added where your store doesn't have a page yet. Pages you've already written, like your policies, are not changed.`
+        : `${themeName}'s other starting pages are added where your store doesn't have one. Your existing pages are not changed.`,
     );
   }
   lines.push(
-    plan.catalogue === "swap-samples"
-      ? `The sample products and categories change to ${themeName}'s examples. The products stay drafts.`
-      : "Your products and categories are not changed.",
+    plan.catalogue === "seed-samples"
+      ? `${themeName}'s sample products and categories are added as examples. The products are drafts, so customers don't see them.`
+      : plan.catalogue === "swap-samples"
+        ? `The sample products and categories change to ${themeName}'s examples. The products stay drafts.`
+        : first
+          ? "Your products and categories are not changed, and no samples are added."
+          : "Your products and categories are not changed.",
   );
   if (plan.menus === "replace") {
-    lines.push(`Your header and footer menus change to ${themeName}'s.`);
+    lines.push(
+      first
+        ? `Your header and footer menus are set up from ${themeName}'s.`
+        : `Your header and footer menus change to ${themeName}'s.`,
+    );
   } else if (facts.hasBuilderChrome) {
     lines.push(
       "Your header and footer stay as you set them in the Website Builder.",
@@ -194,10 +255,15 @@ export function describeThemeSwitch(
   }
   if (plan.brandColor === "keep") {
     lines.push("Your brand colour stays as you chose it.");
+  } else if (first) {
+    lines.push(
+      `Your brand colour starts as ${themeName}'s. You can change it any time.`,
+    );
   }
   if (facts.launched) {
     lines.push("Your store is open, so shoppers see the change straight away.");
   }
+  if (first) lines.push("You can switch to another theme any time.");
   return lines;
 }
 

@@ -7,3 +7,8 @@ export const STORE_CLOSED_MESSAGE =
 /** The storefront route that asks a visitor for the store password. Reserved
  *  in lib/sections/registry.ts so no merchant page can take the slug. */
 export const STOREFRONT_PASSWORD_PATH = "/password";
+
+/** The storefront route a store shows, past the password, while its owner has
+ *  not chosen a theme yet (lib/store/launch-state.ts isThemePending). Reserved
+ *  in lib/sections/registry.ts like the password page. */
+export const STOREFRONT_IN_PROGRESS_PATH = "/in-progress";

@@ -98,6 +98,29 @@ describe("DashboardTopbar search", () => {
     expect(push).toHaveBeenCalledWith("/dashboard/inventory");
   });
 
+  // ★ "Themes" was renamed "Storefront"; people keep typing the old word.
+  it("finds a renamed page by its old name", () => {
+    renderTopbar([
+      {
+        group: "Online store",
+        items: [
+          {
+            label: "Storefront",
+            href: "/dashboard/storefront",
+            searchAliases: ["theme", "themes"],
+          },
+        ],
+      },
+    ]);
+    const input = screen.getByRole("combobox", { name: "Search dashboard" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "theme" } });
+    fireEvent.click(
+      desktopResults().getByRole("option", { name: /Storefront/ }),
+    );
+    expect(push).toHaveBeenCalledWith("/dashboard/storefront");
+  });
+
   it("opens and focuses search with Command/Ctrl+K", async () => {
     renderTopbar();
     const input = screen.getByRole("combobox", { name: "Search dashboard" });

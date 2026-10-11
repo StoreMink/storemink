@@ -62,7 +62,12 @@ const PRIMARY_BTN =
 const OUTLINE_BTN =
   "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[rgba(17,24,39,0.14)] bg-white px-3.5 py-2 text-sm font-medium text-[#111827] transition-colors hover:border-[#111827] disabled:cursor-not-allowed disabled:opacity-50";
 
-export function ThemesClient({
+// Dashboard → Storefront. The store's theme (or, for a new store, the empty
+// state that says there is none yet and what shoppers see meanwhile), then the
+// theme library. Choosing the FIRST theme installs it; choosing another later
+// switches to it. Both go through the same confirm dialog, written from the
+// same rules the server runs (lib/themes/switch-rules.ts).
+export function StorefrontClient({
   current,
   currentId,
   library,
@@ -82,6 +87,10 @@ export function ThemesClient({
   unavailable: boolean;
 }) {
   const router = useRouter();
+  // ★ A store with no theme yet (settings.themePending, read by the server as
+  // facts.firstTheme). Its storefront shows the "store in progress" page, so
+  // nothing here may offer to customise or view a design that does not exist.
+  const pending = facts?.firstTheme === true;
   const [filter, setFilter] = useState<ThemeIndustry | "all">("all");
   const [target, setTarget] = useState<ThemeCard | null>(null);
   const [replaceEdited, setReplaceEdited] = useState(false);
@@ -118,6 +127,9 @@ export function ThemesClient({
     try {
       result = await switchStoreTheme(target.id, {
         replaceEditedHomepage: replaceEdited,
+        // What the dialog just described. The server refuses if the store
+        // has changed since this page loaded (another tab chose a theme).
+        ...(facts ? { expectFirstTheme: facts.firstTheme } : {}),
       });
     } catch {
       result = {
@@ -134,8 +146,10 @@ export function ThemesClient({
     setTarget(null);
     toast.success(`Your store now uses ${result.themeName}.`);
     if (result.warnings.length > 0) {
+      // "In place", not "live": a first theme usually lands on a store that
+      // has not opened yet, so nobody but the owner sees it so far.
       toast.warning(
-        "Your new design is live, but some of the theme's starting content couldn't be added. You can add it in the Website Builder.",
+        "Your new theme is in place, but some of its starting content couldn't be added. You can add it in the Website Builder.",
       );
     }
     router.refresh();
@@ -144,10 +158,10 @@ export function ThemesClient({
   return (
     <div className="dash-page-enter">
       <header className="dash-page-header">
-        <h1>Themes</h1>
+        <h1>Storefront</h1>
         <p>
-          Your theme sets how your store looks: its colours, fonts and layouts.
-          Your products, pages and settings stay yours when you change it.
+          Choose how your store looks to customers. Your products, pages and
+          settings stay yours when you change themes.
         </p>
       </header>
 
@@ -164,67 +178,98 @@ export function ThemesClient({
         </div>
       )}
 
-      {/* ── Current theme ─────────────────────────────────────────── */}
-      <section className="mt-5 max-w-5xl" aria-labelledby="current-theme">
-        <h2
-          id="current-theme"
-          className="mb-3 text-sm font-semibold text-[#111827]"
-        >
-          Current theme
-        </h2>
-        <div className="flex flex-col overflow-hidden rounded-xl border border-[#e5e5e5] bg-white sm:flex-row">
-          <div className="relative aspect-[4/3] w-full shrink-0 bg-[#f4f4f6] sm:w-80">
-            {current ? (
-              <Image
-                src={current.previewImage}
-                alt=""
-                fill
-                sizes="(max-width: 640px) 100vw, 320px"
-                className="object-cover"
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center text-[#9aa1ab]">
-                <Paintbrush className="h-8 w-8" aria-hidden="true" />
-              </div>
-            )}
-          </div>
-          <div className="flex min-w-0 flex-1 flex-col justify-between gap-4 p-5">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-lg font-semibold text-[#111827]">
-                  {current?.name ?? currentId ?? "No theme"}
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-full bg-[#111827]/5 px-2 py-0.5 text-[11px] font-semibold text-[#5b6472]">
-                  <Check className="h-3 w-3" aria-hidden="true" /> In use
-                </span>
-              </div>
-              <p className="mt-1.5 text-sm leading-6 text-[#5b6472]">
-                {current?.description ??
-                  "Your store uses a theme that is no longer in the library. It keeps working; choose one below to change it."}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Link
-                href="/dashboard/builder"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={PRIMARY_BTN}
+      {/* ── Your theme ───────────────────────────────────────────── */}
+      {/* Not drawn when the store couldn't be read: the banner above says so,
+          and a card guessing at "no theme" would contradict it. */}
+      {!unavailable && (
+        <section className="mt-5 max-w-5xl" aria-labelledby="your-theme">
+          <h2
+            id="your-theme"
+            className="mb-3 text-sm font-semibold text-[#111827]"
+          >
+            Your theme
+          </h2>
+          {pending ? (
+            <div className="flex flex-col gap-4 rounded-xl border border-dashed border-[rgba(17,24,39,0.18)] bg-white p-5 sm:flex-row sm:items-center">
+              <div
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#f4f4f6] text-[#5b6472]"
+                aria-hidden="true"
               >
-                Customize
-              </Link>
-              <a
-                href="/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={OUTLINE_BTN}
-              >
-                View your store
-                <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
-              </a>
+                <Paintbrush className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-[#111827]">
+                  You haven&apos;t chosen a theme yet
+                </p>
+                <p className="mt-1 text-sm leading-6 text-[#5b6472]">
+                  Until you do, your storefront shows a &ldquo;store in
+                  progress&rdquo; page instead of your shop.{" "}
+                  {canManage
+                    ? "Choose a theme from the library below. You can switch to another any time."
+                    : "Someone who manages your storefront can choose one from the library below."}
+                </p>
+              </div>
             </div>
-          </div>
-        </div>
-      </section>
+          ) : (
+            <div className="flex flex-col overflow-hidden rounded-xl border border-[#e5e5e5] bg-white sm:flex-row">
+              <div className="relative aspect-[4/3] w-full shrink-0 bg-[#f4f4f6] sm:w-80">
+                {current ? (
+                  <Image
+                    src={current.previewImage}
+                    alt=""
+                    fill
+                    sizes="(max-width: 640px) 100vw, 320px"
+                    className="object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-[#9aa1ab]">
+                    <Paintbrush className="h-8 w-8" aria-hidden="true" />
+                  </div>
+                )}
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col justify-between gap-4 p-5">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-lg font-semibold text-[#111827]">
+                      {current?.name ?? currentId ?? "No theme"}
+                    </span>
+                    {currentId && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[#111827]/5 px-2 py-0.5 text-[11px] font-semibold text-[#5b6472]">
+                        <Check className="h-3 w-3" aria-hidden="true" /> In use
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1.5 text-sm leading-6 text-[#5b6472]">
+                    {current?.description ??
+                      (currentId
+                        ? "Your store uses a theme that is no longer in the library. It keeps working; choose one below to change it."
+                        : "Your store doesn't use a theme from the library. Choose one below to change how it looks.")}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href="/dashboard/builder"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={PRIMARY_BTN}
+                  >
+                    Customize
+                  </Link>
+                  <a
+                    href="/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={OUTLINE_BTN}
+                  >
+                    View your store
+                    <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ── Library ─────────────────────────────────────────────── */}
       <section className="mt-8 max-w-5xl" aria-labelledby="theme-library">
@@ -232,7 +277,8 @@ export function ThemesClient({
           Theme library
         </h2>
         <p className="mt-1 text-sm text-[#5b6472]">
-          Preview any theme on its demo store before you switch.
+          Preview any theme on its demo store before you{" "}
+          {pending ? "choose" : "switch"}.
         </p>
 
         {categories.length > 2 && (
@@ -351,8 +397,12 @@ export function ThemesClient({
       >
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
-            <DialogTitle>Switch to {target?.name}?</DialogTitle>
-            <DialogDescription>Here is what changes.</DialogDescription>
+            <DialogTitle>
+              {pending ? "Use" : "Switch to"} {target?.name}?
+            </DialogTitle>
+            <DialogDescription>
+              {pending ? "Here is what happens." : "Here is what changes."}
+            </DialogDescription>
           </DialogHeader>
           <ul className="space-y-2 text-sm leading-6 text-[#374151]">
             {lines.map((line) => (
@@ -395,8 +445,10 @@ export function ThemesClient({
                     className="h-4 w-4 animate-spin"
                     aria-hidden="true"
                   />
-                  Switching…
+                  {pending ? "Setting up…" : "Switching…"}
                 </>
+              ) : pending ? (
+                `Use ${target?.name ?? "theme"}`
               ) : (
                 "Switch theme"
               )}

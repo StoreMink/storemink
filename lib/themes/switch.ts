@@ -12,7 +12,11 @@ import {
 } from "@/drizzle/schema";
 import { normalizeChrome, type StoreChrome } from "@/lib/chrome/types";
 import { effectivePlan, planAllows, PLAN_META, type Plan } from "@/lib/plans";
-import { isDemoStore, isStoreLaunched } from "@/lib/store/launch-state";
+import {
+  isDemoStore,
+  isStoreLaunched,
+  isThemePending,
+} from "@/lib/store/launch-state";
 import { studioPreviewMarker } from "@/lib/theme-studio/preview-store";
 import { logError } from "@/lib/observability/logger";
 import { readThemeSelection, type StoredThemeInstallation } from "./meta";
@@ -34,7 +38,8 @@ import {
 import type { ThemeDefinition } from "./types";
 
 // ---------------------------------------------------------------------------
-// Switch a live store to another theme from the dashboard's Themes page.
+// Install a store's first theme, or switch it to another, from the
+// dashboard's Storefront page (/dashboard/storefront).
 //
 // What may change is decided by the pure rules in switch-rules.ts; this module
 // reads the facts those rules need and performs the writes. Every read and
@@ -68,6 +73,13 @@ export interface ThemeSwitchContext {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
+
+function hasSections(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0;
+}
+
+/** The first-install write found the store already has a theme. */
+class ThemeAlreadyChosen extends Error {}
 
 /** Colours, fonts, radii or layouts the merchant chose in the Website
  *  Builder. They sit on top of any theme, so a switch leaves them. */
@@ -123,15 +135,20 @@ export async function loadThemeSwitchContext(
   const store = storeRows[0];
   if (!store) return null;
   const settings = isRecord(store.settings) ? store.settings : {};
+  const firstTheme = isThemePending({ settings });
 
-  const currentTheme = await resolveInstalledThemeDefinition(
-    readThemeSelection(settings),
-  ).catch((err) => {
-    // A theme that no longer resolves only means its samples and accent are
-    // unknown, so nothing of the old theme is swapped. Never a refusal.
-    logError("themes.switch_current_theme", err, { storeId });
-    return null;
-  });
+  // A store still waiting for its first theme has none, whatever a stray key
+  // might say, so nothing of an "old" theme is ever swapped out of it.
+  const currentTheme = firstTheme
+    ? null
+    : await resolveInstalledThemeDefinition(readThemeSelection(settings)).catch(
+        (err) => {
+          // A theme that no longer resolves only means its samples and accent
+          // are unknown, so nothing of the old theme is swapped. Never a refusal.
+          logError("themes.switch_current_theme", err, { storeId });
+          return null;
+        },
+      );
   const sampleProductSlugs =
     currentTheme?.preset.sampleData?.products.map((p) => p.slug) ?? [];
   const sampleCategorySlugs =
@@ -193,7 +210,10 @@ export async function loadThemeSwitchContext(
       ),
       withService((db) =>
         db
-          .select({ sections: storePages.sections })
+          .select({
+            sections: storePages.sections,
+            publishedSections: storePages.publishedSections,
+          })
           .from(storePages)
           .where(and(eq(storePages.storeId, storeId), eq(storePages.slug, "")))
           .limit(1),
@@ -212,6 +232,7 @@ export async function loadThemeSwitchContext(
     : false;
 
   const home = pageRows.find((row) => row.slug === "");
+  const homeRow = homeRows[0];
   const brand = isRecord(settings.brand) ? settings.brand : {};
   const brandColor =
     typeof brand.primaryColor === "string"
@@ -221,12 +242,23 @@ export async function loadThemeSwitchContext(
     currentTheme?.preset.brand.primaryColor.trim().toLowerCase() ?? null;
 
   const facts: ThemeSwitchFacts = {
+    firstTheme,
     launched: isStoreLaunched({ settings }),
-    homepage: !home
-      ? "missing"
-      : homepageEditedSinceSeed(settings, home)
+    // ★ On a first install no theme ever wrote the homepage, so the seed
+    // timestamps prove nothing: a row with sections is the merchant's own
+    // work, and an empty one (the blank draft the Website Builder creates) is
+    // as good as none.
+    homepage: firstTheme
+      ? homeRow &&
+        (hasSections(homeRow.sections) ||
+          hasSections(homeRow.publishedSections))
         ? "edited"
-        : "seeded",
+        : "missing"
+      : !home
+        ? "missing"
+        : homepageEditedSinceSeed(settings, home)
+          ? "edited"
+          : "seeded",
     // ★ Only a store that still HAS its samples and nothing else. One with an
     // empty catalogue (samples already deleted, as the checklist suggests) is
     // not given a new set it did not ask for.
@@ -235,6 +267,8 @@ export async function loadThemeSwitchContext(
       productTotal > 0 &&
       productTotal === productSamples &&
       categoryTotal === categorySamples,
+    catalogueIsEmpty:
+      anyOrder.length === 0 && productTotal === 0 && categoryTotal === 0,
     hasBuilderChrome: !!chrome,
     brandColorIsTheme: !brandColor || brandColor === themeColor,
     hasDesignOverrides,
@@ -253,7 +287,7 @@ export async function loadThemeSwitchContext(
       isDemoStore({ settings }) || studioPreviewMarker(settings) !== null,
     currentTheme,
     facts,
-    homepage: homeRows[0] ?? null,
+    homepage: homeRow ? { sections: homeRow.sections } : null,
     pageSlugs: new Set(pageRows.map((row) => row.slug)),
   };
 }
@@ -263,8 +297,9 @@ export type ThemeSwitchResult =
   | { ok: false; error: string };
 
 /**
- * Switch the store to `theme`. The caller has already checked that the theme
- * is in the public catalogue and that the actor may manage themes.
+ * Install `theme` on the store: its first theme while settings.themePending is
+ * set, otherwise a switch. The caller has already checked that the theme is in
+ * the public catalogue and that the actor may manage themes.
  */
 export async function switchStoreThemeTo(input: {
   storeId: string;
@@ -272,6 +307,15 @@ export async function switchStoreThemeTo(input: {
   /** The catalogue's plan gate for this theme (undefined = every plan). */
   minPlan?: "basic" | "pro";
   replaceEditedHomepage: boolean;
+  /**
+   * What the confirm dialog described: a first install (true) or a switch
+   * (false). ★ The dialog's lines come from facts loaded with the page, so a
+   * tab opened while the store had no theme would promise first-install
+   * behaviour after another tab had chosen one, and the server would do an
+   * ordinary switch instead. A mismatch refuses before anything is written.
+   * Undefined skips the check (a caller that showed no dialog).
+   */
+  expectFirstTheme?: boolean;
   actorUserId: string;
 }): Promise<ThemeSwitchResult> {
   const { storeId, theme, actorUserId } = input;
@@ -293,13 +337,27 @@ export async function switchStoreThemeTo(input: {
         "This store's theme is managed by StoreMink and can't be changed here.",
     };
   }
+  if (
+    input.expectFirstTheme !== undefined &&
+    input.expectFirstTheme !== ctx.facts.firstTheme
+  ) {
+    return {
+      ok: false,
+      error: input.expectFirstTheme
+        ? "A theme was just chosen for your store. Reload the page to see it."
+        : "Your store changed since this page loaded. Reload the page and try again.",
+    };
+  }
   if (!planAllows(ctx.plan, input.minPlan)) {
     return {
       ok: false,
       error: `${theme.name} needs the ${PLAN_META[input.minPlan!].name} plan or above.`,
     };
   }
-  const current = readThemeSelection(ctx.settings);
+  // A store with no theme yet has nothing to be "already" on.
+  const current = ctx.facts.firstTheme
+    ? null
+    : readThemeSelection(ctx.settings);
   if (current?.id === theme.id) {
     return { ok: false, error: `${theme.name} is already your theme.` };
   }
@@ -326,8 +384,36 @@ export async function switchStoreThemeTo(input: {
         .where(eq(stores.id, storeId))
         .for("update");
       const settings = isRecord(row?.settings) ? row.settings : {};
-      const previous = isRecord(settings.theme) ? settings.theme : {};
+      // ★ The plan was made for a store with no theme. If another tab chose
+      // one since, this install would add pages and samples to a store that
+      // is no longer empty-handed: stop before writing anything.
+      if (plan.firstTheme && !isThemePending({ settings })) {
+        throw new ThemeAlreadyChosen();
+      }
+      // A first install has no earlier seed to carry, whatever a stray key says.
+      const previous =
+        !plan.firstTheme && isRecord(settings.theme) ? settings.theme : {};
       const brand = isRecord(settings.brand) ? settings.brand : {};
+      const nextBrand: Record<string, unknown> =
+        plan.brandColor === "theme"
+          ? { ...brand, primaryColor: theme.preset.brand.primaryColor }
+          : { ...brand };
+      if (plan.firstTheme) {
+        // What signup's theme seed used to fill in, and only where empty:
+        // the AI brand voice reads these, and never over the merchant's.
+        if (nextBrand.tagline == null && theme.preset.brand.tagline) {
+          nextBrand.tagline = theme.preset.brand.tagline;
+        }
+        if (nextBrand.blurb == null && theme.preset.brand.blurb) {
+          nextBrand.blurb = theme.preset.brand.blurb;
+        }
+      }
+      // ★★ THE PIN AND THE END OF "STORE IN PROGRESS" ARE ONE WRITE. Cleared
+      // anywhere else, a failure between the two would leave a store with a
+      // theme that still shows the in-progress page, or one with no theme
+      // that has stopped showing it.
+      const kept = { ...settings };
+      if (plan.firstTheme) delete kept.themePending;
       const installation: StoredThemeInstallation = {
         presetId: theme.id,
         presetVersion: theme.release.version,
@@ -344,18 +430,22 @@ export async function switchStoreThemeTo(input: {
         .update(stores)
         .set({
           settings: {
-            ...settings,
+            ...kept,
             template: theme.id,
             theme: installation,
-            brand:
-              plan.brandColor === "theme"
-                ? { ...brand, primaryColor: theme.preset.brand.primaryColor }
-                : brand,
+            brand: nextBrand,
           },
         })
         .where(eq(stores.id, storeId));
     });
   } catch (err) {
+    if (err instanceof ThemeAlreadyChosen) {
+      return {
+        ok: false,
+        error:
+          "A theme was just chosen for your store. Reload the page to see it.",
+      };
+    }
     logError("themes.switch_design", err, { storeId, themeId: theme.id });
     return {
       ok: false,
@@ -364,8 +454,16 @@ export async function switchStoreThemeTo(input: {
     };
   }
 
-  // --- 2. The sample catalogue, while it is still only samples ---------------
-  if (
+  // --- 2. The sample catalogue: seeded into an empty store on its first
+  // install, or swapped while it is still only the old theme's samples -------
+  if (plan.catalogue === "seed-samples") {
+    // Drafts, as signup's seed made them: placeholders a customer never sees.
+    await seedSampleCatalogue(storeId, theme, {
+      actorUserId,
+      publishSampleProducts: false,
+      fail: (step, message) => fail(`samples (${step})`, message),
+    });
+  } else if (
     plan.catalogue === "swap-samples" &&
     ctx.currentTheme?.preset.sampleData
   ) {
@@ -506,6 +604,9 @@ export async function switchStoreThemeTo(input: {
   }
 
   // --- 5. The theme's other pages the store does not have yet -----------------
+  // ★ Free slugs only. On a first install the merchant may already have
+  // written their policies (Settings → Policies) at slugs a theme could also
+  // ship; those pages are theirs and the go-live checklist reads them.
   if (plan.addMissingPages) {
     for (const page of theme.preset.pages) {
       if (page.slug === "" || ctx.pageSlugs.has(page.slug)) continue;

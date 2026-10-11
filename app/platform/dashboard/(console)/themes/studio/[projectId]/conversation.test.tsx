@@ -195,9 +195,14 @@ describe("Theme Studio conversation", () => {
     fireEvent.click(screen.getByLabelText("Attach screenshot 1"));
     fireEvent.change(message(), { target: { value: "Fix spacing" } });
     fireEvent.click(send());
+    // The action is called synchronously on click, so a call count alone
+    // passes while the request is still in flight. Wait for the failure to be
+    // handled and the composer to re-enable, or the retry lands on a disabled
+    // button and is dropped.
     await waitFor(() =>
-      expect(actions.reviseThemeStudioVersionAction).toHaveBeenCalledTimes(1),
+      expect((send() as HTMLButtonElement).disabled).toBe(false),
     );
+    expect(actions.reviseThemeStudioVersionAction).toHaveBeenCalledTimes(1);
     expect((message() as HTMLTextAreaElement).value).toBe("Fix spacing");
     expect(screen.getByAltText("Screenshot 1 to send")).toBeTruthy();
     fireEvent.click(send());

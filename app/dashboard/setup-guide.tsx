@@ -37,6 +37,11 @@ const VerifyPhoneForm = dynamic(
  * there. Recommended tasks exist only once the required ones are all done,
  * and fold away so the card never reads as a wall.
  *
+ * ★ A grouped task (business + delivery, the four policies) is ONE row with
+ * its steps listed inside, each with its own tick, so the card stays five
+ * rows long without hiding a single requirement. Steps that share a page
+ * share one button; steps on different pages each get their own.
+ *
  * Every tick is computed server-side from the store's own rows and handed in;
  * the client decides nothing about completion. Everything it DOES goes through
  * a server action that re-checks who is pressing and whether the checklist is
@@ -188,6 +193,8 @@ function TaskRow({
   /** Present only for the mobile task, which is done inline, not elsewhere. */
   phone?: { canVerify: boolean; onVerified: () => void };
 }) {
+  const steps = item.steps ?? [];
+  const stepsDone = steps.filter((s) => s.done).length;
   return (
     <li className="border-t border-[var(--dash-border)]">
       <button
@@ -219,6 +226,11 @@ function TaskRow({
         >
           {item.title}
         </span>
+        {steps.length > 0 && !item.done && (
+          <span className="mt-px shrink-0 text-[12px] font-medium text-[var(--dash-text-3)]">
+            {stepsDone} of {steps.length}
+          </span>
+        )}
         <ChevronRight
           className={`mt-0.5 h-4 w-4 shrink-0 text-[var(--dash-text-3)] transition-transform ${
             open ? "rotate-90" : ""
@@ -241,19 +253,107 @@ function TaskRow({
                 or from their account settings.
               </p>
             )
+          ) : steps.length > 0 ? (
+            <StepList item={item} steps={steps} />
           ) : (
             <div>
-              <Link
+              <TaskLink
                 href={item.href}
-                className={`dash-btn dash-btn-sm ${item.done ? "dash-btn-ghost" : "dash-btn-primary"}`}
-              >
-                {item.done ? "Review" : item.action}
-              </Link>
+                done={item.done}
+                action={item.action}
+              />
             </div>
           )}
         </div>
       )}
     </li>
+  );
+}
+
+/** The button under a task or a step: its action until it is done, then a
+ *  quieter Review, the same rule for both. */
+function TaskLink({
+  href,
+  done,
+  action,
+  label,
+}: {
+  href: string;
+  done: boolean;
+  action: string;
+  /** What a Review button reviews, when several sit side by side. */
+  label?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-label={done && label ? `Review ${label}` : undefined}
+      className={`dash-btn dash-btn-sm ${done ? "dash-btn-ghost" : "dash-btn-primary"}`}
+    >
+      {done ? "Review" : action}
+    </Link>
+  );
+}
+
+function StepList({
+  item,
+  steps,
+}: {
+  item: LaunchChecklistItem;
+  steps: NonNullable<LaunchChecklistItem["steps"]>;
+}) {
+  // ★ One page, one button: four "Write policy" buttons to the same editor
+  // would read as four separate chores.
+  const shared = steps.every((s) => s.href === steps[0].href);
+  return (
+    <div className="flex flex-col gap-3">
+      <ul className="flex flex-col gap-2" aria-label={`${item.title}: steps`}>
+        {steps.map((step) => (
+          <li
+            key={step.key}
+            className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5"
+          >
+            <span
+              aria-hidden
+              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                step.done
+                  ? "border-[var(--dash-green)] bg-[var(--dash-green)] text-white"
+                  : "border-dashed border-[var(--dash-text-3)]"
+              }`}
+            >
+              {step.done && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
+            </span>
+            <span className="min-w-0 flex-1 text-[13px]">
+              <span className="sr-only">
+                {step.done ? "Done: " : "To do: "}
+              </span>
+              <span
+                className={
+                  step.done
+                    ? "text-[var(--dash-text-3)] line-through decoration-[var(--dash-border)]"
+                    : "font-medium text-[var(--dash-text)]"
+                }
+              >
+                {step.title}
+              </span>
+            </span>
+            {!shared && (
+              <TaskLink
+                href={step.href}
+                done={step.done}
+                action={step.action}
+                label={step.title}
+              />
+            )}
+          </li>
+        ))}
+      </ul>
+      {shared && (
+        <div>
+          <TaskLink href={item.href} done={item.done} action={item.action} />
+        </div>
+      )}
+    </div>
   );
 }
 

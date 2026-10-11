@@ -6769,6 +6769,53 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261011_0183_storefront_theme_help",
+      "description": "Help: new stores start without a theme and show a store-in-progress page, themes are chosen under Storefront in Online store, and the go-live checklist is five grouped tasks",
+      "file": "sql/20261011_0183_storefront_theme_help.sql",
+      "transaction": true,
+      "requires": ["20261010_0182_signup_plan_and_themes_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Signup guide says a new store starts without a theme and names Storefront",
+            "sql": "select count(*)::text from public.help_articles where slug='create-your-storemink-store' and status='published' and body like '%Your store starts without a theme, so anyone who enters its password sees a <strong>Store in progress</strong> page until you choose one.%' and body like '%Choose it from <strong>Storefront</strong> in your dashboard, under <strong>Online store</strong>, and change it whenever you like%' and body not like '%Every store starts on a ready-made theme%' and body not like '%<strong>Themes</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "Setup guide lists the five grouped go-live tasks, the theme among them",
+            "sql": "select count(*)::text from public.help_articles where slug='complete-your-store-setup' and status='published' and body like '%There are five required tasks:</p>%' and body like '%<li><strong>Choose your storefront theme</strong> under <strong>Storefront</strong>.%' and body like '%<li><strong>Add your business and delivery details</strong>:%' and body like '%<li><strong>Publish your store policies</strong>:%' and body like '%and count as done when every part is.%' and body like '%The store owner verifies their mobile right in the checklist%' and body not like '%The required items are:%' and body not like '%Each item links to the page%' and excerpt like '%choose a theme%' and seo_description like '%choose a theme%'",
+            "equals": "1"
+          },
+          {
+            "name": "Setup guide's website step starts by choosing a theme",
+            "sql": "select count(*)::text from public.help_articles where slug='complete-your-store-setup' and status='published' and body like '%<li>Open <strong>Storefront</strong>, preview the themes on their demo stores, and choose one with <strong>Use this theme</strong>.</li><li>Open <strong>Website Builder</strong>.</li>%'",
+            "equals": "1"
+          },
+          {
+            "name": "Theme guide names Storefront under Online store and the store-in-progress page",
+            "sql": "select count(*)::text from public.help_articles where slug='change-your-storefront-theme' and status='published' and body like '%You choose it from <strong>Storefront</strong> in your dashboard, under <strong>Online store</strong>, and you can switch to another at any time.%' and body like '%Open <strong>Storefront</strong>. <strong>Your theme</strong> is at the top and the <strong>Theme library</strong> is below it.%' and body not like '%<strong>Themes</strong>%' and body not like '%ready-made theme%'",
+            "equals": "1"
+          },
+          {
+            "name": "Theme guide explains choosing a first theme without overwriting the merchant's work",
+            "sql": "select count(*)::text from public.help_articles where slug='change-your-storefront-theme' and status='published' and body like '%<h2>Choose or switch themes</h2>%' and body like '%the button reads <strong>Use</strong> followed by the theme''s name.%' and body like '%<h2>What your first theme adds</h2>%' and body like '%Policies you wrote under <strong>Settings</strong> → <strong>Policies</strong> stay exactly as they are.%' and body like '%The Website Builder opens once your store has a theme.%' and body not like '%<h2>Switch themes</h2>%' and body not like '%on your current theme%' and length(body) < 25000 and excerpt like '%choose the one that fits your store%'",
+            "equals": "1"
+          },
+          {
+            "name": "Dashboard guide names the Online store sidebar group",
+            "sql": "select count(*)::text from public.help_articles where slug='understand-your-storemink-dashboard' and status='published' and body like '%<li><strong>Online store</strong> contains <strong>Storefront</strong>, where you choose your theme, and the Website Builder%' and body not like '%<li><strong>Storefront</strong> contains the Website Builder%'",
+            "equals": "1"
+          },
+          {
+            "name": "First-product guide explains the store-in-progress page",
+            "sql": "select count(*)::text from public.help_articles where slug='add-your-first-product-and-check-the-storefront' and status='published' and body like '%If you then see <strong>Store in progress</strong>, choose a theme under <strong>Storefront</strong> first.%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

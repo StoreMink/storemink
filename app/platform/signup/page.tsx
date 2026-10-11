@@ -107,9 +107,9 @@ function sixDigits(value: string): string {
 // ★ NO PHONE, NO ADDRESS AND NO THEME HERE (2026-10-10). The address and the
 // mobile are needed before a store can take an order, not before it exists:
 // the store opens closed, and the dashboard's go-live checklist asks for each
-// where it is first needed. Every store starts on the platform's default theme
-// and its owner picks another from the dashboard's Themes page, as Shopify
-// does. The one exception is a PAID plan chosen on the Plan step: Razorpay
+// where it is first needed. A store starts with NO theme (2026-10-11): its
+// storefront shows a "store in progress" page until the owner chooses one on
+// the dashboard's Storefront page, a go-live task. The one exception is a PAID plan chosen on the Plan step: Razorpay
 // needs a verified mobile before it can take the payment, so that path asks
 // for it there, just before paying.
 type Step = "email" | "email-code" | "store" | "plan" | "creating";
@@ -1330,9 +1330,9 @@ export default function SignupPage() {
                     ))}
                   </select>
                   <p className="sgn-help">
-                    Your store starts on a ready-made theme you can change any
-                    time. Before it opens, the dashboard walks you through your
-                    business address and mobile.
+                    Next, your dashboard walks you through choosing your
+                    store&apos;s look, your business address and your mobile
+                    before the store opens.
                   </p>
                 </div>
 

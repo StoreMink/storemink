@@ -2,11 +2,17 @@
 
 import { updateTag } from "next/cache";
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { eq, sql } from "drizzle-orm";
 import { getFirebaseAdminAuth } from "@/lib/auth/firebase-admin";
 import { authErrorCode, deleteAuthUser } from "@/lib/auth/firebase-users";
 import { authIdsInUse } from "@/lib/auth/identity-usage";
-import { logError, logInfo } from "@/lib/observability/logger";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
+import { ensureAuthorizedHosts } from "@/lib/auth/authorized-domains";
+import {
+  storeAuthHosts,
+  type StoreAuthHostInput,
+} from "@/lib/auth/store-auth-hosts";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { withService } from "@/lib/db/client";
 import { isUniqueViolation } from "@/lib/db/errors";
@@ -18,9 +24,6 @@ import { ROOT_DOMAIN } from "@/lib/store/host";
 import { slugify } from "@/lib/slug";
 import { emitEvent } from "@/lib/notifications/record";
 import { recordSignupConsent } from "@/lib/legal/store";
-import { applyTheme } from "@/lib/themes/apply";
-import { DEFAULT_THEME_ID, isThemeSelectable } from "@/lib/themes/meta";
-import { getThemeCatalog } from "@/lib/themes/runtime-registry";
 import { COUNTRIES, DEFAULT_COUNTRY } from "@/lib/countries";
 
 // Subdomains we can never hand out (platform-reserved or operational).
@@ -270,15 +273,43 @@ export async function reclaimUnusedSignupEmail(
   return { reclaimed: true };
 }
 
+/**
+ * Add a new store's exact host(s) to Identity Platform's authorized domains,
+ * after the response is sent. ★ It must never fail or slow signup: the store is
+ * already committed, a Google API round trip has no place in front of the
+ * merchant, and the hourly sweep (syncStoreAuthHosts) re-adds anything missed.
+ * So every failure, including `after()` itself throwing outside a request
+ * scope, is a logged warning and nothing more.
+ */
+function registerStoreAuthHosts(
+  storeId: string,
+  store: StoreAuthHostInput,
+): void {
+  const warn = (err: unknown) =>
+    logWarn("createStore: could not authorize the store's sign-in hosts", {
+      storeId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  try {
+    after(async () => {
+      try {
+        // Empty for a demo/preview store or a local root: nothing to register.
+        const hosts = storeAuthHosts(store, ROOT_DOMAIN);
+        if (hosts.length === 0) return;
+        const result = await ensureAuthorizedHosts(hosts);
+        if (result.error) warn(result.error);
+      } catch (err) {
+        warn(err);
+      }
+    });
+  } catch (err) {
+    warn(err);
+  }
+}
+
 export interface CreateStoreInput {
   /** Store display name (also seeds the subdomain slug). */
   name: string;
-  /**
-   * A theme/template id (see lib/themes/meta). Signup no longer asks: the
-   * store opens on the platform default and the owner picks a theme from the
-   * dashboard's Themes page, the way Shopify starts every store on one.
-   */
-  template?: string;
   /** Owner's first name (written to admins.first_name). */
   firstName?: string;
   /** Owner's last name (admins.last_name; optional). */
@@ -322,6 +353,13 @@ export interface CreateStoreResult {
  * service role because a brand-new owner isn't yet a superadmin of any store
  * (so RLS would block them).
  *
+ * ★★ IT INSTALLS NO THEME (owner, 2026-10-11). The store is created with
+ * `settings.themePending: true` and nothing seeded: no pages, menus or sample
+ * products. Its owner chooses a theme on Dashboard → Storefront, which
+ * installs it and clears the flag (lib/themes/switch.ts); until then the
+ * storefront shows a "store in progress" page behind the password, and the
+ * go-live checklist keeps the store closed.
+ *
  * ★★ THE THREE ROWS ARE ONE TRANSACTION. They used to be three `withService`
  * calls with a hand-written rollback (delete the store if the admin or billing
  * insert failed). A rollback that is itself a network call can fail, and when
@@ -334,19 +372,6 @@ export async function createStore(
   input: CreateStoreInput,
 ): Promise<CreateStoreResult> {
   const rawName = input.name;
-  // An explicitly requested theme must be selectable. With none requested the
-  // store opens on the platform default, falling back to the first selectable
-  // theme so a hidden default can never stop a signup.
-  const catalog = await getThemeCatalog();
-  const themeMeta = input.template
-    ? catalog.find((theme) => theme.id === input.template)
-    : (catalog.find(
-        (theme) => theme.id === DEFAULT_THEME_ID && isThemeSelectable(theme),
-      ) ?? catalog.find(isThemeSelectable));
-  if (!themeMeta || !isThemeSelectable(themeMeta)) {
-    return { error: "That store theme is not available." };
-  }
-  const template = themeMeta.id;
 
   const user = await getServerUser();
   if (!user) {
@@ -454,6 +479,26 @@ export async function createStore(
     (user.email ? user.email.split("@")[0] : "Owner");
   const lastName = (input.lastName || "").trim() || null;
 
+  const storeSettings = {
+    // The brand NAME is the merchant's and is stored here and on stores.name;
+    // the brand colour, tagline and blurb arrive with their first theme, and
+    // only where they are still empty (lib/themes/switch.ts).
+    brand: { name: rawName.trim() },
+    // CLOSED until the owner completes the go-live checklist and presses Go
+    // live: visitors see a password page, nothing is indexed, and every public
+    // write is refused. Written EXPLICITLY false because absence means
+    // "launched" — stores created before this flag existed are already trading
+    // and in Google, and treating a missing value as unlaunched would put a
+    // password page in front of live shops. See lib/store/launch-state.ts.
+    launched: false,
+    // ★ No theme yet: see isThemePending (lib/store/launch-state.ts). Written
+    // explicitly true because only an explicit true counts; every store made
+    // before this flag existed has a theme and must not show the
+    // store-in-progress page.
+    themePending: true,
+    business,
+  };
+
   // Create the store, its owner and its invoice profile — one transaction.
   let store: { id: string; slug: string };
   try {
@@ -465,19 +510,7 @@ export async function createStore(
           name: rawName.trim(),
           status: "active",
           plan: "free",
-          settings: {
-            template,
-            brand: { name: rawName.trim() },
-            // CLOSED until the owner completes the go-live checklist and
-            // presses Go live: visitors see a password page, nothing is
-            // indexed, and every public write is refused. Written EXPLICITLY
-            // false because absence means "launched" — stores created before
-            // this flag existed are already trading and in Google, and treating
-            // a missing value as unlaunched would put a password page in front
-            // of live shops. See lib/store/launch-state.ts.
-            launched: false,
-            business,
-          },
+          settings: storeSettings,
         })
         .returning({ id: stores.id, slug: stores.slug });
 
@@ -532,18 +565,20 @@ export async function createStore(
     return { error: "Could not create your store. Please try again." };
   }
 
-  // Seed the chosen theme: homepage + content pages (published), menus, brand
-  // accents, and clearly-labeled sample products/categories — the merchant
-  // starts by EDITING a real website, not building from a blank canvas.
-  // Best-effort: a partial seed still leaves a working store, and applyTheme
-  // is idempotent (upserts by store_id+slug) so it can be re-run.
-  const seeded = await applyTheme(store.id, template, {
-    publish: true,
-    actorUserId: user.id,
+  // ★ Phone codes need this store's EXACT host in Identity Platform's
+  // authorized domains (storemink.com alone does not cover a subdomain for
+  // phone sign-in; lib/auth/authorized-domains.ts). Registered now so
+  // storefront sign-in, enquiries, POS and the dashboard mobile check work from
+  // the first minute instead of after the hourly sweep. Right after the commit,
+  // so a later failure in this action still leaves the host registered.
+  registerStoreAuthHosts(store.id, {
+    slug: store.slug,
+    settings: storeSettings,
   });
-  if (!seeded.success) {
-    console.error("createStore (theme seed):", seeded.errors.join(" | "));
-  }
+
+  // Nothing is seeded here any more: the owner's first theme choice seeds the
+  // homepage, the theme's pages, its sample catalogue and its menus, without
+  // overwriting anything they have made in the meantime (lib/themes/switch.ts).
 
   // New store row must be resolvable on the VERY NEXT request. `revalidateTag`
   // with the `max` profile is stale-while-revalidate: the first dashboard load
@@ -555,13 +590,12 @@ export async function createStore(
 
   // NOTE: search engines are deliberately NOT notified here any more.
   //
-  // A store at this instant is pure theme seed — the same homepage, the same
-  // ~17 content pages and the same sample catalogue as every other store on
-  // this template. Submitting that to Google and IndexNow the moment it exists
-  // meant the platform repeatedly showed search engines thin, near-duplicate
-  // content, and the reputational cost lands on the whole *.storemink.com
-  // domain — including the stores that did the work. `robots.txt` cannot undo
-  // it either: Disallow stops future crawling, it does not deindex.
+  // A store at this instant has nothing of its own: no theme, no pages, no
+  // products. Submitting that to Google and IndexNow the moment it exists
+  // would show search engines an empty shop, and the reputational cost lands
+  // on the whole *.storemink.com domain — including the stores that did the
+  // work. `robots.txt` cannot undo it either: Disallow stops future crawling,
+  // it does not deindex.
   //
   // The store is submitted when its owner completes the go-live checklist and
   // presses Go live (app/actions/launch-actions.ts), which is the one place
@@ -602,7 +636,7 @@ export async function createStore(
     storeId: null,
     actor: { type: "admin", id: user.id, label: user.email ?? null },
     subject: { type: "store", id: store.id, label: rawName.trim() },
-    payload: { slug: store.slug, template },
+    payload: { slug: store.slug },
   });
 
   return {

@@ -1,4 +1,4 @@
-# StoreMink — Codebase Map
+# StoreMink — Full Codebase Map
 
 > **Read this file first before making any change. Keep it up to date:** whenever you
 > add/remove/move routes, server actions, lib modules, SQL files, or change the
@@ -2438,7 +2438,10 @@ wholesip/
 │   ├── (storefront)/          # ★ THE STORE WEBSITE (served on store hosts)
 │   │   ├── layout.tsx         # Storefront shell: Header/Footer, BrandProvider, Auth+Cart+
 │   │   │                      # delivery-location providers; mounts the Pro merchant
-│   │   │                      # tracking consent boundary outside builder previews
+│   │   │                      # tracking consent boundary outside builder previews.
+│   │   │                      # storefrontShell() picks a BARE shell (brand tokens,
+│   │   │                      # no header/footer/cart) for a locked visitor or a
+│   │   │                      # theme-pending store (§7)
 │   │   ├── page.tsx           # Store homepage = store_pages row with slug "" (the
 │   │   │                      # "homepage sentinel"); reads published/preview sections
 │   │   │                      # just like [pageSlug]. Edited in /dashboard/builder (§11)
@@ -2468,6 +2471,16 @@ wholesip/
 │   │   │   │                  #   The ONE storefront page that does not call
 │   │   │   │                  #   requireStorefrontStore() — that is what sends a
 │   │   │   │                  #   locked visitor here. Rendered in a minimal shell.
+│   │   │   ├── in-progress/   #   ★ "Store in progress" (§7): what a store with no
+│   │   │   │                  #   theme yet (isThemePending) shows past the password,
+│   │   │   │                  #   owner included. Brand name, "This store is being
+│   │   │   │                  #   set up", owner link to /dashboard/storefront,
+│   │   │   │                  #   noindex. Like password/, it does NOT call
+│   │   │   │                  #   requireStorefrontStore() (that is what redirects
+│   │   │   │                  #   here); it re-checks host → password → theme itself
+│   │   │   │                  #   and sends visitors to / once a theme is chosen.
+│   │   │   │                  #   Slug reserved in RESERVED_PAGE_SLUGS and
+│   │   │   │                  #   STOREFRONT_CODE_ROUTES (drift tests pin both).
 │   │   │   ├── notifications/ #   ★ the SHOPPER's notification centre (§22) —
 │   │   │   │                  #   the customer rows the fan-out has always
 │   │   │   │                  #   written, finally rendered
@@ -2593,7 +2606,8 @@ wholesip/
 │   │   ├── page.tsx           # Home: greeting + PlanTag (plan-tag.tsx), then while the
 │   │   │                      # store is closed ONLY LaunchChecklistCard
 │   │   │                      # (launch-checklist.tsx → setup-guide.tsx: password +
-│   │   │                      # Go live head, required-task accordion, folded
+│   │   │                      # Go live head, FIVE required tasks as an accordion —
+│   │   │                      # grouped ones list their steps with "n of m" — folded
 │   │   │                      # Recommended, §7); Mink prompt and setup tiles once open
 │   │   ├── analytics/         # ★ Performance dashboard (§20): URL date/comparison
 │   │   │                      # filters, streamed commerce + tenant-scoped Google
@@ -2634,7 +2648,9 @@ wholesip/
 │   │   │                      # shorthand `padding` beats it at equal specificity.
 │   │   ├── lib/               # access.ts, permissions.ts (role → allowed nav/actions;
 │   │   │                      # ★ SECTIONS is grouped by JOB — Workspace / Sell in
-│   │   │                      # person / Storefront / Marketing / Settings — and a
+│   │   │                      # person / Online store / Marketing / Settings (the
+│   │   │                      # group was "Storefront" until 2026-10-11, when that
+│   │   │                      # became the name of the theme page inside it) — and a
 │   │   │                      # section may set `parent` to render NESTED under
 │   │   │                      # another while keeping its own permission key. That
 │   │   │                      # distinction is load-bearing: `children` are rendered
@@ -2694,7 +2710,11 @@ wholesip/
 │   │   │                      # forms), section-library + section-thumbs (visual add-section
 │   │   │                      # picker), use-autosave, use-history (undo/redo),
 │   │   │                      # use-builder-shortcuts, code-editor(+-lazy) (CodeMirror),
-│   │   │                      # builder.css (tokenised on --dash-*)
+│   │   │                      # builder.css (tokenised on --dash-*). ★ While the store
+│   │   │                      # has no theme (isThemePending) page.tsx returns
+│   │   │                      # choose-theme-first.tsx (a prompt linking to
+│   │   │                      # /dashboard/storefront, in the normal dashboard shell)
+│   │   │                      # BEFORE ensureHomepage, so no blank homepage row is made
 │   │   │   └── settings/      # Website settings ("Website" registry group, e.g.
 │   │   │                      # pages.customCode) — linked from the builder top bar
 │   │   ├── marketing/coupons/ # RETIRED as a destination — 307s to offers/
@@ -2707,9 +2727,17 @@ wholesip/
 │   │   ├── enquiries/         # enquiry inbox + @modal detail
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
 │   │   ├── admins/ roles/     # staff invites + role management
-│   │   ├── themes/            # ★ Themes (§11): current theme + Customize, the
-│   │   │                      # public library with Preview on demo stores, and
-│   │   │                      # a confirm dialog built from switch-rules.ts
+│   │   ├── storefront/        # ★ Storefront (§11; was themes/ until 2026-10-11 —
+│   │   │                      # next.config.ts 307s /dashboard/themes here on store
+│   │   │                      # hosts only, so the operator console's own
+│   │   │                      # /dashboard/themes is untouched). "Your theme" (the
+│   │   │                      # current theme + Customize + View your store, or,
+│   │   │                      # while isThemePending, an empty state saying the
+│   │   │                      # storefront shows a store-in-progress page), the
+│   │   │                      # "Theme library" with Preview on demo stores, and a
+│   │   │                      # confirm dialog built from switch-rules.ts ("Use
+│   │   │                      # {name}?" for a first install). Permission key is
+│   │   │                      # still `themes` (saved roles store the key)
 │   │   ├── branding/          # per-store branding editor (logo, colors)
 │   │   ├── billing/           # ★ Invoices & Billing (§17): tax config + tax-class
 │   │   │                      # manager + invoice-template editor (billing.css)
@@ -2865,8 +2893,10 @@ wholesip/
 │   │   │                      # (plan-picker.tsx, live prices from
 │   │   │                      # /api/plans/pricing) can then take the first
 │   │   │                      # payment for Basic or Pro, with Skip beside it.
-│   │   │                      # No theme step (the default theme; Themes in the
-│   │   │                      # dashboard) and no phone step, except just
+│   │   │                      # No theme step (the store starts with NO theme and
+│   │   │                      # shows a store-in-progress page until the owner
+│   │   │                      # picks one under Storefront in the dashboard; it is
+│   │   │                      # a go-live task) and no phone step, except just
 │   │   │                      # before paying (phone-verify.tsx, next/dynamic,
 │   │   │                      # on lib/auth/use-phone-verification.ts). The
 │   │   │                      # owner otherwise verifies their mobile from the
@@ -2925,11 +2955,13 @@ wholesip/
 │   │   │                      # account-settings/set-password/invite-user/user-management/
 │   │   │                      # user-group/role actions  (homepage-actions RETIRED — §11)
 │   │   ├── store-signup.ts    # Store onboarding (§19): checkStoreSlugAvailability,
-│   │   │                      # createStore({name,template?,firstName,lastName,
-│   │   │                      # country, optional address}) — no template means
-│   │   │                      # the platform default; ONE transaction for
-│   │   │                      # the store, its owner and its invoice profile; the
-│   │   │                      # store starts launched:false — getSignupResumeInfo
+│   │   │                      # createStore({name,firstName,lastName,country,
+│   │   │                      # optional address}) — installs NO theme (writes
+│   │   │                      # settings.themePending: true; a posted `template`
+│   │   │                      # is ignored); ONE transaction for the store, its
+│   │   │                      # owner and its invoice profile (no pages, menus or
+│   │   │                      # products); the store starts launched:false and
+│   │   │                      # theme-pending — getSignupResumeInfo
 │   │   │                      # (resume wizard after Google redirect / refreshed
 │   │   │                      # tab). Tested across slug, identity, transaction
 │   │   │                      # failure and consent gates.
@@ -2960,9 +2992,13 @@ wholesip/
 │   │                      # the signed-in owner's admins row (never the
 │   │                      # request) and share the same enrolment cores.
 │   │                      # ⚠ NOT billing-actions.ts (§17).
-│   ├── theme-actions.ts   # ★ switchStoreTheme for /dashboard/themes (§11):
+│   ├── theme-actions.ts   # ★ switchStoreTheme for /dashboard/storefront (§11):
 │   │                      # `themes` manage gate, selectable catalogue ids only;
-│   │                      # the rules live in lib/themes/switch-rules.ts.
+│   │                      # the rules live in lib/themes/switch-rules.ts. A
+│   │                      # pending store's FIRST choice installs the theme
+│   │                      # (updateTag(STORE_TAG), so /in-progress ends on the
+│   │                      # next request); revalidates /dashboard/storefront,
+│   │                      # /dashboard/builder and /dashboard.
 │   ├── billing-actions.ts # ★ Invoices & tax (§17): tax-class CRUD + save billing/
 │   │   │                      # invoice settings. Gated on `billing`, revalidates TAGS.billing.
 │   │   ├── store-domain.ts    # Custom domain connect (§30) — the GATE only; the
@@ -3372,13 +3408,18 @@ wholesip/
 │   │                          # with the store's effective plan for server reads/writes
 │   ├── store/                 # ★ Tenancy (see §3): host.ts, resolve.ts, brand.ts.
 │   │                          # ★ launch-state.ts (pure predicates: isStoreLaunched /
-│   │                          # isDemoStore / isStorefrontGated — import-free so the
-│   │                          # resolver can read them), launch.ts (markStoreLaunched,
-│   │                          # ONE caller: launchStore), launch-copy.ts (client-safe
-│   │                          # closed-store message + /password path),
+│   │                          # isDemoStore / isStorefrontGated / isThemePending —
+│   │                          # import-free so the resolver can read them; the last
+│   │                          # is true ONLY for an explicit settings.themePending
+│   │                          # === true), launch.ts (markStoreLaunched, ONE caller:
+│   │                          # launchStore; re-exports isThemePending),
+│   │                          # launch-copy.ts (client-safe closed-store message +
+│   │                          # the /password and /in-progress paths),
 │   │                          # storefront-grant.ts (HMAC password grant, pure),
 │   │                          # storefront-access.ts (open|unlocked|locked gate, the
-│   │                          # store_access password row, storefrontClosedRefusal),
+│   │                          # store_access password row, storefrontClosedRefusal,
+│   │                          # and storefrontShell — "bare" for a locked visitor or
+│   │                          # a theme-pending store, else "full"),
 │   │                          # launch-checklist-rules.ts (pure go-live rules) +
 │   │                          # launch-checklist.ts (the fact reads). §7 "closed until
 │   │                          # Go live".
@@ -3592,9 +3633,11 @@ wholesip/
 │   │                          # reCAPTCHA scores those same tokens valid at ~0.97 — so no
 │   │                          # toll-fraud score has ever been computed, and each send costs
 │   │                          # TWO backend requests (Enterprise, then the SDK's v2
-│   │                          # fallback). Diagnose with the identitytoolkit.googleapis.com
-│   │                          # /recaptcha/verdict_count + token_count metrics; staging has
-│   │                          # no Enterprise config at all. Ruled out: the Identity Toolkit
+│   │                          # fallback). ★ Most likely cause: the hostname. Phone reCAPTCHA
+│   │                          # needs the EXACT host in authorizedDomains (§30), and store
+│   │                          # subdomains were not listed. Diagnose with the
+│   │                          # identitytoolkit.googleapis.com/recaptcha/verdict_count +
+│   │                          # token_count metrics; staging has no Enterprise config at all. Ruled out: the Identity Toolkit
 │   │                          # service agent and its role exist, the key allows all
 │   │                          # domains. Both projects are plain FIREBASE_AUTH (not upgraded
 │   │                          # to Identity Platform), so request logging is refused
@@ -3627,6 +3670,13 @@ wholesip/
 │   │                          # dialog in app/pos/pending-customer-codes.ts (keyed by purpose
 │   │                          # + order, so a pickup code never resumes a return) and makes a
 │   │                          # reopened dialog wait for its closed copy's in-flight send.
+│   │                          # store-auth-hosts.ts (pure: storeAuthHosts — a store's exact
+│   │                          # `{slug}.{ROOT_DOMAIN}` plus a verified custom domain's apex +
+│   │                          # www; none for demo, Theme Studio preview or local roots) +
+│   │                          # store-auth-hosts-sync.ts (syncStoreAuthHosts: one add-only
+│   │                          # write for every active store, run by the hourly
+│   │                          # domain-reconcile cron). Phone codes need each EXACT host in
+│   │                          # authorizedDomains — see §30.
 │   ├── storefront/            # queries.ts (cached storefront reads — getPublishedPage/
 │   │                          # getPublishedPageSlugs, named columns only; getPublishedPage validates
 │   │                          # published_sections on read and logs each dropped section), tags.ts
@@ -4431,7 +4481,12 @@ wholesip/
 │                              # setup, account and plans guides for the three-step
 │                              # signup (account, store, plan), the owner's mobile
 │                              # verified from the go-live checklist, and publishes
-│                              # "Change your storefront theme".
+│                              # "Change your storefront theme". 0183 edits five
+│                              # guides in place for the theme-less signup: the
+│                              # store-in-progress page, Storefront under Online
+│                              # store, the five grouped go-live tasks, and a
+│                              # "What your first theme adds" section in the theme
+│                              # guide (a first install follows its own rules).
 │                              # ★★ 0174-0178 BELONG TO THE `whatsapp` BRANCH. This
 │                              # branch's four pending entries were renumbered from
 │                              # 0174/0175/0179/0180 to 0179-0182 (2026-10-10) because
@@ -4440,7 +4495,7 @@ wholesip/
 │                              # ⚠ When both branches merge, manifest.json conflicts:
 │                              # whichever lands second must append its entries AFTER
 │                              # every applied one and fix `requires`, or the runner's
-│                              # out-of-order check refuses. Next free: 0183.
+│                              # out-of-order check refuses. Next free: 0184.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -4593,6 +4648,11 @@ wholesip/
 │                              # Own package.json (playwright-core) and Dockerfile; not in
 │                              # the web image. Runbook: docs/theme-studio-capture-job.md
 ├── scripts/
+│   ├── sync-auth-hosts.ts     # `npm run auth:sync-hosts`: add every active store's exact
+│   │                          # sign-in hosts to the Firebase project's authorizedDomains
+│   │                          # (§30). Dry run unless --commit --confirm-project <project>;
+│   │                          # refuses a database, project and root domain from different
+│   │                          # environments. Logic in sync-auth-hosts-core.ts (tested).
 │   ├── theme-studio-eval.ts   # ★ Phase 0 golden set through the Phase 3 pipeline, no DB.
 │   │                          # Offline (fake) by default and grades nothing; --live needs
 │   │                          # --max-usd AND --yes, because GCP_PROJECT_ID in a dev .env
@@ -5212,8 +5272,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     is now a `custom_code` section. Retired: `homepage_sections` reads,
     `homepage-actions.ts`, `/dashboard/homepage`, `Hero.jsx` (the
     `homepage_sections` table is kept, deprecated, as migration rollback). - **Static pages (Phase 4b, done)**: the 17 former hardcoded content pages
-    (our-story, faqs, …) are seeded as `store_pages` rows (new stores via the
-    theme at signup; the legacy WholeSip fallback store via
+    (our-story, faqs, …) are seeded as `store_pages` rows (new stores when the
+    owner installs their first theme, only at slugs still free; the legacy
+    WholeSip fallback store via
     `wholesip_static_pages_seed.sql`) and their route dirs deleted, so
     `[pageSlug]` serves them; `RESERVED_PAGE_SLUGS` now reserves only
     the INTERACTIVE routes that stay in code (blogs, cart, enquiries, profile,
@@ -5267,7 +5328,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     dropdown that overlaid the section outline you were about to edit, and
     `loadingDraft` starts TRUE when there is a page to auto-open so the first,
     pre-hydration paint says "Opening…" instead of "Select a page" — React
-    state cannot fix that frame, only the initial value can. - **Themes (signup seeding)**: a theme is a DATA PACKAGE in `lib/themes/` —
+    state cannot fix that frame, only the initial value can. - **Themes (packages, and how a store gets one)**: a theme is a DATA PACKAGE in `lib/themes/` —
     `meta.ts` (client-safe, versioned catalog manifest: id/name, engine ref,
     release state/version/notes, industries, catalog-size fit, feature claims,
     keywords, plan gate, preview/screenshots, demo health and catalog
@@ -5278,10 +5339,11 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     categories/products+variants — imagery
     bundled under `public/themes/{id}/`; **basket** is the grocery/F&B
     reference template with real Unsplash photography, per
-    docs/vertical-templates-plan.md §9.1, and the default theme; **studio** and
+    docs/vertical-templates-plan.md §9.1, and the registry fallback (`DEFAULT_THEME_ID`;
+    signup no longer installs any theme); **studio** and
     **ritual** are published `0.1.0` editorial home-design and botanical-wellness
     themes with generated, provenance-logged imagery, available from the
-    dashboard's Themes page and the public catalog after their 2026-08-12
+    dashboard's Storefront page and the public catalog after their 2026-08-12
     production/demo audits — the
     Arcade/Fresko placeholders were retired 2026-07-04),
     `definitions/vitrine.ts` (a
@@ -5292,7 +5354,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     passed. Its ten `public/themes/vitrine/*.webp` assets are bundled, and the
     healthy `demo-vitrine` store is seeded on staging and production.
     `visibility: public` and `status: published` expose it in both the public
-    catalog and the dashboard's Themes page.
+    catalog and the dashboard's Storefront page.
     ★ Its product crops are SQUARE (1000×1000), not the 4:3 Studio/Ritual use,
     because this theme renders cards at 1:1 and a 4:3 source would be
     centre-cropped through the toe of the shoe. Imagery is rebuilt from three
@@ -5309,19 +5371,36 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     store-scoped DB content rather than theme-package state. Rendering reads
     the pin first and falls back to legacy `template`, so existing stores need
     no migration; old immutable releases stay in `THEME_DEFINITIONS` when a
-    preset advances. `createStore` (signup) calls it with the platform default
-    theme (published immediately; brand NAME preserved); signup no longer asks.
+    preset advances. **★★ SIGNUP INSTALLS NO THEME (2026-10-11).** `createStore`
+    writes `settings.themePending: true` and seeds nothing (no pages, menus or
+    products; the store name lives in `stores.name` and `settings.brand.name`),
+    and ignores a posted `template`. `isThemePending` (lib/store/launch-state.ts)
+    is true ONLY for that explicit `true`, so every store created before it,
+    and the fallback store, behaves exactly as before. While it is set the
+    storefront redirects everyone past the password to `/in-progress` (§7), the
+    Website Builder shows a choose-a-theme prompt instead of the editor, and the
+    go-live checklist's "Choose your storefront theme" task holds the store
+    closed. The owner's FIRST choice on the Storefront page installs a theme
+    (below) and deletes the key.
     `settings.theme.homepageSeededAt` records when the theme last wrote the
     homepage, which `homepageEditedSinceSeed` reads.
-    **★★ SWITCHING THEMES FROM THE DASHBOARD (2026-10-10).** `/dashboard/themes`
-    (permission section `themes`, view/manage, Storefront group; its own key,
-    not `builder`'s) shows the current theme with Customize (Website Builder)
-    and the public library newest first, with industry filters, Preview on a
-    healthy demo store, a plan lock with an Upgrade link, and **Use this
-    theme**. `switchStoreTheme` (app/actions/theme-actions.ts, gated on
-    `getManagerIdentity("themes")`) accepts only a selectable catalogue id
-    (the createStore rule) and refuses when the registry would substitute
-    another theme. `lib/themes/switch.ts` reads the facts and writes;
+    **★★ CHOOSING AND SWITCHING THEMES FROM THE DASHBOARD (2026-10-10; renamed
+    2026-10-11).** `/dashboard/storefront` — sidebar label and page heading
+    "Storefront", in the "Online store" group; it was `/dashboard/themes`,
+    which next.config.ts 307s here on store hosts only (the operator console
+    has its own `/dashboard/themes`). The permission KEY is still `themes`
+    (view/manage; its own key, not `builder`'s), because saved roles store the
+    key. "Your theme" shows the current theme with Customize (Website Builder)
+    and View your store — or, while the store is theme-pending, an empty state
+    ("You haven't chosen a theme yet", and that the storefront shows a
+    store-in-progress page until then) with no Customize, View your store or
+    In use badge; the page passes `currentId = null` whenever
+    `facts.firstTheme`. The "Theme library" lists the public catalogue newest
+    first, with industry filters, Preview on a healthy demo store, a plan lock
+    with an Upgrade link, and **Use this theme**. `switchStoreTheme`
+    (app/actions/theme-actions.ts, gated on `getManagerIdentity("themes")`)
+    accepts only a selectable catalogue id and refuses when the registry would
+    substitute another theme. `lib/themes/switch.ts` reads the facts and writes;
     `lib/themes/switch-rules.ts` (pure, also used by the confirm dialog, so
     the dialog cannot promise one thing while the server does another)
     decides what may change: the design pin ALWAYS; the homepage only while
@@ -5338,7 +5417,30 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     never touched. The design write is the one that must land; the rest is
     best-effort and reported as warnings. Demo and Theme Studio preview
     stores are refused, as are themes above the store's plan and the theme
-    already in use. `seedSampleCatalogue`, `seedMenus`, `prepareSections` and
+    already in use. **★ A FIRST INSTALL never overwrites anything the seller
+    already made.** `loadThemeSwitchContext` reads `themePending` as
+    `facts.firstTheme` and never looks up a "current" theme (an existing
+    homepage with sections counts as the seller's; an empty one, like the
+    Builder's blank draft, as missing), and `planThemeSwitch`'s first-theme
+    branch: creates the homepage from the theme unless the seller has one
+    (kept, or saved as a draft first on the same opt-in); ALWAYS adds the
+    theme's starting pages, but only at free slugs and with do-nothing on
+    conflict, so Terms/Refund/Shipping/Privacy pages written in Settings →
+    Policies at those slugs survive untouched; seeds the sample products (as
+    drafts), categories and menus only when the store has no products, no
+    categories, never took an order and has no `store_chrome` row
+    (`catalogueIsEmpty && !hasBuilderChrome`); applies the brand colour only if
+    unset (tagline and blurb only if empty). The pin (`settings.theme` with
+    `homepageSeededAt`) and deleting `themePending` are ONE locked transaction;
+    a tab that lost the race to another first choice is told "A theme was just
+    chosen for your store. Reload the page to see it." and writes nothing.
+    "Already your theme" never fires for a pending store. A first install calls
+    `updateTag(STORE_TAG)` so `/in-progress` ends on the next request, and
+    `describeThemeSwitch` words it truthfully (the storefront "gets" the theme
+    and stops showing the store-in-progress page; starting pages go only where
+    the store has no page, "like your policies"; "You can switch to another
+    theme any time."); the dialog title reads "Use {name}?".
+    `seedSampleCatalogue`, `seedMenus`, `prepareSections` and
     `revalidateThemeSeed` are exported from apply.ts for it. v1 constraints are
     production functions in `lib/themes/validation.ts` (Theme Studio's
     acceptance gates run them too), asserted for every bundled theme by
@@ -5354,12 +5456,13 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     **Demo stores**: one per theme
     (`demo-{id}` — the namespace is blocked at signup), seeded/reseeded via
     `seedDemoStore` (platform superadmin action) from the Themes panel on the
-    platform stores console; the dashboard Themes page's Preview opens
+    platform stores console; the dashboard Storefront page's Preview opens
     `https://demo-{id}.{ROOT_DOMAIN}` only when manifest demo health is
     `healthy`; an unavailable demo renders a disabled, explanatory control
-    instead of opening a known 404. `createStore` repeats catalog visibility
-    validation server-side, so posting a hidden/draft/unknown id around the
-    UI cannot install it; `switchStoreTheme` applies the same rule.
+    instead of opening a known 404. `switchStoreTheme` repeats catalog
+    visibility validation server-side, so posting a hidden/draft/unknown id
+    around the UI cannot install it (signup ignores a posted `template`
+    altogether).
     ★ **A DEMO CARRIES THE THEME'S OWN NAME** (2026-10-03). Every seeder —
     `seedDemoStore`, Theme Studio publication's `seedDemo` and
     `scripts/seed-demo-store.ts` — writes the row through ONE helper,
@@ -8961,12 +9064,16 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     from) → plan → dashboard. Stages Account → Store → Plan.** The wizard
     used to ask for the password on a second screen, verify a phone on a
     third and choose a theme on a fourth.
-    **★★ NO THEME STEP.** Every store opens on the platform default
-    (`DEFAULT_THEME_ID`, else the first selectable theme): `createStore`'s
-    `template` is optional and the wizard never sends one. The owner chooses
-    a theme from the dashboard's Themes page (`/dashboard/themes`, §11), the
-    way Shopify starts every store on one theme. The layout no longer reads
-    the theme catalogue at all.
+    **★★ NO THEME STEP, AND NO THEME (owner, 2026-10-11).** A new store is
+    NOT started on Basket or any other theme: `createStore` installs nothing,
+    writes `settings.themePending: true` and inserts only the store, its owner
+    and its invoice profile (a posted `template` is ignored; the
+    `platform.store_created` event no longer carries one). Until the owner
+    chooses a theme from the dashboard's Storefront page
+    (`/dashboard/storefront`, §11), everyone who gets past the store password,
+    the owner included, sees the "Store in progress" page (§7), and choosing
+    one is a required go-live task. The layout no longer reads the theme
+    catalogue at all.
     **★★ THE PLAN STEP** (`plan-picker.tsx` + the page): Free / Basic / Pro
     cards with a Monthly/Yearly switch, priced from the LIVE quote at
     `GET /api/plans/pricing` (`{ plans, paidCheckout }`; a GET, not a Server
@@ -9035,7 +9142,8 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     store. It is classified exactly like `localhost` (platform at the apex,
     `pos.`/`help.`/`themes.` reserved, stores on subdomains) and it is an
     AUTHORIZED DOMAIN on the staging Identity Platform project (added
-    2026-10-08; one entry covers every subdomain). ★ Unlike `localhost`, it is
+    2026-10-08; for Google popups one entry covers every subdomain, but phone
+    codes need each exact host listed — §30). ★ Unlike `localhost`, it is
     a real registrable domain, so `cookieDomainForHost` returns
     `.localtest.me` and the signup → dashboard session handoff works locally
     the way it does on `.storemink.com` — the "flaky on localhost" handoff
@@ -13870,34 +13978,59 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       failing `auth/unauthorized-domain` before any popup opens — so on a
       merchant's own domain that button was dead while email+password worked,
       because password sign-in is a plain REST call and is not origin-gated.
-    - **★ ONE ENTRY COVERS EVERY SUBDOMAIN.** `matchDomain` in
-      `@firebase/auth` v12 builds
-      `^(.+\.<escaped>|<escaped>)$`, so a listed `storemink.com` authorises
-      `storemink.com` AND every `*.storemink.com`. **There is no bug on store
-      subdomains** — and the earlier §7 instruction to add `*.storemink.com`
-      was both unnecessary and impossible, since **Firebase rejects wildcards
-      in this list**. `entryCovers` mirrors that regex; keep it in step with
-      the SDK, because if the rule ever tightens this becomes an
-      over-estimate and `planAdd` would skip entries that are needed.
-    - The entry added is the **registrable** domain (`entryForDomain` via the
-      PSL), so apex + www + anything else the merchant points at us is covered
-      by one entry — listing `www.xyz.com` alone would leave the apex, the
-      commoner address, unauthorised.
-    - `ensureAuthorizedDomain` runs on the `becameLive` edge, **best effort**:
-      a failure leaves password sign-in working and the next reconcile
-      retries; it must never un-verify a live domain.
-      `removeAuthorizedDomain` runs on disconnect AND on a domain change —
-      an entry for a host we no longer serve is standing permission to run
-      popup sign-in against our project, which matters most if someone else
-      later buys that domain.
-    - **★ `planRemove` REMOVES BY EXACT ENTRY, NEVER BY COVERAGE, and refuses
-      protected entries.** Coverage-based removal is the trap: a
-      subdomain-shaped input would match and delete `storemink.com`, killing
-      Google sign-in for the platform and every store subdomain in one call.
-      Same class of guard as `assertManaged`.
-    - ⚠ Read-modify-write on a project-global list, so two domains verifying
-      in the same second can lose one update. Deliberately not locked — the
-      loser is retried, and the cost is one merchant briefly using a password.
+    - **★ FOR GOOGLE POPUPS, ONE ENTRY COVERS EVERY SUBDOMAIN; FOR PHONE
+      CODES IT DOES NOT.** `matchDomain` in `@firebase/auth` v12 builds
+      `^(.+\.<escaped>|<escaped>)$`, so a listed `storemink.com` lets
+      `signInWithPopup` run on every `*.storemink.com` (`entryCovers` mirrors
+      it). ★★ But phone sign-in's SERVER-SIDE reCAPTCHA check matches the
+      EXACT hostname: on production `echoss.storemink.com` answered every code
+      request with `CAPTCHA_CHECK_FAILED : Hostname match not found` while
+      `storemink.com` was listed, and adding the exact host fixed it at once
+      (2026-10-10). So storefront sign-in, enquiries, POS customer checks and
+      the dashboard mobile check had been broken on every store subdomain. The
+      reCAPTCHA Enterprise audit verdicts that all read `invalid` are most
+      likely the same cause — confirm on the verdict_count metric once hosts
+      are listed. Firebase rejects wildcards, so `lib/auth/authorized-domains.ts`
+      now keeps each EXACT host listed (`ensureAuthorizedHosts` /
+      `removeAuthorizedHosts`, one read-modify-write with
+      `updateMask=authorizedDomains`): a store's `{slug}.{ROOT_DOMAIN}` at
+      `createStore` (deferred, best effort), removed by `deleteStore`; a custom
+      domain's apex AND www on go-live, removed on detach; and the hourly
+      `/api/cron/domain-reconcile` re-adds anything missing for every active
+      store (`syncStoreAuthHosts`, add-only — it is also the backfill), with
+      `npm run auth:sync-hosts` (dry run unless `--commit`) to do it by hand.
+      Demo and Theme Studio preview stores take no sign-ins and are never
+      listed; local roots are skipped. ⚠ Firebase publishes no cap on the
+      list; we warn at 150 entries. If the store count approaches that, the
+      planned answer is a central phone-verification frame served from
+      `storemink.com`, so stores need no entries at all.
+    - **Only EXACT hosts are added** — the custom domain's apex AND www
+      (`domainHosts`), never its registrable domain. ★ The registrable entry
+      the old popup model added was a hole: tldts' ICANN list makes
+      `acme.eu.org` → `eu.org` and `shop.vercel.app` → `vercel.app`, which
+      would authorise Google popups on every site under the suffix. Removal
+      still clears that legacy entry (`legacyRegistrableEntry`) so lists
+      written before the change are cleaned up on detach.
+    - `ensureAuthorizedDomain` runs only on the `becameLive` edge, **best
+      effort**: a failure leaves the domain live and the hourly
+      `syncStoreAuthHosts` pass adds anything missing (it is also what gave
+      domains that went live before exact hosts were tracked their hosts).
+      ⚠ It was briefly called on every healthy health check too; that put up
+      to 30 s of Identity Platform latency per live domain inside the sweep's
+      300 s budget, so it moved back to the edge.
+      `removeAuthorizedDomain` runs on disconnect AND on a domain change.
+    - **★ REMOVAL IS EXACT, NEVER BY COVERAGE, AND CHECKS WHO STILL SERVES
+      THE HOST.** `planRemoveHosts` refuses protected entries (the root, the
+      platform's own `www.`/`app.`/`help.`/`pos.`/`themes.` hosts, the local
+      dev roots `localhost`/`localtest.me`, and Firebase's own) and
+      `hostsStillServed` keeps any host another store still serves (two stores
+      can hold `acme.com` and `www.acme.com`); if that read fails, nothing is
+      removed.
+    - ⚠ Read-modify-write on a project-global list with no etag, so two
+      writers in the same second can lose one update (a signup's host, or a
+      host a detach just removed coming back). Deliberately not locked: the
+      hourly add-only sync restores lost hosts within an hour, and a host
+      wrongly restored only costs an extra entry.
     - Needs `roles/firebaseauth.admin` on the runtime SA (it has it; the role
       includes `firebaseauth.configs.get`/`.update`).
     - **⚠ THE INFRASTRUCTURE IS THE OTHER HALF, AND IT IS NOT IN CODE.** Four
@@ -16836,13 +16969,15 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
       no app redirect URIs go into Google — only Firebase's own auth handler does.
     - **Authorized domains** (Authentication → Settings): list every host the app
       runs on so popup + email-link work — `localhost` and `storemink.com` (+ the
-      staging equivalents). **ONE entry covers every subdomain**: the SDK matches
-      `^(.+\.<entry>|<entry>)$`, so `storemink.com` authorises every
-      `{slug}.storemink.com` and **`*.storemink.com` is neither needed nor
-      accepted — Firebase rejects wildcards here.** MERCHANT custom domains are
-      not covered by anything and are added automatically on verification (§30,
-      `lib/auth/authorized-domains.ts`); without that, "Continue with Google" is
-      dead on a merchant's own domain while email+password still works. Unlike Supabase there is NO
+      staging equivalents). For POPUPS one entry covers every subdomain (the SDK
+      matches `^(.+\.<entry>|<entry>)$`), but **PHONE CODES need every EXACT
+      host listed** — `CAPTCHA_CHECK_FAILED : Hostname match not found`
+      otherwise — and **Firebase rejects wildcards**. The app maintains the
+      exact entries itself: each store's subdomain from signup, each custom
+      domain's apex + www from go-live, and an hourly repair pass (§30,
+      `lib/auth/authorized-domains.ts`). Without them, phone sign-in fails on
+      that store and "Continue with Google" is dead on a merchant's own
+      domain while email+password still works. Unlike Supabase there is NO
       per-path Redirect-URL matrix; popup / email-link just need the domain
       authorized. Cross-subdomain session cookies still span `.storemink.com`
       (set by `/api/auth/session`), so the signup→dashboard handoff works across
@@ -17073,9 +17208,10 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   `stores.settings.launched` is ONE flag behind two things: search
   indexability (as before) and, now, the **storefront password page**.
   `isStoreLaunched` / `isDemoStore` / `isStoreSearchIndexable` /
-  `isStorefrontGated` are pure predicates in `lib/store/launch-state.ts` (no
-  imports, so the host resolver can read them without a cycle; `launch.ts`
-  re-exports them). At creation a store is pure theme seed — the same
+  `isStorefrontGated` / `isThemePending` are pure predicates in
+  `lib/store/launch-state.ts` (no imports, so the host resolver can read them
+  without a cycle; `launch.ts` re-exports them). At creation a store was then
+  pure theme seed (since 2026-10-11 it has no theme at all, below) — the same
   homepage, ~17 content pages and sample catalogue as every other store on
   that template — and until this change the flag flipped on the FIRST PUBLISH
   of anything (page, product, blog, CSV import, Mink publication), so a shop
@@ -17091,13 +17227,27 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   behind the password redirect and robots/sitemap already say `noindex`.
   ★ **The checklist is predicates over real rows, never tick boxes**
   (`lib/store/launch-checklist-rules.ts` pure + `launch-checklist.ts` reads).
-  REQUIRED: the owner's verified mobile (first; a superadmin admins row
-  with `phone_verified_at`, never bare `phone`, which invited staff type
-  unchecked); one published non-sample product (samples are named "… (Sample)"
-  and seed as drafts); business name, address, email and phone in
-  `store_billing_settings`; Terms, Refund & Cancellation, Shipping and Privacy
-  policies published (the Settings → Policies registry, pinned equal by test);
-  Shipping & delivery saved once. RECOMMENDED, never blocking: homepage edited
+  ★★ REQUIRED IS FIVE TASKS, GROUPED (owner, 2026-10-11: nine rows read as a
+  wall), and grouping drops no requirement — every step is still its own
+  predicate and a grouped task is done only when all its steps are, in order:
+  (1) `phone` "Verify your mobile number" — the owner's verified mobile (a
+  superadmin admins row with `phone_verified_at`, never bare `phone`, which
+  invited staff type unchecked), verified inline; (2) `theme` "Choose your
+  storefront theme" — `!isThemePending(store)`, read from the store row in
+  hand, so it costs no query and every store without the key has it done;
+  (3) `products` "Add your first product" — one published non-sample product
+  (samples are named "… (Sample)" and seed as drafts); (4) `business` "Add your
+  business and delivery details" — two STEPS: business name, address, email
+  and phone in `store_billing_settings` (→ Taxes & invoices), and Shipping &
+  delivery saved once; (5) `policies` "Publish your store policies" — four
+  STEPS, Terms & Conditions, Refund & Cancellation, Shipping and Privacy
+  published (the Settings → Policies registry, pinned equal by test), one
+  destination. `groupedTask()` builds a grouped task from its steps, so its
+  tick, link and refusal cannot disagree with them: the button goes to the
+  first unfinished step's page (steps sharing one page share one button), and
+  the go-live refusal names outstanding tasks with their open steps in
+  brackets ("Publish your store policies (Refund & Cancellation, Privacy)").
+  `launchStore` re-runs the whole checklist. RECOMMENDED, never blocking: homepage edited
   since seeding (updated_at more than a minute after created_at), logo, sample
   products removed, payments connected (COD works out of the box, and Free has
   no online payments, so requiring it would mean no Free store ever opens),
@@ -17117,8 +17267,25 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   preview is the one exception, or the builder is blind until launch. The layout renders a locked visitor a minimal
   shell (brand tokens, no header/footer/cart, since every link in them would
   lead back to the password page). `/password` (`(storefront)/(pages)/password`,
-  reserved in `RESERVED_PAGE_SLUGS` and `STOREFRONT_CODE_ROUTES`) is the one
-  storefront page that does NOT call `requireStorefrontStore()`.
+  reserved in `RESERVED_PAGE_SLUGS` and `STOREFRONT_CODE_ROUTES`) does NOT
+  call `requireStorefrontStore()`.
+  ★★ **A STORE WITH NO THEME SHOWS "STORE IN PROGRESS" (2026-10-11).** Signup
+  installs no theme (§11), so after the password check `requireStorefrontStore()`
+  sends every visitor of an `isThemePending` store — the owner included, and
+  the builder preview too — to `/in-progress`
+  (`STOREFRONT_IN_PROGRESS_PATH`, `(storefront)/(pages)/in-progress`, also in
+  `RESERVED_PAGE_SLUGS` and `STOREFRONT_CODE_ROUTES`). Order is host 404 →
+  password → theme, so a locked visitor never learns the store has no theme;
+  `/password` sends an unlocked visitor to `/`, which then lands here. The page
+  is the password page's card: the brand name or logo, "This store is being set
+  up. Please check back soon." and an "Are you the owner? Choose a theme in your
+  dashboard" link to `/dashboard/storefront`, `noindex`. It does not call
+  `requireStorefrontStore()` (that would loop); it repeats the three checks
+  itself and redirects to `/` once a theme is chosen. The layout picks its
+  shell with `storefrontShell(store, access)` — "bare" for a locked visitor or
+  a pending store, "full" otherwise. A pending store is never launched (the
+  checklist's theme task blocks Go live), so this page is only ever seen
+  behind the password. Stores without the key never see it.
   ★ **The password is a secret, and `stores.settings` is anon-readable**
   (§5.9), so it lives in service-only `store_access`
   (`20261007_0170_store_access`; `password`, `password_version`), created on
@@ -17150,9 +17317,12 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   ("Free plan · Upgrade", with the next plan's unlocks in its title, derived
   from `PLAN_LIMITS` via `lib/plans/upgrade-summary.ts`); then the card whose
   HEAD is the store password (Copy / New / Preview) and the Go live button,
-  and whose body is the required tasks as an accordion — exactly one open, the
-  first unfinished, showing its description and a button that goes there
-  (`LaunchChecklistItem.action`). **Recommended renders only once every
+  and whose body is the five required tasks as an accordion ("x of 5 done") —
+  exactly one open, the first unfinished, showing its description and a button
+  that goes there (`LaunchChecklistItem.action`); a grouped task lists its
+  steps inside, each with its own tick, Done/To do text for screen readers and
+  an "n of m" count, so the card stays five rows long without hiding a
+  requirement. **Recommended renders only once every
   required task is done, and folds** (collapsed by default with a count).
   Mink's prompt, the six setup tiles and "All caught up" return once the store
   is open. `setup-guide.test.tsx` pins the open-first-unfinished, hidden-then-
@@ -17174,14 +17344,19 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   merchant's own login and session are never touched, which is what lets a
   number that is also a shopper's identity verify. A save that fails after
   Firebase accepted the code keeps the proof, so **Try again** needs no new
-  code (pinned and mutation-checked in `verify-phone-form.test.tsx`). The `store.created` welcome says the store is READY, not live, and
-  lists the required tasks (the mobile first) at their real routes. Help:
+  code (pinned and mutation-checked in `verify-phone-form.test.tsx`). The `store.created` welcome says the store is READY, not live, that its
+  address shows a store-in-progress page until a theme is chosen, and lists
+  the same five tasks in the same order at their real routes. Help:
   `20261007_0171_launch_checklist_help` edits the signup and setup guides in
   place; `20261008_0173_owner_password_help` corrects the setup guide to say
   the owner enters the password too; `20261010_0182_signup_plan_and_themes_help`
   edits the signup, setup, account and plans guides for the three-step
   signup, the checklist's mobile task and themes chosen from the dashboard,
-  and publishes "Change your storefront theme". ★ "Personalise your
+  and publishes "Change your storefront theme";
+  `20261011_0183_storefront_theme_help` edits the signup, setup, theme,
+  dashboard and first-product guides for the theme-less start, the
+  store-in-progress page, Storefront under Online store and the five grouped
+  tasks. ★ "Personalise your
   homepage" is measured from when the THEME last wrote the homepage
   (`settings.theme.homepageSeededAt`, falling back to the row's creation),
   through `homepageEditedSinceSeed` in lib/themes/switch-rules.ts, so a
