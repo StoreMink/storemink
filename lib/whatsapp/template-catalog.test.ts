@@ -5,8 +5,10 @@ import {
   WHATSAPP_TEMPLATE_CATALOG,
   bodyPlaceholders,
   catalogTemplateFor,
+  pickTemplateRow,
   renderWhatsAppBody,
   templateComponentsFor,
+  templateNameVersion,
   whatsAppParameterText,
 } from "./template-catalog";
 
@@ -70,6 +72,30 @@ describe("WHATSAPP_TEMPLATE_CATALOG", () => {
     expect(catalogTemplateFor("order.placed", "nobody")).toBeUndefined();
   });
 
+  // ★ Meta rejected the pickup-ready template as INCORRECT_CATEGORY twice: a
+  // promotional opener reads as MARKETING, and the collection code reads as
+  // an AUTHENTICATION code whatever it is called ("code", "pickup reference").
+  // Probes without it were accepted as UTILITY. Pinned so no body brings
+  // either back.
+  it("no UTILITY body reads as marketing or carries a verification-style code", () => {
+    for (const t of WHATSAPP_TEMPLATE_CATALOG) {
+      expect(t.body, t.name).not.toMatch(
+        /^(good news|great news|congratulations|hurry|exciting)/i,
+      );
+      expect(t.body, t.name).not.toMatch(/\bcode\s*\{\{/i);
+      expect(t.variables, t.name).not.toContain("collection_code");
+    }
+  });
+
+  it("a reworded entry gets a new name; the others keep theirs", () => {
+    expect(catalogTemplateFor("order.ready_for_pickup", "customer")?.name).toBe(
+      "sm_order_ready_for_pickup_customer_v3",
+    );
+    expect(catalogTemplateFor("order.placed", "customer")?.name).toBe(
+      "sm_order_placed_customer_v1",
+    );
+  });
+
   it("the components array carries the body and its examples", () => {
     const t = catalogTemplateFor("order.placed", "customer")!;
     expect(templateComponentsFor(t)).toEqual([
@@ -97,5 +123,49 @@ describe("renderWhatsAppBody", () => {
     expect(
       renderWhatsAppBody("Order {{1}} at {{2}}: {{3}}.", ["ORD1", "Acme"]),
     ).toBe("Order ORD1 at Acme: -.");
+  });
+});
+
+describe("templateNameVersion", () => {
+  it("reads the _v<n> suffix, and 0 for a name without one", () => {
+    expect(templateNameVersion("sm_order_placed_customer_v1")).toBe(1);
+    expect(templateNameVersion("sm_order_ready_for_pickup_customer_v12")).toBe(
+      12,
+    );
+    expect(templateNameVersion("diwali_promo")).toBe(0);
+  });
+});
+
+describe("pickTemplateRow", () => {
+  const V1 = "sm_order_ready_for_pickup_customer_v1";
+  const V2 = "sm_order_ready_for_pickup_customer_v2";
+  const row = (name: string, status: string) => ({ name, status });
+
+  it("★ the current version wins once approved, whatever the row order", () => {
+    const rows = [row(V2, "APPROVED"), row(V1, "APPROVED")];
+    expect(pickTemplateRow(rows, V2)?.name).toBe(V2);
+    expect(pickTemplateRow([...rows].reverse(), V2)?.name).toBe(V2);
+  });
+
+  it("★ an older approved version keeps sending while the new one is in review", () => {
+    const rows = [row(V1, "APPROVED"), row(V2, "PENDING")];
+    expect(pickTemplateRow(rows, V2)?.name).toBe(V1);
+  });
+
+  it("★ a rejected old version never hides its replacement", () => {
+    const rows = [row(V1, "REJECTED"), row(V2, "PENDING")];
+    expect(pickTemplateRow(rows, V2)?.name).toBe(V2);
+  });
+
+  it("without a current name, the newest approved, then the newest", () => {
+    expect(
+      pickTemplateRow([row(V1, "APPROVED"), row(V2, "APPROVED")], undefined)
+        ?.name,
+    ).toBe(V2);
+    expect(
+      pickTemplateRow([row(V1, "REJECTED"), row(V2, "PENDING")], undefined)
+        ?.name,
+    ).toBe(V2);
+    expect(pickTemplateRow([], V2)).toBeUndefined();
   });
 });

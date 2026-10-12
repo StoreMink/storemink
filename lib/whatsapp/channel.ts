@@ -13,6 +13,7 @@ import { effectivePlan, limitsFor } from "@/lib/plans";
 import { resolveStoreSettings } from "@/lib/settings/registry";
 import { logError } from "@/lib/observability/logger";
 import { textablePhone } from "@/lib/phone";
+import { catalogTemplateFor, pickTemplateRow } from "./template-catalog";
 
 // ---------------------------------------------------------------------------
 // Can this store send THIS notification on WhatsApp, to THIS person?
@@ -159,6 +160,7 @@ export async function loadWhatsAppTemplates(
         audience: whatsappTemplates.audience,
         name: whatsappTemplates.name,
         language: whatsappTemplates.language,
+        status: whatsappTemplates.status,
         variables: whatsappTemplates.variables,
         components: whatsappTemplates.components,
       })
@@ -171,8 +173,18 @@ export async function loadWhatsAppTemplates(
           eq(whatsappTemplates.enabled, true),
         ),
       );
-    for (const r of rows) {
-      if (!r.audience) continue;
+    // ★ ONE ROW PER AUDIENCE, CHOSEN, NOT WHICHEVER CAME LAST: a new catalogue
+    // version and the older one it replaces can both be APPROVED, and the
+    // current wording must win (pickTemplateRow).
+    const audiences = new Set(
+      rows.map((r) => r.audience).filter((a): a is string => Boolean(a)),
+    );
+    for (const audience of audiences) {
+      const r = pickTemplateRow(
+        rows.filter((row) => row.audience === audience),
+        catalogTemplateFor(eventKey, audience)?.name,
+      );
+      if (!r?.audience) continue;
       out.set(r.audience, {
         id: r.id,
         audience: r.audience,

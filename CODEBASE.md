@@ -190,6 +190,26 @@ refusal lands in the new `sync_error` column — distinct from
 `rejection_reason`, which is Meta turning DOWN a template it accepted for
 review. Status comes from Meta only: the create response, `sync` (listing by
 name on Refresh), or the status webhook 0174 already handled.
+★★ CHANGED WORDING IS A NEW NAME, ONE ENTRY AT A TIME (2026-10-13). Meta
+fixes a name's wording once submitted, so `def()` takes a per-entry
+`version`; bumping the shared `WHATSAPP_TEMPLATE_VERSION` would rename and
+resubmit all 19. Two versions of one template then coexist in
+`whatsapp_templates`, so `pickTemplateRow` is the ONE rule the send path
+(`loadWhatsAppTemplates`), the card's count (current catalogue names only)
+and the console's WhatsApp tab all use: the current version once APPROVED,
+an older APPROVED one until then (Meta does not withdraw it), else the
+current row. First use: Meta rejected the pickup-ready template as
+INCORRECT_CATEGORY at submission, TWICE. v1 opened "Good news from…"
+(marketing) and asked to "Show the code…"; v2 dropped the opener and still
+carried the collection code as a "pickup reference", and was refused the same
+way. Throwaway probes on the test account without the code were accepted as
+UTILITY, so the code itself reads as AUTHENTICATION to Meta however it is
+worded. `_v3` names the order number instead, which the counter accepts as
+well as the code, with the hand-over still OTP-verified (§23); the code stays
+in the email and on the collect page. `template-catalog.test.ts` now refuses a
+promotional opener, "code {{n}}" or a `collection_code` variable in any
+UTILITY body. ⚠ A store already connected gets a new version only from
+**Set up templates** (or a reconnect); nothing resubmits on its own.
 ★ A CUSTOMER NEEDS THEIR OWN YES (`whatsapp_contacts`, migration 0175): the
 checkout shows two boxes ONLY when `getCheckoutConfig().whatsapp` is true —
 updates ticked by default, offers never (§19.2) — and `placeOrder` records

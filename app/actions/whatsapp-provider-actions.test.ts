@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeDbMock } from "./_test-helpers";
+import { makeDbMock, sqlParamValues } from "./_test-helpers";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/app/dashboard/lib/access", () => ({
@@ -35,6 +35,7 @@ import {
   connectWhatsApp,
   disconnectWhatsApp,
   getWhatsAppChannelState,
+  getWhatsAppTemplatesForEvent,
   setWhatsAppEnabled,
 } from "./whatsapp-provider-actions";
 
@@ -181,5 +182,58 @@ describe("setWhatsAppEnabled", () => {
     dbHolder.current = makeDbMock({ selectByTable: { stores: [FREE_STORE] } });
     expect((await setWhatsAppEnabled(true)).error).toMatch(/Basic plan/);
     expect((await setWhatsAppEnabled(false)).success).toBe(true);
+  });
+});
+
+describe("template versions", () => {
+  const V1 = "sm_order_ready_for_pickup_customer_v1";
+  const V2 = "sm_order_ready_for_pickup_customer_v3"; // the current name
+  const tplRow = (name: string, status: string, text: string) => ({
+    id: name,
+    audience: "customer",
+    name,
+    status,
+    rejectionReason: status === "REJECTED" ? "INCORRECT_CATEGORY" : null,
+    syncError: null,
+    quality: null,
+    lastSyncedAt: null,
+    components: [{ type: "BODY", text }],
+    variables: ["subject_label"],
+  });
+
+  it("★ the console shows the replacement, not the rejected version it replaces", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        whatsapp_templates: [
+          [tplRow(V1, "REJECTED", "old"), tplRow(V2, "PENDING", "new")],
+        ],
+      },
+    });
+    const { templates } = await getWhatsAppTemplatesForEvent(
+      "order.ready_for_pickup",
+    );
+    const customer = templates.find((t) => t.audience === "customer");
+    expect(customer).toMatchObject({
+      name: V2,
+      status: "PENDING",
+      body: "new",
+    });
+  });
+
+  it("★ the card counts only current catalogue names", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        store_whatsapp_accounts: [ACCOUNT],
+        stores: [BASIC_STORE],
+        whatsapp_templates: [[{ status: "PENDING", n: 19 }]],
+      },
+    });
+    const s = await getWhatsAppChannelState();
+    expect(s.templates).toMatchObject({ pending: 19, total: 19 });
+    const params = dbHolder.current.calls.where.flatMap((w: any) =>
+      sqlParamValues(w),
+    );
+    expect(params).toContain(V2);
+    expect(params).not.toContain(V1);
   });
 });

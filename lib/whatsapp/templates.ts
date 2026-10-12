@@ -359,6 +359,7 @@ export async function listTemplateRowsForEvent(
     quality: string | null;
     lastSyncedAt: string | null;
     body: string;
+    variables: string[];
   }[]
 > {
   const { bodyFromComponents } = await import("./channel");
@@ -374,6 +375,7 @@ export async function listTemplateRowsForEvent(
         quality: whatsappTemplates.quality,
         lastSyncedAt: whatsappTemplates.lastSyncedAt,
         components: whatsappTemplates.components,
+        variables: whatsappTemplates.variables,
       })
       .from(whatsappTemplates)
       .where(
@@ -395,5 +397,6 @@ export async function listTemplateRowsForEvent(
       quality: r.quality,
       lastSyncedAt: r.lastSyncedAt,
       body: bodyFromComponents(r.components),
+      variables: Array.isArray(r.variables) ? (r.variables as string[]) : [],
     }));
 }

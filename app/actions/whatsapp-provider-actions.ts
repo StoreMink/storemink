@@ -35,11 +35,14 @@ import {
   listTemplateRowsForEvent,
   syncWhatsAppTemplates,
 } from "@/lib/whatsapp/templates";
-import { WHATSAPP_TEMPLATE_CATALOG } from "@/lib/whatsapp/template-catalog";
+import {
+  WHATSAPP_TEMPLATE_CATALOG,
+  pickTemplateRow,
+} from "@/lib/whatsapp/template-catalog";
 import { whatsAppChatLink } from "@/lib/whatsapp/chat-link";
 import { getCurrentStore } from "@/lib/store/resolve";
 import { whatsappTemplates } from "@/drizzle/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 export interface WhatsAppChannelState {
   connected: boolean;
@@ -117,7 +120,13 @@ async function templateCounts(
         .where(
           and(
             eq(whatsappTemplates.storeId, storeId),
-            sql`${whatsappTemplates.eventKey} is not null`,
+            // ★ CURRENT CATALOGUE NAMES ONLY. A replaced version (a rejected
+            // v1 beside its v2) is history, and counting it would report
+            // "20 of 19" or a rejection the merchant has nothing to do about.
+            inArray(
+              whatsappTemplates.name,
+              WHATSAPP_TEMPLATE_CATALOG.map((t) => t.name),
+            ),
           ),
         )
         .groupBy(whatsappTemplates.status),
@@ -326,7 +335,14 @@ export async function getWhatsAppTemplatesForEvent(
     const rows = await listTemplateRowsForEvent(storeId, eventKey);
     return {
       templates: catalogue.map((def) => {
-        const row = rows.find((r) => r.audience === def.audience);
+        // The row that is live or awaited (pickTemplateRow), never simply the
+        // first one: an older rejected version would otherwise hide its
+        // replacement, and its own wording would be filled with the new
+        // version's variables.
+        const row = pickTemplateRow(
+          rows.filter((r) => r.audience === def.audience),
+          def.name,
+        );
         return {
           audience: def.audience,
           name: row?.name ?? def.name,
@@ -335,7 +351,10 @@ export async function getWhatsAppTemplatesForEvent(
           syncError: row?.syncError ?? null,
           lastSyncedAt: row?.lastSyncedAt ?? null,
           body: row?.body || def.body,
-          variables: def.variables,
+          variables:
+            row && row.name !== def.name && row.variables.length > 0
+              ? row.variables
+              : def.variables,
         };
       }),
     };

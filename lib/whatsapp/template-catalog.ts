@@ -47,9 +47,11 @@ export interface WhatsAppTemplateDef {
   examples: string[];
 }
 
-/** Bump when a body changes: Meta treats a name as immutable once approved, so
- *  changed copy is a NEW template name, and the old one stays approved for
- *  stores that have not re-synced. */
+/** The version every template starts at. Meta treats a name as immutable once
+ *  submitted, so changed copy is a NEW template name: bump the `version` of
+ *  THAT entry, never this constant, which would rename and resubmit all of
+ *  them. An older version Meta approved keeps sending until the new one is
+ *  approved (`pickTemplateRow`). */
 export const WHATSAPP_TEMPLATE_VERSION = 1;
 
 function def(
@@ -58,11 +60,12 @@ function def(
   body: string,
   variables: string[],
   examples: string[],
+  version: number = WHATSAPP_TEMPLATE_VERSION,
 ): WhatsAppTemplateDef {
   return {
     eventKey,
     audience,
-    name: `sm_${eventKey.replace(/\./g, "_")}_${audience}_v${WHATSAPP_TEMPLATE_VERSION}`,
+    name: `sm_${eventKey.replace(/\./g, "_")}_${audience}_v${version}`,
     language: "en",
     category: "UTILITY",
     body,
@@ -80,24 +83,29 @@ export const WHATSAPP_TEMPLATE_CATALOG: readonly WhatsAppTemplateDef[] = [
     ["store_name", "subject_label", "total", "payment_method"],
     ["Acme Juice", "ORD10010004", "₹1,240.00", "Cash on delivery"],
   ),
+  // ★ v3 (2026-10-13). Meta rejected v1 and v2 as INCORRECT_CATEGORY for
+  // UTILITY, both times at submission. v1 opened with "Good news from …"
+  // (marketing) and asked to "Show the code …"; v2 dropped the opener but
+  // still carried the collection code as a "pickup reference", and was
+  // refused the same way. Probes on the test account (same body without the
+  // code, and with the order number instead) were accepted as UTILITY, so the
+  // code itself reads as AUTHENTICATION to Meta however it is worded. The
+  // counter accepts the order number as well as the code, and hand-over is
+  // verified by an OTP to the order's phone (CODEBASE §23), so the message
+  // names the order number; the code stays in the email and on the collect
+  // page.
   def(
     "order.ready_for_pickup",
     "customer",
-    "Good news from {{1}}: order {{2}} is ready to collect at {{3}}, {{4}}. Show the code {{5}} at the counter.",
+    "Order {{1}} from {{2}} is ready for pickup at {{3}}, {{4}}. Please give your order number at the counter when you collect it.",
+    ["subject_label", "store_name", "pickup_location", "pickup_address"],
     [
-      "store_name",
-      "subject_label",
-      "pickup_location",
-      "pickup_address",
-      "collection_code",
-    ],
-    [
-      "Acme Juice",
       "ORD10010004",
+      "Acme Juice",
       "Connaught Place",
       "12 Radial Road, New Delhi",
-      "PK0M-3T9V",
     ],
+    3,
   ),
   def(
     "order.collected",
@@ -247,6 +255,40 @@ export function catalogTemplateFor(
   audience: string,
 ): WhatsAppTemplateDef | undefined {
   return BY_KEY.get(`${eventKey}:${audience}`);
+}
+
+/** The `_v<n>` a template name ends in; 0 when it carries none (a template
+ *  a merchant authored in WhatsApp Manager). */
+export function templateNameVersion(name: string): number {
+  const m = /_v(\d+)$/.exec(name);
+  return m ? Number(m[1]) : 0;
+}
+
+/**
+ * Which of a store's rows for ONE event and audience counts: the current
+ * catalogue version once Meta approves it; until then an older APPROVED
+ * version, which keeps sending because Meta never withdraws an approval when
+ * we submit new wording; failing both, the current row (in review, rejected)
+ * so the console shows what is being waited on. The newest version breaks
+ * ties. Shared by the send path, the counts and the console, so the three
+ * cannot disagree about which wording is live.
+ */
+export function pickTemplateRow<T extends { name: string; status: string }>(
+  rows: readonly T[],
+  currentName: string | undefined,
+): T | undefined {
+  const newestFirst = [...rows].sort(
+    (a, b) => templateNameVersion(b.name) - templateNameVersion(a.name),
+  );
+  const current = currentName
+    ? rows.find((r) => r.name === currentName)
+    : undefined;
+  if (current?.status === "APPROVED") return current;
+  return (
+    newestFirst.find((r) => r.status === "APPROVED") ??
+    current ??
+    newestFirst[0]
+  );
 }
 
 /** The `{{n}}` placeholders in a body, in order of appearance. */

@@ -130,6 +130,39 @@ describe("loadWhatsAppTemplates", () => {
     });
   });
 
+  it("★ two approved versions of one template: the current catalogue name wins", async () => {
+    const tpl = (name: string, id: string) => ({
+      id,
+      audience: "customer",
+      name,
+      language: "en",
+      status: "APPROVED",
+      variables: [],
+      components: [{ type: "BODY", text: name }],
+    });
+    // v3 is the current catalogue name; v1 is an older approved version.
+    const v1 = tpl("sm_order_ready_for_pickup_customer_v1", "t1");
+    const v2 = tpl("sm_order_ready_for_pickup_customer_v3", "t2");
+    for (const rows of [
+      [v2, v1],
+      [v1, v2],
+    ]) {
+      const map = await loadWhatsAppTemplates(
+        db(rows),
+        "store-1",
+        "order.ready_for_pickup",
+      );
+      expect(map.get("customer")?.id).toBe("t2");
+    }
+    // Until v3 is approved, the approved v1 keeps sending.
+    const map = await loadWhatsAppTemplates(
+      db([v1]),
+      "store-1",
+      "order.ready_for_pickup",
+    );
+    expect(map.get("customer")?.id).toBe("t1");
+  });
+
   it("only ever asks for APPROVED, enabled rows", async () => {
     const d = db([]);
     await loadWhatsAppTemplates(d, "store-1", "order.placed");
