@@ -17,6 +17,8 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/whatsapp/channel", () => ({
   loadWhatsAppSender: vi.fn(),
   bodyFromComponents: vi.fn(() => "Hi {{1}}, your order {{2}} is ready."),
+  templateHasButtons: (c: unknown) =>
+    Array.isArray(c) && c.some((x: any) => x?.type === "BUTTONS"),
 }));
 vi.mock("@/lib/whatsapp/inbox", () => ({
   needsReplyCount: vi.fn(async () => 2),
@@ -95,6 +97,7 @@ beforeEach(() => {
     phoneNumberId: "PN",
     displayPhone: "+91",
     precedence: "whatsapp_first",
+    codConfirmation: false,
   });
   vi.mocked(loadConversation).mockResolvedValue(
     core(new Date().toISOString()) as any,
@@ -269,6 +272,35 @@ describe("sendInboxTemplate", () => {
         })
       ).ok,
     ).toBe(false);
+    expect(sendWhatsAppTemplate).not.toHaveBeenCalled();
+  });
+
+  it("★ refuses a template with buttons, which only the order flow can send", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          {
+            id: TPL,
+            name: "sm_order_placed_customer_cod_confirm_v1",
+            language: "en",
+            variables: ["customer_name", "subject_label"],
+            components: [
+              { type: "BODY", text: "x" },
+              { type: "BUTTONS", buttons: [] },
+            ],
+            audience: "customer",
+            category: "UTILITY",
+          },
+        ],
+      ],
+    });
+    const r = await sendInboxTemplate({
+      conversationId: CONV,
+      templateId: TPL,
+      values: ["Rohan", "ORD1"],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/buttons/);
     expect(sendWhatsAppTemplate).not.toHaveBeenCalled();
   });
 

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeDbMock } from "./_test-helpers";
+import { makeDbMock, sqlParamValues } from "./_test-helpers";
+import { WHATSAPP_TEMPLATE_CATALOG } from "@/lib/whatsapp/template-catalog";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/app/dashboard/lib/access", () => ({
@@ -35,6 +36,7 @@ import {
   connectWhatsApp,
   disconnectWhatsApp,
   getWhatsAppChannelState,
+  getWhatsAppTemplatesForEvent,
   setWhatsAppEnabled,
 } from "./whatsapp-provider-actions";
 
@@ -181,5 +183,101 @@ describe("setWhatsAppEnabled", () => {
     dbHolder.current = makeDbMock({ selectByTable: { stores: [FREE_STORE] } });
     expect((await setWhatsAppEnabled(true)).error).toMatch(/Basic plan/);
     expect((await setWhatsAppEnabled(false)).success).toBe(true);
+  });
+});
+
+describe("template versions", () => {
+  const V1 = "sm_order_ready_for_pickup_customer_v1";
+  const V2 = "sm_order_ready_for_pickup_customer_v3"; // the current name
+  const tplRow = (name: string, status: string, text: string) => ({
+    id: name,
+    audience: "customer",
+    name,
+    status,
+    rejectionReason: status === "REJECTED" ? "INCORRECT_CATEGORY" : null,
+    syncError: null,
+    quality: null,
+    lastSyncedAt: null,
+    components: [{ type: "BODY", text }],
+    variables: ["subject_label"],
+  });
+
+  it("★ the console shows the replacement, not the rejected version it replaces", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        whatsapp_templates: [
+          [tplRow(V1, "REJECTED", "old"), tplRow(V2, "PENDING", "new")],
+        ],
+      },
+    });
+    const { templates } = await getWhatsAppTemplatesForEvent(
+      "order.ready_for_pickup",
+    );
+    const customer = templates.find((t) => t.audience === "customer");
+    expect(customer).toMatchObject({
+      name: V2,
+      status: "PENDING",
+      body: "new",
+    });
+  });
+
+  it("★ the COD wording is its own row: the plain message's approval never shows under it", async () => {
+    const plain = "sm_order_placed_customer_v1";
+    const cod = "sm_order_placed_customer_cod_confirm_v1";
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        whatsapp_templates: [
+          [tplRow(plain, "APPROVED", "plain"), tplRow(cod, "PENDING", "cod")],
+        ],
+      },
+    });
+    const { templates } = await getWhatsAppTemplatesForEvent("order.placed");
+    const customer = templates.filter((t) => t.audience === "customer");
+    expect(customer).toHaveLength(2);
+    expect(customer.find((t) => !t.variant)).toMatchObject({
+      name: plain,
+      status: "APPROVED",
+      buttons: [],
+    });
+    expect(customer.find((t) => t.variant === "cod_confirm")).toMatchObject({
+      name: cod,
+      status: "PENDING",
+      body: "cod",
+      buttons: ["Confirm order", "Cancel order"],
+    });
+  });
+
+  it("…and a store that has not submitted it yet sees it as not set up", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        whatsapp_templates: [
+          [tplRow("sm_order_placed_customer_v1", "APPROVED", "plain")],
+        ],
+      },
+    });
+    const { templates } = await getWhatsAppTemplatesForEvent("order.placed");
+    expect(templates.find((t) => t.variant === "cod_confirm")?.status).toBe(
+      "missing",
+    );
+  });
+
+  it("★ the card counts only current catalogue names", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        store_whatsapp_accounts: [ACCOUNT],
+        stores: [BASIC_STORE],
+        whatsapp_templates: [[{ status: "PENDING", n: 19 }]],
+      },
+    });
+    const s = await getWhatsAppChannelState();
+    expect(s.templates).toMatchObject({
+      pending: 19,
+      total: WHATSAPP_TEMPLATE_CATALOG.length,
+    });
+    const params = dbHolder.current.calls.where.flatMap((w: any) =>
+      sqlParamValues(w),
+    );
+    expect(params).toContain(V2);
+    expect(params).not.toContain(V1);
   });
 });

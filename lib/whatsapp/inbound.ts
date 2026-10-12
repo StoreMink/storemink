@@ -12,6 +12,7 @@ import {
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { recordEvent } from "@/lib/notifications/record";
 import { isWhatsAppWebhook } from "./webhook-events";
+import { handleCodReply } from "./cod-confirmation";
 import {
   applyStatusToMessage,
   hasMedia,
@@ -393,7 +394,35 @@ async function afterFiled(
       media: filed.media,
     });
   }
-  if (filed.needsNotify) {
+  // A COD Confirm / Cancel tap: act on it, answer it, and only when that
+  // cannot be done (refused, too late, failed) hand it to a person — which is
+  // the needs-reply and the bell recordInboundMessage held back.
+  if (filed.codReply && filed.phone) {
+    const handled = await handleCodReply({
+      storeId,
+      conversationId: filed.conversationId,
+      phone: filed.phone,
+      contactLabel: filed.contactLabel,
+      reply: filed.codReply,
+    }).catch((err) => {
+      logError("whatsapp cod: handling failed", err, { storeId });
+      return { outcome: "failed" as const, needsHuman: true };
+    });
+    if (!handled.needsHuman) return;
+    await withService((db) =>
+      db.execute(sql`
+        update public.whatsapp_conversations set
+          status = 'needs_reply',
+          unread_count = unread_count + 1,
+          updated_at = now()
+        where id = ${filed.conversationId}::uuid
+          and store_id = ${storeId}::uuid
+      `),
+    ).catch((err) =>
+      logError("whatsapp cod: hand-over failed", err, { storeId }),
+    );
+  }
+  if (filed.needsNotify || (filed.codReply && filed.phone)) {
     await recordEvent({
       type: "whatsapp.message_received",
       storeId,

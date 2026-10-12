@@ -13,7 +13,7 @@ import {
 } from "@/drizzle/schema";
 import { gcsPublicUrl } from "@/lib/storage/gcs";
 import { formatStoredPhone, storedPhoneVariants } from "@/lib/phone";
-import { bodyFromComponents, consented } from "./channel";
+import { bodyFromComponents, consented, templateHasButtons } from "./channel";
 import { serviceWindow } from "./inbox";
 import type {
   InboxConversationRow,
@@ -429,7 +429,7 @@ export async function listReplyTemplates(
       .orderBy(whatsappTemplates.name),
   );
   return rows
-    .filter((r) => r.audience !== "team")
+    .filter((r) => r.audience !== "team" && !templateHasButtons(r.components))
     .map((r) => ({
       id: r.id,
       name: r.name,

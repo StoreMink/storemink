@@ -22,6 +22,7 @@ import {
   type ParsedMedia,
 } from "./inbox-parse";
 import { WHATSAPP_MARKETING_CONSENT_REPLY } from "./consent-copy";
+import { parseCodPayload, type CodPayload } from "./cod-payload";
 
 // ---------------------------------------------------------------------------
 // The inbox's write side: what a webhook delivery does to contacts,
@@ -91,6 +92,10 @@ export interface RecordInboundResult {
   /** Who, for the bell: the WhatsApp name or the number. */
   contactLabel: string | null;
   userId: string | null;
+  /** A tap on a COD Confirm / Cancel button, to act on after commit. */
+  codReply: CodPayload | null;
+  /** The sender, as stored on the contact (E.164). */
+  phone: string | null;
 }
 
 const NOTHING: RecordInboundResult = {
@@ -104,6 +109,8 @@ const NOTHING: RecordInboundResult = {
   preview: null,
   contactLabel: null,
   userId: null,
+  codReply: null,
+  phone: null,
 };
 
 /**
@@ -242,10 +249,22 @@ export async function recordInboundMessage(
   }
 
   const preview = previewOf(parsed.body, parsed.kind);
+  // ★ A COD BUTTON TAP IS ANSWERED BY THE SYSTEM, not left for staff: it is
+  // filed in the thread like any message and opens the 24-hour window (the
+  // reply is free text), but it neither asks for a reply nor rings the bell.
+  // cod-confirmation.ts acts on it after this commits, and hands it to a
+  // person only when it cannot.
+  const codReply =
+    parsed.kind === "button"
+      ? parseCodPayload(
+          (parsed.payload as Record<string, unknown> | null)?.buttonPayload,
+        )
+      : null;
+  const automated = codReply !== null;
   await db.execute(sql`
     update public.whatsapp_conversations set
-      status = 'needs_reply',
-      unread_count = unread_count + 1,
+      status = case when ${automated}::boolean then status else 'needs_reply' end,
+      unread_count = unread_count + case when ${automated}::boolean then 0 else 1 end,
       last_message_at = greatest(coalesce(last_message_at, '-infinity'::timestamptz), ${parsed.sentAt}::timestamptz),
       last_inbound_at = greatest(coalesce(last_inbound_at, '-infinity'::timestamptz), ${parsed.sentAt}::timestamptz),
       last_preview = ${preview},
@@ -294,12 +313,14 @@ export async function recordInboundMessage(
     contactId: contact.id,
     conversationId: conversation.id,
     messageId,
-    needsNotify: conversation.status !== "needs_reply",
+    needsNotify: !automated && conversation.status !== "needs_reply",
     media: parsed.media,
     kind: parsed.kind,
     preview,
     contactLabel,
     userId: contact.userId,
+    codReply,
+    phone: parsed.phone,
   };
 }
 
@@ -375,6 +396,8 @@ export async function recordEchoMessage(
     preview,
     contactLabel: null,
     userId: contact.userId,
+    codReply: null,
+    phone: null,
   };
 }
 

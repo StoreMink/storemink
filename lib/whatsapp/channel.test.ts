@@ -22,6 +22,7 @@ vi.mock("@/lib/db/client", () => ({
 
 import {
   bodyFromComponents,
+  templateHasButtons,
   consented,
   loadWhatsAppSender,
   loadWhatsAppTemplates,
@@ -61,7 +62,21 @@ describe("loadWhatsAppSender", () => {
       phoneNumberId: "P",
       displayPhone: "+91 98765 43210",
       precedence: "whatsapp_first",
+      codConfirmation: false,
     });
+  });
+
+  it("★ reads COD confirmation from the store's settings, off by default", async () => {
+    const on = await loadWhatsAppSender(
+      db([
+        {
+          ...ACCOUNT,
+          settings: { features: { "whatsapp.codConfirmation": true } },
+        },
+      ]),
+      "store-1",
+    );
+    expect(on?.codConfirmation).toBe(true);
   });
 
   it("reads the merchant's precedence from the store's settings", async () => {
@@ -98,6 +113,39 @@ describe("loadWhatsAppSender", () => {
 });
 
 describe("loadWhatsAppTemplates", () => {
+  it("★ the plain wording and the COD variant never stand in for each other", async () => {
+    const row = (id: string, name: string) => ({
+      id,
+      audience: "customer",
+      name,
+      language: "en",
+      status: "APPROVED",
+      variables: [],
+      components: [{ type: "BODY", text: id }],
+    });
+    const rows = [
+      row("plain", "sm_order_placed_customer_v1"),
+      row("cod", "sm_order_placed_customer_cod_confirm_v1"),
+    ];
+    const plain = await loadWhatsAppTemplates(db(rows), "s", "order.placed");
+    expect(plain.get("customer")?.id).toBe("plain");
+    const cod = await loadWhatsAppTemplates(
+      db(rows),
+      "s",
+      "order.placed",
+      "cod_confirm",
+    );
+    expect(cod.get("customer")?.id).toBe("cod");
+    // Without its own approved row the variant is simply absent.
+    const none = await loadWhatsAppTemplates(
+      db([rows[0]]),
+      "s",
+      "order.placed",
+      "cod_confirm",
+    );
+    expect(none.size).toBe(0);
+  });
+
   it("keys approved rows by audience and lifts the body out of the components", async () => {
     const rows = [
       {
@@ -128,6 +176,39 @@ describe("loadWhatsAppTemplates", () => {
       body: "Hi from {{1}}.",
       variables: ["store_name"],
     });
+  });
+
+  it("★ two approved versions of one template: the current catalogue name wins", async () => {
+    const tpl = (name: string, id: string) => ({
+      id,
+      audience: "customer",
+      name,
+      language: "en",
+      status: "APPROVED",
+      variables: [],
+      components: [{ type: "BODY", text: name }],
+    });
+    // v3 is the current catalogue name; v1 is an older approved version.
+    const v1 = tpl("sm_order_ready_for_pickup_customer_v1", "t1");
+    const v2 = tpl("sm_order_ready_for_pickup_customer_v3", "t2");
+    for (const rows of [
+      [v2, v1],
+      [v1, v2],
+    ]) {
+      const map = await loadWhatsAppTemplates(
+        db(rows),
+        "store-1",
+        "order.ready_for_pickup",
+      );
+      expect(map.get("customer")?.id).toBe("t2");
+    }
+    // Until v3 is approved, the approved v1 keeps sending.
+    const map = await loadWhatsAppTemplates(
+      db([v1]),
+      "store-1",
+      "order.ready_for_pickup",
+    );
+    expect(map.get("customer")?.id).toBe("t1");
   });
 
   it("only ever asks for APPROVED, enabled rows", async () => {
@@ -206,5 +287,19 @@ describe("bodyFromComponents", () => {
     ).toBe("x");
     expect(bodyFromComponents("junk")).toBe("");
     expect(bodyFromComponents([])).toBe("");
+  });
+});
+
+describe("templateHasButtons", () => {
+  it("is true only for a template carrying a BUTTONS component", () => {
+    expect(
+      templateHasButtons([
+        { type: "BODY", text: "x" },
+        { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "OK" }] },
+      ]),
+    ).toBe(true);
+    expect(templateHasButtons([{ type: "BODY", text: "x" }])).toBe(false);
+    expect(templateHasButtons(null)).toBe(false);
+    expect(templateHasButtons("BUTTONS")).toBe(false);
   });
 });

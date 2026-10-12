@@ -39,6 +39,8 @@ export interface SendWhatsAppInput {
   };
   /** Positional body values, already formatted. */
   values: string[];
+  /** Payloads for the template's quick-reply buttons, in button order. */
+  buttonPayloads?: string[];
   eventKey?: string | null;
   category?: string | null;
 }
@@ -74,6 +76,9 @@ export async function sendWhatsAppTemplate(
     name: input.template.name,
     language: input.template.language,
     bodyParams: params,
+    ...(input.buttonPayloads && input.buttonPayloads.length > 0
+      ? { quickReplyPayloads: input.buttonPayloads }
+      : {}),
   });
 
   if (result.ok) {

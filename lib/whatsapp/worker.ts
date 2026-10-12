@@ -5,10 +5,12 @@ import { withService } from "@/lib/db/client";
 import { logError, logInfo } from "@/lib/observability/logger";
 import {
   loadWhatsAppSender,
-  loadWhatsAppTemplates,
+  loadWhatsAppTemplateById,
   whatsAppConsentFor,
 } from "./channel";
 import { sendWhatsAppTemplate } from "./send";
+import { codOrderFromPayloads } from "./cod-payload";
+import { markCodConfirmationRequested } from "./cod-confirmation";
 import { textablePhone } from "@/lib/phone";
 
 // ---------------------------------------------------------------------------
@@ -75,7 +77,8 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
           for update skip locked
        )
       returning q.id, q.store_id, q.recipient_id, q.recipient_type, q.phone,
-                q.event_key, q.audience, q.template_id, q.values, q.attempts
+                q.event_key, q.audience, q.template_id, q.values,
+                q.button_payloads, q.attempts
     `);
     return asRows(rows) as QueueRow[];
   }).catch((err) => {
@@ -91,9 +94,9 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
     string,
     Awaited<ReturnType<typeof loadWhatsAppSender>>
   >();
-  const templateSets = new Map<
+  const templatesById = new Map<
     string,
-    Awaited<ReturnType<typeof loadWhatsAppTemplates>>
+    Awaited<ReturnType<typeof loadWhatsAppTemplateById>>
   >();
 
   for (const row of claimed) {
@@ -143,19 +146,21 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
       }
     }
 
-    const tKey = `${storeId}:${row.event_key}`;
-    if (!templateSets.has(tKey)) {
-      templateSets.set(
+    // ★ RE-READ BY ID, so a template Meta paused or rejected since enqueue is
+    // not sent, and what goes out is exactly the template that was queued: an
+    // event can carry two wordings (COD confirmation beside order-placed), so
+    // re-reading by event and audience could swap one for the other.
+    const tKey = `${storeId}:${row.template_id}`;
+    if (!templatesById.has(tKey)) {
+      templatesById.set(
         tKey,
         await withService((db) =>
-          loadWhatsAppTemplates(db, storeId, row.event_key),
+          loadWhatsAppTemplateById(db, storeId, row.template_id),
         ),
       );
     }
-    const template = templateSets.get(tKey)?.get(row.audience);
-    // Re-read, so a template Meta paused or rejected since enqueue is not
-    // sent — and so the id queued matches the one still approved.
-    if (!template || template.id !== row.template_id) {
+    const template = templatesById.get(tKey);
+    if (!template) {
       await settle(
         row.id,
         "failed",
@@ -177,6 +182,9 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
         body: template.body,
       },
       values: Array.isArray(row.values) ? row.values.map(String) : [],
+      ...(Array.isArray(row.button_payloads)
+        ? { buttonPayloads: row.button_payloads.map(String) }
+        : {}),
       eventKey: row.event_key,
       category: "UTILITY",
     });
@@ -184,6 +192,10 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
     if (out.sent) {
       await settle(row.id, "sent");
       result.sent++;
+      // The order now shows "awaiting confirmation" — only once the message
+      // with the buttons has really gone, never merely because it was queued.
+      const codOrderId = codOrderFromPayloads(row.button_payloads);
+      if (codOrderId) await markCodConfirmationRequested(storeId, codOrderId);
       continue;
     }
 
@@ -270,6 +282,7 @@ interface QueueRow {
   audience: string;
   template_id: string;
   values: unknown;
+  button_payloads: unknown;
   attempts: number;
 }
 

@@ -12,6 +12,7 @@ import {
   graphRequest,
   isTokenError,
   registerPhoneNumber,
+  sendTemplateMessage,
   subscribeAppToWaba,
 } from "./graph";
 
@@ -120,5 +121,62 @@ describe("graphRequest — the three-way outcome", () => {
     const u = new URL(String(fetchMock.mock.calls[0]![0]));
     expect(u.searchParams.get("input_token")).toBe("BIZ");
     expect(u.searchParams.get("access_token")).toBe("APP|SECRET");
+  });
+});
+
+describe("sendTemplateMessage — quick-reply buttons", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  const OLD = { ...process.env };
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.WHATSAPP_GRAPH_VERSION = "v26.0";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...OLD };
+  });
+
+  async function sent(
+    input: Partial<Parameters<typeof sendTemplateMessage>[2]>,
+  ) {
+    fetchMock.mockResolvedValueOnce(
+      reply(200, { messages: [{ id: "wamid.1" }] }),
+    );
+    await sendTemplateMessage("TOK", "PN", {
+      to: "919876543210",
+      name: "sm_x_v1",
+      language: "en",
+      bodyParams: ["ORD1"],
+      ...input,
+    });
+    const [, init] = fetchMock.mock.calls.at(-1)!;
+    return JSON.parse(String(init?.body)).template.components;
+  }
+
+  it("★ one button component per payload, indexed in button order", async () => {
+    const components = await sent({
+      quickReplyPayloads: ["cod:confirm:x", "cod:cancel:x"],
+    });
+    expect(components).toEqual([
+      { type: "body", parameters: [{ type: "text", text: "ORD1" }] },
+      {
+        type: "button",
+        sub_type: "quick_reply",
+        index: "0",
+        parameters: [{ type: "payload", payload: "cod:confirm:x" }],
+      },
+      {
+        type: "button",
+        sub_type: "quick_reply",
+        index: "1",
+        parameters: [{ type: "payload", payload: "cod:cancel:x" }],
+      },
+    ]);
+  });
+
+  it("no buttons when none are given", async () => {
+    const components = await sent({});
+    expect(components).toHaveLength(1);
+    expect(components[0].type).toBe("body");
   });
 });

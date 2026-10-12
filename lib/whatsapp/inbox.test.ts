@@ -123,8 +123,47 @@ describe("recordInboundMessage", () => {
     });
     // The bump reopens and counts.
     const bump = sqlText(calls.execute[2]);
-    expect(bump).toContain("status = 'needs_reply'");
-    expect(bump).toContain("unread_count = unread_count + 1");
+    expect(bump).toContain("else 'needs_reply' end");
+    expect(bump).toMatch(
+      /unread_count = unread_count \+ case when .* then 0 else 1 end/,
+    );
+    // An ordinary message is not automated: it asks for a reply and counts.
+    expect(sqlParamValues(calls.execute[2])).toContain(false);
+  });
+
+  it("★ a COD button tap is filed but neither counts nor asks for a reply", async () => {
+    const ORDER = "22222222-3333-4444-8555-666666666666";
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: { text: "Confirm order", payload: `cod:confirm:${ORDER}` },
+      }),
+    });
+    expect(r).toMatchObject({
+      inserted: true,
+      kind: "button",
+      needsNotify: false,
+      codReply: { action: "confirm", orderId: ORDER },
+      phone: "+919876543210",
+    });
+    // The bump is told this message was automated.
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(true);
+  });
+
+  it("a button tap we did not write is an ordinary message", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: { text: "Yes", payload: "something-else" },
+      }),
+    });
+    expect(r.codReply).toBeNull();
+    expect(r.needsNotify).toBe(true);
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(false);
   });
 
   it("★ a conversation already waiting does not ring the bell again", async () => {

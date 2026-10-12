@@ -239,6 +239,81 @@ when nothing changes and stopping when the tab is hidden; pressing Send is
 never queued behind one. Signed out, a poll answers 401. _Pinned by
 `use-poll.test.ts` and the route's shape._
 
+**WA-3.13 — It reads like WhatsApp, at any size.** On a laptop, open a
+conversation with a long history: the page does not scroll; only the messages
+do, the newest is in view and the reply box stays at the bottom. Messages sit
+under Today / Yesterday / date pills, and a reply that took several messages
+reads as one block. Scroll up: a round arrow appears and takes you back to the
+newest; a message arriving while you read history does not pull you down.
+Narrow the window (or open Mink) until the card is under 640px: the list and
+the chat show one at a time, with a back arrow. On a phone the list fills the
+screen and a chat opens full screen; Enter starts a new line and the green
+button sends. _Pinned by `inbox-client.test.tsx`; layout measured 2026-10-13 in
+a static harness with the real stylesheets at 1280, 880 and 390 px (no page
+scroll, no sideways scroll); not yet looked at on a real phone._
+
+---
+
+## Phase 2, slice 1 — COD confirmation (2026-10-13)
+
+**WA-4.1 — Off until the merchant turns it on.** On a connected store,
+Channels → WhatsApp → Settings shows **Ask cash-on-delivery customers to
+confirm on WhatsApp**, off. With it off, a cash-on-delivery order sends the
+usual order message and the order list shows no WhatsApp label. _Pinned by
+`record-whatsapp.test.ts` ("not when the store has the setting off")._
+
+**WA-4.2 — The template is submitted with the rest.** After the deploy,
+**Set up templates** on the WhatsApp card (or a fresh connect) submits
+`sm_order_placed_customer_cod_confirm_v1` with two buttons, **Confirm order**
+and **Cancel order**. Settings → Notifications → Order placed → WhatsApp shows
+it as a second card, "Cash-on-delivery orders", with its review state and the
+two buttons. _Pinned by `template-catalog.test.ts`,
+`whatsapp-provider-actions.test.ts` and `whatsapp-template-panel.test.tsx`;
+accepted as UTILITY by Meta on the dev test account before shipping._
+
+**WA-4.3 — One message, with buttons.** With the setting on and the template
+approved, a shopper who ticked WhatsApp updates places a cash-on-delivery
+DELIVERY order. Their phone receives one message, "Please confirm your cash on
+delivery order ORD… from …", with the two buttons, and NOT the usual order
+message as well. The order list shows **Awaiting confirmation on WhatsApp**
+under its status. A prepaid order, a collection, or a store whose COD
+template is still in review sends the usual message instead. _Pinned by
+`record-whatsapp.test.ts` and `worker.test.ts`._
+
+**WA-4.4 — Confirm.** The shopper taps **Confirm order**. Within seconds they
+get "Thank you. Order ORD… is confirmed and we will prepare it for delivery."
+The order list reads **Confirmed on WhatsApp**. Inbox shows the tap and the
+reply, but the conversation is not marked Needs reply, the badge does not
+move, and the bell does not ring. Tapping Confirm again gets the same answer
+and changes nothing. _Pinned by `cod-confirmation.test.ts`,
+`inbox.test.ts` and `inbound-cod.test.ts`._
+
+**WA-4.5 — Cancel before it ships.** On a pending or processing order the
+shopper taps **Cancel order**. The order is cancelled exactly as an approved
+cancellation is: its stock goes back to the location that reserved it, any
+store credit used is returned, the team and the customer get the usual
+cancellation notice, and nothing is refunded (nothing was paid). The shopper
+gets "Order ORD… has been cancelled. You will not be charged anything for it."
+The list reads **Cancelled on WhatsApp**. _Pinned by
+`cod-confirmation.test.ts`._
+
+**WA-4.6 — Cancel too late.** On an order already marked shipped, the shopper
+taps **Cancel order**. Nothing changes on the order. They are told it has
+already been sent out and someone from the shop will reply; the conversation
+moves to **Needs reply** with the bell. _Pinned by `cod-confirmation.test.ts`
+and `inbound-cod.test.ts`._
+
+**WA-4.7 — Only the order's own phone.** A tap carrying an order's payload
+from a phone that is neither the account phone nor the delivery phone, or for
+an order that is not cash on delivery, changes nothing and gets no reply; the
+conversation goes to a person. _Pinned by `cod-confirmation.test.ts` and
+`cod-payload.test.ts`._
+
+**WA-4.8 — The inbox cannot send it by hand.** After the 24-hour window
+closes, the inbox's template picker does not list the COD confirmation, and
+forcing it through the send action is refused, because a hand-sent copy would
+carry no order. _Pinned by `inbox-actions.test.ts` and `channel.test.ts`._
+
 ---
 
 ## Known gaps
@@ -253,3 +328,6 @@ never queued behind one. Signed out, a poll answers 401. _Pinned by
 | No assignment, labels, notes, canned replies, business hours or search inside messages; the thread shows the latest 200 messages                    | 2026-10-08 | Phase 2                      |
 | A STOP gets no acknowledgement message; the opt-out is recorded silently                                                                            | 2026-10-08 | Phase 2 (auto-replies)       |
 | Inbound media is kept in the public media bucket at an unguessable path, like the Media Library; a customer's photo is as public as a product photo | 2026-10-08 | Open                         |
+| COD confirmation has not run against live Meta: the button payload shapes follow Meta's reference                                                   | 2026-10-13 | With the live verification   |
+| An unanswered COD confirmation gets no reminder, and an unconfirmed order is never cancelled automatically                                          | 2026-10-13 | Phase 2                      |
+| A COD customer who did not tick WhatsApp updates is never asked to confirm (SMS has no buttons)                                                     | 2026-10-13 | By design                    |

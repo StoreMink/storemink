@@ -2030,6 +2030,14 @@ export const orders = pgTable(
       withTimezone: true,
       mode: "string",
     }),
+    // WhatsApp cash-on-delivery confirmation (0192): 'requested' once the
+    // message with the buttons was sent, then 'confirmed' or 'cancelled'.
+    // NULL = the customer was never asked.
+    codConfirmation: text("cod_confirmation"),
+    codConfirmationAt: timestamp("cod_confirmation_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
     stockStatus: text("stock_status").default("none").notNull(),
     // NOT NULL because the DATABASE always has them: a BEFORE INSERT trigger
     // (identifiers_04_triggers.sql) allocates both. No caller supplies them —
@@ -8989,6 +8997,9 @@ export const notificationWhatsappQueue = pgTable(
     audience: text().notNull(),
     templateId: uuid("template_id").notNull(),
     values: jsonb().default([]).notNull(),
+    // Quick-reply button payloads, in button order (0192); null for a
+    // template without buttons.
+    buttonPayloads: jsonb("button_payloads"),
     status: text().default("pending").notNull(),
     attempts: integer().default(0).notNull(),
     nextAttemptAt: timestamp("next_attempt_at", {

@@ -27,6 +27,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { OrderDetailDrawer } from "./order-detail-drawer";
 import { PickupBadge, isPickupOrder, pickupStageLabel } from "./pickup-badge";
+import { CodConfirmationTag } from "./cod-confirmation";
 
 type Props = {
   orders: OrderRow[];
@@ -695,6 +696,11 @@ export function OrdersManagementView({
                                   {pickupStageLabel(order.pickup_status)}
                                 </span>
                               )}
+                            {!isPos && (
+                              <CodConfirmationTag
+                                value={order.cod_confirmation}
+                              />
+                            )}
                           </div>
                         </td>
                       </tr>
