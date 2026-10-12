@@ -3,6 +3,10 @@
  *
  *   npx tsx --tsconfig tsconfig.scripts.json scripts/publish-legal.ts            # dry run
  *   npx tsx --tsconfig tsconfig.scripts.json scripts/publish-legal.ts --publish  # commit
+ *   ... scripts/publish-legal.ts --only=privacy --publish   # one reviewed kind only
+ *
+ * Use --only whenever just some documents have been reviewed: without it every
+ * kind whose local version is ahead of the live one is published.
  *
  * HOW TO CHANGE A POLICY:
  *   1. Edit the body in lib/legal/content.ts
@@ -42,6 +46,20 @@ loadEnvConfig(process.cwd(), true, {
 
 const COMMIT = process.argv.includes("--publish");
 
+// `--only=privacy` (or a comma list) publishes just those kinds. Without it,
+// every kind whose local version is ahead is published, which is wrong when
+// only one document has been reviewed: the others would go live unreviewed.
+const ONLY = (() => {
+  const arg = process.argv.find((a) => a.startsWith("--only="));
+  if (!arg) return null;
+  const kinds = arg
+    .slice("--only=".length)
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean);
+  return new Set(kinds);
+})();
+
 async function main() {
   // Imported AFTER the env is loaded: lib/db/client builds its pool from
   // process.env at module scope.
@@ -59,9 +77,25 @@ async function main() {
       : "DRY RUN — nothing will be written:\n",
   );
 
+  if (ONLY) {
+    const known = new Set(LEGAL_CONTENT.map((c) => c.kind));
+    const unknown = [...ONLY].filter((k) => !known.has(k));
+    if (unknown.length > 0 || ONLY.size === 0) {
+      console.error(
+        `--only names unknown kinds: ${unknown.join(", ") || "(none)"}. ` +
+          `Known: ${[...known].join(", ")}.`,
+      );
+      process.exit(1);
+    }
+  }
+
   for (const content of LEGAL_CONTENT) {
-    const current = await getCurrentDoc(content.kind);
     const label = content.kind.padEnd(16);
+    if (ONLY && !ONLY.has(content.kind)) {
+      console.log(`  ${label} skipped (not in --only)`);
+      continue;
+    }
+    const current = await getCurrentDoc(content.kind);
 
     if (!current) {
       console.log(`  ${label} NOT PUBLISHED → v${content.version}`);
