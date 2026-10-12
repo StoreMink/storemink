@@ -2617,8 +2617,9 @@ wholesip/
 │   │   │                      # total sales, sales over time, products and Search queries;
 │   │   │                      # platform availability gates live in lib/analytics/features;
 │   │   │                      # Pro gross-margin cards use immutable order-line costs
-│   │   ├── components/        # Dashboard widgets (metric-card, revenue-chart,
-│   │   │                      # Search metric/trend/ranking cards,
+│   │   ├── components/        # Dashboard widgets (metric-card, analytics-card /
+│   │   │                      # -trend / -trend-chart / -donut / -lists / -format /
+│   │   │                      # -charts-lazy, Search metric/trend/ranking cards,
 │   │   │                      # recent-orders-table, activity-feed, bulk-actions, responsive-table…) +
 │   │   │                      # feature-toggles (shared settings-group card, convention #9)
 │   │   │                      # ★ A wide list table (`dash-table-wide`) sets an
@@ -3408,7 +3409,15 @@ wholesip/
 │   │                          # merchant-pixels.ts validates/fail-closes the GA4 + Meta
 │   │                          # settings stored under stores.settings.marketing;
 │   │                          # store-entitlement.ts combines operator availability
-│   │                          # with the store's effective plan for server reads/writes
+│   │                          # with the store's effective plan for server reads/writes;
+│   │                          # buckets.ts = zero-filled calendar buckets for charts;
+│   │                          # plan-previews.ts = which locked plan sections to preview
+│   │                          # and their copy (pure; shared by page + client card);
+│   │                          # search-dimensions.ts = Search device/country names;
+│   │                          # traffic.ts = device / source / geo attribution (pure);
+│   │                          # targets.ts + insights.ts = target maths and rule-based
+│   │                          # insights (pure, tested); explore.ts = custom report
+│   │                          # whitelist, normalizer and report library (pure, tested)
 │   ├── store/                 # ★ Tenancy (see §3): host.ts, resolve.ts, brand.ts.
 │   │                          # ★ launch-state.ts (pure predicates: isStoreLaunched /
 │   │                          # isDemoStore / isStorefrontGated / isThemePending —
@@ -4510,7 +4519,11 @@ wholesip/
 │                              # reverse_customer_cashback(), orders.cashback_amount
 │                              # plus the orders_issue_cashback trigger,
 │                              # order_returns.idempotency_key, and five Help
-│                              # sentence edits. Next free: 0186.
+│                              # sentence edits. 0186 repeats the em dash pass for
+│                              # WhatsApp 0176. 0187-0191 are the analytics parity
+│                              # work (§20): traffic dimensions, targets, saved
+│                              # reports, their Help guides, and the Overview
+│                              # refresh note. Next free: 0192.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -9408,9 +9421,9 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
       NULL-location orders. `analytics/data.ts` applies that resolved contract
       to every order-shaped query and adds AOV, units sold, top products, sales
       by channel, and sales by location. Channel/location totals use recognized
-      orders less completed refunds by settlement date. The new reusable
-      `commerce-breakdown.tsx` and `top-products.tsx` cards are server-rendered
-      under their own Suspense slots. Untouched layouts receive the revised
+      orders less completed refunds by settlement date. These cards are
+      server-rendered under their own Suspense slots (card components replaced
+      by the 2026-10-12 redesign below). Untouched layouts receive the revised
       Overview/Sales default; customized layouts are not silently changed.
     - **Phase 2d commerce completion (2026-08-19):** five additional library
       cards complete the migration-free commerce set. Sales by payment method
@@ -9422,8 +9435,7 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
       markdowns separate. Returns/refunds keeps completed return events and
       settled money events separate. Inventory velocity ranks only negative
       `stock_movements(reason='sale')` rows tied to recognized orders and obeys
-      the selected stock location. `analytics-summary-card.tsx` and
-      `inventory-velocity.tsx` render these server results. Untouched layouts
+      the selected stock location. Untouched layouts
       now also receive the Customers section; customized layouts remain stable.
     - **Search Console Phase 3a foundation (2026-08-19; migration applied):**
       `supabase/search_metrics_01_schema.sql` and migration
@@ -9578,6 +9590,248 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
       store-wide Total customers slot. Current catalogue snapshots never show a
       fake period delta. The old unimported hard-coded performance, inventory
       and operational demo widgets were deleted.
+    - **Shopify-parity redesign + plan previews (2026-10-12):**
+      - _Filters._ `analytics-filters.tsx` is now a thin server wrapper around
+        client `analytics-date-controls.tsx`: date-range / "Compare to" /
+        location pills, each a base-ui Popover that navigates the moment a
+        preset is picked (only custom dates need Apply). URL contract
+        unchanged; the report pages share the same controls. The page head is
+        "Analytics" + a "⋯" menu (Tracking settings) + Edit dashboard;
+        filters sit on their own row. Card titles stay the `WIDGETS` titles
+        and the button stays "Edit dashboard" because the published Analytics
+        guides name them, so this redesign needed no Help Centre change.
+      - _Card system_ (`app/dashboard/components/analytics-*`): one frame
+        (`analytics-card.tsx`: dotted title with a hover definition taken from
+        `WIDGETS[id].description`, corner report link, or a lock that opens an
+        upgrade popover), `analytics-trend.tsx` (trend badge with `goodWhen`,
+        so a rise in refunds/discounts reads red, and a current-vs-dotted-
+        previous sparkline), `analytics-trend-chart.tsx` (Recharts line with
+        the comparison dotted, two-date tooltip, range legend, flat axis when
+        empty), `analytics-donut.tsx` (Sales by channel), `analytics-lists.tsx`
+        (ranked bars with a paler previous bar, metric rows, funnel), and
+        `analytics-format.ts`. ★ Formatters live in that plain module because
+        a function exported from a `"use client"` file cannot be CALLED by a
+        server card. Recharts stays lazy (`analytics-charts-lazy.tsx`). The
+        old revenue-chart, commerce-breakdown, top-products, top-categories,
+        inventory-velocity and analytics-summary-card components were deleted.
+      - _Comparisons everywhere._ `page.tsx` runs each card's reader a second
+        time with `{ ...range, current: range.compare }`: every reader except
+        sales and Search reads only `range.current`, so this gives each card a
+        previous-period figure without a second implementation.
+        `getSalesAnalytics` itself now zero-fills buckets from the calendar
+        (`lib/analytics/buckets.ts`, Postgres `date_trunc` rules, Monday weeks):
+        quiet days used to be missing, so the x-axis skipped them. It also
+        returns the comparison window's buckets aligned by position
+        (`previousSales`, `previousSpark`, `title`/`previousTitle`).
+      - _Number fixes._ `recognizedOrder()` excludes `payment_method =
+'exchange'`: an exchange's replacement order is written as paid and
+        was counting the same sale (money and units) twice. Discount impact's
+        total is `sum(orders.discount)` alone, because that column already
+        contains line markdowns + offers + order discount; adding
+        `line_discount` again double-counted every POS markdown.
+      - _Plan previews._ Sections a plan lacks (Profit and Storefront traffic
+        for Pro, Google Search for Basic) render in place as previews
+        (`plan-preview.tsx`), only when the operator switch is on
+        (`lib/analytics/plan-previews.ts`). Headlines use the store's real
+        numbers where they exist: Search Console data is collected for every
+        active store, and sales are the store's own. Traffic uses a labelled
+        sample. "Hide for 30 days" writes a `sm_an_preview_hidden_*` cookie on
+        the store host (path `/dashboard`), so the server omits the section
+        with no flash. Viewers without Plan & billing (`ai`) see "Ask your
+        store owner". Locked Edit and report icons open the same upgrade
+        popover.
+      - _Saved layouts across plan changes._ `PLAN_GATED_SECTION_IDS` +
+        server-written `acknowledged` in the stored layout: reading a saved
+        layout appends a now-allowed plan section the save didn't know about
+        (an upgrade shows Profit without the merchant knowing to add it), but
+        never re-adds one that was acknowledged and then removed. The save
+        action now treats Profit/Traffic cards like Search cards when the plan
+        lacks them (dormant, preserved), so downgrade, then save, then
+        re-upgrade loses nothing.
+      - _Default layout and in-progress periods._ Defaults are ordered so
+        every row fills: Sales = chart, Top products + Sales by category,
+        Sales by channel + Sales by location (both half); Customers = New vs
+        returning (full width, its rows go three across via a container
+        query on `.dash-an-card`); new "Discounts and returns" section
+        (Free stores cannot customise, so the default is all they see);
+        Profit = Gross margin (full). Total customers and Gross profit stay in
+        the library. Sales by channel is only offered to stores with POS
+        (`posEnabled` or any location): without it the card is one 100%
+        slice. New `traffic_conversion` compact card (Pro). Buckets the range
+        only partly covers (`bucketIsPartial`: today, the current week, a
+        range starting mid-week) are drawn dashed in the chart and
+        sparklines, so a half-finished week does not read as a collapse.
+        Search tiles share the metric-card build; the not-ready explanation
+        and source line appear once, on the performance chart. Phones show
+        number cards two to a row.
+      - _Shopify-parity cards (step 3)._ Eight library cards, all in the
+        default layout: `metric_returning_rate` (Overview now = Total sales,
+        Orders, AOV, Returning customer rate; Units sold moved to the
+        library), `sales_breakdown` (`getSalesBreakdown` +
+        pure `salesBreakdownFromTotals`: gross = `subtotal` less tax on
+        tax-inclusive orders, so `total = gross - discount + tax + shipping`
+        holds; returns = refunds settled in range; anything unexplained is
+        an "Other adjustments" line, never absorbed), `orders_chart` and
+        `aov_chart` (new "Orders" section, from the sales series),
+        `sales_by_discount` (`getSalesByDiscountCode`, upper-cased codes),
+        `sales_by_region` (`getSalesByRegion`: online orders by delivery
+        state, else country; POS has no address), and `search_devices` /
+        `search_countries` (`getSearchDimensionBreakdown`: Search Console
+        reports these WEEKLY, dated to Monday, so a range totals the weeks
+        starting inside it; names via `lib/analytics/search-dimensions.ts`,
+        whose alpha-3 to alpha-2 table covers common markets and otherwise
+        shows the raw code).
+    - **Storefront traffic by device, source and location (2026-10-12,
+      migration `20261012_0187_storefront_traffic_dimensions`, Pro):**
+      - _Collection._ `merchant-tracking.tsx` reads the landing
+        `document.referrer`, `utm_source/medium/campaign` and a Google Ads
+        click id (`gclid`/`gbraid`/`wbraid`) ONCE on mount, in memory (nothing
+        written to the browser), and sends them with every `page_view`.
+        `/api/t` derives and stores only: `device_type` (from the user agent,
+        then dropped), `referrer_host` (host only, the store's own host is
+        null), cleaned `utm_*`, `source` (`classifyTrafficSource`: tags win
+        over the referrer; direct / search / social / email / paid /
+        referral), and `country`/`region`/`city` from load-balancer headers.
+        All logic is pure in `lib/analytics/traffic.ts` (tested).
+      - _Location needs one infra step._ The external Application Load
+        Balancer must add `X-SM-Geo-Country: {client_region}`,
+        `X-SM-Geo-Region: {client_region_subdivision}` and
+        `X-SM-Geo-City: {client_city}`. Until then location columns stay null
+        and the location card shows its empty state. `gcloud compute
+backend-services update` REPLACES the whole custom-header list, so
+        `describe` first and repeat any existing headers:
+        ```bash
+        gcloud compute backend-services list --global --project=storemink-prod
+        gcloud compute backend-services describe <BACKEND> --global \
+          --project=storemink-prod --format="value(customRequestHeaders)"
+        gcloud compute backend-services update <BACKEND> --global \
+          --project=storemink-prod \
+          --custom-request-header='X-SM-Geo-Country:{client_region}' \
+          --custom-request-header='X-SM-Geo-Region:{client_region_subdivision}' \
+          --custom-request-header='X-SM-Geo-City:{client_city}'
+        ```
+        The headers are trusted for analytics only (a spoofed value can at
+        worst mislabel that visitor's own session); no IP is read or stored.
+      - _Rollup._ `runStorefrontDimensionRollup` (called by the hourly
+        `analytics-rollup`) rebuilds `storefront_daily_dimensions` for days
+        at least two days clear of the 14-day raw prune (DELETE then INSERT):
+        a session is credited by its FIRST page view (source, referrer,
+        campaign, landing page); device and location belong to the daily
+        visitor key; sales = totals of orders whose purchase event landed in
+        the session (not cancelled, not exchange). Top 50 keys per store,
+        day and dimension. Region keys are `CC|SUB`, city keys `CC|SUB|City`.
+      - _Cards (Traffic group, Pro)._ Sessions over time
+        (`getSessionsSeries`, zero-filled, partial buckets dashed), Sessions
+        by device type (donut), by traffic source, Sales by traffic source,
+        by location (city), by landing page, plus library cards Sessions by
+        referrer and by campaign (`getTrafficBreakdown`, labels via
+        `trafficKeyLabel`). The funnel is now half width in the default.
+      - _Disclosure._ The storefront analytics Help guide gains what is now
+        recorded and a "Where visitors come from" section (in the
+        migration). `lib/legal/content.ts` privacy section 8 has a v3 DRAFT
+        sentence describing the same; publishing it
+        (`scripts/publish-legal.ts --publish`) makes every merchant re-accept,
+        so it waits for owner/legal review.
+    - **Live View, Targets and Insights (2026-10-12):**
+      - _Live View_ (`/dashboard/analytics/live`, every plan; header button
+        with a pulsing dot). `live/data.ts` reads RAW `storefront_events`
+        (current to the second, Pro collection only): visitors right now
+        (5 min), visitors today, Shopify's customer behaviour (furthest step
+        per visitor in 10 min: active carts / checking out / purchased), top
+        cities and products (30 min) and an activity feed. Sales and orders
+        today come from `getSalesAnalytics` (every plan). Below Pro the
+        visitor panels are Pro previews. Refreshes via `RealtimeRefresher`
+        (15 s, visible tab only).
+      - _Targets_ (migration `20261012_0188_analytics_targets`, Basic+ via the
+        `dashboardCustomization` entitlement; traffic metrics need Pro).
+        Store-wide goal for one metric over store-local inclusive dates.
+        `lib/analytics/targets.ts` (pure, tested): metrics, validation,
+        period presets, and `targetProgress` (sum metrics judged on pace with
+        today half-elapsed; ratio metrics against the target; finished
+        periods achieved/missed). `app/actions/analytics-targets.ts` needs the
+        new Analytics **manage** permission (owners have it; other roles when
+        granted), store-scopes every write, caps 20 per store.
+        `targets-data.ts` computes progress with the dashboard's own readers
+        in the viewer's location scope. UI: `targets-manager.tsx` (header
+        dialog) and `analytics-target-card.tsx` (gauge), shown above the
+        sections; target cards ignore the dashboard date filter.
+      - _Insights_ (every plan). `lib/analytics/insights.ts` (pure, tested)
+        turns figures the page already loads into at most five notes with
+        fixed thresholds and a minimum of 5 orders: sales move, this month's
+        pace vs the same days last month (with projection), rising refunds,
+        a product selling faster, conversion move and best-converting source
+        (Pro), AOV move, returning-rate move, discount share. Each carries
+        the question for "Ask Mink why" (`useChat().startExpandedChat`,
+        shown only when Mink is enabled for the store).
+    - **Reports tab and custom reports (2026-10-12, migration
+      `20261012_0189_analytics_saved_reports`, Basic+ via
+      `drilldownReports`):**
+      - _Navigation._ `analytics-tabs.tsx` (Overview / Reports / Live View)
+        replaces sidebar sub-items, so no new permission sections. `/dashboard
+/analytics/reports` lists `REPORT_LIBRARY` (`lib/analytics/explore.ts`)
+        by Shopify-style category, saved reports first; locked entries carry
+        a Basic/Pro badge; operator-disabled modules are left out.
+      - _Builder_ (`reports/explore`). A WHITELIST, not a query language:
+        `lib/analytics/explore.ts` (pure, tested) defines datasets (sales,
+        Pro traffic), groupings (day/week/month, product, category, channel,
+        location, discount code, region, new vs returning; traffic by source,
+        device, landing page, referrer, campaign, country, region, city),
+        up to 4 measures, and `normalizeExploreConfig`, which every URL and
+        saved row goes through. Product/category group ORDER LINES so only
+        gross sales, units and orders are offered. `reports/explore-data.ts`
+        maps each grouping to a fixed tenant- and location-scoped query and
+        derives every measure from shared base totals (Total sales here ==
+        the card). Time groupings zero-fill and align the comparison by
+        position; the summary row is computed from all groups; display caps
+        at 250 rows, CSV at 5,000 (`serializeCsv`, formula-guarded, built in
+        the browser). State lives in the URL (`ds`, `m`, `by`, `chart`,
+        `report`, `preset`); `AnalyticsFilters` takes `preserve` so date
+        changes keep it.
+      - _Saving._ `app/actions/analytics-reports.ts`: Analytics manage +
+        entitlement, stores the NORMALIZED config (never client input), unique
+        name per store, 50 per store.
+      - _Help._ Migration `20261012_0190_analytics_live_targets_reports_help`
+        adds guides for Live View, targets and custom reports and an
+        "Insights and targets" section in the dashboard guide.
+    - **Performance pass (2026-10-12, 200k orders / 400k lines locally):**
+      ★ production runs `_DB_POOL_MAX: "5"` per instance and every
+      `withService` holds one connection for its whole transaction; the
+      Overview fires ~45 of them, so total query work, not the slowest card,
+      decides page time and how long other requests on that instance wait.
+      Fixes: `getSalesAnalytics` derives totals from its buckets (12 queries
+      to 6; folding units into the orders query was measured and REJECTED,
+      40% slower at 12 months); `getCustomerMix` classifies in SQL instead
+      of returning a row per customer (20k) to the app; targets and the
+      month-pace insight use the light `getSalesTotals`; the custom report's
+      new-vs-returning grouping joins each customer's first order once
+      instead of a correlated subquery per order (12-month report 4.9 s to
+      0.8 s, verified identical). Overview at 90 days: 532 to 290 ms wall;
+      12 months stays ~0.85 s because the heavy order scans compete.
+    - **One-minute Overview cache (2026-10-12, owner's decision):**
+      `analytics/cached.ts` wraps all 23 Overview readers in `unstable_cache`
+      (`revalidate: 60`, tag `analytics`, key = reader name + `VERSION` +
+      arguments, so a result only serves the same store, location scope and
+      range). `page.tsx` calls `cachedReaders.*` for every Overview read and
+      parses the range against `minuteNow()` (now rounded down to the minute),
+      so a preset like "Last 90 days" keeps one key for a minute. A repeat view
+      or a switch back to a range therefore makes no database reads for those
+      readers (measured: 43 misses on the first load, 0 on the next three).
+      ★ RENDER SCOPE ONLY: `unstable_cache` throws outside a render, and the
+      same readers serve Mink, the CSV route and the report builder, which must
+      stay live, so the wrap lives in `cached.ts`, never inside `data.ts`.
+      Live View and target cards are deliberately uncached. ★ Results are
+      stored as JSON, which is safe because every reader returns plain objects
+      with timestamps as ISO strings; a reader that starts returning a `Date`,
+      `Map` or `Set` would come back changed on a hit, and a changed result
+      shape needs a `VERSION` bump so a deploy never serves the old one. The
+      trade-off is that a new order can take up to a minute to show on
+      Overview; migration `20261012_0191_analytics_overview_refresh_help`
+      adds that step (and points to Live View) in the analytics troubleshooting
+      checklist. Production caches per Cloud Run instance.
+      - _Local dev._ `next.config.ts` `allowedDevOrigins` lists `localtest.me`
+        and `*.localtest.me`. Without it Next blocked the HMR socket on those
+        hosts and the client never hydrated, so every form on a store host
+        (login, forgot password) did a native GET and nothing happened.
 
 ### Complete Mink Website Builder controls (2026-10-05)
 

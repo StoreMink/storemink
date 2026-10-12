@@ -2,6 +2,13 @@ import { storefrontEvents } from "@/drizzle/schema";
 import { analyticsFeatureAllowed } from "@/lib/analytics/features";
 import { getPlatformAnalyticsFeatures } from "@/lib/analytics/platform-feature-store";
 import { storefrontVisitorIdentity } from "@/lib/analytics/storefront-identity";
+import {
+  classifyTrafficSource,
+  cleanUtm,
+  deviceTypeFromUserAgent,
+  geoFromHeaders,
+  referrerHostFrom,
+} from "@/lib/analytics/traffic";
 import { withService } from "@/lib/db/client";
 import { effectivePlan } from "@/lib/plans";
 import { rateLimit } from "@/lib/rate-limit";
@@ -19,15 +26,16 @@ const BROWSER_EVENTS = new Set([
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function requestHost(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-host")?.split(",")[0];
+  return (forwarded ?? request.headers.get("host") ?? "").trim().toLowerCase();
+}
+
 function sameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
   if (!origin) return true;
   try {
-    const forwarded = request.headers.get("x-forwarded-host")?.split(",")[0];
-    const host = (forwarded ?? request.headers.get("host") ?? "")
-      .trim()
-      .toLowerCase();
-    return new URL(origin).host.toLowerCase() === host;
+    return new URL(origin).host.toLowerCase() === requestHost(request);
   } catch {
     return false;
   }
@@ -65,6 +73,16 @@ export async function POST(request: Request): Promise<Response> {
   if (productId && !UUID.test(productId)) {
     return new Response(null, { status: 400 });
   }
+  // Session attribution. Optional and best-effort: a malformed value is
+  // dropped, never a reason to reject the event.
+  const utm =
+    value.utm && typeof value.utm === "object"
+      ? (value.utm as Record<string, unknown>)
+      : {};
+  const referrerHost = referrerHostFrom(value.referrer, requestHost(request));
+  const utmSource = cleanUtm(utm.source);
+  const utmMedium = cleanUtm(utm.medium);
+  const utmCampaign = cleanUtm(utm.campaign);
 
   const [store, features] = await Promise.all([
     getCurrentStoreOrNull(),
@@ -82,6 +100,11 @@ export async function POST(request: Request): Promise<Response> {
   }
   const identity = storefrontVisitorIdentity(store, request.headers);
   if (!identity) return new Response(null, { status: 204 });
+  // Derived on the spot; the user agent itself is never stored.
+  const deviceType = deviceTypeFromUserAgent(
+    request.headers.get("user-agent") ?? "",
+  );
+  const geo = geoFromHeaders(request.headers);
   const limited = await rateLimit(
     `storefront:${store.id}:${identity.visitorKey}`,
     {
@@ -102,6 +125,20 @@ export async function POST(request: Request): Promise<Response> {
         eventType: value.type as string,
         path,
         productId,
+        deviceType,
+        source: classifyTrafficSource({
+          referrerHost,
+          utmSource,
+          utmMedium,
+          paidClickId: value.paidClick === true,
+        }),
+        referrerHost,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        country: geo.country,
+        region: geo.region,
+        city: geo.city,
       })
       .onConflictDoNothing({
         target: [storefrontEvents.storeId, storefrontEvents.eventId],

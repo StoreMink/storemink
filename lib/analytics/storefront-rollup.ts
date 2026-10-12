@@ -99,5 +99,136 @@ export async function runStorefrontAnalyticsRollup(): Promise<number> {
       RETURNING store_id
     `),
   );
-  return result.rowCount ?? 0;
+  const dimensions = await runStorefrontDimensionRollup();
+  return (result.rowCount ?? 0) + dimensions;
+}
+
+/**
+ * Rebuild sessions by device / source / referrer / landing page / campaign /
+ * country / region / city (migration 0187).
+ *
+ * A session is credited by its FIRST page view (source, referrer, campaign,
+ * landing page); device and location belong to the visitor key, which is
+ * derived per device and day, so they are constant within it. Sales are the
+ * totals of orders whose purchase event landed in the session.
+ *
+ * ★ Only days at least two days clear of the 14-day raw-event prune are
+ * rebuilt: a day straddling that boundary would be recomputed from a partial
+ * set of events and quietly shrink. DELETE then INSERT (one transaction)
+ * because a key can legitimately disappear on rebuild (top-50 cap shifts).
+ */
+export async function runStorefrontDimensionRollup(): Promise<number> {
+  return withService(async (db) => {
+    await db.execute(sql`
+      DELETE FROM storefront_daily_dimensions
+       WHERE date >= (now() AT TIME ZONE 'UTC')::date - 12
+    `);
+    const result = await db.execute(sql`
+      WITH ordered AS (
+        SELECT e.*,
+               lag(e.occurred_at) OVER (
+                 PARTITION BY e.store_id, e.event_date, e.visitor_key
+                 ORDER BY e.occurred_at, e.id
+               ) AS previous_at
+          FROM storefront_events e
+         WHERE e.event_date >= (now() AT TIME ZONE 'UTC')::date - 12
+      ), numbered AS (
+        SELECT ordered.*,
+               sum(CASE WHEN previous_at IS NULL
+                             OR occurred_at - previous_at > interval '30 minutes'
+                        THEN 1 ELSE 0 END) OVER (
+                 PARTITION BY store_id, event_date, visitor_key
+                 ORDER BY occurred_at, id
+               ) AS session_no
+          FROM ordered
+      ), sessions AS (
+        SELECT store_id, event_date, visitor_key, session_no,
+               (array_agg(source ORDER BY occurred_at, id)
+                  FILTER (WHERE event_type = 'page_view'))[1] AS source,
+               (array_agg(referrer_host ORDER BY occurred_at, id)
+                  FILTER (WHERE event_type = 'page_view'))[1] AS referrer_host,
+               (array_agg(utm_campaign ORDER BY occurred_at, id)
+                  FILTER (WHERE event_type = 'page_view'))[1] AS campaign,
+               (array_agg(path ORDER BY occurred_at, id)
+                  FILTER (WHERE event_type = 'page_view'))[1] AS landing_page,
+               max(device_type) AS device,
+               max(country) AS country,
+               max(region) AS region,
+               max(city) AS city,
+               count(*) FILTER (WHERE event_type = 'page_view')::int AS page_views,
+               bool_or(event_type = 'purchase') AS converted,
+               array_agg(order_id) FILTER (
+                 WHERE event_type = 'purchase' AND order_id IS NOT NULL
+               ) AS order_ids
+          FROM numbered
+         GROUP BY store_id, event_date, visitor_key, session_no
+      ), session_sales AS (
+        SELECT s.*,
+               coalesce((
+                 SELECT sum(o.total)
+                   FROM orders o
+                  WHERE o.id = ANY (s.order_ids)
+                    AND o.store_id = s.store_id
+                    AND o.status <> 'cancelled'
+                    AND o.payment_method <> 'exchange'
+               ), 0) AS sales
+          FROM sessions s
+      ), dims AS (
+        SELECT store_id, event_date, 'source' AS dimension,
+               coalesce(source, 'direct') AS key,
+               visitor_key, page_views, converted, sales
+          FROM session_sales
+        UNION ALL
+        SELECT store_id, event_date, 'device', device,
+               visitor_key, page_views, converted, sales
+          FROM session_sales WHERE device IS NOT NULL
+        UNION ALL
+        SELECT store_id, event_date, 'referrer', referrer_host,
+               visitor_key, page_views, converted, sales
+          FROM session_sales WHERE referrer_host IS NOT NULL
+        UNION ALL
+        SELECT store_id, event_date, 'landing_page', landing_page,
+               visitor_key, page_views, converted, sales
+          FROM session_sales WHERE landing_page IS NOT NULL
+        UNION ALL
+        SELECT store_id, event_date, 'campaign', campaign,
+               visitor_key, page_views, converted, sales
+          FROM session_sales WHERE campaign IS NOT NULL
+        UNION ALL
+        SELECT store_id, event_date, 'country', country,
+               visitor_key, page_views, converted, sales
+          FROM session_sales WHERE country IS NOT NULL
+        UNION ALL
+        SELECT store_id, event_date, 'region', country || '|' || region,
+               visitor_key, page_views, converted, sales
+          FROM session_sales WHERE country IS NOT NULL AND region IS NOT NULL
+        UNION ALL
+        SELECT store_id, event_date, 'city',
+               country || '|' || coalesce(region, '') || '|' || city,
+               visitor_key, page_views, converted, sales
+          FROM session_sales WHERE country IS NOT NULL AND city IS NOT NULL
+      ), aggregated AS (
+        SELECT store_id, event_date, dimension, key,
+               count(*)::int AS sessions,
+               count(DISTINCT visitor_key)::int AS visitors,
+               coalesce(sum(page_views), 0)::int AS page_views,
+               count(*) FILTER (WHERE converted)::int AS converted_sessions,
+               coalesce(sum(sales), 0) AS sales,
+               row_number() OVER (
+                 PARTITION BY store_id, event_date, dimension
+                 ORDER BY count(*) DESC, key
+               ) AS rank
+          FROM dims
+         GROUP BY store_id, event_date, dimension, key
+      )
+      INSERT INTO storefront_daily_dimensions
+        (store_id, date, dimension, key, sessions, visitors, page_views,
+         converted_sessions, sales, updated_at)
+      SELECT store_id, event_date, dimension, left(key, 512), sessions,
+             visitors, page_views, converted_sessions, sales, now()
+        FROM aggregated
+       WHERE rank <= 50 AND length(key) > 0
+    `);
+    return result.rowCount ?? 0;
+  });
 }

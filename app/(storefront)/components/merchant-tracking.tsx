@@ -37,6 +37,36 @@ type TrackStorefrontEvent = (
 
 const TrackingContext = createContext<TrackStorefrontEvent>(() => {});
 
+interface LandingAttribution {
+  referrer: string;
+  utm: { source?: string; medium?: string; campaign?: string };
+  paidClick: boolean;
+}
+
+/**
+ * Where this page load came from, read ONCE, in memory only. A client-side
+ * navigation keeps document.referrer but drops the landing URL's campaign
+ * tags, and a shopper may accept analytics a few pages in; holding the
+ * landing values here means their session is still credited correctly.
+ * Nothing is written to the browser, matching the "no identifier stored"
+ * promise in the privacy policy.
+ */
+function readLandingAttribution(): LandingAttribution {
+  const params = new URLSearchParams(window.location.search);
+  const utm: LandingAttribution["utm"] = {};
+  for (const key of ["source", "medium", "campaign"] as const) {
+    const value = params.get(`utm_${key}`);
+    if (value) utm[key] = value.slice(0, 100);
+  }
+  return {
+    referrer: document.referrer.slice(0, 2048),
+    utm,
+    // A Google Ads click id on the landing URL means a paid search visit.
+    paidClick:
+      params.has("gclid") || params.has("gbraid") || params.has("wbraid"),
+  };
+}
+
 export function useStorefrontTracking(): TrackStorefrontEvent {
   return useContext(TrackingContext);
 }
@@ -135,6 +165,13 @@ export function MerchantTracking({
   const [gaReady, setGaReady] = useState(false);
   const [metaReady, setMetaReady] = useState(false);
   const lastFirstPartyPath = useRef<string | null>(null);
+  const landing = useRef<LandingAttribution | null>(null);
+  // Read on mount, before any client navigation can drop the landing URL's
+  // campaign tags. Reading is not collecting: nothing leaves the page until
+  // the shopper allows analytics.
+  useEffect(() => {
+    landing.current ??= readLandingAttribution();
+  }, []);
 
   // A consent decision made in another tab is authoritative. Provider scripts
   // may already have populated globals even after React removes their tags, so
@@ -161,11 +198,15 @@ export function MerchantTracking({
   const track = useCallback<TrackStorefrontEvent>(
     (type, details) => {
       if (!firstPartyEnabled || !consent?.analytics) return;
+      landing.current ??= readLandingAttribution();
       const payload = JSON.stringify({
         eventId: crypto.randomUUID(),
         type,
         path: window.location.pathname,
         ...(details?.productId ? { productId: details.productId } : {}),
+        // Attribution rides on page views; the rollup credits a session by
+        // its first one.
+        ...(type === "page_view" ? landing.current : {}),
       });
       try {
         if (navigator.sendBeacon) {

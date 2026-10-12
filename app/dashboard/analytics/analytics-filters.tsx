@@ -1,104 +1,40 @@
 import type { AnalyticsRange } from "@/lib/analytics/range";
 import type { AnalyticsLocationOption } from "@/lib/analytics/location";
+import { AnalyticsDateControls } from "./analytics-date-controls";
 
-const RANGES = [
-  ["today", "Today"],
-  ["yesterday", "Yesterday"],
-  ["7d", "Last 7 days"],
-  ["30d", "Last 30 days"],
-  ["90d", "Last 90 days"],
-  ["mtd", "Month to date"],
-  ["ytd", "Year to date"],
-  ["12m", "Last 12 months"],
-  ["custom", "Custom"],
-] as const;
-
-const COMPARISONS = [
-  ["previous", "Previous period"],
-  ["year", "Previous year"],
-  ["custom", "Custom comparison"],
-  ["none", "No comparison"],
-] as const;
-
+// Server wrapper: hands the client controls plain strings only (the range's
+// window instants stay on the server), shared by the dashboard and reports.
 export function AnalyticsFilters({
   range,
   locations,
   selectedLocationId,
+  disabled,
+  preserve,
 }: {
   range: AnalyticsRange;
   locations: AnalyticsLocationOption[];
   selectedLocationId: string | null;
+  disabled?: boolean;
+  /** Other URL params to keep when the dates change (a report's settings). */
+  preserve?: Record<string, string>;
 }) {
   return (
-    <form method="get" className="dash-an-filters">
-      <select name="range" defaultValue={range.preset} aria-label="Date range">
-        {RANGES.map(([value, label]) => (
-          <option key={value} value={value}>
-            {label}
-          </option>
-        ))}
-      </select>
-      <select
-        name="compare"
-        defaultValue={range.comparison}
-        aria-label="Comparison"
-      >
-        {COMPARISONS.map(([value, label]) => (
-          <option key={value} value={value}>
-            {label}
-          </option>
-        ))}
-      </select>
-      {locations.length > 0 ? (
-        <select
-          name="location"
-          defaultValue={selectedLocationId ?? "all"}
-          aria-label="Location"
-        >
-          <option value="all">All accessible locations</option>
-          {locations.map((location) => (
-            <option key={location.id} value={location.id}>
-              {location.name}
-            </option>
-          ))}
-        </select>
-      ) : null}
-      <details className="dash-an-custom-dates">
-        <summary>Custom dates</summary>
-        <div>
-          <label>
-            Range start
-            <input type="date" name="from" defaultValue={range.customFrom} />
-          </label>
-          <label>
-            Range end
-            <input type="date" name="to" defaultValue={range.customTo} />
-          </label>
-          <label>
-            Comparison start
-            <input
-              type="date"
-              name="compareFrom"
-              defaultValue={range.compareFrom}
-            />
-          </label>
-          <label>
-            Comparison end
-            <input
-              type="date"
-              name="compareTo"
-              defaultValue={range.compareTo}
-            />
-          </label>
-        </div>
-      </details>
-      <button type="submit">Apply</button>
-      <span
-        className="dash-an-zone"
-        title={`Calendar boundaries use ${range.timeZone}`}
-      >
-        {range.timeZone}
-      </span>
-    </form>
+    <AnalyticsDateControls
+      state={{
+        preset: range.preset,
+        comparison: range.comparison,
+        label: range.label,
+        comparisonLabel: range.comparisonLabel,
+        customFrom: range.customFrom,
+        customTo: range.customTo,
+        compareFrom: range.compareFrom,
+        compareTo: range.compareTo,
+        timeZone: range.timeZone,
+      }}
+      locations={locations.map(({ id, name }) => ({ id, name }))}
+      selectedLocationId={selectedLocationId}
+      disabled={disabled}
+      preserve={preserve}
+    />
   );
 }
