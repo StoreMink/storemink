@@ -217,7 +217,19 @@ read; failed → the row carries Meta's reason). Reading is not answering:`markI
 never set by hand. ★ POLLING IS A ROUTE (`/api/dashboard/inbox/live`,
 `need=list|thread|count`, the `/api/pos/live`rule) riding`usePoll`'s
 visibility/online gates and back-off; a signed-out poll gets a 401, not the
-login page's HTML. Phones get the list and a sheet for the thread.
+login page's HTML. ★★ THE SCREEN IS A FIXED HEIGHT AND ONLY THE MESSAGES
+SCROLL (2026-10-13). It shipped with `height: calc(100dvh - 180px)`AND`flex: 1`on the panes' wrapper; inside a column flex parent of unknown height
+the flex basis wins over`height`and resolves to the content height, so the
+whole page grew with every message and the composer fell below the fold.`.inbox-page`now fills`.dash-content` (`height: 100%`), the card takes the
+rest (`flex: 1 1 0; min-height: 0`), and it is laid out like WhatsApp: one
+card, list and chat side by side, avatars, day pills, runs of bubbles with the
+time inside, a composer that grows with the text, and a jump-to-latest button
+once the reader scrolls up (new messages follow only while they are at the
+bottom). ★ The panes follow the CARD's width, by container query, not the
+window's: below 640px it shows one pane at a time with a back arrow, so the
+sidebar or the Mink panel narrowing it never squeezes two panes. Phones get
+the list, and the chat opens full screen (`100dvh`) in a sheet; there Enter is
+a new line and the button sends.
 Three ways in for customers: `whatsapp.chatButton` (registry, default ON —
 the button renders only on a connected, enabled number, and no store had one
 before this shipped) puts a floating wa.me link on every storefront page

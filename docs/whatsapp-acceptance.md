@@ -239,6 +239,19 @@ when nothing changes and stopping when the tab is hidden; pressing Send is
 never queued behind one. Signed out, a poll answers 401. _Pinned by
 `use-poll.test.ts` and the route's shape._
 
+**WA-3.13 — It reads like WhatsApp, at any size.** On a laptop, open a
+conversation with a long history: the page does not scroll; only the messages
+do, the newest is in view and the reply box stays at the bottom. Messages sit
+under Today / Yesterday / date pills, and a reply that took several messages
+reads as one block. Scroll up: a round arrow appears and takes you back to the
+newest; a message arriving while you read history does not pull you down.
+Narrow the window (or open Mink) until the card is under 640px: the list and
+the chat show one at a time, with a back arrow. On a phone the list fills the
+screen and a chat opens full screen; Enter starts a new line and the green
+button sends. _Pinned by `inbox-client.test.tsx`; layout measured 2026-10-13 in
+a static harness with the real stylesheets at 1280, 880 and 390 px (no page
+scroll, no sideways scroll); not yet looked at on a real phone._
+
 ---
 
 ## Phase 2, slice 1 — COD confirmation (2026-10-13)

@@ -3,11 +3,17 @@
 // ---------------------------------------------------------------------------
 // The WhatsApp inbox screen (docs/whatsapp-commerce-plan.md §11).
 //
-// Two panes on a desktop — the conversation list and the open thread — and
-// one at a time on a phone, where the thread is a sheet over the list (the
-// Orders page's `use-mobile` pattern). The customer's orders and consent sit
-// in a collapsible strip at the top of the thread rather than a third column,
-// so the same layout holds at every width.
+// Laid out like WhatsApp: one card with the conversation list and the open
+// chat side by side on a desktop, and one at a time on a phone, where the
+// chat opens full screen over the list (the Orders page's `use-mobile`
+// pattern). The customer's orders and consent sit in a collapsible panel under
+// the chat header rather than a third column, so the same layout holds at
+// every width.
+//
+// ★ THE PAGE IS A FIXED HEIGHT; ONLY THE MESSAGES SCROLL (inbox.css). The
+// chat opens at the newest message, follows new ones while the reader is at
+// the bottom, and leaves them alone (with a jump-to-latest button) once they
+// have scrolled up to read history.
 //
 // ★ THE LIST AND THE THREAD POLL THROUGH THE ROUTE, NOT ACTIONS. A reply is
 // a Server Action; Next queues actions one at a time per client, so a poll
@@ -23,6 +29,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,22 +40,23 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  ArrowLeft,
   Check,
   CheckCheck,
   ChevronDown,
-  ChevronUp,
   FileText,
+  Info,
   Lock,
   MessageCircle,
   Search,
   Send,
   Smartphone,
-  X,
+  User,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePoll } from "@/lib/pos/use-poll";
+import { isTouchPrimary } from "@/lib/pos/keyboard-wedge";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { formatWhen } from "@/lib/dates";
 import { formatPrice } from "@/lib/pricing";
 import {
   getInboxThread,
@@ -257,22 +265,31 @@ export function InboxClient({
     />
   ) : (
     <div className="inbox-empty">
-      <MessageCircle className="h-6 w-6 opacity-30" />
-      <p>Choose a conversation</p>
+      <span className="inbox-empty-icon">
+        <MessageCircle className="h-7 w-7" />
+      </span>
+      <p className="inbox-empty-title">Choose a conversation</p>
+      <p>Messages from your customers on WhatsApp appear on the left.</p>
     </div>
   );
 
   return (
     <div className="dash-page-enter inbox-page">
-      <header className="dash-page-header row">
+      <header className="dash-page-header row inbox-page-header">
         <div>
           <h1>Inbox</h1>
           <p>Customer conversations on your WhatsApp number.</p>
         </div>
       </header>
 
-      <div className="inbox-layout">
-        <section className="dash-card inbox-list">
+      {/* `has-thread` lets a narrow card show one pane at a time (inbox.css);
+          on a phone the chat is a sheet instead, so the list stays put. */}
+      <div
+        className={`dash-card inbox-shell ${
+          selectedId && !isMobile ? "has-thread" : ""
+        }`}
+      >
+        <section className="inbox-list" aria-label="Conversations">
           <div className="inbox-list-head">
             <form
               className="inbox-search"
@@ -362,7 +379,9 @@ export function InboxClient({
             </Sheet>
           )
         ) : (
-          <section className="dash-card inbox-thread">{threadPane}</section>
+          <section className="inbox-thread" aria-label="Conversation">
+            {threadPane}
+          </section>
         )}
       </div>
     </div>
@@ -384,26 +403,54 @@ function ConversationRow({
       <button
         type="button"
         onClick={onSelect}
+        aria-current={active ? "true" : undefined}
         className={`inbox-row ${active ? "is-active" : ""} ${
           row.status === "needs_reply" ? "needs-reply" : ""
-        }`}
+        } ${row.unreadCount > 0 ? "has-unread" : ""}`}
       >
-        <span className="inbox-row-top">
-          <span className="inbox-row-name">{name}</span>
-          <span className="inbox-row-when">
-            {row.lastMessageAt ? shortWhen(row.lastMessageAt) : ""}
+        <Avatar name={row.contact.name} seed={row.contact.id} />
+        <span className="inbox-row-body">
+          <span className="inbox-row-top">
+            <span className="inbox-row-name">{name}</span>
+            <span className="inbox-row-when">
+              {row.lastMessageAt ? shortWhen(row.lastMessageAt) : ""}
+            </span>
           </span>
-        </span>
-        <span className="inbox-row-bottom">
-          <span className="inbox-row-preview">{row.lastPreview ?? "-"}</span>
-          {row.unreadCount > 0 ? (
-            <span className="inbox-row-unread">{row.unreadCount}</span>
-          ) : row.status === "closed" ? (
-            <span className="inbox-row-closed">Closed</span>
-          ) : null}
+          <span className="inbox-row-bottom">
+            <span className="inbox-row-preview">{row.lastPreview ?? "-"}</span>
+            {row.unreadCount > 0 ? (
+              <span className="inbox-row-unread">{row.unreadCount}</span>
+            ) : row.status === "closed" ? (
+              <span className="inbox-row-closed">Closed</span>
+            ) : null}
+          </span>
         </span>
       </button>
     </li>
+  );
+}
+
+/** Initials on a soft colour fixed by the contact, or a person outline when
+ *  WhatsApp gave no name (WhatsApp's own look for an unknown sender). */
+function Avatar({
+  name,
+  seed,
+  small = false,
+}: {
+  name: string | null;
+  seed: string;
+  small?: boolean;
+}) {
+  const [bg, fg] = AVATAR_COLOURS[hashString(seed) % AVATAR_COLOURS.length];
+  const letters = initials(name);
+  return (
+    <span
+      className={`inbox-avatar ${small ? "is-sm" : ""}`}
+      style={{ background: bg, color: fg }}
+      aria-hidden="true"
+    >
+      {letters ?? <User className={small ? "h-5 w-5" : "h-6 w-6"} />}
+    </span>
   );
 }
 
@@ -432,20 +479,57 @@ function ThreadPane({
 }) {
   const [showCustomer, setShowCustomer] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showJump, setShowJump] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
-  const lastCount = useRef(0);
+  // What the scroll position was last settled for, and whether the reader is
+  // at the bottom. Refs, so a scroll does not re-render the thread.
+  const settled = useRef<{ id: string | null; count: number }>({
+    id: null,
+    count: 0,
+  });
+  const atBottom = useRef(true);
 
-  // Stick to the newest message when one arrives; leave the reader alone
-  // otherwise.
-  useEffect(() => {
+  const count = thread?.messages.length ?? 0;
+  const lastOut = thread?.messages[count - 1]?.direction === "out";
+
+  const toBottom = useCallback((smooth = false) => {
     const el = scroller.current;
-    const count = thread?.messages.length ?? 0;
     if (!el) return;
-    if (count !== lastCount.current) {
+    if (smooth && typeof el.scrollTo === "function") {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } else {
       el.scrollTop = el.scrollHeight;
-      lastCount.current = count;
     }
-  }, [thread?.messages.length, conversationId]);
+    // The scroll event this causes hides the jump button (onScroll).
+    atBottom.current = true;
+  }, []);
+
+  // ★ Open at the newest message; follow new ones only while the reader is at
+  // the bottom, or when the newest is our own reply. Someone scrolled up to
+  // read history is left where they are. Before paint, so a chat never flashes
+  // open at the top.
+  useLayoutEffect(() => {
+    if (!thread || !scroller.current) return;
+    const opened = settled.current.id !== conversationId;
+    const grew = count > settled.current.count;
+    if (opened || (grew && (atBottom.current || lastOut))) toBottom();
+    settled.current = { id: conversationId, count };
+  }, [thread, conversationId, count, lastOut, toBottom]);
+
+  const onScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    atBottom.current = distance < 80;
+    const jump = distance > 240;
+    setShowJump((was) => (was === jump ? was : jump));
+  };
+
+  // A photo that finishes loading after the chat opened pushes the newest
+  // message down; keep it in view if the reader was there.
+  const onMediaLoad = useCallback(() => {
+    if (atBottom.current) toBottom();
+  }, [toBottom]);
 
   if (error) {
     return (
@@ -487,10 +571,11 @@ function ThreadPane({
           type="button"
           className="inbox-icon-btn inbox-thread-back"
           onClick={onClose}
-          aria-label="Back"
+          aria-label="Back to conversations"
         >
-          <X className="h-4 w-4" />
+          <ArrowLeft className="h-5 w-5" />
         </button>
+        <Avatar name={c.contact.name} seed={c.contact.id} small />
         <div className="inbox-thread-who">
           <p className="inbox-thread-name">{name}</p>
           <p className="inbox-thread-sub">
@@ -502,48 +587,65 @@ function ThreadPane({
                 : "Open"}
           </p>
         </div>
-        <button
-          type="button"
-          className="inbox-text-btn"
-          onClick={() => setShowCustomer((v) => !v)}
-          aria-expanded={showCustomer}
-        >
-          Details
-          {showCustomer ? (
-            <ChevronUp className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronDown className="h-3.5 w-3.5" />
-          )}
-        </button>
-        {canManage &&
-          (c.status === "closed" ? (
-            <button
-              type="button"
-              className="inbox-text-btn"
-              disabled={busy}
-              onClick={() => setStatus("open")}
-            >
-              Reopen
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="inbox-text-btn"
-              disabled={busy}
-              onClick={() => setStatus("closed")}
-            >
-              Close
-            </button>
-          ))}
+        <div className="inbox-thread-actions">
+          <button
+            type="button"
+            className="inbox-text-btn"
+            onClick={() => setShowCustomer((v) => !v)}
+            aria-expanded={showCustomer}
+            aria-label="Customer details"
+          >
+            <Info className="h-3.5 w-3.5" />
+            <span className="inbox-text-label">Details</span>
+          </button>
+          {canManage &&
+            (c.status === "closed" ? (
+              <button
+                type="button"
+                className="inbox-text-btn"
+                disabled={busy}
+                onClick={() => setStatus("open")}
+              >
+                Reopen
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="inbox-text-btn"
+                disabled={busy}
+                onClick={() => setStatus("closed")}
+              >
+                Close
+              </button>
+            ))}
+        </div>
       </header>
 
       {showCustomer && <CustomerStrip thread={thread} />}
 
-      <div className="inbox-messages" ref={scroller}>
-        {thread.messages.length === 0 ? (
-          <p className="inbox-note">No messages yet.</p>
-        ) : (
-          thread.messages.map((m) => <Bubble key={m.id} m={m} />)
+      <div className="inbox-messages-wrap">
+        <div
+          className="inbox-messages"
+          ref={scroller}
+          onScroll={onScroll}
+          role="log"
+          aria-label={`Messages with ${name}`}
+        >
+          {thread.messages.length === 0 ? (
+            <p className="inbox-note">No messages yet.</p>
+          ) : (
+            <MessageList messages={thread.messages} onMediaLoad={onMediaLoad} />
+          )}
+        </div>
+        {showJump && (
+          <button
+            type="button"
+            className="inbox-jump"
+            onClick={() => toBottom(true)}
+            aria-label="Go to the latest message"
+          >
+            <ChevronDown className="h-5 w-5" />
+          </button>
         )}
       </div>
 
@@ -618,53 +720,135 @@ function CustomerStrip({ thread }: { thread: InboxThread }) {
   );
 }
 
-function Bubble({ m }: { m: InboxMessageRow }) {
+/** Messages grouped by day, each day under its own date pill, and a run of
+ *  messages from one side within a few minutes drawn as one block (only the
+ *  first bubble carries the tail and the sender label). */
+function MessageList({
+  messages,
+  onMediaLoad,
+}: {
+  messages: InboxMessageRow[];
+  onMediaLoad: () => void;
+}) {
+  const days = useMemo(() => groupByDay(messages), [messages]);
+  return (
+    <>
+      {days.map((day) => (
+        <section key={day.key} className="inbox-day" aria-label={day.label}>
+          <span className="inbox-day-label">{day.label}</span>
+          {day.messages.map((m, i) => {
+            const prev = day.messages[i - 1];
+            const continues =
+              !!prev &&
+              prev.direction === m.direction &&
+              new Date(m.sentAt).getTime() - new Date(prev.sentAt).getTime() <
+                RUN_GAP_MS;
+            const label = senderLabel(m);
+            const showLabel =
+              label !== null && (!continues || senderLabel(prev) !== label);
+            return (
+              <Bubble
+                key={m.id}
+                m={m}
+                continues={continues}
+                showLabel={showLabel}
+                onMediaLoad={onMediaLoad}
+              />
+            );
+          })}
+        </section>
+      ))}
+    </>
+  );
+}
+
+function Bubble({
+  m,
+  continues,
+  showLabel,
+  onMediaLoad,
+}: {
+  m: InboxMessageRow;
+  continues: boolean;
+  showLabel: boolean;
+  onMediaLoad: () => void;
+}) {
   const out = m.direction === "out";
   const intent =
     m.payload && typeof m.payload.intent === "string" ? m.payload.intent : null;
+  const inboundError = Boolean(m.error && !out);
+  const outboundError = Boolean(out && m.status === "failed" && m.error);
+  // ★ The time sits over the end of the last line only when the text IS the
+  // last line; a flag or an error under it gets the time on its own row.
+  const tailMeta =
+    Boolean(m.body) && !intent && !inboundError && !outboundError;
+  const hasMedia = Boolean(m.mediaUrl);
   return (
-    <div className={`inbox-bubble-row ${out ? "is-out" : "is-in"}`}>
+    <div
+      className={`inbox-bubble-row ${out ? "is-out" : "is-in"} ${
+        continues ? "is-cont" : ""
+      }`}
+    >
       <div
-        className={`inbox-bubble ${m.status === "failed" ? "is-failed" : ""}`}
+        className={`inbox-bubble ${m.status === "failed" ? "is-failed" : ""} ${
+          tailMeta ? "has-tail-meta" : ""
+        } ${hasMedia ? "has-media" : ""}`}
       >
-        {m.source === "phone_app" && (
-          <span className="inbox-bubble-source">
-            <Smartphone className="h-3 w-3" /> From your phone
-          </span>
+        {showLabel && <SenderLabel m={m} />}
+        <Media m={m} onLoad={onMediaLoad} />
+        {m.body && (
+          <p className="inbox-bubble-text">
+            {m.body}
+            {tailMeta && (
+              <span className="inbox-bubble-spacer" aria-hidden="true" />
+            )}
+          </p>
         )}
-        {m.source === "template" && (
-          <span className="inbox-bubble-source">
-            <FileText className="h-3 w-3" />{" "}
-            {m.sentBy ? `Template · ${m.sentBy}` : "Order update"}
-          </span>
-        )}
-        {m.source === "dashboard" && m.sentBy && (
-          <span className="inbox-bubble-source">{m.sentBy}</span>
-        )}
-        <Media m={m} />
-        {m.body && <p className="inbox-bubble-text">{m.body}</p>}
         {intent === "stop" && (
           <span className="inbox-bubble-flag">Opted out of offers</span>
         )}
         {intent === "start" && (
           <span className="inbox-bubble-flag">Opted back in to offers</span>
         )}
-        {m.error && !out && (
-          <span className="inbox-bubble-error">{m.error}</span>
-        )}
+        {inboundError && <span className="inbox-bubble-error">{m.error}</span>}
+        {outboundError && <span className="inbox-bubble-error">{m.error}</span>}
         <span className="inbox-bubble-meta">
-          {formatWhen(m.sentAt)}
+          <time dateTime={m.sentAt} title={fullWhen(m.sentAt)}>
+            {timeOnly(m.sentAt)}
+          </time>
           {out && <Ticks status={m.status} />}
         </span>
-        {out && m.status === "failed" && m.error && (
-          <span className="inbox-bubble-error">{m.error}</span>
-        )}
       </div>
     </div>
   );
 }
 
-function Media({ m }: { m: InboxMessageRow }) {
+/** Who sent an outbound message, when it is worth saying; null for the
+ *  customer's own messages and the shop's unnamed automation. */
+function senderLabel(m: InboxMessageRow): string | null {
+  if (m.direction !== "out") return null;
+  if (m.source === "phone_app") return "From your phone";
+  if (m.source === "template") {
+    return m.sentBy ? `Template · ${m.sentBy}` : "Order update";
+  }
+  if (m.source === "automation") return "Automatic reply";
+  if (m.source === "dashboard" && m.sentBy) return m.sentBy;
+  return null;
+}
+
+function SenderLabel({ m }: { m: InboxMessageRow }) {
+  const label = senderLabel(m);
+  if (!label) return null;
+  return (
+    <span className="inbox-bubble-source">
+      {m.source === "phone_app" && <Smartphone className="h-3 w-3" />}
+      {m.source === "template" && <FileText className="h-3 w-3" />}
+      {label}
+    </span>
+  );
+}
+
+function Media({ m, onLoad }: { m: InboxMessageRow; onLoad: () => void }) {
   if (!m.mediaUrl) {
     if (
       m.kind === "image" ||
@@ -696,12 +880,24 @@ function Media({ m }: { m: InboxMessageRow }) {
         {/* eslint-disable-next-line @next/next/no-img-element -- a customer's
             photo from our bucket; next/image would need a remote pattern per
             size and gains nothing in a chat thread. */}
-        <img src={m.mediaUrl} alt={m.body ?? "Photo"} className="inbox-media" />
+        <img
+          src={m.mediaUrl}
+          alt={m.body ?? "Photo"}
+          className="inbox-media"
+          onLoad={onLoad}
+        />
       </a>
     );
   }
   if (m.kind === "video") {
-    return <video src={m.mediaUrl} controls className="inbox-media" />;
+    return (
+      <video
+        src={m.mediaUrl}
+        controls
+        className="inbox-media"
+        onLoadedMetadata={onLoad}
+      />
+    );
   }
   if (m.kind === "audio") {
     return <audio src={m.mediaUrl} controls className="inbox-audio" />;
@@ -758,6 +954,17 @@ function Composer({
   const [templateId, setTemplateId] = useState("");
   const [values, setValues] = useState<string[]>([]);
   const [, tick] = useState(0);
+  const box = useRef<HTMLTextAreaElement>(null);
+
+  // The box grows with what is typed, up to its CSS max-height, then scrolls.
+  // ★ Only from a real measurement: a box measured while hidden (or before
+  // layout) reports 0, and writing that would collapse it to nothing.
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "auto";
+    if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight}px`;
+  }, [text]);
 
   // Re-render each minute so the countdown and the 24-hour switch move.
   useEffect(() => {
@@ -825,8 +1032,11 @@ function Composer({
         {windowOpen ? (
           <>
             <span>
-              You can reply freely for {remaining}. The customer&rsquo;s next
-              message restarts the 24 hours.
+              You can reply freely for {remaining}.
+              <span className="inbox-window-more">
+                {" "}
+                The customer&rsquo;s next message restarts the 24 hours.
+              </span>
             </span>
             {templates.length > 0 && (
               <button
@@ -905,16 +1115,20 @@ function Composer({
       ) : (
         <div className="inbox-compose-row">
           <textarea
+            ref={box}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              // Enter sends on a keyboard; on a phone it is a new line and
+              // the button sends, as in WhatsApp.
+              if (e.key === "Enter" && !e.shiftKey && !isTouchPrimary()) {
                 e.preventDefault();
                 if (text.trim()) void send();
               }
             }}
-            placeholder="Type a reply… (Enter to send, Shift+Enter for a new line)"
-            rows={2}
+            placeholder="Type a message"
+            title="Enter to send, Shift+Enter for a new line"
+            rows={1}
             maxLength={INBOX_REPLY_MAX_CHARS}
             aria-label="Reply"
           />
@@ -935,24 +1149,125 @@ function Composer({
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
+const TIME_ZONE = "Asia/Kolkata";
+
+/** Messages closer together than this, from the same side, read as one run. */
+const RUN_GAP_MS = 5 * 60_000;
+
+/** Soft background and a text colour that reads on it (≥ 4.5:1). */
+const AVATAR_COLOURS: [string, string][] = [
+  ["#dbeafe", "#1e40af"],
+  ["#dcfce7", "#166534"],
+  ["#fef3c7", "#92400e"],
+  ["#fce7f3", "#9d174d"],
+  ["#ede9fe", "#5b21b6"],
+  ["#e0f2fe", "#075985"],
+  ["#ffedd5", "#9a3412"],
+  ["#e2e8f0", "#334155"],
+];
+
+function hashString(value: string): number {
+  let h = 5381;
+  for (let i = 0; i < value.length; i++) {
+    h = ((h << 5) + h + value.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+/** Up to two letters from a name; null when there is no name to take them
+ *  from (WhatsApp sent none, or it is only a number). */
+function initials(name: string | null): string | null {
+  const words = (name ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter((w) => /^\p{L}/u.test(w));
+  if (words.length === 0) return null;
+  const first = Array.from(words[0])[0] ?? "";
+  const last =
+    words.length > 1 ? (Array.from(words[words.length - 1])[0] ?? "") : "";
+  return (first + last).toUpperCase();
+}
+
+function dayKey(d: Date): string {
+  return d.toLocaleDateString("en-CA", { timeZone: TIME_ZONE });
+}
+
+/** "Today", "Yesterday", a weekday within the week, else the date. */
+function dayLabel(d: Date): string {
+  const now = Date.now();
+  const key = dayKey(d);
+  if (key === dayKey(new Date(now))) return "Today";
+  if (key === dayKey(new Date(now - 86_400_000))) return "Yesterday";
+  if (now - d.getTime() < 6 * 86_400_000) {
+    return d.toLocaleDateString("en-IN", {
+      weekday: "long",
+      timeZone: TIME_ZONE,
+    });
+  }
+  return d.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: TIME_ZONE,
+  });
+}
+
+function groupByDay(
+  messages: InboxMessageRow[],
+): { key: string; label: string; messages: InboxMessageRow[] }[] {
+  const days: { key: string; label: string; messages: InboxMessageRow[] }[] =
+    [];
+  for (const m of messages) {
+    const d = new Date(m.sentAt);
+    const key = Number.isNaN(d.getTime()) ? "unknown" : dayKey(d);
+    let day = days[days.length - 1];
+    if (!day || day.key !== key) {
+      day = {
+        key,
+        label: key === "unknown" ? "Earlier" : dayLabel(d),
+        messages: [],
+      };
+      days.push(day);
+    }
+    day.messages.push(m);
+  }
+  return days;
+}
+
+function timeOnly(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-IN", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: TIME_ZONE,
+  });
+}
+
+function fullWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: TIME_ZONE,
+  });
+}
+
 function shortWhen(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const now = new Date();
-  const sameDay =
-    d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) ===
-    now.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-  return sameDay
-    ? d.toLocaleTimeString("en-IN", {
-        hour: "numeric",
-        minute: "2-digit",
-        timeZone: "Asia/Kolkata",
-      })
-    : d.toLocaleDateString("en-IN", {
-        day: "numeric",
-        month: "short",
-        timeZone: "Asia/Kolkata",
-      });
+  const key = dayKey(d);
+  if (key === dayKey(new Date())) return timeOnly(iso);
+  if (key === dayKey(new Date(Date.now() - 86_400_000))) return "Yesterday";
+  return d.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    timeZone: TIME_ZONE,
+  });
 }
 
 function countdown(closesAt: string): string {

@@ -175,6 +175,111 @@ describe("InboxClient", () => {
     expect(screen.queryByLabelText("Reply")).not.toBeInTheDocument();
   });
 
+  it("groups messages under day labels and draws a run as one block", async () => {
+    // Pinned to India's calendar days, which is what the labels follow, so
+    // the test reads the same whatever time it runs.
+    const today = new Date().toLocaleDateString("en-CA", {
+      timeZone: "Asia/Kolkata",
+    });
+    const at = (dayOffset: number, hhmm: string) =>
+      new Date(
+        new Date(`${today}T${hhmm}:00+05:30`).getTime() +
+          dayOffset * 86_400_000,
+      ).toISOString();
+    const base = thread().messages[0];
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({
+        messages: [
+          { ...base, id: "a", body: "Old question", sentAt: at(-1, "12:00") },
+          { ...base, id: "b", body: "First today", sentAt: at(0, "00:01") },
+          {
+            ...base,
+            id: "c",
+            body: "Second, a minute later",
+            sentAt: at(0, "00:02"),
+          },
+          {
+            ...base,
+            id: "d",
+            direction: "out",
+            source: "automation",
+            status: "sent",
+            body: "Order ORD1 is confirmed.",
+            sentAt: at(0, "00:03"),
+          },
+        ],
+      }),
+    });
+    const { container } = render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    expect(await screen.findByText("Today")).toBeInTheDocument();
+    expect(screen.getByText("Yesterday")).toBeInTheDocument();
+    const rows = container.querySelectorAll(".inbox-bubble-row");
+    // The second of two messages a minute apart continues the run; the first
+    // of each day, and a change of side, start a new one.
+    expect(
+      Array.from(rows).map((r) => r.classList.contains("is-cont")),
+    ).toEqual([false, false, true, false]);
+    // An automatic answer says so, so staff can tell it was not a person.
+    expect(screen.getByText("Automatic reply")).toBeInTheDocument();
+  });
+
+  it("★ on a touch screen Enter is a new line and the button sends", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    vi.mocked(sendInboxReply).mockClear();
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    const box = await screen.findByLabelText("Reply");
+    fireEvent.change(box, { target: { value: "Line one" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(sendInboxReply).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sendInboxReply).toHaveBeenCalled());
+    vi.unstubAllGlobals();
+  });
+
+  it("tells the card a chat is open, so a narrow card shows one pane", async () => {
+    const { container } = render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        canManage
+        channelLive
+        initialConversationId={null}
+      />,
+    );
+    const shell = container.querySelector(".inbox-shell")!;
+    expect(shell.classList.contains("has-thread")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: /Rohan/ }));
+    expect(shell.classList.contains("has-thread")).toBe(true);
+    // The back arrow returns to the list.
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Back to conversations" }),
+    );
+    expect(shell.classList.contains("has-thread")).toBe(false);
+  });
+
   it("a paused number says so instead of offering a box that always fails", async () => {
     render(
       <InboxClient
