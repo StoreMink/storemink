@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const captured = vi.hoisted(() => ({
   wheres: [] as unknown[],
   groups: [] as unknown[][],
+  executed: [] as unknown[],
   activeQueries: 0,
   maxActiveQueries: 0,
 }));
@@ -31,6 +32,25 @@ function chain(): any {
   c.where = vi.fn((w: unknown) => {
     captured.wheres.push(w);
     return c;
+  });
+  c.having = vi.fn(self);
+  c.as = vi.fn(() => ({ firstOrderAt: "first_order_at" }));
+  // Raw statements (the sales bucket CTE). Their SQL holds the WHERE, so it
+  // is captured alongside the builder WHEREs for the parameter checks.
+  c.execute = vi.fn((statement: unknown) => {
+    captured.wheres.push(statement);
+    captured.executed.push(statement);
+    captured.activeQueries += 1;
+    captured.maxActiveQueries = Math.max(
+      captured.maxActiveQueries,
+      captured.activeQueries,
+    );
+    return new Promise((resolve) =>
+      queueMicrotask(() => {
+        captured.activeQueries -= 1;
+        resolve({ rows: [] });
+      }),
+    );
   });
   // ★ ONE permissive row, not []. The data layer destructures scalar results,
   // so an empty array throws before any WHERE is captured — and the test would
@@ -66,8 +86,10 @@ import {
   comparisonTrend,
   getRecentOrders,
   getActivity,
+  getDiscountImpact,
   getSalesAnalytics,
   grossMarginFromTotals,
+  salesBreakdownFromTotals,
   getSalesByChannel,
   RECOGNIZED_PAYMENT_STATUSES,
   RECOGNIZED_POS_STATUSES,
@@ -107,7 +129,9 @@ function params(): unknown[] {
 function boundValues(nodes: unknown[]): unknown[] {
   const out: unknown[] = [];
   const walk = (node: any, depth = 0) => {
-    if (depth > 12 || node === null || node === undefined) return;
+    // Raw statements nest the shared WHERE a few levels deeper than the
+    // builder does, so the walk allows for it.
+    if (depth > 24 || node === null || node === undefined) return;
     if (typeof node !== "object") {
       out.push(node);
       return;
@@ -125,6 +149,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   captured.wheres = [];
   captured.groups = [];
+  captured.executed = [];
   captured.activeQueries = 0;
   captured.maxActiveQueries = 0;
 });
@@ -222,6 +247,8 @@ describe("recognized sales", () => {
     await getSalesAnalytics("store-1", allLocations, range);
 
     expect(captured.maxActiveQueries).toBe(1);
+    // One window: orders, units and refunds, each grouped by ordinal; the
+    // totals come from the buckets, so there are no separate totals queries.
     expect(captured.groups).toHaveLength(3);
     const groupValues = boundValues(captured.groups);
     expect(groupValues).not.toContain("day");
@@ -294,5 +321,74 @@ describe("customer mix", () => {
       returningCustomers: 1,
       totalCustomers: 2,
     });
+  });
+});
+
+describe("number fixes (2026-10-12)", () => {
+  it("never counts an exchange's replacement order as a sale", async () => {
+    await getSalesAnalytics("store-1", allLocations, range);
+    expect(params()).toContain("exchange");
+  });
+
+  it("takes total discounts from the order alone (lines are a subset)", async () => {
+    // The permissive mock returns 0 for every column; the contract under test
+    // is the arithmetic, so stub one order and one line row explicitly.
+    const { withService } = await import("@/lib/db/client");
+    const rows = [[{ discounts: 150, couponOrders: 2 }], [{ discounts: 50 }]];
+    vi.mocked(withService).mockImplementationOnce(async (fn: any) => {
+      const db: any = {};
+      const self = () => db;
+      for (const m of ["select", "from", "where", "innerJoin"]) db[m] = self;
+      db.then = (res: (v: unknown[]) => unknown) => res(rows.shift()!);
+      return fn(db);
+    });
+    const impact = await getDiscountImpact("store-1", allLocations, range);
+    expect(impact).toEqual({
+      totalDiscounts: 150,
+      lineDiscounts: 50,
+      orderDiscounts: 100,
+      couponOrders: 2,
+    });
+  });
+});
+
+describe("total sales breakdown", () => {
+  it("reconciles gross, discounts, shipping, taxes and returns to total sales", () => {
+    const breakdown = salesBreakdownFromTotals({
+      grossSales: 1000,
+      discounts: 100,
+      shipping: 40,
+      taxes: 162,
+      orderTotal: 1102,
+      returns: 200,
+    });
+    expect(breakdown).toMatchObject({
+      netSales: 700,
+      adjustments: 0,
+      totalSales: 902,
+    });
+  });
+
+  it("shows what the lines cannot explain instead of hiding it", () => {
+    expect(
+      salesBreakdownFromTotals({
+        grossSales: 1000,
+        discounts: 0,
+        shipping: 0,
+        taxes: 0,
+        orderTotal: 950,
+        returns: 0,
+      }).adjustments,
+    ).toBe(-50);
+    expect(
+      salesBreakdownFromTotals({
+        grossSales: 1000,
+        discounts: 0,
+        shipping: 0,
+        taxes: 0,
+        orderTotal: 1000.4,
+        returns: 0,
+      }).adjustments,
+    ).toBe(0);
   });
 });

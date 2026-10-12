@@ -244,7 +244,7 @@ const TERMS_BODY = [
 
 // ── Privacy Policy ──────────────────────────────────────────────────────────
 const PRIVACY_BODY = [
-  `<p><em>Version 2</em></p>`,
+  `<p><em>Version 3</em></p>`,
 
   section(
     "1. Two different roles",
@@ -310,7 +310,7 @@ const PRIVACY_BODY = [
   section(
     "8. If you shopped at a store built on StoreMink",
     `The merchant decides what to collect and why; we process it for them. Ask them first: they can change or remove your details, and we will help them do it.`,
-    `A merchant may add their own analytics or advertising tags to their storefront. Those send data to the merchant's own accounts, not ours, and only after you allow that category on their site. You can withdraw that choice on the same site at any time. First-party measurement, where the merchant has switched it on, uses a key we rotate daily and does not store an identifier in your browser.`,
+    `A merchant may add their own analytics or advertising tags to their storefront. Those send data to the merchant's own accounts, not ours, and only after you allow that category on their site. You can withdraw that choice on the same site at any time. First-party measurement, where the merchant has switched it on, uses a key we rotate daily and does not store an identifier in your browser. It records the pages you view and the shopping steps you take, the type of device you use (desktop, mobile or tablet), the website or tagged campaign link that brought you, and your approximate location (country, state and city) as reported by your network. We do not keep your IP address, your browser details or the full address of the page that referred you.`,
   ),
 
   section(
@@ -413,7 +413,10 @@ const AUP_BODY = [
  */
 export const LEGAL_CONTENT: LegalContent[] = [
   { kind: "terms", title: "Terms of Service", version: 2, body: TERMS_BODY },
-  { kind: "privacy", title: "Privacy Policy", version: 2, body: PRIVACY_BODY },
+  // v3 DRAFT (2026-10-12, analytics traffic sources): section 8 now says what
+  // first-party measurement records. Owner/legal review before
+  // `scripts/publish-legal.ts --publish`, which makes every merchant re-accept.
+  { kind: "privacy", title: "Privacy Policy", version: 3, body: PRIVACY_BODY },
   {
     kind: "acceptable-use",
     title: "Acceptable Use Policy",

@@ -375,3 +375,68 @@ export async function getSearchAnalytics(
     pages: toSearchRanking(result.pages),
   };
 }
+
+export interface SearchDimensionRow {
+  key: string;
+  clicks: number;
+  impressions: number;
+  previousClicks: number | null;
+}
+
+/**
+ * Clicks and impressions by device or country. Google reports these two
+ * dimensions WEEKLY (rows dated to the week's Monday, top 3 devices / top 10
+ * countries), so a range totals the weeks that begin inside it. Tenant-bound
+ * like every other Search read.
+ */
+export async function getSearchDimensionBreakdown(
+  storeId: string,
+  range: AnalyticsRange,
+  dimension: "device" | "country",
+): Promise<SearchDimensionRow[]> {
+  const current = searchDateWindow(range.current);
+  const previous = range.compare ? searchDateWindow(range.compare) : null;
+  const totalsFor = (
+    db: Parameters<Parameters<typeof withService>[0]>[0],
+    window: SearchDateWindow,
+  ) =>
+    db
+      .select({
+        key: storeSearchMetrics.key,
+        clicks:
+          sql<number>`coalesce(sum(${storeSearchMetrics.clicks}), 0)::double precision`.mapWith(
+            Number,
+          ),
+        impressions:
+          sql<number>`coalesce(sum(${storeSearchMetrics.impressions}), 0)::double precision`.mapWith(
+            Number,
+          ),
+      })
+      .from(storeSearchMetrics)
+      .where(
+        and(
+          eq(storeSearchMetrics.storeId, storeId),
+          eq(storeSearchMetrics.dimension, dimension),
+          ne(storeSearchMetrics.key, ""),
+          gte(storeSearchMetrics.date, window.from),
+          lte(storeSearchMetrics.date, window.to),
+        ),
+      )
+      .groupBy(storeSearchMetrics.key)
+      .orderBy(
+        desc(sql`sum(${storeSearchMetrics.clicks})`),
+        desc(sql`sum(${storeSearchMetrics.impressions})`),
+      );
+  const [now, before] = await withService(async (db) => {
+    const rows = await totalsFor(db, current);
+    const prior = previous ? await totalsFor(db, previous) : null;
+    return [rows, prior] as const;
+  });
+  const prior = new Map(before?.map((row) => [row.key, row.clicks]));
+  return now.map((row) => ({
+    key: row.key,
+    clicks: Number(row.clicks),
+    impressions: Number(row.impressions),
+    previousClicks: before ? (prior.get(row.key) ?? 0) : null,
+  }));
+}

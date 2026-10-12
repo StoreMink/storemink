@@ -42,13 +42,18 @@ vi.mock("@/lib/rate-limit", () => ({
 import { POST } from "./route";
 import { getCurrentStoreOrNull } from "@/lib/store/resolve";
 
-function request(body: unknown, origin = "https://mystore.storemink.com") {
+function request(
+  body: unknown,
+  origin = "https://mystore.storemink.com",
+  extraHeaders: Record<string, string> = {},
+) {
   return new Request("https://mystore.storemink.com/api/t", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       host: "mystore.storemink.com",
       origin,
+      ...extraHeaders,
     },
     body: JSON.stringify(body),
   });
@@ -119,5 +124,61 @@ describe("POST /api/t", () => {
     );
     expect(response.status).toBe(204);
     expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("stores derived attribution, never the raw user agent or referring URL", async () => {
+    await POST(
+      request(
+        {
+          eventId: "8bf13763-9e50-4d42-9e8a-0b79fe84b7c1",
+          type: "page_view",
+          path: "/",
+          referrer: "https://l.instagram.com/?u=https%3A%2F%2Fmystore&e=secret",
+          utm: {
+            source: "instagram",
+            medium: "social",
+            campaign: " Diwali Sale ",
+          },
+        },
+        "https://mystore.storemink.com",
+        {
+          "user-agent":
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile/15E148",
+          "x-sm-geo-country": "IN",
+          "x-sm-geo-region": "INMH",
+          "x-sm-geo-city": "Mumbai",
+        },
+      ),
+    );
+    const row = insertValues.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(row).toMatchObject({
+      deviceType: "mobile",
+      source: "social",
+      referrerHost: "instagram.com",
+      utmCampaign: "Diwali Sale",
+      country: "IN",
+      region: "MH",
+      city: "Mumbai",
+    });
+    expect(JSON.stringify(row)).not.toContain("secret");
+    expect(JSON.stringify(row)).not.toContain("iPhone");
+  });
+
+  it("treats the store's own pages as no referrer (direct)", async () => {
+    await POST(
+      request({
+        eventId: "9bf13763-9e50-4d42-9e8a-0b79fe84b7c1",
+        type: "page_view",
+        path: "/shop",
+        referrer: "https://mystore.storemink.com/",
+      }),
+    );
+    expect(insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referrerHost: null,
+        source: "direct",
+        country: null,
+      }),
+    );
   });
 });

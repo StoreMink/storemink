@@ -13,6 +13,7 @@ import {
   sanitizeStoredAnalyticsLayout,
   storedAnalyticsLayout,
   type AnalyticsLayoutSection,
+  type PlanGatedSectionId,
 } from "@/lib/analytics/layout";
 import { withService } from "@/lib/db/client";
 import { isUniqueViolation } from "@/lib/db/errors";
@@ -33,11 +34,20 @@ async function actionContext() {
   if (!can(viewer.permissions, "analytics", "view", viewer.isSuperadmin)) {
     return null;
   }
-  const [scope, features, canCustomize, canUseSearch] = await Promise.all([
+  const [
+    scope,
+    features,
+    canCustomize,
+    canUseSearch,
+    canUseMargin,
+    canUseTraffic,
+  ] = await Promise.all([
     getViewerLocations(),
     getPlatformAnalyticsFeatures(),
     storeHasAnalyticsFeature(viewer.storeId, "dashboardCustomization"),
     storeHasAnalyticsFeature(viewer.storeId, "googleSearchConsole"),
+    storeHasAnalyticsFeature(viewer.storeId, "grossMargin"),
+    storeHasAnalyticsFeature(viewer.storeId, "storefrontConversion"),
   ]);
   if (
     !features.coreDashboard ||
@@ -46,11 +56,24 @@ async function actionContext() {
   )
     return null;
   const allowed = new Set<WidgetId>(Object.keys(WIDGETS) as WidgetId[]);
-  if (!canUseSearch) {
-    for (const id of allowed) {
-      if (WIDGETS[id].group === "Search") allowed.delete(id);
-    }
+  // Cards a plan doesn't include are NOT allowed, so a save made while the
+  // store is below that plan keeps them as dormant preferences (below) rather
+  // than dropping them: a downgrade followed by a save must not lose them.
+  const blockedGroups = new Set<string>([
+    ...(canUseSearch ? [] : ["Search"]),
+    ...(canUseMargin ? [] : ["Profit"]),
+    ...(canUseTraffic ? [] : ["Traffic"]),
+  ]);
+  for (const id of allowed) {
+    if (blockedGroups.has(WIDGETS[id].group)) allowed.delete(id);
   }
+  // Plan sections this store can use right now: once saved, the merchant has
+  // seen them, so removing one later is a choice the read path must respect.
+  const acknowledged: PlanGatedSectionId[] = [
+    ...(canUseMargin ? (["profit"] as const) : []),
+    ...(canUseSearch ? (["google-search"] as const) : []),
+    ...(canUseTraffic ? (["storefront-traffic"] as const) : []),
+  ];
   if (scope !== null) allowed.delete("metric_customers");
   if (!can(viewer.permissions, "blogs", "view", viewer.isSuperadmin)) {
     allowed.delete("blog_approvals");
@@ -58,7 +81,7 @@ async function actionContext() {
   if (!can(viewer.permissions, "enquiries", "view", viewer.isSuperadmin)) {
     allowed.delete("enquiries");
   }
-  return { viewer, allowed };
+  return { viewer, allowed, acknowledged };
 }
 
 function sameVersion(
@@ -159,13 +182,17 @@ export async function saveAnalyticsDashboardLayout(
         }
       }
 
+      const layout = storedAnalyticsLayout(sections, [
+        ...(old?.acknowledged ?? []),
+        ...ctx.acknowledged,
+      ]);
       await db
         .insert(analyticsDashboardLayouts)
         .values({
           storeId: ctx.viewer.storeId,
           adminUserId: ctx.viewer.userId,
           schemaVersion: ANALYTICS_LAYOUT_SCHEMA_VERSION,
-          layout: storedAnalyticsLayout(sections),
+          layout,
           updatedAt,
         })
         .onConflictDoUpdate({
@@ -175,7 +202,7 @@ export async function saveAnalyticsDashboardLayout(
           ],
           set: {
             schemaVersion: ANALYTICS_LAYOUT_SCHEMA_VERSION,
-            layout: storedAnalyticsLayout(sections),
+            layout,
             updatedAt,
           },
         });

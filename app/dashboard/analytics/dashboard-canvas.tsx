@@ -30,8 +30,13 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import Link from "next/link";
+import { Menu } from "@base-ui/react/menu";
 import {
   ChartNoAxesCombined,
+  Ellipsis,
+  Lock,
+  Settings2,
   ChevronDown,
   ChevronUp,
   EllipsisVertical,
@@ -50,6 +55,7 @@ import {
   saveAnalyticsDashboardLayout,
 } from "@/app/actions/analytics-layout";
 import {
+  DEFAULT_SECTION_ORDER,
   MAX_ANALYTICS_SECTIONS,
   analyticsWidgetGridRows,
   availableWidgetSizes,
@@ -69,13 +75,33 @@ import {
   type WidgetId,
 } from "./widgets";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
+import { UpgradePopover, type ReportLock } from "../components/analytics-card";
 
 interface DashboardCanvasProps {
   storeId: string;
   slots: Partial<Record<WidgetId, ReactNode>>;
-  headerExtras?: ReactNode;
+  /** Date range / comparison / location pills, shown under the title. */
+  filters?: ReactNode;
+  /** Where "Tracking settings" in the page menu goes. */
+  settingsHref?: string;
+  /** The Live View page (header button). */
+  liveHref?: string;
+  /** Extra header controls (the targets editor). */
+  headerControls?: ReactNode;
+  /** The Analytics sub-navigation (Overview / Reports / Live View). */
+  tabs?: ReactNode;
+  /** View-mode content between the filters and the sections (targets). */
+  beforeSections?: ReactNode;
   initialLayout: AnalyticsLayoutView;
   canCustomize?: boolean;
+  /** Customising is a paid feature: show Edit with a lock that explains it. */
+  customizeLock?: ReportLock;
+  /**
+   * Plan-locked sections rendered as previews (view mode only). On an
+   * untouched dashboard each sits where its real section would; on a saved
+   * layout they follow the merchant's own sections.
+   */
+  previews?: Array<{ id: string; node: ReactNode }>;
 }
 
 const EDITOR_GUIDE_CELLS = 36;
@@ -116,6 +142,18 @@ function removeLegacyLayout(storeId: string) {
   }
 }
 
+/**
+ * Sort key for a view-mode section. An untouched dashboard follows the default
+ * section order (so a locked preview sits where its real section would);
+ * a saved layout keeps the merchant's order and previews follow it.
+ */
+function defaultOrder(id: string, index: number, configured: boolean) {
+  const position = DEFAULT_SECTION_ORDER.indexOf(id);
+  if (!configured && position >= 0) return position;
+  if (index === Infinity) return 1_000 + Math.max(0, position);
+  return configured ? index : 100 + index;
+}
+
 function itemLocation(sections: AnalyticsLayoutSection[], id: string) {
   for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
     const itemIndex = sections[sectionIndex].items.findIndex(
@@ -149,9 +187,16 @@ function dropLocation(sections: AnalyticsLayoutSection[], overId: string) {
 export function DashboardCanvas({
   storeId,
   slots,
-  headerExtras,
+  filters,
+  settingsHref,
+  liveHref,
+  headerControls,
+  tabs,
+  beforeSections,
   initialLayout,
   canCustomize = true,
+  customizeLock,
+  previews = [],
 }: DashboardCanvasProps) {
   const allowed = useMemo(
     () => Object.keys(slots).filter((id): id is WidgetId => id in WIDGETS),
@@ -618,7 +663,39 @@ export function DashboardCanvas({
           <header className="dash-an-head">
             <h1>Analytics</h1>
             <div className="dash-an-actions">
-              {headerExtras}
+              {headerControls}
+              {liveHref ? (
+                <Link href={liveHref} className="dash-an-btn">
+                  <span className="dash-live-dot" aria-hidden /> Live View
+                </Link>
+              ) : null}
+              {settingsHref ? (
+                <Menu.Root>
+                  <Menu.Trigger
+                    className="dash-an-btn is-icon"
+                    aria-label="More actions"
+                  >
+                    <Ellipsis aria-hidden />
+                  </Menu.Trigger>
+                  <Menu.Portal>
+                    <Menu.Positioner
+                      className="isolate z-50"
+                      side="bottom"
+                      align="end"
+                      sideOffset={6}
+                    >
+                      <Menu.Popup className="dashboard-shell dash-an-menu">
+                        <Menu.LinkItem
+                          className="dash-an-menu-item"
+                          render={<Link href={settingsHref} />}
+                        >
+                          <Settings2 aria-hidden /> Tracking settings
+                        </Menu.LinkItem>
+                      </Menu.Popup>
+                    </Menu.Positioner>
+                  </Menu.Portal>
+                </Menu.Root>
+              ) : null}
               {canCustomize ? (
                 <button
                   type="button"
@@ -627,24 +704,50 @@ export function DashboardCanvas({
                 >
                   Edit dashboard
                 </button>
+              ) : customizeLock ? (
+                <UpgradePopover
+                  lock={customizeLock}
+                  feature="Customise your dashboard"
+                  pitch="Add the cards that matter to you, from inventory velocity to discounts and returns, and arrange them into your own sections."
+                  triggerClassName="dash-an-btn is-locked"
+                  triggerLabel="Edit dashboard needs a paid plan"
+                >
+                  <Lock aria-hidden /> Edit dashboard
+                </UpgradePopover>
               ) : null}
             </div>
           </header>
+          {tabs}
+          {filters ? <div className="dash-an-toolbar">{filters}</div> : null}
+          {beforeSections}
           <div className="dash-sections">
-            {renderedSections.map((section) => (
-              <section key={section.id} className="dash-section">
-                <h2>{section.title}</h2>
-                <div className="dash-canvas">
-                  {section.items.map((item) => (
-                    <Widget
-                      key={item.widgetId}
-                      item={item}
-                      node={slots[item.widgetId]}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
+            {[
+              ...renderedSections.map((section, index) => ({
+                key: section.id,
+                order: defaultOrder(section.id, index, layoutConfigured),
+                node: (
+                  <section key={section.id} className="dash-section">
+                    <h2>{section.title}</h2>
+                    <div className="dash-canvas">
+                      {section.items.map((item) => (
+                        <Widget
+                          key={item.widgetId}
+                          item={item}
+                          node={slots[item.widgetId]}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ),
+              })),
+              ...previews.map((preview) => ({
+                key: `preview:${preview.id}`,
+                order: defaultOrder(preview.id, Infinity, layoutConfigured),
+                node: <div key={`preview:${preview.id}`}>{preview.node}</div>,
+              })),
+            ]
+              .sort((a, b) => a.order - b.order)
+              .map((entry) => entry.node)}
           </div>
           {renderedSections.length === 0 ? (
             <div className="dash-canvas-empty">

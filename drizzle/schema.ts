@@ -4017,6 +4017,18 @@ export const storefrontEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
+    // Session attribution (migration 0187). Device is derived from the user
+    // agent, which is then discarded; location is the load balancer's
+    // approximate one; no IP or full referring URL is ever stored.
+    deviceType: text("device_type"),
+    source: text(),
+    referrerHost: text("referrer_host"),
+    utmSource: text("utm_source"),
+    utmMedium: text("utm_medium"),
+    utmCampaign: text("utm_campaign"),
+    country: text(),
+    region: text(),
+    city: text(),
   },
   (table) => [
     unique("storefront_events_store_event_key").on(
@@ -4083,6 +4095,109 @@ export const storefrontOrderAttribution = pgTable(
       foreignColumns: [stores.id],
       name: "storefront_order_attribution_store_id_fkey",
     }).onDelete("cascade"),
+  ],
+);
+
+/** Daily sessions by device / source / referrer / landing page / campaign /
+ *  country / region / city (migration 0187), top 50 keys per day. */
+export const storefrontDailyDimensions = pgTable(
+  "storefront_daily_dimensions",
+  {
+    storeId: uuid("store_id").notNull(),
+    date: date({ mode: "string" }).notNull(),
+    dimension: text().notNull(),
+    key: text().notNull(),
+    sessions: integer().default(0).notNull(),
+    visitors: integer().default(0).notNull(),
+    pageViews: integer("page_views").default(0).notNull(),
+    convertedSessions: integer("converted_sessions").default(0).notNull(),
+    sales: numeric().default("0").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.storeId, table.date, table.dimension, table.key],
+    }),
+    index("storefront_daily_dimensions_store_dimension_idx").on(
+      table.storeId,
+      table.dimension,
+      table.date,
+    ),
+    foreignKey({
+      columns: [table.storeId],
+      foreignColumns: [stores.id],
+      name: "storefront_daily_dimensions_store_id_fkey",
+    }).onDelete("cascade"),
+    check(
+      "storefront_daily_dimensions_dimension_check",
+      sql`${table.dimension} IN ('device', 'source', 'referrer', 'landing_page', 'campaign', 'country', 'region', 'city')`,
+    ),
+  ],
+);
+
+/** Saved custom reports (migration 0189): a name and a re-validated config. */
+export const analyticsSavedReports = pgTable(
+  "analytics_saved_reports",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    storeId: uuid("store_id").notNull(),
+    name: text().notNull(),
+    config: jsonb().notNull(),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("analytics_saved_reports_store_name_key").on(
+      table.storeId,
+      table.name,
+    ),
+    foreignKey({
+      columns: [table.storeId],
+      foreignColumns: [stores.id],
+      name: "analytics_saved_reports_store_id_fkey",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Store-wide analytics goals (migration 0188); progress is computed on read. */
+export const analyticsTargets = pgTable(
+  "analytics_targets",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    storeId: uuid("store_id").notNull(),
+    metric: text().notNull(),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    targetValue: numeric("target_value").notNull(),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("analytics_targets_store_period_idx").on(
+      table.storeId,
+      table.periodEnd,
+    ),
+    foreignKey({
+      columns: [table.storeId],
+      foreignColumns: [stores.id],
+      name: "analytics_targets_store_id_fkey",
+    }).onDelete("cascade"),
+    check(
+      "analytics_targets_metric_check",
+      sql`${table.metric} IN ('total_sales', 'orders', 'average_order_value', 'new_customers', 'sessions', 'conversion_rate')`,
+    ),
   ],
 );
 

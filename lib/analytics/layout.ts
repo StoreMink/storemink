@@ -17,6 +17,23 @@ export const ANALYTICS_WIDGET_GRID_ROWS: Record<WidgetId, number> = {
   traffic_visitors: 2,
   traffic_sessions: 2,
   traffic_page_views: 2,
+  traffic_conversion: 2,
+  metric_returning_rate: 2,
+  sales_breakdown: 7,
+  orders_chart: 7,
+  aov_chart: 7,
+  sales_by_discount: 6,
+  sales_by_region: 6,
+  search_devices: 6,
+  search_countries: 6,
+  traffic_sessions_chart: 7,
+  traffic_devices: 6,
+  traffic_sources: 6,
+  traffic_locations: 6,
+  traffic_landing_pages: 6,
+  traffic_referrers: 6,
+  traffic_campaigns: 6,
+  sales_by_source: 6,
   traffic_funnel: 6,
   metric_gross_profit: 2,
   gross_margin_overview: 6,
@@ -68,6 +85,33 @@ export interface AnalyticsLayoutSection {
 export interface StoredAnalyticsLayoutV2 {
   defaultRevision: 2;
   sections: AnalyticsLayoutSection[];
+  /**
+   * Plan-gated default sections this store could already use when the layout
+   * was saved. Server-written only (never trusted from the client).
+   */
+  acknowledged?: PlanGatedSectionId[];
+}
+
+/**
+ * Default sections that only exist on a higher plan. A saved layout is a
+ * snapshot of what the merchant could see at the time, so after an UPGRADE
+ * these would never appear without the merchant knowing to add them. Reading
+ * a saved layout therefore appends any of these that are now allowed, unless
+ * the save already knew about it (`acknowledged`): a section the merchant
+ * removed after unlocking it stays removed.
+ */
+export const PLAN_GATED_SECTION_IDS = [
+  "profit",
+  "google-search",
+  "storefront-traffic",
+] as const;
+export type PlanGatedSectionId = (typeof PLAN_GATED_SECTION_IDS)[number];
+
+function isPlanGatedSectionId(value: unknown): value is PlanGatedSectionId {
+  return (
+    typeof value === "string" &&
+    (PLAN_GATED_SECTION_IDS as readonly string[]).includes(value)
+  );
 }
 
 interface StoredAnalyticsLayoutV1 {
@@ -94,9 +138,26 @@ export const WIDGET_SIZE_RULES: Record<
   traffic_visitors: { default: "compact", min: "compact" },
   traffic_sessions: { default: "compact", min: "compact" },
   traffic_page_views: { default: "compact", min: "compact" },
-  traffic_funnel: { default: "full", min: "half" },
+  traffic_conversion: { default: "compact", min: "compact" },
+  metric_returning_rate: { default: "compact", min: "compact" },
+  sales_breakdown: { default: "half", min: "half" },
+  orders_chart: { default: "half", min: "half" },
+  aov_chart: { default: "half", min: "half" },
+  sales_by_discount: { default: "half", min: "half" },
+  sales_by_region: { default: "half", min: "half" },
+  search_devices: { default: "half", min: "half" },
+  search_countries: { default: "half", min: "half" },
+  traffic_sessions_chart: { default: "full", min: "half" },
+  traffic_devices: { default: "half", min: "half" },
+  traffic_sources: { default: "half", min: "half" },
+  traffic_locations: { default: "half", min: "half" },
+  traffic_landing_pages: { default: "half", min: "half" },
+  traffic_referrers: { default: "half", min: "half" },
+  traffic_campaigns: { default: "half", min: "half" },
+  sales_by_source: { default: "half", min: "half" },
+  traffic_funnel: { default: "half", min: "half" },
   metric_gross_profit: { default: "compact", min: "compact" },
-  gross_margin_overview: { default: "half", min: "half" },
+  gross_margin_overview: { default: "full", min: "half" },
   metric_revenue: { default: "compact", min: "compact" },
   metric_orders: { default: "compact", min: "compact" },
   metric_aov: { default: "compact", min: "compact" },
@@ -107,7 +168,7 @@ export const WIDGET_SIZE_RULES: Record<
   top_categories: { default: "half", min: "half" },
   top_products: { default: "half", min: "half" },
   sales_by_channel: { default: "half", min: "half" },
-  sales_by_location: { default: "full", min: "half" },
+  sales_by_location: { default: "half", min: "half" },
   sales_by_payment: { default: "half", min: "half" },
   customer_mix: { default: "half", min: "half" },
   discount_impact: { default: "half", min: "half" },
@@ -134,27 +195,51 @@ const DEFAULT_SECTIONS: Array<{
   {
     id: "overview",
     title: "Overview",
-    widgets: ["metric_revenue", "metric_orders", "metric_aov", "metric_units"],
+    // Shopify's top row: money, volume, basket size and loyalty.
+    widgets: [
+      "metric_revenue",
+      "metric_orders",
+      "metric_aov",
+      "metric_returning_rate",
+    ],
   },
   {
     id: "sales",
     title: "Sales",
+    // Ordered so every row fills: the chart full width, then pairs of half
+    // cards. Sales by channel only exists for stores with point of sale, and
+    // Sales by location only for stores with locations, so they pair up.
     widgets: [
       "revenue_chart",
+      "sales_breakdown",
       "top_products",
+      "top_categories",
+      "sales_by_discount",
       "sales_by_channel",
       "sales_by_location",
     ],
   },
   {
+    id: "orders",
+    title: "Orders",
+    widgets: ["orders_chart", "aov_chart"],
+  },
+  {
     id: "customers",
     title: "Customers",
-    widgets: ["customer_mix", "metric_customers"],
+    widgets: ["customer_mix", "sales_by_region"],
+  },
+  {
+    // Free stores cannot customise, so the default is the whole dashboard
+    // they ever see: it carries the commerce cards every plan can use.
+    id: "discounts-returns",
+    title: "Discounts and returns",
+    widgets: ["discount_impact", "returns_refunds"],
   },
   {
     id: "profit",
     title: "Profit",
-    widgets: ["metric_gross_profit", "gross_margin_overview"],
+    widgets: ["gross_margin_overview"],
   },
   {
     id: "google-search",
@@ -167,6 +252,8 @@ const DEFAULT_SECTIONS: Array<{
       "search_trend",
       "search_queries",
       "search_pages",
+      "search_devices",
+      "search_countries",
     ],
   },
   {
@@ -176,10 +263,27 @@ const DEFAULT_SECTIONS: Array<{
       "traffic_visitors",
       "traffic_sessions",
       "traffic_page_views",
+      "traffic_conversion",
+      "traffic_sessions_chart",
       "traffic_funnel",
+      "traffic_devices",
+      "traffic_sources",
+      "sales_by_source",
+      "traffic_locations",
+      "traffic_landing_pages",
     ],
   },
 ];
+
+/** Default section ids in render order, for placing plan previews in place. */
+export const DEFAULT_SECTION_ORDER: readonly string[] = DEFAULT_SECTIONS.map(
+  (section) => section.id,
+);
+
+/** Which widgets make up each plan-gated default section. */
+export function planGatedSectionWidgets(id: PlanGatedSectionId): WidgetId[] {
+  return DEFAULT_SECTIONS.find((section) => section.id === id)?.widgets ?? [];
+}
 
 const SECTION_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const SIZE_SET = new Set<string>(ANALYTICS_WIDGET_SIZES);
@@ -335,7 +439,15 @@ function sanitizeV2(
     }
     sections.push({ id, title, hidden: section.hidden, items });
   }
-  return { defaultRevision: 2, sections };
+  // Client input never carries `acknowledged` (the save action computes it);
+  // a stored value keeps only known section ids.
+  if (strict || !Array.isArray(raw.acknowledged)) {
+    return { defaultRevision: 2, sections };
+  }
+  const acknowledged = [
+    ...new Set(raw.acknowledged.filter(isPlanGatedSectionId)),
+  ];
+  return { defaultRevision: 2, sections, acknowledged };
 }
 
 /** Strict client-write validation. Unknown/duplicate/undersized cards fail. */
@@ -364,8 +476,13 @@ export function sanitizeStoredAnalyticsLayout(
 
 export function storedAnalyticsLayout(
   sections: readonly AnalyticsLayoutSection[],
+  acknowledged?: readonly PlanGatedSectionId[],
 ): StoredAnalyticsLayoutV2 {
-  return { defaultRevision: 2, sections: cloneSections(sections) };
+  return {
+    defaultRevision: 2,
+    sections: cloneSections(sections),
+    ...(acknowledged ? { acknowledged: [...new Set(acknowledged)] } : {}),
+  };
 }
 
 export function layoutForViewer(
@@ -383,12 +500,32 @@ export function layoutForViewer(
     };
   }
   const permitted = new Set(allowed);
-  return {
-    sections: stored.sections.map((section) => ({
-      ...section,
-      items: section.items.filter((item) => permitted.has(item.widgetId)),
-    })),
-    configured: true,
-    updatedAt,
-  };
+  const sections = stored.sections.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => permitted.has(item.widgetId)),
+  }));
+
+  // Newly unlocked plan sections (see PLAN_GATED_SECTION_IDS). A layout saved
+  // before `acknowledged` existed falls back to "none of its cards are placed
+  // anywhere", which is the same answer for every merchant who never had it.
+  const placed = new Set(
+    stored.sections.flatMap((section) =>
+      section.items.map((item) => item.widgetId),
+    ),
+  );
+  const acknowledged = new Set(stored.acknowledged ?? []);
+  for (const fallback of defaultAnalyticsSections(allowed)) {
+    if (
+      !isPlanGatedSectionId(fallback.id) ||
+      acknowledged.has(fallback.id) ||
+      sections.length >= MAX_ANALYTICS_SECTIONS ||
+      sections.some((section) => section.id === fallback.id) ||
+      fallback.items.some((item) => placed.has(item.widgetId))
+    ) {
+      continue;
+    }
+    sections.push(fallback);
+  }
+
+  return { sections, configured: true, updatedAt };
 }
