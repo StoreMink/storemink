@@ -213,6 +213,12 @@ still holds `GCP_SERVICE_ACCOUNT` and `GCP_WORKLOAD_IDENTITY_PROVIDER`.
 
 ### Repointing a trigger without retyping it
 
+⚠ **The same route is the fallback when `update github` refuses.** On
+2026-10-13 `gcloud builds triggers update github storemink-web-dev
+--update-substitutions=…` returned a bare `INVALID_ARGUMENT` (by name and by
+ID, no field named); describe, edit the `substitutions:` block, then import
+added the key and kept the other 24.
+
 The installed gcloud has no `builds triggers export`, but `describe` writes the
 same YAML, and `import` updates the trigger whose `id` the file carries. That
 keeps the ID and every substitution, which retyping a long `--substitutions`

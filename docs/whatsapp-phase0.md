@@ -269,7 +269,9 @@ on each (the same grant the existing secrets carry).
 `WHATSAPP_APP_ID` / `WHATSAPP_CONFIG_ID` as plain env vars (defaults = the
 dev app), and the `storemink-web-prod` trigger overrides all three to the prod
 app and `*_PROD` secrets (verified with `gcloud builds triggers describe`).
-`_WHATSAPP_CONFIG_ID` stays empty on both until §4.3 produces one.
+`_WHATSAPP_CONFIG_ID` defaults to empty. The `storemink-web-dev` trigger has
+carried the dev configuration (`1080489094597122`) since 2026-10-13; the prod
+trigger stays empty until the production app has its own configuration.
 
 Remaining: merge `whatsapp` → `dev` so `dev.storemink.com` serves the route,
 wait for the dev build, then click **Verify and save** in §4.2. The verify
