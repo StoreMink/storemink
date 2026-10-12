@@ -207,7 +207,9 @@ export const SECTIONS: DashboardSection[] = [
     href: "/dashboard/analytics",
     icon: "analytics",
     group: "Workspace",
-    actions: ["view"],
+    // "manage" creates and edits the store's shared analytics targets and
+    // saved reports; viewing (and a personal dashboard layout) needs "view".
+    actions: ["view", "manage"],
   },
 
   // --- Sell in person -------------------------------------------------------

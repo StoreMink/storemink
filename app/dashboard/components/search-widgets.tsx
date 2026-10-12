@@ -4,10 +4,12 @@ import { ArrowUpRight } from "lucide-react";
 import type {
   SearchAnalytics,
   SearchAnalyticsState,
-  SearchMetricStat,
   SearchRankingRow,
 } from "../analytics/search-data";
 import { SearchTrendChart } from "./search-trend-chart-lazy";
+import { MetricTitle } from "./analytics-card";
+import { Sparkline, TrendBadge } from "./analytics-trend";
+import { WIDGETS } from "../analytics/widgets";
 
 type SearchMetric = "clicks" | "impressions" | "ctr" | "position";
 
@@ -82,43 +84,6 @@ function SearchState({ state }: { state: SearchAnalyticsState }) {
   );
 }
 
-function Sparkline({ data }: { data: number[] }) {
-  const width = 72;
-  const height = 22;
-  if (data.length < 2) return null;
-  const max = Math.max(...data);
-  const min = Math.min(...data);
-  const range = max - min || 1;
-  const step = width / (data.length - 1);
-  const points = data
-    .map((value, index) => {
-      const x = index * step;
-      const y = height - ((value - min) / range) * (height - 3) - 1.5;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-  return (
-    <svg
-      width={width}
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      fill="none"
-      preserveAspectRatio="none"
-      className="dash-metric-spark"
-      aria-hidden
-    >
-      <polyline
-        points={points}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 function formatMetric(
   value: number,
   format: "count" | "percent" | "position",
@@ -128,38 +93,25 @@ function formatMetric(
   return value.toFixed(1);
 }
 
-function MetricValue({
-  stat,
-  metric,
-}: {
-  stat: SearchMetricStat;
-  metric: SearchMetric;
-}) {
-  const meta = METRIC_META[metric];
-  const flat = stat.trendPct === 0;
-  const deltaClass =
-    stat.trendPct === null || flat
-      ? "is-flat"
-      : stat.improved
-        ? "is-up"
-        : "is-down";
-  return (
-    <div className="dash-metric-row">
-      <span className="dash-metric-val">
-        {formatMetric(stat.value, meta.format)}
-      </span>
-      {stat.trendPct !== null ? (
-        <span className={`dash-metric-delta ${deltaClass}`}>
-          {flat
-            ? "-"
-            : `${stat.direction === "up" ? "↑" : "↓"} ${Math.abs(stat.trendPct)}%`}
-        </span>
-      ) : null}
-      <Sparkline data={stat.spark} />
-    </div>
-  );
-}
+const SHORT_STATE: Record<Exclude<SearchAnalyticsState, "ready">, string> = {
+  not_launched: "Starts after your store launches",
+  collecting: "Collecting the first days of data",
+  no_visibility: "No Google visibility yet",
+  error: "Needs attention, see the chart below",
+};
 
+const DEFINITION: Record<SearchMetric, string> = {
+  clicks: WIDGETS.search_clicks.description,
+  impressions: WIDGETS.search_impressions.description,
+  ctr: WIDGETS.search_ctr.description,
+  position: WIDGETS.search_position.description,
+};
+
+/**
+ * A compact Search tile, built like every other Analytics metric. The source
+ * line and the full not-ready explanation live once on the performance chart
+ * instead of being repeated on four tiles.
+ */
 export function SearchMetricCard({
   data,
   metric,
@@ -168,15 +120,44 @@ export function SearchMetricCard({
   metric: SearchMetric;
 }) {
   const meta = METRIC_META[metric];
+  const stat = data[metric];
+  const ready = data.state === "ready";
+  // SearchMetricStat keeps magnitude and direction apart; the badge wants a
+  // signed change, and a LOWER average position is the improvement.
+  const signed =
+    stat.trendPct === null
+      ? null
+      : stat.direction === "down"
+        ? -Math.abs(stat.trendPct)
+        : Math.abs(stat.trendPct);
   return (
-    <div className="dash-metric dash-search-metric">
-      <div className="dash-metric-label">{meta.title}</div>
-      {data.state === "ready" ? (
-        <MetricValue stat={data[metric]} metric={metric} />
+    <div className="dash-metric">
+      <div className="dash-metric-top">
+        <MetricTitle title={meta.title} definition={DEFINITION[metric]} />
+      </div>
+      {ready ? (
+        <>
+          <div className="dash-metric-row">
+            <span className="dash-metric-val">
+              {formatMetric(stat.value, meta.format)}
+            </span>
+            <TrendBadge
+              pct={signed}
+              goodWhen={metric === "position" ? "down" : "up"}
+            />
+          </div>
+          <Sparkline data={stat.spark} />
+        </>
       ) : (
-        <SearchState state={data.state} />
+        <>
+          <div className="dash-metric-row">
+            <span className="dash-metric-val is-muted">-</span>
+          </div>
+          <p className="dash-metric-note">
+            {SHORT_STATE[data.state as Exclude<SearchAnalyticsState, "ready">]}
+          </p>
+        </>
       )}
-      <SearchSourceMeta data={data} />
     </div>
   );
 }
@@ -308,7 +289,8 @@ export function SearchRankingWidget({
             impressions.
           </p>
         ) : null}
-        <SearchSourceMeta data={data} />
+        {/* Source, freshness and any warning are shown once, on the
+            performance chart, rather than on every Search card. */}
       </div>
     </div>
   );

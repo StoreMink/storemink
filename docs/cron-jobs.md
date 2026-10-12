@@ -124,14 +124,19 @@ gcloud builds submit --project storemink-prod --region global --config=cloudbuil
 | `storemink-domain-reconcile`        | `10 * * * *`   | `https://storemink.com/api/cron/domain-reconcile`        |
 | `storemink-prune-logs`              | `0 3 * * *`    | `https://storemink.com/api/cron/prune-logs`              |
 | `storemink-analytics-rollup`        | `40 * * * *`   | `https://storemink.com/api/cron/analytics-rollup`        |
-| `storemink-import-worker`           | `*/10 * * * *` | `https://storemink.com/api/cron/import-worker`           |
-| `storemink-billing`                 | `20 * * * *`   | `https://storemink.com/api/cron/billing`                 |
-| `storemink-help-embeddings`         | `50 * * * *`   | `https://storemink.com/api/cron/help-embeddings`         |
-| `storemink-mink-publications`       | `* * * * *`    | `https://storemink.com/api/cron/mink-publications`       |
-| `storemink-mink-workflows`          | `* * * * *`    | `https://storemink.com/api/cron/mink-workflows`          |
-| `storemink-theme-studio-runs`       | `* * * * *`    | `https://storemink.com/api/internal/theme-studio/runs`   |
-| `storemink-theme-studio-capture`    | `* * * * *` ⚠  | Cloud Run Job execution API (to pause: see below)        |
-| `storemink-theme-studio-qa`         | `* * * * *`    | `https://storemink.com/api/internal/theme-studio/qa`     |
+
+> `analytics-rollup` rebuilds both `storefront_daily` and (since migration 0187) `storefront_daily_dimensions` (sessions by device, source, referrer,
+> landing page, campaign and location). While it is paused, every storefront
+> traffic card is empty, and raw events older than 14 days are pruned without
+> ever being counted.
+> | `storemink-import-worker` | `*/10 * * * *` | `https://storemink.com/api/cron/import-worker` |
+> | `storemink-billing` | `20 * * * *` | `https://storemink.com/api/cron/billing` |
+> | `storemink-help-embeddings` | `50 * * * *` | `https://storemink.com/api/cron/help-embeddings` |
+> | `storemink-mink-publications` | `* * * * *` | `https://storemink.com/api/cron/mink-publications` |
+> | `storemink-mink-workflows` | `* * * * *` | `https://storemink.com/api/cron/mink-workflows` |
+> | `storemink-theme-studio-runs` | `* * * * *` | `https://storemink.com/api/internal/theme-studio/runs` |
+> | `storemink-theme-studio-capture` | `* * * * *` ⚠ | Cloud Run Job execution API (to pause: see below) |
+> | `storemink-theme-studio-qa` | `* * * * *` | `https://storemink.com/api/internal/theme-studio/qa` |
 
 > ⚠ **The table above is the INTENDED state. Measured live 2026-09-08 with
 > `gcloud scheduler jobs list --project storemink-prod --location asia-south1`,

@@ -39,9 +39,26 @@ export type WidgetId =
   | "traffic_visitors"
   | "traffic_sessions"
   | "traffic_page_views"
+  | "traffic_conversion"
   | "traffic_funnel"
   | "metric_gross_profit"
-  | "gross_margin_overview";
+  | "gross_margin_overview"
+  | "metric_returning_rate"
+  | "sales_breakdown"
+  | "orders_chart"
+  | "aov_chart"
+  | "sales_by_discount"
+  | "sales_by_region"
+  | "search_devices"
+  | "search_countries"
+  | "traffic_sessions_chart"
+  | "traffic_devices"
+  | "traffic_sources"
+  | "traffic_locations"
+  | "traffic_landing_pages"
+  | "traffic_referrers"
+  | "traffic_campaigns"
+  | "sales_by_source";
 
 export type WidgetGroup =
   | "Metrics"
@@ -61,6 +78,108 @@ export interface WidgetMeta {
 }
 
 export const WIDGETS: Record<WidgetId, WidgetMeta> = {
+  traffic_sessions_chart: {
+    id: "traffic_sessions_chart",
+    title: "Sessions over time",
+    description: "Consented storefront sessions for each day, week or month.",
+    group: "Traffic",
+  },
+  traffic_devices: {
+    id: "traffic_devices",
+    title: "Sessions by device type",
+    description: "Sessions on mobile, desktop and tablet.",
+    group: "Traffic",
+  },
+  traffic_sources: {
+    id: "traffic_sources",
+    title: "Sessions by traffic source",
+    description:
+      "How sessions started: direct, search, social, email, paid or another site.",
+    group: "Traffic",
+  },
+  sales_by_source: {
+    id: "sales_by_source",
+    title: "Sales by traffic source",
+    description:
+      "Sales from orders placed in a session, credited to how that session started.",
+    group: "Traffic",
+  },
+  traffic_locations: {
+    id: "traffic_locations",
+    title: "Sessions by location",
+    description: "Visitors' approximate city, as reported by their network.",
+    group: "Traffic",
+  },
+  traffic_landing_pages: {
+    id: "traffic_landing_pages",
+    title: "Sessions by landing page",
+    description: "The first page of each session, and how often it converted.",
+    group: "Traffic",
+  },
+  traffic_referrers: {
+    id: "traffic_referrers",
+    title: "Sessions by referrer",
+    description: "Websites and apps that sent visitors to your store.",
+    group: "Traffic",
+  },
+  traffic_campaigns: {
+    id: "traffic_campaigns",
+    title: "Sessions by campaign",
+    description: "Sessions from links tagged with utm_campaign.",
+    group: "Traffic",
+  },
+  metric_returning_rate: {
+    id: "metric_returning_rate",
+    title: "Returning customer rate",
+    description:
+      "Share of customers who ordered in the range and had ordered before.",
+    group: "Metrics",
+  },
+  sales_breakdown: {
+    id: "sales_breakdown",
+    title: "Total sales breakdown",
+    description:
+      "Gross sales, discounts, returns, shipping and taxes that make up total sales.",
+    group: "Sales",
+  },
+  orders_chart: {
+    id: "orders_chart",
+    title: "Orders over time",
+    description: "Recognized orders placed over the selected date range.",
+    group: "Sales",
+  },
+  aov_chart: {
+    id: "aov_chart",
+    title: "Average order value over time",
+    description: "Total sales divided by orders, for each day, week or month.",
+    group: "Sales",
+  },
+  sales_by_discount: {
+    id: "sales_by_discount",
+    title: "Sales by discount code",
+    description:
+      "Sales from orders that used each discount code, and the amount taken off.",
+    group: "Sales",
+  },
+  sales_by_region: {
+    id: "sales_by_region",
+    title: "Sales by customer region",
+    description:
+      "Online sales by the state, or country, the order was delivered to.",
+    group: "Customers",
+  },
+  search_devices: {
+    id: "search_devices",
+    title: "Google Search by device",
+    description: "Clicks from Google Search on mobile, desktop and tablet.",
+    group: "Search",
+  },
+  search_countries: {
+    id: "search_countries",
+    title: "Google Search by country",
+    description: "Countries that sent the most clicks from Google Search.",
+    group: "Search",
+  },
   metric_gross_profit: {
     id: "metric_gross_profit",
     title: "Gross profit",
@@ -90,6 +209,13 @@ export const WIDGETS: Record<WidgetId, WidgetMeta> = {
     id: "traffic_page_views",
     title: "Storefront page views",
     description: "Pages viewed during consented storefront sessions.",
+    group: "Traffic",
+  },
+  traffic_conversion: {
+    id: "traffic_conversion",
+    title: "Conversion rate",
+    description:
+      "Share of consented storefront sessions that ended in a purchase.",
     group: "Traffic",
   },
   traffic_funnel: {

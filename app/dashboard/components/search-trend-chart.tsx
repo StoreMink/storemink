@@ -55,12 +55,21 @@ export function SearchTrendChart({ data }: { data: SearchTrendPoint[] }) {
           margin={{ top: 10, right: 6, bottom: 0, left: -12 }}
         >
           <CartesianGrid vertical={false} />
-          <XAxis dataKey="label" axisLine={false} tickLine={false} dy={8} />
+          <XAxis
+            dataKey="label"
+            axisLine={false}
+            tickLine={false}
+            dy={8}
+            interval="preserveStartEnd"
+            minTickGap={28}
+            tick={{ fontSize: 11, fill: "var(--dash-text-3)" }}
+          />
           <YAxis
             yAxisId="clicks"
             axisLine={false}
             tickLine={false}
             tickFormatter={compactNumber}
+            tick={{ fontSize: 11, fill: "var(--dash-text-3)" }}
             width={52}
           />
           <YAxis
@@ -69,6 +78,7 @@ export function SearchTrendChart({ data }: { data: SearchTrendPoint[] }) {
             axisLine={false}
             tickLine={false}
             tickFormatter={compactNumber}
+            tick={{ fontSize: 11, fill: "var(--dash-text-3)" }}
             width={52}
           />
           <Tooltip content={<SearchTooltip />} />

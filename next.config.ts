@@ -3,6 +3,13 @@ import { totalmem } from "node:os";
 import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 
 const nextConfig: NextConfig = {
+  // Dev only. `localtest.me` is the local platform/store host (CODEBASE.md:
+  // a public name that resolves to 127.0.0.1 and that Firebase accepts). Next
+  // blocks dev resources, including the HMR socket, for any host but
+  // localhost unless it is listed here, and without that socket the client
+  // never hydrated: every form on a store host (login, forgot password) fell
+  // back to a native GET submit and nothing happened.
+  allowedDevOrigins: ["localtest.me", "*.localtest.me"],
   // Self-contained server bundle (.next/standalone) for the Cloud Run container
   // (GCP migration Phase 4). Copies only the traced node_modules + a minimal
   // server.js, so the runtime image stays small. Ignored by Vercel (which uses

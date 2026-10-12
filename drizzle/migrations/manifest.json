@@ -7104,6 +7104,122 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261012_0187_storefront_traffic_dimensions",
+      "description": "Storefront traffic by device, source and approximate location: nullable attribution columns on storefront_events, the storefront_daily_dimensions rollup table, and the storefront analytics guide's what-is-recorded and where-visitors-come-from sections",
+      "file": "sql/20261012_0187_storefront_traffic_dimensions.sql",
+      "transaction": true,
+      "requires": ["20261011_0185_refund_credit_integrity"],
+      "verify": {
+        "tables": ["storefront_daily_dimensions"],
+        "columns": [
+          "storefront_events.device_type",
+          "storefront_events.source",
+          "storefront_events.referrer_host",
+          "storefront_events.utm_source",
+          "storefront_events.utm_medium",
+          "storefront_events.utm_campaign",
+          "storefront_events.country",
+          "storefront_events.region",
+          "storefront_events.city"
+        ],
+        "constraints": [
+          "storefront_daily_dimensions_pkey",
+          "storefront_daily_dimensions_dimension_check",
+          "storefront_events_device_check",
+          "storefront_events_source_check"
+        ],
+        "rlsTables": ["storefront_daily_dimensions"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "storefront analytics guide describes device, source and location collection",
+            "sql": "select count(*)::text from public.help_articles where slug='understand-storefront-conversion-analytics' and status='published' and body like '%For each visit it also records the type of device (desktop, mobile or tablet)%' and body like '%StoreMink does not store the visitor''s IP address%' and body like '%<h2>Where visitors come from</h2>%' and body like '%<h2>Conversion funnel</h2>%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261012_0188_analytics_targets",
+      "description": "Analytics targets: a store-wide goal for one metric over a store-local date period, shown as a progress card on the Analytics dashboard (Basic and above)",
+      "file": "sql/20261012_0188_analytics_targets.sql",
+      "transaction": true,
+      "requires": ["20261012_0187_storefront_traffic_dimensions"],
+      "verify": {
+        "tables": ["analytics_targets"],
+        "constraints": [
+          "analytics_targets_pkey",
+          "analytics_targets_metric_check",
+          "analytics_targets_period_check",
+          "analytics_targets_value_check"
+        ],
+        "rlsTables": ["analytics_targets"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261012_0189_analytics_saved_reports",
+      "description": "Saved custom analytics reports: a name and a re-validated config (never SQL) per store, Basic and above",
+      "file": "sql/20261012_0189_analytics_saved_reports.sql",
+      "transaction": true,
+      "requires": ["20261012_0188_analytics_targets"],
+      "verify": {
+        "tables": ["analytics_saved_reports"],
+        "constraints": [
+          "analytics_saved_reports_pkey",
+          "analytics_saved_reports_name_check",
+          "analytics_saved_reports_config_check",
+          "analytics_saved_reports_store_name_key"
+        ],
+        "rlsTables": ["analytics_saved_reports"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261012_0190_analytics_live_targets_reports_help",
+      "description": "Help: Live View, targets and custom reports guides, and the dashboard guide's Insights and targets section",
+      "file": "sql/20261012_0190_analytics_live_targets_reports_help.sql",
+      "transaction": true,
+      "requires": ["20261012_0189_analytics_saved_reports"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Live View, targets and custom report guides are published in Analytics",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id = a.category_id where c.slug = 'analytics' and a.status = 'published' and a.slug in ('use-analytics-live-view', 'set-analytics-targets', 'build-custom-analytics-reports')",
+            "equals": "3"
+          },
+          {
+            "name": "Dashboard guide has the Insights and targets section and links the new guides",
+            "sql": "select count(*)::text from public.help_articles where slug = 'understand-analytics-dashboard' and status = 'published' and body like '%<h2>Insights and targets</h2>%' and body like '%<h2>Customize your page</h2>%' and body like '%/help/analytics/use-analytics-live-view%' and body like '%/help/analytics/build-custom-analytics-reports%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261012_0191_analytics_overview_refresh_help",
+      "description": "Help: the analytics troubleshooting checklist says the Overview updates about once a minute and Live View shows orders as they arrive",
+      "file": "sql/20261012_0191_analytics_overview_refresh_help.sql",
+      "transaction": true,
+      "requires": ["20261012_0190_analytics_live_targets_reports_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Troubleshooting checklist tells merchants the Overview updates about once a minute",
+            "sql": "select count(*)::text from public.help_articles where slug = 'analytics-troubleshooting' and status = 'published' and body like '%updates its figures about once a minute%' and body like '%<strong>Live View</strong> shows orders as they arrive%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }
