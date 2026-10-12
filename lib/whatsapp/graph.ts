@@ -385,6 +385,10 @@ export interface SendTemplateInput {
   language: string;
   /** Body parameters, positional. */
   bodyParams: string[];
+  /** One payload per quick-reply button, in the template's button order. A
+   *  tap comes back in the webhook carrying it. Absent: the template has no
+   *  buttons, or none need telling apart. */
+  quickReplyPayloads?: string[];
 }
 
 export interface SendMessageData {
@@ -403,7 +407,7 @@ export async function sendTemplateMessage(
   phoneNumberId: string,
   input: SendTemplateInput,
 ): Promise<GraphResult<SendMessageData>> {
-  const components =
+  const components: unknown[] =
     input.bodyParams.length > 0
       ? [
           {
@@ -415,6 +419,14 @@ export async function sendTemplateMessage(
           },
         ]
       : [];
+  (input.quickReplyPayloads ?? []).forEach((payload, index) => {
+    components.push({
+      type: "button",
+      sub_type: "quick_reply",
+      index: String(index),
+      parameters: [{ type: "payload", payload }],
+    });
+  });
   return graphRequest<SendMessageData>({
     method: "POST",
     path: `/${encodeURIComponent(phoneNumberId)}/messages`,

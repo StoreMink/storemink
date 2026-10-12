@@ -72,7 +72,11 @@ export function WhatsAppTemplatePanel({
   /** The event's variables, for a sample rendering of the wording. */
   variables: { name: string; sample: string }[];
 }) {
-  const template = templates.find((t) => t.audience === audience) ?? null;
+  // The plain wording first; a variant (the COD confirmation) after it, with
+  // what decides when it is used, since it replaces the plain one then.
+  const shown = templates
+    .filter((t) => t.audience === audience)
+    .sort((a, b) => Number(Boolean(a.variant)) - Number(Boolean(b.variant)));
 
   return (
     <div className="space-y-4 px-5 py-4">
@@ -91,14 +95,34 @@ export function WhatsAppTemplatePanel({
         </div>
       )}
 
-      {!template ? (
+      {shown.length === 0 ? (
         <p className="text-[13px] text-[var(--dash-text-3)]">
           <MessageCircle className="mr-1.5 inline h-4 w-4 opacity-50" />
           This notification has no WhatsApp message for{" "}
           {audience === "team" ? "your team" : "customers"} yet.
         </p>
       ) : (
-        <WhatsAppTemplateCard template={template} variables={variables} />
+        shown.map((template) => (
+          <div key={template.name} className="space-y-2">
+            {template.variant === "cod_confirm" && (
+              <div className="text-[12px] text-[var(--dash-text-3)]">
+                <p className="text-[13px] font-semibold text-[var(--dash-text)]">
+                  Cash-on-delivery orders
+                </p>
+                <p className="mt-0.5">
+                  Sent instead of the message above for website cash-on-delivery
+                  orders when{" "}
+                  <Link href="/dashboard/channels" className="underline">
+                    Ask cash-on-delivery customers to confirm on WhatsApp
+                  </Link>{" "}
+                  is on. Confirm order marks the order confirmed; Cancel order
+                  cancels it if it hasn&apos;t shipped.
+                </p>
+              </div>
+            )}
+            <WhatsAppTemplateCard template={template} variables={variables} />
+          </div>
+        ))
       )}
 
       <p className="text-[12px] text-[var(--dash-text-3)]">
@@ -150,6 +174,18 @@ function WhatsAppTemplateCard({
         <p className="whitespace-pre-wrap text-[13px] text-[var(--dash-text)]">
           {preview}
         </p>
+        {template.buttons.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2" aria-label="Buttons">
+            {template.buttons.map((label) => (
+              <span
+                key={label}
+                className="rounded-md border border-[var(--dash-border)] px-2.5 py-1 text-[12px] font-medium text-[#128C7E]"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
         <p className="mt-3 text-[12px] text-[var(--dash-text-3)]">
           {status.note}
         </p>

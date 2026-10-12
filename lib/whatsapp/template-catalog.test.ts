@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import { EVENTS } from "@/lib/notifications/events";
 import { variableNamesFor } from "@/lib/notifications/variables";
 import {
+  COD_CONFIRM_VARIANT,
   WHATSAPP_TEMPLATE_CATALOG,
   bodyPlaceholders,
+  catalogEntryForName,
   catalogTemplateFor,
   pickTemplateRow,
   renderWhatsAppBody,
   templateComponentsFor,
+  templateFamily,
   templateNameVersion,
   whatsAppParameterText,
 } from "./template-catalog";
@@ -61,15 +64,19 @@ describe("WHATSAPP_TEMPLATE_CATALOG", () => {
     }
   });
 
-  it("one template per event and audience, looked up by both", () => {
+  it("one template per event, audience and variant, looked up by all three", () => {
     const seen = new Set<string>();
     for (const t of WHATSAPP_TEMPLATE_CATALOG) {
-      const key = `${t.eventKey}:${t.audience}`;
+      const key = `${t.eventKey}:${t.audience}:${t.variant ?? ""}`;
       expect(seen.has(key), key).toBe(false);
       seen.add(key);
-      expect(catalogTemplateFor(t.eventKey, t.audience)).toBe(t);
+      expect(catalogTemplateFor(t.eventKey, t.audience, t.variant)).toBe(t);
     }
     expect(catalogTemplateFor("order.placed", "nobody")).toBeUndefined();
+    // Asking without a variant never returns one.
+    expect(catalogTemplateFor("order.placed", "customer")?.variant).toBe(
+      undefined,
+    );
   });
 
   // ★ Meta rejected the pickup-ready template as INCORRECT_CATEGORY twice: a
@@ -167,5 +174,67 @@ describe("pickTemplateRow", () => {
         ?.name,
     ).toBe(V2);
     expect(pickTemplateRow([], V2)).toBeUndefined();
+  });
+});
+
+describe("the COD confirmation variant", () => {
+  const cod = catalogTemplateFor(
+    "order.placed",
+    "customer",
+    COD_CONFIRM_VARIANT,
+  )!;
+
+  it("is its own template family, never a version of the plain message", () => {
+    expect(cod.name).toBe("sm_order_placed_customer_cod_confirm_v1");
+    expect(templateFamily(cod.name)).not.toBe(
+      templateFamily(catalogTemplateFor("order.placed", "customer")!.name),
+    );
+  });
+
+  it("★ a stored row maps back to its own entry, whatever its version", () => {
+    expect(catalogEntryForName("sm_order_placed_customer_cod_confirm_v4")).toBe(
+      cod,
+    );
+    expect(catalogEntryForName("sm_order_placed_customer_v1")?.variant).toBe(
+      undefined,
+    );
+    // An old version of a reworded entry still maps to that entry.
+    expect(
+      catalogEntryForName("sm_order_ready_for_pickup_customer_v1")?.eventKey,
+    ).toBe("order.ready_for_pickup");
+    expect(catalogEntryForName("diwali_promo")).toBeUndefined();
+  });
+
+  it("★ carries the two buttons in the order the payloads assume", () => {
+    expect(cod.quickReplies).toEqual(["Confirm order", "Cancel order"]);
+    expect(templateComponentsFor(cod)).toEqual([
+      {
+        type: "BODY",
+        text: cod.body,
+        example: { body_text: [cod.examples] },
+      },
+      {
+        type: "BUTTONS",
+        buttons: [
+          { type: "QUICK_REPLY", text: "Confirm order" },
+          { type: "QUICK_REPLY", text: "Cancel order" },
+        ],
+      },
+    ]);
+  });
+
+  it("button labels fit Meta's 25-character limit", () => {
+    for (const t of WHATSAPP_TEMPLATE_CATALOG) {
+      for (const label of t.quickReplies ?? []) {
+        expect(label.length, `${t.name}: ${label}`).toBeLessThanOrEqual(25);
+      }
+    }
+  });
+
+  it("only the COD variant has buttons", () => {
+    const withButtons = WHATSAPP_TEMPLATE_CATALOG.filter(
+      (t) => (t.quickReplies ?? []).length > 0,
+    );
+    expect(withButtons).toEqual([cod]);
   });
 });

@@ -204,6 +204,8 @@ const ORDER_LIST_COLUMNS = {
   // the stage, and the shop's name belongs in the drawer, not a list row.
   fulfilment_type: orders.fulfilmentType,
   pickup_status: orders.pickupStatus,
+  // Whether a COD customer confirmed on WhatsApp; NULL when never asked.
+  cod_confirmation: orders.codConfirmation,
 };
 
 export interface OrdersResult {
@@ -742,6 +744,10 @@ export interface OrderDetail {
   /** The SHOP's address — `line1`/`city`/…, NOT the customer address shape
    *  (lib/locations/address.ts). */
   pickup_location_address: Record<string, unknown> | null;
+  /** The COD customer's WhatsApp answer: requested / confirmed / cancelled,
+   *  or null when they were never asked. */
+  cod_confirmation: string | null;
+  cod_confirmation_at: string | null;
   items: OrderDetailItem[];
 }
 
@@ -786,6 +792,8 @@ const ORDER_DETAIL_COLUMNS = {
   pickup_expires_at: orders.pickupExpiresAt,
   pickup_location_name: pickupLocation.name,
   pickup_location_address: pickupLocation.address,
+  cod_confirmation: orders.codConfirmation,
+  cod_confirmation_at: orders.codConfirmationAt,
 };
 
 /**

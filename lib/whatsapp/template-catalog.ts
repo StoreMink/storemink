@@ -32,10 +32,17 @@ import type { EventKey } from "@/lib/notifications/events";
 
 export type WhatsAppAudience = "team" | "customer";
 
+/** A second wording for one event and audience, chosen at send time from the
+ *  event's facts. `cod_confirm` replaces the order-placed message for a
+ *  website cash-on-delivery order when the store asks customers to confirm. */
+export type WhatsAppTemplateVariant = "cod_confirm";
+
+export const COD_CONFIRM_VARIANT: WhatsAppTemplateVariant = "cod_confirm";
+
 export interface WhatsAppTemplateDef {
   eventKey: EventKey;
   audience: WhatsAppAudience;
-  /** Meta's template name: `sm_<event>_<audience>_v<n>`. */
+  /** Meta's template name: `sm_<event>_<audience>[_<variant>]_v<n>`. */
   name: string;
   language: "en";
   category: "UTILITY";
@@ -45,6 +52,10 @@ export interface WhatsAppTemplateDef {
   variables: string[];
   /** One example per placeholder, for Meta's review. */
   examples: string[];
+  variant?: WhatsAppTemplateVariant;
+  /** Quick-reply button labels, in order. Each tap comes back with the
+   *  payload the send attached to that button (send.ts). */
+  quickReplies?: string[];
 }
 
 /** The version every template starts at. Meta treats a name as immutable once
@@ -60,17 +71,25 @@ function def(
   body: string,
   variables: string[],
   examples: string[],
-  version: number = WHATSAPP_TEMPLATE_VERSION,
+  opts: {
+    version?: number;
+    variant?: WhatsAppTemplateVariant;
+    quickReplies?: string[];
+  } = {},
 ): WhatsAppTemplateDef {
+  const version = opts.version ?? WHATSAPP_TEMPLATE_VERSION;
+  const variant = opts.variant ? `_${opts.variant}` : "";
   return {
     eventKey,
     audience,
-    name: `sm_${eventKey.replace(/\./g, "_")}_${audience}_v${version}`,
+    name: `sm_${eventKey.replace(/\./g, "_")}_${audience}${variant}_v${version}`,
     language: "en",
     category: "UTILITY",
     body,
     variables,
     examples,
+    ...(opts.variant ? { variant: opts.variant } : {}),
+    ...(opts.quickReplies ? { quickReplies: opts.quickReplies } : {}),
   };
 }
 
@@ -82,6 +101,23 @@ export const WHATSAPP_TEMPLATE_CATALOG: readonly WhatsAppTemplateDef[] = [
     "Thanks for your order with {{1}}. Order {{2}} has been received. Total: {{3}}, payment: {{4}}. We will keep you updated as it moves forward.",
     ["store_name", "subject_label", "total", "payment_method"],
     ["Acme Juice", "ORD10010004", "₹1,240.00", "Cash on delivery"],
+  ),
+  // ★ COD CONFIRMATION (WhatsApp Phase 2). Sent INSTEAD of the message above
+  // for a website cash-on-delivery order when the store has
+  // `whatsapp.codConfirmation` on, so the customer gets one message, not two.
+  // The buttons come back as `cod:confirm:<order>` / `cod:cancel:<order>`
+  // (cod-payload.ts). Probed on the dev test account before shipping: Meta
+  // accepted this exact body with both buttons as UTILITY.
+  def(
+    "order.placed",
+    "customer",
+    "Please confirm your cash on delivery order {{1}} from {{2}}. Amount to pay on delivery: {{3}}. Tap Confirm order and we will prepare it, or Cancel order if you no longer want it.",
+    ["subject_label", "store_name", "total"],
+    ["ORD10010004", "Acme Juice", "₹1,240.00"],
+    {
+      variant: COD_CONFIRM_VARIANT,
+      quickReplies: ["Confirm order", "Cancel order"],
+    },
   ),
   // ★ v3 (2026-10-13). Meta rejected v1 and v2 as INCORRECT_CATEGORY for
   // UTILITY, both times at submission. v1 opened with "Good news from …"
@@ -105,7 +141,7 @@ export const WHATSAPP_TEMPLATE_CATALOG: readonly WhatsAppTemplateDef[] = [
       "Connaught Place",
       "12 Radial Road, New Delhi",
     ],
-    3,
+    { version: 3 },
   ),
   def(
     "order.collected",
@@ -246,15 +282,42 @@ export const WHATSAPP_TEMPLATE_CATALOG: readonly WhatsAppTemplateDef[] = [
   ),
 ];
 
+const keyOf = (eventKey: string, audience: string, variant?: string) =>
+  `${eventKey}:${audience}:${variant ?? ""}`;
+
 const BY_KEY = new Map(
-  WHATSAPP_TEMPLATE_CATALOG.map((t) => [`${t.eventKey}:${t.audience}`, t]),
+  WHATSAPP_TEMPLATE_CATALOG.map((t) => [
+    keyOf(t.eventKey, t.audience, t.variant),
+    t,
+  ]),
 );
 
+/** The catalogue entry for an event and audience; the plain wording unless a
+ *  `variant` is asked for. */
 export function catalogTemplateFor(
   eventKey: string,
   audience: string,
+  variant?: WhatsAppTemplateVariant,
 ): WhatsAppTemplateDef | undefined {
-  return BY_KEY.get(`${eventKey}:${audience}`);
+  return BY_KEY.get(keyOf(eventKey, audience, variant));
+}
+
+/** A template name without its `_v<n>`: every version of one catalogue entry
+ *  shares it. */
+export function templateFamily(name: string): string {
+  return name.replace(/_v\d+$/, "");
+}
+
+const BY_FAMILY = new Map(
+  WHATSAPP_TEMPLATE_CATALOG.map((t) => [templateFamily(t.name), t]),
+);
+
+/** The catalogue entry a stored template row belongs to, whatever its
+ *  version; undefined for a template the merchant authored elsewhere. */
+export function catalogEntryForName(
+  name: string,
+): WhatsAppTemplateDef | undefined {
+  return BY_FAMILY.get(templateFamily(name));
 }
 
 /** The `_v<n>` a template name ends in; 0 when it carries none (a template
@@ -320,11 +383,18 @@ export function renderWhatsAppBody(body: string, values: string[]): string {
   );
 }
 
-/** Meta's `components` array for a text-only body template. */
+/** Meta's `components` array: the body, then any quick-reply buttons. */
 export function templateComponentsFor(t: WhatsAppTemplateDef): unknown[] {
   const component: Record<string, unknown> = { type: "BODY", text: t.body };
   if (t.examples.length > 0) {
     component.example = { body_text: [t.examples] };
   }
-  return [component];
+  const out: unknown[] = [component];
+  if (t.quickReplies && t.quickReplies.length > 0) {
+    out.push({
+      type: "BUTTONS",
+      buttons: t.quickReplies.map((text) => ({ type: "QUICK_REPLY", text })),
+    });
+  }
+  return out;
 }

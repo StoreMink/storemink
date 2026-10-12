@@ -92,6 +92,79 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### WhatsApp Commerce — Phase 2 slice 1: COD confirmation (2026-10-13)
+
+Plan §16 Phase 2's first item: a website **cash-on-delivery** order can be
+confirmed or cancelled by the customer from two WhatsApp buttons. Off by
+default: `whatsapp.codConfirmation` (registry, group WhatsApp, section
+`channels`, rendered inside the Channels → WhatsApp card), because a Cancel
+button that cancels an order is new behaviour on a live store, and switching it
+on is the merchant's consent to customers cancelling unshipped COD orders from
+WhatsApp, separately from `orders.allowCustomerCancellation`.
+★★ IT REPLACES THE ORDER-PLACED MESSAGE, NEVER JOINS IT. The catalogue gained
+a VARIANT (`WhatsAppTemplateDef.variant`, `COD_CONFIRM_VARIANT`,
+`sm_order_placed_customer_cod_confirm_v1`, UTILITY, two QUICK_REPLY buttons
+"Confirm order" / "Cancel order"; probed on the dev test account before
+shipping and accepted as UTILITY). `record.ts`'s WhatsApp branch picks it for a
+customer when `codConfirmationOrderId` says so (event `order.placed`, sender's
+`codConfirmation` on, `paymentMethod === "cod"`, not `fulfilment: "pickup"`, a
+subject order id) AND the store holds an approved row of it; otherwise the
+plain message goes, so a store whose variant is still in review loses nothing.
+Consent is unchanged: the customer's own WhatsApp yes is still required.
+★ VARIANTS ARE SEPARATE FAMILIES. `templateFamily` strips `_vN`;
+`catalogEntryForName` maps any stored version back to its entry, and
+`loadWhatsAppTemplates(…, variant?)` and the console read
+(`getWhatsAppTemplatesForEvent`) both filter rows to the wording asked for, so
+the plain message's approval can never stand in for the variant or the other
+way round (pinned both ways, mutation-checked). `catalogTemplateFor` takes the
+variant as a third argument.
+★ THE BUTTONS CARRY OUR PAYLOADS. `notification_whatsapp_queue.button_payloads`
+(jsonb array, migration `20261013_0192`) is written at enqueue
+(`codButtonPayloads`: `cod:confirm:<order id>`, `cod:cancel:<order id>`, in
+button order) because the order is known there and nowhere downstream; the
+worker passes them through `sendWhatsAppTemplate` → `sendTemplateMessage` as
+`quick_reply` button components, and once a send SUCCEEDS stamps
+`orders.cod_confirmation = 'requested'` (only over NULL, so a resend never
+resets an answer, and never on an order already cancelled). The worker now re-reads the queued template BY ID
+(`loadWhatsAppTemplateById`), not by event, because an event has two
+customer wordings.
+★★ THE PAYLOAD NAMES THE ORDER; THE PHONE AUTHORISES THE TAP. A tap arrives as
+an inbound `button` message. `recordInboundMessage` parses its payload
+(`parseCodPayload`, pure: exact prefix, action, UUID) and files the message as
+AUTOMATED: no unread count, no `needs_reply`, no bell. `afterFiled`
+(inbound.ts) then calls `handleCodReply` (`lib/whatsapp/cod-confirmation.ts`),
+which acts only when the order is in the store the tap arrived for, is
+`payment_method = 'cod'`, and the tapping phone is the order's own (account
+phone or delivery phone, compared through `textablePhone`). Confirm sets
+`cod_confirmation = 'confirmed'` with the status guard INSIDE the update, so a
+Cancel that won a race leaves it matching nothing. Cancel, from `pending` /
+`processing` only, goes through `approveCancellation` (its fourth caller, as
+plan §1 said): refund destination `later` (nothing was paid), restock,
+`order.cancelled` to team and customer, store credit used on the order
+reinstated by the cleanup; then `cod_confirmation = 'cancelled'`. A refused
+cancellation re-reads the order so the customer is told the truth.
+★ Every outcome is answered in the chat through the choke point
+(`sendWhatsAppText`, inside the 24-hour window the tap just opened) and filed
+as an `automation` message, so staff reading Inbox see exactly what was said.
+A tap that is refused (wrong phone, not COD, unknown order), too late (shipped)
+or failed hands the conversation to a person: `needs_reply`, unread + 1, and
+the bell. A wrong phone gets NO reply: nothing is said about an order to a
+phone that does not own it.
+★ The inbox never offers a template with buttons (`templateHasButtons`), in
+the picker or at the send action: a quick reply sent by hand carries no
+payload, so it would come back as two words nobody can act on.
+Orders: `cod_confirmation` in the list and drawer columns, rendered by
+`app/dashboard/orders/cod-confirmation.tsx` as "Awaiting confirmation on
+WhatsApp" / "Confirmed on WhatsApp" / "Cancelled on WhatsApp", and NOTHING when
+NULL (never asked must not read as a customer who ignored us). The
+notification console's WhatsApp tab shows the variant as a second card,
+"Cash-on-delivery orders", with its buttons. Help: `20261013_0193` adds one
+section to `send-order-updates-on-whatsapp`. Stories WA-4.x in
+`docs/whatsapp-acceptance.md`. ⚠ Not built: a reminder when nobody answers,
+auto-cancelling unconfirmed orders, and the same buttons for POS or pickup
+orders. ⚠ Not yet run against live Meta: the button payload shapes follow
+Meta's reference; the template itself was accepted on the test account.
+
 ### WhatsApp Commerce — Phase 1 slice 3: The inbox (2026-10-08)
 
 Plan §11 built: the moment a customer receives "Order confirmed" they reply
@@ -3620,6 +3693,11 @@ wholesip/
 │   │                          # thread, customer panel, approved reply templates),
 │   │                          # chat-link.ts (wa.me, client-safe) + storefront.ts (the
 │   │                          # chat button's three gates: switch, plan, live number).
+│   │                          # Phase 2: cod-payload.ts (pure: the Confirm/Cancel
+│   │                          # button payloads and their parser) + cod-confirmation.ts
+│   │                          # (what a tap does: same store, a COD order, the order's
+│   │                          # own phone; confirm, or cancel through
+│   │                          # approve-cancellation; answered in the chat).
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
 │   │                          # positional render, carrier match, 6-char sender header
 │   │                          # and segment cost, plus the one send choke point, queue,
@@ -4848,7 +4926,11 @@ wholesip/
 │                              # into main, and once a dev build has applied them,
 │                              # move 0187-0191 back between 0185 and 0174, which is
 │                              # production's order (pending there: 0174-0178, 0186).
-│                              # Next free: 0192.
+│                              # 0192 adds orders.cod_confirmation(+_at) and
+│                              # notification_whatsapp_queue.button_payloads (WhatsApp
+│                              # COD confirmation); 0193 edits the order-updates Help
+│                              # guide for it. Both come after 0191 and require it.
+│                              # Next free: 0194.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

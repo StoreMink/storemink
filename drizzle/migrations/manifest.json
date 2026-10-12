@@ -7220,6 +7220,44 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261013_0192_whatsapp_cod_confirmation",
+      "description": "WhatsApp cash-on-delivery confirmation: where the customer's Confirm/Cancel answer stands on the order, and the payloads a queued message's buttons carry",
+      "file": "sql/20261013_0192_whatsapp_cod_confirmation.sql",
+      "transaction": true,
+      "requires": ["20261012_0191_analytics_overview_refresh_help"],
+      "verify": {
+        "columns": [
+          "notification_whatsapp_queue.button_payloads",
+          "orders.cod_confirmation",
+          "orders.cod_confirmation_at"
+        ],
+        "constraints": [
+          "notification_whatsapp_queue_button_payloads_check",
+          "orders_cod_confirmation_check"
+        ]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261013_0193_whatsapp_cod_confirmation_help",
+      "description": "Help: the order-updates guide explains asking cash-on-delivery customers to confirm or cancel on WhatsApp, and the label the order list shows",
+      "file": "sql/20261013_0193_whatsapp_cod_confirmation_help.sql",
+      "transaction": true,
+      "requires": ["20261013_0192_whatsapp_cod_confirmation"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the order-updates guide explains the COD confirmation setting",
+            "sql": "select count(*)::text from public.help_articles where slug='send-order-updates-on-whatsapp' and body like '%Ask cash-on-delivery customers to confirm on WhatsApp%' and body like '%<h2>If a customer has both SMS and WhatsApp</h2>%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

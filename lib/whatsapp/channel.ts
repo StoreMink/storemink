@@ -13,7 +13,12 @@ import { effectivePlan, limitsFor } from "@/lib/plans";
 import { resolveStoreSettings } from "@/lib/settings/registry";
 import { logError } from "@/lib/observability/logger";
 import { textablePhone } from "@/lib/phone";
-import { catalogTemplateFor, pickTemplateRow } from "./template-catalog";
+import {
+  catalogEntryForName,
+  catalogTemplateFor,
+  pickTemplateRow,
+  type WhatsAppTemplateVariant,
+} from "./template-catalog";
 
 // ---------------------------------------------------------------------------
 // Can this store send THIS notification on WhatsApp, to THIS person?
@@ -45,6 +50,8 @@ export interface WhatsAppSender {
   displayPhone: string;
   /** The merchant's rule for a customer reachable on both channels. */
   precedence: WhatsAppPrecedence;
+  /** Ask website cash-on-delivery customers to confirm with buttons. */
+  codConfirmation: boolean;
 }
 
 /**
@@ -104,6 +111,7 @@ export async function loadWhatsAppSender(
         precedence === "sms_first" || precedence === "both"
           ? precedence
           : "whatsapp_first",
+      codConfirmation: settings["whatsapp.codConfirmation"] === true,
     };
   } catch (err) {
     // A decrypt failure means PAYMENT_CRED_KEY rotated without re-encrypting —
@@ -125,6 +133,24 @@ export interface WhatsAppTemplateRow {
 }
 
 /** Meta's body text out of a stored components array. */
+/**
+ * Whether a stored template carries buttons. The inbox never offers one: a
+ * quick reply sent by hand carries no payload, so the COD confirmation's
+ * Confirm / Cancel would come back as two words nobody can act on, and a URL
+ * or copy-code button needs values the picker does not ask for.
+ */
+export function templateHasButtons(components: unknown): boolean {
+  return (
+    Array.isArray(components) &&
+    components.some(
+      (c) =>
+        c &&
+        typeof c === "object" &&
+        (c as { type?: unknown }).type === "BUTTONS",
+    )
+  );
+}
+
 export function bodyFromComponents(components: unknown): string {
   if (!Array.isArray(components)) return "";
   for (const c of components) {
@@ -151,6 +177,8 @@ export async function loadWhatsAppTemplates(
   db: Db,
   storeId: string,
   eventKey: string,
+  /** The variant wording (e.g. COD confirmation) instead of the plain one. */
+  variant?: WhatsAppTemplateVariant,
 ): Promise<Map<string, WhatsAppTemplateRow>> {
   const out = new Map<string, WhatsAppTemplateRow>();
   try {
@@ -176,13 +204,20 @@ export async function loadWhatsAppTemplates(
     // ★ ONE ROW PER AUDIENCE, CHOSEN, NOT WHICHEVER CAME LAST: a new catalogue
     // version and the older one it replaces can both be APPROVED, and the
     // current wording must win (pickTemplateRow).
+    // ★ AND ONLY THE WORDING ASKED FOR. An event can have a variant beside its
+    // plain template (COD confirmation beside order-placed); a row belongs to
+    // one or the other by its catalogue entry, never both.
     const audiences = new Set(
       rows.map((r) => r.audience).filter((a): a is string => Boolean(a)),
     );
     for (const audience of audiences) {
       const r = pickTemplateRow(
-        rows.filter((row) => row.audience === audience),
-        catalogTemplateFor(eventKey, audience)?.name,
+        rows.filter(
+          (row) =>
+            row.audience === audience &&
+            catalogEntryForName(row.name)?.variant === variant,
+        ),
+        catalogTemplateFor(eventKey, audience, variant)?.name,
       );
       if (!r?.audience) continue;
       out.set(r.audience, {
@@ -198,6 +233,54 @@ export async function loadWhatsAppTemplates(
     logError("whatsapp: template load failed", err, { storeId, eventKey });
   }
   return out;
+}
+
+/**
+ * One queued template, re-read by id at send time: still APPROVED and enabled
+ * in this store, or null. The worker sends exactly what was queued, and this
+ * is what tells it Meta paused or rejected that template in between. By id,
+ * not by event and audience, because an event can carry two wordings (the
+ * COD confirmation beside order-placed) and only the id says which one.
+ */
+export async function loadWhatsAppTemplateById(
+  db: Db,
+  storeId: string,
+  templateId: string,
+): Promise<WhatsAppTemplateRow | null> {
+  try {
+    const rows = await db
+      .select({
+        id: whatsappTemplates.id,
+        audience: whatsappTemplates.audience,
+        name: whatsappTemplates.name,
+        language: whatsappTemplates.language,
+        variables: whatsappTemplates.variables,
+        components: whatsappTemplates.components,
+      })
+      .from(whatsappTemplates)
+      .where(
+        and(
+          eq(whatsappTemplates.id, templateId),
+          eq(whatsappTemplates.storeId, storeId),
+          eq(whatsappTemplates.status, "APPROVED"),
+          eq(whatsappTemplates.enabled, true),
+        ),
+      )
+      .limit(1);
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      id: r.id,
+      audience: r.audience ?? "",
+      name: r.name,
+      language: r.language,
+      variables: Array.isArray(r.variables) ? (r.variables as string[]) : [],
+      body: bodyFromComponents(r.components),
+    };
+  } catch (err) {
+    logError("whatsapp: template load failed", err, { storeId, templateId });
+    return null;
+  }
 }
 
 export interface WhatsAppConsent {

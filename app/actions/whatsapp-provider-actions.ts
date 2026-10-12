@@ -37,7 +37,9 @@ import {
 } from "@/lib/whatsapp/templates";
 import {
   WHATSAPP_TEMPLATE_CATALOG,
+  catalogEntryForName,
   pickTemplateRow,
+  type WhatsAppTemplateVariant,
 } from "@/lib/whatsapp/template-catalog";
 import { whatsAppChatLink } from "@/lib/whatsapp/chat-link";
 import { getCurrentStore } from "@/lib/store/resolve";
@@ -314,6 +316,11 @@ export interface WhatsAppEventTemplate {
   body: string;
   /** Which named event value fills each `{{n}}`, in order — for the preview. */
   variables: string[];
+  /** Set for a second wording of the same event (the COD confirmation),
+   *  which the tab shows separately with what decides when it is used. */
+  variant: WhatsAppTemplateVariant | null;
+  /** Quick-reply button labels, in order. */
+  buttons: string[];
 }
 
 /**
@@ -339,8 +346,15 @@ export async function getWhatsAppTemplatesForEvent(
         // first one: an older rejected version would otherwise hide its
         // replacement, and its own wording would be filled with the new
         // version's variables.
+        // ★ Only rows of THIS entry's wording: the COD variant shares the
+        // event and audience with the plain message, and picking across both
+        // would show one's approval under the other's name.
         const row = pickTemplateRow(
-          rows.filter((r) => r.audience === def.audience),
+          rows.filter(
+            (r) =>
+              r.audience === def.audience &&
+              catalogEntryForName(r.name)?.variant === def.variant,
+          ),
           def.name,
         );
         return {
@@ -355,6 +369,8 @@ export async function getWhatsAppTemplatesForEvent(
             row && row.name !== def.name && row.variables.length > 0
               ? row.variables
               : def.variables,
+          variant: def.variant ?? null,
+          buttons: def.quickReplies ?? [],
         };
       }),
     };

@@ -92,12 +92,16 @@ function queued(mock: any, table: any) {
   return Array.isArray(rows) ? rows : [rows];
 }
 
-const WA_SENDER = (precedence: "whatsapp_first" | "sms_first" | "both") => ({
+const WA_SENDER = (
+  precedence: "whatsapp_first" | "sms_first" | "both",
+  codConfirmation = false,
+) => ({
   token: "t",
   wabaId: "W",
   phoneNumberId: "P",
   displayPhone: "+91",
   precedence,
+  codConfirmation,
 });
 const WA_TEMPLATE = {
   id: "wt-1",
@@ -279,5 +283,121 @@ describe("kicking the worker", () => {
     expect(queued(mock, notificationWhatsappQueue)).toHaveLength(0);
     expect(queued(mock, notificationSmsQueue)).toHaveLength(0);
     expect(triggerEmailWorker).not.toHaveBeenCalled();
+  });
+});
+
+// ★ COD confirmation (Phase 2, slice 1): a website cash-on-delivery order on a
+// store that asks gets the button variant INSTEAD of the plain order message.
+describe("COD confirmation", () => {
+  const ORDER_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const COD_TEMPLATE = {
+    id: "wt-cod",
+    audience: "customer",
+    name: "sm_order_placed_customer_cod_confirm_v1",
+    language: "en",
+    variables: ["subject_label", "store_name", "total"],
+    body: "x",
+  };
+
+  async function codOrder(payload: Record<string, unknown> = {}) {
+    return recordEvent({
+      type: "order.placed",
+      storeId: STORE,
+      customerId: CUSTOMER,
+      subject: { type: "order", id: ORDER_ID, label: "ORD1" },
+      payload: { total: 1240, paymentMethod: "cod", ...payload },
+    });
+  }
+
+  function withCodTemplate() {
+    vi.mocked(loadWhatsAppTemplates).mockImplementation(
+      async (_db: any, _store: string, _key: string, variant?: string) =>
+        new Map([["customer", variant ? COD_TEMPLATE : WA_TEMPLATE]]) as any,
+    );
+  }
+
+  beforeEach(() => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(
+      WA_SENDER("whatsapp_first", true),
+    );
+    withCodTemplate();
+  });
+
+  it("★ sends the button variant, with both payloads naming the order", async () => {
+    const mock = setupDb();
+    await codOrder();
+    const rows = queued(mock, notificationWhatsappQueue);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      templateId: "wt-cod",
+      buttonPayloads: [`cod:confirm:${ORDER_ID}`, `cod:cancel:${ORDER_ID}`],
+    });
+    expect(rows[0].values).toEqual(["ORD1", "Acme", "₹1,240.00"]);
+  });
+
+  it("★ never both: the plain order message is not also queued", async () => {
+    const mock = setupDb();
+    await codOrder();
+    const rows = queued(mock, notificationWhatsappQueue);
+    expect(rows.map((r: any) => r.templateId)).toEqual(["wt-cod"]);
+  });
+
+  it("falls back to the plain message while Meta has not approved the variant", async () => {
+    vi.mocked(loadWhatsAppTemplates).mockImplementation(
+      async (_db: any, _store: string, _key: string, variant?: string) =>
+        (variant ? new Map() : new Map([["customer", WA_TEMPLATE]])) as any,
+    );
+    const mock = setupDb();
+    await codOrder();
+    const rows = queued(mock, notificationWhatsappQueue);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].templateId).toBe("wt-1");
+    expect(rows[0].buttonPayloads).toBeUndefined();
+  });
+
+  it("not when the store has the setting off", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(
+      WA_SENDER("whatsapp_first", false),
+    );
+    const mock = setupDb();
+    await codOrder();
+    expect(queued(mock, notificationWhatsappQueue)[0].templateId).toBe("wt-1");
+    expect(loadWhatsAppTemplates).not.toHaveBeenCalledWith(
+      expect.anything(),
+      STORE,
+      "order.placed",
+      "cod_confirm",
+    );
+  });
+
+  it("not for a prepaid order", async () => {
+    const mock = setupDb();
+    await codOrder({ paymentMethod: "razorpay" });
+    expect(queued(mock, notificationWhatsappQueue)[0].templateId).toBe("wt-1");
+  });
+
+  it("not for a collection, which is paid at the counter", async () => {
+    const mock = setupDb();
+    await codOrder({ fulfilment: "pickup" });
+    expect(queued(mock, notificationWhatsappQueue)[0].templateId).toBe("wt-1");
+  });
+
+  it("not without an order id to put on the buttons", async () => {
+    const mock = setupDb();
+    await recordEvent({
+      type: "order.placed",
+      storeId: STORE,
+      customerId: CUSTOMER,
+      subject: { label: "ORD1" },
+      payload: { total: 1240, paymentMethod: "cod" },
+    });
+    expect(queued(mock, notificationWhatsappQueue)[0].templateId).toBe("wt-1");
+  });
+
+  it("still needs the customer's own yes", async () => {
+    vi.mocked(whatsAppConsentFor).mockResolvedValue(new Map());
+    const mock = setupDb();
+    await codOrder();
+    expect(queued(mock, notificationWhatsappQueue)).toHaveLength(0);
   });
 });

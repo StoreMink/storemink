@@ -23,7 +23,11 @@ import { getActingStoreId, getViewerAccess } from "@/app/dashboard/lib/access";
 import { whatsappConversations, whatsappTemplates } from "@/drizzle/schema";
 import { rateLimit } from "@/lib/rate-limit";
 import { logError } from "@/lib/observability/logger";
-import { loadWhatsAppSender, bodyFromComponents } from "@/lib/whatsapp/channel";
+import {
+  loadWhatsAppSender,
+  bodyFromComponents,
+  templateHasButtons,
+} from "@/lib/whatsapp/channel";
 import {
   needsReplyCount,
   recordOutboundMessage,
@@ -352,6 +356,13 @@ export async function sendInboxTemplate(input: {
     return {
       ok: false,
       error: "That template isn't approved for customers on this store.",
+    };
+  }
+  // The picker never offers one (listReplyTemplates); this is the boundary.
+  if (templateHasButtons(template.components)) {
+    return {
+      ok: false,
+      error: "That template has buttons and can't be sent from the inbox.",
     };
   }
   const variables = Array.isArray(template.variables)

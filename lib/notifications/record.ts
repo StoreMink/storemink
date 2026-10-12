@@ -56,7 +56,10 @@ import {
   loadWhatsAppSender,
   loadWhatsAppTemplates,
   whatsAppConsentFor,
+  type WhatsAppSender,
 } from "@/lib/whatsapp/channel";
+import { COD_CONFIRM_VARIANT } from "@/lib/whatsapp/template-catalog";
+import { codButtonPayloads } from "@/lib/whatsapp/cod-payload";
 import { textablePhone } from "@/lib/phone";
 import { selectRecipients } from "./routing";
 import { resolveNotification, type AudienceKey } from "./config";
@@ -768,7 +771,19 @@ async function fanOut(
       // ★ STATUS IS THE SWITCH: only an APPROVED template comes back here, so
       // a paused or rejected one queues nothing rather than failing later.
       const templates = await loadWhatsAppTemplates(db, storeId, key);
-      const wanted = candidates.filter((c) => templates.has(c.audienceKey));
+      // ★ COD CONFIRMATION REPLACES THE ORDER-PLACED MESSAGE, never joins it:
+      // a website cash-on-delivery order, on a store that asks, gets the
+      // variant with Confirm/Cancel buttons; the plain wording is the
+      // fallback while Meta has not approved the variant.
+      const codOrderId = codConfirmationOrderId(key, input, sender);
+      const codTemplates = codOrderId
+        ? await loadWhatsAppTemplates(db, storeId, key, COD_CONFIRM_VARIANT)
+        : null;
+      const templateFor = (c: PhoneCandidate) =>
+        (c.audienceKey === "customer"
+          ? codTemplates?.get("customer")
+          : undefined) ?? templates.get(c.audienceKey);
+      const wanted = candidates.filter((c) => Boolean(templateFor(c)));
       if (wanted.length === 0) return queued;
       const numbers = await phonesFor();
       // ★ A CUSTOMER NEEDS THEIR OWN YES. Staff do not (plan §8).
@@ -788,8 +803,11 @@ async function fanOut(
         if (c.audienceKey === "customer" && !consent.get(phone)?.updates) {
           continue;
         }
-        const template = templates.get(c.audienceKey);
+        const template = templateFor(c);
         if (!template) continue;
+        const isCod =
+          codOrderId !== null &&
+          template.id === codTemplates?.get("customer")?.id;
         whatsapp.push({
           storeId,
           eventId,
@@ -802,6 +820,9 @@ async function fanOut(
           values: template.variables.map((name) =>
             String(resolved[name] ?? ""),
           ),
+          ...(isCod && codOrderId
+            ? { buttonPayloads: codButtonPayloads(codOrderId) }
+            : {}),
         });
         queued.add(recipientKey(c));
       }
@@ -856,6 +877,26 @@ async function fanOut(
     sms.length > 0 ||
     whatsapp.length > 0
   );
+}
+
+/**
+ * The order to ask a customer to confirm with WhatsApp buttons, or null. Only
+ * a website cash-on-delivery DELIVERY order, on a store that switched
+ * `whatsapp.codConfirmation` on: a collection is paid at the counter, and a
+ * prepaid order has nothing to confirm.
+ */
+function codConfirmationOrderId(
+  key: EventKey,
+  input: EmitEventInput,
+  sender: WhatsAppSender | null,
+): string | null {
+  if (key !== "order.placed" || !sender?.codConfirmation) return null;
+  const payload = input.payload ?? {};
+  if (payload.paymentMethod !== "cod" || payload.fulfilment === "pickup") {
+    return null;
+  }
+  if (input.subject?.type !== "order" || !input.subject.id) return null;
+  return input.subject.id;
 }
 
 /** A customer's address for the email channel, or null if they have none. */

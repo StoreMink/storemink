@@ -13,10 +13,13 @@ vi.mock("@/lib/observability/logger", () => ({
 }));
 vi.mock("./channel", () => ({
   loadWhatsAppSender: vi.fn(),
-  loadWhatsAppTemplates: vi.fn(),
+  loadWhatsAppTemplateById: vi.fn(),
   whatsAppConsentFor: vi.fn(),
 }));
 vi.mock("./send", () => ({ sendWhatsAppTemplate: vi.fn() }));
+vi.mock("./cod-confirmation", () => ({
+  markCodConfirmationRequested: vi.fn(async () => undefined),
+}));
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
@@ -24,10 +27,11 @@ vi.mock("@/lib/db/client", () => ({
 
 import {
   loadWhatsAppSender,
-  loadWhatsAppTemplates,
+  loadWhatsAppTemplateById,
   whatsAppConsentFor,
 } from "./channel";
 import { sendWhatsAppTemplate } from "./send";
+import { markCodConfirmationRequested } from "./cod-confirmation";
 import { RETRYABLE_META_CODES, runWhatsAppWorker } from "./worker";
 
 const ROW = {
@@ -48,6 +52,7 @@ const SENDER = {
   phoneNumberId: "P",
   displayPhone: "+91",
   precedence: "whatsapp_first" as const,
+  codConfirmation: false,
 };
 const TEMPLATE = {
   id: "t1",
@@ -61,9 +66,7 @@ const TEMPLATE = {
 function setup(rows: any[] = [ROW]) {
   dbHolder.current = makeDbMock({ executeQueue: [rows] });
   vi.mocked(loadWhatsAppSender).mockResolvedValue(SENDER);
-  vi.mocked(loadWhatsAppTemplates).mockResolvedValue(
-    new Map([["customer", TEMPLATE]]),
-  );
+  vi.mocked(loadWhatsAppTemplateById).mockResolvedValue(TEMPLATE);
   vi.mocked(whatsAppConsentFor).mockResolvedValue(
     new Map([["+919876543210", { updates: true, marketing: false }]]),
   );
@@ -121,9 +124,10 @@ describe("runWhatsAppWorker", () => {
 
   it("needs no consent for a team row", async () => {
     setup([{ ...ROW, audience: "team", recipient_type: "admin" }]);
-    vi.mocked(loadWhatsAppTemplates).mockResolvedValue(
-      new Map([["team", { ...TEMPLATE, audience: "team" }]]),
-    );
+    vi.mocked(loadWhatsAppTemplateById).mockResolvedValue({
+      ...TEMPLATE,
+      audience: "team",
+    });
     vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
       sent: true,
       messageId: "m",
@@ -134,13 +138,72 @@ describe("runWhatsAppWorker", () => {
     expect(sendWhatsAppTemplate).toHaveBeenCalled();
   });
 
-  it("refuses a template Meta has since paused, or a different one than was queued", async () => {
-    vi.mocked(loadWhatsAppTemplates).mockResolvedValue(
-      new Map([["customer", { ...TEMPLATE, id: "other" }]]),
-    );
+  it("refuses a template Meta has since paused", async () => {
+    vi.mocked(loadWhatsAppTemplateById).mockResolvedValue(null);
     const r = await runWhatsAppWorker();
     expect(r.failed).toBe(1);
     expect(sendWhatsAppTemplate).not.toHaveBeenCalled();
+  });
+
+  it("★ re-reads exactly the template that was queued, by id in its store", async () => {
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: true,
+      messageId: "m",
+      logId: null,
+    });
+    await runWhatsAppWorker();
+    expect(loadWhatsAppTemplateById).toHaveBeenCalledWith(
+      expect.anything(),
+      "store-1",
+      "t1",
+    );
+  });
+
+  it("★ a COD row sends its button payloads and marks the order asked, once sent", async () => {
+    const ORDER = "11111111-2222-4333-8444-555555555555";
+    const payloads = [`cod:confirm:${ORDER}`, `cod:cancel:${ORDER}`];
+    setup([{ ...ROW, button_payloads: payloads }]);
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: true,
+      messageId: "m",
+      logId: null,
+    });
+    await runWhatsAppWorker();
+    expect(sendWhatsAppTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ buttonPayloads: payloads }),
+    );
+    expect(markCodConfirmationRequested).toHaveBeenCalledWith("store-1", ORDER);
+  });
+
+  it("★ a COD row that did not send leaves the order unasked", async () => {
+    const ORDER = "11111111-2222-4333-8444-555555555555";
+    setup([
+      {
+        ...ROW,
+        button_payloads: [`cod:confirm:${ORDER}`, `cod:cancel:${ORDER}`],
+      },
+    ]);
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: false,
+      outcome: "rejected",
+      error: "Not a WhatsApp user",
+      code: 131026,
+    });
+    await runWhatsAppWorker();
+    expect(markCodConfirmationRequested).not.toHaveBeenCalled();
+  });
+
+  it("a row without buttons sends none and marks nothing", async () => {
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: true,
+      messageId: "m",
+      logId: null,
+    });
+    await runWhatsAppWorker();
+    expect(sendWhatsAppTemplate).toHaveBeenCalledWith(
+      expect.not.objectContaining({ buttonPayloads: expect.anything() }),
+    );
+    expect(markCodConfirmationRequested).not.toHaveBeenCalled();
   });
 
   it("★ an unknown outcome is terminal — settled failed, never requeued", async () => {

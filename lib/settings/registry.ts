@@ -69,6 +69,7 @@ export const SETTING_KEYS = [
   "offers.maxTotalDiscountPercent",
   "whatsapp.updatePrecedence",
   "whatsapp.chatButton",
+  "whatsapp.codConfirmation",
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];
@@ -739,6 +740,20 @@ export const SETTINGS: readonly SettingDef[] = [
     section: "channels",
     type: "boolean",
     defaultValue: true,
+  },
+  {
+    // ★ OFF BY DEFAULT: a Cancel button that cancels an order is new
+    // behaviour on a live store, and that is the merchant's call. Turning it
+    // on is also the consent for customers to cancel unshipped COD orders
+    // from WhatsApp, separately from `orders.allowCustomerCancellation`.
+    key: "whatsapp.codConfirmation",
+    label: "Ask cash-on-delivery customers to confirm on WhatsApp",
+    description:
+      "Website cash-on-delivery orders get a WhatsApp message with Confirm order and Cancel order buttons instead of the usual order message. Cancel order cancels it straight away if it hasn't shipped. Sent only to customers who agreed to WhatsApp updates, once Meta approves the message.",
+    group: "WhatsApp",
+    section: "channels",
+    type: "boolean",
+    defaultValue: false,
   },
 ];
 
