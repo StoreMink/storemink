@@ -13373,8 +13373,14 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       workers filter, failing OPEN. Failed rows surface in a panel on the
       notifications page (`getDeliveryHealth` + `retryFailedEmail`) that renders
       only when mail actually failed.
-    - **"INSTANT" RESTS ON THE WORKER KICK.** The cron heartbeat is DAILY, so if
-      `triggerEmailWorker` doesn't land, mail waits up to 24 h — silently.
+    - **"INSTANT" RESTS ON THE WORKER KICK.** The production heartbeat is once a
+      minute and dev has no scheduler at all, so if `triggerEmailWorker`
+      doesn't land, a message waits for the next tick on production and
+      indefinitely on dev, silently. ★ `fanOut` kicks for an instant EMAIL **or
+      any SMS or WhatsApp row** (2026-10-13): neither of those queues has a
+      digest window, and counting only email left a WhatsApp-only update (a
+      pickup-ready notice to a customer with no email) sitting in its queue.
+      `record-whatsapp.test.ts` pins it, mutation-checked.
       The origin is **the current request's host** (`getRequestOrigin()`), not a
       configured one: resolving it from env made a local dev order POST the kick
       to `https://staging.storemink.com`, telling another environment to drain a
@@ -16419,6 +16425,8 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
     - **★ SMS RIDES THE EMAIL HEARTBEAT** rather than taking a new Cloud
       Scheduler entry; `docs/cron-jobs.md` records a job being documented but
       never created three times. It cannot take the email queues down with it.
+      Queuing an SMS (or a WhatsApp message) kicks that worker at once, like an
+      instant email does.
     - **★ THE SMS TAB IS ITS OWN EDITOR**, not the Subject/Body fields beside
       it: a DLT body has no subject and is not authored here, so the generic
       form would invite a merchant to write something a carrier silently drops.
