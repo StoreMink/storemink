@@ -25,8 +25,9 @@ import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 //   2. Self-chaining: if work remains after a run, kick another via after() so
 //      a large campaign (or a burst of notifications) drains in minutes rather
 //      than on the cron cadence.
-//   3. On demand: emitting a notification with an instant email channel calls
-//      triggerEmailWorker(), so "new order" mail goes out in seconds.
+//   3. On demand: emitting a notification that queues an instant email, an
+//      SMS or a WhatsApp message calls triggerEmailWorker(), so "new order"
+//      goes out in seconds.
 //
 // Auth: requires `Authorization: Bearer <CRON_SECRET>`. Vercel Cron is
 // configured to send this header. Set CRON_SECRET in the environment.

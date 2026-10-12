@@ -30,6 +30,9 @@ vi.mock("@/lib/whatsapp/channel", () => ({
   loadWhatsAppTemplates: vi.fn(),
   whatsAppConsentFor: vi.fn(),
 }));
+vi.mock("@/lib/email/trigger-worker", () => ({
+  triggerEmailWorker: vi.fn(async () => {}),
+}));
 
 import { recordEvent } from "./record";
 import {
@@ -42,7 +45,9 @@ import {
   loadWhatsAppTemplates,
   whatsAppConsentFor,
 } from "@/lib/whatsapp/channel";
+import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 import {
+  notificationEmailQueue,
   notificationSmsQueue,
   notificationWhatsappQueue,
 } from "@/drizzle/schema";
@@ -234,5 +239,45 @@ describe("WhatsApp fan-out", () => {
     await placeOrder();
     expect(loadWhatsAppSender).not.toHaveBeenCalled();
     expect(loadSmsSender).not.toHaveBeenCalled();
+  });
+});
+
+// The fixture switches WhatsApp and SMS on with NO email channel, which is
+// exactly the event that used to sit in its queue: only an instant email
+// kicked the worker, and dev has no scheduler to drain it otherwise.
+describe("kicking the worker", () => {
+  it("★ a WhatsApp-only event kicks the worker after it commits", async () => {
+    const mock = setupDb();
+    await placeOrder();
+    expect(queued(mock, notificationWhatsappQueue)).toHaveLength(1);
+    expect(queued(mock, notificationEmailQueue)).toHaveLength(0);
+    expect(triggerEmailWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ an SMS-only event kicks it too", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(null);
+    const mock = setupDb();
+    await placeOrder();
+    expect(queued(mock, notificationSmsQueue)).toHaveLength(1);
+    expect(queued(mock, notificationWhatsappQueue)).toHaveLength(0);
+    expect(queued(mock, notificationEmailQueue)).toHaveLength(0);
+    expect(triggerEmailWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("one kick for both channels, not one each", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(WA_SENDER("both"));
+    setupDb();
+    await placeOrder();
+    expect(triggerEmailWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("no kick when nothing was queued for sending", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(null);
+    vi.mocked(loadSmsSender).mockResolvedValue(null);
+    const mock = setupDb();
+    await placeOrder();
+    expect(queued(mock, notificationWhatsappQueue)).toHaveLength(0);
+    expect(queued(mock, notificationSmsQueue)).toHaveLength(0);
+    expect(triggerEmailWorker).not.toHaveBeenCalled();
   });
 });

@@ -229,7 +229,7 @@ export async function recordEvent(
   }
 
   try {
-    let queuedInstantEmail = false;
+    let queuedInstantDelivery = false;
     const persist = async (db: Db) => {
       const insert = db.insert(activityEvents).values({
         storeId: input.storeId ?? null,
@@ -250,8 +250,8 @@ export async function recordEvent(
         : await insert.returning({ id: activityEvents.id });
 
       if (!event) return null;
-      queuedInstantEmail = await fanOut(db, event.id, input, def.key);
-      if (existingDb && queuedInstantEmail)
+      queuedInstantDelivery = await fanOut(db, event.id, input, def.key);
+      if (existingDb && queuedInstantDelivery)
         throw new Error("Watch alerts must remain in-app only");
       return event.id;
     };
@@ -259,12 +259,12 @@ export async function recordEvent(
       ? persist(existingDb)
       : withService(persist));
 
-    // Kick the email worker only AFTER the transaction has committed — a
-    // worker that claims before the COMMIT would find an empty queue and the
-    // mail would then wait for the next cron tick. Best-effort: the cron
-    // heartbeat is the reliable path, this is just what makes "new order"
-    // mail arrive in seconds.
-    if (queuedInstantEmail) {
+    // Kick the worker only AFTER the transaction has committed — a worker
+    // that claims before the COMMIT would find an empty queue and the message
+    // would then wait for the next cron tick. Best-effort: the cron heartbeat
+    // is the reliable path, this is just what makes "new order" arrive in
+    // seconds. One route drains the email, SMS and WhatsApp queues alike.
+    if (queuedInstantDelivery) {
       await triggerEmailWorker();
     }
     return eventId;
@@ -305,8 +305,9 @@ export function emitEvent(input: EmitEventInput): void {
 
 // ── Fan-out ────────────────────────────────────────────────────────────────
 
-/** Returns true when at least one INSTANT email was queued, so the caller can
- *  kick the worker once the transaction commits. */
+/** Returns true when anything was queued for immediate sending (an instant
+ *  email, or any SMS or WhatsApp message), so the caller can kick the worker
+ *  once the transaction commits. */
 async function fanOut(
   db: Db,
   eventId: string,
@@ -845,7 +846,16 @@ async function fanOut(
       .values(whatsapp)
       .onConflictDoNothing();
   }
-  return mail.some((m) => m.digest === "instant");
+  // ★ SMS AND WHATSAPP ARE ALWAYS INSTANT: neither queue has a digest window,
+  // so either one queued is a reason to kick the worker. Counting only
+  // instant EMAIL left a WhatsApp-only update (a pickup-ready notice to a
+  // customer with no email) waiting for the next heartbeat, a minute on
+  // production and indefinitely on dev, which has no scheduler.
+  return (
+    mail.some((m) => m.digest === "instant") ||
+    sms.length > 0 ||
+    whatsapp.length > 0
+  );
 }
 
 /** A customer's address for the email channel, or null if they have none. */

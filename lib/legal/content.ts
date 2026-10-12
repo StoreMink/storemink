@@ -413,9 +413,11 @@ const AUP_BODY = [
  */
 export const LEGAL_CONTENT: LegalContent[] = [
   { kind: "terms", title: "Terms of Service", version: 2, body: TERMS_BODY },
-  // v3 DRAFT (2026-10-12, analytics traffic sources): section 8 now says what
-  // first-party measurement records. Owner/legal review before
-  // `scripts/publish-legal.ts --publish`, which makes every merchant re-accept.
+  // v3 (2026-10-12, analytics traffic sources): section 8 now says what
+  // first-party measurement records. Reviewed and approved by the owner on
+  // 2026-10-13; publish it alone with `--only=privacy`, because Terms v2 and
+  // Acceptable Use v2 above are NOT approved (Terms still has the two blocked
+  // clauses in the header). Publishing makes every merchant re-accept.
   { kind: "privacy", title: "Privacy Policy", version: 3, body: PRIVACY_BODY },
   {
     kind: "acceptable-use",

@@ -6,8 +6,9 @@ import { logError, logWarn } from "@/lib/observability/logger";
 
 /**
  * Fire the background email worker without blocking the caller. Called right
- * after mail is enqueued (a campaign, or a notification with an instant email
- * channel) so the queue starts draining in seconds instead of waiting for the
+ * after something is enqueued (a campaign, or a notification that queued an
+ * instant email, an SMS or a WhatsApp message; the one route drains all of
+ * them) so the queue starts draining in seconds instead of waiting for the
  * next cron tick.
  *
  * THIS IS WHAT MAKES "INSTANT" INSTANT. Phase 5E requires Cloud Scheduler's

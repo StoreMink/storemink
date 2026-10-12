@@ -1,7 +1,9 @@
 # WhatsApp Commerce — the design (v2)
 
-**Status:** ⏳ **nothing built — every decision settled** (owner, 2026-10-08;
-§19). Phase 0 (§16) can start.
+**Status:** ◐ **Phase 1 code complete on dev; live verification pending**
+(2026-10-13). Phase 0's dev gate passed 2026-10-08; slices 1–3 (connect,
+notify, inbox) are built; production waits on App Review. Decisions: §19.
+Progress per phase is in §16 and `docs/whatsapp-acceptance.md`.
 v1 (2026-10-04) was a merchant-facing brief; this version keeps its product
 shape and turns it into a buildable spec. The review that produced it is in
 §18.
