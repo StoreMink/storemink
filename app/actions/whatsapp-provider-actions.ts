@@ -18,7 +18,11 @@
 
 import { revalidatePath } from "next/cache";
 import { withService } from "@/lib/db/client";
-import { getManagerUserId, getActingStoreId } from "@/app/dashboard/lib/access";
+import {
+  getManagerUserId,
+  getActingStoreId,
+  getViewerAccess,
+} from "@/app/dashboard/lib/access";
 import { storeWhatsappAccounts, stores } from "@/drizzle/schema";
 import { effectivePlan, limitsFor } from "@/lib/plans";
 import {
@@ -32,9 +36,15 @@ import {
 } from "@/lib/whatsapp/connect";
 import {
   bootstrapWhatsAppTemplates,
+  deleteStoreTemplate,
+  listStoreTemplates,
   listTemplateRowsForEvent,
+  submitCustomTemplate,
   syncWhatsAppTemplates,
+  type ManagedTemplate,
 } from "@/lib/whatsapp/templates";
+import { validateCustomTemplate } from "@/lib/whatsapp/custom-template";
+import { rateLimit } from "@/lib/rate-limit";
 import {
   WHATSAPP_TEMPLATE_CATALOG,
   catalogEntryForName,
@@ -436,5 +446,125 @@ export async function disconnectWhatsApp(): Promise<WhatsAppActionResult> {
     return { error: "Couldn't disconnect. Please try again." };
   }
   revalidatePath("/dashboard/channels");
+  return { success: true };
+}
+
+// ── The template manager (Channels → WhatsApp → Templates) ─────────────────
+
+export interface WhatsAppTemplateManagerView {
+  connected: boolean;
+  /** Meta's view of the connection; `needs_reauth` disables submitting. */
+  status: string | null;
+  canManage: boolean;
+  templates: ManagedTemplate[];
+}
+
+/** Every template the store holds, for the manager page. Read with
+ *  `channels` view; the page gates the same way. */
+export async function getWhatsAppTemplateManager(): Promise<
+  { ok: true; view: WhatsAppTemplateManagerView } | { ok: false; error: string }
+> {
+  const access = await getViewerAccess();
+  if (!access || !access.can("channels", "view")) {
+    return { ok: false, error: "You don't have permission to view Channels." };
+  }
+  const storeId = await getActingStoreId();
+  try {
+    const [account, templates] = await Promise.all([
+      withService((db) =>
+        db
+          .select({ status: storeWhatsappAccounts.status })
+          .from(storeWhatsappAccounts)
+          .where(eq(storeWhatsappAccounts.storeId, storeId))
+          .limit(1),
+      ).then((rows) => rows[0] ?? null),
+      listStoreTemplates(storeId),
+    ]);
+    return {
+      ok: true,
+      view: {
+        connected: Boolean(account),
+        status: account?.status ?? null,
+        canManage: access.can("channels", "manage"),
+        templates,
+      },
+    };
+  } catch (err) {
+    console.error(
+      "getWhatsAppTemplateManager:",
+      err instanceof Error ? err.message : err,
+    );
+    return {
+      ok: false,
+      error: "Couldn't load your templates. Please try again.",
+    };
+  }
+}
+
+/**
+ * Submit a merchant's own template to Meta for review. The server runs the
+ * same check the editor ran, because the editor is not the boundary; Meta
+ * then reviews the words, usually within a day, and the status webhook (or
+ * Refresh) brings the answer back onto the row.
+ */
+export async function submitWhatsAppTemplate(
+  input: unknown,
+): Promise<WhatsAppActionResult & { id?: string; status?: string }> {
+  const userId = await getManagerUserId("channels");
+  if (!userId) return { error: "You don't have permission to do this." };
+  const storeId = await getActingStoreId();
+  if (!(await planAllowsWhatsApp(storeId))) {
+    return {
+      error:
+        "WhatsApp is available on the Basic plan and above. Upgrade under Plans & Billing.",
+    };
+  }
+  const checked = validateCustomTemplate(input);
+  if (!checked.ok) return { error: checked.error };
+  // Meta reviews each submission by hand; a loop submitting junk is a WABA
+  // Meta stops trusting, so a store may submit a few an hour, not hundreds.
+  const limit = await rateLimit(`whatsapp-template-submit:${storeId}`, {
+    max: 20,
+    windowSeconds: 3600,
+  });
+  if (!limit.allowed) {
+    return {
+      error:
+        "You've submitted a lot of templates recently. Try again in an hour.",
+    };
+  }
+  const r = await submitCustomTemplate(storeId, checked.template);
+  revalidatePath("/dashboard/channels/whatsapp/templates");
+  revalidatePath("/dashboard/channels");
+  if (!r.ok) return { error: r.error };
+  return { success: true, id: r.id, status: r.status };
+}
+
+/** Delete a merchant's own template at Meta and here. StoreMink's
+ *  order-update templates are refused (lib/whatsapp/templates.ts). */
+export async function deleteWhatsAppTemplate(
+  templateId: string,
+): Promise<WhatsAppActionResult> {
+  const userId = await getManagerUserId("channels");
+  if (!userId) return { error: "You don't have permission to do this." };
+  if (!/^[0-9a-f-]{36}$/i.test(String(templateId ?? ""))) {
+    return { error: "That template no longer exists." };
+  }
+  const storeId = await getActingStoreId();
+  const r = await deleteStoreTemplate(storeId, templateId);
+  revalidatePath("/dashboard/channels/whatsapp/templates");
+  revalidatePath("/dashboard/channels");
+  if (!r.ok) return { error: r.error };
+  return { success: true };
+}
+
+/** Re-read every template's status from Meta, for the manager's Refresh. */
+export async function refreshWhatsAppTemplates(): Promise<WhatsAppActionResult> {
+  const userId = await getManagerUserId("channels");
+  if (!userId) return { error: "You don't have permission to do this." };
+  const storeId = await getActingStoreId();
+  const r = await syncWhatsAppTemplates(storeId);
+  revalidatePath("/dashboard/channels/whatsapp/templates");
+  if (!r.ok) return { error: r.error ?? "Couldn't reach Meta." };
   return { success: true };
 }

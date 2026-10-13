@@ -36,6 +36,7 @@ const nextConfig: NextConfig = {
       "./brand/tasks/**",
       "./docs/mink-ai-system-prompt.md",
       "./docs/mink-ai-image-prompt.md",
+      "./docs/mink-ai-whatsapp-prompt.md",
       "./docs/theme-studio-image-prompt.md",
       "./node_modules/sharp/**",
       "./node_modules/@img/**",

@@ -14,8 +14,19 @@ import {
 import {
   AUTO_REPLY_MAX_CHARS,
   AWAY_AFTER_HUMAN_REPLY_HOURS,
+  DEFAULT_PERSON_TEXT,
+  MENU_ACTIONS,
+  MENU_ACTION_LABELS,
+  MENU_BUTTON_TITLE_MAX_CHARS,
+  MENU_MAX_BUTTONS,
+  MENU_PROMPT_TEXT,
+  MINK_ANSWER_CREDITS,
+  MINK_MODE_LABELS,
   WELCOME_QUIET_DAYS,
   validateAutoReplySettings,
+  type MenuButton,
+  type MenuButtonAction,
+  type MinkMode,
   type WhatsAppAutoReplySettings,
 } from "@/lib/whatsapp/auto-reply-settings";
 import {
@@ -178,6 +189,218 @@ function MessageBox({
   );
 }
 
+/**
+ * A button's id is generated once and kept: it is what a customer's tap
+ * carries back (menu-payload.ts), so renaming or reordering buttons must not
+ * change which one a tap on an older message means.
+ */
+function newButtonId(): string {
+  return `b${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** What a button answers with, for the merchant to see before a customer does. */
+function describeButton(b: MenuButton): string {
+  if (b.action === "order_status") {
+    return "Answers with the status of the customer's recent orders, like Order status below.";
+  }
+  if (b.action === "person") {
+    return "Hands the conversation to your team in Needs reply.";
+  }
+  return "Sends the message as written.";
+}
+
+function MenuEditor({
+  buttons,
+  disabled,
+  onChange,
+}: {
+  buttons: MenuButton[];
+  disabled: boolean;
+  onChange: (next: MenuButton[]) => void;
+}) {
+  const update = (index: number, patch: Partial<MenuButton>) =>
+    onChange(buttons.map((b, i) => (i === index ? { ...b, ...patch } : b)));
+  const remove = (index: number) =>
+    onChange(buttons.filter((_, i) => i !== index));
+  const add = () =>
+    onChange([
+      ...buttons,
+      { id: newButtonId(), title: "", action: "text", text: "" },
+    ]);
+
+  return (
+    <div className="flex flex-col gap-3">
+      {buttons.map((b, index) => {
+        const n = index + 1;
+        return (
+          <div
+            key={b.id}
+            className="rounded-[10px] border border-[rgba(17,24,39,0.08)] px-3 py-3"
+          >
+            <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+              <label className="flex min-w-0 flex-1 flex-col gap-1 text-[13px]">
+                <span className="text-[var(--dash-text-3)]">
+                  Button {n} label
+                </span>
+                <input
+                  type="text"
+                  className="dash-input w-full"
+                  aria-label={`Menu button ${n} label`}
+                  value={b.title}
+                  maxLength={MENU_BUTTON_TITLE_MAX_CHARS}
+                  disabled={disabled}
+                  onChange={(e) => update(index, { title: e.target.value })}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-[13px]">
+                <span className="text-[var(--dash-text-3)]">When tapped</span>
+                <select
+                  className="dash-input w-44"
+                  aria-label={`Menu button ${n} action`}
+                  value={b.action}
+                  disabled={disabled}
+                  onChange={(e) =>
+                    update(index, {
+                      action: e.target.value as MenuButtonAction,
+                    })
+                  }
+                >
+                  {MENU_ACTIONS.map((action) => (
+                    <option key={action} value={action}>
+                      {MENU_ACTION_LABELS[action]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="dash-btn dash-btn-ghost dash-btn-sm"
+                aria-label={`Remove menu button ${n}`}
+                disabled={disabled}
+                onClick={() => remove(index)}
+              >
+                Remove
+              </button>
+            </div>
+            <p className="mt-2 text-[12px] text-[var(--dash-text-3)]">
+              {b.title.length} / {MENU_BUTTON_TITLE_MAX_CHARS} characters.{" "}
+              {describeButton(b)}
+            </p>
+            {b.action !== "order_status" ? (
+              <div className="mt-2">
+                <textarea
+                  className="dash-input w-full"
+                  rows={2}
+                  aria-label={`Menu button ${n} message`}
+                  placeholder={
+                    b.action === "person" ? DEFAULT_PERSON_TEXT : undefined
+                  }
+                  value={b.text}
+                  maxLength={AUTO_REPLY_MAX_CHARS}
+                  disabled={disabled}
+                  onChange={(e) => update(index, { text: e.target.value })}
+                />
+                {b.action === "person" ? (
+                  <p className="mt-1 text-[12px] text-[var(--dash-text-3)]">
+                    Optional. Leave it blank to send the message shown.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+      {buttons.length < MENU_MAX_BUTTONS ? (
+        <div>
+          <button
+            type="button"
+            className="dash-btn dash-btn-ghost dash-btn-sm"
+            disabled={disabled}
+            onClick={add}
+          >
+            Add a button
+          </button>
+        </div>
+      ) : (
+        <p className="text-[12px] text-[var(--dash-text-3)]">
+          WhatsApp allows {MENU_MAX_BUTTONS} buttons on a message.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** What Mink does with a question, one of the two ways it can be on. */
+const MINK_CHOICES: { mode: Exclude<MinkMode, "off">; detail: string }[] = [
+  {
+    mode: "helps",
+    detail:
+      "Mink replies on its own when the answer is in your store's facts: the customer's own orders, products and prices, stock, delivery to their PIN, offers, your policies and hours. Anything else, and every complaint, refund, cancellation or request for a person, waits for you in Needs reply with Mink's draft attached.",
+  },
+  {
+    mode: "drafts",
+    detail:
+      "Mink never sends anything. Every message waits for you in Needs reply with Mink's suggested reply above the message box; send it, change it, or ignore it.",
+  },
+];
+
+function MinkCard({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: MinkMode;
+  disabled: boolean;
+  onChange: (next: MinkMode) => void;
+}) {
+  return (
+    <Card
+      title="Mink AI answers"
+      description={`Mink answers customers' questions from your store's own facts, or drafts a reply for you. Each reply that is sent uses ${MINK_ANSWER_CREDITS} Mink credit; a draft nobody sends is free.`}
+      on={mode !== "off"}
+      disabled={disabled}
+      onToggle={(on) => onChange(on ? "helps" : "off")}
+    >
+      <div
+        className="flex flex-col gap-3"
+        role="radiogroup"
+        aria-label="What Mink AI does"
+      >
+        {MINK_CHOICES.map((choice) => (
+          <label
+            key={choice.mode}
+            className="flex cursor-pointer items-start gap-3 rounded-[10px] border border-[rgba(17,24,39,0.08)] px-3 py-3 text-[13px]"
+          >
+            <input
+              type="radio"
+              name="mink-mode"
+              className="mt-0.5"
+              value={choice.mode}
+              checked={mode === choice.mode}
+              disabled={disabled || mode === "off"}
+              onChange={() => onChange(choice.mode)}
+            />
+            <span className="flex flex-col gap-1">
+              <span className="font-semibold">
+                {MINK_MODE_LABELS[choice.mode]}
+              </span>
+              <span className="leading-relaxed text-[var(--dash-text-3)]">
+                {choice.detail}
+              </span>
+            </span>
+          </label>
+        ))}
+        <p className="text-[12px] leading-relaxed text-[var(--dash-text-3)]">
+          Mink never cancels, refunds, changes a price or an address, or applies
+          a code: it only answers, and it tells the customer a person can take
+          over. It replies in the language the customer wrote in. Your Mink
+          credits are under Plans &amp; Billing.
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 function Card({
   title,
   description,
@@ -301,6 +524,25 @@ export function AutoRepliesForm({ view }: { view: AutoRepliesView }) {
       </Card>
 
       <Card
+        title="Menu buttons"
+        description={`Up to ${MENU_MAX_BUTTONS} buttons under the welcome message, and again whenever a customer types "menu". Each one checks their order, hands the chat to your team, or sends a message you write.`}
+        on={settings.menuEnabled}
+        disabled={disabled}
+        onToggle={(on) => patch({ menuEnabled: on })}
+      >
+        <MenuEditor
+          buttons={settings.menuButtons}
+          disabled={disabled}
+          onChange={(menuButtons) => patch({ menuButtons })}
+        />
+        <p className="mt-3 text-[12px] leading-relaxed text-[var(--dash-text-3)]">
+          {settings.welcomeEnabled
+            ? "The buttons go out with your welcome message."
+            : `With the welcome message off, the buttons go out under "${MENU_PROMPT_TEXT}" when a customer asks for the menu.`}
+        </p>
+      </Card>
+
+      <Card
         title="Order status"
         description="When a customer asks where their order is, they get its status and tracking link straight away, for orders placed with the number they are messaging from. If no order matches, or a delivery has a problem, the conversation waits for you in Needs reply."
         on={settings.orderStatusEnabled}
@@ -318,6 +560,12 @@ export function AutoRepliesForm({ view }: { view: AutoRepliesView }) {
           aayega&rdquo;.
         </p>
       </Card>
+
+      <MinkCard
+        mode={settings.minkMode}
+        disabled={disabled}
+        onChange={(minkMode) => patch({ minkMode })}
+      />
 
       {view.canManage ? (
         <div className="flex justify-end">

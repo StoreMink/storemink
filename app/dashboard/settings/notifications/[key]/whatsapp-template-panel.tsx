@@ -188,6 +188,21 @@ function WhatsAppTemplateCard({
         )}
         <p className="mt-3 text-[12px] text-[var(--dash-text-3)]">
           {status.note}
+          {(template.status === "PAUSED" ||
+            template.status === "REJECTED" ||
+            template.status === "DISABLED") && (
+            <>
+              {" "}
+              See every template and Meta&apos;s answer under{" "}
+              <Link
+                href="/dashboard/channels/whatsapp/templates"
+                className="underline"
+              >
+                WhatsApp templates
+              </Link>
+              .
+            </>
+          )}
         </p>
         {template.rejectionReason && (
           <p className="mt-2 text-[12px] text-red-700 dark:text-red-400">

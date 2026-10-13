@@ -6,6 +6,8 @@ import { stores, whatsappAutoReplies } from "@/drizzle/schema";
 import { logWarn } from "@/lib/observability/logger";
 import {
   autoReplySettingsFromRow,
+  normalizeMinkMode,
+  type MinkMode,
   type WhatsAppAutoReplySettings,
 } from "./auto-reply-settings";
 
@@ -37,6 +39,9 @@ export async function loadAutoReplies(
       awayText: whatsappAutoReplies.awayText,
       businessHours: whatsappAutoReplies.businessHours,
       orderStatusEnabled: whatsappAutoReplies.orderStatusEnabled,
+      menuEnabled: whatsappAutoReplies.menuEnabled,
+      menuButtons: whatsappAutoReplies.menuButtons,
+      minkMode: whatsappAutoReplies.minkMode,
       updatedAt: whatsappAutoReplies.updatedAt,
     })
     .from(stores)
@@ -55,6 +60,9 @@ export async function loadAutoReplies(
             awayText: row.awayText ?? "",
             businessHours: row.businessHours,
             orderStatusEnabled: row.orderStatusEnabled === true,
+            menuEnabled: row.menuEnabled === true,
+            menuButtons: row.menuButtons,
+            minkMode: row.minkMode,
           }
         : null,
       row?.storeName ?? null,
@@ -81,6 +89,9 @@ export async function saveAutoReplies(
     awayText: settings.awayText,
     businessHours: settings.hours,
     orderStatusEnabled: settings.orderStatusEnabled,
+    menuEnabled: settings.menuEnabled,
+    menuButtons: settings.menuButtons,
+    minkMode: settings.minkMode,
     updatedBy: input.updatedBy,
   };
   await db
@@ -92,27 +103,62 @@ export async function saveAutoReplies(
     });
 }
 
+/** The switches read BEFORE a message is filed (see loadAutoReplyFlags). */
+export interface AutoReplyFlags {
+  /** "Where is my order?" is answered from the customer's orders. */
+  orderStatus: boolean;
+  /** The menu's buttons go out with the welcome and on request. */
+  menu: boolean;
+  /** Customer-facing Mink: off, answers (helps) or drafts for a person. */
+  minkMode: MinkMode;
+}
+
+const NO_FLAGS: AutoReplyFlags = {
+  orderStatus: false,
+  menu: false,
+  minkMode: "off",
+};
+
 /**
- * Does this store answer "where is my order?" automatically? Read BEFORE a
- * message is filed, outside its transaction, so a failure here can never stop
- * the message being recorded. ★ Fails to false: the question then waits for a
- * person, exactly as it did before the feature existed.
+ * Which automatic answers this store has switched on, read BEFORE a message
+ * is filed and outside its transaction, so a failure here can never stop the
+ * message being recorded. The filing uses them to decide whether the message
+ * is one the system will answer (no unread, no Needs reply, no bell).
+ * ★ Fails to every flag off: the message then waits for a person, exactly as
+ * it did before the feature existed.
  */
-export async function answersOrderQuestions(storeId: string): Promise<boolean> {
+export async function loadAutoReplyFlags(
+  storeId: string,
+): Promise<AutoReplyFlags> {
   try {
     const rows = await withService((db) =>
       db
-        .select({ on: whatsappAutoReplies.orderStatusEnabled })
+        .select({
+          orderStatus: whatsappAutoReplies.orderStatusEnabled,
+          menu: whatsappAutoReplies.menuEnabled,
+          minkMode: whatsappAutoReplies.minkMode,
+        })
         .from(whatsappAutoReplies)
         .where(eq(whatsappAutoReplies.storeId, storeId))
         .limit(1),
     );
-    return rows[0]?.on === true;
+    const row = rows[0];
+    if (!row) return NO_FLAGS;
+    return {
+      orderStatus: row.orderStatus === true,
+      menu: row.menu === true,
+      minkMode: normalizeMinkMode(row.minkMode),
+    };
   } catch (err) {
-    logWarn("whatsapp auto-replies: order-question setting unreadable", {
+    logWarn("whatsapp auto-replies: settings unreadable before filing", {
       storeId,
       error: err instanceof Error ? err.message : String(err),
     });
-    return false;
+    return NO_FLAGS;
   }
+}
+
+/** Does this store answer "where is my order?" automatically? */
+export async function answersOrderQuestions(storeId: string): Promise<boolean> {
+  return (await loadAutoReplyFlags(storeId)).orderStatus;
 }

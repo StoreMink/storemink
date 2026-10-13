@@ -7365,6 +7365,126 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261014_0199_whatsapp_menu_buttons",
+      "description": "WhatsApp menu buttons: up to three reply buttons on the automatic-replies row, sent with the welcome message and when a customer asks for the menu",
+      "file": "sql/20261014_0199_whatsapp_menu_buttons.sql",
+      "transaction": true,
+      "requires": ["20261013_0198_whatsapp_auto_replies_help"],
+      "verify": {
+        "columns": [
+          "whatsapp_auto_replies.menu_enabled",
+          "whatsapp_auto_replies.menu_buttons"
+        ],
+        "constraints": [
+          "whatsapp_auto_replies_menu_shape_check",
+          "whatsapp_auto_replies_menu_on_check"
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every existing settings row keeps the menu off with no buttons",
+            "sql": "select count(*)::text from public.whatsapp_auto_replies where menu_enabled or jsonb_array_length(menu_buttons) > 0",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0200_whatsapp_menu_buttons_help",
+      "description": "Help: the automatic-replies guide gains a Menu buttons section",
+      "file": "sql/20261014_0200_whatsapp_menu_buttons_help.sql",
+      "transaction": true,
+      "requires": ["20261014_0199_whatsapp_menu_buttons"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the automatic-replies guide describes menu buttons",
+            "sql": "select count(*)::text from public.help_articles where slug='set-up-whatsapp-automatic-replies' and status='published' and body like '%<h2>Menu buttons</h2>%' and body like '%Tapped a button%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0201_whatsapp_template_manager_help",
+      "description": "Help: manage your WhatsApp templates (the template manager); the order-updates guide's card sentence names the page",
+      "file": "sql/20261014_0201_whatsapp_template_manager_help.sql",
+      "transaction": true,
+      "requires": ["20261014_0200_whatsapp_menu_buttons_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the template-manager guide is published under Marketing",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id=a.category_id where a.slug='manage-your-whatsapp-templates' and a.status='published' and c.slug='marketing' and a.body like '%Send to Meta for review%'",
+            "equals": "1"
+          },
+          {
+            "name": "the order-updates guide names the page",
+            "sql": "select count(*)::text from public.help_articles where slug='send-order-updates-on-whatsapp' and body like '%/help/marketing/manage-your-whatsapp-templates%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0202_whatsapp_mink_answers",
+      "description": "Customer-facing Mink on WhatsApp: the mink_mode switch, the answers ledger and the one-credit charge function",
+      "file": "sql/20261014_0202_whatsapp_mink_answers.sql",
+      "transaction": true,
+      "requires": ["20261014_0201_whatsapp_template_manager_help"],
+      "verify": {
+        "tables": ["whatsapp_mink_answers"],
+        "columns": ["whatsapp_auto_replies.mink_mode"],
+        "constraints": [
+          "whatsapp_auto_replies_mink_mode_check",
+          "whatsapp_mink_answers_pkey",
+          "whatsapp_mink_answers_mode_check",
+          "whatsapp_mink_answers_outcome_check",
+          "whatsapp_mink_answers_credits_check",
+          "whatsapp_mink_answers_source_check",
+          "whatsapp_mink_answers_period_check"
+        ],
+        "functions": [
+          "consume_mink_whatsapp_answer(uuid,uuid,text,integer,integer)"
+        ],
+        "rlsTables": ["whatsapp_mink_answers"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every existing settings row keeps Mink off",
+            "sql": "select count(*)::text from public.whatsapp_auto_replies where mink_mode <> 'off'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0203_whatsapp_mink_help",
+      "description": "Help: the automatic-replies guide gains an Answers from Mink AI section; the inbox guide's reply section names the draft card",
+      "file": "sql/20261014_0203_whatsapp_mink_help.sql",
+      "transaction": true,
+      "requires": ["20261014_0202_whatsapp_mink_answers"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the automatic-replies guide describes Mink's two ways of helping",
+            "sql": "select count(*)::text from public.help_articles where slug='set-up-whatsapp-automatic-replies' and status='published' and body like '%<h2>Answers from Mink AI</h2>%' and body like '%Drafts replies for you</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide names the draft card",
+            "sql": "select count(*)::text from public.help_articles where slug='reply-to-whatsapp-messages' and body like '%Mink AI drafted a reply%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

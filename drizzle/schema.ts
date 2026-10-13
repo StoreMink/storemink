@@ -9125,11 +9125,49 @@ export const whatsappAutoReplies = pgTable("whatsapp_auto_replies", {
   // { mon: { open: "10:00", close: "19:00" } | null, ... } in the store's zone.
   businessHours: jsonb("business_hours").default({}).notNull(),
   orderStatusEnabled: boolean("order_status_enabled").default(false).notNull(),
+  // Migration 20261014_0199: [{ id, title, action, text }], at most three.
+  menuEnabled: boolean("menu_enabled").default(false).notNull(),
+  menuButtons: jsonb("menu_buttons").default([]).notNull(),
+  // Migration 20261014_0202: off | helps | drafts (lib/whatsapp/mink-answer.ts).
+  minkMode: text("mink_mode").default("off").notNull(),
   updatedBy: text("updated_by"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
     .defaultNow()
     .notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+// One row per question customer-facing Mink was asked on WhatsApp
+// (migration 20261014_0202): the mode, what happened, the answer, the facts
+// it drew on, and the credit it cost once sent. Service-only.
+export const whatsappMinkAnswers = pgTable("whatsapp_mink_answers", {
+  id: uuid().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  messageId: uuid("message_id"),
+  // helps | drafts
+  mode: text().notNull(),
+  // draft | sent | discarded | handed_over | failed
+  outcome: text().notNull(),
+  reason: text().default("").notNull(),
+  answer: text().default("").notNull(),
+  // Short labels: ["Order ORD10011027", "Almond Shake", "Refund policy"].
+  facts: jsonb().default([]).notNull(),
+  model: text().default("").notNull(),
+  inputTokens: integer("input_tokens").default(0).notNull(),
+  outputTokens: integer("output_tokens").default(0).notNull(),
+  period: text(),
+  chargedCredits: integer("charged_credits").default(0).notNull(),
+  planCredits: integer("plan_credits").default(0).notNull(),
+  balanceCredits: integer("balance_credits").default(0).notNull(),
+  // NULL until the answer is sent and charged.
+  creditSource: text("credit_source"),
+  sentMessageId: uuid("sent_message_id"),
+  sentByAdminId: text("sent_by_admin_id"),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "string" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
     .defaultNow()
     .notNull(),
 });

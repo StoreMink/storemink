@@ -180,6 +180,28 @@ describe("applyAccountEvent", () => {
     expect(updates[1]!.set.status).toBe("REJECTED");
   });
 
+  it("★ a template status the row cannot hold (FLAGGED, ARCHIVED) changes nothing", async () => {
+    const { db, updates } = fakeDb();
+    await applyAccountEvent(db, {
+      storeId: "s",
+      field: "message_template_status_update",
+      value: {
+        event: "FLAGGED",
+        message_template_id: 777,
+        message_template_name: "sm_order_placed_customer_v1",
+        message_template_language: "en",
+      },
+    });
+    expect(updates.length).toBe(0);
+    // A lower-case word Meta spells differently is still its status.
+    await applyAccountEvent(db, {
+      storeId: "s",
+      field: "message_template_status_update",
+      value: { event: "approved", message_template_id: 777 },
+    });
+    expect(updates[0]!.set.status).toBe("APPROVED");
+  });
+
   it("phone_number_quality_update writes the tier and a flag as a rating", async () => {
     const { db, updates } = fakeDb();
     await applyAccountEvent(db, {

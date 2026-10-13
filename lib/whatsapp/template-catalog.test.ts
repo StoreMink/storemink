@@ -7,7 +7,9 @@ import {
   bodyPlaceholders,
   catalogEntryForName,
   catalogTemplateFor,
+  knownTemplateStatus,
   pickTemplateRow,
+  templateBodyProblem,
   renderWhatsAppBody,
   templateComponentsFor,
   templateFamily,
@@ -236,5 +238,39 @@ describe("the COD confirmation variant", () => {
       (t) => (t.quickReplies ?? []).length > 0,
     );
     expect(withButtons).toEqual([cod]);
+  });
+});
+
+describe("templateBodyProblem: the one body rule", () => {
+  it("★ every catalogue body passes the rule a merchant's template is held to", () => {
+    for (const t of WHATSAPP_TEMPLATE_CATALOG) {
+      expect(templateBodyProblem(t.body, t.examples), t.name).toBeNull();
+    }
+  });
+
+  it("names each refusal in the merchant's words", () => {
+    expect(templateBodyProblem("", [])).toBe("Write the message.");
+    expect(templateBodyProblem("{{1}} ok", ["x"])).toMatch(/cannot start/);
+    expect(templateBodyProblem("ok {{1}}.", ["x"])).toMatch(/cannot end/);
+    expect(templateBodyProblem("a {{1}} {{2}} b", ["x", "y"])).toMatch(
+      /next to each other/,
+    );
+    expect(templateBodyProblem("a {{2}} b {{1}} c", ["x", "y"])).toMatch(
+      /Number the placeholders/,
+    );
+    expect(templateBodyProblem("a {{1}} b", [])).toBe(
+      "Give every placeholder a sample value.",
+    );
+    expect(templateBodyProblem("a\tb", [])).toMatch(/tab/);
+    expect(templateBodyProblem("a {{x}} b", [])).toMatch(/written \{\{1\}\}/);
+  });
+});
+
+describe("knownTemplateStatus", () => {
+  it("keeps Meta's words the row can hold and refuses the rest", () => {
+    expect(knownTemplateStatus("approved")).toBe("APPROVED");
+    expect(knownTemplateStatus("PAUSED")).toBe("PAUSED");
+    expect(knownTemplateStatus("FLAGGED")).toBeNull();
+    expect(knownTemplateStatus(undefined)).toBeNull();
   });
 });

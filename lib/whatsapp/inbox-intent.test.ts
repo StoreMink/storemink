@@ -116,3 +116,30 @@ describe("classifyWhatsAppInbound: where is my order", () => {
     expect(classifyWhatsAppInbound("start")).toBe("start");
   });
 });
+
+describe("classifyWhatsAppInbound: asking for the menu", () => {
+  it("reads a short request for the menu, with courtesy words and punctuation", () => {
+    for (const body of [
+      "menu",
+      "Menu!",
+      "options",
+      "main menu",
+      "show menu please",
+      "help",
+      "menu dikhao",
+      "मेनू",
+    ]) {
+      expect(classifyWhatsAppInbound(body), body).toBe("menu");
+    }
+  });
+
+  it("★ a sentence that merely contains the word is not a request", () => {
+    for (const body of [
+      "the menu button does nothing",
+      "do you have a menu for catering",
+      "help me cancel my order",
+    ]) {
+      expect(classifyWhatsAppInbound(body), body).not.toBe("menu");
+    }
+  });
+});

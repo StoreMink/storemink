@@ -8,10 +8,12 @@ vi.mock("@/lib/observability/logger", () => ({
 
 import {
   debugToken,
+  deleteMessageTemplate,
   exchangeEmbeddedSignupCode,
   graphRequest,
   isTokenError,
   registerPhoneNumber,
+  sendInteractiveMessage,
   sendTemplateMessage,
   subscribeAppToWaba,
 } from "./graph";
@@ -178,5 +180,93 @@ describe("sendTemplateMessage — quick-reply buttons", () => {
     const components = await sent({});
     expect(components).toHaveLength(1);
     expect(components[0].type).toBe("body");
+  });
+});
+
+describe("sendInteractiveMessage — reply buttons", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  const OLD = { ...process.env };
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.WHATSAPP_GRAPH_VERSION = "v26.0";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...OLD };
+  });
+
+  it("★ posts Meta's interactive button shape: a body and one reply per button, in order", async () => {
+    fetchMock.mockResolvedValueOnce(
+      reply(200, { messages: [{ id: "wamid.9" }] }),
+    );
+    const r = await sendInteractiveMessage("TOK", "PN", {
+      to: "919876543210",
+      body: "How can we help?",
+      buttons: [
+        { id: "menu:b1", title: "Check my order" },
+        { id: "menu:b2", title: "Talk to a person" },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls.at(-1)!;
+    expect(String(url)).toBe("https://graph.facebook.com/v26.0/PN/messages");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: "919876543210",
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: "How can we help?" },
+        action: {
+          buttons: [
+            {
+              type: "reply",
+              reply: { id: "menu:b1", title: "Check my order" },
+            },
+            {
+              type: "reply",
+              reply: { id: "menu:b2", title: "Talk to a person" },
+            },
+          ],
+        },
+      },
+    });
+  });
+});
+
+describe("deleteMessageTemplate", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  const OLD = { ...process.env };
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.WHATSAPP_GRAPH_VERSION = "v26.0";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...OLD };
+  });
+
+  it("★ names the template and, when known, Meta's id, so only that language goes", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, { success: true }));
+    const r = await deleteMessageTemplate("TOK", "W", {
+      name: "delivery_delay",
+      hsmId: "123",
+    });
+    expect(r.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls.at(-1)!;
+    expect(init?.method).toBe("DELETE");
+    expect(String(url)).toBe(
+      "https://graph.facebook.com/v26.0/W/message_templates?name=delivery_delay&hsm_id=123",
+    );
+  });
+
+  it("by name alone when no id was ever recorded", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, { success: true }));
+    await deleteMessageTemplate("TOK", "W", { name: "delivery_delay" });
+    const [url] = fetchMock.mock.calls.at(-1)!;
+    expect(String(url)).toBe(
+      "https://graph.facebook.com/v26.0/W/message_templates?name=delivery_delay",
+    );
   });
 });

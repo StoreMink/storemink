@@ -3,8 +3,13 @@ import "server-only";
 import { withService } from "@/lib/db/client";
 import { logError, logInfo } from "@/lib/observability/logger";
 import { loadWhatsAppSender, type WhatsAppSender } from "./channel";
-import { sendWhatsAppText, type SendWhatsAppResult } from "./send";
+import {
+  sendWhatsAppInteractive,
+  sendWhatsAppText,
+  type SendWhatsAppResult,
+} from "./send";
 import { recordOutboundMessage } from "./inbox";
+import type { InteractiveButton } from "./graph";
 
 // ---------------------------------------------------------------------------
 // One automatic answer in a customer's chat: a COD Confirm/Cancel reply, a
@@ -36,6 +41,12 @@ export interface AutoReplyInput {
   reason: string;
   /** The store's sender, when the caller has already loaded it. */
   sender?: WhatsAppSender | null;
+  /** Reply buttons under the text (the store's menu): one to three, and the
+   *  body then has to fit WhatsApp's 1,024 characters for a button message. */
+  buttons?: InteractiveButton[];
+  /** Filed on the message row beside the buttons: `{ mink: true, answerId }`
+   *  marks an answer customer-facing Mink wrote, which the thread labels. */
+  extraPayload?: Record<string, unknown>;
 }
 
 /** Send one automatic answer and file it. True when Meta accepted it. */
@@ -53,15 +64,26 @@ export async function replyInChat(input: AutoReplyInput): Promise<boolean> {
     return false;
   }
 
+  const buttons =
+    input.buttons && input.buttons.length > 0 ? input.buttons : null;
   let sent: SendWhatsAppResult;
   try {
-    sent = await sendWhatsAppText({
-      storeId,
-      to: input.to,
-      token: sender.token,
-      phoneNumberId: sender.phoneNumberId,
-      body: input.body,
-    });
+    sent = buttons
+      ? await sendWhatsAppInteractive({
+          storeId,
+          to: input.to,
+          token: sender.token,
+          phoneNumberId: sender.phoneNumberId,
+          body: input.body,
+          buttons,
+        })
+      : await sendWhatsAppText({
+          storeId,
+          to: input.to,
+          token: sender.token,
+          phoneNumberId: sender.phoneNumberId,
+          body: input.body,
+        });
   } catch (err) {
     logError("whatsapp auto-reply: send threw", err, { storeId, reason });
     sent = {
@@ -76,8 +98,12 @@ export async function replyInChat(input: AutoReplyInput): Promise<boolean> {
       storeId,
       conversationId: input.conversationId,
       source: "automation",
-      kind: "text",
+      kind: buttons ? "interactive" : "text",
       body: input.body,
+      payload:
+        buttons || input.extraPayload
+          ? { ...(buttons ? { buttons } : {}), ...(input.extraPayload ?? {}) }
+          : null,
       providerMessageId: sent.sent ? sent.messageId : null,
       status: sent.sent ? "sent" : "failed",
       error: sent.sent ? null : sent.error,

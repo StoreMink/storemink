@@ -1,20 +1,32 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { storeWhatsappAccounts, whatsappTemplates } from "@/drizzle/schema";
 import { decryptSecret } from "@/lib/payments/crypto";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import {
   createMessageTemplate,
+  deleteMessageTemplate,
   isTemplateExistsError,
   isTokenError,
   listMessageTemplates,
 } from "./graph";
 import {
   WHATSAPP_TEMPLATE_CATALOG,
+  catalogEntryForName,
+  knownTemplateStatus,
   templateComponentsFor,
 } from "./template-catalog";
+import {
+  customTemplateComponents,
+  templateButtonsOf,
+  templateFooterText,
+  templateHeaderText,
+  templateNeedsSendParameters,
+  type CustomTemplateDraft,
+  type TemplateButtonView,
+} from "./custom-template";
 
 // ---------------------------------------------------------------------------
 // Registering StoreMink's notification templates on a merchant's WABA, and
@@ -313,21 +325,8 @@ export async function syncWhatsAppTemplates(
 
 /** Meta's status vocabulary onto the 0174 CHECK; anything new stays PENDING
  *  rather than failing the whole sync on an unknown word. */
-const KNOWN_STATUSES = new Set([
-  "PENDING",
-  "APPROVED",
-  "REJECTED",
-  "PAUSED",
-  "DISABLED",
-  "IN_APPEAL",
-  "PENDING_DELETION",
-  "DELETED",
-  "LIMIT_EXCEEDED",
-]);
-
 export function normalizeStatus(status: string | undefined): string {
-  const s = (status ?? "").toUpperCase();
-  return KNOWN_STATUSES.has(s) ? s : "PENDING";
+  return knownTemplateStatus(status) ?? "PENDING";
 }
 
 async function markNeedsReauth(storeId: string, error: string): Promise<void> {
@@ -399,4 +398,308 @@ export async function listTemplateRowsForEvent(
       body: bodyFromComponents(r.components),
       variables: Array.isArray(r.variables) ? (r.variables as string[]) : [],
     }));
+}
+
+// ── The template manager (plan §4 Templates) ───────────────────────────────
+
+export interface ManagedTemplate {
+  id: string;
+  name: string;
+  language: string;
+  category: string;
+  status: string;
+  rejectionReason: string | null;
+  syncError: string | null;
+  quality: string | null;
+  lastSyncedAt: string | null;
+  createdAt: string;
+  /** StoreMink's own (an order-update template behind an event), or the
+   *  merchant's. Only the merchant's can be deleted here. */
+  catalogue: boolean;
+  /** The event a catalogue template serves, for the label. */
+  eventKey: string | null;
+  audience: string | null;
+  headerText: string;
+  body: string;
+  footerText: string;
+  /** Which named value fills each {{n}}, in order. */
+  variables: string[];
+  buttons: TemplateButtonView[];
+  /** Whether the inbox composer can send it (approved, for customers, and
+   *  needing no value at send time beyond the body's). */
+  sendableFromInbox: boolean;
+}
+
+/** Every template this store holds, newest first. Service scope; the
+ *  caller gates. */
+export async function listStoreTemplates(
+  storeId: string,
+): Promise<ManagedTemplate[]> {
+  const { bodyFromComponents, templateHasButtons } = await import("./channel");
+  const rows = await withService((db) =>
+    db
+      .select({
+        id: whatsappTemplates.id,
+        name: whatsappTemplates.name,
+        language: whatsappTemplates.language,
+        category: whatsappTemplates.category,
+        status: whatsappTemplates.status,
+        rejectionReason: whatsappTemplates.rejectionReason,
+        syncError: whatsappTemplates.syncError,
+        quality: whatsappTemplates.quality,
+        lastSyncedAt: whatsappTemplates.lastSyncedAt,
+        createdAt: whatsappTemplates.createdAt,
+        eventKey: whatsappTemplates.eventKey,
+        audience: whatsappTemplates.audience,
+        components: whatsappTemplates.components,
+        variables: whatsappTemplates.variables,
+        enabled: whatsappTemplates.enabled,
+      })
+      .from(whatsappTemplates)
+      .where(eq(whatsappTemplates.storeId, storeId))
+      .orderBy(desc(whatsappTemplates.createdAt)),
+  );
+  return rows.map((r) => {
+    const catalogue =
+      r.eventKey !== null || Boolean(catalogEntryForName(r.name));
+    return {
+      id: r.id,
+      name: r.name,
+      language: r.language,
+      category: r.category,
+      status: r.status,
+      rejectionReason: r.rejectionReason,
+      syncError: r.syncError,
+      quality: r.quality,
+      lastSyncedAt: r.lastSyncedAt,
+      createdAt: r.createdAt,
+      catalogue,
+      eventKey: r.eventKey,
+      audience: r.audience,
+      headerText: templateHeaderText(r.components),
+      body: bodyFromComponents(r.components),
+      footerText: templateFooterText(r.components),
+      variables: Array.isArray(r.variables) ? (r.variables as string[]) : [],
+      buttons: templateButtonsOf(r.components),
+      sendableFromInbox:
+        r.status === "APPROVED" &&
+        r.enabled &&
+        r.audience !== "team" &&
+        (catalogue
+          ? !templateHasButtons(r.components)
+          : !templateNeedsSendParameters(r.components)),
+    };
+  });
+}
+
+export type SubmitTemplateResult =
+  | { ok: true; id: string; status: string }
+  | { ok: false; error: string };
+
+/**
+ * Submit a merchant's template to Meta for review and keep the row. The row
+ * is written PENDING before the call, like the catalogue's, so the status
+ * webhook has something to land on; a refusal at submission is kept on the
+ * row as `sync_error` with the merchant's words beside it, and the row stays
+ * so the reason can be read and the template deleted or rewritten.
+ */
+export async function submitCustomTemplate(
+  storeId: string,
+  draft: CustomTemplateDraft,
+): Promise<SubmitTemplateResult> {
+  const account = await loadAccount(storeId).catch((err) => {
+    logError("whatsapp templates: account load failed", err, { storeId });
+    return null;
+  });
+  if (!account) return { ok: false, error: "WhatsApp isn't connected." };
+
+  const now = new Date().toISOString();
+  const components = customTemplateComponents(draft);
+  let row: { id: string; providerTemplateId: string | null } | undefined;
+  try {
+    const rows = await withService((db) =>
+      db
+        .insert(whatsappTemplates)
+        .values({
+          storeId,
+          wabaId: account.wabaId,
+          eventKey: null,
+          // For customers: the composer offers it once approved. Nothing
+          // automatic ever picks it, because no event names it.
+          audience: "customer",
+          name: draft.name,
+          language: draft.language,
+          category: draft.category,
+          components,
+          variables: draft.variables.map((v) => v.name),
+          status: "PENDING",
+          updatedAt: now,
+        })
+        .onConflictDoNothing({
+          target: [
+            whatsappTemplates.storeId,
+            whatsappTemplates.name,
+            whatsappTemplates.language,
+          ],
+        })
+        .returning({
+          id: whatsappTemplates.id,
+          providerTemplateId: whatsappTemplates.providerTemplateId,
+        }),
+    );
+    row = rows[0];
+  } catch (err) {
+    logError("whatsapp templates: custom row insert failed", err, { storeId });
+    return {
+      ok: false,
+      error: "Couldn't save the template. Please try again.",
+    };
+  }
+  if (!row) {
+    return {
+      ok: false,
+      error: `You already have a template called ${draft.name} in that language. Choose another name.`,
+    };
+  }
+
+  const created = await createMessageTemplate(account.token, account.wabaId, {
+    name: draft.name,
+    language: draft.language,
+    category: draft.category,
+    components,
+  });
+
+  if (created.ok) {
+    const status = normalizeStatus(created.data.status);
+    await withService((db) =>
+      db
+        .update(whatsappTemplates)
+        .set({
+          providerTemplateId: created.data.id,
+          status,
+          category: created.data.category ?? draft.category,
+          syncError: null,
+          lastSyncedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(whatsappTemplates.id, row.id)),
+    ).catch((err) =>
+      logError("whatsapp templates: record custom create failed", err, {
+        storeId,
+      }),
+    );
+    logInfo("whatsapp template submitted", {
+      storeId,
+      name: draft.name,
+      status,
+    });
+    return { ok: true, id: row.id, status };
+  }
+
+  if (isTemplateExistsError(created)) {
+    // Meta holds this name already (authored in WhatsApp Manager, or an
+    // earlier submission we never recorded): adopt its status by listing.
+    await syncWhatsAppTemplates(storeId).catch(() => undefined);
+    return { ok: true, id: row.id, status: "PENDING" };
+  }
+
+  const error = isTokenError(created)
+    ? "Meta no longer accepts this connection. Reconnect WhatsApp in Channels."
+    : created.outcome === "unknown"
+      ? `Meta didn't answer: ${created.error}`
+      : `Meta refused the template: ${created.error}`;
+  if (isTokenError(created)) await markNeedsReauth(storeId, error);
+  await withService((db) =>
+    db
+      .update(whatsappTemplates)
+      .set({ syncError: error, lastSyncedAt: now, updatedAt: now })
+      .where(eq(whatsappTemplates.id, row.id)),
+  ).catch(() => undefined);
+  logWarn("whatsapp templates: custom create refused", {
+    storeId,
+    name: draft.name,
+    outcome: created.outcome,
+    code: created.code,
+  });
+  return { ok: false, error };
+}
+
+export type DeleteTemplateResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Delete a merchant's template, at Meta and here. A catalogue template is
+ * refused: the notification spine sends it, and removing it would silence an
+ * order update with nothing on the console to say why. Meta's "does not
+ * exist" reads as already gone; any other refusal keeps the row.
+ */
+export async function deleteStoreTemplate(
+  storeId: string,
+  templateId: string,
+): Promise<DeleteTemplateResult> {
+  const rows = await withService((db) =>
+    db
+      .select({
+        id: whatsappTemplates.id,
+        name: whatsappTemplates.name,
+        eventKey: whatsappTemplates.eventKey,
+        providerTemplateId: whatsappTemplates.providerTemplateId,
+      })
+      .from(whatsappTemplates)
+      .where(
+        and(
+          eq(whatsappTemplates.storeId, storeId),
+          eq(whatsappTemplates.id, templateId),
+        ),
+      )
+      .limit(1),
+  );
+  const row = rows[0];
+  if (!row) return { ok: false, error: "That template no longer exists." };
+  if (row.eventKey !== null || catalogEntryForName(row.name)) {
+    return {
+      ok: false,
+      error:
+        "That is one of StoreMink's order-update templates and can't be deleted. Switch the message off under Settings → Notifications instead.",
+    };
+  }
+
+  const account = await loadAccount(storeId).catch(() => null);
+  if (account) {
+    const deleted = await deleteMessageTemplate(account.token, account.wabaId, {
+      name: row.name,
+      hsmId: row.providerTemplateId,
+    });
+    if (!deleted.ok) {
+      if (isTokenError(deleted)) {
+        const error =
+          "Meta no longer accepts this connection. Reconnect WhatsApp in Channels.";
+        await markNeedsReauth(storeId, error);
+        return { ok: false, error };
+      }
+      const gone =
+        deleted.outcome === "rejected" &&
+        /does not exist|not found|no template/i.test(deleted.error);
+      if (!gone) {
+        return {
+          ok: false,
+          error:
+            deleted.outcome === "unknown"
+              ? "Meta didn't answer. Try again in a minute."
+              : `Meta refused: ${deleted.error}`,
+        };
+      }
+    }
+  }
+  await withService((db) =>
+    db
+      .delete(whatsappTemplates)
+      .where(
+        and(
+          eq(whatsappTemplates.storeId, storeId),
+          eq(whatsappTemplates.id, templateId),
+        ),
+      ),
+  );
+  logInfo("whatsapp template deleted", { storeId, name: row.name });
+  return { ok: true };
 }

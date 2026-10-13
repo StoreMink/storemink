@@ -15,8 +15,10 @@ import { isWhatsAppWebhook } from "./webhook-events";
 import { handleCodReply } from "./cod-confirmation";
 import { answerOptOut } from "./opt-out-reply";
 import { answerAutomatically } from "./answer-automatically";
-import { answersOrderQuestions } from "./auto-reply-store";
-import { classifyWhatsAppInbound } from "./inbox-intent";
+import { loadAutoReplyFlags } from "./auto-reply-store";
+import { knownTemplateStatus } from "./template-catalog";
+import { handleMenuReply } from "./menu-reply";
+import { answerWithMink } from "./mink-answer";
 import {
   applyStatusToMessage,
   handOverConversation,
@@ -329,15 +331,17 @@ export async function processPendingInboundEvents(
       const value = isRec(ev.payload) ? ev.payload : {};
       const kind = str(value.kind);
       // ★ Read before the transaction: a failed settings read must never be
-      // the reason a customer's message is not filed. Only for a message that
-      // reads as "where is my order?", so every other message costs nothing.
-      const orderQuestions =
-        ev.storeId &&
-        ev.field === "messages" &&
-        kind === "message" &&
-        classifyWhatsAppInbound(textBodyOf(value) ?? "") === "order_status"
-          ? await answersOrderQuestions(ev.storeId)
-          : false;
+      // the reason a customer's message is not filed. Once per TEXT message
+      // (an order question, a menu request, or anything Mink may answer); a
+      // photo or a sticker never needs the row, so it costs nothing.
+      const text =
+        ev.storeId && ev.field === "messages" && kind === "message"
+          ? textBodyOf(value)
+          : null;
+      const flags =
+        ev.storeId && text !== null
+          ? await loadAutoReplyFlags(ev.storeId)
+          : null;
       const filed = await withService(
         async (db): Promise<RecordInboundResult | null> => {
           let out: RecordInboundResult | null = null;
@@ -345,7 +349,9 @@ export async function processPendingInboundEvents(
             out = await recordInboundMessage(db, {
               storeId: ev.storeId,
               value,
-              answersOrderQuestions: orderQuestions,
+              answersOrderQuestions: flags?.orderStatus === true,
+              hasMenu: flags?.menu === true,
+              minkMode: flags?.minkMode ?? "off",
             });
           } else if (ev.storeId && ev.field === "smb_message_echoes") {
             out = await recordEchoMessage(db, { storeId: ev.storeId, value });
@@ -445,9 +451,25 @@ async function afterFiled(
       return { outcome: "failed" as const, needsHuman: true };
     });
     handOver = handled.needsHuman;
+  } else if (filed.menuReply && filed.menuReply !== "menu" && filed.phone) {
+    // A tap on one of the store's menu buttons: do what the button says, and
+    // hand over when it asks for a person or cannot be done (menu-reply.ts).
+    const handled = await handleMenuReply({
+      storeId,
+      conversationId,
+      phone: filed.phone,
+      userId: filed.userId,
+      buttonId: filed.menuReply,
+    }).catch((err) => {
+      logError("whatsapp menu: handling failed", err, { storeId });
+      return { outcome: "failed" as const, needsHuman: true };
+    });
+    handOver = handled.needsHuman;
   } else if (filed.phone) {
     // The store's own automatic replies: the welcome, the away message, the
-    // answer to "where is my order?" (answer-automatically.ts).
+    // menu on request, the answer to "where is my order?"
+    // (answer-automatically.ts).
+    const menuRequest = filed.menuReply === "menu";
     const answered = await answerAutomatically({
       storeId,
       conversationId,
@@ -456,11 +478,33 @@ async function afterFiled(
       kind: filed.kind,
       orderQuestion: filed.orderQuestion,
       welcomeEligible: filed.welcomeEligible,
+      menuRequest,
     }).catch((err) => {
       logError("whatsapp auto-replies: failed", err, { storeId });
-      return { handOver: filed.orderQuestion, sent: [] };
+      return { handOver: filed.orderQuestion || menuRequest, sent: [] };
     });
     handOver = answered.handOver;
+
+    // Customer-facing Mink (mink-answer.ts), after the welcome so a first
+    // message reads "hi, thanks for messaging" and then the answer. `helps`
+    // was filed as answered by the system, so whatever Mink could not
+    // finish hands over here; `drafts` only leaves a draft for the person
+    // who already has the message.
+    if (filed.minkAnswer && filed.body) {
+      const mink = await answerWithMink({
+        storeId,
+        conversationId,
+        messageId: filed.messageId,
+        phone: filed.phone,
+        userId: filed.userId,
+        mode: filed.minkAnswer,
+        text: filed.body,
+      }).catch((err) => {
+        logError("whatsapp mink: failed", err, { storeId });
+        return { outcome: "failed" as const, needsHuman: true };
+      });
+      if (filed.minkAnswer === "helps") handOver = handOver || mink.needsHuman;
+    }
   }
 
   if (filed.media && hasMedia(filed.kind)) {
@@ -520,7 +564,10 @@ export async function applyAccountEvent(
       const templateId = v.message_template_id;
       const name = str(v.message_template_name);
       const language = str(v.message_template_language);
-      const status = event;
+      // ★ Only a status the row can hold. Meta also posts FLAGGED, ARCHIVED
+      // and words it adds later; writing one would fail the 0174 CHECK and
+      // mark the whole delivery failed, so an unknown word changes nothing.
+      const status = knownTemplateStatus(event);
       if (!status) return;
       const reason = str(v.reason);
       const set = {

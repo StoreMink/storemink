@@ -92,6 +92,207 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### WhatsApp Commerce — Phase 2 slice 5: Customer-facing Mink (2026-10-14)
+
+Plan §13: **Inbox → Automatic replies** gains **Mink AI answers**, off, with
+two ways on: `helps` (Mink answers a customer's question from the store's own
+facts and hands over the rest) and `drafts` (Mink never sends; every message
+waits for a person with Mink's draft above the message box). Stored as
+`whatsapp_auto_replies.mink_mode` (migration `20261014_0202`, CHECK
+off|helps|drafts; `MINK_MODES` in auto-reply-settings.ts), read with the
+other flags BEFORE a message is filed (`loadAutoReplyFlags`, now once per
+TEXT message, never for a photo).
+★★ ANSWER-ONLY, BY CONSTRUCTION. `lib/whatsapp/mink-answer.ts` is a new
+bounded actor: it reads the facts itself, scoped to the store and to the
+PHONE that wrote (the order-status rule), builds one sheet
+(`mink-facts.ts`, pure: the customer's orders in order-status-reply's words,
+products matched by the words they share with the question with the card's
+price/options/stock/return rule/link, delivery to a six-digit PIN the
+message names through `lib/shipping/product-delivery.ts` (the core of the
+PDP's PIN check, extracted so the action and Mink quote identically),
+running offers from `readMinkCurrentOffers` (its actor narrowed to
+`Pick<"storeId"|"effectivePlan">`), the published policies as text, the
+hours, the last six messages), and makes ONE Vertex call
+(`mink-model.ts`: no tools, no session, `responseJsonSchema`, LOW thinking,
+one attempt, 25 s) with the system instruction from
+`docs/mink-ai-whatsapp-prompt.md` (`lib/mink/whatsapp-prompt.ts`, the
+image-prompt loader's shape; one-pass render, traced into standalone and
+the Docker context) and the facts, the recent exchange and the customer's
+message each in their own fence in the USER turn. There is nothing it could
+call, so a cancel, a refund, a reprice, a code or an address change is a
+hand-over whatever the model says.
+★★ HAND OVER IS THE DEFAULT, IN THREE LAYERS. (1) `mink-gate.ts` (pure, run
+at FILING in inbox.ts) keeps a complaint, a refund, a return of goods in
+hand ("return" + my/this/want to/order; "can I return the cookies?" is a
+policy question and passes), a cancellation or order change, a payment
+problem, "talk to a person", a bare greeting, an empty or a 1,000-character
+message for a person with no model call: filed exactly as before. (2) The
+instruction hands over anything outside the sheet, another customer's
+business and "ignore your rules". (3) `parseMinkWhatsAppAnswer` turns a
+reply carrying a link not in the sheet, a `{{` token or over 1,000
+characters into a hand-over. A hand-over keeps whatever the model drafted.
+★★ FILED LIKE A COD TAP IN `helps`, AS BEFORE IN `drafts`.
+`recordInboundMessage` sets `minkAnswer` for a text message nothing above
+already answers and the gate lets through; `helps` makes it `automated`
+(no unread, no Needs reply, no bell) and `afterFiled` runs Mink AFTER
+`answerAutomatically` (so a first message reads welcome, then answer) and
+hands over on `needsHuman`; `drafts` files normally (the bell rings) and
+only attaches the draft. Mink's own answer is filed through `replyInChat`
+as `automation` with `payload.mink` (the thread labels it **Mink AI**); a
+staff send of a draft is a `dashboard` message with the same marker ("Priya
+· from a Mink draft").
+★★ ONE CREDIT PER SENT ANSWER, FAILING CLOSED (plan §19.6).
+`whatsapp_mink_answers` (0202; service-only) is one row per question asked:
+mode, outcome (draft|sent|discarded|handed_over|failed), answer, facts
+labels, model, tokens, the charge. `minkCreditHeadroom` is asked BEFORE the
+model (a store with nothing left costs nothing); `consume_mink_whatsapp_answer`
+(the refine function's shape, keyed on the answer row, idempotent, same pool
+and order: plan cycle then top-ups) is called just before the send, and
+`insufficient` leaves a draft. `mink-drafts.ts` holds the ledger reads, the
+claim (`FOR UPDATE` on `outcome = 'draft'`) and the charge, so the inbox
+actions use them without the model. Probed on local Postgres: insufficient,
+plan, idempotent, unlimited, mixed with a top-up, an unknown id raises, every
+CHECK, app_user unprivileged. Rate limits: 20/conversation/hour,
+300/store/hour, 3,000/hour platform-wide.
+★ THE DRAFT CARD. `InboxThread.minkDraft` (`loadMinkDraft`, newest pending)
+renders above the composer (`MinkDraftCard`, lavender): "Based on: …",
+editable, **Send** (`sendMinkDraft`: claim + charge in one transaction,
+free when the credit was already taken by a send Meta refused, then the
+ordinary text send filed under the person) and **Discard**. A person's own
+reply or template discards the conversation's drafts (`supersedeMinkDrafts`).
+A viewer never sees it; a closed window or a paused number disables Send.
+★ Evals: `evals/mink/whatsapp.json` (21 cases; gate cases name their
+reason, answer cases their outcome and words) through
+`scripts/mink-whatsapp-eval.ts` (`npm run mink:whatsapp-eval`, offline;
+`-- --live --yes` sends the exact live request). Help: `20261014_0203`
+adds an Answers from Mink AI section to the automatic-replies guide and one
+sentence on the draft card to the inbox guide. Stories WA-8.x. ⚠ Not built:
+reading a photo the customer sent, per-location stock in the sheet, a
+question that names no product word, a gate for scripts beyond English,
+Hinglish and Devanagari. ⚠ Not yet run against live Vertex from a WhatsApp
+message; `docs/whatsapp-dev-live-test.md` Part L16 is that run.
+
+### WhatsApp Commerce — Phase 2 slice 4: The template manager (2026-10-14)
+
+Plan §4's "template manager": **Channels → WhatsApp → Manage templates**
+(`app/dashboard/channels/whatsapp/templates/`, `channels` view to read,
+`channels` manage to change) lists every template the number holds, newest
+first, catalogue and merchant alike, with Meta's status, its reason and the
+words (header, body, footer, buttons), and lets the merchant **add their
+own**, **delete their own** and **refresh** statuses. `getWhatsAppTemplateManager`
+/ `submitWhatsAppTemplate` / `deleteWhatsAppTemplate` /
+`refreshWhatsAppTemplates` in `whatsapp-provider-actions.ts`;
+`listStoreTemplates` / `submitCustomTemplate` / `deleteStoreTemplate` in
+`lib/whatsapp/templates.ts`; `deleteMessageTemplate` in graph.ts (by `hsm_id`
+when the row holds Meta's id, so one language goes, never every language of
+the name).
+★★ `lib/whatsapp/custom-template.ts` IS THE ONE SHAPE (pure, client-safe):
+`validateCustomTemplate` is what the editor runs before Send AND what the
+action runs again (the editor is not the boundary); `customTemplateComponents`
+builds Meta's components (HEADER text, BODY with `example.body_text`,
+FOOTER, BUTTONS); the readers (`templateHeaderText`, `templateFooterText`,
+`templateButtonsOf`) read any stored components back. A merchant may author a
+text header, a body with `{{n}}` placeholders (each with a label, which
+becomes the `variables` entry the composer shows, and a sample Meta reviews
+with), a footer, and up to three buttons: quick reply, https link, phone.
+★ WHAT IS NOT OFFERED, AND WHY: a picture header, a link with a placeholder,
+a copy-code button and a carousel each need a value at send time that the
+inbox composer has no field for, so they are withheld at authoring rather
+than offered and refused on Send. `templateNeedsSendParameters` is that
+rule, and `composerCanSend` is the ONE rule the picker (`listReplyTemplates`)
+and the send action (`sendInboxTemplate`) share: a catalogue template with
+buttons never (its payloads are the order flow's; a hand-sent COD Confirm
+would come back as two words), a merchant's with quick replies yes (its
+payload is `custom:<label>`, `quickReplyPayloadsFor`, so a tap files as an
+ordinary customer message saying what was chosen), a merchant's needing a
+send-time value no. `InboxTemplateOption` gained `headerText`, `footerText`
+and `buttons`, which the composer draws above the fields.
+★★ THE BODY RULES ARE THE CATALOGUE'S. `templateBodyProblem` in
+template-catalog.ts holds the rules Meta applies at review (placeholders
+numbered in order, none first/last/adjacent, a sample each, 1,024
+characters) in the merchant's words; the catalogue test asserts every
+StoreMink body passes it, and the custom validator asks it, so the two
+cannot drift. Names use Meta's `^[a-z0-9_]+$` and may not start with `sm_`
+(`catalogEntryForName` would otherwise read a merchant's row as a catalogue
+version). Quick replies must come before link/call buttons, so the composer's
+payload list lines up with button indices.
+★ A custom row is `event_key NULL, audience 'customer'` (nothing automatic
+ever picks it; the composer does once APPROVED), written PENDING before
+Meta is asked (the status webhook has a row to land on), ON CONFLICT DO
+NOTHING on (store, name, language) so a duplicate name is refused before
+Meta. A submission Meta refuses keeps the row with `sync_error` for the
+merchant to read and delete. Submits are rate-limited at 20 per store per
+hour: Meta reviews by hand, and a WABA that submits junk is one Meta stops
+trusting. ★ A catalogue template is never deletable here (the spine sends
+it; switch the message off under Notifications instead).
+★★ AND THE STATUS WEBHOOK NO LONGER FAILS ON META'S EXTRA WORDS.
+`applyAccountEvent` wrote `event` raw into `status`; Meta also posts
+FLAGGED, ARCHIVED and words it adds later, none in the 0174 CHECK, so such a
+delivery failed on the constraint and was marked failed. `knownTemplateStatus`
+(the one status vocabulary, shared with `normalizeStatus`) keeps a word the
+row can hold, in Meta's casing, and an unknown one changes nothing. The
+notification console's WhatsApp tab links a paused, rejected or disabled
+template to the manager. Help: `20261014_0201` publishes
+`manage-your-whatsapp-templates` and widens the order-updates guide's card
+sentence in place. Stories WA-7.x. ⚠ Not built: importing templates authored
+in WhatsApp Manager (the sync updates only rows we hold), media headers,
+dynamic-URL and copy-code buttons, carousels, editing a submitted template
+(Meta's edit endpoint; a change is a new name). ⚠ Not yet run against live
+Meta.
+
+### WhatsApp Commerce — Phase 2 slice 3: Menu buttons (2026-10-14)
+
+Plan §4's "menu buttons": **Inbox → Automatic replies** gains a **Menu
+buttons** card (off, no buttons, until the merchant turns it on). Up to THREE
+reply buttons (WhatsApp's limit on one message; labels of 20 characters), each
+doing one of three things when tapped: **Check my order** (the order-status
+answer, from the phone's own orders), **Talk to a person** (an acknowledgement,
+the merchant's or a default, then `needs_reply` with the bell) or **Send a
+message** (the merchant's text). Stored on `whatsapp_auto_replies`
+(`menu_enabled`, `menu_buttons` jsonb; migration `20261014_0199`, CHECKs for
+the type, the count and that a menu which is on has a button; probed on local
+Postgres). `lib/whatsapp/auto-reply-settings.ts` `validateMenuButtons` is the
+one rule the form and the save action share; `normalizeMenuButtons` reads a
+stored menu leniently (a row an older revision wrote has none; a button that
+no longer validates is dropped, never the whole menu).
+★★ THE BUTTONS RIDE WITH THE WELCOME AS ONE MESSAGE. `answerAutomatically`
+sends the joined welcome (+ away) text as a reply-button message (Meta's
+`interactive`/`button` type: `sendInteractiveMessage` in graph.ts,
+`sendWhatsAppInteractive` in send.ts, the same choke point and `whatsapp_logs`
+row as free text; `send-coverage.test.ts` now greps all three Graph sends)
+whenever the welcome is claimed and the menu is on, and again when the
+customer asks for the menu (`inbox-intent.ts` gained `menu`: "menu",
+"options", "help", ≤2 words after courtesy words, English/Hinglish/Devanagari)
+under the welcome's words, or `MENU_PROMPT_TEXT` when the welcome is off.
+⚠ A button message's body is capped at 1,024 characters while welcome + away
+may reach ~2,000: then the words go first as text and the buttons follow in a
+second message under the prompt, rather than being dropped. `replyInChat` takes
+`buttons` and files the message as kind `interactive` with `payload.buttons`,
+which the inbox thread draws as chips under the bubble (`inbox-bubble-buttons`).
+★★ A TAP IS FILED LIKE A COD TAP. The reply id is `menu:<button id>`
+(`menu-payload.ts`, the cod-payload.ts shape: it names a button and authorises
+nothing). `recordInboundMessage` parses it off an `interactive` message
+(`menuReply`), and `"menu"` typed to a store whose menu is on
+(`loadAutoReplyFlags`, read BEFORE the transaction with the order-status flag,
+failing to all-off), and files both as automated: no unread, no Needs reply,
+no bell. `afterFiled` routes a button tap to `menu-reply.ts handleMenuReply`,
+which looks the button up in the store's CURRENT settings (a removed button
+or a switched-off menu hands over with no reply; the tap is in the thread as
+the label with a "Tapped a button" mark) and hands over only for Talk to a
+person, an order nobody can find, or a send Meta refused.
+★★ AND THE FIRST MESSAGE OF A NEW CONVERSATION NOW RINGS (a fix to slice 3,
+the live-test script's P1/P2). `whatsapp_conversations` rows are created with
+the column default `status = 'needs_reply'`, and the bell needs a prior status
+other than `needs_reply`, so a brand-new conversation's first message never
+rang, and an automated first message (a STOP, a COD tap) left it in Needs
+reply with nothing unread. `recordInboundMessage` judges a new conversation
+(`last_message_at IS NULL`) as `open`, and an automated first message sets it
+`open`, so a hand-over from it rings. Help: `20261014_0200` adds one Menu
+buttons section to `set-up-whatsapp-automatic-replies`. Stories WA-6.x.
+⚠ Not built: list messages (up to ten rows); a per-button answer in the
+customer's language. ⚠ Not yet run against live Meta: the interactive shapes
+follow Meta's reference; `docs/whatsapp-dev-live-test.md` Part L14 tests them.
+
 ### WhatsApp Commerce — Phase 2 slice 2: Automatic replies (2026-10-13)
 
 **Inbox → Automatic replies** (`app/dashboard/inbox/settings/`, linked from the
@@ -3152,8 +3353,8 @@ wholesip/
 │   │   │                      # phones; inbox.css. Shown in the sidebar only once a
 │   │   │                      # number is connected, with the needs-reply badge.
 │   │   │                      # settings/ = Automatic replies (welcome, away message
-│   │   │                      # with business hours, order status), linked from the
-│   │   │                      # Inbox header; auto-replies-form.tsx.
+│   │   │                      # with business hours, order status, Mink AI answers),
+│   │   │                      # linked from the Inbox header; auto-replies-form.tsx.
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
 │   │   ├── admins/ roles/     # staff invites + role management
 │   │   ├── storefront/        # ★ Storefront (§11; was themes/ until 2026-10-11 —
@@ -3171,6 +3372,8 @@ wholesip/
 │   │   ├── billing/           # ★ Invoices & Billing (§17): tax config + tax-class
 │   │   │                      # manager + invoice-template editor (billing.css)
 │   │   ├── channels/          # ★ Channels (§18/§35/WhatsApp): connect the store's OWN Razorpay,
+│   │                          # whatsapp/templates/ = the template manager (every
+│   │                          # template with Meta's answer; add, delete, refresh);
 │   │                      # Shiprocket, Twilio and WhatsApp (whatsapp-modal.tsx +
 │   │                      # embedded-signup.ts — Meta's popup, Coexistence asked first);
 │   │   │                      # and Shiprocket accounts; pause/resume, sync warehouse
@@ -3807,7 +4010,9 @@ wholesip/
 │   │                          # /api/plans/pricing quote, charge per period, the yearly
 │   │                          # saving label; never quotes compiled-in prices
 │   ├── shipping/              # ★ §35 checkout policy/types + pure rate translation +
-│   │                          # server-only origin-aware Shiprocket quotation
+│   │                          # server-only origin-aware Shiprocket quotation;
+│   │                          # product-delivery.ts = one product to one PIN (the
+│   │                          # PDP's PIN check and WhatsApp Mink quote through it)
 │   ├── whatsapp/              # ★ WhatsApp Commerce (docs/whatsapp-commerce-plan.md).
 │   │                          # config.ts (the one env reader; app id + config id are
 │   │                          # public, app secret + verify token never leave the
@@ -3869,7 +4074,24 @@ wholesip/
 │   │                          # ("where is my order": the phone's own orders, the
 │   │                          # answer, the hand-over cases) and answer-automatically.ts
 │   │                          # (welcome + order answer + away as ONE message, each
-│   │                          # claimed on the conversation before it is sent).
+│   │                          # claimed on the conversation before it is sent, with
+│   │                          # the menu's buttons under it). Menu buttons:
+│   │                          # menu-payload.ts (pure: the `menu:<id>` reply id and
+│   │                          # its parser) + menu-reply.ts (what a tap does: check
+│   │                          # my order, talk to a person, send a message; looked
+│   │                          # up in the store's current settings).
+│   │                          # The template manager: custom-template.ts (pure: a
+│   │                          # merchant's own template, its validator, Meta's
+│   │                          # components, the readers, and composerCanSend);
+│   │                          # templates.ts gained list/submit/delete.
+│   │                          # Customer-facing Mink (plan §13): mink-gate.ts (pure:
+│   │                          # what never reaches a model), mink-facts.ts (pure: the
+│   │                          # facts sheet, product matching, the answer parser),
+│   │                          # mink-model.ts (the one Vertex call, no database),
+│   │                          # mink-drafts.ts (the answers ledger, the claim, the
+│   │                          # one-credit charge) and mink-answer.ts (the
+│   │                          # orchestration: gate, headroom, facts, model, charge,
+│   │                          # send or hand over).
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
 │   │                          # positional render, carrier match, 6-char sender header
 │   │                          # and segment cost, plus the one send choke point, queue,
@@ -4310,9 +4532,10 @@ wholesip/
 │   │                          # read by ImageUpload and by Refine with Mink AI
 │   ├── mink/                  # ★ Dashboard agent foundation (docs/mink-ai-dashboard-plan.md):
 │   │                          # default-on global + fail-closed invited-store access;
-│   │                          # system-prompt.ts and image-prompt.ts validate/render the
-│   │                          # marked runtime templates in docs/mink-ai-system-prompt.md
-│   │                          # and docs/mink-ai-image-prompt.md; trusted actor,
+│   │                          # system-prompt.ts, image-prompt.ts and whatsapp-prompt.ts
+│   │                          # validate/render the marked runtime templates in
+│   │                          # docs/mink-ai-system-prompt.md, docs/mink-ai-image-prompt.md
+│   │                          # and docs/mink-ai-whatsapp-prompt.md; trusted actor,
 │   │                          # route and selected product/order construction; bounded
 │   │                          # orchestrator; official Google Gen AI SDK Vertex client;
 │   │                          # abort-aware one-retry transport + hard run/tool timeouts;
@@ -5113,8 +5336,11 @@ wholesip/
 │                              # 0197 adds whatsapp_auto_replies and the conversation's
 │                              # welcome_sent_at / away_sent_at; 0198 publishes the
 │                              # automatic-replies guide and points the inbox guide
-│                              # at it.
-│                              # Next free: 0199.
+│                              # at it. 0199 adds menu buttons, 0200 their Help;
+│                              # 0201 the template-manager Help; 0202 customer-facing
+│                              # Mink (mink_mode, whatsapp_mink_answers, the charge
+│                              # function) and 0203 its Help.
+│                              # Next free: 0204.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

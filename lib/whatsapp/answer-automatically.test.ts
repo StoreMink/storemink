@@ -335,3 +335,105 @@ describe("answerAutomatically: where is my order", () => {
     expect(sentBody()).not.toContain("See all your orders");
   });
 });
+
+describe("answerAutomatically: the menu", () => {
+  const MENU = [
+    { id: "b1", title: "Check my order", action: "order_status", text: "" },
+    { id: "b2", title: "Talk to a person", action: "person", text: "" },
+  ];
+  const AS_SENT = [
+    { id: "menu:b1", title: "Check my order" },
+    { id: "menu:b2", title: "Talk to a person" },
+  ];
+
+  it("★ rides with the welcome as ONE reply-button message", async () => {
+    setup(
+      configRow({ welcomeEnabled: true, menuEnabled: true, menuButtons: MENU }),
+      [[{ id: "c1" }]],
+    );
+    const r = await answerAutomatically(input());
+    expect(r).toEqual({ handOver: false, sent: ["welcome", "menu"] });
+    expect(replyInChat).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(replyInChat).mock.calls[0][0]).toMatchObject({
+      body: "Hi, thanks for messaging Echoss!",
+      buttons: AS_SENT,
+      reason: "auto:welcome+menu",
+    });
+  });
+
+  it("is not sent when the menu is off, and not with a welcome already given", async () => {
+    setup(configRow({ welcomeEnabled: true, menuButtons: MENU }), [
+      [{ id: "c1" }],
+    ]);
+    await answerAutomatically(input());
+    expect(vi.mocked(replyInChat).mock.calls[0][0].buttons).toBeUndefined();
+    vi.mocked(replyInChat).mockClear();
+
+    setup(
+      configRow({ welcomeEnabled: true, menuEnabled: true, menuButtons: MENU }),
+    );
+    const r = await answerAutomatically(input({ welcomeEligible: false }));
+    expect(r.sent).toEqual([]);
+    expect(replyInChat).not.toHaveBeenCalled();
+  });
+
+  it("★ asked for by name, it goes whether or not a welcome is due, under the welcome's words", async () => {
+    setup(
+      configRow({ welcomeEnabled: true, menuEnabled: true, menuButtons: MENU }),
+    );
+    const r = await answerAutomatically(
+      input({ welcomeEligible: false, menuRequest: true }),
+    );
+    expect(r).toEqual({ handOver: false, sent: ["menu"] });
+    expect(vi.mocked(replyInChat).mock.calls[0][0]).toMatchObject({
+      body: "Hi, thanks for messaging Echoss!",
+      buttons: AS_SENT,
+    });
+  });
+
+  it("with the welcome off, the requested menu gets a plain prompt", async () => {
+    setup(configRow({ menuEnabled: true, menuButtons: MENU }));
+    const r = await answerAutomatically(input({ menuRequest: true }));
+    expect(r.sent).toEqual(["menu"]);
+    expect(vi.mocked(replyInChat).mock.calls[0][0]).toMatchObject({
+      body: "How can we help? Choose an option:",
+      buttons: AS_SENT,
+    });
+  });
+
+  it("a requested menu that could not be sent hands the chat to a person", async () => {
+    setup(configRow({ menuEnabled: true, menuButtons: MENU }));
+    vi.mocked(replyInChat).mockResolvedValueOnce(false);
+    const r = await answerAutomatically(input({ menuRequest: true }));
+    expect(r).toEqual({ handOver: true, sent: [] });
+  });
+
+  it("★ words too long for one button message go first, and the buttons follow with a prompt", async () => {
+    setup(
+      configRow({
+        welcomeEnabled: true,
+        welcomeText: "W".repeat(900),
+        awayEnabled: true,
+        awayText: "A".repeat(900),
+        menuEnabled: true,
+        menuButtons: MENU,
+      }),
+      [
+        [{ id: "c1" }],
+        [{ away_sent_at: null, human_recent: false }],
+        [{ id: "c1" }],
+      ],
+    );
+    const r = await answerAutomatically(input({ now: CLOSED_NOW }));
+    expect(r.sent).toEqual(["welcome", "away", "menu"]);
+    expect(replyInChat).toHaveBeenCalledTimes(2);
+    const [first, second] = vi.mocked(replyInChat).mock.calls.map((c) => c[0]);
+    expect(first.buttons).toBeUndefined();
+    expect(first.body).toBe(`${"W".repeat(900)}\n\n${"A".repeat(900)}`);
+    expect(second).toMatchObject({
+      body: "How can we help? Choose an option:",
+      buttons: AS_SENT,
+      reason: "auto:menu",
+    });
+  });
+});

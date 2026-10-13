@@ -31,7 +31,9 @@ export type MinkOfferAvailability =
   | "automatic_offers_disabled";
 
 export async function readMinkCurrentOffers(
-  actor: MinkActorContext,
+  // Only the store and its plan: customer-facing Mink (lib/whatsapp/
+  // mink-answer.ts) reads this with no admin behind it.
+  actor: Pick<MinkActorContext, "storeId" | "effectivePlan">,
   input: { limit: number; now?: Date },
 ) {
   const now = input.now ?? new Date();

@@ -29,7 +29,12 @@
 // not. A miss costs nothing: the message waits for a person as it always did.
 // ---------------------------------------------------------------------------
 
-export type WhatsAppInboundIntent = "stop" | "start" | "order_status" | "other";
+export type WhatsAppInboundIntent =
+  | "stop"
+  | "start"
+  | "order_status"
+  | "menu"
+  | "other";
 
 const STOP_PHRASES = new Set([
   "stop",
@@ -79,6 +84,27 @@ const START_PHRASES = new Set([
   "चालू करो",
 ]);
 
+/**
+ * Asking for the menu. Short on purpose: "menu" is somebody wanting the
+ * options, "the menu button does nothing" is a complaint. Only a store with a
+ * menu switched on acts on it (inbox.ts); elsewhere it is an ordinary message.
+ */
+const MENU_PHRASES = new Set([
+  "menu",
+  "options",
+  "main menu",
+  "show menu",
+  "show options",
+  "help",
+  "help me",
+  // Hinglish
+  "menu dikhao",
+  "options dikhao",
+  // Devanagari
+  "मेनू",
+  "मेन्यू",
+]);
+
 const COURTESY = new Set([
   "please",
   "pls",
@@ -110,6 +136,7 @@ export function classifyWhatsAppInbound(body: string): WhatsAppInboundIntent {
     const phrase = words.join(" ");
     if (STOP_PHRASES.has(phrase)) return "stop";
     if (START_PHRASES.has(phrase)) return "start";
+    if (MENU_PHRASES.has(phrase)) return "menu";
   }
   return isOrderStatusQuestion(words) ? "order_status" : "other";
 }

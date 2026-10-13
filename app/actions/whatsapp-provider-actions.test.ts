@@ -7,6 +7,16 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/app/dashboard/lib/access", () => ({
   getManagerUserId: vi.fn(),
   getActingStoreId: vi.fn(async () => "store-1"),
+  getViewerAccess: vi.fn(),
+}));
+vi.mock("@/lib/whatsapp/templates", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/whatsapp/templates")>()),
+  submitCustomTemplate: vi.fn(),
+  deleteStoreTemplate: vi.fn(),
+  listStoreTemplates: vi.fn(async () => []),
+}));
+vi.mock("@/lib/rate-limit", () => ({
+  rateLimit: vi.fn(async () => ({ allowed: true })),
 }));
 vi.mock("@/lib/whatsapp/config", () => ({
   whatsappConfig: vi.fn(() => ({
@@ -29,7 +39,13 @@ vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
 }));
 
-import { getManagerUserId } from "@/app/dashboard/lib/access";
+import { getManagerUserId, getViewerAccess } from "@/app/dashboard/lib/access";
+import {
+  deleteStoreTemplate,
+  listStoreTemplates,
+  submitCustomTemplate,
+} from "@/lib/whatsapp/templates";
+import { rateLimit } from "@/lib/rate-limit";
 import { whatsappConnectConfigured } from "@/lib/whatsapp/config";
 import { connectWhatsAppAccount } from "@/lib/whatsapp/connect";
 import {
@@ -37,7 +53,10 @@ import {
   disconnectWhatsApp,
   getWhatsAppChannelState,
   getWhatsAppTemplatesForEvent,
+  getWhatsAppTemplateManager,
   setWhatsAppEnabled,
+  submitWhatsAppTemplate,
+  deleteWhatsAppTemplate,
 } from "./whatsapp-provider-actions";
 
 const BASIC_STORE = [
@@ -279,5 +298,96 @@ describe("template versions", () => {
     );
     expect(params).toContain(V2);
     expect(params).not.toContain(V1);
+  });
+});
+
+describe("the template manager", () => {
+  const DRAFT = {
+    name: "delivery_delay",
+    language: "en",
+    category: "UTILITY",
+    headerText: "",
+    body: "Hi {{1}}, your order is late.",
+    variables: [{ name: "customer_name", sample: "Rohan" }],
+    footerText: "",
+    buttons: [],
+  };
+
+  it("reads with Channels: view and says whether the viewer may change anything", async () => {
+    vi.mocked(getViewerAccess).mockResolvedValue({
+      can: (section: string, action: string) =>
+        section === "channels" && action === "view",
+    } as any);
+    const r = await getWhatsAppTemplateManager();
+    expect(r).toEqual({
+      ok: true,
+      view: {
+        connected: true,
+        status: "connected",
+        canManage: false,
+        templates: [],
+      },
+    });
+    expect(listStoreTemplates).toHaveBeenCalledWith("store-1");
+
+    vi.mocked(getViewerAccess).mockResolvedValue({ can: () => false } as any);
+    expect(await getWhatsAppTemplateManager()).toEqual({
+      ok: false,
+      error: "You don't have permission to view Channels.",
+    });
+  });
+
+  it("★ submit checks the template on the server, then hands it to Meta", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: { stores: [BASIC_STORE, BASIC_STORE] },
+    });
+    vi.mocked(submitCustomTemplate).mockResolvedValue({
+      ok: true,
+      id: "row-c",
+      status: "PENDING",
+    });
+    expect(await submitWhatsAppTemplate(DRAFT)).toEqual({
+      success: true,
+      id: "row-c",
+      status: "PENDING",
+    });
+    expect(submitCustomTemplate).toHaveBeenCalledWith(
+      "store-1",
+      expect.objectContaining({ name: "delivery_delay" }),
+    );
+    expect(await submitWhatsAppTemplate({ ...DRAFT, name: "sm_mine" })).toEqual(
+      { error: expect.stringMatching(/StoreMink's own/) },
+    );
+    expect(submitCustomTemplate).toHaveBeenCalledTimes(1);
+  });
+
+  it("submit needs Channels: manage, the plan, and is rate-limited", async () => {
+    vi.mocked(getManagerUserId).mockResolvedValueOnce(null);
+    expect(await submitWhatsAppTemplate(DRAFT)).toEqual({
+      error: "You don't have permission to do this.",
+    });
+    dbHolder.current = makeDbMock({ selectByTable: { stores: [FREE_STORE] } });
+    expect((await submitWhatsAppTemplate(DRAFT)).error).toMatch(/Basic plan/);
+    dbHolder.current = makeDbMock({ selectByTable: { stores: [BASIC_STORE] } });
+    vi.mocked(rateLimit).mockResolvedValueOnce({ allowed: false } as any);
+    expect((await submitWhatsAppTemplate(DRAFT)).error).toMatch(
+      /Try again in an hour/,
+    );
+    expect(submitCustomTemplate).not.toHaveBeenCalled();
+  });
+
+  it("delete passes a uuid through and surfaces the refusal", async () => {
+    vi.mocked(deleteStoreTemplate).mockResolvedValue({ ok: true });
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(await deleteWhatsAppTemplate(id)).toEqual({ success: true });
+    expect(deleteStoreTemplate).toHaveBeenCalledWith("store-1", id);
+    expect(await deleteWhatsAppTemplate("junk")).toEqual({
+      error: "That template no longer exists.",
+    });
+    vi.mocked(deleteStoreTemplate).mockResolvedValue({
+      ok: false,
+      error: "nope",
+    });
+    expect(await deleteWhatsAppTemplate(id)).toEqual({ error: "nope" });
   });
 });

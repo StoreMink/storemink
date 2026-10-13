@@ -22,6 +22,9 @@ import {
   type ParsedMedia,
 } from "./inbox-parse";
 import { WHATSAPP_MARKETING_CONSENT_REPLY } from "./consent-copy";
+import { parseMenuPayload } from "./menu-payload";
+import { minkGate } from "./mink-gate";
+import type { MinkMode } from "./auto-reply-settings";
 import { parseCodPayload, type CodPayload } from "./cod-payload";
 import { conversationMediaPrefix } from "./retention";
 import { WELCOME_QUIET_DAYS } from "./auto-reply-settings";
@@ -102,11 +105,22 @@ export interface RecordInboundResult {
   /** "Where is my order?" from a store that answers it automatically, to
    *  answer after commit (answer-automatically.ts). Filed like a COD tap. */
   orderQuestion: boolean;
+  /** A tap on one of the store's menu buttons (the button's id), or the
+   *  customer asking for the menu (`"menu"`) on a store whose menu is on, to
+   *  act on after commit (menu-reply.ts). Filed like a COD tap. */
+  menuReply: string | null;
   /** The first message, or the first after WELCOME_QUIET_DAYS with no
    *  message either way: the moment a welcome message is for. */
   welcomeEligible: boolean;
   /** The sender, as stored on the contact (E.164). */
   phone: string | null;
+  /** Customer-facing Mink is asked about this message after commit
+   *  (mink-answer.ts): `helps` files it like a COD tap and Mink answers or
+   *  hands over; `drafts` files it for a person with Mink's draft to follow.
+   *  Null for a message the gate kept for a person, or a store with Mink off. */
+  minkAnswer: Exclude<MinkMode, "off"> | null;
+  /** The customer's words, for Mink; null for anything but text. */
+  body: string | null;
 }
 
 const NOTHING: RecordInboundResult = {
@@ -123,8 +137,11 @@ const NOTHING: RecordInboundResult = {
   codReply: null,
   optOut: null,
   orderQuestion: false,
+  menuReply: null,
   welcomeEligible: false,
   phone: null,
+  minkAnswer: null,
+  body: null,
 };
 
 /**
@@ -227,8 +244,12 @@ export async function recordInboundMessage(
     storeId: string;
     value: Rec;
     /** The store answers "where is my order?" itself. Read by the caller
-     *  OUTSIDE this transaction (auto-reply-store.ts answersOrderQuestions). */
+     *  OUTSIDE this transaction (auto-reply-store.ts loadAutoReplyFlags). */
     answersOrderQuestions?: boolean;
+    /** The store has menu buttons switched on, read the same way. */
+    hasMenu?: boolean;
+    /** What customer-facing Mink does on this store, read the same way. */
+    minkMode?: MinkMode;
   },
 ): Promise<RecordInboundResult> {
   const parsed = parseInboundMessage(ev.value.message, ev.value.contacts);
@@ -304,7 +325,48 @@ export async function recordInboundMessage(
   // and hands the chat to a person only when it cannot (answer-automatically.ts).
   const orderQuestion =
     intent === "order_status" && ev.answersOrderQuestions === true;
-  const automated = codReply !== null || optOut !== null || orderQuestion;
+  // A tap on a menu button (its id rides in the reply id, menu-payload.ts),
+  // or "menu" typed to a store whose menu is on: the system answers, and
+  // hands over only when the button asks for a person (menu-reply.ts).
+  const menuReply =
+    parsed.kind === "interactive"
+      ? parseMenuPayload(
+          (parsed.payload as Record<string, unknown> | null)?.replyId,
+        )
+      : intent === "menu" && ev.hasMenu === true
+        ? "menu"
+        : null;
+  // Customer-facing Mink (mink-answer.ts), for a text message nothing above
+  // already answers and the gate (mink-gate.ts) lets through: a complaint,
+  // a refund, "talk to a person" or a bare greeting never reaches a model
+  // and is filed for a person exactly as before. `helps` is answered by the
+  // system (filed like a COD tap; a hand-over rings later); `drafts` only
+  // adds a draft to a message a person already has to read.
+  const minkMode = ev.minkMode ?? "off";
+  const minkAnswer =
+    minkMode !== "off" &&
+    parsed.kind === "text" &&
+    codReply === null &&
+    optOut === null &&
+    !orderQuestion &&
+    menuReply === null &&
+    minkGate(parsed.body).ok
+      ? minkMode
+      : null;
+  const automated =
+    codReply !== null ||
+    optOut !== null ||
+    orderQuestion ||
+    menuReply !== null ||
+    minkAnswer === "helps";
+  // ★ A BRAND-NEW CONVERSATION IS NOT ALREADY WAITING. The row is created with
+  // the column default `needs_reply`, which would read as "the bell already
+  // rang": the first message of every new conversation would then never ring
+  // it, and an automated first message (a STOP, a COD tap) would leave the
+  // conversation in Needs reply with nothing unread. A new conversation is
+  // judged as if it were open, and an automated first message makes it so.
+  const isNew = conversation.last_message_at === null;
+  const priorStatus = isNew ? "open" : conversation.status;
   const priorAt = conversation.last_message_at
     ? Date.parse(conversation.last_message_at)
     : NaN;
@@ -313,7 +375,9 @@ export async function recordInboundMessage(
     Date.parse(parsed.sentAt) - priorAt > WELCOME_QUIET_DAYS * 86_400_000;
   await db.execute(sql`
     update public.whatsapp_conversations set
-      status = case when ${automated}::boolean then status else 'needs_reply' end,
+      status = case when ${automated}::boolean
+                    then (case when ${isNew}::boolean then 'open' else status end)
+                    else 'needs_reply' end,
       unread_count = unread_count + case when ${automated}::boolean then 0 else 1 end,
       last_message_at = greatest(coalesce(last_message_at, '-infinity'::timestamptz), ${parsed.sentAt}::timestamptz),
       last_inbound_at = greatest(coalesce(last_inbound_at, '-infinity'::timestamptz), ${parsed.sentAt}::timestamptz),
@@ -360,7 +424,7 @@ export async function recordInboundMessage(
     contactId: contact.id,
     conversationId: conversation.id,
     messageId,
-    needsNotify: !automated && conversation.status !== "needs_reply",
+    needsNotify: !automated && priorStatus !== "needs_reply",
     media: parsed.media,
     kind: parsed.kind,
     preview,
@@ -369,8 +433,11 @@ export async function recordInboundMessage(
     codReply,
     optOut,
     orderQuestion,
+    menuReply,
     welcomeEligible,
     phone: parsed.phone,
+    minkAnswer,
+    body: parsed.kind === "text" ? parsed.body : null,
   };
 }
 
@@ -449,8 +516,11 @@ export async function recordEchoMessage(
     codReply: null,
     optOut: null,
     orderQuestion: false,
+    menuReply: null,
     welcomeEligible: false,
     phone: null,
+    minkAnswer: null,
+    body: null,
   };
 }
 
@@ -473,13 +543,16 @@ export async function recordOutboundMessage(
     storeId: string;
     conversationId: string;
     source: "dashboard" | "template" | "automation";
-    kind: "text" | "template";
+    kind: "text" | "template" | "interactive";
     body: string;
     providerMessageId: string | null;
     status: "sent" | "failed";
     error?: string | null;
     sentByAdminId?: string | null;
     templateId?: string | null;
+    /** For an interactive message: the buttons it carried, so the thread can
+     *  show them under the text. */
+    payload?: Record<string, unknown> | null;
   },
 ): Promise<string> {
   const now = new Date().toISOString();
@@ -492,6 +565,7 @@ export async function recordOutboundMessage(
       source: input.source,
       kind: input.kind,
       body: input.body,
+      payload: input.payload ?? null,
       providerMessageId: input.providerMessageId,
       status: input.status,
       error: input.error ?? null,

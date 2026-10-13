@@ -11,10 +11,14 @@ import { loadWhatsAppSender } from "./channel";
 import { replyInChat } from "./auto-reply";
 import {
   AWAY_AFTER_HUMAN_REPLY_HOURS,
+  INTERACTIVE_BODY_MAX_CHARS,
+  MENU_PROMPT_TEXT,
   WELCOME_QUIET_DAYS,
   autoReplySettingsFromRow,
   type WhatsAppAutoReplySettings,
 } from "./auto-reply-settings";
+import type { InteractiveButton } from "./graph";
+import { menuButtonPayload } from "./menu-payload";
 import { isOpenAt, openedBetween } from "./business-hours";
 import type { InboxMessageKind } from "./inbox-parse";
 import { lookupOrdersForPhone, orderStatusAnswer } from "./order-status-reply";
@@ -28,7 +32,11 @@ import { lookupOrdersForPhone, orderStatusAnswer } from "./order-status-reply";
 //
 // ★ ONE MESSAGE, NOT THREE. Whatever applies is joined into a single reply,
 // welcome first and away last, so a new customer writing at night reads one
-// friendly paragraph rather than a burst of notifications.
+// friendly paragraph rather than a burst of notifications. The store's menu
+// buttons ride under it (a reply-button message) when the welcome goes out,
+// and on their own when the customer asks for the menu; only when the joined
+// text is longer than a button message may carry (1,024 characters) do the
+// words go first and the buttons follow with a one-line prompt.
 //
 // ★★ EACH IS CLAIMED BEFORE IT IS SENT, so nothing loops and nothing repeats.
 // The welcome goes once per WELCOME_QUIET_DAYS, the away message once until the
@@ -59,6 +67,9 @@ export interface AnswerInput {
   orderQuestion: boolean;
   /** First message, or the first after WELCOME_QUIET_DAYS of silence. */
   welcomeEligible: boolean;
+  /** The customer asked for the menu ("menu", "options") on a store whose
+   *  menu is on: send it, whether or not a welcome is due. */
+  menuRequest?: boolean;
   now?: Date;
 }
 
@@ -67,7 +78,7 @@ export interface AnswerResult {
    *  answered); the caller marks it needs-reply and rings the bell. */
   handOver: boolean;
   /** What was sent, for the logs and the tests. */
-  sent: Array<"welcome" | "order_status" | "away">;
+  sent: Array<"welcome" | "order_status" | "away" | "menu">;
 }
 
 /** A reaction to one of our messages is not somebody starting a chat. */
@@ -101,6 +112,8 @@ async function loadConfig(storeId: string): Promise<Config | null> {
         awayText: whatsappAutoReplies.awayText,
         businessHours: whatsappAutoReplies.businessHours,
         orderStatusEnabled: whatsappAutoReplies.orderStatusEnabled,
+        menuEnabled: whatsappAutoReplies.menuEnabled,
+        menuButtons: whatsappAutoReplies.menuButtons,
         savedAt: whatsappAutoReplies.updatedAt,
       })
       .from(stores)
@@ -139,6 +152,8 @@ async function loadConfig(storeId: string): Promise<Config | null> {
             awayText: row.awayText ?? "",
             businessHours: row.businessHours,
             orderStatusEnabled: row.orderStatusEnabled === true,
+            menuEnabled: row.menuEnabled === true,
+            menuButtons: row.menuButtons,
           }
         : null,
       row.name,
@@ -228,15 +243,32 @@ async function claimAway(
   return claimed.length > 0;
 }
 
+/** The menu's buttons as WhatsApp sends them, or none when the menu is off. */
+function menuButtonsFor(
+  settings: WhatsAppAutoReplySettings,
+): InteractiveButton[] {
+  if (!settings.menuEnabled) return [];
+  return settings.menuButtons.map((b) => ({
+    id: menuButtonPayload(b.id),
+    title: b.title,
+  }));
+}
+
 /** Answer one customer message automatically, where the store asked us to. */
 export async function answerAutomatically(
   input: AnswerInput,
 ): Promise<AnswerResult> {
   const { storeId, conversationId, orderQuestion } = input;
+  const menuRequest = input.menuRequest === true;
   const now = input.now ?? new Date();
   const nothing: AnswerResult = { handOver: orderQuestion, sent: [] };
 
-  if (!orderQuestion && input.kind && NO_GREETING_KINDS.has(input.kind)) {
+  if (
+    !orderQuestion &&
+    !menuRequest &&
+    input.kind &&
+    NO_GREETING_KINDS.has(input.kind)
+  ) {
     return { handOver: false, sent: [] };
   }
 
@@ -249,7 +281,13 @@ export async function answerAutomatically(
   }
   if (!config) return nothing;
   const { settings } = config;
-  if (!orderQuestion && !settings.welcomeEnabled && !settings.awayEnabled) {
+  const menu = menuButtonsFor(settings);
+  if (
+    !orderQuestion &&
+    !settings.welcomeEnabled &&
+    !settings.awayEnabled &&
+    !(menuRequest && menu.length > 0)
+  ) {
     return { handOver: false, sent: [] };
   }
 
@@ -266,6 +304,7 @@ export async function answerAutomatically(
   const sent: AnswerResult["sent"] = [];
   let handOver = false;
   let answered = false;
+  let withMenu = false;
 
   if (orderQuestion) {
     const lookup = await lookupOrdersForPhone({
@@ -297,6 +336,8 @@ export async function answerAutomatically(
       ) {
         parts.unshift(settings.welcomeText);
         sent.unshift("welcome");
+        // The menu rides with the welcome, so a first message gets both at once.
+        withMenu = menu.length > 0;
       }
       if (
         settings.awayEnabled &&
@@ -310,19 +351,60 @@ export async function answerAutomatically(
       // A claim that failed is a reply not sent, never a lost message.
       logError("whatsapp auto-replies: claim failed", err, { storeId });
     }
+    // Asked for by name: the menu goes whether or not a welcome was due. Its
+    // prompt is the welcome's words (they already ask "how can we help?") or,
+    // with the welcome off, a plain one-line prompt.
+    if (menuRequest && menu.length > 0 && !withMenu) {
+      if (parts.length === 0) {
+        parts.push(
+          settings.welcomeEnabled ? settings.welcomeText : MENU_PROMPT_TEXT,
+        );
+      }
+      withMenu = true;
+    }
   }
 
   if (parts.length === 0) return { handOver, sent: [] };
 
-  const delivered = await replyInChat({
-    storeId,
-    conversationId,
-    to: input.phone,
-    body: parts.join("\n\n"),
-    reason: `auto:${sent.join("+")}`,
-    sender,
-  });
+  const body = parts.join("\n\n");
+  const reason = `auto:${sent.join("+")}`;
+  let delivered: boolean;
+  if (withMenu && body.length <= INTERACTIVE_BODY_MAX_CHARS) {
+    delivered = await replyInChat({
+      storeId,
+      conversationId,
+      to: input.phone,
+      body,
+      reason: `${reason}+menu`,
+      sender,
+      buttons: menu,
+    });
+    if (delivered) sent.push("menu");
+  } else {
+    delivered = await replyInChat({
+      storeId,
+      conversationId,
+      to: input.phone,
+      body,
+      reason,
+      sender,
+    });
+    // Too long for one button message: the words went first, and the buttons
+    // follow under a one-line prompt rather than being dropped.
+    if (withMenu && delivered) {
+      const menuSent = await replyInChat({
+        storeId,
+        conversationId,
+        to: input.phone,
+        body: MENU_PROMPT_TEXT,
+        reason: "auto:menu",
+        sender,
+        buttons: menu,
+      });
+      if (menuSent) sent.push("menu");
+    }
+  }
   // The customer asked and heard nothing: a person has to answer.
-  if (orderQuestion && !delivered) handOver = true;
+  if ((orderQuestion || menuRequest) && !delivered) handOver = true;
   return { handOver, sent: delivered ? sent : [] };
 }

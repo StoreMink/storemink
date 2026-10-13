@@ -3,12 +3,18 @@ import "server-only";
 import { withService } from "@/lib/db/client";
 import { logError } from "@/lib/observability/logger";
 import { whatsappLogs } from "@/drizzle/schema";
-import { sendTemplateMessage, sendTextMessage } from "./graph";
+import {
+  sendInteractiveMessage,
+  sendTemplateMessage,
+  sendTextMessage,
+  type InteractiveButton,
+} from "./graph";
 import { renderWhatsAppBody, whatsAppParameterText } from "./template-catalog";
 
 // ---------------------------------------------------------------------------
 // ★★ THE CHOKE POINT. Every WhatsApp message this platform sends leaves
-// through `sendWhatsAppTemplate`, and every attempt lands in `whatsapp_logs` —
+// through `sendWhatsAppTemplate`, `sendWhatsAppText` or
+// `sendWhatsAppInteractive`, and every attempt lands in `whatsapp_logs` —
 // sent, failed or skipped alike. `send-coverage.test.ts` fails on any other
 // caller of the Graph send, for the reason lib/sms/send.ts and lib/email/send.ts
 // give: a log with a hole in it is worse than no log, because a merchant who
@@ -168,7 +174,70 @@ export async function sendWhatsAppText(
     body,
     replyToProviderId: input.replyToProviderId ?? null,
   });
+  return settle(logInput, body, result);
+}
 
+export interface SendWhatsAppInteractiveInput {
+  storeId: string;
+  /** E.164. */
+  to: string;
+  token: string;
+  phoneNumberId: string;
+  /** At most 1,024 characters (the caller's job; Meta refuses more). */
+  body: string;
+  /** One to three reply buttons. */
+  buttons: InteractiveButton[];
+}
+
+/**
+ * One reply-button message: the store's menu, sent with the welcome or on
+ * request (answer-automatically.ts). The SAME choke point and the same log
+ * row shape as a free-text reply; the log keeps the body, and the buttons
+ * ride in the thread's own record of the message (inbox.ts). Inside the
+ * 24-hour window only, like free text.
+ */
+export async function sendWhatsAppInteractive(
+  input: SendWhatsAppInteractiveInput,
+): Promise<SendWhatsAppResult> {
+  const to = input.to.replace(/\D/g, "");
+  const body = input.body.trim();
+  const logInput: SendWhatsAppInput = {
+    storeId: input.storeId,
+    to: input.to,
+    token: input.token,
+    phoneNumberId: input.phoneNumberId,
+    template: { id: "", name: "", language: "", body },
+    values: [],
+    eventKey: null,
+    category: "SERVICE",
+  };
+  if (!to) {
+    await writeLog(logInput, body, { status: "skipped" }, "No phone number.");
+    return { sent: false, outcome: "skipped", error: "No phone number." };
+  }
+  if (!body) {
+    await writeLog(logInput, body, { status: "skipped" }, "Empty message.");
+    return { sent: false, outcome: "skipped", error: "Empty message." };
+  }
+  if (input.buttons.length === 0) {
+    await writeLog(logInput, body, { status: "skipped" }, "No buttons.");
+    return { sent: false, outcome: "skipped", error: "No buttons." };
+  }
+
+  const result = await sendInteractiveMessage(
+    input.token,
+    input.phoneNumberId,
+    { to, body, buttons: input.buttons },
+  );
+  return settle(logInput, body, result);
+}
+
+/** Log and report one send's outcome, the same way for every message type. */
+async function settle(
+  logInput: SendWhatsAppInput,
+  body: string,
+  result: Awaited<ReturnType<typeof sendTextMessage>>,
+): Promise<SendWhatsAppResult> {
   if (result.ok) {
     const messageId = result.data.messages?.[0]?.id ?? null;
     if (!messageId) {
