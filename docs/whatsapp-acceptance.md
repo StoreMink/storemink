@@ -371,6 +371,83 @@ answered "already cancelled". _Pinned by `cod-confirmation.test.ts`._
 
 ---
 
+## Phase 2, slice 2 — Automatic replies (2026-10-13)
+
+**WA-5.1 — Off until the merchant turns it on.** **Inbox → Automatic replies**
+shows **Welcome message**, **Away message** and **Order status**, all off, with
+the welcome text naming the store. A customer message on a store that has never
+saved this page gets no automatic reply. Saving needs **Inbox: manage**; a
+viewer with only **Inbox: view** sees the settings greyed out and no Save
+button. _Pinned by `whatsapp-auto-reply-actions.test.ts`,
+`auto-replies-form.test.tsx` and `answer-automatically.test.ts` ("nothing
+switched on")._
+
+**WA-5.2 — The welcome, once.** With the welcome on, a customer who messages
+the number for the first time gets the welcome within seconds. Their second
+message gets nothing more, and two messages sent at the same moment get one
+welcome. The same customer writing again after 14 days with no messages either
+way is welcomed again. The conversation still lands in **Needs reply** with the
+bell, and the inbox list shows the customer's words, not the welcome. _Pinned
+by `answer-automatically.test.ts` (the claim), `inbox.test.ts`
+(`welcomeEligible`, automation filing) and a rolled-back probe of the claim
+SQL on local Postgres._
+
+**WA-5.3 — The away message, once per closed spell.** With the away message on
+and hours Monday to Saturday 10:00 to 19:00, a customer writing on Monday at
+21:00 gets the away message; writing again at 22:00, or on Sunday, gets
+nothing; writing on Tuesday at 20:00 (the shop opened at 10:00 in between)
+gets it again. A customer writing during opening hours gets nothing. A shop
+that set every day to Closed (a holiday) sends it once per customer. _Pinned by
+`business-hours.test.ts` (`openedBetween`) and `answer-automatically.test.ts`._
+
+**WA-5.4 — Not after a person replied.** Outside hours, staff reply to a
+customer from the inbox or from the phone; the customer answers within two
+hours and gets no away message. _Pinned by `answer-automatically.test.ts`
+("not straight after a person on the team replied")._
+
+**WA-5.5 — Hours past midnight and other zones.** Friday 18:00 to 02:00 shows
+"next day" beside the closing time; a message at 01:00 on Saturday is inside
+Friday's hours and gets no away message. Changing **Settings → Business time
+zone** moves the hours with it. _Pinned by `business-hours.test.ts`, including
+a daylight-saving zone._
+
+**WA-5.6 — One message, not two.** A new customer writing outside hours with
+both replies on gets ONE message: the welcome, a blank line, the away message.
+_Pinned by `answer-automatically.test.ts`._
+
+**WA-5.7 — Where is my order, answered.** With **Order status** on, a customer
+whose number placed an order asks "where is my order" (or "order kab aayega",
+"मेरा ऑर्डर कहाँ है", "track my order"). Within seconds they get the order
+number, the day it was placed, its status in the order page's words, and, once
+shipped, the courier and its tracking link; up to three open orders are listed.
+The conversation does NOT go to **Needs reply** and the bell does not ring.
+Only orders on the account with that phone, or with it as the delivery phone,
+are mentioned; a till sale and an online payment never completed are not.
+_Pinned by `order-status-reply.test.ts`, `inbox-intent.test.ts`,
+`inbound-auto-reply.test.ts` and `answer-automatically.test.ts`._
+
+**WA-5.8 — Where is my order, handed over.** A number with no recent order
+asks the same question: they are told someone will reply, and the conversation
+waits in **Needs reply** with the bell. A delivery the courier could not
+complete, or one returning to the shop, is described and also handed over. A
+message such as "my order was not delivered" or "cancel my order" is never
+answered automatically. _Pinned by `order-status-reply.test.ts`,
+`inbox-intent.test.ts` and `inbound-auto-reply.test.ts`._
+
+**WA-5.9 — A paused number sends nothing and spends nothing.** With the number
+paused, a first message gets no welcome; once it is switched back on, the
+customer's next message is welcomed. An order question while paused waits for
+a person. _Pinned by `answer-automatically.test.ts` ("a paused number claims
+nothing")._
+
+**WA-5.10 — An automatic reply never answers for a person.** A customer asks a
+question (the conversation is in **Needs reply**), then taps **Confirm order**
+on a COD message: the confirmation reply arrives and the conversation stays in
+**Needs reply** with its unread count. _Pinned by `inbox.test.ts` ("answers
+nobody") and a rolled-back probe of the filing SQL on local Postgres._
+
+---
+
 ## Known gaps
 
 | Gap                                                                                                                                                          | Since      | Status                       |
@@ -380,8 +457,11 @@ answered "already cancelled". _Pinned by `cod-confirmation.test.ts`._
 | Template submission, the status webhook, echoes and media download follow Meta's published shapes but have not run against live Meta                         | 2026-10-08 | With the live verification   |
 | Dashboard replies are text only; a photo or file must be sent from the phone                                                                                 | 2026-10-08 | Phase 2                      |
 | Coexistence contact/history sync (`smb_app_state_sync`) is recorded, not processed — a thread starts at the first message after connecting                   | 2026-10-08 | Phase 2                      |
-| No assignment, labels, notes, canned replies, business hours or search inside messages; the thread shows the latest 200 messages                             | 2026-10-08 | Phase 2                      |
+| No assignment, labels, notes, canned replies or search inside messages; the thread shows the latest 200 messages                                             | 2026-10-08 | Phase 2                      |
 | Inbound media is kept in the public media bucket at an unguessable path, like the Media Library; a customer's photo is as public as a product photo          | 2026-10-08 | Open                         |
 | COD confirmation has not run against live Meta: the button payload shapes follow Meta's reference                                                            | 2026-10-13 | With the live verification   |
 | A COD customer who did not tick WhatsApp updates is never asked to confirm (SMS has no buttons)                                                              | 2026-10-13 | By design                    |
 | The COD reminder and automatic cancellation run only where the hourly order sweep is scheduled, which is production; on dev the route must be called by hand | 2026-10-13 | By design                    |
+| Automatic replies are in English, whatever language the customer wrote in; the order question is understood in English, Hinglish and Devanagari Hindi        | 2026-10-13 | Open                         |
+| Order updates sent as templates are not filed in the thread, so a customer's first reply to one counts as a first message and gets the welcome               | 2026-10-13 | Open                         |
+| Automatic replies have not run against live Meta; they use the same free-text send as inbox replies, which has                                               | 2026-10-13 | With the live verification   |

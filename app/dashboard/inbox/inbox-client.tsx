@@ -50,6 +50,7 @@ import {
   MessageCircle,
   Search,
   Send,
+  Settings2,
   Smartphone,
   User,
 } from "lucide-react";
@@ -280,6 +281,13 @@ export function InboxClient({
           <h1>Inbox</h1>
           <p>Customer conversations on your WhatsApp number.</p>
         </div>
+        <Link
+          href="/dashboard/inbox/settings"
+          className="dash-btn dash-btn-ghost dash-btn-sm shrink-0"
+        >
+          <Settings2 className="h-4 w-4" />
+          Automatic replies
+        </Link>
       </header>
 
       {/* `has-thread` lets a narrow card show one pane at a time (inbox.css);

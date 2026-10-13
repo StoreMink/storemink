@@ -24,6 +24,7 @@ import {
 import { WHATSAPP_MARKETING_CONSENT_REPLY } from "./consent-copy";
 import { parseCodPayload, type CodPayload } from "./cod-payload";
 import { conversationMediaPrefix } from "./retention";
+import { WELCOME_QUIET_DAYS } from "./auto-reply-settings";
 
 // ---------------------------------------------------------------------------
 // The inbox's write side: what a webhook delivery does to contacts,
@@ -98,6 +99,12 @@ export interface RecordInboundResult {
   /** A STOP or START that changed the contact's offers consent, to
    *  acknowledge after commit. */
   optOut: "stop" | "start" | null;
+  /** "Where is my order?" from a store that answers it automatically, to
+   *  answer after commit (answer-automatically.ts). Filed like a COD tap. */
+  orderQuestion: boolean;
+  /** The first message, or the first after WELCOME_QUIET_DAYS with no
+   *  message either way: the moment a welcome message is for. */
+  welcomeEligible: boolean;
   /** The sender, as stored on the contact (E.164). */
   phone: string | null;
 }
@@ -115,6 +122,8 @@ const NOTHING: RecordInboundResult = {
   userId: null,
   codReply: null,
   optOut: null,
+  orderQuestion: false,
+  welcomeEligible: false,
   phone: null,
 };
 
@@ -180,18 +189,25 @@ async function upsertContact(
   };
 }
 
-/** Ensure the one conversation for a contact exists; report its status. */
+/**
+ * Ensure the one conversation for a contact exists; report its status and
+ * when its last message was, BEFORE the one being filed.
+ */
 async function ensureConversation(
   db: Db,
   storeId: string,
   contactId: string,
-): Promise<{ id: string; status: string }> {
-  const rows = asRows<{ id: string; status: string }>(
+): Promise<{ id: string; status: string; last_message_at: string | null }> {
+  const rows = asRows<{
+    id: string;
+    status: string;
+    last_message_at: string | null;
+  }>(
     await db.execute(sql`
       insert into public.whatsapp_conversations (store_id, contact_id)
       values (${storeId}::uuid, ${contactId}::uuid)
       on conflict (store_id, contact_id) do update set updated_at = now()
-      returning id, status
+      returning id, status, last_message_at
     `),
   );
   const row = rows[0];
@@ -207,7 +223,13 @@ async function ensureConversation(
  */
 export async function recordInboundMessage(
   db: Db,
-  ev: { storeId: string; value: Rec },
+  ev: {
+    storeId: string;
+    value: Rec;
+    /** The store answers "where is my order?" itself. Read by the caller
+     *  OUTSIDE this transaction (auto-reply-store.ts answersOrderQuestions). */
+    answersOrderQuestions?: boolean;
+  },
 ): Promise<RecordInboundResult> {
   const parsed = parseInboundMessage(ev.value.message, ev.value.contacts);
   if (!parsed) throw new Error("inbound message has no id or sender");
@@ -278,7 +300,17 @@ export async function recordInboundMessage(
       : intent === "start" && contact.marketingOptInAt
         ? "start"
         : null;
-  const automated = codReply !== null || optOut !== null;
+  // "Where is my order?" from a store that answers it: the system replies,
+  // and hands the chat to a person only when it cannot (answer-automatically.ts).
+  const orderQuestion =
+    intent === "order_status" && ev.answersOrderQuestions === true;
+  const automated = codReply !== null || optOut !== null || orderQuestion;
+  const priorAt = conversation.last_message_at
+    ? Date.parse(conversation.last_message_at)
+    : NaN;
+  const welcomeEligible =
+    !Number.isFinite(priorAt) ||
+    Date.parse(parsed.sentAt) - priorAt > WELCOME_QUIET_DAYS * 86_400_000;
   await db.execute(sql`
     update public.whatsapp_conversations set
       status = case when ${automated}::boolean then status else 'needs_reply' end,
@@ -336,6 +368,8 @@ export async function recordInboundMessage(
     userId: contact.userId,
     codReply,
     optOut,
+    orderQuestion,
+    welcomeEligible,
     phone: parsed.phone,
   };
 }
@@ -414,6 +448,8 @@ export async function recordEchoMessage(
     userId: contact.userId,
     codReply: null,
     optOut: null,
+    orderQuestion: false,
+    welcomeEligible: false,
     phone: null,
   };
 }
@@ -422,6 +458,14 @@ export async function recordEchoMessage(
  * Record a message STAFF sent from the dashboard (or the template spine sent
  * on their behalf), after the choke point has reported the outcome. The
  * conversation becomes `open`: somebody answered.
+ *
+ * ★★ AN AUTOMATIC MESSAGE ANSWERS NOBODY. A welcome, an away message or a COD
+ * confirmation leaves the conversation's status and unread count exactly as
+ * they were: a customer whose question was waiting in Needs reply is still
+ * waiting. (It used to open the conversation and clear its unread count like
+ * a staff reply, so a customer who asked something and then tapped Confirm
+ * dropped out of Needs reply with the question unanswered.) While the
+ * conversation waits, the list keeps showing what the CUSTOMER said.
  */
 export async function recordOutboundMessage(
   db: Db,
@@ -458,7 +502,18 @@ export async function recordOutboundMessage(
     .onConflictDoNothing()
     .returning({ id: whatsappMessages.id });
   const id = rows[0]?.id ?? "";
-  if (input.status === "sent") {
+  if (input.status === "sent" && input.source === "automation") {
+    await db.execute(sql`
+      update public.whatsapp_conversations set
+        last_message_at = ${now}::timestamptz,
+        last_outbound_at = ${now}::timestamptz,
+        last_preview = case when status = 'needs_reply' then last_preview
+                            else ${previewOf(input.body, input.kind)} end,
+        updated_at = now()
+      where id = ${input.conversationId}::uuid
+        and store_id = ${input.storeId}::uuid
+    `);
+  } else if (input.status === "sent") {
     await db.execute(sql`
       update public.whatsapp_conversations set
         status = case when status = 'closed' then 'closed' else 'open' end,
@@ -472,6 +527,36 @@ export async function recordOutboundMessage(
     `);
   }
   return id;
+}
+
+/**
+ * Give a conversation the system was answering to a person: it needs a reply,
+ * with one more unread. True when it MOVED into needs_reply, which is when the
+ * bell rings; a conversation already waiting is not announced twice. The row
+ * is locked while its old status is read, so two hand-overs at once ring once.
+ */
+export async function handOverConversation(
+  db: Db,
+  storeId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const rows = asRows<{ prior: string }>(
+    await db.execute(sql`
+      update public.whatsapp_conversations c set
+        status = 'needs_reply',
+        unread_count = c.unread_count + 1,
+        updated_at = now()
+      from (
+        select id, status as prior from public.whatsapp_conversations
+         where id = ${conversationId}::uuid and store_id = ${storeId}::uuid
+         for update
+      ) p
+      where c.id = p.id
+      returning p.prior
+    `),
+  );
+  const prior = rows[0]?.prior;
+  return prior !== undefined && prior !== "needs_reply";
 }
 
 /** How far along a delivery is; mirrored in the SQL below. */

@@ -9095,6 +9095,37 @@ export const whatsappConversations = pgTable("whatsapp_conversations", {
     mode: "string",
   }),
   lastPreview: text("last_preview"),
+  // When this conversation last got the automatic welcome / away message
+  // (lib/whatsapp/answer-automatically.ts). Each is claimed by a conditional
+  // UPDATE, so two messages arriving together never get two replies.
+  welcomeSentAt: timestamp("welcome_sent_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  awaySentAt: timestamp("away_sent_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+// A store's WhatsApp automatic replies (migration 20261013_0197). One row per
+// store, service-only; no row means every reply is off.
+export const whatsappAutoReplies = pgTable("whatsapp_auto_replies", {
+  storeId: uuid("store_id").primaryKey().notNull(),
+  welcomeEnabled: boolean("welcome_enabled").default(false).notNull(),
+  welcomeText: text("welcome_text").default("").notNull(),
+  awayEnabled: boolean("away_enabled").default(false).notNull(),
+  awayText: text("away_text").default("").notNull(),
+  // { mon: { open: "10:00", close: "19:00" } | null, ... } in the store's zone.
+  businessHours: jsonb("business_hours").default({}).notNull(),
+  orderStatusEnabled: boolean("order_status_enabled").default(false).notNull(),
+  updatedBy: text("updated_by"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
     .defaultNow()
     .notNull(),

@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeDbMock, sqlText } from "@/app/actions/_test-helpers";
+import { makeDbMock } from "@/app/actions/_test-helpers";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -26,8 +26,15 @@ vi.mock("./cod-confirmation", () => ({ handleCodReply: vi.fn() }));
 vi.mock("./opt-out-reply", () => ({
   answerOptOut: vi.fn(async () => undefined),
 }));
+vi.mock("./answer-automatically", () => ({
+  answerAutomatically: vi.fn(async () => ({ handOver: false, sent: [] })),
+}));
+vi.mock("./auto-reply-store", () => ({
+  answersOrderQuestions: vi.fn(async () => false),
+}));
 vi.mock("./inbox", () => ({
   applyStatusToMessage: vi.fn(),
+  handOverConversation: vi.fn(async () => true),
   hasMedia: vi.fn(() => false),
   recordEchoMessage: vi.fn(),
   recordInboundMessage: vi.fn(),
@@ -37,7 +44,8 @@ vi.mock("./inbox", () => ({
 import { processPendingInboundEvents } from "./inbound";
 import { handleCodReply } from "./cod-confirmation";
 import { answerOptOut } from "./opt-out-reply";
-import { recordInboundMessage } from "./inbox";
+import { handOverConversation, recordInboundMessage } from "./inbox";
+import { answerAutomatically } from "./answer-automatically";
 import { recordEvent } from "@/lib/notifications/record";
 
 const STORE = "11111111-1111-4111-8111-111111111111";
@@ -95,7 +103,10 @@ describe("a COD tap after filing", () => {
       reply: { action: "cancel", orderId: ORDER },
     });
     expect(mock.calls.execute).toHaveLength(0);
+    expect(handOverConversation).not.toHaveBeenCalled();
     expect(recordEvent).not.toHaveBeenCalled();
+    // ★ A COD tap has its own answer: no welcome or away message on top.
+    expect(answerAutomatically).not.toHaveBeenCalled();
   });
 
   it("★ refused or too late: the conversation needs a reply and the team is told", async () => {
@@ -103,12 +114,26 @@ describe("a COD tap after filing", () => {
       outcome: "too_late",
       needsHuman: true,
     });
-    const mock = dbHolder.current;
     await processPendingInboundEvents();
-    expect(sqlText(mock.calls.execute[0])).toContain("status = 'needs_reply'");
+    expect(handOverConversation).toHaveBeenCalledWith(
+      expect.anything(),
+      STORE,
+      "c1",
+    );
     expect(recordEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: "whatsapp.message_received" }),
     );
+  });
+
+  it("★ a hand-over of a conversation already waiting does not ring again", async () => {
+    vi.mocked(handleCodReply).mockResolvedValue({
+      outcome: "too_late",
+      needsHuman: true,
+    });
+    vi.mocked(handOverConversation).mockResolvedValueOnce(false);
+    await processPendingInboundEvents();
+    expect(handOverConversation).toHaveBeenCalled();
+    expect(recordEvent).not.toHaveBeenCalled();
   });
 
   it("a handler that throws is treated as needing a person", async () => {
@@ -146,10 +171,11 @@ describe("a STOP after filing", () => {
       intent: "stop",
     });
     expect(handleCodReply).not.toHaveBeenCalled();
+    expect(answerAutomatically).not.toHaveBeenCalled();
     expect(recordEvent).not.toHaveBeenCalled();
   });
 
-  it("an ordinary message gets no automatic answer", async () => {
+  it("an ordinary message gets no opt-out answer", async () => {
     vi.mocked(recordInboundMessage).mockResolvedValue({
       ...FILED,
       kind: "text",

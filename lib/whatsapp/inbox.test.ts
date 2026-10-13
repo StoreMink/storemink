@@ -29,6 +29,7 @@ vi.mock("./graph", () => ({
 
 import {
   applyStatusToMessage,
+  handOverConversation,
   inboundMediaPath,
   recordEchoMessage,
   recordInboundMessage,
@@ -285,6 +286,63 @@ describe("recordInboundMessage", () => {
     });
   });
 
+  it("★ 'where is my order' from a store that answers it is filed like a COD tap", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "Where is my order?" } }),
+      answersOrderQuestions: true,
+    });
+    expect(r).toMatchObject({
+      orderQuestion: true,
+      needsNotify: false,
+      phone: "+919876543210",
+    });
+    // The bump is told this message was automated: no unread, no Needs reply.
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(true);
+  });
+
+  it("the same question to a store that does not answer it waits for a person", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "Where is my order?" } }),
+    });
+    expect(r.orderQuestion).toBe(false);
+    expect(r.needsNotify).toBe(true);
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(false);
+  });
+
+  it("★ a welcome is due on a first message, or after 14 quiet days", async () => {
+    const at = (lastMessageAt: string | null) => {
+      dbHolder.current = makeDbMock({
+        executeQueue: [
+          [
+            {
+              id: "k1",
+              user_id: null,
+              marketing_opt_in_at: null,
+              marketing_opt_out_at: null,
+            },
+          ],
+          [{ id: "c1", status: "open", last_message_at: lastMessageAt }],
+          [],
+        ],
+        returningQueue: [[{ id: "m1" }]],
+      });
+      // The message was sent at 1760000000 (2025-10-09T08:53:20Z).
+      return recordInboundMessage(dbHolder.current.db, {
+        storeId: STORE,
+        value: inbound(),
+      });
+    };
+    expect((await at(null)).welcomeEligible).toBe(true);
+    expect((await at("2025-10-08T08:53:20Z")).welcomeEligible).toBe(false);
+    expect((await at("2025-09-24T08:53:20Z")).welcomeEligible).toBe(true);
+    // The conversation read carries the time of the message BEFORE this one.
+    expect(sqlText(dbHolder.current.calls.execute[1])).toContain(
+      "returning id, status, last_message_at",
+    );
+  });
+
   it("hands media back to be fetched after the commit", async () => {
     const r = await recordInboundMessage(dbHolder.current.db, {
       storeId: STORE,
@@ -387,6 +445,49 @@ describe("recordOutboundMessage", () => {
       error: "131047",
     });
     expect(dbHolder.current.calls.execute).toHaveLength(0);
+  });
+});
+
+describe("recordOutboundMessage: an automatic message", () => {
+  it("★ answers nobody: status and unread are left as they were", async () => {
+    dbHolder.current = makeDbMock({ returningQueue: [[{ id: "m1" }]] });
+    await recordOutboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      conversationId: "c1",
+      source: "automation",
+      kind: "text",
+      body: "Hi, thanks for messaging us!",
+      providerMessageId: "wamid.a",
+      status: "sent",
+    });
+    const text = sqlText(dbHolder.current.calls.execute[0]);
+    expect(text).not.toContain("unread_count");
+    // No `status =` assignment of its own (the CASE below only reads it).
+    expect(text).not.toMatch(/^\s*status =/m);
+    expect(text).toContain("last_outbound_at");
+    // While the customer waits, the list keeps showing what THEY said.
+    expect(text).toContain("when status = 'needs_reply' then last_preview");
+  });
+});
+
+describe("handOverConversation", () => {
+  const run = async (rows: any[]) => {
+    dbHolder.current = makeDbMock({ executeQueue: [rows] });
+    const moved = await handOverConversation(dbHolder.current.db, STORE, "c1");
+    return { moved, text: sqlText(dbHolder.current.calls.execute[0]) };
+  };
+
+  it("needs a reply, one more unread, read under a row lock", async () => {
+    const { moved, text } = await run([{ prior: "open" }]);
+    expect(moved).toBe(true);
+    expect(text).toContain("status = 'needs_reply'");
+    expect(text).toContain("unread_count = c.unread_count + 1");
+    expect(text).toContain("for update");
+  });
+
+  it("★ a conversation already waiting is not announced twice", async () => {
+    expect((await run([{ prior: "needs_reply" }])).moved).toBe(false);
+    expect((await run([])).moved).toBe(false);
   });
 });
 

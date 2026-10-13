@@ -92,6 +92,73 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### WhatsApp Commerce — Phase 2 slice 2: Automatic replies (2026-10-13)
+
+**Inbox → Automatic replies** (`app/dashboard/inbox/settings/`, linked from the
+Inbox header; read with `inbox` view, saved with `inbox` manage through
+`app/actions/whatsapp-auto-reply-actions.ts`) holds three replies, ALL OFF until
+the merchant turns one on (new behaviour on a live store is theirs to choose):
+a **welcome message**, an **away message** with weekly **business hours**, and
+**order status**, which answers "where is my order?" from the customer's own
+orders. Stored in service-only `whatsapp_auto_replies` (one row per store,
+migration `20261013_0197`, CHECKs refuse an enabled reply with no text), kept
+apart from `store_whatsapp_accounts` so a reconnect loses nothing. The texts are
+sent exactly as written (no tokens); defaults name the store.
+★★ ONE ORCHESTRATOR, CALLED AFTER FILING. `inbound.ts afterFiled` routes a
+customer message to exactly one answerer: STOP/START → `opt-out-reply.ts`, a
+COD tap → `cod-confirmation.ts`, anything else → `answer-automatically.ts`,
+which joins whatever applies into ONE message (welcome, then the order answer,
+then away). The answer now goes BEFORE the media copy, so a customer is not kept
+waiting on a twenty-second download.
+★★ EACH REPLY IS CLAIMED BEFORE IT IS SENT, on the conversation
+(`welcome_sent_at`, `away_sent_at`): the welcome by a conditional UPDATE (once
+per `WELCOME_QUIET_DAYS`, 14, the WhatsApp Business app's own greeting rule;
+`welcomeEligible` is computed at filing from the conversation's PREVIOUS
+`last_message_at`), the away message by read-then-compare-and-set, sent again
+only once an opening time has passed since the last one (`openedBetween`, so
+once per closed spell) and never within `AWAY_AFTER_HUMAN_REPLY_HOURS` (2) of a
+dashboard or phone reply. Two messages arriving together get one reply, and two
+businesses' away messages stop after one round. ★ Nothing is claimed when there
+is no sender (paused number, lapsed plan), so a paused store's customer is
+welcomed once the number is back.
+★ `lib/whatsapp/business-hours.ts` (pure): one span per day, `close < open`
+runs into the next day and BELONGS TO THE DAY IT BEGINS ON (the offers
+`time_window` rule), "Open all day" is 00:00 to 24:00, times in the store's
+`settings.business.timeZone` (India - Kolkata by default, never the container's
+UTC). An unreadable zone counts as OPEN, so nothing ever claims a shop is
+closed when it cannot tell.
+★★ "WHERE IS MY ORDER" IS FILED LIKE A COD TAP. `inbox-intent.ts` gained
+`order_status`, recognised by parts (an order word plus a progress word, or
+where/when plus "my"), in English, Hinglish and Devanagari, at most 8 words,
+and NEVER when a complaint word is present ("not delivered", "cancel",
+"refund"): those always wait for a person. The store's setting is read BEFORE
+the filing transaction (`auto-reply-store.ts answersOrderQuestions`, fails to
+false), so a failed read can never stop a message being recorded. Filed as
+automated (no unread, no Needs reply, no bell); `order-status-reply.ts` reads
+the orders the PHONE owns (account phone or delivery phone, this store only,
+no till sales, no unpaid online payments; the rule the COD buttons and the
+customer panel use) and answers in `lib/orders/customer-status.ts`'s words,
+which the storefront order pages now share (moved there and re-exported, so a
+chat and the order page can never disagree). Order number, placed date, status,
+courier and an https-only tracking link; never items, amounts or addresses. No
+order found, a failed lookup, a delivery in trouble (NDR, RTO, lost) or a send
+that failed HANDS OVER (`handOverConversation`).
+★★ AND AN AUTOMATIC MESSAGE ANSWERS NOBODY (a fix to slice 1).
+`recordOutboundMessage` treated `source: automation` like a staff reply:
+`open`, unread 0. So a customer who asked a question and then tapped Confirm
+on a COD message dropped out of Needs reply with the question unanswered.
+Automation now moves only `last_message_at`/`last_outbound_at`, leaves status
+and unread alone, and keeps the list preview on the customer's words while the
+conversation waits. ★ `handOverConversation` returns whether it MOVED the
+conversation into needs_reply (row-locked read of the prior status), so a
+hand-over of a conversation already waiting does not ring the bell twice; the
+COD path uses it too. Both verified against local Postgres in a rolled-back
+transaction, with the claims and the four CHECKs. Help:
+`20261013_0198` publishes `set-up-whatsapp-automatic-replies` and points the
+inbox guide's Reply section at it. Stories WA-5.x. ⚠ Not built: menu buttons
+(interactive messages), replies in the customer's language, and filing
+template order updates in the thread (so a first reply to one is greeted).
+
 ### WhatsApp Commerce — Phase 2 slice 1: COD confirmation (2026-10-13)
 
 Plan §16 Phase 2's first item: a website **cash-on-delivery** order can be
@@ -3063,6 +3130,9 @@ wholesip/
 │   │   │                      # polled through /api/dashboard/inbox/live, a sheet on
 │   │   │                      # phones; inbox.css. Shown in the sidebar only once a
 │   │   │                      # number is connected, with the needs-reply badge.
+│   │   │                      # settings/ = Automatic replies (welcome, away message
+│   │   │                      # with business hours, order status), linked from the
+│   │   │                      # Inbox header; auto-replies-form.tsx.
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
 │   │   ├── admins/ roles/     # staff invites + role management
 │   │   ├── storefront/        # ★ Storefront (§11; was themes/ until 2026-10-11 —
@@ -3377,6 +3447,9 @@ wholesip/
 │   │   │                      # (the notification console's WhatsApp tab). Tested.
 │   │   ├── whatsapp-log-actions.ts # ★ the WhatsApp log read (`activity` view, store-
 │   │   │                      # scoped only — the platform has no number of its own)
+│   │   ├── whatsapp-auto-reply-actions.ts # ★ Inbox → Automatic replies: read
+│   │   │                      # (`inbox` view) and save (`inbox` manage, validated
+│   │   │                      # server-side) the welcome, away + hours, order status
 │   │   ├── inbox-actions.ts   # ★ the WhatsApp inbox (`inbox` view/manage): list,
 │   │   │                      # thread, mark read, close/reopen, sendInboxReply (window
 │   │   │                      # re-checked server-side) and sendInboxTemplate (approved
@@ -3768,6 +3841,14 @@ wholesip/
 │   │                          # auto-cancel) and retention.ts (closed conversations
 │   │                          # deleted two years after their last message, media
 │   │                          # first; a RETENTION_POLICIES entry).
+│   │                          # Automatic replies: business-hours.ts (pure: weekly
+│   │                          # hours, isOpenAt, openedBetween), auto-reply-settings.ts
+│   │                          # (pure: shape, defaults, validation), auto-reply-store.ts
+│   │                          # (the whatsapp_auto_replies row), order-status-reply.ts
+│   │                          # ("where is my order": the phone's own orders, the
+│   │                          # answer, the hand-over cases) and answer-automatically.ts
+│   │                          # (welcome + order answer + away as ONE message, each
+│   │                          # claimed on the conversation before it is sent).
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
 │   │                          # positional render, carrier match, 6-char sender header
 │   │                          # and segment cost, plus the one send choke point, queue,
@@ -3914,7 +3995,10 @@ wholesip/
 │   │                          # DEFAULT (defaultRestockLocation, pure). ONE list
 │   │                          # feeds both the picker and the action's
 │   │                          # validation, so they cannot drift.
-│   ├── orders/                # ★ cancel.ts (§26): the ONE implementation of what
+│   ├── orders/                # ★ customer-status.ts: how a SHOPPER reads a status
+│   │                          # (shared by the storefront order pages and the
+│   │                          # WhatsApp order-status answer).
+│   │                          # ★ cancel.ts (§26): the ONE implementation of what
 │   │                          # cancelling DOES to stock — reserved stock released
 │   │                          # AT THE LOCATION THAT RESERVED IT, pickup holds
 │   │                          # released instead (their units never left the shelf).
@@ -5005,7 +5089,11 @@ wholesip/
 │                              # 'expired' COD answer and orders_cod_awaiting_idx;
 │                              # 0196 edits the COD and inbox guides for the
 │                              # follow-up and the two-year conversation deletion.
-│                              # Next free: 0197.
+│                              # 0197 adds whatsapp_auto_replies and the conversation's
+│                              # welcome_sent_at / away_sent_at; 0198 publishes the
+│                              # automatic-replies guide and points the inbox guide
+│                              # at it.
+│                              # Next free: 0199.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

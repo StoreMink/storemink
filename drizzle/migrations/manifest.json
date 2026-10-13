@@ -7312,6 +7312,59 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261013_0197_whatsapp_auto_replies",
+      "description": "WhatsApp automatic replies: a service-only settings row per store (welcome, away message and business hours, order-status answers) and when each conversation last got the welcome and the away message",
+      "file": "sql/20261013_0197_whatsapp_auto_replies.sql",
+      "transaction": true,
+      "requires": ["20261013_0196_whatsapp_cod_followup_retention_help"],
+      "verify": {
+        "tables": ["whatsapp_auto_replies"],
+        "columns": [
+          "whatsapp_conversations.welcome_sent_at",
+          "whatsapp_conversations.away_sent_at"
+        ],
+        "constraints": [
+          "whatsapp_auto_replies_welcome_length_check",
+          "whatsapp_auto_replies_away_length_check",
+          "whatsapp_auto_replies_welcome_text_check",
+          "whatsapp_auto_replies_away_text_check",
+          "whatsapp_auto_replies_hours_check"
+        ],
+        "rlsTables": ["whatsapp_auto_replies"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "app_user holds no privilege on the automatic-replies table",
+            "sql": "select count(*)::text from information_schema.role_table_grants where table_schema='public' and table_name='whatsapp_auto_replies' and grantee='app_user'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261013_0198_whatsapp_auto_replies_help",
+      "description": "Help: set up WhatsApp automatic replies (welcome, away message and business hours, order status); the inbox guide's Reply section points to it",
+      "file": "sql/20261013_0198_whatsapp_auto_replies_help.sql",
+      "transaction": true,
+      "requires": ["20261013_0197_whatsapp_auto_replies"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the automatic-replies guide is published under Marketing",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id=a.category_id where a.slug='set-up-whatsapp-automatic-replies' and a.status='published' and c.slug='marketing' and a.body like '%does not get it again until you have been open since%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide points to it",
+            "sql": "select count(*)::text from public.help_articles where slug='reply-to-whatsapp-messages' and body like '%/help/marketing/set-up-whatsapp-automatic-replies%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

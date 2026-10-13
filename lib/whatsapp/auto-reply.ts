@@ -2,13 +2,14 @@ import "server-only";
 
 import { withService } from "@/lib/db/client";
 import { logError, logInfo } from "@/lib/observability/logger";
-import { loadWhatsAppSender } from "./channel";
+import { loadWhatsAppSender, type WhatsAppSender } from "./channel";
 import { sendWhatsAppText, type SendWhatsAppResult } from "./send";
 import { recordOutboundMessage } from "./inbox";
 
 // ---------------------------------------------------------------------------
 // One automatic answer in a customer's chat: a COD Confirm/Cancel reply, a
-// STOP or START acknowledgement.
+// STOP or START acknowledgement, a welcome or away message, the answer to
+// "where is my order?".
 //
 // ★ THROUGH THE CHOKE POINT AND INTO THE THREAD. The text goes out by
 // sendWhatsAppText (so it is in WhatsApp logs like any send) and is filed as
@@ -19,6 +20,10 @@ import { recordOutboundMessage } from "./inbox";
 // ★ BEST EFFORT, NEVER THROWS. The answer never decides the action it
 // describes: a paused number or a failed send leaves an opt-out or a
 // confirmation standing. A failed send is filed as failed, with Meta's reason.
+//
+// ★ FILED WITHOUT ANSWERING THE CONVERSATION. An automatic message is not a
+// person replying: a customer whose question is waiting in Needs reply is still
+// waiting after a welcome or a COD confirmation (recordOutboundMessage).
 // ---------------------------------------------------------------------------
 
 export interface AutoReplyInput {
@@ -29,18 +34,23 @@ export interface AutoReplyInput {
   body: string;
   /** For the logs only: which automation answered. */
   reason: string;
+  /** The store's sender, when the caller has already loaded it. */
+  sender?: WhatsAppSender | null;
 }
 
-export async function replyInChat(input: AutoReplyInput): Promise<void> {
+/** Send one automatic answer and file it. True when Meta accepted it. */
+export async function replyInChat(input: AutoReplyInput): Promise<boolean> {
   const { storeId, reason } = input;
 
-  const sender = await withService((db) =>
-    loadWhatsAppSender(db, storeId),
-  ).catch(() => null);
+  const sender =
+    input.sender ??
+    (await withService((db) => loadWhatsAppSender(db, storeId)).catch(
+      () => null,
+    ));
   if (!sender) {
     // Paused, disconnected or a lapsed plan: there is no number to answer from.
     logInfo("whatsapp auto-reply: not sent, no sender", { storeId, reason });
-    return;
+    return false;
   }
 
   let sent: SendWhatsAppResult;
@@ -75,4 +85,5 @@ export async function replyInChat(input: AutoReplyInput): Promise<void> {
   ).catch((err) =>
     logError("whatsapp auto-reply: filing failed", err, { storeId, reason }),
   );
+  return sent.sent;
 }
