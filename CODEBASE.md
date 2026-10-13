@@ -359,6 +359,26 @@ rows for the next run, because the bucket is public by URL. Open and
 needs-reply conversations are kept whatever their age, and the contact with
 its consent record is never deleted. Help: `20261013_0196`.
 
+★ FLOATING CONTROLS SHARE ONE SET OF RULES (2026-10-13, storefront-theme.css
+"Floating controls", pinned by `app/(storefront)/floating-controls.test.ts`).
+The chat button owns the bottom-right; the consent **Privacy choices** button
+(merchant-tracking.tsx) moved to the bottom-left, at the chat button's layer
+(z-35, under every drawer and sheet), because the two sat on top of each
+other. Both lift above the phone Add to cart bar while it shows (it hid the
+chat button, and the privacy button sat on Add to cart), and the privacy
+button lifts above a blog's reaction bar on narrow phones. ★★ The privacy
+button renders OUTSIDE `.storefront-root`, so a rule that moves it starts at
+`body:has(…)`: the old `.sm-atc-sticky:has(…) [data-sm-privacy-pill]` lift
+could never match. ★ The end of the page keeps its last line clear: the
+footer credit (`data-sm="footer-credit"`) takes the room (80px when either
+button shows, 84px under the Add to cart bar alone, 148px under the bar with
+a button), reserved whenever the bar CAN show so the page never changes
+length mid-scroll. It replaces the bar's spacer, which sat above the footer
+and so never kept it clear. Measured in Chrome on all five footer variants at
+320, 375 and 1280px: before, the privacy button covered "Powered by" on
+phones and the chat button covered the compact footer's Privacy and Terms
+links on desktop. No merchant-visible change, no Help Centre update.
+
 ### WhatsApp Commerce — Phase 1 slice 2: Order updates (2026-10-08)
 
 Plan §8 built: a WhatsApp notification is the SMS channel with a better
@@ -8351,7 +8371,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         click-to-magnify, and native pinch on phones. Universal on purpose — at
         rest it shows the same first photo. `[slug]/sticky-add-to-cart.tsx` is
         the phone buy bar, shown once the page's own buttons scroll away ABOVE the
-        shopper; it calls the page's own handler. Opt-in theme layout keys
+        shopper; it calls the page's own handler. The room it needs at the end
+        of the page is the footer's, and the floating buttons lift above it
+        (storefront-theme.css "Floating controls", WhatsApp slice 3). Opt-in theme layout keys
         `stickyAddToCart`, `gridColumnsMobile` (1|2) and `gridColumnsDesktop`
         (3|4|5) resolve through `resolveStorefrontAppearance` into root classes
         `sm-atc-sticky` / `sm-grid-m2` / `sm-grid-d3|d5`, with a compact card for

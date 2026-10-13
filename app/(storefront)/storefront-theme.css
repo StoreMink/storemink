@@ -1565,12 +1565,12 @@
 }
 
 /* ---- Phone sticky add-to-cart (theme layout.stickyAddToCart) ------------
-   Rendered on every product page, shown only under the opt-in root class at
-   phone widths (sticky-add-to-cart.tsx). It slides up once the page's own
-   buy buttons have scrolled away above the shopper, and the spacer keeps it
-   from covering the footer's last line. */
-.sm-sticky-atc,
-.sm-sticky-atc-spacer {
+   Rendered on a product page whose template carries the sticky bar, shown
+   only under the opt-in root class at phone widths (sticky-add-to-cart.tsx).
+   It slides up once the page's own buy buttons have scrolled away above the
+   shopper. What it does to the other floating controls, and the room it
+   takes at the end of the page, is under "Floating controls" below. */
+.sm-sticky-atc {
   display: none;
 }
 @media (max-width: 859.98px) {
@@ -1590,14 +1590,6 @@
   }
   .sm-atc-sticky .sm-sticky-atc.is-shown {
     transform: translateY(0);
-  }
-  .sm-atc-sticky .sm-sticky-atc-spacer {
-    display: block;
-    height: calc(72px + env(safe-area-inset-bottom));
-  }
-  /* The floating privacy button would sit on top of Add to cart. */
-  .sm-atc-sticky:has(.sm-sticky-atc.is-shown) [data-sm-privacy-pill] {
-    bottom: calc(80px + env(safe-area-inset-bottom));
   }
 }
 .sm-sticky-atc-thumb {
@@ -2078,6 +2070,7 @@
   text-decoration: none;
   box-shadow: 0 6px 20px rgba(var(--sm-shadow-rgb, 0, 0, 0), 0.22);
   transition:
+    bottom 0.22s ease,
     transform 0.15s ease,
     box-shadow 0.15s ease;
 }
@@ -2113,5 +2106,61 @@
 @media print {
   .storefront-root .sm-wa-chat {
     display: none;
+  }
+}
+
+/* ── Floating controls ─────────────────────────────────────────────────────
+   What floats over the bottom edge of a store: the WhatsApp chat button
+   (bottom-right, above), the Privacy choices button (bottom-left,
+   merchant-tracking.tsx, rendered OUTSIDE .storefront-root, hence `body:has`),
+   the phone Add to cart bar (product pages, theme opt-in) and a blog post's
+   reaction bar (bottom-centre below 1080px). Three rules keep them apart:
+   ★ The two buttons own opposite corners, so they never meet.
+   ★ A bar that slides in lifts the buttons above it instead of covering
+     them: the Add to cart bar used to hide the chat button entirely, and the
+     privacy button sat on top of Add to cart.
+   ★ The end of the page keeps its last line clear of all of them, so the
+     footer's final row can always be read and tapped. The room goes in the
+     footer's credit line, which carries the footer's own background. A bar's
+     room is reserved whenever the bar can show, never toggled with it, so the
+     page does not change length while the shopper scrolls.
+   The numbers: buttons sit 16px from the edge and are at most 52px tall, the
+   Add to cart bar is at most 72px, the reaction bar 58px from 18px up, and
+   anything stacked keeps a 12px gap. */
+[data-sm-privacy-pill] {
+  transition: bottom 0.22s ease;
+}
+.storefront-root:has(> .sm-wa-chat) [data-sm="footer-credit"],
+body:has([data-sm-privacy-pill]) .storefront-root [data-sm="footer-credit"] {
+  padding-bottom: calc(max(16px, env(safe-area-inset-bottom)) + 64px);
+}
+@media (max-width: 859.98px) {
+  .sm-atc-sticky:has(.sm-sticky-atc.is-shown) .sm-wa-chat,
+  body:has(.sm-atc-sticky .sm-sticky-atc.is-shown) [data-sm-privacy-pill] {
+    bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+  .sm-atc-sticky:has(.sm-sticky-atc) [data-sm="footer-credit"] {
+    padding-bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+  .sm-atc-sticky:has(.sm-sticky-atc):has(> .sm-wa-chat)
+    [data-sm="footer-credit"],
+  body:has([data-sm-privacy-pill])
+    .sm-atc-sticky:has(.sm-sticky-atc)
+    [data-sm="footer-credit"] {
+    padding-bottom: calc(148px + env(safe-area-inset-bottom));
+  }
+}
+/* The reaction bar is centred, so only a narrow screen brings it within
+   reach of the bottom-left button. It hides once the footer is in view
+   (blog-reactions.tsx), and the button settles back with it. */
+@media (max-width: 480px) {
+  body:has(.blog-reactions:not(.is-hidden)) [data-sm-privacy-pill] {
+    bottom: 88px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .storefront-root .sm-wa-chat,
+  [data-sm-privacy-pill] {
+    transition: none;
   }
 }

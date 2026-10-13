@@ -271,6 +271,17 @@ button sends. _Pinned by `inbox-client.test.tsx`; layout measured 2026-10-13 in
 a static harness with the real stylesheets at 1280, 880 and 390 px (no page
 scroll, no sideways scroll); not yet looked at on a real phone._
 
+**WA-3.14 — The chat button never covers another control.** On a store with
+the chat button and analytics (choose Reject optional on the privacy banner),
+**Privacy choices** sits bottom-left and the chat button bottom-right, at
+every width from 320px up. On a phone product page whose theme has the sticky
+Add to cart bar, scroll past the page's own button: both lift above the bar,
+and neither covers Add to cart. Scroll to the very end of any page, on every
+footer layout: the footer's last line (Powered by, Privacy, Terms) is fully
+visible and tappable. On a blog post on a phone, Privacy choices sits above
+the reaction bar, and the reactions open over it. _Pinned by
+`app/(storefront)/floating-controls.test.ts`; positions measured in Chrome._
+
 ---
 
 ## Phase 2, slice 1 — COD confirmation (2026-10-13)
