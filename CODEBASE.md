@@ -5351,8 +5351,11 @@ wholesip/
 │                              # at it. 0199 adds menu buttons, 0200 their Help;
 │                              # 0201 the template-manager Help; 0202 customer-facing
 │                              # Mink (mink_mode, whatsapp_mink_answers, the charge
-│                              # function) and 0203 its Help.
-│                              # Next free: 0204.
+│                              # function) and 0203 its Help. 0204 moves the timestamp
+│                              # on the three WhatsApp guides those Help edits had
+│                              # rewritten without one, so the Mink Help index
+│                              # re-embeds them (help:lint's index-timestamp rule).
+│                              # Next free: 0205.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -5595,6 +5598,13 @@ wholesip/
 │   │                          # ⚠ It cannot prove a check is SUFFICIENT — the pattern may
 │   │                          # also occur elsewhere in the article, which needs the real
 │   │                          # body (`help:audit:*`), not CI.
+│   │                          # ★★ AND A BODY WRITE MUST MOVE `updated_at`
+│   │                          # (`lintIndexTimestamps`, rule `index-timestamp`).
+│   │                          # The Help index re-embeds a guide only when its
+│   │                          # timestamp differs from the chunks' source
+│   │                          # timestamp, so a replace() that leaves it alone
+│   │                          # updates the page and never the index. Eight
+│   │                          # WhatsApp edits did; 0204 moved their timestamps.
 │   ├── help-content-audit.mjs # ★ The same rules against the rows a DATABASE serves —
 │   │                          # catches Help-console operator edits and the ASSEMBLED
 │   │                          # result of many migrations appending to one guide, which
@@ -11470,6 +11480,18 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       nothing, so `help:lint` requires one that changes value when the edit
       lands. ⚠ `verify` is the wrong home for it — that block is re-checked
       forever and freezes the wording it names.
+    - **★★ AND A BODY WRITE MUST MOVE `updated_at`, OR THE INDEX NEVER SEES
+      IT.** `lib/help/embedding-worker.ts` re-embeds a guide only when
+      `help_articles.updated_at` differs from the chunks' `source_updated_at`.
+      Eight WhatsApp Help migrations (0178 to 0203) rewrote a body with
+      `replace()` and left the timestamp alone, so after the 2026-10-14 dev
+      deploy the pages showed the new sections while the public assistant and
+      the dashboard's Help tool still answered from the old wording, with
+      nothing to report it. `lintIndexTimestamps` (`index-timestamp`) now
+      refuses a SET clause that assigns `body` without `updated_at` on a plain
+      UPDATE or an upsert's DO UPDATE; an INSERT needs nothing, the column
+      defaults. The eight are grandfathered (applied, so unchangeable) and
+      `20261014_0204` moved their rows' timestamps by hand.
     - **★★ NEVER ASSERT PUBLISHED WORDING IN A DURABLE `verify` BLOCK.** It is
       re-checked for every applied migration on every status/verify/drift run
       in every environment, and it is part of that migration's checksum — so
