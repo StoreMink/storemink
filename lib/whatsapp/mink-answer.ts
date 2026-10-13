@@ -53,10 +53,7 @@ import {
   minkChargeContext,
   minkCreditHeadroom,
 } from "./mink-drafts";
-import {
-  callMinkWhatsAppModel,
-  MINK_WHATSAPP_MODEL_TIMEOUT_MS,
-} from "./mink-model";
+import { callMinkWhatsAppModelWithRetry } from "./mink-model";
 import {
   lookupOrdersForPhone,
   orderStatusLine,
@@ -469,12 +466,20 @@ export async function answerWithMink(
     const allowed = allowedUrlsIn(facts);
     const summary = factsSummary(facts);
 
-    const signal = AbortSignal.timeout(MINK_WHATSAPP_MODEL_TIMEOUT_MS);
-    const result = await callMinkWhatsAppModel(
-      config,
-      { facts, message: input.text, now, timeZone: ctx.timeZone },
-      signal,
-    );
+    // One attempt, and one more only if the first stalled (mink-model.ts).
+    const result = await callMinkWhatsAppModelWithRetry(config, {
+      facts,
+      message: input.text,
+      now,
+      timeZone: ctx.timeZone,
+    });
+    if (result.attempts > 1) {
+      logWarn("whatsapp mink: model stalled once, answered on the retry", {
+        storeId,
+        conversationId,
+        attempts: result.attempts,
+      });
+    }
     const answer =
       result.finishReason === "STOP"
         ? parseMinkWhatsAppAnswer(result.parsed, allowed)
@@ -595,8 +600,15 @@ export async function answerWithMink(
       reason: answer.reason,
     };
   } catch (err) {
-    if (err instanceof Error && err.name === "TimeoutError") {
-      logWarn("whatsapp mink: model timed out", { storeId, conversationId });
+    if (
+      err instanceof Error &&
+      (err.name === "MinkWhatsAppModelStalled" || err.name === "TimeoutError")
+    ) {
+      logWarn("whatsapp mink: model timed out", {
+        storeId,
+        conversationId,
+        attempts: (err as { attempts?: number }).attempts ?? 1,
+      });
       return {
         outcome: "failed",
         needsHuman: true,

@@ -662,11 +662,14 @@ card; nothing is charged until a person presses Send. _Pinned by
 
 **WA-8.8 — Bounded and quiet when it cannot.** At most 20 answers an hour
 per conversation, 300 per store and 3,000 platform-wide; a model call is
-held to 25 seconds; a provider error, a timeout, a switched-off mode, a
-paused number or Mink being unavailable all end as "a person reads it",
-never as a failed delivery. _Pinned by `mink-answer.test.ts` ("rate limits,
-a switched-off mode, and an unavailable Mink all skip to a person", "never
-throws")._
+held to 25 seconds and asked once more only when it stalled (a refusal is
+final, and a stall costs no credit); a provider error, two stalls, a
+switched-off mode, a paused number or Mink being unavailable all end as "a
+person reads it", never as a failed delivery. _Pinned by
+`mink-answer.test.ts` ("rate limits, a switched-off mode, and an unavailable
+Mink all skip to a person", "never throws", "needed the second attempt") and
+`mink-model.test.ts` (a stall is followed by exactly one more attempt; a
+refusal is final)._
 
 **WA-8.9 — The eval set.** `npm run mink:whatsapp-eval` runs 21 cases
 offline (the gate, the fixtures, the sheet and the parser);

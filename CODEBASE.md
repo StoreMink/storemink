@@ -114,7 +114,8 @@ running offers from `readMinkCurrentOffers` (its actor narrowed to
 `Pick<"storeId"|"effectivePlan">`), the published policies as text, the
 hours, the last six messages), and makes ONE Vertex call
 (`mink-model.ts`: no tools, no session, `responseJsonSchema`, LOW thinking,
-one attempt, 25 s) with the system instruction from
+25 s per attempt, one more attempt only after a stall) with the system
+instruction from
 `docs/mink-ai-whatsapp-prompt.md` (`lib/mink/whatsapp-prompt.ts`, the
 image-prompt loader's shape; one-pass render, traced into standalone and
 the Docker context) and the facts, the recent exchange and the customer's
@@ -161,6 +162,17 @@ free when the credit was already taken by a send Meta refused, then the
 ordinary text send filed under the person) and **Discard**. A person's own
 reply or template discards the conversation's drafts (`supersedeMinkDrafts`).
 A viewer never sees it; a closed window or a paused number disables Send.
+★ A STALLED CALL IS ASKED ONCE MORE (2026-10-14). The first live eval run
+had 3 of 15 model cases hang past the budget while every other case
+answered in 2 to 17 s, and all three answered on a re-run minutes later: a
+stall is the provider not answering, not a slow generation.
+`callMinkWhatsAppModelWithRetry` gives each attempt its own 25 s and asks
+again only when the attempt's own signal fired (`isModelStall` reads the
+signal, not the error's name, because the SDK surfaces the abort as a plain
+"This operation was aborted"); a refusal, a 4xx or unreadable JSON is final.
+Nothing is charged for a stall, so the retry spends tokens, never a credit,
+and `whatsapp_mink_answers` is unchanged. The eval reports `attempts` per
+case and `stalledOnce` in its summary.
 ★ Evals: `evals/mink/whatsapp.json` (21 cases; gate cases name their
 reason, answer cases their outcome and words) through
 `scripts/mink-whatsapp-eval.ts` (`npm run mink:whatsapp-eval`, offline;

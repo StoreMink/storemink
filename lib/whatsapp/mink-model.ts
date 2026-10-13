@@ -22,14 +22,23 @@ import {
 // value, so the eval harness (scripts/mink-whatsapp-eval.ts) can send the
 // exact request the live path sends against fixture facts, with no store.
 //
-// ★ ONE ATTEMPT. A customer waiting on WhatsApp is better handed to a person
-// after one failed call than kept waiting through retries; the SDK is held
-// to a single attempt and the whole call to MINK_WHATSAPP_MODEL_TIMEOUT_MS.
+// ★ ONE CALL PER ATTEMPT, AND A SECOND ATTEMPT ONLY AFTER A STALL. The SDK is
+// held to a single try, and each attempt to MINK_WHATSAPP_MODEL_TIMEOUT_MS.
+// The first live eval run (2026-10-14) had 3 of 15 model cases hang past the
+// budget while every other case answered in 2 to 17 s, and all three answered
+// on a re-run: a stall is the provider not answering, not a slow generation.
+// So callMinkWhatsAppModelWithRetry asks once more after a stall, and only
+// then; a refusal, a 4xx, a safety block or unreadable JSON is final. A stall
+// costs the store nothing (the credit is taken after a parsed answer), so the
+// second attempt spends tokens, never a credit, and a customer waits at most
+// two budgets before the chat goes to a person.
 // ---------------------------------------------------------------------------
 
 /** Long enough for a cold model, short enough that a person is not kept
  *  waiting on a dead call: the answer lands or the chat is handed over. */
 export const MINK_WHATSAPP_MODEL_TIMEOUT_MS = 25_000;
+/** Attempts per question: the first, and one more only if the first stalled. */
+export const MINK_WHATSAPP_MODEL_ATTEMPTS = 2;
 /** A chat reply is four sentences; the JSON around it is small. */
 const MAX_OUTPUT_TOKENS = 1024;
 
@@ -150,4 +159,61 @@ export async function callMinkWhatsAppModel(
       (Number(usage?.candidatesTokenCount ?? 0) || 0) +
       (Number(usage?.thoughtsTokenCount ?? 0) || 0),
   };
+}
+
+/** Every attempt stalled past its budget. The caller hands the chat to a person. */
+export class MinkWhatsAppModelStalled extends Error {
+  readonly attempts: number;
+  constructor(attempts: number) {
+    super(`The model did not answer within ${attempts} attempt(s).`);
+    this.name = "MinkWhatsAppModelStalled";
+    this.attempts = attempts;
+  }
+}
+
+/**
+ * A stall is the attempt's own signal having fired. The SDK wraps the abort
+ * in its own error (seen live as a plain "This operation was aborted"), so
+ * the signal, not the error's name, is the fact; the names are the fallback
+ * for a stall surfaced before the signal is read.
+ */
+export function isModelStall(err: unknown, signal: AbortSignal): boolean {
+  if (signal.aborted) return true;
+  const name = err instanceof Error ? err.name : "";
+  return name === "TimeoutError" || name === "AbortError";
+}
+
+export interface MinkWhatsAppModelRetryOptions {
+  timeoutMs?: number;
+  attempts?: number;
+  /** The call to make; injectable so the retry rule is testable without a provider. */
+  call?: typeof callMinkWhatsAppModel;
+}
+
+/**
+ * The live path's call: a fresh budget per attempt, one more attempt after a
+ * stall, every other failure thrown as it came. Returns how many attempts the
+ * answer took, so a stall that recovered is visible in the log and the eval.
+ */
+export async function callMinkWhatsAppModelWithRetry(
+  config: MinkConfig,
+  input: MinkWhatsAppModelInput,
+  options: MinkWhatsAppModelRetryOptions = {},
+): Promise<MinkWhatsAppModelResult & { attempts: number }> {
+  const timeoutMs = options.timeoutMs ?? MINK_WHATSAPP_MODEL_TIMEOUT_MS;
+  const attempts = Math.max(
+    1,
+    options.attempts ?? MINK_WHATSAPP_MODEL_ATTEMPTS,
+  );
+  const call = options.call ?? callMinkWhatsAppModel;
+  for (let attempt = 1; ; attempt += 1) {
+    const signal = AbortSignal.timeout(timeoutMs);
+    try {
+      const result = await call(config, input, signal);
+      return { ...result, attempts: attempt };
+    } catch (err) {
+      if (!isModelStall(err, signal)) throw err;
+      if (attempt >= attempts) throw new MinkWhatsAppModelStalled(attempt);
+    }
+  }
 }
