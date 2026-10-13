@@ -110,6 +110,10 @@ customer when `codConfirmationOrderId` says so (event `order.placed`, sender's
 `codConfirmation` on, `paymentMethod === "cod"`, not `fulfilment: "pickup"`, a
 subject order id) AND the store holds an approved row of it; otherwise the
 plain message goes, so a store whose variant is still in review loses nothing.
+★ `paymentMethod` on the event is how the order was PAID, not what checkout
+picked: an order store credit covers in full is announced as `store_credit`
+(the row says so too), so it gets neither the COD buttons nor a "Cash on
+delivery" line in its confirmation.
 Consent is unchanged: the customer's own WhatsApp yes is still required.
 ★ VARIANTS ARE SEPARATE FAMILIES. `templateFamily` strips `_vN`;
 `catalogEntryForName` maps any stored version back to its entry, and
@@ -158,15 +162,37 @@ the picker or at the send action: a quick reply sent by hand carries no
 payload, so it would come back as two words nobody can act on.
 Orders: `cod_confirmation` in the list and drawer columns, rendered by
 `app/dashboard/orders/cod-confirmation.tsx` as "Awaiting confirmation on
-WhatsApp" / "Confirmed on WhatsApp" / "Cancelled on WhatsApp", and NOTHING when
-NULL (never asked must not read as a customer who ignored us). The
+WhatsApp" / "Confirmed on WhatsApp" / "Cancelled on WhatsApp" / "Not confirmed
+on WhatsApp" (`expired`, below), and NOTHING when NULL (never asked must not
+read as a customer who ignored us). The
 notification console's WhatsApp tab shows the variant as a second card,
 "Cash-on-delivery orders", with its buttons. Help: `20261013_0193` adds one
 section to `send-order-updates-on-whatsapp`. Stories WA-4.x in
-`docs/whatsapp-acceptance.md`. ⚠ Not built: a reminder when nobody answers,
-auto-cancelling unconfirmed orders, and the same buttons for POS or pickup
-orders. ⚠ Not yet run against live Meta: the button payload shapes follow
-Meta's reference; the template itself was accepted on the test account.
+`docs/whatsapp-acceptance.md`.
+★★ AND NOBODY ANSWERING IS FOLLOWED UP (2026-10-13; `lib/whatsapp/cod-sweep.ts`,
+migration `20261013_0195`, run by the hourly
+`/api/cron/expire-pending-payments`). 24 hours after the message, a pending
+order still awaiting an answer gets it ONCE more (`whatsapp.codReminder`, on
+by default under the COD switch): a copy of the queue row that went out, same
+approved template, phone, values and button payloads, so no new Meta approval,
+and the worker re-checks consent and approval at send. `orders.cod_reminded_at`
+is claimed in the same transaction that queues the copy. 48 hours after it,
+`whatsapp.codAutoCancel` (OFF by default: cancelling an order nobody asked to
+cancel is the merchant's call) cancels through `approveCancellation` as the
+SYSTEM (`bySystem`), reason `not_confirmed`, nothing refunded, the customer
+told, then `cod_confirmation = 'expired'`. ★ `onlyWhileCodAwaited` puts
+`cod_confirmation = 'requested'` INSIDE the cancellation's claim, so a Confirm
+tapped a moment before the sweep keeps the order. ★ Each action has a 24-hour
+window rather than "older than", so switching a setting on never reminds or
+cancels last week's orders at once. ★ `notifyInline` makes
+`approveCancellation` await `recordEvent` instead of `emitEvent`, because a
+cron has no after() to rely on (§24). A Confirm tapped after the automatic
+cancellation is answered "cancelled because it was not confirmed in time" and
+handed to a person (outcome `expired`), since only the shop can put it back.
+Help: `20261013_0196` extends one sentence of the COD section. ⚠ Not built:
+the same buttons for POS or pickup orders. ⚠ Not yet run against live Meta:
+the button payload shapes follow Meta's reference; the template itself was
+accepted on the test account.
 
 ### WhatsApp Commerce — Phase 1 slice 3: The inbox (2026-10-08)
 
@@ -205,7 +231,13 @@ only). ★ STOP IS A MARKETING OPT-OUT, NOT A SILENCE (plan §10):
 Devanagari; ≤3 words after a courtesy word; **"cancel" is deliberately NOT
 an opt-out** — on WhatsApp it is about an order) sets `marketing_opt_out_at`;
 order updates continue, and START re-opts-in only a contact who had opted
-in before. `inbox-parse.ts`(pure) turns every Meta message type — text,
+in before. ★ A STOP (or a START that worked) is ANSWERED BY THE SYSTEM: it is
+classified before the conversation is touched, filed like a COD tap (no
+unread, no `needs_reply`, no bell), and `opt-out-reply.ts`confirms it in the
+chat. The reply never offers START, which works only for somebody who agreed
+to offers before. Both automatic answers (this and the COD replies) go out
+through`auto-reply.ts` `replyInChat`: the choke point, then filed as an
+`automation`message, best effort.`inbox-parse.ts`(pure) turns every Meta message type — text,
 five media kinds, location, contacts, button/interactive replies, catalogue
 orders, reactions, unsupported — into one bounded row (4,096-char body,
 200-char name, 50-item payloads).
@@ -249,6 +281,16 @@ replies with media, assignment/labels/notes, search inside messages, and
 the pending`smb_app_state_sync` handler (Phase 2). ⚠ Not run against live
 Meta: echo and media shapes follow Meta's reference; the inbound text path
 is the one Phase 0 proved end to end.
+
+★ A CLOSED conversation is deleted two years after its last message
+(`lib/whatsapp/retention.ts`, a `whatsapp_conversations` entry in
+`RETENTION_POLICIES`, owner's decision 2026-10-13), with its messages (FK
+cascade) and its media folder (`stores/{store}/whatsapp/{conversation}/`,
+`conversationMediaPrefix`, which `inboundMediaPath` also builds from). Media
+goes FIRST and a conversation whose folder could not be emptied keeps its
+rows for the next run, because the bucket is public by URL. Open and
+needs-reply conversations are kept whatever their age, and the contact with
+its consent record is never deleted. Help: `20261013_0196`.
 
 ### WhatsApp Commerce — Phase 1 slice 2: Order updates (2026-10-08)
 
@@ -3505,7 +3547,12 @@ wholesip/
 │       │                      # orders: mark paid if captured (capturing an authorized
 │       │                      # payment of the exact amount), skip if the gateway can't
 │       │                      # be READ, else cancel through releaseCancelledOrder; then
-│       │                      # records payments that landed after expiry (§18)
+│       │                      # records payments that landed after expiry (§18).
+│       │                      # ★ standingSweeps() (late payments, pickup expiry +
+│       │                      # reminders, WhatsApp COD follow-up, refunds, holds)
+│       │                      # runs on EVERY hour: it used to run pickups only when
+│       │                      # some online payment was stuck, so on a quiet store
+│       │                      # uncollected pickups never expired
 │       ├── cron/seo-refresh/  # ★ Daily Google reconciliation: platform/help/themes
 │       │                      # sitemaps + every launched store; custom-domain META
 │       │                      # verification/property creation; 503 triggers retries
@@ -3560,7 +3607,8 @@ wholesip/
 │       │                      # still ISSUES invoices payable on /dashboard/plans
 │       ├── cron/prune-logs/   # ★ DAILY log retention (§32): the ONLY caller of
 │       │                      # lib/retention/prune.ts. notifications 90d,
-│       │                      # activity_events 365d, email_logs 90d (+ pos_parked_sales 7d,
+│       │                      # activity_events 365d, email_logs 90d (+ closed
+│       │                      # whatsapp_conversations 730d, pos_parked_sales 7d,
 │                              # Step 15 — the 20-per-counter CAP is what runs
 │                              # out, not the disk) — windows
 │       │                      # that were documented for months and enforced by
@@ -3713,6 +3761,13 @@ wholesip/
 │   │                          # (what a tap does: same store, a COD order, the order's
 │   │                          # own phone; confirm, or cancel through
 │   │                          # approve-cancellation; answered in the chat).
+│   │                          # opt-out-reply.ts (the STOP/START confirmation) and
+│   │                          # auto-reply.ts (replyInChat: every automatic answer,
+│   │                          # through the choke point, filed as `automation`).
+│   │                          # cod-sweep.ts (the hourly COD reminder + optional
+│   │                          # auto-cancel) and retention.ts (closed conversations
+│   │                          # deleted two years after their last message, media
+│   │                          # first; a RETENTION_POLICIES entry).
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
 │   │                          # positional render, carrier match, 6-char sender header
 │   │                          # and segment cost, plus the one send choke point, queue,
@@ -4945,7 +5000,12 @@ wholesip/
 │                              # notification_whatsapp_queue.button_payloads (WhatsApp
 │                              # COD confirmation); 0193 edits the order-updates Help
 │                              # guide for it. Both come after 0191 and require it.
-│                              # Next free: 0194.
+│                              # 0194 edits the inbox guide for the automatic STOP
+│                              # reply; 0195 adds orders.cod_reminded_at, the
+│                              # 'expired' COD answer and orders_cod_awaiting_idx;
+│                              # 0196 edits the COD and inbox guides for the
+│                              # follow-up and the two-year conversation deletion.
+│                              # Next free: 0197.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -12884,7 +12944,9 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       side table would mean every order read either joins it or silently
       ignores a whole fulfilment mode. `lib/fulfilment/pickup.ts` decides
       where; `/pos/pickups` hands it over; the sweep rides on
-      `/api/cron/expire-pending-payments`. Config:
+      `/api/cron/expire-pending-payments`, every hour (until 2026-10-13 it ran
+      only on an hour that also found a stuck online payment, so on most
+      stores pickups never expired and no reminder went). Config:
       `fulfilment.offerPickup` + `fulfilment.pickupHoldDays` (section
       `locations`, rendered on Locations → Online fulfilment).
       - **★★ HAND-OVER REQUIRES THE ORDER PHONE'S OTP.**
@@ -15080,7 +15142,8 @@ way — an entry there is a deliberate act, not a way to silence the guard.
 32. **Log retention — the policy that was written down three times and enforced
     nowhere.** `lib/retention/prune.ts`, driven daily by
     `/api/cron/prune-logs` (03:00 UTC). Windows: `notifications` 90 days,
-    `activity_events` 365, `email_logs` 90. Full operational detail —
+    `activity_events` 365, `email_logs` 90, closed `whatsapp_conversations`
+    730 (by last message; media first, see the inbox section). Full operational detail —
     the schedule, the `gcloud` command, how to read a response — is in
     `docs/cron-jobs.md`.
     - **★ IT WAS DOCUMENTED, INDEXED, AND DEAD.** `supabase/email_logs.sql`

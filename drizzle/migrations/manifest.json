@@ -7258,6 +7258,60 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261013_0194_whatsapp_stop_reply_help",
+      "description": "Help: the inbox guide says a customer's STOP gets an automatic reply and does not wait in Needs reply",
+      "file": "sql/20261013_0194_whatsapp_stop_reply_help.sql",
+      "transaction": true,
+      "requires": ["20261013_0193_whatsapp_cod_confirmation_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the inbox guide says STOP is answered automatically",
+            "sql": "select count(*)::text from public.help_articles where slug='reply-to-whatsapp-messages' and body like '%automatic reply on WhatsApp confirming it%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261013_0195_whatsapp_cod_followup",
+      "description": "WhatsApp COD follow-up: when the one reminder was claimed, an 'expired' answer for the automatic cancellation, and the sweep's partial index",
+      "file": "sql/20261013_0195_whatsapp_cod_followup.sql",
+      "transaction": true,
+      "requires": ["20261013_0194_whatsapp_stop_reply_help"],
+      "verify": {
+        "columns": ["orders.cod_reminded_at"],
+        "constraints": ["orders_cod_confirmation_check"],
+        "indexes": ["orders_cod_awaiting_idx"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261013_0196_whatsapp_cod_followup_retention_help",
+      "description": "Help: the order-updates guide explains the COD reminder and the optional automatic cancellation, and the inbox guide says closed conversations are deleted after two years",
+      "file": "sql/20261013_0196_whatsapp_cod_followup_retention_help.sql",
+      "transaction": true,
+      "requires": ["20261013_0195_whatsapp_cod_followup"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the order-updates guide explains the COD reminder and automatic cancellation",
+            "sql": "select count(*)::text from public.help_articles where slug='send-order-updates-on-whatsapp' and body like '%Cancel orders not confirmed within 48 hours%' and body like '%gets the message once more%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide says when closed conversations are deleted",
+            "sql": "select count(*)::text from public.help_articles where slug='reply-to-whatsapp-messages' and body like '%deleted two years after its last message%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

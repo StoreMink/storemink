@@ -23,6 +23,9 @@ vi.mock("@/lib/notifications/record", () => ({
   recordEvent: vi.fn(async () => undefined),
 }));
 vi.mock("./cod-confirmation", () => ({ handleCodReply: vi.fn() }));
+vi.mock("./opt-out-reply", () => ({
+  answerOptOut: vi.fn(async () => undefined),
+}));
 vi.mock("./inbox", () => ({
   applyStatusToMessage: vi.fn(),
   hasMedia: vi.fn(() => false),
@@ -33,6 +36,7 @@ vi.mock("./inbox", () => ({
 
 import { processPendingInboundEvents } from "./inbound";
 import { handleCodReply } from "./cod-confirmation";
+import { answerOptOut } from "./opt-out-reply";
 import { recordInboundMessage } from "./inbox";
 import { recordEvent } from "@/lib/notifications/record";
 
@@ -122,5 +126,39 @@ describe("a COD tap after filing", () => {
     await processPendingInboundEvents();
     expect(handleCodReply).not.toHaveBeenCalled();
     expect(recordEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("a STOP after filing", () => {
+  it("★ is acknowledged in the chat, without the bell", async () => {
+    vi.mocked(recordInboundMessage).mockResolvedValue({
+      ...FILED,
+      kind: "text",
+      preview: "STOP",
+      codReply: null,
+      optOut: "stop",
+    } as any);
+    await processPendingInboundEvents();
+    expect(answerOptOut).toHaveBeenCalledWith({
+      storeId: STORE,
+      conversationId: "c1",
+      phone: "+919876543210",
+      intent: "stop",
+    });
+    expect(handleCodReply).not.toHaveBeenCalled();
+    expect(recordEvent).not.toHaveBeenCalled();
+  });
+
+  it("an ordinary message gets no automatic answer", async () => {
+    vi.mocked(recordInboundMessage).mockResolvedValue({
+      ...FILED,
+      kind: "text",
+      codReply: null,
+      optOut: null,
+      needsNotify: true,
+    } as any);
+    await processPendingInboundEvents();
+    expect(answerOptOut).not.toHaveBeenCalled();
+    expect(recordEvent).toHaveBeenCalled();
   });
 });

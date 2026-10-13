@@ -13,6 +13,7 @@ import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { recordEvent } from "@/lib/notifications/record";
 import { isWhatsAppWebhook } from "./webhook-events";
 import { handleCodReply } from "./cod-confirmation";
+import { answerOptOut } from "./opt-out-reply";
 import {
   applyStatusToMessage,
   hasMedia,
@@ -393,6 +394,18 @@ async function afterFiled(
       messageId: filed.messageId,
       media: filed.media,
     });
+  }
+  // A STOP or START that changed the customer's offers consent: tell them it
+  // worked. Recorded already; this is only the answer, and never throws.
+  if (filed.optOut && filed.phone) {
+    await answerOptOut({
+      storeId,
+      conversationId: filed.conversationId,
+      phone: filed.phone,
+      intent: filed.optOut,
+    }).catch((err) =>
+      logError("whatsapp opt-out: reply failed", err, { storeId }),
+    );
   }
   // A COD Confirm / Cancel tap: act on it, answer it, and only when that
   // cannot be done (refused, too late, failed) hand it to a person — which is

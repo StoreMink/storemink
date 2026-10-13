@@ -23,6 +23,7 @@ import {
 } from "./inbox-parse";
 import { WHATSAPP_MARKETING_CONSENT_REPLY } from "./consent-copy";
 import { parseCodPayload, type CodPayload } from "./cod-payload";
+import { conversationMediaPrefix } from "./retention";
 
 // ---------------------------------------------------------------------------
 // The inbox's write side: what a webhook delivery does to contacts,
@@ -94,6 +95,9 @@ export interface RecordInboundResult {
   userId: string | null;
   /** A tap on a COD Confirm / Cancel button, to act on after commit. */
   codReply: CodPayload | null;
+  /** A STOP or START that changed the contact's offers consent, to
+   *  acknowledge after commit. */
+  optOut: "stop" | "start" | null;
   /** The sender, as stored on the contact (E.164). */
   phone: string | null;
 }
@@ -110,6 +114,7 @@ const NOTHING: RecordInboundResult = {
   contactLabel: null,
   userId: null,
   codReply: null,
+  optOut: null,
   phone: null,
 };
 
@@ -260,7 +265,20 @@ export async function recordInboundMessage(
           (parsed.payload as Record<string, unknown> | null)?.buttonPayload,
         )
       : null;
-  const automated = codReply !== null;
+  // STOP / START (plan §10), classified BEFORE the conversation is touched:
+  // an opt-out the system records and answers (opt-out-reply.ts) does not ask
+  // staff for a reply either. START counts only for somebody who HAD opted in.
+  const intent =
+    parsed.kind === "text" && parsed.body
+      ? classifyWhatsAppInbound(parsed.body)
+      : null;
+  const optOut: "stop" | "start" | null =
+    intent === "stop"
+      ? "stop"
+      : intent === "start" && contact.marketingOptInAt
+        ? "start"
+        : null;
+  const automated = codReply !== null || optOut !== null;
   await db.execute(sql`
     update public.whatsapp_conversations set
       status = case when ${automated}::boolean then status else 'needs_reply' end,
@@ -272,40 +290,37 @@ export async function recordInboundMessage(
     where id = ${conversation.id}::uuid
   `);
 
-  // STOP / START (plan §10). Recorded on the contact; the message keeps the
-  // intent in its payload so the thread can say "opted out of offers".
-  if (parsed.kind === "text" && parsed.body) {
-    const intent = classifyWhatsAppInbound(parsed.body);
-    if (intent === "stop") {
-      await db
-        .update(whatsappContacts)
-        .set({
-          marketingOptOutAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(whatsappContacts.id, contact.id));
-      await db
-        .update(whatsappMessages)
-        .set({ payload: { intent: "stop" } })
-        .where(eq(whatsappMessages.id, messageId));
-    } else if (intent === "start" && contact.marketingOptInAt) {
-      // Only somebody who HAD opted in can re-opt in by reply: "start" from a
-      // customer who never agreed to offers is not consent to receive them.
-      const now = new Date().toISOString();
-      await db
-        .update(whatsappContacts)
-        .set({
-          marketingOptInAt: now,
-          marketingConsentText: WHATSAPP_MARKETING_CONSENT_REPLY,
-          marketingOptOutAt: null,
-          updatedAt: now,
-        })
-        .where(eq(whatsappContacts.id, contact.id));
-      await db
-        .update(whatsappMessages)
-        .set({ payload: { intent: "start" } })
-        .where(eq(whatsappMessages.id, messageId));
-    }
+  // Recorded on the contact; the message keeps the intent in its payload so
+  // the thread can say "opted out of offers".
+  if (optOut === "stop") {
+    await db
+      .update(whatsappContacts)
+      .set({
+        marketingOptOutAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(whatsappContacts.id, contact.id));
+    await db
+      .update(whatsappMessages)
+      .set({ payload: { intent: "stop" } })
+      .where(eq(whatsappMessages.id, messageId));
+  } else if (optOut === "start") {
+    // Only somebody who HAD opted in can re-opt in by reply: "start" from a
+    // customer who never agreed to offers is not consent to receive them.
+    const now = new Date().toISOString();
+    await db
+      .update(whatsappContacts)
+      .set({
+        marketingOptInAt: now,
+        marketingConsentText: WHATSAPP_MARKETING_CONSENT_REPLY,
+        marketingOptOutAt: null,
+        updatedAt: now,
+      })
+      .where(eq(whatsappContacts.id, contact.id));
+    await db
+      .update(whatsappMessages)
+      .set({ payload: { intent: "start" } })
+      .where(eq(whatsappMessages.id, messageId));
   }
 
   return {
@@ -320,6 +335,7 @@ export async function recordInboundMessage(
     contactLabel,
     userId: contact.userId,
     codReply,
+    optOut,
     phone: parsed.phone,
   };
 }
@@ -397,6 +413,7 @@ export async function recordEchoMessage(
     contactLabel: null,
     userId: contact.userId,
     codReply: null,
+    optOut: null,
     phone: null,
   };
 }
@@ -525,7 +542,8 @@ export function inboundMediaPath(
   messageId: string,
   mime: string | null,
 ): string {
-  return `stores/${storeId}/whatsapp/${conversationId}/${messageId}${extensionFor(mime)}`;
+  // ★ One folder per conversation (retention.ts deletes it with the chat).
+  return `${conversationMediaPrefix(storeId, conversationId)}${messageId}${extensionFor(mime)}`;
 }
 
 async function loadInboxToken(storeId: string): Promise<string | null> {

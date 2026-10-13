@@ -34,6 +34,13 @@ vi.mock("@/lib/orders/mark-paid", () => ({
 vi.mock("@/lib/orders/cancel", () => ({
   releaseCancelledOrder: vi.fn(async () => {}),
 }));
+vi.mock("@/lib/whatsapp/cod-sweep", () => ({
+  sweepCodConfirmations: vi.fn(async () => ({
+    reminded: 1,
+    cancelled: 0,
+    failed: 0,
+  })),
+}));
 
 import { GET } from "./route";
 import { recordEvent } from "@/lib/notifications/record";
@@ -41,6 +48,11 @@ import { lookupStoreGateway } from "@/lib/payments/provider";
 import { settleOrderPayment } from "@/lib/payments/capture";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
 import { releaseCancelledOrder } from "@/lib/orders/cancel";
+import {
+  sweepExpiredPickups,
+  sweepPickupReminders,
+} from "@/lib/fulfilment/pickup";
+import { sweepCodConfirmations } from "@/lib/whatsapp/cod-sweep";
 
 const CREDS = { keyId: "rzp_live_x", keySecret: "s" };
 const HOUR = 60 * 60_000;
@@ -94,6 +106,31 @@ describe("expire-pending-payments", () => {
   it("refuses without the cron secret", async () => {
     const res = await GET(new Request("https://storemink.com/x"));
     expect(res.status).toBe(401);
+  });
+
+  it("★★ runs the standing sweeps on an hour with no stuck online payment", async () => {
+    // The ordinary hour. These used to run only when a pending payment was
+    // found, so uncollected pickups never expired on a quiet store.
+    seed([]);
+    const body = await (await run()).json();
+    expect(sweepExpiredPickups).toHaveBeenCalledTimes(1);
+    expect(sweepPickupReminders).toHaveBeenCalledTimes(1);
+    expect(sweepCodConfirmations).toHaveBeenCalledTimes(1);
+    expect(body).toMatchObject({
+      ok: true,
+      paid: 0,
+      expired: 0,
+      pickupsExpired: 0,
+      pickupsWarned: 0,
+      codFollowUp: { reminded: 1, cancelled: 0, failed: 0 },
+    });
+  });
+
+  it("runs them once on an hour that also expired payments", async () => {
+    seed([pending()]);
+    await run();
+    expect(sweepExpiredPickups).toHaveBeenCalledTimes(1);
+    expect(sweepCodConfirmations).toHaveBeenCalledTimes(1);
   });
 
   it("★ marks a captured payment paid and never cancels it", async () => {

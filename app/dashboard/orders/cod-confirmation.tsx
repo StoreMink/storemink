@@ -12,12 +12,16 @@ export const COD_CONFIRMATION_LABEL: Record<string, string> = {
   requested: "Awaiting confirmation on WhatsApp",
   confirmed: "Confirmed on WhatsApp",
   cancelled: "Cancelled on WhatsApp",
+  // The store's automatic cancellation fired because nobody answered. Not
+  // "Cancelled on WhatsApp", which would say the customer chose to.
+  expired: "Not confirmed on WhatsApp",
 };
 
 const TONE: Record<string, string> = {
   requested: "text-amber-700",
   confirmed: "text-emerald-700",
   cancelled: "text-[var(--dash-text-3)]",
+  expired: "text-[var(--dash-text-3)]",
 };
 
 export function codConfirmationLabel(value: unknown): string | null {

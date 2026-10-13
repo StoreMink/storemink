@@ -2031,10 +2031,16 @@ export const orders = pgTable(
       mode: "string",
     }),
     // WhatsApp cash-on-delivery confirmation (0192): 'requested' once the
-    // message with the buttons was sent, then 'confirmed' or 'cancelled'.
+    // message with the buttons was sent, then 'confirmed' or 'cancelled' by
+    // the customer, or 'expired' when the automatic cancellation fired (0195).
     // NULL = the customer was never asked.
     codConfirmation: text("cod_confirmation"),
     codConfirmationAt: timestamp("cod_confirmation_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    // When the one COD reminder was claimed (0195); NULL = not reminded.
+    codRemindedAt: timestamp("cod_reminded_at", {
       withTimezone: true,
       mode: "string",
     }),

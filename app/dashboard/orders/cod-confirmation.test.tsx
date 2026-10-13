@@ -12,6 +12,10 @@ describe("CodConfirmationTag", () => {
     expect(codConfirmationLabel("cancelled")).toBe("Cancelled on WhatsApp");
   });
 
+  it("★ an automatic cancellation does not read as the customer cancelling", () => {
+    expect(codConfirmationLabel("expired")).toBe("Not confirmed on WhatsApp");
+  });
+
   it("★ renders nothing when the customer was never asked", () => {
     const { container } = render(<CodConfirmationTag value={null} />);
     expect(container.textContent).toBe("");

@@ -70,6 +70,8 @@ export const SETTING_KEYS = [
   "whatsapp.updatePrecedence",
   "whatsapp.chatButton",
   "whatsapp.codConfirmation",
+  "whatsapp.codReminder",
+  "whatsapp.codAutoCancel",
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];
@@ -754,6 +756,35 @@ export const SETTINGS: readonly SettingDef[] = [
     section: "channels",
     type: "boolean",
     defaultValue: false,
+  },
+  {
+    // ON by default once confirmation is on: the same message once more, to
+    // somebody who has not answered, is part of asking. Resends the approved
+    // COD template, so it needs no new approval (it is a paid utility message).
+    key: "whatsapp.codReminder",
+    label: "Remind customers who haven't answered after 24 hours",
+    description:
+      "Sends the confirmation message once more to a customer whose cash-on-delivery order is still waiting for an answer 24 hours later.",
+    group: "WhatsApp",
+    section: "channels",
+    type: "boolean",
+    defaultValue: true,
+    dependsOn: "whatsapp.codConfirmation",
+  },
+  {
+    // ★ OFF BY DEFAULT: cancelling an order nobody asked to cancel is the
+    // merchant's decision to make, not ours. Only orders still pending, and
+    // only 48 to 72 hours after the message (lib/whatsapp/cod-sweep.ts), so
+    // switching it on never cancels last week's orders.
+    key: "whatsapp.codAutoCancel",
+    label: "Cancel orders not confirmed within 48 hours",
+    description:
+      "Cancels a pending cash-on-delivery order whose customer has not confirmed it on WhatsApp 48 hours after the message. Its stock goes back on sale and the customer is told.",
+    group: "WhatsApp",
+    section: "channels",
+    type: "boolean",
+    defaultValue: false,
+    dependsOn: "whatsapp.codConfirmation",
   },
 ];
 

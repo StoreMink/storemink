@@ -205,6 +205,16 @@ customer replying "cancel" changes nothing about consent. Replying "START"
 restores offers only for a customer who had agreed to them before. _Pinned by
 `inbox-intent.test.ts` and `inbox.test.ts`._
 
+**WA-3.7a — STOP gets an answer and does not wait for staff.** The customer
+replies "STOP". Within seconds they get "You will not get offers from … on
+WhatsApp any more. You will still get updates about your orders." Inbox shows
+the STOP and that automatic reply, and the conversation is not in Needs reply,
+the badge does not move and the bell does not ring. A START from a customer who
+had agreed to offers gets "You will get offers from … again"; a START from
+anyone else is an ordinary message waiting for a person. With the number
+paused, the opt-out is still recorded and no reply is sent. _Pinned by
+`opt-out-reply.test.ts`, `inbox.test.ts` and `inbound-cod.test.ts`._
+
 **WA-3.8 — The customer strip.** Opening **Details** on a conversation shows
 what the customer agreed to, their store credit when the number matches an
 account on this store, a link to their customer profile, and their five most
@@ -215,6 +225,15 @@ construction in `inbox-read.ts`; not covered by a database probe._
 **WA-3.9 — Close and reopen.** **Close** moves a conversation to Closed and
 clears its unread count; the customer's next message reopens it as Needs
 reply. **Reopen** moves a closed one to Open. Neither sends anything.
+
+**WA-3.9a — Closed chats are deleted after two years.** A conversation that
+has been Closed with no message for two years disappears from the inbox on
+the next nightly retention run, with its messages and any photos or files the
+customer sent; the customer's WhatsApp consent stays on their contact. An Open
+or Needs reply conversation of the same age is untouched, and a closed one the
+customer wrote to in between has reopened and is untouched too. If a photo
+could not be deleted, the whole conversation stays and is tried again the next
+night. _Pinned by `lib/whatsapp/retention.test.ts` and `prune.test.ts`._
 
 **WA-3.10 — The customer can change their mind.** A signed-in shopper on a
 connected store opens **My account**: a **WhatsApp** card shows two switches
@@ -309,25 +328,60 @@ an order that is not cash on delivery, changes nothing and gets no reply; the
 conversation goes to a person. _Pinned by `cod-confirmation.test.ts` and
 `cod-payload.test.ts`._
 
+**WA-4.7a — A real COD order is recognised.** A website COD order is stored
+as `payment_method = 'cash_on_delivery'`; a tap on its buttons confirms or
+cancels it. (The first version compared the row against `cod`, the checkout
+choice, and refused every real tap; found on dev 2026-10-13.) _Pinned by
+`cod-confirmation.test.ts`._
+
+**WA-4.7b — Store credit that pays it all is not cash on delivery.** A shopper
+whose store credit covers the whole order, having picked cash on delivery, gets
+the usual order message, never the Confirm/Cancel buttons, and the
+confirmation's payment line reads "Store credit". _Pinned by
+`checkout-actions.test.ts`._
+
 **WA-4.8 — The inbox cannot send it by hand.** After the 24-hour window
 closes, the inbox's template picker does not list the COD confirmation, and
 forcing it through the send action is refused, because a hand-sent copy would
 carry no order. _Pinned by `inbox-actions.test.ts` and `channel.test.ts`._
 
+**WA-4.9 — One reminder after 24 hours.** With confirmation on, a shopper who
+has not tapped anything gets the same Confirm/Cancel message once more 24 to
+48 hours after the first, and never a third time, however often the hourly
+sweep runs. An order the shop has already moved past Pending gets no
+reminder, nor does any order when **Remind customers who haven't answered
+after 24 hours** is off. Switching the reminder on never reminds orders whose
+message went more than two days ago. _Pinned by `cod-sweep.test.ts`._
+
+**WA-4.10 — Automatic cancellation is the merchant's choice.** With **Cancel
+orders not confirmed within 48 hours** on, a Pending COD order still awaiting
+an answer 48 to 72 hours after the message is cancelled: its stock goes back
+on sale, nothing is refunded, the customer gets the cancellation message, the
+order's history names the system rather than an admin, and the order list
+shows **Not confirmed on WhatsApp**. With it off (the default) nothing is
+cancelled. An order whose customer tapped **Confirm order** a moment before
+the sweep is not cancelled. _Pinned by `cod-sweep.test.ts` and
+`approve-cancellation.test.ts`._
+
+**WA-4.11 — Confirming too late goes to a person.** A shopper whose order was
+cancelled automatically taps **Confirm order**: they are told it was cancelled
+because it was not confirmed in time, nothing about the order changes, and the
+chat lands in **Needs reply** with the bell. A **Cancel order** tap on it is
+answered "already cancelled". _Pinned by `cod-confirmation.test.ts`._
+
 ---
 
 ## Known gaps
 
-| Gap                                                                                                                                                 | Since      | Status                       |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------- |
-| The connect flow has not run against a live Embedded Signup popup; dev has carried the configuration ID since 2026-10-13                            | 2026-10-08 | Waiting on a live run on dev |
-| An unreachable database reads as "not connected" on the Channels card (the SMS card's documented gap, shared)                                       | 2026-10-08 | Open                         |
-| Template submission, the status webhook, echoes and media download follow Meta's published shapes but have not run against live Meta                | 2026-10-08 | With the live verification   |
-| Dashboard replies are text only; a photo or file must be sent from the phone                                                                        | 2026-10-08 | Phase 2                      |
-| Coexistence contact/history sync (`smb_app_state_sync`) is recorded, not processed — a thread starts at the first message after connecting          | 2026-10-08 | Phase 2                      |
-| No assignment, labels, notes, canned replies, business hours or search inside messages; the thread shows the latest 200 messages                    | 2026-10-08 | Phase 2                      |
-| A STOP gets no acknowledgement message; the opt-out is recorded silently                                                                            | 2026-10-08 | Phase 2 (auto-replies)       |
-| Inbound media is kept in the public media bucket at an unguessable path, like the Media Library; a customer's photo is as public as a product photo | 2026-10-08 | Open                         |
-| COD confirmation has not run against live Meta: the button payload shapes follow Meta's reference                                                   | 2026-10-13 | With the live verification   |
-| An unanswered COD confirmation gets no reminder, and an unconfirmed order is never cancelled automatically                                          | 2026-10-13 | Phase 2                      |
-| A COD customer who did not tick WhatsApp updates is never asked to confirm (SMS has no buttons)                                                     | 2026-10-13 | By design                    |
+| Gap                                                                                                                                                          | Since      | Status                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------------- |
+| The connect flow has not run against a live Embedded Signup popup; dev has carried the configuration ID since 2026-10-13                                     | 2026-10-08 | Waiting on a live run on dev |
+| An unreachable database reads as "not connected" on the Channels card (the SMS card's documented gap, shared)                                                | 2026-10-08 | Open                         |
+| Template submission, the status webhook, echoes and media download follow Meta's published shapes but have not run against live Meta                         | 2026-10-08 | With the live verification   |
+| Dashboard replies are text only; a photo or file must be sent from the phone                                                                                 | 2026-10-08 | Phase 2                      |
+| Coexistence contact/history sync (`smb_app_state_sync`) is recorded, not processed — a thread starts at the first message after connecting                   | 2026-10-08 | Phase 2                      |
+| No assignment, labels, notes, canned replies, business hours or search inside messages; the thread shows the latest 200 messages                             | 2026-10-08 | Phase 2                      |
+| Inbound media is kept in the public media bucket at an unguessable path, like the Media Library; a customer's photo is as public as a product photo          | 2026-10-08 | Open                         |
+| COD confirmation has not run against live Meta: the button payload shapes follow Meta's reference                                                            | 2026-10-13 | With the live verification   |
+| A COD customer who did not tick WhatsApp updates is never asked to confirm (SMS has no buttons)                                                              | 2026-10-13 | By design                    |
+| The COD reminder and automatic cancellation run only where the hourly order sweep is scheduled, which is production; on dev the route must be called by hand | 2026-10-13 | By design                    |

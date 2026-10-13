@@ -1392,6 +1392,29 @@ describe("placeOrder — store credit", () => {
     expect(paid).toBeUndefined();
   });
 
+  it("★ announces a fully-covered order as paid by store credit, not cash on delivery", async () => {
+    // The confirmation's payment line and the WhatsApp COD buttons both read
+    // this: "Cash on delivery" with Confirm/Cancel for an order with nothing
+    // to collect is wrong twice.
+    seedWithCredit(500);
+    await placeOrder(validForm, [oneItem()]);
+    const placed = vi
+      .mocked(emitEvent)
+      .mock.calls.map((c) => c[0])
+      .find((e) => e.type === "order.placed");
+    expect(placed?.payload?.paymentMethod).toBe("store_credit");
+  });
+
+  it("a partly-covered COD order is still announced as cash on delivery", async () => {
+    seedWithCredit(50);
+    await placeOrder(validForm, [oneItem()]);
+    const placed = vi
+      .mocked(emitEvent)
+      .mock.calls.map((c) => c[0])
+      .find((e) => e.type === "order.placed");
+    expect(placed?.payload?.paymentMethod).toBe("cod");
+  });
+
   it("doesn't look up a balance for a signed-out shopper", async () => {
     seedWithCredit(50);
     vi.mocked(getServerUser).mockResolvedValue(null as any);

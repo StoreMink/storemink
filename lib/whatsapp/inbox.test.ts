@@ -229,6 +229,29 @@ describe("recordInboundMessage", () => {
     expect(calls.set[1]).toEqual({ payload: { intent: "stop" } });
   });
 
+  it("★ STOP is answered by the system: reported for a reply, never Needs reply or the bell", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "STOP" } }),
+    });
+    expect(r).toMatchObject({
+      optOut: "stop",
+      needsNotify: false,
+      phone: "+919876543210",
+    });
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(true);
+  });
+
+  it("START from somebody who never agreed to offers is an ordinary message", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "start" } }),
+    });
+    expect(r.optOut).toBeNull();
+    expect(r.needsNotify).toBe(true);
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(false);
+  });
+
   it("★ START re-opts in only somebody who had opted in before", async () => {
     await recordInboundMessage(dbHolder.current.db, {
       storeId: STORE,

@@ -6,9 +6,7 @@ import { orders, stores, users } from "@/drizzle/schema";
 import { approveCancellation } from "@/lib/orders/approve-cancellation";
 import { logError, logInfo } from "@/lib/observability/logger";
 import { textablePhone } from "@/lib/phone";
-import { loadWhatsAppSender } from "./channel";
-import { sendWhatsAppText, type SendWhatsAppResult } from "./send";
-import { recordOutboundMessage } from "./inbox";
+import { replyInChat } from "./auto-reply";
 import type { CodPayload } from "./cod-payload";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +40,7 @@ export type CodOutcome =
   | "already_confirmed"
   | "cancelled"
   | "already_cancelled"
+  | "expired"
   | "too_late"
   | "failed"
   | "not_allowed";
@@ -67,6 +66,9 @@ const NEEDS_HUMAN: Record<CodOutcome, boolean> = {
   already_confirmed: false,
   cancelled: false,
   already_cancelled: false,
+  // A Confirm after the store's automatic cancellation: the customer still
+  // wants the goods, and only a person can put the order back.
+  expired: true,
   too_late: true,
   failed: true,
   not_allowed: true,
@@ -142,6 +144,8 @@ export function codReplyText(
       return `${order} has been cancelled. You will not be charged anything for it.`;
     case "already_cancelled":
       return `${order} has already been cancelled.`;
+    case "expired":
+      return `${order} was cancelled because it was not confirmed in time. Someone from ${shop} will reply to you in this chat.`;
     case "too_late":
       return `${order} has already been sent out, so it can't be cancelled here. Someone from ${shop} will reply to you in this chat.`;
     case "failed":
@@ -224,6 +228,7 @@ async function readOrder(
 }
 
 async function confirm(storeId: string, order: CodOrder): Promise<CodOutcome> {
+  if (order.codConfirmation === "expired") return "expired";
   if (order.status === "cancelled" || order.codConfirmation === "cancelled") {
     return "already_cancelled";
   }
@@ -246,7 +251,11 @@ async function confirm(storeId: string, order: CodOrder): Promise<CodOutcome> {
         )
         .returning({ id: orders.id }),
     );
-    return rows.length > 0 ? "confirmed" : "already_cancelled";
+    if (rows.length > 0) return "confirmed";
+    // Cancelled in between: by the customer's own Cancel, or by the store's
+    // automatic cancellation, which wants a different answer.
+    const now = await readOrder(storeId, order.id).catch(() => null);
+    return now?.codConfirmation === "expired" ? "expired" : "already_cancelled";
   } catch (err) {
     logError("whatsapp cod: confirm failed", err, { storeId });
     return "failed";
@@ -317,50 +326,13 @@ async function answer(
 ): Promise<void> {
   const body = codReplyText(outcome, order.orderRef, order.storeName);
   if (!body) return;
-  const { storeId } = input;
-
-  const sender = await withService((db) =>
-    loadWhatsAppSender(db, storeId),
-  ).catch(() => null);
-  if (!sender) {
-    // Paused, disconnected or a lapsed plan: the action stands, but there is
-    // no number to answer from.
-    logInfo("whatsapp cod: reply not sent, no sender", { storeId, outcome });
-    return;
-  }
-
-  let sent: SendWhatsAppResult;
-  try {
-    sent = await sendWhatsAppText({
-      storeId,
-      to: input.phone,
-      token: sender.token,
-      phoneNumberId: sender.phoneNumberId,
-      body,
-    });
-  } catch (err) {
-    logError("whatsapp cod: reply send threw", err, { storeId });
-    sent = {
-      sent: false,
-      outcome: "unknown",
-      error: "The reply could not be sent.",
-    };
-  }
-
-  await withService((db) =>
-    recordOutboundMessage(db, {
-      storeId,
-      conversationId: input.conversationId,
-      source: "automation",
-      kind: "text",
-      body,
-      providerMessageId: sent.sent ? sent.messageId : null,
-      status: sent.sent ? "sent" : "failed",
-      error: sent.sent ? null : sent.error,
-    }),
-  ).catch((err) =>
-    logError("whatsapp cod: reply filing failed", err, { storeId }),
-  );
+  await replyInChat({
+    storeId: input.storeId,
+    conversationId: input.conversationId,
+    to: input.phone,
+    body,
+    reason: `cod:${outcome}`,
+  });
 }
 
 /**

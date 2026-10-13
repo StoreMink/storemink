@@ -16,6 +16,7 @@ import { settleOrderPayment } from "@/lib/payments/capture";
 import { sweepPendingRefunds } from "@/lib/payments/refund-reconcile";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
 import { releaseCancelledOrder } from "@/lib/orders/cancel";
+import { sweepCodConfirmations } from "@/lib/whatsapp/cod-sweep";
 
 // Reaper for online-payment orders stuck in `payment_status: 'pending'` —
 // v1 has no merchant webhooks (reconcile-on-read instead), so this scheduled
@@ -38,7 +39,8 @@ import { releaseCancelledOrder } from "@/lib/orders/cancel";
 //   3. Look again at orders it expired in the last three days: a payment that
 //      landed after expiry is recorded so it can be refunded, never lost.
 //
-// It ALSO cancels pickups nobody collected (Phase F) and sweeps expired stock
+// It ALSO cancels pickups nobody collected (Phase F), follows up WhatsApp
+// cash-on-delivery confirmations nobody answered, and sweeps expired stock
 // holds (roadmap Phase E). Same job because it is
 // the same shape of problem — units set aside for something that never
 // completed — and a hold nobody ends would make stock unsellable forever.
@@ -142,16 +144,15 @@ async function handle(request: Request) {
     return NextResponse.json({ error: "read failed" }, { status: 500 });
   }
   if (!pending.length) {
-    // The refund sweep runs even with no pending payments — money going OUT
-    // is a different queue from money coming in, and a store can easily have
-    // a refund in limbo and not one unpaid order.
+    // The standing sweeps run even with no pending payments: money going OUT,
+    // uncollected pickups and unanswered COD confirmations are different
+    // queues from money coming in, and a store can easily have one of them
+    // and not one unpaid order.
     return NextResponse.json({
       ok: true,
       paid: 0,
       expired: 0,
-      latePayments: await sweepLatePayments(),
-      refundsSettled: await sweepPendingRefunds(),
-      holdsFreed: await sweepExpiredHolds(),
+      ...(await standingSweeps()),
     });
   }
 
@@ -300,6 +301,22 @@ async function handle(request: Request) {
     }
   }
 
+  return NextResponse.json({
+    ok: true,
+    paid,
+    expired,
+    ...(await standingSweeps()),
+  });
+}
+
+/**
+ * The sweeps that do not depend on any online payment being stuck. ★ They
+ * used to run only on the path that found pending payments, so on the
+ * ordinary hour with none, uncollected pickups never expired and their
+ * reminders never went. One helper for both returns, so the two cannot drift.
+ */
+async function standingSweeps() {
+  const latePayments = await sweepLatePayments();
   // Pickups first: cancelling an uncollected order releases its own holds, so
   // running the generic sweep afterwards finds a tidier table (and anything the
   // pickup pass failed to release still lapses here on TTL).
@@ -308,20 +325,21 @@ async function handle(request: Request) {
   // is no longer awaiting collection, and telling someone to hurry and collect
   // something we have already cancelled is worse than saying nothing.
   const pickupsWarned = await sweepPickupReminders();
-
-  return NextResponse.json({
-    ok: true,
-    paid,
-    expired,
-    latePayments: await sweepLatePayments(),
+  // Cash-on-delivery orders nobody confirmed on WhatsApp: the one reminder,
+  // then (where the store switched it on) the automatic cancellation. Before
+  // the hold sweep, because a cancellation releases what the order held.
+  const codFollowUp = await sweepCodConfirmations();
+  return {
+    latePayments,
     pickupsExpired,
     pickupsWarned,
+    codFollowUp,
     // Refunds whose gateway call we never got an answer for. The order page
     // reconciles instantly when anyone looks; this is the backstop for the
     // ones nobody opens.
     refundsSettled: await sweepPendingRefunds(),
     holdsFreed: await sweepExpiredHolds(),
-  });
+  };
 }
 
 export const GET = handle;
