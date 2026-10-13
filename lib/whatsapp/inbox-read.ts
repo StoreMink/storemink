@@ -13,8 +13,15 @@ import {
 } from "@/drizzle/schema";
 import { gcsPublicUrl } from "@/lib/storage/gcs";
 import { formatStoredPhone, storedPhoneVariants } from "@/lib/phone";
-import { bodyFromComponents, consented, templateHasButtons } from "./channel";
+import { bodyFromComponents, consented } from "./channel";
+import {
+  composerCanSend,
+  templateButtonsOf,
+  templateFooterText,
+  templateHeaderText,
+} from "./custom-template";
 import { serviceWindow } from "./inbox";
+import { loadMinkDraft } from "./mink-drafts";
 import type {
   InboxConversationRow,
   InboxConversationStatus,
@@ -237,9 +244,12 @@ export async function loadThread(
   const core = await loadConversation(storeId, conversationId);
   if (!core) return null;
 
-  const [messages, customer] = await Promise.all([
+  const [messages, customer, minkDraft] = await Promise.all([
     loadMessages(storeId, conversationId),
     loadCustomerPanel(storeId, core),
+    // A draft that cannot be read is a draft not shown, never a thread that
+    // fails to open.
+    loadMinkDraft(storeId, conversationId).catch(() => null),
   ]);
 
   return {
@@ -247,6 +257,7 @@ export async function loadThread(
     messages,
     window: serviceWindow(core.contact.lastInboundAt),
     customer,
+    minkDraft,
   };
 }
 
@@ -417,6 +428,7 @@ export async function listReplyTemplates(
         variables: whatsappTemplates.variables,
         components: whatsappTemplates.components,
         audience: whatsappTemplates.audience,
+        eventKey: whatsappTemplates.eventKey,
       })
       .from(whatsappTemplates)
       .where(
@@ -429,12 +441,18 @@ export async function listReplyTemplates(
       .orderBy(whatsappTemplates.name),
   );
   return rows
-    .filter((r) => r.audience !== "team" && !templateHasButtons(r.components))
+    .filter((r) => r.audience !== "team" && composerCanSend(r))
     .map((r) => ({
       id: r.id,
       name: r.name,
       language: r.language,
       body: bodyFromComponents(r.components),
       variables: Array.isArray(r.variables) ? (r.variables as string[]) : [],
+      headerText: templateHeaderText(r.components),
+      footerText: templateFooterText(r.components),
+      buttons: templateButtonsOf(r.components).map((b) => ({
+        type: b.type,
+        text: b.text,
+      })),
     }));
 }

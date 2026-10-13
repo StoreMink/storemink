@@ -35,6 +35,7 @@
     "test:watch": "vitest",
     "test:shuffle": "vitest run --coverage=false --sequence.shuffle --sequence.seed=20260813",
     "mink:eval": "node scripts/mink-eval.mjs",
+    "mink:whatsapp-eval": "tsx --tsconfig tsconfig.scripts.json scripts/mink-whatsapp-eval.ts",
     "theme-studio:model-check": "node scripts/theme-studio-model-check.mjs",
     "email:gallery": "tsx --tsconfig tsconfig.scripts.json scripts/email-gallery.ts",
     "theme-studio:eval": "tsx --tsconfig tsconfig.scripts.json scripts/theme-studio-eval.ts",

@@ -124,6 +124,7 @@ describe("codReplyText", () => {
       "already_confirmed",
       "cancelled",
       "already_cancelled",
+      "expired",
       "too_late",
       "failed",
     ] as const) {
@@ -171,6 +172,33 @@ describe("handleCodReply", () => {
     setup([[ORDER_ROW]], [[]]);
     const r = await tap("confirm");
     expect(r.outcome).toBe("already_cancelled");
+  });
+
+  it("★ a confirm after the store's automatic cancellation goes to a person", async () => {
+    // The customer still wants the goods; only the shop can put them back.
+    setup([
+      [{ ...ORDER_ROW, status: "cancelled", codConfirmation: "expired" }],
+    ]);
+    const mock = dbHolder.current;
+    const r = await tap("confirm");
+    expect(r).toEqual({ outcome: "expired", needsHuman: true });
+    expect(mock.calls.update).toHaveLength(0);
+    expect(sendWhatsAppText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("not confirmed in time"),
+      }),
+    );
+  });
+
+  it("a confirm that loses a race with the automatic cancellation says so", async () => {
+    setup(
+      [
+        [ORDER_ROW],
+        [{ ...ORDER_ROW, status: "cancelled", codConfirmation: "expired" }],
+      ],
+      [[]],
+    );
+    expect((await tap("confirm")).outcome).toBe("expired");
   });
 
   it("a second confirm is answered, not re-written", async () => {

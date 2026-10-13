@@ -50,7 +50,9 @@ import {
   MessageCircle,
   Search,
   Send,
+  Settings2,
   Smartphone,
+  Sparkles,
   User,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -59,10 +61,12 @@ import { isTouchPrimary } from "@/lib/pos/keyboard-wedge";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { formatPrice } from "@/lib/pricing";
 import {
+  discardMinkDraft,
   getInboxThread,
   markInboxRead,
   sendInboxReply,
   sendInboxTemplate,
+  sendMinkDraft,
   setInboxConversationStatus,
 } from "@/app/actions/inbox-actions";
 import {
@@ -71,6 +75,7 @@ import {
   type InboxFilter,
   type InboxListResult,
   type InboxMessageRow,
+  type InboxMinkDraft,
   type InboxTemplateOption,
   type InboxThread,
 } from "@/lib/whatsapp/inbox-types";
@@ -280,6 +285,13 @@ export function InboxClient({
           <h1>Inbox</h1>
           <p>Customer conversations on your WhatsApp number.</p>
         </div>
+        <Link
+          href="/dashboard/inbox/settings"
+          className="dash-btn dash-btn-ghost dash-btn-sm shrink-0"
+        >
+          <Settings2 className="h-4 w-4" />
+          Automatic replies
+        </Link>
       </header>
 
       {/* `has-thread` lets a narrow card show one pane at a time (inbox.css);
@@ -649,6 +661,17 @@ function ThreadPane({
         )}
       </div>
 
+      {thread.minkDraft && canManage && (
+        <MinkDraftCard
+          key={thread.minkDraft.id}
+          conversationId={conversationId}
+          draft={thread.minkDraft}
+          windowOpen={thread.window.open}
+          channelLive={channelLive}
+          onChanged={onChanged}
+        />
+      )}
+
       <Composer
         key={conversationId}
         conversationId={conversationId}
@@ -660,6 +683,114 @@ function ThreadPane({
         onSent={onChanged}
       />
     </div>
+  );
+}
+
+/**
+ * A reply Mink wrote and did not send: shown above the composer with what it
+ * drew on, editable, with Send (one Mink credit) and Discard. It is NOT the
+ * composer: a person writing their own reply leaves the draft where it is,
+ * and sending their own reply discards it.
+ */
+function MinkDraftCard({
+  conversationId,
+  draft,
+  windowOpen,
+  channelLive,
+  onChanged,
+}: {
+  conversationId: string;
+  draft: InboxMinkDraft;
+  windowOpen: boolean;
+  channelLive: boolean;
+  onChanged: () => Promise<void>;
+}) {
+  const [text, setText] = useState(draft.text);
+  const [busy, setBusy] = useState(false);
+  const canSend = windowOpen && channelLive && text.trim().length > 0;
+
+  async function send() {
+    if (busy || !canSend) return;
+    setBusy(true);
+    const r = await sendMinkDraft({ conversationId, draftId: draft.id, text });
+    setBusy(false);
+    if (!r.ok) {
+      toast.error(r.error ?? "Couldn't send the draft.");
+      if (r.code === "gone" || r.messageId) await onChanged();
+      return;
+    }
+    toast.success("Sent.");
+    await onChanged();
+  }
+
+  async function discard() {
+    if (busy) return;
+    setBusy(true);
+    const r = await discardMinkDraft({ conversationId, draftId: draft.id });
+    setBusy(false);
+    if (!r.ok) {
+      toast.error(r.error ?? "Couldn't discard the draft.");
+      return;
+    }
+    await onChanged();
+  }
+
+  return (
+    <section className="inbox-mink" aria-label="Mink AI suggestion">
+      <div className="inbox-mink-head">
+        <Sparkles className="h-3.5 w-3.5" />
+        <span>
+          {draft.mode === "helps"
+            ? "Mink handed this one to you"
+            : "Mink drafted a reply"}
+        </span>
+        {draft.reason && (
+          <span className="inbox-mink-reason" title={draft.reason}>
+            {draft.reason}
+          </span>
+        )}
+      </div>
+      {draft.facts.length > 0 && (
+        <p className="inbox-mink-facts">Based on: {draft.facts.join(" · ")}</p>
+      )}
+      <textarea
+        className="inbox-mink-text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={Math.min(6, Math.max(2, text.split("\n").length))}
+        maxLength={INBOX_REPLY_MAX_CHARS}
+        aria-label="Mink AI draft"
+        disabled={busy}
+      />
+      <div className="inbox-mink-actions">
+        <span className="inbox-mink-note">
+          {!channelLive
+            ? "Your WhatsApp number is paused, so this can't be sent."
+            : !windowOpen
+              ? "The 24-hour window has closed; only a template can be sent now."
+              : draft.charged
+                ? "Already paid for: sending uses no credit."
+                : "Sending uses 1 Mink credit."}
+        </span>
+        <button
+          type="button"
+          className="inbox-text-btn"
+          disabled={busy}
+          onClick={discard}
+        >
+          Discard
+        </button>
+        <button
+          type="button"
+          className="inbox-send inbox-mink-send"
+          disabled={busy || !canSend}
+          onClick={send}
+          aria-label="Send Mink's draft"
+        >
+          <Send className="h-4 w-4" /> Send
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -776,12 +907,23 @@ function Bubble({
   const out = m.direction === "out";
   const intent =
     m.payload && typeof m.payload.intent === "string" ? m.payload.intent : null;
+  // The store's menu, as it was sent: the buttons under the text.
+  const buttons = out ? menuButtonsOf(m) : [];
+  // A customer's tap on one of them: their words are the button's label.
+  const tapped =
+    !out && m.kind === "interactive" && m.payload?.replyType === "button";
   const inboundError = Boolean(m.error && !out);
   const outboundError = Boolean(out && m.status === "failed" && m.error);
   // ★ The time sits over the end of the last line only when the text IS the
-  // last line; a flag or an error under it gets the time on its own row.
+  // last line; a flag, buttons or an error under it get the time on their
+  // own row.
   const tailMeta =
-    Boolean(m.body) && !intent && !inboundError && !outboundError;
+    Boolean(m.body) &&
+    !intent &&
+    !tapped &&
+    buttons.length === 0 &&
+    !inboundError &&
+    !outboundError;
   const hasMedia = Boolean(m.mediaUrl);
   return (
     <div
@@ -804,6 +946,16 @@ function Bubble({
             )}
           </p>
         )}
+        {buttons.length > 0 && (
+          <span className="inbox-bubble-buttons" aria-label="Menu buttons">
+            {buttons.map((b) => (
+              <span key={b.id} className="inbox-bubble-button">
+                {b.title}
+              </span>
+            ))}
+          </span>
+        )}
+        {tapped && <span className="inbox-bubble-flag">Tapped a button</span>}
         {intent === "stop" && (
           <span className="inbox-bubble-flag">Opted out of offers</span>
         )}
@@ -823,6 +975,20 @@ function Bubble({
   );
 }
 
+/** The reply buttons a sent menu carried, read back off the stored row. */
+function menuButtonsOf(m: InboxMessageRow): { id: string; title: string }[] {
+  if (m.kind !== "interactive" || !Array.isArray(m.payload?.buttons)) return [];
+  const out: { id: string; title: string }[] = [];
+  for (const b of m.payload.buttons as unknown[]) {
+    if (!b || typeof b !== "object") continue;
+    const { id, title } = b as { id?: unknown; title?: unknown };
+    if (typeof id === "string" && typeof title === "string" && title) {
+      out.push({ id, title });
+    }
+  }
+  return out;
+}
+
 /** Who sent an outbound message, when it is worth saying; null for the
  *  customer's own messages and the shop's unnamed automation. */
 function senderLabel(m: InboxMessageRow): string | null {
@@ -831,8 +997,11 @@ function senderLabel(m: InboxMessageRow): string | null {
   if (m.source === "template") {
     return m.sentBy ? `Template · ${m.sentBy}` : "Order update";
   }
-  if (m.source === "automation") return "Automatic reply";
-  if (m.source === "dashboard" && m.sentBy) return m.sentBy;
+  const mink = m.payload?.mink === true;
+  if (m.source === "automation") return mink ? "Mink AI" : "Automatic reply";
+  if (m.source === "dashboard" && m.sentBy) {
+    return mink ? `${m.sentBy} · from a Mink draft` : m.sentBy;
+  }
   return null;
 }
 
@@ -843,6 +1012,7 @@ function SenderLabel({ m }: { m: InboxMessageRow }) {
     <span className="inbox-bubble-source">
       {m.source === "phone_app" && <Smartphone className="h-3 w-3" />}
       {m.source === "template" && <FileText className="h-3 w-3" />}
+      {m.payload?.mink === true && <Sparkles className="h-3 w-3" />}
       {label}
     </span>
   );
@@ -1080,7 +1250,26 @@ function Composer({
               </select>
               {template && (
                 <>
+                  {template.headerText ? (
+                    <p className="inbox-template-body inbox-template-header">
+                      {template.headerText}
+                    </p>
+                  ) : null}
                   <p className="inbox-template-body">{template.body}</p>
+                  {template.footerText ? (
+                    <p className="inbox-template-body inbox-template-footer">
+                      {template.footerText}
+                    </p>
+                  ) : null}
+                  {template.buttons && template.buttons.length > 0 ? (
+                    <span className="inbox-bubble-buttons" aria-label="Buttons">
+                      {template.buttons.map((b) => (
+                        <span key={b.text} className="inbox-bubble-button">
+                          {b.text}
+                        </span>
+                      ))}
+                    </span>
+                  ) : null}
                   {template.variables.map((v, i) => (
                     <label key={v} className="inbox-field">
                       <span>{labelVariable(v)}</span>

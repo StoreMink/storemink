@@ -22,7 +22,12 @@ import {
   type ParsedMedia,
 } from "./inbox-parse";
 import { WHATSAPP_MARKETING_CONSENT_REPLY } from "./consent-copy";
+import { parseMenuPayload } from "./menu-payload";
+import { minkGate } from "./mink-gate";
+import type { MinkMode } from "./auto-reply-settings";
 import { parseCodPayload, type CodPayload } from "./cod-payload";
+import { conversationMediaPrefix } from "./retention";
+import { WELCOME_QUIET_DAYS } from "./auto-reply-settings";
 
 // ---------------------------------------------------------------------------
 // The inbox's write side: what a webhook delivery does to contacts,
@@ -94,8 +99,28 @@ export interface RecordInboundResult {
   userId: string | null;
   /** A tap on a COD Confirm / Cancel button, to act on after commit. */
   codReply: CodPayload | null;
+  /** A STOP or START that changed the contact's offers consent, to
+   *  acknowledge after commit. */
+  optOut: "stop" | "start" | null;
+  /** "Where is my order?" from a store that answers it automatically, to
+   *  answer after commit (answer-automatically.ts). Filed like a COD tap. */
+  orderQuestion: boolean;
+  /** A tap on one of the store's menu buttons (the button's id), or the
+   *  customer asking for the menu (`"menu"`) on a store whose menu is on, to
+   *  act on after commit (menu-reply.ts). Filed like a COD tap. */
+  menuReply: string | null;
+  /** The first message, or the first after WELCOME_QUIET_DAYS with no
+   *  message either way: the moment a welcome message is for. */
+  welcomeEligible: boolean;
   /** The sender, as stored on the contact (E.164). */
   phone: string | null;
+  /** Customer-facing Mink is asked about this message after commit
+   *  (mink-answer.ts): `helps` files it like a COD tap and Mink answers or
+   *  hands over; `drafts` files it for a person with Mink's draft to follow.
+   *  Null for a message the gate kept for a person, or a store with Mink off. */
+  minkAnswer: Exclude<MinkMode, "off"> | null;
+  /** The customer's words, for Mink; null for anything but text. */
+  body: string | null;
 }
 
 const NOTHING: RecordInboundResult = {
@@ -110,7 +135,13 @@ const NOTHING: RecordInboundResult = {
   contactLabel: null,
   userId: null,
   codReply: null,
+  optOut: null,
+  orderQuestion: false,
+  menuReply: null,
+  welcomeEligible: false,
   phone: null,
+  minkAnswer: null,
+  body: null,
 };
 
 /**
@@ -175,18 +206,25 @@ async function upsertContact(
   };
 }
 
-/** Ensure the one conversation for a contact exists; report its status. */
+/**
+ * Ensure the one conversation for a contact exists; report its status and
+ * when its last message was, BEFORE the one being filed.
+ */
 async function ensureConversation(
   db: Db,
   storeId: string,
   contactId: string,
-): Promise<{ id: string; status: string }> {
-  const rows = asRows<{ id: string; status: string }>(
+): Promise<{ id: string; status: string; last_message_at: string | null }> {
+  const rows = asRows<{
+    id: string;
+    status: string;
+    last_message_at: string | null;
+  }>(
     await db.execute(sql`
       insert into public.whatsapp_conversations (store_id, contact_id)
       values (${storeId}::uuid, ${contactId}::uuid)
       on conflict (store_id, contact_id) do update set updated_at = now()
-      returning id, status
+      returning id, status, last_message_at
     `),
   );
   const row = rows[0];
@@ -202,7 +240,17 @@ async function ensureConversation(
  */
 export async function recordInboundMessage(
   db: Db,
-  ev: { storeId: string; value: Rec },
+  ev: {
+    storeId: string;
+    value: Rec;
+    /** The store answers "where is my order?" itself. Read by the caller
+     *  OUTSIDE this transaction (auto-reply-store.ts loadAutoReplyFlags). */
+    answersOrderQuestions?: boolean;
+    /** The store has menu buttons switched on, read the same way. */
+    hasMenu?: boolean;
+    /** What customer-facing Mink does on this store, read the same way. */
+    minkMode?: MinkMode;
+  },
 ): Promise<RecordInboundResult> {
   const parsed = parseInboundMessage(ev.value.message, ev.value.contacts);
   if (!parsed) throw new Error("inbound message has no id or sender");
@@ -260,10 +308,76 @@ export async function recordInboundMessage(
           (parsed.payload as Record<string, unknown> | null)?.buttonPayload,
         )
       : null;
-  const automated = codReply !== null;
+  // STOP / START (plan §10), classified BEFORE the conversation is touched:
+  // an opt-out the system records and answers (opt-out-reply.ts) does not ask
+  // staff for a reply either. START counts only for somebody who HAD opted in.
+  const intent =
+    parsed.kind === "text" && parsed.body
+      ? classifyWhatsAppInbound(parsed.body)
+      : null;
+  const optOut: "stop" | "start" | null =
+    intent === "stop"
+      ? "stop"
+      : intent === "start" && contact.marketingOptInAt
+        ? "start"
+        : null;
+  // "Where is my order?" from a store that answers it: the system replies,
+  // and hands the chat to a person only when it cannot (answer-automatically.ts).
+  const orderQuestion =
+    intent === "order_status" && ev.answersOrderQuestions === true;
+  // A tap on a menu button (its id rides in the reply id, menu-payload.ts),
+  // or "menu" typed to a store whose menu is on: the system answers, and
+  // hands over only when the button asks for a person (menu-reply.ts).
+  const menuReply =
+    parsed.kind === "interactive"
+      ? parseMenuPayload(
+          (parsed.payload as Record<string, unknown> | null)?.replyId,
+        )
+      : intent === "menu" && ev.hasMenu === true
+        ? "menu"
+        : null;
+  // Customer-facing Mink (mink-answer.ts), for a text message nothing above
+  // already answers and the gate (mink-gate.ts) lets through: a complaint,
+  // a refund, "talk to a person" or a bare greeting never reaches a model
+  // and is filed for a person exactly as before. `helps` is answered by the
+  // system (filed like a COD tap; a hand-over rings later); `drafts` only
+  // adds a draft to a message a person already has to read.
+  const minkMode = ev.minkMode ?? "off";
+  const minkAnswer =
+    minkMode !== "off" &&
+    parsed.kind === "text" &&
+    codReply === null &&
+    optOut === null &&
+    !orderQuestion &&
+    menuReply === null &&
+    minkGate(parsed.body).ok
+      ? minkMode
+      : null;
+  const automated =
+    codReply !== null ||
+    optOut !== null ||
+    orderQuestion ||
+    menuReply !== null ||
+    minkAnswer === "helps";
+  // ★ A BRAND-NEW CONVERSATION IS NOT ALREADY WAITING. The row is created with
+  // the column default `needs_reply`, which would read as "the bell already
+  // rang": the first message of every new conversation would then never ring
+  // it, and an automated first message (a STOP, a COD tap) would leave the
+  // conversation in Needs reply with nothing unread. A new conversation is
+  // judged as if it were open, and an automated first message makes it so.
+  const isNew = conversation.last_message_at === null;
+  const priorStatus = isNew ? "open" : conversation.status;
+  const priorAt = conversation.last_message_at
+    ? Date.parse(conversation.last_message_at)
+    : NaN;
+  const welcomeEligible =
+    !Number.isFinite(priorAt) ||
+    Date.parse(parsed.sentAt) - priorAt > WELCOME_QUIET_DAYS * 86_400_000;
   await db.execute(sql`
     update public.whatsapp_conversations set
-      status = case when ${automated}::boolean then status else 'needs_reply' end,
+      status = case when ${automated}::boolean
+                    then (case when ${isNew}::boolean then 'open' else status end)
+                    else 'needs_reply' end,
       unread_count = unread_count + case when ${automated}::boolean then 0 else 1 end,
       last_message_at = greatest(coalesce(last_message_at, '-infinity'::timestamptz), ${parsed.sentAt}::timestamptz),
       last_inbound_at = greatest(coalesce(last_inbound_at, '-infinity'::timestamptz), ${parsed.sentAt}::timestamptz),
@@ -272,40 +386,37 @@ export async function recordInboundMessage(
     where id = ${conversation.id}::uuid
   `);
 
-  // STOP / START (plan §10). Recorded on the contact; the message keeps the
-  // intent in its payload so the thread can say "opted out of offers".
-  if (parsed.kind === "text" && parsed.body) {
-    const intent = classifyWhatsAppInbound(parsed.body);
-    if (intent === "stop") {
-      await db
-        .update(whatsappContacts)
-        .set({
-          marketingOptOutAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(whatsappContacts.id, contact.id));
-      await db
-        .update(whatsappMessages)
-        .set({ payload: { intent: "stop" } })
-        .where(eq(whatsappMessages.id, messageId));
-    } else if (intent === "start" && contact.marketingOptInAt) {
-      // Only somebody who HAD opted in can re-opt in by reply: "start" from a
-      // customer who never agreed to offers is not consent to receive them.
-      const now = new Date().toISOString();
-      await db
-        .update(whatsappContacts)
-        .set({
-          marketingOptInAt: now,
-          marketingConsentText: WHATSAPP_MARKETING_CONSENT_REPLY,
-          marketingOptOutAt: null,
-          updatedAt: now,
-        })
-        .where(eq(whatsappContacts.id, contact.id));
-      await db
-        .update(whatsappMessages)
-        .set({ payload: { intent: "start" } })
-        .where(eq(whatsappMessages.id, messageId));
-    }
+  // Recorded on the contact; the message keeps the intent in its payload so
+  // the thread can say "opted out of offers".
+  if (optOut === "stop") {
+    await db
+      .update(whatsappContacts)
+      .set({
+        marketingOptOutAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(whatsappContacts.id, contact.id));
+    await db
+      .update(whatsappMessages)
+      .set({ payload: { intent: "stop" } })
+      .where(eq(whatsappMessages.id, messageId));
+  } else if (optOut === "start") {
+    // Only somebody who HAD opted in can re-opt in by reply: "start" from a
+    // customer who never agreed to offers is not consent to receive them.
+    const now = new Date().toISOString();
+    await db
+      .update(whatsappContacts)
+      .set({
+        marketingOptInAt: now,
+        marketingConsentText: WHATSAPP_MARKETING_CONSENT_REPLY,
+        marketingOptOutAt: null,
+        updatedAt: now,
+      })
+      .where(eq(whatsappContacts.id, contact.id));
+    await db
+      .update(whatsappMessages)
+      .set({ payload: { intent: "start" } })
+      .where(eq(whatsappMessages.id, messageId));
   }
 
   return {
@@ -313,14 +424,20 @@ export async function recordInboundMessage(
     contactId: contact.id,
     conversationId: conversation.id,
     messageId,
-    needsNotify: !automated && conversation.status !== "needs_reply",
+    needsNotify: !automated && priorStatus !== "needs_reply",
     media: parsed.media,
     kind: parsed.kind,
     preview,
     contactLabel,
     userId: contact.userId,
     codReply,
+    optOut,
+    orderQuestion,
+    menuReply,
+    welcomeEligible,
     phone: parsed.phone,
+    minkAnswer,
+    body: parsed.kind === "text" ? parsed.body : null,
   };
 }
 
@@ -397,7 +514,13 @@ export async function recordEchoMessage(
     contactLabel: null,
     userId: contact.userId,
     codReply: null,
+    optOut: null,
+    orderQuestion: false,
+    menuReply: null,
+    welcomeEligible: false,
     phone: null,
+    minkAnswer: null,
+    body: null,
   };
 }
 
@@ -405,6 +528,14 @@ export async function recordEchoMessage(
  * Record a message STAFF sent from the dashboard (or the template spine sent
  * on their behalf), after the choke point has reported the outcome. The
  * conversation becomes `open`: somebody answered.
+ *
+ * ★★ AN AUTOMATIC MESSAGE ANSWERS NOBODY. A welcome, an away message or a COD
+ * confirmation leaves the conversation's status and unread count exactly as
+ * they were: a customer whose question was waiting in Needs reply is still
+ * waiting. (It used to open the conversation and clear its unread count like
+ * a staff reply, so a customer who asked something and then tapped Confirm
+ * dropped out of Needs reply with the question unanswered.) While the
+ * conversation waits, the list keeps showing what the CUSTOMER said.
  */
 export async function recordOutboundMessage(
   db: Db,
@@ -412,13 +543,16 @@ export async function recordOutboundMessage(
     storeId: string;
     conversationId: string;
     source: "dashboard" | "template" | "automation";
-    kind: "text" | "template";
+    kind: "text" | "template" | "interactive";
     body: string;
     providerMessageId: string | null;
     status: "sent" | "failed";
     error?: string | null;
     sentByAdminId?: string | null;
     templateId?: string | null;
+    /** For an interactive message: the buttons it carried, so the thread can
+     *  show them under the text. */
+    payload?: Record<string, unknown> | null;
   },
 ): Promise<string> {
   const now = new Date().toISOString();
@@ -431,6 +565,7 @@ export async function recordOutboundMessage(
       source: input.source,
       kind: input.kind,
       body: input.body,
+      payload: input.payload ?? null,
       providerMessageId: input.providerMessageId,
       status: input.status,
       error: input.error ?? null,
@@ -441,7 +576,18 @@ export async function recordOutboundMessage(
     .onConflictDoNothing()
     .returning({ id: whatsappMessages.id });
   const id = rows[0]?.id ?? "";
-  if (input.status === "sent") {
+  if (input.status === "sent" && input.source === "automation") {
+    await db.execute(sql`
+      update public.whatsapp_conversations set
+        last_message_at = ${now}::timestamptz,
+        last_outbound_at = ${now}::timestamptz,
+        last_preview = case when status = 'needs_reply' then last_preview
+                            else ${previewOf(input.body, input.kind)} end,
+        updated_at = now()
+      where id = ${input.conversationId}::uuid
+        and store_id = ${input.storeId}::uuid
+    `);
+  } else if (input.status === "sent") {
     await db.execute(sql`
       update public.whatsapp_conversations set
         status = case when status = 'closed' then 'closed' else 'open' end,
@@ -455,6 +601,36 @@ export async function recordOutboundMessage(
     `);
   }
   return id;
+}
+
+/**
+ * Give a conversation the system was answering to a person: it needs a reply,
+ * with one more unread. True when it MOVED into needs_reply, which is when the
+ * bell rings; a conversation already waiting is not announced twice. The row
+ * is locked while its old status is read, so two hand-overs at once ring once.
+ */
+export async function handOverConversation(
+  db: Db,
+  storeId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const rows = asRows<{ prior: string }>(
+    await db.execute(sql`
+      update public.whatsapp_conversations c set
+        status = 'needs_reply',
+        unread_count = c.unread_count + 1,
+        updated_at = now()
+      from (
+        select id, status as prior from public.whatsapp_conversations
+         where id = ${conversationId}::uuid and store_id = ${storeId}::uuid
+         for update
+      ) p
+      where c.id = p.id
+      returning p.prior
+    `),
+  );
+  const prior = rows[0]?.prior;
+  return prior !== undefined && prior !== "needs_reply";
 }
 
 /** How far along a delivery is; mirrored in the SQL below. */
@@ -525,7 +701,8 @@ export function inboundMediaPath(
   messageId: string,
   mime: string | null,
 ): string {
-  return `stores/${storeId}/whatsapp/${conversationId}/${messageId}${extensionFor(mime)}`;
+  // ★ One folder per conversation (retention.ts deletes it with the chat).
+  return `${conversationMediaPrefix(storeId, conversationId)}${messageId}${extensionFor(mime)}`;
 }
 
 async function loadInboxToken(storeId: string): Promise<string | null> {

@@ -50,6 +50,10 @@ import {
 } from "@/drizzle/schema";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
+import {
+  CLOSED_CONVERSATION_RETENTION_DAYS,
+  pruneClosedConversations,
+} from "@/lib/whatsapp/retention";
 
 /** Rows deleted per statement. Bounds both the IN list and the lock window. */
 export const BATCH_SIZE = 1000;
@@ -348,6 +352,20 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       whatsappInboundEvents.id,
       whatsappInboundEvents.receivedAt,
     ),
+  },
+  {
+    // ★ ONLY CLOSED ones, by their LAST MESSAGE, and their messages and media
+    // go with them (lib/whatsapp/retention.ts). The contact and its consent
+    // record stay. Small batches: each conversation cascades its messages
+    // and may need a bucket folder emptied first.
+    table: "whatsapp_conversations",
+    days: CLOSED_CONVERSATION_RETENTION_DAYS,
+    batchSize: 50,
+    reason:
+      "A closed chat is kept two years after its last message (owner's decision, " +
+      "2026-10-13); one still waiting on the shop, or still going, is kept " +
+      "whatever its age, and a closed one reopens when the customer writes.",
+    deleteBatch: pruneClosedConversations,
   },
   {
     table: "mink_csv_files",

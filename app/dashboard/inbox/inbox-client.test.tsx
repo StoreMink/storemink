@@ -15,11 +15,18 @@ vi.mock("@/app/actions/inbox-actions", () => ({
   markInboxRead: vi.fn(async () => ({ ok: true })),
   sendInboxReply: vi.fn(async () => ({ ok: true, messageId: "m" })),
   sendInboxTemplate: vi.fn(async () => ({ ok: true, messageId: "m" })),
+  sendMinkDraft: vi.fn(async () => ({ ok: true, messageId: "m" })),
+  discardMinkDraft: vi.fn(async () => ({ ok: true })),
   setInboxConversationStatus: vi.fn(async () => ({ ok: true })),
 }));
 
 import { InboxClient } from "./inbox-client";
-import { getInboxThread, sendInboxReply } from "@/app/actions/inbox-actions";
+import {
+  discardMinkDraft,
+  getInboxThread,
+  sendInboxReply,
+  sendMinkDraft,
+} from "@/app/actions/inbox-actions";
 import type { InboxListResult, InboxThread } from "@/lib/whatsapp/inbox-types";
 
 const CONV = "22222222-2222-4222-8222-222222222222";
@@ -76,6 +83,7 @@ const thread = (over: Partial<InboxThread> = {}): InboxThread => ({
     orders: [],
     credit: null,
   },
+  minkDraft: null,
   ...over,
 });
 
@@ -293,5 +301,167 @@ describe("InboxClient", () => {
     expect(
       await screen.findByText(/paused or needs reconnecting/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("InboxClient: Mink's draft", () => {
+  const DRAFT = "44444444-4444-4444-8444-444444444444";
+  const draft = (over: Record<string, unknown> = {}) => ({
+    id: DRAFT,
+    text: "Yes, the Almond Shake is ₹120 and in stock.",
+    reason: "price in facts",
+    facts: ["Almond Shake", "Refund Policy"],
+    mode: "drafts" as const,
+    charged: false,
+    createdAt: new Date().toISOString(),
+    ...over,
+  });
+
+  it("★ shows the draft above the composer with what it drew on, editable, and sends it as edited", async () => {
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({ minkDraft: draft() }),
+    });
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    const box = await screen.findByLabelText("Mink AI draft");
+    expect(screen.getByText("Mink drafted a reply")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Based on: Almond Shake · Refund Policy/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Sending uses 1 Mink credit/)).toBeInTheDocument();
+    fireEvent.change(box, { target: { value: "Yes, ₹120, in stock today." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send Mink's draft" }));
+    await waitFor(() =>
+      expect(sendMinkDraft).toHaveBeenCalledWith({
+        conversationId: CONV,
+        draftId: DRAFT,
+        text: "Yes, ₹120, in stock today.",
+      }),
+    );
+    // The composer is still its own, empty box.
+    expect(screen.getByLabelText("Reply")).toHaveValue("");
+  });
+
+  it("a hand-over reads as one, a charged draft says sending is free, and Discard discards", async () => {
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({ minkDraft: draft({ mode: "helps", charged: true }) }),
+    });
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    expect(
+      await screen.findByText("Mink handed this one to you"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/sending uses no credit/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() =>
+      expect(discardMinkDraft).toHaveBeenCalledWith({
+        conversationId: CONV,
+        draftId: DRAFT,
+      }),
+    );
+  });
+
+  it("★ a viewer never sees the draft, and a closed window cannot send it", async () => {
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({ minkDraft: draft() }),
+    });
+    const { unmount } = render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        canManage={false}
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    await screen.findByText("Is it in stock?");
+    expect(screen.queryByLabelText("Mink AI draft")).toBeNull();
+    unmount();
+
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({
+        minkDraft: draft(),
+        window: { open: false, closesAt: null },
+      }),
+    });
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    await screen.findByLabelText("Mink AI draft");
+    expect(
+      screen.getByRole("button", { name: "Send Mink's draft" }),
+    ).toBeDisabled();
+    expect(screen.getByText(/24-hour window has closed/)).toBeInTheDocument();
+  });
+
+  it("labels Mink's own answer, and a person's send of a draft, in the thread", async () => {
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({
+        messages: [
+          ...thread().messages,
+          {
+            id: "m2",
+            direction: "out",
+            source: "automation",
+            kind: "text",
+            body: "Yes, in stock.",
+            mediaUrl: null,
+            mediaMime: null,
+            mediaName: null,
+            payload: { mink: true, answerId: DRAFT },
+            status: "sent",
+            error: null,
+            sentAt: new Date().toISOString(),
+            sentBy: null,
+          },
+          {
+            id: "m3",
+            direction: "out",
+            source: "dashboard",
+            kind: "text",
+            body: "And ₹120.",
+            mediaUrl: null,
+            mediaMime: null,
+            mediaName: null,
+            payload: { mink: true, answerId: DRAFT },
+            status: "sent",
+            error: null,
+            sentAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+            sentBy: "Priya",
+          },
+        ],
+      }),
+    });
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    expect(await screen.findByText("Mink AI")).toBeInTheDocument();
+    expect(screen.getByText("Priya · from a Mink draft")).toBeInTheDocument();
   });
 });

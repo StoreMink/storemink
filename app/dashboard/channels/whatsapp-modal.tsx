@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -396,7 +397,14 @@ function ConnectedView({
                 : ""}
               . Meta usually answers within a day; each message sends only once
               its template is approved. Which message goes to whom is under
-              Settings → Notifications.
+              Settings → Notifications.{" "}
+              <Link
+                href="/dashboard/channels/whatsapp/templates"
+                className="font-medium text-[#111827] underline"
+              >
+                Manage templates
+              </Link>{" "}
+              to see every one, with Meta&apos;s answer, and to add your own.
             </p>
           </div>
           {canManage &&

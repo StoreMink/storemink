@@ -7,14 +7,18 @@ vi.mock("@/lib/observability/logger", () => ({
   logWarn: vi.fn(),
   logInfo: vi.fn(),
 }));
-vi.mock("./graph", () => ({ sendTemplateMessage: vi.fn() }));
+vi.mock("./graph", () => ({
+  sendTemplateMessage: vi.fn(),
+  sendTextMessage: vi.fn(),
+  sendInteractiveMessage: vi.fn(),
+}));
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
 }));
 
-import { sendTemplateMessage } from "./graph";
-import { sendWhatsAppTemplate } from "./send";
+import { sendInteractiveMessage, sendTemplateMessage } from "./graph";
+import { sendWhatsAppInteractive, sendWhatsAppTemplate } from "./send";
 import { whatsappLogs } from "@/drizzle/schema";
 
 const INPUT = {
@@ -125,5 +129,64 @@ describe("sendWhatsAppTemplate", () => {
     dbHolder.current = makeDbMock({ failInsertFor: [whatsappLogs] });
     const r = await sendWhatsAppTemplate(INPUT);
     expect(r).toMatchObject({ sent: true, messageId: "wamid.3", logId: null });
+  });
+});
+
+describe("sendWhatsAppInteractive", () => {
+  const MENU = {
+    storeId: "store-1",
+    to: "+919876543210",
+    token: "tok",
+    phoneNumberId: "P",
+    body: "How can we help?",
+    buttons: [{ id: "menu:b1", title: "Check my order" }],
+  };
+
+  it("★ sends digits-only with the buttons and logs the id, like any other send", async () => {
+    vi.mocked(sendInteractiveMessage).mockResolvedValue({
+      ok: true,
+      data: { messages: [{ id: "wamid.9" }] },
+    });
+    const r = await sendWhatsAppInteractive(MENU);
+    expect(r).toEqual({ sent: true, messageId: "wamid.9", logId: "log-1" });
+    expect(sendInteractiveMessage).toHaveBeenCalledWith("tok", "P", {
+      to: "919876543210",
+      body: "How can we help?",
+      buttons: MENU.buttons,
+    });
+    expect(loggedRow()).toMatchObject({
+      storeId: "store-1",
+      toPhone: "+919876543210",
+      body: "How can we help?",
+      category: "SERVICE",
+      status: "sent",
+      providerMessageId: "wamid.9",
+    });
+  });
+
+  it("a rejection is logged failed with Meta's code", async () => {
+    vi.mocked(sendInteractiveMessage).mockResolvedValue({
+      ok: false,
+      outcome: "rejected",
+      error: "(#131047) Re-engagement message",
+      code: 131047,
+    });
+    const r = await sendWhatsAppInteractive(MENU);
+    expect(r).toMatchObject({ sent: false, outcome: "rejected", code: 131047 });
+    expect(loggedRow()).toMatchObject({ status: "failed", errorCode: 131047 });
+  });
+
+  it("skips, with a log row, when there is no body or no button", async () => {
+    expect(await sendWhatsAppInteractive({ ...MENU, body: " " })).toMatchObject(
+      {
+        sent: false,
+        outcome: "skipped",
+      },
+    );
+    expect(loggedRow()).toMatchObject({ status: "skipped" });
+    expect(
+      await sendWhatsAppInteractive({ ...MENU, buttons: [] }),
+    ).toMatchObject({ sent: false, outcome: "skipped", error: "No buttons." });
+    expect(sendInteractiveMessage).not.toHaveBeenCalled();
   });
 });

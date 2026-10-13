@@ -376,6 +376,27 @@ export async function listMessageTemplates(
   });
 }
 
+/**
+ * Delete a template at Meta. With `hsmId` (Meta's template id) only that
+ * language is deleted; by name alone Meta deletes EVERY language of the name,
+ * so the id is passed whenever the row holds one. Meta answers a template it
+ * does not hold with an error, which the caller reads as already gone.
+ */
+export async function deleteMessageTemplate(
+  token: string,
+  wabaId: string,
+  input: { name: string; hsmId?: string | null },
+): Promise<GraphResult<{ success?: boolean }>> {
+  const query: Record<string, string> = { name: input.name };
+  if (input.hsmId) query.hsm_id = input.hsmId;
+  return graphRequest<{ success?: boolean }>({
+    method: "DELETE",
+    path: `/${encodeURIComponent(wabaId)}/message_templates`,
+    token,
+    query,
+  });
+}
+
 // ── Sending ─────────────────────────────────────────────────────────────────
 
 export interface SendTemplateInput {
@@ -477,6 +498,57 @@ export async function sendTextMessage(
         ? { context: { message_id: input.replyToProviderId } }
         : {}),
       text: { preview_url: false, body: input.body },
+    },
+  });
+}
+
+export interface InteractiveButton {
+  /** What a tap carries back (menu-payload.ts), at most 256 characters. */
+  id: string;
+  /** The label, at most 20 characters. */
+  title: string;
+}
+
+export interface SendInteractiveInput {
+  /** Digits only, country code first — Meta's `to`. */
+  to: string;
+  /** At most 1,024 characters. */
+  body: string;
+  /** One to three reply buttons, in the order shown. */
+  buttons: InteractiveButton[];
+}
+
+/**
+ * One reply-button message (Meta's `interactive` type, `button` sub-type):
+ * a body and up to three buttons whose tap comes back as an `interactive`
+ * message carrying the button's id. Like free text it is allowed only inside
+ * the 24-hour window. ★ ONLY `lib/whatsapp/send.ts` MAY CALL THIS, for the
+ * template send's reason: the choke point is what writes the log row.
+ */
+export async function sendInteractiveMessage(
+  token: string,
+  phoneNumberId: string,
+  input: SendInteractiveInput,
+): Promise<GraphResult<SendMessageData>> {
+  return graphRequest<SendMessageData>({
+    method: "POST",
+    path: `/${encodeURIComponent(phoneNumberId)}/messages`,
+    token,
+    body: {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: input.to,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: input.body },
+        action: {
+          buttons: input.buttons.map((b) => ({
+            type: "reply",
+            reply: { id: b.id, title: b.title },
+          })),
+        },
+      },
     },
   });
 }

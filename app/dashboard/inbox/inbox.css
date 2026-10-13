@@ -592,6 +592,33 @@
   padding: 1px 6px;
   align-self: flex-start;
 }
+/* The store's menu as it was sent: WhatsApp draws reply buttons as a row of
+   rounded chips under the text, so the thread does too. Not clickable here;
+   they are what the customer saw. */
+.inbox-bubble-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.inbox-bubble-button {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--inbox-green-hover);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 128, 105, 0.25);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+/* A merchant's own template may carry a header and a footer; the composer
+   shows them above and below the body as WhatsApp will. */
+.inbox-template-header {
+  font-weight: 600;
+}
+.inbox-template-footer {
+  font-size: 12px;
+  color: var(--inbox-meta);
+}
 .inbox-bubble-error {
   font-size: 11.5px;
   color: #b91c1c;
@@ -649,6 +676,77 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+
+/* ── Mink's draft ──────────────────────────────────────────────────────── */
+
+/* A reply Mink wrote and did not send, above the composer. Lavender, the
+   dashboard's Mink colour, so it never reads as a message in the thread. */
+.inbox-mink {
+  flex-shrink: 0;
+  margin: 0 12px 6px;
+  padding: 8px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid rgba(87, 60, 240, 0.25);
+  border-radius: 10px;
+  background: rgba(87, 60, 240, 0.06);
+}
+.inbox-mink-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #4530c7;
+}
+.inbox-mink-reason {
+  font-weight: 400;
+  color: var(--dash-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.inbox-mink-reason::before {
+  content: "· ";
+}
+.inbox-mink-facts {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dash-text-2);
+}
+.inbox-mink-text {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 8px;
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.inbox-mink-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.inbox-mink-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--dash-text-3);
+}
+.inbox-mink-send {
+  width: auto;
+  padding: 0 14px;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* ── Composer ──────────────────────────────────────────────────────────── */

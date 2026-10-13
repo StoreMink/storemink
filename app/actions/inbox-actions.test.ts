@@ -44,14 +44,30 @@ vi.mock("@/lib/whatsapp/send", () => ({
   sendWhatsAppText: vi.fn(),
   sendWhatsAppTemplate: vi.fn(),
 }));
+vi.mock("@/lib/whatsapp/mink-drafts", () => ({
+  minkChargeContext: vi.fn(async () => ({ period: "2026-10", planCap: 20 })),
+  claimMinkDraft: vi.fn(async () => ({ id: DRAFT_ID, charged: false })),
+  chargeMinkAnswer: vi.fn(async () => "plan"),
+  markMinkAnswerSent: vi.fn(async () => undefined),
+  discardMinkDrafts: vi.fn(async () => 1),
+}));
+const DRAFT_ID = vi.hoisted(() => "44444444-4444-4444-8444-444444444444");
 
 import {
+  discardMinkDraft,
   getInboxConversations,
   markInboxRead,
   sendInboxReply,
   sendInboxTemplate,
+  sendMinkDraft,
   setInboxConversationStatus,
 } from "./inbox-actions";
+import {
+  chargeMinkAnswer,
+  claimMinkDraft,
+  discardMinkDrafts,
+  markMinkAnswerSent,
+} from "@/lib/whatsapp/mink-drafts";
 import { getViewerAccess } from "@/app/dashboard/lib/access";
 import { loadWhatsAppSender } from "@/lib/whatsapp/channel";
 import { recordOutboundMessage } from "@/lib/whatsapp/inbox";
@@ -304,6 +320,80 @@ describe("sendInboxTemplate", () => {
     expect(sendWhatsAppTemplate).not.toHaveBeenCalled();
   });
 
+  it("★ a merchant's own template with quick replies IS sendable, each reply carrying its label", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          {
+            id: TPL,
+            name: "delivery_delay",
+            language: "en",
+            variables: ["customer_name"],
+            components: [
+              { type: "HEADER", format: "TEXT", text: "Update" },
+              { type: "BODY", text: "Hi {{1}}, your order is late." },
+              {
+                type: "BUTTONS",
+                buttons: [
+                  { type: "QUICK_REPLY", text: "Okay" },
+                  { type: "URL", text: "Track", url: "https://x.y/orders" },
+                ],
+              },
+            ],
+            audience: "customer",
+            category: "UTILITY",
+            eventKey: null,
+          },
+        ],
+      ],
+    });
+    const r = await sendInboxTemplate({
+      conversationId: CONV,
+      templateId: TPL,
+      values: ["Rohan"],
+    });
+    expect(r).toEqual({ ok: true, messageId: "m-out" });
+    expect(sendWhatsAppTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        template: expect.objectContaining({ name: "delivery_delay" }),
+        values: ["Rohan"],
+        buttonPayloads: ["custom:Okay"],
+      }),
+    );
+  });
+
+  it("★ a merchant's template needing a value at send time is refused like one with order buttons", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          {
+            id: TPL,
+            name: "promo_code",
+            language: "en",
+            variables: [],
+            components: [
+              { type: "BODY", text: "Your code" },
+              {
+                type: "BUTTONS",
+                buttons: [{ type: "COPY_CODE", text: "Copy" }],
+              },
+            ],
+            audience: "customer",
+            category: "MARKETING",
+            eventKey: null,
+          },
+        ],
+      ],
+    });
+    const r = await sendInboxTemplate({
+      conversationId: CONV,
+      templateId: TPL,
+      values: [],
+    });
+    expect(r.ok).toBe(false);
+    expect(sendWhatsAppTemplate).not.toHaveBeenCalled();
+  });
+
   it("an unapproved template reads as not available", async () => {
     dbHolder.current = makeDbMock({ selectQueue: [[]] });
     const r = await sendInboxTemplate({
@@ -313,5 +403,148 @@ describe("sendInboxTemplate", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/approved/);
+  });
+});
+
+describe("sendMinkDraft", () => {
+  it("★ claims the draft, charges one credit, sends as the person, and marks it sent", async () => {
+    const r = await sendMinkDraft({
+      conversationId: CONV,
+      draftId: DRAFT_ID,
+      text: "  Yes, in stock, ₹120.  ",
+    });
+    expect(r).toEqual({ ok: true, messageId: "m-out" });
+    expect(claimMinkDraft).toHaveBeenCalledWith(expect.anything(), {
+      storeId: "s1",
+      conversationId: CONV,
+      draftId: DRAFT_ID,
+    });
+    expect(chargeMinkAnswer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ answerId: DRAFT_ID, storeId: "s1" }),
+    );
+    expect(sendWhatsAppText).toHaveBeenCalledWith(
+      expect.objectContaining({ body: "Yes, in stock, ₹120." }),
+    );
+    expect(recordOutboundMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        source: "dashboard",
+        payload: { mink: true, answerId: DRAFT_ID },
+        sentByAdminId: "admin-1",
+      }),
+    );
+    expect(markMinkAnswerSent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        answerId: DRAFT_ID,
+        answer: "Yes, in stock, ₹120.",
+        sentMessageId: "m-out",
+        sentByAdminId: "admin-1",
+      }),
+    );
+  });
+
+  it("★ no credits: refused with the reason, nothing sent, the draft stays", async () => {
+    vi.mocked(chargeMinkAnswer).mockResolvedValueOnce("insufficient");
+    const r = await sendMinkDraft({
+      conversationId: CONV,
+      draftId: DRAFT_ID,
+      text: "x",
+    });
+    expect(r).toMatchObject({ ok: false, code: "no_credits" });
+    expect(r.error).toMatch(/1 Mink credit/);
+    expect(sendWhatsAppText).not.toHaveBeenCalled();
+    expect(markMinkAnswerSent).not.toHaveBeenCalled();
+  });
+
+  it("a draft already sent or discarded is gone; a closed window and a viewer are refused", async () => {
+    vi.mocked(claimMinkDraft).mockResolvedValueOnce(null);
+    expect(
+      await sendMinkDraft({
+        conversationId: CONV,
+        draftId: DRAFT_ID,
+        text: "x",
+      }),
+    ).toMatchObject({ ok: false, code: "gone" });
+    expect(chargeMinkAnswer).not.toHaveBeenCalled();
+
+    vi.mocked(loadConversation).mockResolvedValue(
+      core(new Date(Date.now() - 25 * 3600_000).toISOString()) as any,
+    );
+    expect(
+      await sendMinkDraft({
+        conversationId: CONV,
+        draftId: DRAFT_ID,
+        text: "x",
+      }),
+    ).toMatchObject({ ok: false, code: "window_closed" });
+
+    access(true, false);
+    expect(
+      (
+        await sendMinkDraft({
+          conversationId: CONV,
+          draftId: DRAFT_ID,
+          text: "x",
+        })
+      ).error,
+    ).toMatch(/permission/);
+    expect(sendWhatsAppText).not.toHaveBeenCalled();
+  });
+
+  it("a refusal from Meta after the charge keeps the draft and says so", async () => {
+    vi.mocked(sendWhatsAppText).mockResolvedValue({
+      sent: false,
+      outcome: "rejected",
+      error: "131047",
+      code: 131047,
+    });
+    const r = await sendMinkDraft({
+      conversationId: CONV,
+      draftId: DRAFT_ID,
+      text: "x",
+    });
+    expect(r).toMatchObject({ ok: false, code: "refused" });
+    expect(markMinkAnswerSent).not.toHaveBeenCalled();
+  });
+});
+
+describe("discardMinkDraft, and a reply by hand", () => {
+  it("discards the named draft with Inbox: manage", async () => {
+    expect(
+      await discardMinkDraft({ conversationId: CONV, draftId: DRAFT_ID }),
+    ).toEqual({
+      ok: true,
+    });
+    expect(discardMinkDrafts).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        storeId: "s1",
+        conversationId: CONV,
+        draftId: DRAFT_ID,
+      }),
+    );
+    access(true, false);
+    expect(
+      (await discardMinkDraft({ conversationId: CONV, draftId: DRAFT_ID })).ok,
+    ).toBe(false);
+  });
+
+  it("★ a person's own reply discards whatever Mink had drafted for the conversation", async () => {
+    await sendInboxReply({
+      conversationId: CONV,
+      text: "I'll check and get back",
+    });
+    expect(discardMinkDrafts).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        conversationId: CONV,
+        reason: "a person replied",
+      }),
+    );
+    expect(vi.mocked(discardMinkDrafts).mock.calls[0][1]).not.toHaveProperty(
+      "draftId",
+    );
   });
 });

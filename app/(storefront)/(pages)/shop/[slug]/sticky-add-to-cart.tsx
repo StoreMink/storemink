@@ -53,40 +53,39 @@ export function StickyAddToCart({
     return () => observer.disconnect();
   }, [target]);
 
+  // ★ The room the bar needs at the end of the page is the FOOTER's
+  // (storefront-theme.css, "Floating controls"): a spacer here sat inside
+  // the product page, above the footer, so the bar still covered the
+  // footer's last line.
   return (
-    <>
-      <div
-        className={`sm-sticky-atc${shown ? " is-shown" : ""}`}
-        aria-hidden={!shown}
-        inert={!shown}
-      >
-        {image ? (
-          <span className="sm-sticky-atc-thumb">
-            <Image src={image} alt="" fill sizes="44px" />
-          </span>
-        ) : null}
-        <span className="sm-sticky-atc-text">
-          <span className="sm-sticky-atc-name">{name}</span>
-          <span className="sm-sticky-atc-price">
-            {variantName ? `${variantName} · ` : ""}
-            {formatPrice(price)}
-            {compareAt !== null && compareAt > price ? (
-              <s className="sm-sticky-atc-was">{formatPrice(compareAt)}</s>
-            ) : null}
-          </span>
+    <div
+      className={`sm-sticky-atc${shown ? " is-shown" : ""}`}
+      aria-hidden={!shown}
+      inert={!shown}
+    >
+      {image ? (
+        <span className="sm-sticky-atc-thumb">
+          <Image src={image} alt="" fill sizes="44px" />
         </span>
-        <button
-          type="button"
-          className="sm-sticky-atc-btn sm-btn-primary"
-          onClick={onAdd}
-          disabled={disabled}
-        >
-          {disabled ? "Sold out" : "Add to cart"}
-        </button>
-      </div>
-      {/* Room under the last content so the bar never covers the footer's
-          final line when a shopper scrolls to the very end. */}
-      <div className="sm-sticky-atc-spacer" aria-hidden />
-    </>
+      ) : null}
+      <span className="sm-sticky-atc-text">
+        <span className="sm-sticky-atc-name">{name}</span>
+        <span className="sm-sticky-atc-price">
+          {variantName ? `${variantName} · ` : ""}
+          {formatPrice(price)}
+          {compareAt !== null && compareAt > price ? (
+            <s className="sm-sticky-atc-was">{formatPrice(compareAt)}</s>
+          ) : null}
+        </span>
+      </span>
+      <button
+        type="button"
+        className="sm-sticky-atc-btn sm-btn-primary"
+        onClick={onAdd}
+        disabled={disabled}
+      >
+        {disabled ? "Sold out" : "Add to cart"}
+      </button>
+    </div>
   );
 }

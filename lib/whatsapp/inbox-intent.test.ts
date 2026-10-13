@@ -47,3 +47,99 @@ describe("classifyWhatsAppInbound", () => {
     expect(classifyWhatsAppInbound("stop it from leaking")).toBe("other");
   });
 });
+
+describe("classifyWhatsAppInbound: where is my order", () => {
+  it("★ recognises the question however it is asked", () => {
+    for (const body of [
+      "Where is my order?",
+      "where's my order",
+      "Hi, where is my order please",
+      "Hello sir where is my parcel",
+      "order status",
+      "Status",
+      "Track my order",
+      "tracking id?",
+      "when will my order arrive",
+      "status of my order",
+      "has my order shipped",
+      "mera order kahan hai",
+      "order kab aayega",
+      "kab milega mera parcel",
+      "मेरा ऑर्डर कहाँ है",
+      "मेरा ऑर्डर कहां है?",
+      "ऑर्डर कब आएगा",
+    ]) {
+      expect(classifyWhatsAppInbound(body), body).toBe("order_status");
+    }
+  });
+
+  it("★ a complaint or a request goes to a person", () => {
+    for (const body of [
+      "my order was not delivered",
+      "cancel my order",
+      "I want to return my order",
+      "wrong order received",
+      "where is my refund",
+      "order abhi tak nahi aaya",
+      "मेरा ऑर्डर नहीं आया",
+      "can you change the address on my order",
+    ]) {
+      expect(classifyWhatsAppInbound(body), body).toBe("other");
+    }
+  });
+
+  it("asking to buy, or about the shop, is not a status question", () => {
+    for (const body of [
+      "where can I order from",
+      "I want to order 2 more",
+      "order",
+      "my order",
+      "do you deliver to Pune",
+      "what are the delivery charges",
+      "where is your shop",
+      "Is the blue one in stock?",
+    ]) {
+      expect(classifyWhatsAppInbound(body), body).toBe("other");
+    }
+  });
+
+  it("a long message is a story a person should read", () => {
+    expect(
+      classifyWhatsAppInbound(
+        "where is my order I placed it last week for my sister's wedding on Saturday",
+      ),
+    ).toBe("other");
+  });
+
+  it("STOP and START still win on a short message", () => {
+    expect(classifyWhatsAppInbound("stop")).toBe("stop");
+    expect(classifyWhatsAppInbound("start")).toBe("start");
+  });
+});
+
+describe("classifyWhatsAppInbound: asking for the menu", () => {
+  it("reads a short request for the menu, with courtesy words and punctuation", () => {
+    for (const body of [
+      "menu",
+      "Menu!",
+      "options",
+      "main menu",
+      "show menu please",
+      "help",
+      "menu dikhao",
+      "मेनू",
+    ]) {
+      expect(classifyWhatsAppInbound(body), body).toBe("menu");
+    }
+  });
+
+  it("★ a sentence that merely contains the word is not a request", () => {
+    for (const body of [
+      "the menu button does nothing",
+      "do you have a menu for catering",
+      "help me cancel my order",
+    ]) {
+      expect(classifyWhatsAppInbound(body), body).not.toBe("menu");
+    }
+  });
+});

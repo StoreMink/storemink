@@ -398,3 +398,75 @@ export function templateComponentsFor(t: WhatsAppTemplateDef): unknown[] {
   }
   return out;
 }
+
+/** Meta's template statuses the 0174 CHECK admits. */
+export const KNOWN_TEMPLATE_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "PAUSED",
+  "DISABLED",
+  "IN_APPEAL",
+  "PENDING_DELETION",
+  "DELETED",
+  "LIMIT_EXCEEDED",
+] as const;
+
+const KNOWN_STATUS_SET: ReadonlySet<string> = new Set(KNOWN_TEMPLATE_STATUSES);
+
+/** A status word as Meta sent it, upper-cased, when it is one the row can
+ *  hold; null for anything else (FLAGGED, ARCHIVED, a typo), so a caller can
+ *  leave the stored status alone rather than fail on the CHECK. */
+export function knownTemplateStatus(status: unknown): string | null {
+  const s = String(status ?? "").toUpperCase();
+  return KNOWN_STATUS_SET.has(s) ? s : null;
+}
+
+/** Meta's limit on a template body. */
+export const TEMPLATE_BODY_MAX_CHARS = 1024;
+
+/**
+ * The rules Meta applies to a template body at review, as one check shared
+ * by the catalogue (its test asserts every entry passes) and a merchant's own
+ * template (custom-template.ts refuses before submitting). A refused
+ * submission is a template that silently never sends, so the words are
+ * checked here, where the reason can be shown, rather than learned from
+ * Meta's error.
+ *
+ * Returns the problem in the merchant's words, or null when the body is fine.
+ */
+export function templateBodyProblem(
+  body: string,
+  examples: readonly string[],
+): string | null {
+  if (!body.trim()) return "Write the message.";
+  if (body.length > TEMPLATE_BODY_MAX_CHARS) {
+    return `The message can be at most ${TEMPLATE_BODY_MAX_CHARS} characters.`;
+  }
+  if (/[\t]/.test(body)) return "The message cannot contain a tab.";
+  if (/\{\{(?!\d+\}\})|(?<!\{\{\d+)\}\}/.test(body)) {
+    return "Placeholders are written {{1}}, {{2}} and so on.";
+  }
+  const slots = bodyPlaceholders(body);
+  for (const [i, n] of slots.entries()) {
+    if (n !== i + 1) {
+      return "Number the placeholders {{1}}, {{2}}, {{3}} in the order they appear, with none missing or repeated.";
+    }
+  }
+  if (/^\{\{\d+\}\}/.test(body.trim())) {
+    return "The message cannot start with a placeholder; add a word before it.";
+  }
+  if (/\{\{\d+\}\}\.?$/.test(body.trim())) {
+    return "The message cannot end with a placeholder; add a word after it.";
+  }
+  if (/\}\}\s*\{\{/.test(body)) {
+    return "Two placeholders cannot sit next to each other; put a word between them.";
+  }
+  if (examples.length !== slots.length) {
+    return "Give every placeholder a sample value.";
+  }
+  if (examples.some((e) => !e.trim())) {
+    return "Give every placeholder a sample value.";
+  }
+  return null;
+}

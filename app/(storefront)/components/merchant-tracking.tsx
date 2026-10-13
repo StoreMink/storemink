@@ -437,10 +437,15 @@ window.fbq('init', '${metaPixelId}');
           </div>
         </section>
       ) : hasOptionalTracking && consent ? (
+        // ★ Bottom-LEFT: the bottom-right corner belongs to the WhatsApp chat
+        // button, and the two used to sit on top of each other. It lifts above
+        // the phone Add to cart bar and a blog's reaction bar rather than
+        // covering them (storefront-theme.css, "Floating controls"), so it
+        // shares the chat button's layer, under every drawer and sheet.
         <button
           type="button"
           data-sm-privacy-pill=""
-          className="fixed bottom-3 right-3 z-[70] rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-md"
+          className="fixed bottom-4 left-4 z-[35] rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-md"
           onClick={beginManaging}
         >
           Privacy choices

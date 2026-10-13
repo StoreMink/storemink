@@ -86,11 +86,29 @@ export interface InboxCustomerPanel {
   credit: number | null;
 }
 
+/** A reply customer-facing Mink wrote for a person to send (or not). */
+export interface InboxMinkDraft {
+  id: string;
+  text: string;
+  /** Mink's own few words on why it stopped short of sending. */
+  reason: string;
+  /** What it drew on: "Order ORD10011027", "Refund & Cancellation Policy". */
+  facts: string[];
+  /** `helps`: Mink would have sent it but handed over; `drafts`: every reply
+   *  waits for a person. */
+  mode: "helps" | "drafts";
+  /** The credit was already taken (a send Meta refused); sending is free. */
+  charged: boolean;
+  createdAt: string;
+}
+
 export interface InboxThread {
   conversation: InboxConversationRow;
   messages: InboxMessageRow[];
   window: { open: boolean; closesAt: string | null };
   customer: InboxCustomerPanel;
+  /** The newest draft waiting on this conversation, if any. */
+  minkDraft: InboxMinkDraft | null;
 }
 
 export interface InboxTemplateOption {
@@ -100,6 +118,12 @@ export interface InboxTemplateOption {
   body: string;
   /** Named placeholders, in `{{n}}` order; staff fill each one. */
   variables: string[];
+  /** A merchant's template may carry a text header, a footer and buttons;
+   *  shown so staff know what the customer will see. Empty for the
+   *  catalogue's. */
+  headerText?: string;
+  footerText?: string;
+  buttons?: { type: string; text: string }[];
 }
 
 /** The longest free-form reply the dashboard sends — WhatsApp's own cap. */

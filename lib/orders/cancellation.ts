@@ -226,6 +226,7 @@ export const CANCEL_REASONS = [
   { code: "items_unavailable", label: "Items unavailable" },
   { code: "payment_declined", label: "Payment declined" },
   { code: "staff_error", label: "Staff error" },
+  { code: "not_confirmed", label: "Not confirmed by the customer" },
   { code: "other", label: "Other" },
 ] as const;
 

@@ -3,7 +3,8 @@
 **The rule from `docs/pos-acceptance.md` applies:** a slice is not done until
 its user stories are in here, and a fixed gap must leave the "Known gaps"
 table. Spec: `docs/whatsapp-commerce-plan.md`. Console setup:
-`docs/whatsapp-phase0.md`.
+`docs/whatsapp-phase0.md`. The live dev session that runs these stories against
+real Meta traffic is scripted in `docs/whatsapp-dev-live-test.md`.
 
 > Each story names what a person does and what they must see. "Verified"
 > records what has actually been run and where; everything else is a story,
@@ -205,6 +206,16 @@ customer replying "cancel" changes nothing about consent. Replying "START"
 restores offers only for a customer who had agreed to them before. _Pinned by
 `inbox-intent.test.ts` and `inbox.test.ts`._
 
+**WA-3.7a — STOP gets an answer and does not wait for staff.** The customer
+replies "STOP". Within seconds they get "You will not get offers from … on
+WhatsApp any more. You will still get updates about your orders." Inbox shows
+the STOP and that automatic reply, and the conversation is not in Needs reply,
+the badge does not move and the bell does not ring. A START from a customer who
+had agreed to offers gets "You will get offers from … again"; a START from
+anyone else is an ordinary message waiting for a person. With the number
+paused, the opt-out is still recorded and no reply is sent. _Pinned by
+`opt-out-reply.test.ts`, `inbox.test.ts` and `inbound-cod.test.ts`._
+
 **WA-3.8 — The customer strip.** Opening **Details** on a conversation shows
 what the customer agreed to, their store credit when the number matches an
 account on this store, a link to their customer profile, and their five most
@@ -215,6 +226,15 @@ construction in `inbox-read.ts`; not covered by a database probe._
 **WA-3.9 — Close and reopen.** **Close** moves a conversation to Closed and
 clears its unread count; the customer's next message reopens it as Needs
 reply. **Reopen** moves a closed one to Open. Neither sends anything.
+
+**WA-3.9a — Closed chats are deleted after two years.** A conversation that
+has been Closed with no message for two years disappears from the inbox on
+the next nightly retention run, with its messages and any photos or files the
+customer sent; the customer's WhatsApp consent stays on their contact. An Open
+or Needs reply conversation of the same age is untouched, and a closed one the
+customer wrote to in between has reopened and is untouched too. If a photo
+could not be deleted, the whole conversation stays and is tried again the next
+night. _Pinned by `lib/whatsapp/retention.test.ts` and `prune.test.ts`._
 
 **WA-3.10 — The customer can change their mind.** A signed-in shopper on a
 connected store opens **My account**: a **WhatsApp** card shows two switches
@@ -251,6 +271,17 @@ screen and a chat opens full screen; Enter starts a new line and the green
 button sends. _Pinned by `inbox-client.test.tsx`; layout measured 2026-10-13 in
 a static harness with the real stylesheets at 1280, 880 and 390 px (no page
 scroll, no sideways scroll); not yet looked at on a real phone._
+
+**WA-3.14 — The chat button never covers another control.** On a store with
+the chat button and analytics (choose Reject optional on the privacy banner),
+**Privacy choices** sits bottom-left and the chat button bottom-right, at
+every width from 320px up. On a phone product page whose theme has the sticky
+Add to cart bar, scroll past the page's own button: both lift above the bar,
+and neither covers Add to cart. Scroll to the very end of any page, on every
+footer layout: the footer's last line (Powered by, Privacy, Terms) is fully
+visible and tappable. On a blog post on a phone, Privacy choices sits above
+the reaction bar, and the reactions open over it. _Pinned by
+`app/(storefront)/floating-controls.test.ts`; positions measured in Chrome._
 
 ---
 
@@ -309,25 +340,367 @@ an order that is not cash on delivery, changes nothing and gets no reply; the
 conversation goes to a person. _Pinned by `cod-confirmation.test.ts` and
 `cod-payload.test.ts`._
 
+**WA-4.7a — A real COD order is recognised.** A website COD order is stored
+as `payment_method = 'cash_on_delivery'`; a tap on its buttons confirms or
+cancels it. (The first version compared the row against `cod`, the checkout
+choice, and refused every real tap; found on dev 2026-10-13.) _Pinned by
+`cod-confirmation.test.ts`._
+
+**WA-4.7b — Store credit that pays it all is not cash on delivery.** A shopper
+whose store credit covers the whole order, having picked cash on delivery, gets
+the usual order message, never the Confirm/Cancel buttons, and the
+confirmation's payment line reads "Store credit". _Pinned by
+`checkout-actions.test.ts`._
+
 **WA-4.8 — The inbox cannot send it by hand.** After the 24-hour window
 closes, the inbox's template picker does not list the COD confirmation, and
 forcing it through the send action is refused, because a hand-sent copy would
 carry no order. _Pinned by `inbox-actions.test.ts` and `channel.test.ts`._
 
+**WA-4.9 — One reminder after 24 hours.** With confirmation on, a shopper who
+has not tapped anything gets the same Confirm/Cancel message once more 24 to
+48 hours after the first, and never a third time, however often the hourly
+sweep runs. An order the shop has already moved past Pending gets no
+reminder, nor does any order when **Remind customers who haven't answered
+after 24 hours** is off. Switching the reminder on never reminds orders whose
+message went more than two days ago. _Pinned by `cod-sweep.test.ts`._
+
+**WA-4.10 — Automatic cancellation is the merchant's choice.** With **Cancel
+orders not confirmed within 48 hours** on, a Pending COD order still awaiting
+an answer 48 to 72 hours after the message is cancelled: its stock goes back
+on sale, nothing is refunded, the customer gets the cancellation message, the
+order's history names the system rather than an admin, and the order list
+shows **Not confirmed on WhatsApp**. With it off (the default) nothing is
+cancelled. An order whose customer tapped **Confirm order** a moment before
+the sweep is not cancelled. _Pinned by `cod-sweep.test.ts` and
+`approve-cancellation.test.ts`._
+
+**WA-4.11 — Confirming too late goes to a person.** A shopper whose order was
+cancelled automatically taps **Confirm order**: they are told it was cancelled
+because it was not confirmed in time, nothing about the order changes, and the
+chat lands in **Needs reply** with the bell. A **Cancel order** tap on it is
+answered "already cancelled". _Pinned by `cod-confirmation.test.ts`._
+
+---
+
+## Phase 2, slice 2 — Automatic replies (2026-10-13)
+
+**WA-5.1 — Off until the merchant turns it on.** **Inbox → Automatic replies**
+shows **Welcome message**, **Away message** and **Order status**, all off, with
+the welcome text naming the store. A customer message on a store that has never
+saved this page gets no automatic reply. Saving needs **Inbox: manage**; a
+viewer with only **Inbox: view** sees the settings greyed out and no Save
+button. _Pinned by `whatsapp-auto-reply-actions.test.ts`,
+`auto-replies-form.test.tsx` and `answer-automatically.test.ts` ("nothing
+switched on")._
+
+**WA-5.2 — The welcome, once.** With the welcome on, a customer who messages
+the number for the first time gets the welcome within seconds. Their second
+message gets nothing more, and two messages sent at the same moment get one
+welcome. The same customer writing again after 14 days with no messages either
+way is welcomed again. The conversation still lands in **Needs reply** with the
+bell, and the inbox list shows the customer's words, not the welcome. _Pinned
+by `answer-automatically.test.ts` (the claim), `inbox.test.ts`
+(`welcomeEligible`, automation filing) and a rolled-back probe of the claim
+SQL on local Postgres._
+
+**WA-5.3 — The away message, once per closed spell.** With the away message on
+and hours Monday to Saturday 10:00 to 19:00, a customer writing on Monday at
+21:00 gets the away message; writing again at 22:00, or on Sunday, gets
+nothing; writing on Tuesday at 20:00 (the shop opened at 10:00 in between)
+gets it again. A customer writing during opening hours gets nothing. A shop
+that set every day to Closed (a holiday) sends it once per customer. _Pinned by
+`business-hours.test.ts` (`openedBetween`) and `answer-automatically.test.ts`._
+
+**WA-5.4 — Not after a person replied.** Outside hours, staff reply to a
+customer from the inbox or from the phone; the customer answers within two
+hours and gets no away message. _Pinned by `answer-automatically.test.ts`
+("not straight after a person on the team replied")._
+
+**WA-5.5 — Hours past midnight and other zones.** Friday 18:00 to 02:00 shows
+"next day" beside the closing time; a message at 01:00 on Saturday is inside
+Friday's hours and gets no away message. Changing **Settings → Business time
+zone** moves the hours with it. _Pinned by `business-hours.test.ts`, including
+a daylight-saving zone._
+
+**WA-5.6 — One message, not two.** A new customer writing outside hours with
+both replies on gets ONE message: the welcome, a blank line, the away message.
+_Pinned by `answer-automatically.test.ts`._
+
+**WA-5.7 — Where is my order, answered.** With **Order status** on, a customer
+whose number placed an order asks "where is my order" (or "order kab aayega",
+"मेरा ऑर्डर कहाँ है", "track my order"). Within seconds they get the order
+number, the day it was placed, its status in the order page's words, and, once
+shipped, the courier and its tracking link; up to three open orders are listed.
+The conversation does NOT go to **Needs reply** and the bell does not ring.
+Only orders on the account with that phone, or with it as the delivery phone,
+are mentioned; a till sale and an online payment never completed are not.
+_Pinned by `order-status-reply.test.ts`, `inbox-intent.test.ts`,
+`inbound-auto-reply.test.ts` and `answer-automatically.test.ts`._
+
+**WA-5.8 — Where is my order, handed over.** A number with no recent order
+asks the same question: they are told someone will reply, and the conversation
+waits in **Needs reply** with the bell. A delivery the courier could not
+complete, or one returning to the shop, is described and also handed over. A
+message such as "my order was not delivered" or "cancel my order" is never
+answered automatically. _Pinned by `order-status-reply.test.ts`,
+`inbox-intent.test.ts` and `inbound-auto-reply.test.ts`._
+
+**WA-5.9 — A paused number sends nothing and spends nothing.** With the number
+paused, a first message gets no welcome; once it is switched back on, the
+customer's next message is welcomed. An order question while paused waits for
+a person. _Pinned by `answer-automatically.test.ts` ("a paused number claims
+nothing")._
+
+**WA-5.10 — An automatic reply never answers for a person.** A customer asks a
+question (the conversation is in **Needs reply**), then taps **Confirm order**
+on a COD message: the confirmation reply arrives and the conversation stays in
+**Needs reply** with its unread count. _Pinned by `inbox.test.ts` ("answers
+nobody") and a rolled-back probe of the filing SQL on local Postgres._
+
+---
+
+## Phase 2, slice 3 — Menu buttons (2026-10-14)
+
+**WA-6.1 — Off until the merchant turns it on.** **Inbox → Automatic replies**
+gains **Menu buttons**, off, with no buttons. A store that never touched it
+sends exactly what it sent before. Saving needs **Inbox: manage**. _Pinned by
+`auto-reply-settings.test.ts` ("off with no buttons by default") and
+`auto-replies-form.test.tsx`._
+
+**WA-6.2 — Up to three buttons, 20 characters each.** The merchant adds a
+button, gives it a label and chooses what it does: **Check my order**, **Talk
+to a person** or **Send a message** (with the message). A fourth button cannot
+be added; a label is cut at 20 characters; a menu switched on with no button,
+or a message button with no message, is refused with the reason on Save. Each
+button keeps the id it was created with, so renaming or reordering never
+changes what a tap on an older message means. _Pinned by
+`auto-reply-settings.test.ts`, `auto-replies-form.test.tsx` and a rolled-back
+probe of the CHECKs on local Postgres (four buttons refused, an object
+refused, one button accepted)._
+
+**WA-6.3 — The buttons ride with the welcome.** With the welcome and the menu
+on, a customer's first message gets ONE message: the welcome text with the
+buttons under it. The thread in Inbox shows the buttons under the bubble as
+the customer saw them. With the menu off, the welcome goes as plain text as
+before. _Pinned by `answer-automatically.test.ts` ("rides with the welcome"),
+`send.test.ts` and `graph.test.ts` (Meta's interactive shape)._
+
+**WA-6.4 — "menu" brings them back.** A customer whose welcome was already
+sent types "menu", "options" or "help": the buttons arrive under the welcome's
+words (or under "How can we help? Choose an option:" when the welcome is off),
+and the request itself does not land in Needs reply. On a store whose menu is
+off, "menu" is an ordinary message that waits for a person. _Pinned by
+`inbox-intent.test.ts`, `inbox.test.ts` ("'menu' is answered by the system
+only on a store whose menu is on") and `answer-automatically.test.ts`._
+
+**WA-6.5 — Check my order.** Tapping it answers with the status of the orders
+placed with the customer's number, exactly as Order status does, and the tap
+neither counts as unread nor rings the bell. With no matching order, or a
+delivery in trouble, the conversation is handed to a person with the bell.
+_Pinned by `menu-reply.test.ts` and `inbound-auto-reply.test.ts`._
+
+**WA-6.6 — Talk to a person.** Tapping it sends the merchant's acknowledgement
+(or "Sure. Someone from our team will reply here shortly.") and puts the
+conversation in **Needs reply** with the bell, one unread. _Pinned by
+`menu-reply.test.ts` ("acknowledges and hands over")._
+
+**WA-6.7 — Send a message.** Tapping it sends the merchant's text; nobody is
+needed unless the send failed. A tap on a button the merchant has since
+removed, or with the menu switched off, hands the chat to a person with no
+reply: the customer's tap is in the thread as the button's label with a
+"Tapped a button" mark. _Pinned by `menu-reply.test.ts`._
+
+**WA-6.8 — Too long for one message.** A welcome and an away message that
+together pass 1,024 characters go out as text, and the buttons follow in a
+second message under the one-line prompt; nothing is dropped. _Pinned by
+`answer-automatically.test.ts` ("words too long for one button message")._
+
+**WA-6.9 — A first message rings the bell, and an automated first message
+leaves nothing waiting.** (A fix to slice 3.) The first message ever from a
+new number lands in **Needs reply** with the bell. A new number whose first
+message is a STOP, a COD tap or a menu tap is filed with no unread and the
+conversation **open**; a hand-over from there (Talk to a person, an order
+nobody can find) then rings. Before this, a new conversation was created
+already marked Needs reply, so its first message never rang and an automated
+first message left it waiting with nothing unread. _Pinned by `inbox.test.ts`
+("the first message of a brand-new conversation rings the bell", "an automated
+first message opens the new conversation")._
+
+---
+
+## Phase 2, slice 4 — The template manager (2026-10-14)
+
+**WA-7.1 — Every template, with Meta's answer.** Channels → WhatsApp →
+**Manage templates** (`/dashboard/channels/whatsapp/templates`) lists every
+template the number holds, newest first: StoreMink's order updates (named by
+their event and audience) and the merchant's own, each with its language,
+kind, Meta's status, its reason when rejected, and the words themselves with
+header, footer and buttons. **Refresh from Meta** re-reads the statuses.
+Anyone with **Channels: view** can read the page. _Pinned by
+`templates.test.ts` ("listStoreTemplates") and `templates-client.test.tsx`._
+
+**WA-7.2 — Add a template.** **New template** asks for a title (the name at
+Meta is spelled from it), a language from the list, Utility or Marketing, an
+optional header, the message, an optional footer and up to three buttons
+(quick reply, link, call). Typing `{{2}}` into the message adds a second
+placeholder row with a label and a sample. **Send to Meta for review** refuses
+with the reason, before anything is sent, for a message that starts or ends
+with a placeholder, has two side by side, numbers them out of order, lacks a
+sample, has a fourth button, a 26-character label, a link without https, a
+link with a placeholder, a phone number without a country code, a header with
+a placeholder, or a name starting with `sm_`. A passing template is written
+PENDING and submitted; the page shows **In review**, then whatever Meta
+answers. Needs **Channels: manage**, the plan, and at most 20 submissions an
+hour. _Pinned by `custom-template.test.ts`, `template-catalog.test.ts` ("the
+one body rule": every catalogue body passes the rule a merchant's is held
+to), `templates.test.ts` ("submitCustomTemplate") and
+`whatsapp-provider-actions.test.ts`._
+
+**WA-7.3 — A refused submission is kept with its reason.** A template Meta
+will not take (a bad parameter) stays on the page with Meta's words in amber
+and can be deleted; a name the store already holds in that language is
+refused before Meta is asked. _Pinned by `templates.test.ts`._
+
+**WA-7.4 — Send one from the inbox.** Once approved, a merchant's template
+is offered in the inbox composer after the 24-hour window, with its header,
+footer and buttons shown above the fields. Sending fills the placeholders;
+a quick-reply tap comes back as the customer's message with the button's
+words (an ordinary message in Needs reply). A template needing a value at
+send time (a picture header, a link with a placeholder, a copy code) is
+neither offered nor accepted. StoreMink's templates with buttons stay
+unsendable by hand, as before. _Pinned by `inbox-actions.test.ts` and
+`custom-template.test.ts` ("composerCanSend", "needs a send-time value")._
+
+**WA-7.5 — Delete a template.** **Delete** on the merchant's own template
+asks first, then removes it at Meta (by its id, so one language only) and
+here; a template Meta no longer holds is simply removed. StoreMink's
+order-update templates show no Delete and refuse one from the action.
+_Pinned by `templates.test.ts` ("deleteStoreTemplate"),
+`templates-client.test.tsx` and `graph.test.ts` ("deleteMessageTemplate")._
+
+**WA-7.6 — Meta's extra words do not break the webhook.** (A fix.) A
+template status Meta posts that the row cannot hold (FLAGGED, ARCHIVED)
+changes nothing, instead of failing the delivery on the status CHECK; a
+status in Meta's casing is still read. The notification console's WhatsApp
+tab links a paused, rejected or disabled template to the manager. _Pinned by
+`inbound.test.ts` and `template-catalog.test.ts` ("knownTemplateStatus")._
+
+---
+
+## Phase 2, slice 5 — Customer-facing Mink (2026-10-14)
+
+**WA-8.1 — Off until the merchant turns it on.** **Inbox → Automatic replies**
+gains **Mink AI answers**, off. A store that never touched it sends exactly
+what it sent before, and its messages are filed exactly as before. Saving
+needs **Inbox: manage**. _Pinned by `auto-reply-settings.test.ts` ("Mink is
+off by default"), `auto-replies-form.test.tsx` and `inbox.test.ts` ("Mink
+off: nothing changes")._
+
+**WA-8.2 — Two ways of helping.** Switching it on offers **Answers
+customers** (Mink replies on its own inside its facts and hands over the
+rest) and **Drafts replies for you** (Mink never sends; every message waits
+for a person with a draft attached). The card says each sent reply uses 1
+Mink credit and a draft is free. _Pinned by `auto-replies-form.test.tsx`
+("saves the chosen mode, and off again as off") and a rolled-back probe of
+the CHECK on local Postgres (`always` refused, `drafts` accepted)._
+
+**WA-8.3 — Answered from the store's facts, for the phone that wrote.** With
+**Answers customers** on, a question is read against: the orders placed with
+the customer's number (the order-status rule), the products it names with the
+card's price, options and stock, delivery to a six-digit PIN it mentions,
+the offers running now, the published policies, the business hours and the
+last few messages. A price, a size in stock, Sunday's hours, the return
+policy's words or an order's status comes back as one message in the
+customer's language, labelled **Mink AI** in the thread. The message is
+filed like a COD tap (no unread, no Needs reply, no bell) and the answer
+goes after the welcome when one is due. _Pinned by `mink-answer.test.ts`
+("reads the facts for the phone that wrote, asks once, charges, sends and
+records"), `mink-facts.test.ts` and `inbound-auto-reply.test.ts`._
+
+**WA-8.4 — Hand over is the default, in three layers.** A complaint, a
+refund, a return of goods in hand, a cancellation, an address or order
+change, a payment problem, "talk to a person", a bare greeting, an empty or
+a 1,000-character message never reaches a model: it is filed for a person as
+before (the gate). Anything outside the facts, a question about another
+customer, an attempt to make Mink ignore its rules, or a store with no
+facts to answer from is handed over by the model; a reply carrying a link
+the facts never gave, a template token or more than 1,000 characters is
+turned into a hand-over by the parser. A hand-over puts the conversation in
+**Needs reply** with the bell, and keeps whatever Mink drafted for staff.
+_Pinned by `mink-gate.test.ts`, `mink-facts.test.ts` ("a link not in the
+facts turns the answer into a hand-over"), `mink-answer.test.ts` ("the gate
+runs again here") and `evals/mink/whatsapp.json`._
+
+**WA-8.5 — One Mink credit per sent answer, failing closed.** Before any
+model call the store's headroom (the cycle's included credits plus top-ups)
+is checked; a store with none left costs nothing and the message goes to a
+person. The credit is taken just before the send, from the same pool and in
+the same order as the dashboard's Mink, keyed on the answer so a retry can
+never take two; `insufficient` at that moment leaves a draft. A draft nobody
+sends is free. _Pinned by `mink-drafts.test.ts`, `mink-answer.test.ts` ("a
+store with no credits costs nothing", "'insufficient' at the charge keeps
+the answer as a draft") and the local Postgres probe of
+`consume_mink_whatsapp_answer` (insufficient, plan, idempotent, unlimited,
+mixed with a top-up, an unknown id raises)._
+
+**WA-8.6 — The draft card.** A conversation holding a draft shows it above
+the message box with what Mink drew on ("Based on: Order ORD10011027,
+Almond Shake, Refund Policy"), editable. **Send** sends the words as edited
+as the person's own reply (labelled "Priya · from a Mink draft"), charging
+the credit unless it was already taken; **Discard** drops it. A reply the
+person writes themselves discards the draft. A viewer never sees the card;
+outside the 24-hour window or on a paused number the card says so and Send
+is off. _Pinned by `inbox-client.test.tsx` ("InboxClient: Mink's draft") and
+`inbox-actions.test.ts` ("sendMinkDraft", "a person's own reply discards")._
+
+**WA-8.7 — Drafts mode never sends.** With **Drafts replies for you** on,
+every message rings as it always did and Mink's suggestion waits on the
+card; nothing is charged until a person presses Send. _Pinned by
+`mink-answer.test.ts` ("answerWithMink: drafts") and
+`inbound-auto-reply.test.ts` ("a draft (drafts mode) is asked for")._
+
+**WA-8.8 — Bounded and quiet when it cannot.** At most 20 answers an hour
+per conversation, 300 per store and 3,000 platform-wide; a model call is
+held to 25 seconds; a provider error, a timeout, a switched-off mode, a
+paused number or Mink being unavailable all end as "a person reads it",
+never as a failed delivery. _Pinned by `mink-answer.test.ts` ("rate limits,
+a switched-off mode, and an unavailable Mink all skip to a person", "never
+throws")._
+
+**WA-8.9 — The eval set.** `npm run mink:whatsapp-eval` runs 21 cases
+offline (the gate, the fixtures, the sheet and the parser);
+`-- --live --yes` sends each non-gate case to the model exactly as the
+live path does and grades the outcome, the words an answer must and must
+not carry, and any link. _The prompt document may not change without a run
+of both._
+
 ---
 
 ## Known gaps
 
-| Gap                                                                                                                                                 | Since      | Status                       |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------- |
-| The connect flow has not run against a live Embedded Signup popup; dev has carried the configuration ID since 2026-10-13                            | 2026-10-08 | Waiting on a live run on dev |
-| An unreachable database reads as "not connected" on the Channels card (the SMS card's documented gap, shared)                                       | 2026-10-08 | Open                         |
-| Template submission, the status webhook, echoes and media download follow Meta's published shapes but have not run against live Meta                | 2026-10-08 | With the live verification   |
-| Dashboard replies are text only; a photo or file must be sent from the phone                                                                        | 2026-10-08 | Phase 2                      |
-| Coexistence contact/history sync (`smb_app_state_sync`) is recorded, not processed — a thread starts at the first message after connecting          | 2026-10-08 | Phase 2                      |
-| No assignment, labels, notes, canned replies, business hours or search inside messages; the thread shows the latest 200 messages                    | 2026-10-08 | Phase 2                      |
-| A STOP gets no acknowledgement message; the opt-out is recorded silently                                                                            | 2026-10-08 | Phase 2 (auto-replies)       |
-| Inbound media is kept in the public media bucket at an unguessable path, like the Media Library; a customer's photo is as public as a product photo | 2026-10-08 | Open                         |
-| COD confirmation has not run against live Meta: the button payload shapes follow Meta's reference                                                   | 2026-10-13 | With the live verification   |
-| An unanswered COD confirmation gets no reminder, and an unconfirmed order is never cancelled automatically                                          | 2026-10-13 | Phase 2                      |
-| A COD customer who did not tick WhatsApp updates is never asked to confirm (SMS has no buttons)                                                     | 2026-10-13 | By design                    |
+| Gap                                                                                                                                                                                                               | Since      | Status                       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------- |
+| The connect flow has not run against a live Embedded Signup popup; dev has carried the configuration ID since 2026-10-13                                                                                          | 2026-10-08 | Waiting on a live run on dev |
+| An unreachable database reads as "not connected" on the Channels card (the SMS card's documented gap, shared)                                                                                                     | 2026-10-08 | Open                         |
+| Template submission, the status webhook, echoes and media download follow Meta's published shapes but have not run against live Meta                                                                              | 2026-10-08 | With the live verification   |
+| Dashboard replies are text only; a photo or file must be sent from the phone                                                                                                                                      | 2026-10-08 | Phase 2                      |
+| Coexistence contact/history sync (`smb_app_state_sync`) is recorded, not processed — a thread starts at the first message after connecting                                                                        | 2026-10-08 | Phase 2                      |
+| No assignment, labels, notes, canned replies or search inside messages; the thread shows the latest 200 messages                                                                                                  | 2026-10-08 | Phase 2                      |
+| Inbound media is kept in the public media bucket at an unguessable path, like the Media Library; a customer's photo is as public as a product photo                                                               | 2026-10-08 | Open                         |
+| COD confirmation has not run against live Meta: the button payload shapes follow Meta's reference                                                                                                                 | 2026-10-13 | With the live verification   |
+| A COD customer who did not tick WhatsApp updates is never asked to confirm (SMS has no buttons)                                                                                                                   | 2026-10-13 | By design                    |
+| The COD reminder and automatic cancellation run only where the hourly order sweep is scheduled, which is production; on dev the route must be called by hand                                                      | 2026-10-13 | By design                    |
+| Automatic replies are in English, whatever language the customer wrote in; the order question is understood in English, Hinglish and Devanagari Hindi                                                             | 2026-10-13 | Open                         |
+| Order updates sent as templates are not filed in the thread, so a customer's first reply to one counts as a first message and gets the welcome                                                                    | 2026-10-13 | Open                         |
+| Automatic replies have not run against live Meta; they use the same free-text send as inbox replies, which has                                                                                                    | 2026-10-13 | With the live verification   |
+| Menu buttons are WhatsApp's three reply buttons; a list of up to ten options is not offered                                                                                                                       | 2026-10-14 | Open                         |
+| A tap on a button the merchant has since changed or removed hands the chat to a person rather than doing what the old button did                                                                                  | 2026-10-14 | By design                    |
+| The reply-button message follows Meta's published interactive shape but has not run against live Meta                                                                                                             | 2026-10-14 | With the live verification   |
+| A merchant's template may carry a text header, a footer, quick-reply, link and call buttons; a picture header, a link with a placeholder, a copy-code button and a carousel are not offered                       | 2026-10-14 | Open                         |
+| Templates a merchant authored in WhatsApp Manager are not imported; only ones submitted here, or by StoreMink, are listed                                                                                         | 2026-10-14 | Open                         |
+| Submitting and deleting a merchant's template follow Meta's published shapes but have not run against live Meta                                                                                                   | 2026-10-14 | With the live verification   |
+| Customer-facing Mink has not run against live Vertex from a WhatsApp message; the request shape is the dashboard's one-shot reader's, and the eval set's live mode is the first real run                          | 2026-10-14 | With the live verification   |
+| Mink's facts are text only: it does not see a photo the customer sent, and a question about a picture waits for a person                                                                                          | 2026-10-14 | By design                    |
+| Mink answers from the published products' price and stock totals; a per-location shelf count, a size the store never listed as an option, and a product the question does not name by a word are not in its facts | 2026-10-14 | Open                         |
+| The deterministic gate reads English, Hinglish and Devanagari; a complaint in another script reaches the model, whose instruction then hands it over                                                              | 2026-10-14 | Open                         |

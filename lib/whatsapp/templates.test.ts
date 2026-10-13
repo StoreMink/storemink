@@ -13,6 +13,7 @@ vi.mock("@/lib/payments/crypto", () => ({
 }));
 vi.mock("./graph", () => ({
   createMessageTemplate: vi.fn(),
+  deleteMessageTemplate: vi.fn(async () => ({ ok: true, data: {} })),
   listMessageTemplates: vi.fn(async () => ({ ok: true, data: { data: [] } })),
   isTemplateExistsError: vi.fn(
     (r: any) => !r.ok && r.outcome === "rejected" && r.subcode === 2388023,
@@ -26,11 +27,18 @@ vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
 }));
 
-import { createMessageTemplate, listMessageTemplates } from "./graph";
+import {
+  createMessageTemplate,
+  deleteMessageTemplate,
+  listMessageTemplates,
+} from "./graph";
 import { WHATSAPP_TEMPLATE_CATALOG } from "./template-catalog";
 import {
   bootstrapWhatsAppTemplates,
+  deleteStoreTemplate,
+  listStoreTemplates,
   normalizeStatus,
+  submitCustomTemplate,
   syncWhatsAppTemplates,
 } from "./templates";
 import { storeWhatsappAccounts, whatsappTemplates } from "@/drizzle/schema";
@@ -219,5 +227,263 @@ describe("normalizeStatus", () => {
     expect(normalizeStatus("PAUSED")).toBe("PAUSED");
     expect(normalizeStatus("SOMETHING_NEW")).toBe("PENDING");
     expect(normalizeStatus(undefined)).toBe("PENDING");
+  });
+});
+
+const DRAFT = {
+  name: "delivery_delay",
+  language: "en" as const,
+  category: "UTILITY" as const,
+  headerText: "",
+  body: "Hi {{1}}, your order is running late.",
+  variables: [{ name: "customer_name", sample: "Rohan" }],
+  footerText: "",
+  buttons: [{ type: "quick_reply" as const, text: "Okay" }],
+};
+
+describe("submitCustomTemplate", () => {
+  it("★ writes the row PENDING for customers, then submits Meta's components and records the answer", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: { store_whatsapp_accounts: [ACCOUNT] },
+      returningQueue: [[{ id: "row-c", providerTemplateId: null }]],
+    });
+    vi.mocked(createMessageTemplate).mockResolvedValue({
+      ok: true,
+      data: { id: "meta-c", status: "PENDING", category: "UTILITY" },
+    });
+    const r = await submitCustomTemplate("store-1", DRAFT);
+    expect(r).toEqual({ ok: true, id: "row-c", status: "PENDING" });
+    expect(dbHolder.current.calls.values[0]).toMatchObject({
+      storeId: "store-1",
+      wabaId: "W",
+      eventKey: null,
+      audience: "customer",
+      name: "delivery_delay",
+      language: "en",
+      status: "PENDING",
+      variables: ["customer_name"],
+    });
+    expect(createMessageTemplate).toHaveBeenCalledWith("plain:tok", "W", {
+      name: "delivery_delay",
+      language: "en",
+      category: "UTILITY",
+      components: [
+        {
+          type: "BODY",
+          text: "Hi {{1}}, your order is running late.",
+          example: { body_text: [["Rohan"]] },
+        },
+        { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "Okay" }] },
+      ],
+    });
+    // The record of Meta's answer.
+    const set = dbHolder.current.calls.set.find(
+      (v: any) => v.providerTemplateId === "meta-c",
+    );
+    expect(set).toMatchObject({ status: "PENDING", syncError: null });
+  });
+
+  it("★ a name the store already holds is refused before Meta is asked", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: { store_whatsapp_accounts: [ACCOUNT] },
+      returningQueue: [[]],
+    });
+    const r = await submitCustomTemplate("store-1", DRAFT);
+    expect(r).toEqual({
+      ok: false,
+      error: expect.stringMatching(
+        /already have a template called delivery_delay/,
+      ),
+    });
+    expect(createMessageTemplate).not.toHaveBeenCalled();
+  });
+
+  it("a refusal at submission stays on the row as the reason, and is reported", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: { store_whatsapp_accounts: [ACCOUNT] },
+      returningQueue: [[{ id: "row-c", providerTemplateId: null }]],
+    });
+    vi.mocked(createMessageTemplate).mockResolvedValue({
+      ok: false,
+      outcome: "rejected",
+      error: "Invalid parameter",
+      code: 100,
+    } as any);
+    const r = await submitCustomTemplate("store-1", DRAFT);
+    expect(r).toEqual({
+      ok: false,
+      error: "Meta refused the template: Invalid parameter",
+    });
+    const set = dbHolder.current.calls.set.find((v: any) => v.syncError);
+    expect(set.syncError).toBe("Meta refused the template: Invalid parameter");
+  });
+
+  it("refuses when the store is not connected", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: { store_whatsapp_accounts: [[]] },
+    });
+    expect(await submitCustomTemplate("store-1", DRAFT)).toEqual({
+      ok: false,
+      error: "WhatsApp isn't connected.",
+    });
+  });
+});
+
+describe("deleteStoreTemplate", () => {
+  it("★ deletes a merchant's template at Meta by its id, then here", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        whatsapp_templates: [
+          [
+            {
+              id: "row-c",
+              name: "delivery_delay",
+              eventKey: null,
+              providerTemplateId: "meta-c",
+            },
+          ],
+        ],
+        store_whatsapp_accounts: [ACCOUNT],
+      },
+    });
+    expect(await deleteStoreTemplate("store-1", "row-c")).toEqual({ ok: true });
+    expect(deleteMessageTemplate).toHaveBeenCalledWith("plain:tok", "W", {
+      name: "delivery_delay",
+      hsmId: "meta-c",
+    });
+    expect(dbHolder.current.calls.delete.length).toBe(1);
+  });
+
+  it("★ refuses one of StoreMink's own, by event or by name", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        whatsapp_templates: [
+          [
+            {
+              id: "row-1",
+              name: "sm_order_placed_customer_v1",
+              eventKey: "order.placed",
+              providerTemplateId: "m",
+            },
+          ],
+        ],
+      },
+    });
+    const r = await deleteStoreTemplate("store-1", "row-1");
+    expect(r.ok).toBe(false);
+    expect((r as { error: string }).error).toMatch(/can't be deleted/);
+    expect(deleteMessageTemplate).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.delete.length).toBe(0);
+  });
+
+  it("Meta no longer holding it reads as gone; any other refusal keeps the row", async () => {
+    const row = {
+      id: "row-c",
+      name: "delivery_delay",
+      eventKey: null,
+      providerTemplateId: null,
+    };
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        whatsapp_templates: [[row]],
+        store_whatsapp_accounts: [ACCOUNT],
+      },
+    });
+    vi.mocked(deleteMessageTemplate).mockResolvedValueOnce({
+      ok: false,
+      outcome: "rejected",
+      error: "Message template does not exist",
+    } as any);
+    expect(await deleteStoreTemplate("store-1", "row-c")).toEqual({ ok: true });
+
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        whatsapp_templates: [[row]],
+        store_whatsapp_accounts: [ACCOUNT],
+      },
+    });
+    vi.mocked(deleteMessageTemplate).mockResolvedValueOnce({
+      ok: false,
+      outcome: "unknown",
+      error: "timeout",
+    } as any);
+    expect(await deleteStoreTemplate("store-1", "row-c")).toEqual({
+      ok: false,
+      error: "Meta didn't answer. Try again in a minute.",
+    });
+    expect(dbHolder.current.calls.delete.length).toBe(0);
+  });
+});
+
+describe("listStoreTemplates", () => {
+  it("★ tells StoreMink's templates from the merchant's, and which the inbox may send", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          {
+            id: "a",
+            name: "sm_order_placed_customer_cod_confirm_v1",
+            language: "en",
+            category: "UTILITY",
+            status: "APPROVED",
+            rejectionReason: null,
+            syncError: null,
+            quality: null,
+            lastSyncedAt: null,
+            createdAt: "2026-10-01T00:00:00Z",
+            eventKey: "order.placed",
+            audience: "customer",
+            components: [
+              { type: "BODY", text: "Confirm {{1}}" },
+              {
+                type: "BUTTONS",
+                buttons: [{ type: "QUICK_REPLY", text: "Confirm order" }],
+              },
+            ],
+            variables: ["subject_label"],
+            enabled: true,
+          },
+          {
+            id: "b",
+            name: "delivery_delay",
+            language: "hi",
+            category: "UTILITY",
+            status: "APPROVED",
+            rejectionReason: null,
+            syncError: null,
+            quality: "GREEN",
+            lastSyncedAt: null,
+            createdAt: "2026-10-02T00:00:00Z",
+            eventKey: null,
+            audience: "customer",
+            components: [
+              { type: "HEADER", format: "TEXT", text: "Update" },
+              { type: "BODY", text: "Hi {{1}}" },
+              { type: "FOOTER", text: "Echoss" },
+              {
+                type: "BUTTONS",
+                buttons: [{ type: "QUICK_REPLY", text: "Okay" }],
+              },
+            ],
+            variables: ["customer_name"],
+            enabled: true,
+          },
+        ],
+      ],
+    });
+    const rows = await listStoreTemplates("store-1");
+    expect(rows.map((r) => [r.name, r.catalogue, r.sendableFromInbox])).toEqual(
+      [
+        ["sm_order_placed_customer_cod_confirm_v1", true, false],
+        ["delivery_delay", false, true],
+      ],
+    );
+    expect(rows[1]).toMatchObject({
+      headerText: "Update",
+      body: "Hi {{1}}",
+      footerText: "Echoss",
+      buttons: [{ type: "quick_reply", text: "Okay" }],
+      variables: ["customer_name"],
+    });
   });
 });

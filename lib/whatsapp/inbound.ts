@@ -13,8 +13,15 @@ import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { recordEvent } from "@/lib/notifications/record";
 import { isWhatsAppWebhook } from "./webhook-events";
 import { handleCodReply } from "./cod-confirmation";
+import { answerOptOut } from "./opt-out-reply";
+import { answerAutomatically } from "./answer-automatically";
+import { loadAutoReplyFlags } from "./auto-reply-store";
+import { knownTemplateStatus } from "./template-catalog";
+import { handleMenuReply } from "./menu-reply";
+import { answerWithMink } from "./mink-answer";
 import {
   applyStatusToMessage,
+  handOverConversation,
   hasMedia,
   recordEchoMessage,
   recordInboundMessage,
@@ -323,6 +330,18 @@ export async function processPendingInboundEvents(
     try {
       const value = isRec(ev.payload) ? ev.payload : {};
       const kind = str(value.kind);
+      // ★ Read before the transaction: a failed settings read must never be
+      // the reason a customer's message is not filed. Once per TEXT message
+      // (an order question, a menu request, or anything Mink may answer); a
+      // photo or a sticker never needs the row, so it costs nothing.
+      const text =
+        ev.storeId && ev.field === "messages" && kind === "message"
+          ? textBodyOf(value)
+          : null;
+      const flags =
+        ev.storeId && text !== null
+          ? await loadAutoReplyFlags(ev.storeId)
+          : null;
       const filed = await withService(
         async (db): Promise<RecordInboundResult | null> => {
           let out: RecordInboundResult | null = null;
@@ -330,6 +349,9 @@ export async function processPendingInboundEvents(
             out = await recordInboundMessage(db, {
               storeId: ev.storeId,
               value,
+              answersOrderQuestions: flags?.orderStatus === true,
+              hasMenu: flags?.menu === true,
+              minkMode: flags?.minkMode ?? "off",
             });
           } else if (ev.storeId && ev.field === "smb_message_echoes") {
             out = await recordEchoMessage(db, { storeId: ev.storeId, value });
@@ -374,33 +396,53 @@ export async function processPendingInboundEvents(
   return result;
 }
 
+/** The text of a `text` message, before it is filed. */
+function textBodyOf(value: Rec): string | null {
+  const message = isRec(value.message) ? value.message : null;
+  if (!message || message.type !== "text") return null;
+  const text = isRec(message.text) ? message.text : null;
+  return str(text?.body);
+}
+
 /**
- * What happens once a message is safely on disk: its file is copied into our
- * bucket, and — when it moved the conversation into needs_reply — the team is
- * told. Both best-effort: the message is already filed, and neither failure
- * is worth retrying the whole event for (a retry would re-file nothing, but
- * would also ring the bell twice).
+ * What happens once a message is safely on disk: the customer is answered
+ * where the system can answer (a STOP or START, a COD tap, the store's
+ * automatic replies), its file is copied into our bucket, and, when it needs a
+ * person, the team is told. All best-effort: the message is already filed, and
+ * none of these is worth retrying the whole event for (a retry would re-file
+ * nothing, but would also ring the bell twice).
+ *
+ * ★ THE ANSWER GOES BEFORE THE FILE COPY. A download can take twenty seconds,
+ * and a customer waiting for "thanks, we're closed" should not wait on it.
  */
 async function afterFiled(
   storeId: string,
   filed: RecordInboundResult,
 ): Promise<void> {
   if (!filed.inserted || !filed.conversationId || !filed.messageId) return;
-  if (filed.media && hasMedia(filed.kind)) {
-    await storeInboundMedia({
+  const conversationId = filed.conversationId;
+
+  // Whether the system could not finish the job and a person must: the
+  // needs-reply and the bell that recordInboundMessage held back.
+  let handOver = false;
+
+  if (filed.optOut && filed.phone) {
+    // A STOP or START that changed the customer's offers consent: tell them
+    // it worked. Recorded already; this is only the answer, and never throws.
+    await answerOptOut({
       storeId,
-      conversationId: filed.conversationId,
-      messageId: filed.messageId,
-      media: filed.media,
-    });
-  }
-  // A COD Confirm / Cancel tap: act on it, answer it, and only when that
-  // cannot be done (refused, too late, failed) hand it to a person — which is
-  // the needs-reply and the bell recordInboundMessage held back.
-  if (filed.codReply && filed.phone) {
+      conversationId,
+      phone: filed.phone,
+      intent: filed.optOut,
+    }).catch((err) =>
+      logError("whatsapp opt-out: reply failed", err, { storeId }),
+    );
+  } else if (filed.codReply && filed.phone) {
+    // A COD Confirm / Cancel tap: act on it, answer it, and only when that
+    // cannot be done (refused, too late, failed) hand it to a person.
     const handled = await handleCodReply({
       storeId,
-      conversationId: filed.conversationId,
+      conversationId,
       phone: filed.phone,
       contactLabel: filed.contactLabel,
       reply: filed.codReply,
@@ -408,39 +450,101 @@ async function afterFiled(
       logError("whatsapp cod: handling failed", err, { storeId });
       return { outcome: "failed" as const, needsHuman: true };
     });
-    if (!handled.needsHuman) return;
-    await withService((db) =>
-      db.execute(sql`
-        update public.whatsapp_conversations set
-          status = 'needs_reply',
-          unread_count = unread_count + 1,
-          updated_at = now()
-        where id = ${filed.conversationId}::uuid
-          and store_id = ${storeId}::uuid
-      `),
-    ).catch((err) =>
-      logError("whatsapp cod: hand-over failed", err, { storeId }),
-    );
-  }
-  if (filed.needsNotify || (filed.codReply && filed.phone)) {
-    await recordEvent({
-      type: "whatsapp.message_received",
+    handOver = handled.needsHuman;
+  } else if (filed.menuReply && filed.menuReply !== "menu" && filed.phone) {
+    // A tap on one of the store's menu buttons: do what the button says, and
+    // hand over when it asks for a person or cannot be done (menu-reply.ts).
+    const handled = await handleMenuReply({
       storeId,
-      actor: {
-        type: "customer",
-        id: filed.userId,
-        label: filed.contactLabel,
-      },
-      subject: {
-        type: "whatsapp_conversation",
-        id: filed.conversationId,
-        label: filed.contactLabel,
-      },
-      payload: { preview: filed.preview },
-    }).catch((err) =>
-      logError("whatsapp inbox: notify failed", err, { storeId }),
-    );
+      conversationId,
+      phone: filed.phone,
+      userId: filed.userId,
+      buttonId: filed.menuReply,
+    }).catch((err) => {
+      logError("whatsapp menu: handling failed", err, { storeId });
+      return { outcome: "failed" as const, needsHuman: true };
+    });
+    handOver = handled.needsHuman;
+  } else if (filed.phone) {
+    // The store's own automatic replies: the welcome, the away message, the
+    // menu on request, the answer to "where is my order?"
+    // (answer-automatically.ts).
+    const menuRequest = filed.menuReply === "menu";
+    const answered = await answerAutomatically({
+      storeId,
+      conversationId,
+      phone: filed.phone,
+      userId: filed.userId,
+      kind: filed.kind,
+      orderQuestion: filed.orderQuestion,
+      welcomeEligible: filed.welcomeEligible,
+      menuRequest,
+    }).catch((err) => {
+      logError("whatsapp auto-replies: failed", err, { storeId });
+      return { handOver: filed.orderQuestion || menuRequest, sent: [] };
+    });
+    handOver = answered.handOver;
+
+    // Customer-facing Mink (mink-answer.ts), after the welcome so a first
+    // message reads "hi, thanks for messaging" and then the answer. `helps`
+    // was filed as answered by the system, so whatever Mink could not
+    // finish hands over here; `drafts` only leaves a draft for the person
+    // who already has the message.
+    if (filed.minkAnswer && filed.body) {
+      const mink = await answerWithMink({
+        storeId,
+        conversationId,
+        messageId: filed.messageId,
+        phone: filed.phone,
+        userId: filed.userId,
+        mode: filed.minkAnswer,
+        text: filed.body,
+      }).catch((err) => {
+        logError("whatsapp mink: failed", err, { storeId });
+        return { outcome: "failed" as const, needsHuman: true };
+      });
+      if (filed.minkAnswer === "helps") handOver = handOver || mink.needsHuman;
+    }
   }
+
+  if (filed.media && hasMedia(filed.kind)) {
+    await storeInboundMedia({
+      storeId,
+      conversationId,
+      messageId: filed.messageId,
+      media: filed.media,
+    });
+  }
+
+  let ring = filed.needsNotify;
+  if (handOver) {
+    const moved = await withService(async (db) =>
+      handOverConversation(db, storeId, conversationId),
+    ).catch((err) => {
+      logError("whatsapp inbox: hand-over failed", err, { storeId });
+      // Unknown, so ring: a missed hand-over is worse than a second bell.
+      return true;
+    });
+    ring = ring || moved;
+  }
+  if (!ring) return;
+  await recordEvent({
+    type: "whatsapp.message_received",
+    storeId,
+    actor: {
+      type: "customer",
+      id: filed.userId,
+      label: filed.contactLabel,
+    },
+    subject: {
+      type: "whatsapp_conversation",
+      id: conversationId,
+      label: filed.contactLabel,
+    },
+    payload: { preview: filed.preview },
+  }).catch((err) =>
+    logError("whatsapp inbox: notify failed", err, { storeId }),
+  );
 }
 
 /** Account- and template-level facts, applied to the rows the card reads. */
@@ -460,7 +564,10 @@ export async function applyAccountEvent(
       const templateId = v.message_template_id;
       const name = str(v.message_template_name);
       const language = str(v.message_template_language);
-      const status = event;
+      // ★ Only a status the row can hold. Meta also posts FLAGGED, ARCHIVED
+      // and words it adds later; writing one would fail the 0174 CHECK and
+      // mark the whole delivery failed, so an unknown word changes nothing.
+      const status = knownTemplateStatus(event);
       if (!status) return;
       const reason = str(v.reason);
       const set = {

@@ -2293,9 +2293,8 @@ export async function placeOrder(
   // real. Credit covering the whole total is NOT waiting on anything — the
   // balance already paid it, and the razorpay branch below skips the gateway
   // entirely for exactly that case.
-  const awaitsGatewayPayment =
-    paymentMethod === "razorpay" &&
-    !(creditApplied > 0 && total - creditApplied <= 0);
+  const creditCoversAll = creditApplied > 0 && total - creditApplied <= 0;
+  const awaitsGatewayPayment = paymentMethod === "razorpay" && !creditCoversAll;
 
   // ★★ AN UNPAID GATEWAY ORDER IS NOT A PLACED ORDER — DO NOT ANNOUNCE IT.
   //
@@ -2342,7 +2341,12 @@ export async function placeOrder(
       total,
       currency: "INR",
       items: summariseItems(orderItemsToInsert),
-      paymentMethod,
+      // ★ HOW IT WAS PAID, not what was picked at checkout. Credit covering the
+      // whole total makes the row `store_credit` (below), and saying "Cash on
+      // delivery" here put that line in the confirmation and sent a COD
+      // customer WhatsApp Confirm/Cancel buttons for an order with nothing to
+      // collect (record.ts reads this to decide).
+      paymentMethod: creditCoversAll ? "store_credit" : paymentMethod,
       // Only on a pickup. A delivery order's fact list is unchanged — an empty
       // "Pickup location" row on every confirmation would be noise.
       // A delivery confirmation names where it's going; a collection names
@@ -2424,7 +2428,7 @@ export async function placeOrder(
   // Without this the gateway would be asked for ₹0 (which it refuses, minimum
   // ₹1) and a COD order would tell the courier to collect nothing. The order
   // is already paid, by the balance.
-  if (creditApplied > 0 && total - creditApplied <= 0) {
+  if (creditCoversAll) {
     await withService((db) =>
       db
         .update(orders)
