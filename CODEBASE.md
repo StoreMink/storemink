@@ -475,7 +475,8 @@ Embedded Signup configuration (2026-10-13).
 ### WhatsApp Commerce — Phase 1 slice 1: Connect (2026-10-08)
 
 Spec `docs/whatsapp-commerce-plan.md`; console runbook `docs/whatsapp-phase0.md`
-(Phase 0's dev gate passed 2026-10-08); stories `docs/whatsapp-acceptance.md`.
+(Phase 0's dev gate passed 2026-10-08); stories `docs/whatsapp-acceptance.md`;
+live dev test script `docs/whatsapp-dev-live-test.md`.
 Dashboard → Channels gains a **WhatsApp** card (category Messaging) whose
 modal asks ONE question before Meta's popup — _is this number already on the
 WhatsApp Business app?_ — because Coexistence is a different onboarding flow

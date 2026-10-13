@@ -3,7 +3,8 @@
 **The rule from `docs/pos-acceptance.md` applies:** a slice is not done until
 its user stories are in here, and a fixed gap must leave the "Known gaps"
 table. Spec: `docs/whatsapp-commerce-plan.md`. Console setup:
-`docs/whatsapp-phase0.md`.
+`docs/whatsapp-phase0.md`. The live dev session that runs these stories against
+real Meta traffic is scripted in `docs/whatsapp-dev-live-test.md`.
 
 > Each story names what a person does and what they must see. "Verified"
 > records what has actually been run and where; everything else is a story,
