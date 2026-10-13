@@ -133,9 +133,12 @@ an inbound `button` message. `recordInboundMessage` parses its payload
 (`parseCodPayload`, pure: exact prefix, action, UUID) and files the message as
 AUTOMATED: no unread count, no `needs_reply`, no bell. `afterFiled`
 (inbound.ts) then calls `handleCodReply` (`lib/whatsapp/cod-confirmation.ts`),
-which acts only when the order is in the store the tap arrived for, is
-`payment_method = 'cod'`, and the tapping phone is the order's own (account
-phone or delivery phone, compared through `textablePhone`). Confirm sets
+which acts only when the order is in the store the tap arrived for, is cash
+on delivery, and the tapping phone is the order's own (account
+phone or delivery phone, compared through `textablePhone`). ★★ The ROW says
+`payment_method = 'cash_on_delivery'`; only checkout's choice and the event
+payload say `cod`. The handler first compared the row against `cod` and so
+refused every real tap, found on dev 2026-10-13 (`COD_PAYMENT_METHODS`). Confirm sets
 `cod_confirmation = 'confirmed'` with the status guard INSIDE the update, so a
 Cancel that won a race leaves it matching nothing. Cancel, from `pending` /
 `processing` only, goes through `approveCancellation` (its fourth caller, as

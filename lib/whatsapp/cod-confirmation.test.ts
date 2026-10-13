@@ -38,7 +38,8 @@ const ORDER_ROW = {
   id: ORDER,
   orderRef: "ORD10010004",
   status: "pending",
-  paymentMethod: "cod",
+  // What placeOrder really stores for COD; `cod` is only the checkout choice.
+  paymentMethod: "cash_on_delivery",
   codConfirmation: "requested",
   customerId: "cust-1",
   shippingAddress: { phone: "9876543210" },
@@ -248,6 +249,13 @@ describe("handleCodReply", () => {
     expect(approveCancellation).not.toHaveBeenCalled();
     expect(mock.calls.update).toHaveLength(0);
     expect(sendWhatsAppText).not.toHaveBeenCalled();
+  });
+
+  it("★★ acts on an order stored as cash_on_delivery, the value checkout writes", async () => {
+    // The event payload says `cod` and the row says `cash_on_delivery`;
+    // reading one for the other refused every real tap on dev.
+    setup([[{ ...ORDER_ROW, paymentMethod: "cash_on_delivery" }]]);
+    expect((await tap("confirm")).outcome).toBe("confirmed");
   });
 
   it("★ refuses an order that is not cash on delivery", async () => {

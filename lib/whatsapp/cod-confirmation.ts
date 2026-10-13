@@ -79,6 +79,15 @@ const NEEDS_HUMAN: Record<CodOutcome, boolean> = {
  */
 const CANCELLABLE_STATUSES = new Set(["pending", "processing"]);
 
+/**
+ * ★★ WHAT A COD ORDER IS STORED AS, which is NOT what checkout calls it.
+ * Checkout's choice and the `order.placed` payload say `cod`; placeOrder
+ * writes `orders.payment_method = 'cash_on_delivery'` (checkout-actions.ts).
+ * Comparing the row against `cod` refused every real tap. `cod` stays in the
+ * set only so a row written in the payload's vocabulary is not refused.
+ */
+const COD_PAYMENT_METHODS = new Set(["cash_on_delivery", "cod"]);
+
 interface CodOrder {
   id: string;
   orderRef: string;
@@ -160,7 +169,7 @@ export async function handleCodReply(
 
   const refusal = !order
     ? "unknown order"
-    : order.paymentMethod !== "cod"
+    : !COD_PAYMENT_METHODS.has(order.paymentMethod)
       ? "not cash on delivery"
       : !tapperOwnsOrder(input.phone, order)
         ? "phone does not own the order"
