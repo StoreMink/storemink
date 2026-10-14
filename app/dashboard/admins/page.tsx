@@ -1,11 +1,10 @@
 import { desc, eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import { admins } from "@/drizzle/schema";
+import { adminLocations, admins } from "@/drizzle/schema";
 import { requireSectionAccess, getActingStoreId } from "../lib/access";
 import { UsersManagementView } from "./users-management-view";
 import { getCurrentStore } from "@/lib/store/resolve";
 import { getPosState, getStoreLocations } from "@/lib/pos/locations";
-import { listAdminLocations } from "@/app/actions/location-actions";
 import { listStaff } from "@/app/actions/pos-staff-actions";
 import { getStorePlanContext } from "@/lib/plans/entitlements";
 import { posStaffToRow, type StaffRow } from "./shared";
@@ -75,8 +74,30 @@ export default async function UsersPage() {
   // Who is currently restricted to what, so the editor opens on today's answer
   // rather than resetting anyone to unrestricted on save. Register staff carry
   // their assignments on the row already.
-  const [{ bindings }, locations, pos, roles] = await Promise.all([
-    listAdminLocations(),
+  //
+  // ★ Read here, under the page's own `admins` view gate, rather than through
+  // `listAdminLocations` (a `manage` action): for a viewer without manage, such
+  // as the seeded Admin, that answered no bindings and the Where column called
+  // every restricted admin "All locations".
+  const [bindings, locations, pos, roles] = await Promise.all([
+    withService((db) =>
+      db
+        .select({
+          admin_id: adminLocations.adminId,
+          location_id: adminLocations.locationId,
+        })
+        .from(adminLocations)
+        .where(eq(adminLocations.storeId, storeId)),
+    )
+      .then((rows) => {
+        const map: Record<string, string[]> = {};
+        for (const r of rows) (map[r.admin_id] ??= []).push(r.location_id);
+        return map;
+      })
+      .catch((err) => {
+        console.error("Failed to load location access:", err);
+        return {} as Record<string, string[]>;
+      }),
     getStoreLocations(storeId).catch(() => []),
     // The register roles exist only on a plan that has POS. `listStaff` gates
     // itself on the `pos` permission and answers an error rather than throw;

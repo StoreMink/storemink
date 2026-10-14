@@ -7018,9 +7018,9 @@
       }
     },
     {
-      "id": "20261014_0192_paid_plan_renewal_entitlement",
+      "id": "20261014_0205_paid_plan_renewal_entitlement",
       "description": "Paid plans stop lapsing after one cycle: the overdue downgrade checks the next cycle's invoice and closes it, and stores whose paid renewal lapsed to Free get their plan back",
-      "file": "sql/20261014_0192_paid_plan_renewal_entitlement.sql",
+      "file": "sql/20261014_0205_paid_plan_renewal_entitlement.sql",
       "transaction": true,
       "requires": ["20261012_0191_analytics_overview_refresh_help"],
       "verify": {
@@ -7050,11 +7050,11 @@
       }
     },
     {
-      "id": "20261014_0193_stock_rpc_store_ownership",
+      "id": "20261014_0206_stock_rpc_store_ownership",
       "description": "adjust_stock_at and transfer_stock refuse a product, variant or location that is not the calling store's",
-      "file": "sql/20261014_0193_stock_rpc_store_ownership.sql",
+      "file": "sql/20261014_0206_stock_rpc_store_ownership.sql",
       "transaction": true,
-      "requires": ["20261014_0192_paid_plan_renewal_entitlement"],
+      "requires": ["20261014_0205_paid_plan_renewal_entitlement"],
       "verify": {
         "functions": [
           "adjust_stock_at(uuid,uuid,uuid,uuid,integer,text,text,text)",
@@ -7078,11 +7078,11 @@
       }
     },
     {
-      "id": "20261014_0194_fixed_staff_roles",
-      "description": "Platform-managed staff roles: the operator-owned platform_roles table seeded with Owner, Admin, Staff, Manager and Cashier, admins.role as a foreign key to it, per-store custom roles retired, and the Help guides edited for the one Staff page",
-      "file": "sql/20261014_0194_fixed_staff_roles.sql",
+      "id": "20261014_0207_fixed_staff_roles",
+      "description": "Platform-managed staff roles: the operator-owned platform_roles table seeded with Owner, Admin, Staff, Manager and Cashier, admins.role as a foreign key to it, per-store custom roles retired, the store-admin RLS helpers admitting every dashboard role and no suspended admin, and the Help guides edited for the one Staff page",
+      "file": "sql/20261014_0207_fixed_staff_roles.sql",
       "transaction": true,
-      "requires": ["20261014_0193_stock_rpc_store_ownership"],
+      "requires": ["20261014_0206_stock_rpc_store_ownership"],
       "verify": {
         "columns": [
           "platform_roles.slug",
@@ -7117,8 +7117,18 @@
             "equals": "0"
           },
           {
+            "name": "is_store_admin admits every dashboard role and no suspended admin",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.is_store_admin(uuid)'::regprocedure and pg_get_functiondef(oid) like '%platform_roles%' and pg_get_functiondef(oid) like '%is_suspended%'",
+            "equals": "1"
+          },
+          {
+            "name": "is_store_superadmin admits no suspended admin",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.is_store_superadmin(uuid)'::regprocedure and pg_get_functiondef(oid) like '%is_suspended%'",
+            "equals": "1"
+          },
+          {
             "name": "the roles guide describes the five fixed roles",
-            "sql": "select count(*)::text from public.help_articles where slug = 'create-roles-permissions-and-location-access' and status = 'published' and body like '%<h2>The standard roles</h2>%' and body like '%invite them again with the new role%' and body like '%an assignment to every location for a register user%' and body like '%Admin manages everything except staff and billing%'",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-roles-permissions-and-location-access' and status = 'published' and body like '%<h2>The standard roles</h2>%' and body like '%remove them from Staff first, then invite them again with the new role%' and body like '%an assignment to every location for a register user%' and body like '%Admin manages everything except staff and billing%'",
             "equals": "1"
           },
           {

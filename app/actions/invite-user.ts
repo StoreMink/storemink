@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getServerUser } from "@/lib/auth/server-user";
 import { emitEvent } from "@/lib/notifications/record";
 import {
@@ -10,8 +10,12 @@ import {
 } from "@/lib/auth/firebase-users";
 import { setUserClaims } from "@/lib/auth/firebase-claims";
 import { setAdminLocations } from "./location-actions";
-import { withService, withUser } from "@/lib/db/client";
-import { admins } from "@/drizzle/schema";
+import { withService } from "@/lib/db/client";
+import { admins, posStaff } from "@/drizzle/schema";
+import {
+  getActingStoreId,
+  isStoreSuperadmin,
+} from "@/app/dashboard/lib/access";
 import { buildStaffInviteEmail } from "@/lib/email/account-emails";
 import { getStoreBrandById } from "@/lib/store/brand";
 import { fromAddress } from "@/lib/email/sender";
@@ -49,7 +53,7 @@ function normalizedEmailOf(email: string): string {
 
 /**
  * The register half of an invite. Delegates to `inviteStaff`, whose own gate
- * (`pos` manage) the superadmin caller already passes, after two checks that
+ * (the owner) the superadmin caller already passes, after two checks that
  * only make sense here: the store must actually have the register switched
  * on, and "no shops ticked" means every shop — the same reading the location
  * picker gives a dashboard admin, where absence is not restriction.
@@ -117,29 +121,25 @@ export async function inviteUser(formData: FormData): Promise<InviteResult> {
     return { error: "Invalid role." };
   }
 
-  // Verify the caller is a superadmin (own-row read under their identity).
   const caller = await getServerUser();
   if (!caller) {
     return { error: "Not authenticated." };
   }
 
-  const callerRows = await withUser(
-    { uid: caller.id, email: caller.email },
-    (db) =>
-      db
-        .select({ role: admins.role, store_id: admins.storeId })
-        .from(admins)
-        .where(eq(admins.id, caller.id))
-        .limit(1),
-  ).catch(() => []);
-  const callerProfile = callerRows[0];
-
-  if (callerProfile?.role !== "superadmin") {
+  // ★ A superadmin of THE STORE THIS DASHBOARD IS FOR, platform operators
+  // included (user-management.ts's gate). It used to read the caller's own
+  // admins row, which an operator does not have: since the register invite
+  // moved here from Point of Sale → Staff, that left operators with an Invite
+  // button that always failed. Fails closed on a lookup error.
+  let storeId: string;
+  try {
+    if (!(await isStoreSuperadmin())) {
+      return { error: "Unauthorized. Superadmin access required." };
+    }
+    storeId = await getActingStoreId();
+  } catch {
     return { error: "Unauthorized. Superadmin access required." };
   }
-
-  // The invited admin joins the inviter's store.
-  const storeId = callerProfile.store_id;
 
   // A role from the platform's list (lib/roles/platform-roles.ts): the
   // dashboard roles StoreMink defines, or one of the two register roles.
@@ -162,6 +162,22 @@ export async function inviteUser(formData: FormData): Promise<InviteResult> {
   // become a cashier" guard. Only the entry point moved: since 2026-10-14 the
   // one Staff page invites every role.
   if (staffRole.kind === "pos") {
+    // ★ A DASHBOARD LOGIN CANNOT ALSO WORK THE REGISTER: registration refuses
+    // it (completeStaffRegistration), so inviting one leaves a Pending row
+    // that can never finish. Say so now, while the owner can act on it.
+    const adminRows = await withService((db) =>
+      db
+        .select({ id: admins.id })
+        .from(admins)
+        .where(eq(admins.email, normalizedEmailOf(email)))
+        .limit(1),
+    ).catch(() => []);
+    if (adminRows[0]) {
+      return {
+        error:
+          "This email already signs in to a StoreMink dashboard, and register staff can't. If they work here, remove them from Staff first; otherwise use a different email address.",
+      };
+    }
     return invitePosStaff({
       storeId,
       staffRole,
@@ -190,6 +206,25 @@ export async function inviteUser(formData: FormData): Promise<InviteResult> {
 
   if (existingRows[0]) {
     return { error: "A user with this email already exists." };
+  }
+
+  // ★ Register staff here keep their own login under this email, so creating a
+  // dashboard user for it would fail with a bare "already exists". Name the
+  // step that comes first instead.
+  const posRows = await withService((db) =>
+    db
+      .select({ id: posStaff.id })
+      .from(posStaff)
+      .where(
+        and(eq(posStaff.storeId, storeId), eq(posStaff.email, normalizedEmail)),
+      )
+      .limit(1),
+  ).catch(() => []);
+  if (posRows[0]) {
+    return {
+      error:
+        "This email belongs to register staff here. Remove them from Staff first, then invite them again with a dashboard role.",
+    };
   }
 
   // Friendly preflight before creating an external auth identity. The same

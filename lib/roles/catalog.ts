@@ -82,10 +82,53 @@ export const ROLE_NAME_MAX = 40;
 export const ROLE_DESCRIPTION_MAX = 200;
 export const ROLE_SLUG_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
 
-/** Every section with every action it supports. */
+/**
+ * The dashboard sections that existed when `platform_roles` was seeded
+ * (migration 20261014_0207). DEFAULT_STAFF_ROLES is what that migration wrote,
+ * so it is frozen to this list, not to the live SECTIONS: a section added later
+ * reaches the stored roles only through a migration of its own, and
+ * lib/roles/catalog.test.ts fails until one grants it. Never edit this list.
+ */
+export const ROLE_SEED_SECTION_KEYS = [
+  "dashboard",
+  "orders",
+  "products",
+  "categories",
+  "colors",
+  "inventory",
+  "users",
+  "enquiries",
+  "analytics",
+  "locations",
+  "pos",
+  "themes",
+  "builder",
+  "navigation",
+  "blogs",
+  "branding",
+  "media",
+  "marketing",
+  "promotions",
+  "settings",
+  "admins",
+  "roles",
+  "ai",
+  "channels",
+  "billing",
+  "notifications",
+  "activity",
+] as const;
+
+/** Every seeded section with every action it supports. */
 function everything(): RolePermissions {
+  const seeded = new Set<string>(ROLE_SEED_SECTION_KEYS);
   return normalizePermissions(
-    Object.fromEntries(SECTIONS.map((s) => [s.key, [...s.actions]])),
+    Object.fromEntries(
+      SECTIONS.filter((s) => seeded.has(s.key)).map((s) => [
+        s.key,
+        [...s.actions],
+      ]),
+    ),
   );
 }
 

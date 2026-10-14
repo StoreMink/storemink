@@ -17,7 +17,9 @@ import { admins, posStaff, posStaffLocations } from "@/drizzle/schema";
 import {
   getActingStoreId,
   getManagerIdentity,
+  isStoreSuperadmin,
 } from "@/app/dashboard/lib/access";
+import { authIdsInUse } from "@/lib/auth/identity-usage";
 import { getServerUser } from "@/lib/auth/server-user";
 import { getStoreLocations } from "@/lib/pos/locations";
 import { getAuthorizedDevice } from "@/lib/pos/devices";
@@ -58,6 +60,18 @@ function cleanName(v: unknown): string {
 function cleanEmail(v: unknown): string {
   return typeof v === "string" ? v.trim().toLowerCase().slice(0, 200) : "";
 }
+/**
+ * ★ STAFF ARE MANAGED BY THE OWNER (platform operators count). `pos` manage is
+ * not enough: the seeded Admin role holds it to run the register, and it must
+ * not let them promote, deactivate or remove the people who work it, which
+ * the Staff page, the role list and the Help guides all reserve to the owner.
+ * Same gate as user-management.ts uses for dashboard staff.
+ */
+async function canManageStaff(): Promise<boolean> {
+  if (!(await getManagerIdentity("pos"))) return false;
+  return isStoreSuperadmin();
+}
+
 async function validLocationIds(
   storeId: string,
   ids: unknown,
@@ -163,8 +177,9 @@ async function sendInviteEmail(
 export async function inviteStaff(
   input: InviteInput,
 ): Promise<{ id?: string; error?: string }> {
-  const admin = await getManagerIdentity("pos");
-  if (!admin) return { error: "You don't have permission to do this." };
+  if (!(await canManageStaff())) {
+    return { error: "You don't have permission to do this." };
+  }
   const storeId = await getActingStoreId();
 
   const name = cleanName(input.name);
@@ -216,8 +231,9 @@ export async function inviteStaff(
 }
 
 export async function resendInvite(id: string): Promise<ActionResult> {
-  const admin = await getManagerIdentity("pos");
-  if (!admin) return { error: "You don't have permission to do this." };
+  if (!(await canManageStaff())) {
+    return { error: "You don't have permission to do this." };
+  }
   const storeId = await getActingStoreId();
   if (typeof id !== "string" || !id) return { error: "Invalid staff member." };
 
@@ -262,8 +278,9 @@ export async function updateStaff(
   id: string,
   input: { name: string; role: string; locationIds: string[] },
 ): Promise<ActionResult> {
-  const admin = await getManagerIdentity("pos");
-  if (!admin) return { error: "You don't have permission to do this." };
+  if (!(await canManageStaff())) {
+    return { error: "You don't have permission to do this." };
+  }
   const storeId = await getActingStoreId();
   if (typeof id !== "string" || !id) return { error: "Invalid staff member." };
 
@@ -320,8 +337,9 @@ export async function setStaffActive(
   id: string,
   active: boolean,
 ): Promise<ActionResult> {
-  const admin = await getManagerIdentity("pos");
-  if (!admin) return { error: "You don't have permission to do this." };
+  if (!(await canManageStaff())) {
+    return { error: "You don't have permission to do this." };
+  }
   const storeId = await getActingStoreId();
   if (typeof id !== "string" || !id) return { error: "Invalid staff member." };
 
@@ -341,20 +359,23 @@ export async function setStaffActive(
 }
 
 export async function deleteStaff(id: string): Promise<ActionResult> {
-  const admin = await getManagerIdentity("pos");
-  if (!admin) return { error: "You don't have permission to do this." };
+  if (!(await canManageStaff())) {
+    return { error: "You don't have permission to do this." };
+  }
   const storeId = await getActingStoreId();
   if (typeof id !== "string" || !id) return { error: "Invalid staff member." };
 
   let uid: string | null = null;
+  let email = "";
   try {
     const rows = await withService((db) =>
       db
         .delete(posStaff)
         .where(and(eq(posStaff.id, id), eq(posStaff.storeId, storeId)))
-        .returning({ user_id: posStaff.userId }),
+        .returning({ user_id: posStaff.userId, email: posStaff.email }),
     );
     uid = rows[0]?.user_id ?? null;
+    email = rows[0]?.email ?? "";
   } catch (err) {
     return { error: dbErrorMessage(err, "Couldn't remove the staff member.") };
   }
@@ -375,8 +396,48 @@ export async function deleteStaff(id: string): Promise<ActionResult> {
   // be the person's SHOPPER account on this platform, which predates the
   // invite and has orders behind it. The uid came from the staff row, so it is
   // the only id we know belongs to this staff member.
+  //
+  // ★ AND ONLY WHEN NOTHING ELSE USES IT (deleteUser's rule). The same login
+  // can be this person's shopper account (`users`) or another store's register
+  // login, and deleting it would lock them out there too. An unanswerable check
+  // counts as "in use": a stray login is recoverable, a deleted one is not.
   let authCleanup: "done" | "not-needed" | "failed" = "not-needed";
+  let inUse = false;
   if (uid) {
+    const authUid = uid;
+    inUse = true;
+    try {
+      const emails = new Set(email ? [email.trim().toLowerCase()] : []);
+      inUse = (await authIdsInUse(new Map([[authUid, emails]]))).has(authUid);
+    } catch (err) {
+      logError("deleteStaff: identity usage check failed", err, {
+        storeId,
+        uid: authUid,
+      });
+    }
+    if (inUse) {
+      // Keep the login; drop the register claim unless another store's
+      // register still uses it.
+      const stillStaff = await withService((db) =>
+        db
+          .select({ id: posStaff.id })
+          .from(posStaff)
+          .where(eq(posStaff.userId, authUid))
+          .limit(1),
+      )
+        .then((rows) => rows.length > 0)
+        .catch(() => true);
+      if (!stillStaff) {
+        await setUserClaims(authUid, { role: null }).catch((e) =>
+          logError("deleteStaff: claim strip failed", e, {
+            storeId,
+            uid: authUid,
+          }),
+        );
+      }
+    }
+  }
+  if (uid && !inUse) {
     try {
       await deleteAuthUser(uid);
       authCleanup = "done";

@@ -1,7 +1,7 @@
 import "server-only";
 
 // ---------------------------------------------------------------------------
-// The platform's role list, as stored in `platform_roles` (migration 0194).
+// The platform's role list, as stored in `platform_roles` (migration 0207).
 //
 // Operators own it (app/actions/platform-role-actions.ts); every seller
 // dashboard READS it: the access gates, the notification fan-out, the Staff

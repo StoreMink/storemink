@@ -406,6 +406,55 @@ describe("startEnrolment", () => {
     },
   );
 
+  it("★★ re-subscribing after a downgrade bills the NEXT cycle, not cycle 1", async () => {
+    // Invoices are one per cycle for ever. Cycle 1 is this store's old PAID
+    // invoice and cycle 2 was closed unpaid when they were downgraded, so
+    // enrolling at 1 again handed back the paid one and refused "already paid
+    // for", leaving no way back onto a paid plan.
+    seed([
+      [{ state: "downgraded", cycleSeq: 1 }],
+      [{ seq: 2, status: "uncollectible" }],
+    ]);
+    const res = await startEnrolment(args);
+    expect(res.ok).toBe(true);
+    expect(store.ensureRenewalInvoice.mock.calls[0][0].cycleSeq).toBe(3);
+    expect(store.getCycleInvoice).toHaveBeenCalledWith(STORE, 3);
+    // Seeded as the cycle BEFORE, so activation lands on the one being paid.
+    expect(dbHolder.current.calls.values[0].currentCycleSeq).toBe(2);
+    expect(dbHolder.current.calls.onConflict[0].set.currentCycleSeq).toBe(2);
+  });
+
+  it("★ re-uses this re-enrolment's own draft rather than skipping past it", async () => {
+    // A dismissed payment window left a draft at cycle 3; coming back must
+    // reach the same invoice, not open a fourth.
+    seed([
+      [{ state: "cancelled", cycleSeq: 2 }],
+      [{ seq: 3, status: "draft" }],
+    ]);
+    await startEnrolment(args);
+    expect(store.ensureRenewalInvoice.mock.calls[0][0].cycleSeq).toBe(3);
+  });
+
+  it("★ still refuses a re-enrolment cycle that was paid but never activated", async () => {
+    // The money for cycle 2 landed and activation failed. Pointing past it would
+    // charge the merchant a second time; returning it keeps the refusal.
+    seed([
+      [{ state: "downgraded", cycleSeq: 1 }],
+      [{ seq: 2, status: "paid" }],
+    ]);
+    store.ensureRenewalInvoice.mockResolvedValueOnce({
+      id: INVOICE,
+      status: "paid",
+      totalPaise: 5_000_00,
+      periodStart: NOW.toISOString(),
+      periodEnd: MONTHLY_CYCLE_END,
+    });
+    const res = await startEnrolment(args);
+    expect(store.ensureRenewalInvoice.mock.calls[0][0].cycleSeq).toBe(2);
+    expect(res.ok).toBe(false);
+    expect(rzp.rzpCreateAuthorizationOrder).not.toHaveBeenCalled();
+  });
+
   it("★ fails CLOSED when the subscription state can't be read", async () => {
     // Unable to read means unable to rule out billing the same store twice.
     dbHolder.current = makeDbMock({ selectQueue: [] });
@@ -987,7 +1036,7 @@ describe("confirmEnrolment", () => {
 
   /** attempt row, then subscription row, then stores row. */
   function seedConfirm(
-    opts: { storePlan?: string; storeSource?: string } = {},
+    opts: { storePlan?: string; storeSource?: string; cycleSeq?: number } = {},
   ) {
     seed([
       [
@@ -1004,6 +1053,7 @@ describe("confirmEnrolment", () => {
           period: "monthly",
           state: "free",
           currentPeriodEnd: null,
+          currentCycleSeq: opts.cycleSeq ?? 0,
         },
       ],
       [
@@ -1023,6 +1073,23 @@ describe("confirmEnrolment", () => {
     expect(res.data.plan).toBe("pro");
     expect(res.data.periodEnd).toBe(CYCLE_END);
   });
+
+  it.each([
+    [0, 1],
+    [2, 3],
+  ])(
+    "★ activates the cycle after the seeded one (seeded %i, activates %i)",
+    async (seeded, expected) => {
+      // A first subscription activates cycle 1; a re-enrolment activates the
+      // cycle its invoice was raised for, not cycle 1 again.
+      seedConfirm({ cycleSeq: seeded });
+      await confirmEnrolment(args);
+      const activation = dbHolder.current.calls.set.find(
+        (v: any) => v.state === "active",
+      );
+      expect(activation.currentCycleSeq).toBe(expected);
+    },
+  );
 
   it("★★ ISSUES the invoice now — the number is spent on a payment that HAPPENED", async () => {
     // The gapless GST series must not be spent on an abandoned checkout, and the

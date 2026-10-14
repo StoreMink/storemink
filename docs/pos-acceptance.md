@@ -584,7 +584,7 @@ and the transfer with a product id, variant id or location id that belongs to
 store B.
 **Expect:** the adjustment is refused with "That product or location is not part
 of this store." and the transfer returns false; store B's stock and ledger are
-unchanged. (Migration 0193: before it, store A could set store B's product
+unchanged. (Migration 0206: before it, store A could set store B's product
 stock.)
 
 ---

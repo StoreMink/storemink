@@ -144,15 +144,24 @@ export function UsersManagementView({
   const roleOptionsFor = (row: StaffRow) =>
     row.kind === "pos" ? posRoles(roles) : dashboardRoles(roles);
 
-  // Where someone may work. Empty means every shop for both kinds (an admin is
-  // unrestricted; register staff are assigned everywhere), and an owner is
-  // never limited at all.
+  // Where someone may work. An admin with no bindings is unrestricted and an
+  // owner is never limited at all. Register staff are always assigned to
+  // specific shops, so an empty list means the shop they had was removed and
+  // they can sign in nowhere: say so, rather than "All locations".
   const whereLabel = (row: StaffRow) => {
-    if (row.role === "superadmin" || row.locationIds.length === 0) {
-      return "All locations";
+    if (row.role === "superadmin") return "All locations";
+    if (row.locationIds.length === 0) {
+      return row.kind === "pos" ? "No locations" : "All locations";
     }
     return row.locationIds.map(locationName).filter(Boolean).join(", ");
   };
+
+  // The Locations action: where there is a choice to make, and always for a
+  // register user left with no shop, or nothing on this page could fix them.
+  const showLocations = (row: StaffRow) =>
+    row.role !== "superadmin" &&
+    (locations.length > 1 ||
+      (row.kind === "pos" && row.locationIds.length === 0));
 
   const closeDialog = () => {
     setActionType(null);
@@ -378,16 +387,15 @@ export function UsersManagementView({
                               for an owner — they are unrestricted by
                               definition, so a scope editor there would imply a
                               limit that does not apply. */}
-                          {locations.length > 1 &&
-                            row.role !== "superadmin" && (
-                              <DropdownMenuItem
-                                className="cursor-pointer"
-                                onClick={() => openDialog(row, "locations")}
-                              >
-                                <MapPin className="mr-2 h-4 w-4" />
-                                Locations
-                              </DropdownMenuItem>
-                            )}
+                          {showLocations(row) && (
+                            <DropdownMenuItem
+                              className="cursor-pointer"
+                              onClick={() => openDialog(row, "locations")}
+                            >
+                              <MapPin className="mr-2 h-4 w-4" />
+                              Locations
+                            </DropdownMenuItem>
+                          )}
                           {row.kind === "pos" &&
                             row.pos_status === "invited" && (
                               <DropdownMenuItem
@@ -536,13 +544,13 @@ export function UsersManagementView({
                 </p>
                 {selected.kind === "pos" ? (
                   <p className="text-[12.5px] text-[var(--dash-text-3)]">
-                    To give this person the dashboard instead, invite them again
-                    with a dashboard role.
+                    To give this person the dashboard instead, remove them from
+                    Staff first, then invite them again with a dashboard role.
                   </p>
                 ) : (
                   <p className="text-[12.5px] text-[var(--dash-text-3)]">
-                    To put this person on the register instead, invite them
-                    again as a Manager or Cashier.
+                    To put this person on the register instead, remove them from
+                    Staff first, then invite them again as a Manager or Cashier.
                   </p>
                 )}
               </div>

@@ -29,6 +29,9 @@
 -- 4. Help: the guides that told a merchant to create a role, to choose
 --    between Admin and Superadmin, or to invite till staff from Point of
 --    Sale → Staff are edited in place. The roles guide keeps its address.
+--
+-- 5. is_store_admin()/is_store_superadmin() admit every dashboard role on the
+--    list, and no suspended admin (below the foreign key).
 
 CREATE TABLE IF NOT EXISTS public.platform_roles (
   slug text PRIMARY KEY,
@@ -86,6 +89,41 @@ ALTER TABLE public.admins
   FOREIGN KEY (role) REFERENCES public.platform_roles (slug)
   ON UPDATE CASCADE ON DELETE RESTRICT;
 
+-- ── RLS: every dashboard role is a store admin ───────────────────────────
+-- is_store_admin() admitted role IN ('superadmin','member'), which was every
+-- value the old CHECK allowed. With roles now a list (Admin is seeded and
+-- operators add more), that pair would let an Admin past getManagerIdentity
+-- and then return nothing under RLS: an empty Orders page, refused product
+-- writes. It now admits any DASHBOARD-kind role; a register slug never acts on
+-- the dashboard. Neither helper admits a suspended admin, so suspension is
+-- enforced by the database as well as by app/dashboard/lib/access.ts.
+CREATE OR REPLACE FUNCTION public.is_store_admin(target_store uuid)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = ''
+AS $$
+BEGIN
+  RETURN public.is_platform_admin() OR EXISTS (
+    SELECT 1
+      FROM public.admins a
+      JOIN public.platform_roles r ON r.slug = a.role AND r.kind = 'dashboard'
+     WHERE a.id = auth.uid()
+       AND a.store_id = target_store
+       AND coalesce(a.is_suspended, false) = false
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_store_superadmin(target_store uuid)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = ''
+AS $$
+BEGIN
+  RETURN public.is_platform_admin() OR EXISTS (
+    SELECT 1 FROM public.admins
+    WHERE id = auth.uid() AND role = 'superadmin' AND store_id = target_store
+      AND coalesce(is_suspended, false) = false
+  );
+END;
+$$;
+
 -- ── Help: roles are fixed ─────────────────────────────────────────────────
 
 UPDATE public.help_articles
@@ -107,7 +145,7 @@ SET body = replace(
 <h2>See what a role can do</h2>
 <ol><li>Open <strong>Settings</strong>, then <strong>Roles &amp; permissions</strong>.</li><li>The dashboard table shows, page by page, whether Owner, Admin and Staff can view or manage it. Manage includes View.</li><li>The register table shows what a Manager and a Cashier can do at the counter.</li></ol>$new$),
       $old$<li>Choose the saved role and confirm.</li>$old$,
-      $new$<li>Choose the role and confirm. A dashboard user can move between Owner, Admin and Staff; a register user between Manager and Cashier. To move someone between the dashboard and the register, invite them again with the new role.</li>$new$),
+      $new$<li>Choose the role and confirm. A dashboard user can move between Owner, Admin and Staff; a register user between Manager and Cashier. To move someone between the dashboard and the register, remove them from Staff first, then invite them again with the new role.</li>$new$),
       $old$<p>The Locations action appears only when the store has more than one location and the user is not a superadmin. For non-superadmins, no shops ticked means unrestricted access to all shops.$old$,
       $new$<p>The Locations action appears only when the store has more than one location and the user is not the owner. No shops ticked means every shop: unrestricted access for a dashboard user, and an assignment to every location for a register user.$new$),
       $old$<li>If a page is missing, check the role's section permission.</li><li>If the page opens but actions are disabled, check whether the role has Manage, not only View.</li>$old$,

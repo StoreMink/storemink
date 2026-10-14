@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_STAFF_ROLES,
+  ROLE_SEED_SECTION_KEYS,
   SYSTEM_ROLE_SLUGS,
   dashboardRoles,
   findRole,
@@ -14,7 +15,19 @@ import {
 } from "./catalog";
 import { SECTIONS } from "@/app/dashboard/lib/permissions";
 
-const MIGRATION = "drizzle/migrations/sql/20261014_0194_fixed_staff_roles.sql";
+const MIGRATION_ID = "20261014_0207_fixed_staff_roles";
+const MIGRATION = `drizzle/migrations/sql/${MIGRATION_ID}.sql`;
+
+/** SQL of every migration that runs after the roles were seeded. */
+function laterMigrationSql(): string[] {
+  const manifest = JSON.parse(
+    readFileSync("drizzle/migrations/manifest.json", "utf8"),
+  ) as { migrations: { id: string; file: string }[] };
+  const at = manifest.migrations.findIndex((m) => m.id === MIGRATION_ID);
+  return manifest.migrations
+    .slice(at + 1)
+    .map((m) => readFileSync(`drizzle/migrations/${m.file}`, "utf8"));
+}
 
 /** The seeded rows of the migration: slug → { kind, permissions }. */
 function seededRoles() {
@@ -45,13 +58,31 @@ describe("staff role catalog", () => {
     }
   });
 
-  it("gives the owner every section and the register roles none", () => {
+  it("gives the owner every seeded section and the register roles none", () => {
     const owner = findRole(DEFAULT_STAFF_ROLES, "superadmin")!;
     expect(Object.keys(owner.permissions).sort()).toEqual(
-      SECTIONS.map((s) => s.key).sort(),
+      [...ROLE_SEED_SECTION_KEYS].sort(),
     );
     for (const role of posRoles(DEFAULT_STAFF_ROLES)) {
       expect(role.permissions).toEqual({});
+    }
+  });
+
+  // ★ THE STORED ROLES ARE DATA, so a section added after the seed reaches no
+  // role until a migration grants it. The defaults above are frozen to the
+  // seed (comparing them to the live SECTIONS broke on the first new section
+  // and could not be fixed without editing an applied migration); this is the
+  // reminder that keeps a new section from silently reaching nobody but owners.
+  it("grants every section added after the seed through a later migration", () => {
+    const seeded = new Set<string>(ROLE_SEED_SECTION_KEYS);
+    const later = laterMigrationSql();
+    for (const { key } of SECTIONS.filter((s) => !seeded.has(s.key))) {
+      expect(
+        later.some(
+          (sql) => sql.includes("platform_roles") && sql.includes(`"${key}"`),
+        ),
+        `Section "${key}" was added after platform_roles was seeded. Write a migration that grants it to the roles that should have it, e.g. UPDATE public.platform_roles SET permissions = permissions || '{"${key}":["view","manage"]}'::jsonb WHERE slug IN ('superadmin', 'admin').`,
+      ).toBe(true);
     }
   });
 

@@ -12,6 +12,11 @@ vi.mock("@/lib/auth/firebase-claims", () => ({
   setUserClaims: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/auth/server-user", () => ({ getServerUser: vi.fn() }));
+// The caller gate: a superadmin of the HOST store, platform operators included.
+vi.mock("@/app/dashboard/lib/access", () => ({
+  isStoreSuperadmin: vi.fn(async () => true),
+  getActingStoreId: vi.fn(async () => "store-1"),
+}));
 const planMocks = vi.hoisted(() => ({ assertCanInviteStaff: vi.fn() }));
 vi.mock("@/lib/plans/entitlements", () => ({
   assertCanInviteStaff: planMocks.assertCanInviteStaff,
@@ -72,6 +77,7 @@ import { inviteUser } from "./invite-user";
 import { createAuthUser, deleteAuthUser } from "@/lib/auth/firebase-users";
 import { setUserClaims } from "@/lib/auth/firebase-claims";
 import { getServerUser } from "@/lib/auth/server-user";
+import { isStoreSuperadmin } from "@/app/dashboard/lib/access";
 import { setAdminLocations } from "./location-actions";
 import { PlanEntitlementError } from "@/lib/plans/entitlements";
 
@@ -90,19 +96,20 @@ const STAFF_ROLE: RoleRow = {
   name: "Staff",
 };
 
-// The caller-role gate reads via withUser (select #1 = role + store_id), the
-// platform_roles lookup via withService (select #2 — the role list is
-// platform data, so the invite asks it what `role` is), then the
-// email-collision check (select #3). superadmin, in-store.
+// The caller gate is `isStoreSuperadmin` (mocked above). Then the
+// platform_roles lookup (select #1 — the role list is platform data, so the
+// invite asks it what `role` is), the dashboard-email collision check
+// (select #2), and for a dashboard role the register-staff check (select #3).
 function superadminCaller(
   existingEmail = false,
   role: RoleRow | null = STAFF_ROLE,
+  registerStaff = false,
 ) {
   dbHolder.current = makeDbMock({
     selectQueue: [
-      [{ role: "superadmin", store_id: "store-1" }],
       role ? [role] : [],
       existingEmail ? [{ id: "existing" }] : [],
+      registerStaff ? [{ id: "pos-1" }] : [],
     ],
   });
 }
@@ -137,6 +144,7 @@ describe("inviteUser", () => {
     vi.mocked(setUserClaims).mockResolvedValue();
     // ⚠ clearAllMocks clears CALLS, not IMPLEMENTATIONS.
     vi.mocked(setAdminLocations).mockResolvedValue({ success: true });
+    vi.mocked(isStoreSuperadmin).mockResolvedValue(true);
   });
 
   it("rejects empty first name", async () => {
@@ -196,11 +204,19 @@ describe("inviteUser", () => {
   });
 
   it("rejects non-superadmin callers", async () => {
-    dbHolder.current = makeDbMock({
-      selectQueue: [[{ role: "member", store_id: "store-1" }]],
-    });
+    vi.mocked(isStoreSuperadmin).mockResolvedValue(false);
     const result = await inviteUser(makeFormData(validForm));
     expect(result.error).toMatch(/unauthorized|superadmin/i);
+    expect(createAuthUser).not.toHaveBeenCalled();
+  });
+
+  // Register staff keep their own login under this email, so the dashboard
+  // invite would fail at the auth layer. The owner is told what to do first.
+  it("asks for register staff to be removed before a dashboard invite", async () => {
+    superadminCaller(false, STAFF_ROLE, true);
+    const result = await inviteUser(makeFormData(validForm));
+    expect(result.error).toMatch(/remove them from staff first/i);
+    expect(createAuthUser).not.toHaveBeenCalled();
   });
 
   it("rejects when a profile with that email already exists", async () => {
@@ -418,11 +434,27 @@ describe("inviteUser", () => {
 
     // Still the owner's call: the caller gate runs before the branch.
     it("still requires the owner", async () => {
-      dbHolder.current = makeDbMock({
-        selectQueue: [[{ role: "admin", store_id: "store-1" }]],
-      });
+      vi.mocked(isStoreSuperadmin).mockResolvedValue(false);
       const r = await inviteUser(posForm("cashier"));
       expect(r.error).toMatch(/unauthorized|superadmin/i);
+      expect(posMocks.inviteStaff).not.toHaveBeenCalled();
+    });
+
+    // A platform operator has no admins row of their own; the gate is the
+    // host store's superadmin check, which they pass.
+    it("lets a platform operator invite register staff", async () => {
+      superadminCaller(false, CASHIER);
+      const r = await inviteUser(posForm("cashier", ["loc-1"]));
+      expect(r).toEqual({ success: true });
+      expect(posMocks.inviteStaff).toHaveBeenCalled();
+    });
+
+    // Registration refuses a login that already has a dashboard, so the invite
+    // would leave a Pending row that can never finish.
+    it("refuses an email that already signs in to a dashboard", async () => {
+      superadminCaller(true, CASHIER);
+      const r = await inviteUser(posForm("cashier"));
+      expect(r.error).toMatch(/remove them from staff first/i);
       expect(posMocks.inviteStaff).not.toHaveBeenCalled();
     });
   });

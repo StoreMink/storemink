@@ -33,7 +33,7 @@ export const storeNoSeq = pgSequence("store_no_seq", {
   cycle: false,
 });
 
-// ★ THE PLATFORM'S STAFF ROLES (migration 0194; lib/roles/catalog.ts for the
+// ★ THE PLATFORM'S STAFF ROLES (migration 0207; lib/roles/catalog.ts for the
 // defaults, lib/roles/platform-roles.ts for the reads). Platform-global — no
 // store_id — and operator-owned: a store picks from this list and cannot add to
 // it. Service-only, the mink_plan_allowances posture. `slug` is the key that
@@ -154,7 +154,7 @@ export const admins = pgTable(
       for: "select",
       to: ["supabase_auth_admin"],
     }),
-    // A DASHBOARD role from platform_roles (migration 0194). The old CHECK
+    // A DASHBOARD role from platform_roles (migration 0207). The old CHECK
     // admitted only superadmin|member; roles are operator-defined now, so the
     // reference is a foreign key: a role in use cannot be deleted, and a slug
     // never changes anyway. "Dashboard kind" is enforced by the actions — a

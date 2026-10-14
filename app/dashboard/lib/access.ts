@@ -45,6 +45,11 @@ export interface ViewerContext {
    * "no access". See the note on getViewerContext.
    */
   dbError?: boolean;
+  /**
+   * The viewer has an admins row here but it is SUSPENDED. `profile` is null,
+   * so every gate refuses; the flag only lets the layout say why.
+   */
+  suspended?: boolean;
 }
 
 // Platform-operator role for the signed-in user (by JWT email), or null.
@@ -111,6 +116,7 @@ export const getViewerContext = cache(
 
     let isPlatformAdmin = false;
     let profile: ViewerProfile | undefined;
+    let suspended = false;
     try {
       isPlatformAdmin = (await getPlatformRole()) !== null;
 
@@ -124,12 +130,27 @@ export const getViewerContext = cache(
             first_name: admins.firstName,
             last_name: admins.lastName,
             store_id: admins.storeId,
+            is_suspended: admins.isSuspended,
           })
           .from(admins)
           .where(and(eq(admins.id, user.id), eq(admins.storeId, storeId)))
           .limit(1),
       );
-      profile = profileRows[0];
+      const row = profileRows[0];
+      // ★ A SUSPENDED ADMIN HAS NO ACCESS. The flag used to be read only by
+      // the notification fan-out, so "Suspend user" changed a badge and nothing
+      // else. Treating the row as absent sends every gate below (and the
+      // layout, Mink's actor, isStoreSuperadmin) down the no-access path.
+      if (row?.is_suspended) suspended = true;
+      else if (row) {
+        profile = {
+          email: row.email,
+          role: row.role,
+          first_name: row.first_name,
+          last_name: row.last_name,
+          store_id: row.store_id,
+        };
+      }
     } catch (error) {
       logError("dashboard: access lookup failed", error, {
         userId: user.id,
@@ -169,6 +190,7 @@ export const getViewerContext = cache(
         profile: null,
         isSuperadmin: false,
         permissions: {},
+        ...(suspended ? { suspended: true } : {}),
       };
     }
 
@@ -286,12 +308,14 @@ export async function getManagerIdentity(
   const storeId = await getCurrentStoreId();
   const profileRows = await withService((db) =>
     db
-      .select({ role: admins.role })
+      .select({ role: admins.role, isSuspended: admins.isSuspended })
       .from(admins)
       .where(and(eq(admins.id, user.id), eq(admins.storeId, storeId)))
       .limit(1),
   );
 
+  // A suspended admin manages nothing (getViewerContext's rule).
+  if (profileRows[0]?.isSuspended) return null;
   const slug = profileRows[0]?.role;
   if (!slug) return null;
   if (slug === SUPERADMIN_SLUG) return identity;

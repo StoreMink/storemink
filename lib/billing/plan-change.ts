@@ -585,9 +585,11 @@ async function applyNow(
         store &&
         billingMayApplyPlan(store.plan, store.planSource, input.plan)
       ) {
+        // ★ NO `plan_expires_at` on a paid plan (renewal-worker.ts): one left
+        // over from an operator's timed grant would lapse a plan being paid for.
         await db
           .update(stores)
-          .set({ plan: input.plan, planSource: "paid" })
+          .set({ plan: input.plan, planSource: "paid", planExpiresAt: null })
           .where(eq(stores.id, storeId));
       }
     });

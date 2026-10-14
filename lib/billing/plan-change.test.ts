@@ -444,6 +444,17 @@ describe("confirmPlanChange", () => {
     ).toBe(true);
   });
 
+  // An operator's timed grant left in plan_expires_at would lapse the plan the
+  // merchant just paid for once its date passed.
+  it("★ clears a leftover grant expiry when it writes the paid plan", async () => {
+    seedConfirm({ plan: "basic", planSource: "comp" });
+    await confirmPlanChange(args);
+    const write = dbHolder.current.calls.set.find(
+      (s: any) => s.planSource === "paid",
+    );
+    expect(write).toMatchObject({ planExpiresAt: null });
+  });
+
   it("★★ refuses an invoice with no recorded count", async () => {
     // ⚠ The attempt MUST be present, or this passes because there is no payment
     // to confirm rather than because the guard held — which is how a mutation

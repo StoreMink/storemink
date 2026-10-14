@@ -111,7 +111,7 @@ repaired AS (
 )
 INSERT INTO public.plan_events (store_id, from_plan, to_plan, source, actor, note)
 SELECT before.id, before.from_plan, before.to_plan, 'system',
-       'migration-0192',
+       'migration-0205',
        'restored: a paid renewal had lapsed to Free through the first-cycle expiry'
   FROM before
   JOIN repaired ON repaired.id = before.id

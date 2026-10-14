@@ -15,7 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeDbMock, sqlParamValues } from "@/app/actions/_test-helpers";
-import { stores } from "@/drizzle/schema";
+import { planEvents, stores } from "@/drizzle/schema";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -552,6 +552,61 @@ describe("evaluateCycleTurns — the boundary", () => {
       expect(dbHolder.current.calls.set[1]).toMatchObject({ plan: "basic" });
     });
 
+    // ★★ The booked plan has no Point of Sale, so the till stops at the turn:
+    // the open shift is closed with it, as at a downgrade, and the change is
+    // in the plan history.
+    it("★★ closes the till and records the change when a booked downgrade drops POS", async () => {
+      seed([
+        [{ ...TURNED, scheduledPlan: "basic" }],
+        [{ status: "paid" }],
+        [
+          {
+            plan: "pro",
+            planSource: "paid",
+            planExpiresAt: null,
+            compPlan: null,
+            compExpiresAt: null,
+          },
+        ],
+      ]);
+      await evaluateCycleTurns({ now: NOW });
+      const shift = dbHolder.current.calls.set.find(
+        (x: any) => x.status === "closed",
+      );
+      expect(shift.note).toMatch(/as booked/i);
+      expect(shift.variance).toBe(0);
+      expect(dbHolder.current.calls.insert).toContain(planEvents);
+      expect(dbHolder.current.calls.values.at(-1)).toEqual([
+        expect.objectContaining({
+          fromPlan: "pro",
+          toPlan: "basic",
+          source: "billing",
+        }),
+      ]);
+    });
+
+    it("★ leaves the till alone when the renewed plan keeps POS", async () => {
+      seed([
+        [TURNED],
+        [{ status: "paid" }],
+        [
+          {
+            plan: "pro",
+            planSource: "paid",
+            planExpiresAt: null,
+            compPlan: null,
+            compExpiresAt: null,
+          },
+        ],
+      ]);
+      await evaluateCycleTurns({ now: NOW });
+      expect(
+        dbHolder.current.calls.set.some((x: any) => x.status === "closed"),
+      ).toBe(false);
+      // Same plan: nothing to record.
+      expect(dbHolder.current.calls.insert).not.toContain(planEvents);
+    });
+
     it("★ never lowers an operator's comp", async () => {
       seed([
         [{ ...TURNED, scheduledPlan: "basic" }],
@@ -793,8 +848,9 @@ describe("downgradeExpired", () => {
     expect(s.downgraded).toBe(1);
     expect(s.shiftsClosed).toBe(1);
 
-    const set = dbHolder.current.calls.set[0];
-    expect(set.status).toBe("closed");
+    const set = dbHolder.current.calls.set.find(
+      (x: any) => x.status === "closed",
+    );
     expect(set.closedByName).toBe("System");
   });
 
@@ -811,10 +867,13 @@ describe("downgradeExpired", () => {
       plan: "free",
       planExpiresAt: null,
     });
-    // The stores write is the last statement of the transaction.
-    expect(sqlParamValues(dbHolder.current.calls.where.at(-1))).toEqual(
-      expect.arrayContaining([STORE, "comp"]),
-    );
+    // The stores write keeps the comp guard.
+    expect(
+      dbHolder.current.calls.where.some((w: any) => {
+        const v = sqlParamValues(w);
+        return v.includes(STORE) && v.includes("comp");
+      }),
+    ).toBe(true);
   });
 
   it("★★ tells the merchant, naming the plan they LOST", async () => {
@@ -843,8 +902,84 @@ describe("downgradeExpired", () => {
     seed([[{ storeId: STORE }]]);
     dbHolder.current.db.execute = vi.fn(async () => ({ rows: [{ ok: true }] }));
     await downgradeExpired({ now: NOW });
-    expect(dbHolder.current.calls.set[0].variance).toBe(0);
-    expect(dbHolder.current.calls.set[0].note).toMatch(/no variance/i);
+    const shift = dbHolder.current.calls.set.find(
+      (x: any) => x.status === "closed",
+    );
+    expect(shift.variance).toBe(0);
+    expect(shift.note).toMatch(/no variance/i);
+  });
+
+  // ★★ An operator's comp is not the subscription's to take away, so the store
+  // keeps its plan and its till. Closing the drawer and telling the merchant
+  // they are on Free were both false.
+  it("★★ leaves a comped store's till open and says nothing about Free", async () => {
+    seed([
+      [{ storeId: STORE, plan: "basic" }],
+      [
+        {
+          plan: "pro",
+          planSource: "comp",
+          planExpiresAt: null,
+          compPlan: null,
+          compExpiresAt: null,
+        },
+      ],
+    ]);
+    dbHolder.current.db.execute = vi.fn(async () => ({ rows: [{ ok: true }] }));
+    const s = await downgradeExpired({ now: NOW });
+    expect(s.downgraded).toBe(1);
+    expect(s.shiftsClosed).toBe(0);
+    expect(
+      dbHolder.current.calls.set.some((x: any) => x.status === "closed"),
+    ).toBe(false);
+    expect(dunning.notifyDowngraded).not.toHaveBeenCalled();
+  });
+
+  it("★ treats a live comp overlay the same way", async () => {
+    seed([
+      [{ storeId: STORE, plan: "basic" }],
+      [
+        {
+          plan: "basic",
+          planSource: "paid",
+          planExpiresAt: null,
+          compPlan: "pro",
+          compExpiresAt: "2026-12-01T00:00:00.000Z",
+        },
+      ],
+    ]);
+    dbHolder.current.db.execute = vi.fn(async () => ({ rows: [{ ok: true }] }));
+    await downgradeExpired({ now: NOW });
+    expect(
+      dbHolder.current.calls.set.some((x: any) => x.status === "closed"),
+    ).toBe(false);
+    expect(dunning.notifyDowngraded).not.toHaveBeenCalled();
+  });
+
+  it("★ records the downgrade in the plan history", async () => {
+    seed([
+      [{ storeId: STORE, plan: "pro" }],
+      [
+        {
+          plan: "pro",
+          planSource: "paid",
+          planExpiresAt: null,
+          compPlan: null,
+          compExpiresAt: null,
+        },
+      ],
+    ]);
+    dbHolder.current.db.execute = vi.fn(async () => ({ rows: [{ ok: true }] }));
+    await downgradeExpired({ now: NOW });
+    expect(dbHolder.current.calls.insert).toContain(planEvents);
+    expect(dbHolder.current.calls.values.at(-1)).toEqual([
+      expect.objectContaining({
+        storeId: STORE,
+        fromPlan: "pro",
+        toPlan: "free",
+        source: "billing",
+      }),
+    ]);
   });
 
   it("★ a REFUSED claim closes no shift — the store keeps trading", async () => {

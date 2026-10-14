@@ -115,12 +115,21 @@ export default async function DashboardLayout({
             🔒
           </div>
           <h1 className="text-lg font-bold">No access to this dashboard</h1>
-          <p className="text-sm text-[#5b6472]">
-            You&apos;re signed in as{" "}
-            <span className="font-medium text-[#111827]">{userEmail}</span>, but
-            this account isn&apos;t a staff member of this store. If this is
-            your store, sign in with the account you used to create it.
-          </p>
+          {ctx.suspended ? (
+            <p className="text-sm text-[#5b6472]">
+              You&apos;re signed in as{" "}
+              <span className="font-medium text-[#111827]">{userEmail}</span>,
+              but your access to this store has been suspended. Ask the store
+              owner to restore it.
+            </p>
+          ) : (
+            <p className="text-sm text-[#5b6472]">
+              You&apos;re signed in as{" "}
+              <span className="font-medium text-[#111827]">{userEmail}</span>,
+              but this account isn&apos;t a staff member of this store. If this
+              is your store, sign in with the account you used to create it.
+            </p>
+          )}
           <SwitchAccountButton />
         </div>
       </div>
