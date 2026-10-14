@@ -1,49 +1,50 @@
-"use client";
-
+import { KeyRound, Zap } from "lucide-react";
 import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+import {
+  SECTIONS,
+  SECTION_GROUPS,
+  roleBadgeClass,
+  can,
+} from "../lib/permissions";
+import {
+  dashboardRoles,
+  isPosRole,
+  posRoles,
+  type StaffRole,
+} from "@/lib/roles/catalog";
+import { posCan, type PosCapability } from "@/lib/pos/permissions";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { toast } from "sonner";
-import {
-  KeyRound,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  Trash2,
-  Zap,
-} from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { deleteRole } from "@/app/actions/role-actions";
-import { SECTIONS, roleBadgeClass } from "../lib/permissions";
-import type { Role } from "../lib/access";
-import { RoleEditorDialog } from "./role-editor-dialog";
+// ★ READ-ONLY. Every store uses the role list StoreMink's operators define
+// (lib/roles/platform-roles.ts); a store cannot add to it, so this page
+// answers one question — "which role do I give this person?" — rather than
+// offering an editor. It is a server component: there is nothing to click.
 
-type RoleRow = Role & { member_count: number };
+type RoleRow = StaffRole & { member_count: number };
 
 type Props = {
   roles: RoleRow[];
-  canManage: boolean;
-  planLocked?: boolean;
 };
 
-function summarize(role: RoleRow) {
+/** What the register lets each POS role do, in the words a merchant uses. */
+const POS_CAPABILITIES: { cap: PosCapability; label: string }[] = [
+  { cap: "sell", label: "Ring up sales and take payments" },
+  { cap: "fulfil_pickup", label: "Prepare and hand over pickup orders" },
+  { cap: "refund", label: "Take returns and issue refunds" },
+  { cap: "adjust_inventory", label: "Receive, count and transfer stock" },
+  { cap: "open_close_shift", label: "Open and close cash drawer shifts" },
+  { cap: "cash_drop", label: "Record cash drops and payouts" },
+  { cap: "edit_layout", label: "Arrange the register layout" },
+  {
+    cap: "discount_over_cap",
+    label: "Approve a cashier's discount above the store limit",
+  },
+  {
+    cap: "override_verification",
+    label: "Hand over or take a return when the customer cannot be sent a code",
+  },
+];
+
+function summarize(role: StaffRole) {
   let viewable = 0;
   let manageable = 0;
   for (const section of SECTIONS) {
@@ -58,45 +59,45 @@ function summarize(role: RoleRow) {
   return { viewable, manageable };
 }
 
-export function RolesManagementView({
-  roles,
-  canManage,
-  planLocked = false,
-}: Props) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [deleteTarget, setDeleteTarget] = useState<RoleRow | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editing, setEditing] = useState<Role | null>(null);
+function RolePill({ role }: { role: StaffRole }) {
+  return (
+    <span
+      className={`dash-role-pill inline-flex items-center gap-1 ${roleBadgeClass(role.color)}`}
+    >
+      {role.slug === "superadmin" ? (
+        <Zap className="h-3.5 w-3.5" />
+      ) : (
+        <KeyRound className="h-3.5 w-3.5" />
+      )}
+      {role.name}
+    </span>
+  );
+}
 
-  const openEditor = (role?: Role) => {
-    setEditing(role ?? null);
-    setEditorOpen(true);
-  };
+function Mark({ value }: { value: "manage" | "view" | null }) {
+  if (value === "manage") {
+    return <span className="dash-badge dash-badge-green">Manage</span>;
+  }
+  if (value === "view") {
+    return <span className="dash-badge dash-badge-grey">View</span>;
+  }
+  return <span className="dash-cell-sub">-</span>;
+}
 
-  const closeEditor = () => {
-    setEditorOpen(false);
-    setEditing(null);
-  };
+function grant(role: StaffRole, section: string): "manage" | "view" | null {
+  const isOwner = role.slug === "superadmin";
+  if (can(role.permissions, section, "manage", isOwner)) return "manage";
+  if (can(role.permissions, section, "view", isOwner)) return "view";
+  return null;
+}
 
-  const handleSaved = () => {
-    closeEditor();
-    router.refresh();
-  };
-
-  const handleDelete = () => {
-    if (!deleteTarget) return;
-    startTransition(async () => {
-      const result = await deleteRole(deleteTarget.id);
-      if (result.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Role deleted");
-        setDeleteTarget(null);
-        router.refresh();
-      }
-    });
-  };
+export function RolesManagementView({ roles }: Props) {
+  const countBySlug = new Map<string, number>(
+    roles.map((r) => [r.slug, r.member_count]),
+  );
+  const countFor = (slug: string) => countBySlug.get(slug) ?? 0;
+  const dashboard = dashboardRoles(roles);
+  const register = posRoles(roles);
 
   return (
     <div className="dash-page-enter">
@@ -104,200 +105,136 @@ export function RolesManagementView({
         <div>
           <h1>Roles &amp; Permissions</h1>
           <p>
-            Define roles and control which sections of the dashboard each one
-            can access.
+            StoreMink defines the roles every store uses. Pick the closest one
+            when you invite someone, and use Locations to limit them to their
+            shops.
           </p>
         </div>
-        {canManage && !planLocked && (
-          <button
-            className="dash-btn dash-btn-primary shrink-0"
-            onClick={() => openEditor()}
-          >
-            <Plus className="h-4 w-4" />
-            New role
-          </button>
-        )}
       </header>
-
-      {planLocked ? (
-        <div className="dash-card mb-3.5 flex items-center justify-between gap-3 px-4 py-3.5 text-[13px]">
-          <span>
-            Custom roles are available on Basic and Pro. Existing roles,
-            permissions and staff assignments remain safe. You can remove an
-            unused custom role, but creating or editing roles requires an
-            upgrade.
-          </span>
-          <Link
-            href="/dashboard/plans"
-            className="dash-btn dash-btn-primary shrink-0"
-          >
-            View plans
-          </Link>
-        </div>
-      ) : null}
 
       <div className="dash-card">
         <div className="dash-card-header">
           <div>
             <div className="dash-card-title">Roles</div>
             <div className="dash-card-sub">
-              {roles.length} {roles.length === 1 ? "role" : "roles"}
+              {dashboard.length} for the dashboard, {register.length} for the
+              register
             </div>
           </div>
         </div>
-
-        {roles.length === 0 ? (
-          <div className="dash-empty">
-            <span className="dash-empty-icon">
-              <KeyRound className="h-5 w-5" />
-            </span>
-            <div className="dash-empty-title">No roles yet</div>
-            <p className="dash-empty-text">
-              Run <code>supabase/roles_table.sql</code> to seed the system
-              roles, then create your own.
-            </p>
-          </div>
-        ) : (
-          <ResponsiveTable className="dash-table dash-table-wide">
-            <thead>
-              <tr>
-                <th>Role</th>
-                <th>Description</th>
-                <th>Access</th>
-                <th>Admins</th>
-                <th className="dash-col-actions">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {roles.map((role) => {
-                const { viewable, manageable } = summarize(role);
-                return (
-                  <tr key={role.id}>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`dash-role-pill inline-flex items-center gap-1 ${roleBadgeClass(role.color)}`}
-                        >
-                          {role.slug === "superadmin" ? (
-                            <Zap className="h-3.5 w-3.5" />
-                          ) : (
-                            <KeyRound className="h-3.5 w-3.5" />
-                          )}
-                          {role.name}
-                        </span>
-                        {role.is_system && (
-                          <span className="dash-badge dash-badge-grey">
-                            System
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="dash-cell-sub max-w-[320px]">
-                      {role.description || "-"}
-                    </td>
-                    <td className="dash-cell-sub">
-                      {role.slug === "superadmin" ? (
-                        <span>Full access</span>
-                      ) : (
-                        <span>
-                          {viewable} view · {manageable} manage
-                        </span>
-                      )}
-                    </td>
-                    <td className="dash-cell-sub mono">{role.member_count}</td>
-                    <td className="dash-col-actions">
-                      {canManage ? (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger className="dash-row-menu">
-                            <MoreHorizontal className="h-4 w-4" />
-                            <span className="sr-only">Actions</span>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            align="end"
-                            className="min-w-[160px]"
-                          >
-                            {!planLocked && (
-                              <DropdownMenuItem
-                                className="cursor-pointer"
-                                onClick={() => openEditor(role)}
-                              >
-                                <Pencil className="mr-2 h-4 w-4" />
-                                Edit
-                              </DropdownMenuItem>
-                            )}
-                            {!role.is_system && (
-                              <>
-                                {!planLocked && <DropdownMenuSeparator />}
-                                <DropdownMenuItem
-                                  variant="destructive"
-                                  className="cursor-pointer"
-                                  onClick={() => setDeleteTarget(role)}
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      ) : (
-                        <span className="dash-cell-sub">-</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </ResponsiveTable>
-        )}
+        <ResponsiveTable className="dash-table dash-table-wide">
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th>Who it is for</th>
+              <th>Access</th>
+              <th>People</th>
+            </tr>
+          </thead>
+          <tbody>
+            {roles.map((role) => {
+              const { viewable, manageable } = summarize(role);
+              return (
+                <tr key={role.slug}>
+                  <td>
+                    <RolePill role={role} />
+                  </td>
+                  <td className="dash-cell-sub max-w-[420px]">
+                    {role.description}
+                  </td>
+                  <td className="dash-cell-sub">
+                    {role.slug === "superadmin"
+                      ? "Full access"
+                      : role.kind === "pos"
+                        ? "Register only"
+                        : `${viewable} view · ${manageable} manage`}
+                  </td>
+                  <td className="dash-cell-sub mono">{countFor(role.slug)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </ResponsiveTable>
       </div>
 
-      {/* Delete confirmation */}
-      <Dialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-      >
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Delete role</DialogTitle>
-            <DialogDescription>
-              Delete &ldquo;{deleteTarget?.name}&rdquo;? This cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          {(deleteTarget?.member_count ?? 0) > 0 && (
-            <div className="py-2">
-              <p className="text-sm text-[var(--dash-amber)]">
-                {deleteTarget?.member_count} admin
-                {deleteTarget?.member_count === 1 ? "" : "s"} currently hold
-                this role. Reassign them first.
-              </p>
+      <div className="dash-card mt-3.5">
+        <div className="dash-card-header">
+          <div>
+            <div className="dash-card-title">Dashboard pages</div>
+            <div className="dash-card-sub">
+              Manage includes View. Owners always have full access.
             </div>
-          )}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteTarget(null)}
-              disabled={isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={isPending}
-            >
-              {isPending ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </div>
+        <ResponsiveTable className="dash-table dash-table-wide">
+          <thead>
+            <tr>
+              <th>Page</th>
+              {dashboard.map((role) => (
+                <th key={role.slug}>{role.name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {SECTION_GROUPS.flatMap((group) =>
+              SECTIONS.filter((s) => s.group === group && !s.hiddenInNav).map(
+                (section) => (
+                  <tr key={section.key}>
+                    <td>
+                      <div>{section.label}</div>
+                      <div className="dash-cell-sub">{group}</div>
+                    </td>
+                    {dashboard.map((role) => (
+                      <td key={role.slug}>
+                        <Mark value={grant(role, section.key)} />
+                      </td>
+                    ))}
+                  </tr>
+                ),
+              ),
+            )}
+          </tbody>
+        </ResponsiveTable>
+      </div>
 
-      <RoleEditorDialog
-        open={editorOpen}
-        role={editing}
-        onClose={closeEditor}
-        onSaved={handleSaved}
-      />
+      <div className="dash-card mt-3.5">
+        <div className="dash-card-header">
+          <div>
+            <div className="dash-card-title">At the register</div>
+            <div className="dash-card-sub">
+              Managers and cashiers sign in at /pos on an authorised device and
+              never see the dashboard. Discounts, price overrides and
+              authorising a device stay with the owner.
+            </div>
+          </div>
+        </div>
+        <ResponsiveTable className="dash-table dash-table-wide">
+          <thead>
+            <tr>
+              <th>Can they</th>
+              {register.map((role) => (
+                <th key={role.slug}>{role.name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {POS_CAPABILITIES.map(({ cap, label }) => (
+              <tr key={cap}>
+                <td>{label}</td>
+                {register.map((role) => (
+                  <td key={role.slug}>
+                    {isPosRole(role.slug) && posCan(role.slug, cap) ? (
+                      <span className="dash-badge dash-badge-green">Yes</span>
+                    ) : (
+                      <span className="dash-cell-sub">-</span>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </ResponsiveTable>
+      </div>
     </div>
   );
 }

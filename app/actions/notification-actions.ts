@@ -41,7 +41,6 @@ import {
   admins,
   notificationEmailQueue,
   notificationPreferences,
-  roles,
 } from "@/drizzle/schema";
 import { getCurrentStoreId } from "@/lib/store/resolve";
 import { isPlatformHost } from "@/lib/store/host";
@@ -50,8 +49,8 @@ import {
   SECTIONS,
   SUPERADMIN_SLUG,
   can,
-  normalizePermissions,
 } from "@/app/dashboard/lib/permissions";
+import { listPlatformRolesWith } from "@/lib/roles/platform-roles";
 import { logError } from "@/lib/observability/logger";
 import {
   DIGESTS,
@@ -1128,31 +1127,18 @@ export async function getStoreNotificationAudience(): Promise<StoreAudience> {
             or(isNull(admins.isSuspended), eq(admins.isSuspended, false)),
           ),
         );
-      const roleRows = await db
-        .select({
-          slug: roles.slug,
-          name: roles.name,
-          permissions: roles.permissions,
-        })
-        .from(roles)
-        .where(eq(roles.storeId, storeId));
-
-      const permsBySlug = new Map(
-        roleRows.map((r) => [r.slug, normalizePermissions(r.permissions)]),
-      );
+      // The platform's role list (lib/roles/platform-roles.ts), read on the
+      // same connection. Mirrors storeAdminRecipients exactly, so what the
+      // picker shows as eligible is precisely who the fan-out will deliver to.
+      const roles = await listPlatformRolesWith(db);
+      const roleBySlug = new Map(roles.map((r) => [r.slug, r]));
 
       const members: AudienceMember[] = staff.map((member) => {
         const slug = member.role ?? "";
         const isSuperadmin = slug === SUPERADMIN_SLUG;
-        const perms = permsBySlug.get(slug);
-        // Mirrors storeAdminRecipients exactly, so what the picker shows as
-        // eligible is precisely who the fan-out will deliver to.
-        const sections = SECTIONS.filter((section) =>
-          isSuperadmin
-            ? true
-            : perms
-              ? can(perms, section.key, "view")
-              : slug === "member",
+        const perms = roleBySlug.get(slug)?.permissions ?? {};
+        const sections = SECTIONS.filter(
+          (section) => isSuperadmin || can(perms, section.key, "view"),
         ).map((section) => section.key);
 
         return {
@@ -1166,12 +1152,11 @@ export async function getStoreNotificationAudience(): Promise<StoreAudience> {
         };
       });
 
-      const roleList: AudienceRole[] = [
-        { slug: SUPERADMIN_SLUG, name: "Owner" },
-        ...roleRows
-          .filter((r) => r.slug !== SUPERADMIN_SLUG)
-          .map((r) => ({ slug: r.slug, name: r.name })),
-      ];
+      // Dashboard roles only; register roles never hold a dashboard
+      // permission and so can never be a notification audience.
+      const roleList: AudienceRole[] = roles
+        .filter((r) => r.kind === "dashboard")
+        .map((r) => ({ slug: r.slug, name: r.name }));
 
       return { roles: roleList, members };
     });

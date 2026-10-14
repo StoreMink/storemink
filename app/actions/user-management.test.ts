@@ -190,24 +190,32 @@ describe("User Management Actions", () => {
   });
 
   describe("changeUserRole", () => {
+    // The role list is platform data (platform_roles): the lookup is by slug
+    // alone, never per store, and only a DASHBOARD role may be assigned.
     it("should fail if role is invalid", async () => {
-      // roles-table lookup empty → unknown non-builtin role rejected.
+      // platform_roles lookup empty → unknown role rejected.
       setup([[]]);
       const result = await changeUserRole("user-1", "invalid-role");
       expect(result.error).toBe("Invalid role");
     });
 
-    it("looks the role up in THIS store's roles", async () => {
-      setup([[{ slug: "editor" }], member]);
+    it("looks the role up in the platform role list", async () => {
+      setup([[{ slug: "editor", kind: "dashboard" }], member]);
       await changeUserRole("user-1", "editor");
-      expect(whereParams(0)).toEqual(
-        expect.arrayContaining(["editor", "store-1"]),
-      );
+      expect(whereParams(0)).toEqual(["editor"]);
+    });
+
+    // A cashier/manager is a pos_staff row with a PIN: moving someone there is
+    // an invite, never a role change on an admins row.
+    it("refuses a register role for a dashboard admin", async () => {
+      setup([[{ slug: "cashier", kind: "pos" }], member]);
+      const result = await changeUserRole("user-1", "cashier");
+      expect(result.error).toBe("Invalid role");
+      expect(dbHolder.current.calls.update).toHaveLength(0);
     });
 
     it("should change role successfully and sync the claim", async () => {
-      // roles lookup (member is builtin so [] is fine), target=member.
-      setup([[], member]);
+      setup([[{ slug: "member", kind: "dashboard" }], member]);
       const result = await changeUserRole("user-1", "member");
       expect((result as any).success).toBe(true);
       expect(dbHolder.current.calls.set[0]).toEqual({ role: "member" });
@@ -219,7 +227,7 @@ describe("User Management Actions", () => {
     });
 
     it("refuses to change the role of another store's admin", async () => {
-      setup([[], []]);
+      setup([[{ slug: "member", kind: "dashboard" }], []]);
       const result = await changeUserRole("other-store-owner", "member");
       expect(result.error).toMatch(/isn't a member of this store/);
       expect(dbHolder.current.calls.update).toHaveLength(0);

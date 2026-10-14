@@ -15,26 +15,41 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Loader2, UserPlus } from "lucide-react";
+import {
+  dashboardRoles,
+  findRole,
+  posRoles,
+  type StaffRole,
+} from "@/lib/roles/catalog";
 
 export function InviteUserDialog({
   className,
   label = "Add User",
   locations = [],
+  roles,
+  posEnabled = false,
 }: {
   className?: string;
   label?: string;
   size?: "default" | "sm" | "lg";
+  /** The platform's role list (StoreMink defines it; a store picks from it). */
+  roles: StaffRole[];
   /** The store's shops. Empty for a single-location store, which hides the
    *  field entirely — a scope picker with one option is a decision nobody has
    *  to make. */
   locations?: { id: string; name: string }[];
+  /** The register roles can only be invited once Point of Sale is on. They
+   *  are still LISTED, greyed, so the roles read the same in every store. */
+  posEnabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [firstName, setFirstName] = useState("");
@@ -45,6 +60,9 @@ export function InviteUserDialog({
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+
+  const chosen = findRole(roles, role);
+  const isPosRole = chosen?.kind === "pos";
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -61,7 +79,7 @@ export function InviteUserDialog({
     formData.set("email", email);
     formData.set("role", role);
     // ★ append, not set — the field is multi-value, and the action reads it
-    // with getAll. Skipped for a superadmin, who is unrestricted by definition.
+    // with getAll. Skipped for an owner, who is unrestricted by definition.
     if (role !== "superadmin") {
       for (const id of locationIds) formData.append("locationIds", id);
     }
@@ -79,6 +97,7 @@ export function InviteUserDialog({
         setLastName("");
         setEmail("");
         setRole("member");
+        setLocationIds([]);
         router.refresh();
       }
     });
@@ -168,21 +187,58 @@ export function InviteUserDialog({
                 <SelectValue placeholder="Select a role" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="member">Admin</SelectItem>
-                <SelectItem value="superadmin">Superadmin</SelectItem>
+                <SelectGroup>
+                  <SelectLabel>Dashboard</SelectLabel>
+                  {dashboardRoles(roles).map((r) => (
+                    <SelectItem key={r.slug} value={r.slug}>
+                      {r.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+                <SelectGroup>
+                  <SelectLabel>Point of sale</SelectLabel>
+                  {posRoles(roles).map((r) => (
+                    <SelectItem
+                      key={r.slug}
+                      value={r.slug}
+                      disabled={!posEnabled}
+                    >
+                      {r.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
+            {chosen && (
+              <p className="-mt-1 text-[12.5px] text-[var(--dash-text-3)]">
+                {chosen.description}
+              </p>
+            )}
+            {!posEnabled && (
+              <p className="-mt-1 text-[12.5px] text-[var(--dash-text-3)]">
+                Manager and Cashier work the register. Switch on Point of Sale
+                to invite them.
+              </p>
+            )}
+            {isPosRole && (
+              <p className="-mt-1 text-[12.5px] text-[var(--dash-text-3)]">
+                They get an email link to set a password, verify their phone and
+                choose an 8-digit PIN. They sign in at the register only, never
+                the dashboard.
+              </p>
+            )}
           </div>
 
-          {/* ★ Hidden for a superadmin: they see every shop by definition, so
-              a picker there would imply a restriction that does not apply.
+          {/* ★ Hidden for an owner: they see every shop by definition, so a
+              picker there would imply a restriction that does not apply.
               Hidden for a single-location store for the same reason. */}
           {locations.length > 1 && role !== "superadmin" && (
             <div className="flex flex-col gap-2">
               <Label className="text-[14px] font-medium">Locations</Label>
               <p className="-mt-1 text-[12.5px] text-[var(--dash-text-3)]">
-                Which shops they can see. Leave all unticked for full access to
-                every location.
+                {isPosRole
+                  ? "Which shops they can work at. Leave all unticked to assign them to every location."
+                  : "Which shops they can see. Leave all unticked for full access to every location."}
               </p>
               <div className="flex flex-col gap-1.5 rounded-md border border-[var(--dash-border)] p-3">
                 {locations.map((l) => {

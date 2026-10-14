@@ -2727,14 +2727,23 @@ wholesip/
 │   │   │                      # Permission section is still `promotions`
 │   │   ├── enquiries/         # enquiry inbox + @modal detail
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
-│   │   ├── admins/ roles/     # staff invites + role management. ★ The delete /
-│   │   │                      # role / suspend actions (app/actions/user-management.ts)
-│   │   │                      # require a superadmin of the HOST store
-│   │   │                      # (isStoreSuperadmin) and scope every target read and
-│   │   │                      # write to that store; a login is deleted only when
-│   │   │                      # authIdsInUse says nothing else uses it. Before
-│   │   │                      # 2026-10-14 any store's superadmin could act on any
-│   │   │                      # admin, and delete any login, by uid.
+│   │   ├── admins/ roles/     # ★ THE ONE STAFF PAGE + the read-only roles reference
+│   │   │                      # (§41). admins/ lists dashboard admins AND register
+│   │   │                      # staff (pos_staff) together, each with a role from
+│   │   │                      # the PLATFORM's list (platform_roles — operators
+│   │   │                      # define it, lib/roles/platform-roles.ts reads it),
+│   │   │                      # and its invite dialog offers every role on it
+│   │   │                      # (Manager/Cashier greyed until POS is on; `inviteUser`
+│   │   │                      # routes those two to the POS staff flow). roles/
+│   │   │                      # shows what each role can do; a store has no editor.
+│   │   │                      # ★ The delete / role / suspend actions
+│   │   │                      # (app/actions/user-management.ts) require a
+│   │   │                      # superadmin of the HOST store (isStoreSuperadmin) and
+│   │   │                      # scope every target read and write to that store; a
+│   │   │                      # login is deleted only when authIdsInUse says nothing
+│   │   │                      # else uses it. Before 2026-10-14 any store's
+│   │   │                      # superadmin could act on any admin, and delete any
+│   │   │                      # login, by uid.
 │   │   ├── storefront/        # ★ Storefront (§11; was themes/ until 2026-10-11 —
 │   │   │                      # next.config.ts 307s /dashboard/themes here on store
 │   │   │                      # hosts only, so the operator console's own
@@ -8705,8 +8714,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     (product/staff/AI/coupon caps plus every boolean product entitlement;
     `null` = unlimited). Product caps are **5 / 50 / unlimited**; custom
     domains are **Pro only**; customer blog submissions, customer groups,
-    custom roles/code, Shiprocket and detailed/custom analytics are
-    **Basic+**; email campaigns, advanced analytics and POS are **Pro**;
+    custom code, Shiprocket and detailed/custom analytics are
+    **Basic+** (custom ROLES were a Basic+ feature until 2026-10-14; every
+    store now has the same five fixed roles, §41); email campaigns, advanced analytics and POS are **Pro**;
     and AI-credit top-ups are available on every plan. AI caps are
     **3 / 10 / 50 per month** — pro is metered too; enforce server-side in
     the owning action). `lib/plans/entitlements.ts` resolves the effective plan
@@ -11060,9 +11070,11 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       authorization.** POS is served at **`{slug}.storemink.com/pos`** — a
       SEPARATE app shell from `/dashboard` (outside the `(storefront)` group, so
       it gets only the root layout + its own dark chrome).
-      - **Staff have real accounts, created by invitation.** An admin adds a
-        cashier/manager by **name + email + role + locations**
-        (`inviteStaff`); the staff member gets an emailed link (Resend, the
+      - **Staff have real accounts, created by invitation.** The owner adds a
+        cashier/manager by **name + email + role + locations** — since
+        2026-10-14 from the ONE Staff page (Settings → Staff; `inviteUser`
+        delegates the two register roles to `inviteStaff`, §41) — and the
+        staff member gets an emailed link (Resend, the
         `inviteUser` pattern) to **`/pos/register?token=…`** and self-registers:
         **password (typed twice, must match) → phone OTP (Firebase Phone auth,
         the signup wizard's invisible-reCAPTCHA pattern) → their own 8-digit
@@ -11264,7 +11276,8 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
         `layout.tsx` (store + Pro + pos.enabled gate), `page.tsx` (operator gate
         → register shell + the owner's "authorize this device" card),
         `login/` (email + PIN pad / password), `register/` (the 3-step
-        self-registration wizard). Dashboard: `/dashboard/pos/staff` +
+        self-registration wizard). Dashboard: `/dashboard/admins` (the one
+        Staff page; `/dashboard/pos/staff` redirects there since 2026-10-14) +
         `/dashboard/pos/devices`.
     - **Phase 2 (v1, done) = the register.** `app/actions/pos-sale-actions.ts`
       is the sell path's trust boundary and mirrors `placeOrder` (§12) step for
@@ -17265,6 +17278,88 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       product text), CLI output in `scripts/`, and other content already
       stored in the database (pages, product descriptions, theme content).
       Those keep their dashes until edited.
+
+41. **Staff roles are platform data (2026-10-14, owner's decision).** Every
+    store picks from ONE list of roles that StoreMink operators own; a store
+    cannot create or edit a role. The list is the `platform_roles` table
+    (migration `20261014_0194`; platform-global, no store_id, service-only),
+    seeded with five: **Owner** (`superadmin`), **Admin** (`admin`) and
+    **Staff** (`member`) for the dashboard, **Manager** and **Cashier** for the
+    register. `lib/roles/catalog.ts` is the pure side (types, the seed
+    defaults, input validation, list helpers); `lib/roles/platform-roles.ts`
+    is the server-only reader; `app/actions/platform-role-actions.ts` +
+    `/dashboard/roles` on the platform host (`roles-console.tsx`) are the
+    operator's editor. A store's superadmin used to create their own roles in
+    a per-store `roles` table and tick View/Manage per section
+    (`role-actions.ts`, the role editor, `PLAN_LIMITS.customRoles`); all of
+    that is gone.
+    - **★ THE SLUG `member` STAYS THOUGH THE LABEL IS "Staff"** — the `themes` /
+      `promotions` / `activity` precedent: roles are stored by slug on
+      `admins.role` and in Firebase claims, so renaming it is a data rewrite
+      in the same release as the code that reads it. Every label comes from
+      the row's `name` (`roleName()`; the layout resolves the topbar's label
+      and hands the topbar a NAME); emails use `roleNoun()` ("a staff
+      member", never "a member").
+    - **★ `admins.role` IS A FOREIGN KEY TO `platform_roles.slug`** (ON UPDATE
+      CASCADE, ON DELETE RESTRICT). The old CHECK had only ever admitted
+      `superadmin|member`, which is why no row could hold a custom slug and
+      why 0194's data guard touches nothing. "A role in use cannot be deleted"
+      is therefore true at the database, not only in the console's count.
+      "Dashboard kind" is the actions' job: `changeUserRole` and `inviteUser`
+      refuse a register slug for an admins row.
+    - **★ EVERY READER TAKES THE PLATFORM LIST, WITH ONE FALLBACK.**
+      `getViewerContext` and `getManagerIdentity` (access.ts),
+      `storeAdminRecipients` (fan-out, on the caller's connection),
+      `getStoreNotificationAudience`, Mink's `revalidateWorkflowAuthority`,
+      the Staff page, its invite dialog and the seller's read-only Roles page
+      all read `platform_roles`. `listPlatformRoles`/`getPlatformRole` fall
+      back to `DEFAULT_STAFF_ROLES` ONLY on `isSchemaNotReady` (the table not
+      there yet: local dev before the migration), never on any other failure
+      — an unreachable database is not an access decision, so access.ts keeps
+      its "role lookup failed → dbError" branch. The `…With(db)` variants run
+      inside a transaction and never fall back (a failed statement has already
+      aborted it). `lib/roles/catalog.test.ts` reads 0194's seed back and
+      fails if it drifts from the defaults.
+    - **★ THE OPERATOR CAN ADD A DASHBOARD ROLE OR CHANGE ANY ROLE'S MAP; THREE
+      THINGS ARE FIXED.** Seeded roles cannot be deleted; the owner's map
+      cannot be narrowed (`superadmin` bypasses the map in code, so an edit
+      would only make the Roles page lie); Manager and Cashier keep an EMPTY
+      dashboard map — their capabilities are `lib/pos/permissions.ts`, and
+      `pos_staff.role` is a two-value CHECK, so no third register role. A new
+      role's slug is derived from its name (`slugifyRoleName`, `-2`, `-3` on
+      collision) and never changes. Superadmin operators only.
+    - **★ MANAGER AND CASHIER ARE ROLES, NOT A SEPARATE ENTITY — in the
+      product.** They are still `pos_staff` rows with a PIN (proxy.ts bounces
+      a cashier/manager claim to /pos), because a PIN on an authorised device
+      and an email + password login are different flows. What a merchant sees
+      is ONE Staff page (`app/dashboard/admins`, `shared.ts` → `StaffRow` with
+      `kind: "admin" | "pos"`) and ONE invite: the dialog's role picker is
+      grouped Dashboard / Point of sale with the register roles greyed until
+      POS is on, and `inviteUser` routes a register role to `inviteStaff`
+      (which keeps its own gate and its "a dashboard admin must not become a
+      cashier" registration guard). Row actions dispatch on `kind`: change
+      role moves WITHIN a kind (crossing is a new invite), Locations writes
+      `admin_locations` or `pos_staff_locations`, Suspend ↔ Deactivate, Resend
+      invitation for an unregistered till account. `/dashboard/pos/staff`
+      redirects; the POS sidebar lost its Staff child. Invites stay
+      owner-only (`admins:manage`).
+    - **★ "NOTHING TICKED" MEANS EVERY SHOP FOR BOTH KINDS**: unrestricted for
+      an admin (`lib/locations/scope.ts`), and for register staff — whose
+      flow refuses an empty assignment — the action fills in every location.
+    - **The seller's `/dashboard/roles` is read-only** (section `roles`,
+      actions `["view"]`, key kept): the platform list with who holds each
+      role here, a page-by-page grid of the dashboard roles, and a
+      Manager/Cashier capability table from `posCan`.
+    - **Migration `20261014_0194_fixed_staff_roles`** creates and seeds
+      `platform_roles`, swaps the admins CHECK for the foreign key, and edits
+      four Help guides in place (roles, staff invite, POS staff, plan). ⚠ The
+      per-store `roles` table and `supabase/roles_table.sql` are NOT dropped
+      here — the revision being replaced still reads the table during the
+      rollout — and need a follow-up contract migration. Four retired files
+      the tooling could not delete are `export {}` stubs to `git rm`:
+      `app/actions/role-actions.ts` (+ `.test.ts`),
+      `app/dashboard/roles/role-editor-dialog.tsx`,
+      `app/dashboard/pos/staff/staff-client.tsx`.
 
 ## 6. Commands
 

@@ -1,27 +1,9 @@
 import { redirect } from "next/navigation";
-import { requireSectionAccess } from "../../lib/access";
-import { getCurrentStore } from "@/lib/store/resolve";
-import { getPosState, getStoreLocations } from "@/lib/pos/locations";
-import { listStaff } from "@/app/actions/pos-staff-actions";
-import { StaffClient } from "./staff-client";
 
-export const metadata = { title: "POS Staff" };
-
-export default async function PosStaffPage() {
-  const access = await requireSectionAccess("pos", "view");
-  const store = await getCurrentStore();
-  if (!getPosState(store).posEnabled) redirect("/dashboard/pos");
-
-  const [{ staff }, locations] = await Promise.all([
-    listStaff(),
-    getStoreLocations(store.id),
-  ]);
-
-  return (
-    <StaffClient
-      initialStaff={staff}
-      locations={locations.map((l) => ({ id: l.id, name: l.name }))}
-      canManage={access.can("pos", "manage")}
-    />
-  );
+// There is no separate POS staff screen any more (2026-10-14): cashiers and
+// managers are two of the five fixed roles and are invited from Settings →
+// Staff like everyone else. Emails, bookmarks and the old sidebar entry still
+// name this path, so it forwards rather than 404s.
+export default function PosStaffPage() {
+  redirect("/dashboard/admins");
 }

@@ -12,7 +12,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { ArrowRight, Search, Store, Menu, X } from "lucide-react";
-import { TopbarProfile, formatRole } from "./topbar-profile";
+import { TopbarProfile } from "./topbar-profile";
 import { useMobileNav } from "./dashboard-mobile-nav";
 import { useChat } from "./chat-context";
 import { NotificationBell } from "./components/notification-bell";
@@ -114,6 +114,7 @@ export function DashboardTopbar({
   searchGroups = [],
 }: {
   email: string;
+  /** The viewer's role NAME ("Owner", "Staff"), resolved by the layout. */
   role: string;
   firstName?: string | null;
   lastName?: string | null;
@@ -319,7 +320,7 @@ export function DashboardTopbar({
               </span>
             )}
             <span className="hidden sm:inline-flex items-center rounded-full bg-white/10 px-2.5 h-[34px] text-[12.5px] font-medium text-white/85 shrink-0">
-              {formatRole(role)}
+              {role}
             </span>
             {/* Immediately right of the role: both answer "who am I here", and
                 for a restricted admin the second is the one that explains why

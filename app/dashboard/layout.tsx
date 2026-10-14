@@ -27,6 +27,8 @@ import {
   type SectionGroup,
 } from "./lib/permissions";
 import "./dashboard.css";
+import { getPlatformRoles } from "@/lib/roles/platform-roles";
+import { roleName } from "@/lib/roles/catalog";
 
 const dashFont = Inter({
   subsets: ["latin"],
@@ -182,6 +184,13 @@ export default async function DashboardLayout({
     ]);
   const { store, posState, locationCount } = resolvedStoreContext;
   const planId = effectivePlan(store);
+  // The role's NAME, from the platform's role list ("Owner", "Staff", or
+  // whatever an operator called a role they added). A failed read must not
+  // take the dashboard down over a label, so it falls back to the slug.
+  const roleLabel = roleName(
+    await getPlatformRoles().catch(() => []),
+    profile.role,
+  );
   const planName = PLAN_META[planId].name;
 
   // POS sidebar three-state: "Included in Pro" (upgrade) → "Enable POS" → live.
@@ -264,7 +273,7 @@ export default async function DashboardLayout({
           <MobileNavProvider>
             <DashboardTopbar
               email={profile.email}
-              role={profile.role ?? ""}
+              role={roleLabel}
               scopedLocations={scopedLocations}
               firstName={profile.first_name}
               lastName={profile.last_name}

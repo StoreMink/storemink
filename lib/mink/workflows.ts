@@ -10,7 +10,8 @@ import {
 } from "./business-brief-types";
 
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { can, normalizePermissions } from "@/app/dashboard/lib/permissions";
+import { can } from "@/app/dashboard/lib/permissions";
+import { readRolePermissionsWith } from "@/lib/roles/platform-roles";
 import {
   activityEvents,
   adminLocations,
@@ -21,7 +22,6 @@ import {
   minkWatches,
   minkWatchResponses,
   platformAdmins,
-  roles,
   storeLocations,
 } from "@/drizzle/schema";
 import { withService, type Db } from "@/lib/db/client";
@@ -772,14 +772,8 @@ export async function revalidateWorkflowAuthority(
       if (!admin || admin.isSuspended === true) return null;
       isStoreSuperadmin = admin.role === "superadmin";
       if (admin.role !== "superadmin") {
-        const roleRows = await db
-          .select({ permissions: roles.permissions })
-          .from(roles)
-          .where(
-            and(eq(roles.storeId, run.storeId), eq(roles.slug, admin.role)),
-          )
-          .limit(1);
-        const permissions = normalizePermissions(roleRows[0]?.permissions);
+        // The platform's role list, read on this transaction's connection.
+        const permissions = await readRolePermissionsWith(db, admin.role);
         if (requireDashboard && !can(permissions, "dashboard", "view"))
           return null;
         if (!hasWorkflowPermissions(permissions, template)) return null;

@@ -18,6 +18,24 @@ vi.mock("@/lib/plans/entitlements", () => ({
   PlanEntitlementError: class PlanEntitlementError extends Error {},
 }));
 vi.mock("./location-actions", () => ({ setAdminLocations: vi.fn() }));
+// The register half of an invite: a cashier/manager becomes a pos_staff row
+// through the POS staff flow, gated on the store having POS switched on.
+const posMocks = vi.hoisted(() => ({
+  inviteStaff: vi.fn(async () => ({ id: "pos-1" })),
+  getPosState: vi.fn(() => ({ posEnabled: true, posAvailable: true })),
+  getStoreLocations: vi.fn(async () => [
+    { id: "loc-1", name: "Delhi" },
+    { id: "loc-2", name: "Jaipur" },
+  ]),
+}));
+vi.mock("./pos-staff-actions", () => ({ inviteStaff: posMocks.inviteStaff }));
+vi.mock("@/lib/pos/locations", () => ({
+  getPosState: posMocks.getPosState,
+  getStoreLocations: posMocks.getStoreLocations,
+}));
+vi.mock("@/lib/store/resolve", () => ({
+  getCurrentStore: vi.fn(async () => ({ id: "store-1" })),
+}));
 vi.mock("@/lib/store/brand", () => ({
   getStoreBrandById: vi.fn(async () => ({
     name: "WholeSip",
@@ -65,12 +83,25 @@ function makeFormData(fields: Record<string, string | null | undefined>) {
   return fd;
 }
 
+type RoleRow = { slug: string; kind: "dashboard" | "pos"; name: string };
+const STAFF_ROLE: RoleRow = {
+  slug: "member",
+  kind: "dashboard",
+  name: "Staff",
+};
+
 // The caller-role gate reads via withUser (select #1 = role + store_id), the
-// email-collision check via withService (select #2). superadmin, in-store.
-function superadminCaller(existingEmail = false) {
+// platform_roles lookup via withService (select #2 — the role list is
+// platform data, so the invite asks it what `role` is), then the
+// email-collision check (select #3). superadmin, in-store.
+function superadminCaller(
+  existingEmail = false,
+  role: RoleRow | null = STAFF_ROLE,
+) {
   dbHolder.current = makeDbMock({
     selectQueue: [
       [{ role: "superadmin", store_id: "store-1" }],
+      role ? [role] : [],
       existingEmail ? [{ id: "existing" }] : [],
     ],
   });
@@ -121,10 +152,41 @@ describe("inviteUser", () => {
   });
 
   it("rejects unknown role", async () => {
+    superadminCaller(false, null);
     const result = await inviteUser(
       makeFormData({ ...validForm, role: "ghost" }),
     );
     expect(result.error).toMatch(/invalid role/i);
+    expect(createAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("accepts any dashboard role on the platform list, including one an operator added", async () => {
+    const rows: RoleRow[] = [
+      { slug: "superadmin", kind: "dashboard", name: "Owner" },
+      { slug: "admin", kind: "dashboard", name: "Admin" },
+      { slug: "content-editor", kind: "dashboard", name: "Content editor" },
+    ];
+    for (const row of rows) {
+      superadminCaller(false, row);
+      const result = await inviteUser(
+        makeFormData({ ...validForm, role: row.slug }),
+      );
+      expect(result.error).toBeUndefined();
+    }
+    expect(createAuthUser).toHaveBeenCalledTimes(3);
+    expect(setUserClaims).toHaveBeenLastCalledWith("new-user", {
+      role: "content-editor",
+      forcePasswordReset: true,
+    });
+  });
+
+  // The email says what the role is CALLED, never the stored slug: a `member`
+  // row is "a staff member" to the person reading the invitation.
+  it("names the role in the role's own words", async () => {
+    await inviteUser(makeFormData(validForm));
+    const sent = resendSend.mock.calls[0][0];
+    expect(sent.html).toContain("a staff member");
+    expect(sent.html).not.toMatch(/\ba member\b/);
   });
 
   it("rejects unauthenticated callers", async () => {
@@ -283,6 +345,85 @@ describe("inviteUser", () => {
       vi.mocked(setAdminLocations).mockRejectedValue(new Error("db down"));
       const r = await inviteUser(formWith(["loc-1"]));
       expect(r.error).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Register roles. A cashier or manager is a pos_staff row with a PIN, not a
+  // dashboard account: the one invite dialog routes them to the POS staff flow
+  // and never creates an auth user or an admins row for them.
+  // ---------------------------------------------------------------------------
+  describe("inviteUser — register roles", () => {
+    function posForm(role: "cashier" | "manager", locationIds: string[] = []) {
+      const fd = new FormData();
+      fd.set("firstName", "Priya");
+      fd.set("lastName", "Sharma");
+      fd.set("email", "Priya@Example.com");
+      fd.set("role", role);
+      for (const id of locationIds) fd.append("locationIds", id);
+      return fd;
+    }
+
+    const CASHIER: RoleRow = { slug: "cashier", kind: "pos", name: "Cashier" };
+    const MANAGER: RoleRow = { slug: "manager", kind: "pos", name: "Manager" };
+
+    it("routes a cashier to the POS staff flow with a composed name", async () => {
+      superadminCaller(false, CASHIER);
+      const r = await inviteUser(posForm("cashier", ["loc-2"]));
+      expect(r).toEqual({ success: true });
+      expect(posMocks.inviteStaff).toHaveBeenCalledWith({
+        name: "Priya Sharma",
+        email: "priya@example.com",
+        role: "cashier",
+        locationIds: ["loc-2"],
+      });
+      expect(createAuthUser).not.toHaveBeenCalled();
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+      expect(setAdminLocations).not.toHaveBeenCalled();
+    });
+
+    // "Nothing ticked" means every shop, the same reading the dashboard
+    // location picker gives — and the POS flow refuses an empty assignment,
+    // so the action fills it in rather than failing the invite.
+    it("assigns every location when none is ticked", async () => {
+      superadminCaller(false, MANAGER);
+      await inviteUser(posForm("manager"));
+      expect(posMocks.inviteStaff).toHaveBeenCalledWith(
+        expect.objectContaining({
+          role: "manager",
+          locationIds: ["loc-1", "loc-2"],
+        }),
+      );
+    });
+
+    it("refuses a register role while Point of Sale is off", async () => {
+      superadminCaller(false, CASHIER);
+      posMocks.getPosState.mockReturnValueOnce({
+        posEnabled: false,
+        posAvailable: true,
+      });
+      const r = await inviteUser(posForm("cashier"));
+      expect(r.error).toMatch(/switch on point of sale/i);
+      expect(posMocks.inviteStaff).not.toHaveBeenCalled();
+    });
+
+    it("surfaces the POS flow's own refusal", async () => {
+      superadminCaller(false, CASHIER);
+      posMocks.inviteStaff.mockResolvedValueOnce({
+        error: "A staff member with this email already exists.",
+      } as any);
+      const r = await inviteUser(posForm("cashier"));
+      expect(r.error).toMatch(/already exists/i);
+    });
+
+    // Still the owner's call: the caller gate runs before the branch.
+    it("still requires the owner", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [[{ role: "admin", store_id: "store-1" }]],
+      });
+      const r = await inviteUser(posForm("cashier"));
+      expect(r.error).toMatch(/unauthorized|superadmin/i);
+      expect(posMocks.inviteStaff).not.toHaveBeenCalled();
     });
   });
 });

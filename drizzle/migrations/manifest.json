@@ -7076,6 +7076,78 @@
       "applyVerify": {
         "queries": []
       }
+    },
+    {
+      "id": "20261014_0194_fixed_staff_roles",
+      "description": "Platform-managed staff roles: the operator-owned platform_roles table seeded with Owner, Admin, Staff, Manager and Cashier, admins.role as a foreign key to it, per-store custom roles retired, and the Help guides edited for the one Staff page",
+      "file": "sql/20261014_0194_fixed_staff_roles.sql",
+      "transaction": true,
+      "requires": ["20261014_0193_stock_rpc_store_ownership"],
+      "verify": {
+        "columns": [
+          "platform_roles.slug",
+          "platform_roles.kind",
+          "platform_roles.permissions",
+          "platform_roles.is_system",
+          "platform_roles.position"
+        ],
+        "queries": [
+          {
+            "name": "admins.role references platform_roles and a role in use cannot be deleted",
+            "sql": "select count(*)::text from pg_constraint where conname = 'admins_role_fkey' and conrelid = 'public.admins'::regclass and confrelid = 'public.platform_roles'::regclass and confdeltype = 'r' and confupdtype = 'c'",
+            "equals": "1"
+          },
+          {
+            "name": "the old two-value role check is gone",
+            "sql": "select count(*)::text from pg_constraint where conname = 'profiles_role_check' and conrelid = 'public.admins'::regclass",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the five standard roles are seeded as system roles",
+            "sql": "select count(*)::text from public.platform_roles where is_system and slug in ('superadmin', 'admin', 'member', 'manager', 'cashier') and kind = case when slug in ('manager', 'cashier') then 'pos' else 'dashboard' end",
+            "equals": "5"
+          },
+          {
+            "name": "every admin holds a dashboard role",
+            "sql": "select count(*)::text from public.admins a where not exists (select 1 from public.platform_roles r where r.slug = a.role and r.kind = 'dashboard')",
+            "equals": "0"
+          },
+          {
+            "name": "the roles guide describes the five fixed roles",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-roles-permissions-and-location-access' and status = 'published' and body like '%<h2>The standard roles</h2>%' and body like '%invite them again with the new role%' and body like '%an assignment to every location for a register user%' and body like '%Admin manages everything except staff and billing%'",
+            "equals": "1"
+          },
+          {
+            "name": "the roles guide no longer tells a merchant to create a role",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-roles-permissions-and-location-access' and (body like '%<h2>Create a role</h2>%' or body like '%custom role%' or body like '%Choose the saved role%')",
+            "equals": "0"
+          },
+          {
+            "name": "the staff guide invites every role from one list",
+            "sql": "select count(*)::text from public.help_articles where slug = 'invite-and-manage-dashboard-staff' and status = 'published' and body like '%invited from the same list%' and body like '%The register roles can be chosen once Point of Sale is switched on%' and body like '%the email carries a registration link%' and body like '%Managers and cashiers sign in at the register only%' and body like '%can also be resent from the same menu%' and body like '%Register roles need Point of Sale switched on%' and body like '%>Roles, permissions, and location access</a>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the staff guide no longer offers Admin or Superadmin as the only choice",
+            "sql": "select count(*)::text from public.help_articles where slug = 'invite-and-manage-dashboard-staff' and (body like '%built-in member role%' or body like '%Choose <strong>Admin</strong> or <strong>Superadmin</strong>%')",
+            "equals": "0"
+          },
+          {
+            "name": "the POS staff guide sends merchants to Settings, then Staff",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-pos-staff-and-pins' and status = 'published' and body like '%These two roles work the register%' and body like '%Deactivating a staff member from <strong>Settings</strong>%' and body not like '%Point of Sale → Staff%'",
+            "equals": "1"
+          },
+          {
+            "name": "the plan guide no longer lists custom roles",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%Customer groups, custom-code page sections%' and body like '%creating another group is paused.</li>%' and body not like '%custom role%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

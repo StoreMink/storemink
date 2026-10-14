@@ -2,17 +2,22 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { withService, type UserIdentity } from "@/lib/db/client";
-import { admins, platformAdmins, roles } from "@/drizzle/schema";
+import { admins, platformAdmins } from "@/drizzle/schema";
 import { getServerUser } from "@/lib/auth/server-user";
 import { getCurrentStoreId } from "@/lib/store/resolve";
 import { logError } from "@/lib/observability/logger";
 import {
   can,
-  normalizePermissions,
   SUPERADMIN_SLUG,
   type PermissionAction,
   type RolePermissions,
 } from "./permissions";
+// Aliased: `getPlatformRole` below is the PLATFORM OPERATOR role (platform_admins),
+// a different question from "which staff role is this slug".
+import {
+  getPlatformRole as getStaffRole,
+  platformRolePermissions,
+} from "@/lib/roles/platform-roles";
 
 export interface ViewerProfile {
   email: string;
@@ -172,18 +177,15 @@ export const getViewerContext = cache(
 
     let permissions: RolePermissions = {};
     if (!isSuperadmin && roleSlug) {
-      // Same rule as above: an unreadable roles table means we don't KNOW this
-      // admin's permissions. Defaulting to {} would strip a staff member down to
-      // an empty dashboard and blame their role for it.
+      // The platform's role list (lib/roles/platform-roles.ts; operators own
+      // it, every store reads it). Same rule as above: an unreadable table
+      // means we don't KNOW this admin's permissions. Defaulting to {} would
+      // strip a staff member down to an empty dashboard and blame their role
+      // for it. An unknown slug, by contrast, resolves to no permissions on
+      // purpose: it widens nobody's access, and the Staff page shows the raw
+      // slug so an owner can see what to reassign.
       try {
-        const roleRows = await withService((db) =>
-          db
-            .select({ permissions: roles.permissions })
-            .from(roles)
-            .where(and(eq(roles.storeId, storeId), eq(roles.slug, roleSlug)))
-            .limit(1),
-        );
-        permissions = normalizePermissions(roleRows[0]?.permissions);
+        permissions = await platformRolePermissions(roleSlug);
       } catch (error) {
         logError("dashboard: role permissions lookup failed", error, {
           userId: user.id,
@@ -212,18 +214,6 @@ export const getViewerContext = cache(
  */
 export async function getActingStoreId(): Promise<string> {
   return getCurrentStoreId();
-}
-
-export interface Role {
-  id: string;
-  name: string;
-  slug: string;
-  description: string | null;
-  permissions: RolePermissions;
-  color: string;
-  is_system: boolean;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface ViewerAccess {
@@ -306,23 +296,11 @@ export async function getManagerIdentity(
   if (!slug) return null;
   if (slug === SUPERADMIN_SLUG) return identity;
 
-  const roleRows = await withService((db) =>
-    db
-      .select({ permissions: roles.permissions })
-      .from(roles)
-      .where(and(eq(roles.storeId, storeId), eq(roles.slug, slug)))
-      .limit(1),
-  );
-
-  // Role found: enforce the permission map.
-  if (roleRows[0]) {
-    const perms = normalizePermissions(roleRows[0].permissions);
-    return can(perms, section, "manage") ? identity : null;
-  }
-
-  // Legacy fallback before the roles table is populated: "member" keeps rights.
-  if (slug === "member") return identity;
-  return null;
+  // The platform's role list decides; an unknown slug manages nothing. A
+  // failed read THROWS (getStaffRole swallows only "table not there yet").
+  const role = await getStaffRole(slug);
+  if (!role) return null;
+  return can(role.permissions, section, "manage") ? identity : null;
 }
 
 /**

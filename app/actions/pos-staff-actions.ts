@@ -1,10 +1,12 @@
 "use server";
 
 // POS Phase 1 — staff management (dashboard admin side) + the self-registration
-// finalize. The admin invites a cashier/manager by name/email/role/locations;
-// the staff self-registers (phone OTP + 8-digit PIN + password → Firebase
-// account with a role claim). pin_hash is WRITE-ONLY here (listStaff never
-// returns it); PIN verification happens at login (pos-auth-actions).
+// finalize. A cashier/manager is invited by name/email/role/locations — since
+// 2026-10-14 from the ONE Staff page (Settings → Staff, `inviteUser` delegates
+// here for the two register roles; there is no separate POS staff screen); the
+// staff self-registers (phone OTP + 8-digit PIN + password → Firebase account
+// with a role claim). pin_hash is WRITE-ONLY here (listStaff never returns
+// it); PIN verification happens at login (pos-auth-actions).
 
 import { and, eq, inArray } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
@@ -43,6 +45,8 @@ export interface PosStaffRow {
   status: "invited" | "active" | "disabled";
   active: boolean;
   locationIds: string[];
+  /** When the invitation was sent; the Staff list sorts on it. */
+  createdAt: string;
 }
 
 const MAX_NAME = 80;
@@ -87,6 +91,7 @@ export async function listStaff(): Promise<{
           role: posStaff.role,
           status: posStaff.status,
           active: posStaff.active,
+          createdAt: posStaff.createdAt,
         })
         .from(posStaff)
         .where(eq(posStaff.storeId, storeId));
@@ -119,6 +124,7 @@ export async function listStaff(): Promise<{
         status: (r.status as PosStaffRow["status"]) ?? "invited",
         active: r.active,
         locationIds: byStaff.get(r.id) ?? [],
+        createdAt: r.createdAt ?? "",
       })),
     };
   } catch (err) {
@@ -205,7 +211,7 @@ export async function inviteStaff(
   }
 
   await sendInviteEmail(storeId, email, name, input.role, token);
-  revalidatePath("/dashboard/pos/staff");
+  revalidatePath("/dashboard/admins");
   return { id };
 }
 
@@ -306,7 +312,7 @@ export async function updateStaff(
     return { error: dbErrorMessage(err, "Couldn't save the staff member.") };
   }
 
-  revalidatePath("/dashboard/pos/staff");
+  revalidatePath("/dashboard/admins");
   return { success: true };
 }
 
@@ -330,7 +336,7 @@ export async function setStaffActive(
     return { error: dbErrorMessage(err, "Couldn't update the staff member.") };
   }
 
-  revalidatePath("/dashboard/pos/staff");
+  revalidatePath("/dashboard/admins");
   return { success: true };
 }
 
@@ -393,7 +399,7 @@ export async function deleteStaff(id: string): Promise<ActionResult> {
     }
   }
 
-  revalidatePath("/dashboard/pos/staff");
+  revalidatePath("/dashboard/admins");
 
   // ★ REPORTED, not hidden. The staff member IS removed — that part succeeded
   // and is what matters — but an operator who is never told about the leftover

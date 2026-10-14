@@ -1,6 +1,8 @@
-// POS role capabilities (docs/pos-plan.md §3.3). POS roles are a SEPARATE model
-// from dashboard `roles` — they live on pos_staff.role. Pure module — enforce
-// these SERVER-SIDE in the POS actions, never from a client flag.
+// POS role capabilities (docs/pos-plan.md §3.3). `cashier` and `manager` are two
+// of the five fixed staff roles in lib/roles/catalog.ts (the catalog imports
+// this module, so the vocabulary is defined once, here); they are stored on
+// pos_staff.role and their DASHBOARD permissions are empty. Pure module —
+// enforce these SERVER-SIDE in the POS actions, never from a client flag.
 //
 // FOUR actors, two of them dashboard-side:
 //   cashier / manager  — pos_staff rows, signed in with a PIN or password.

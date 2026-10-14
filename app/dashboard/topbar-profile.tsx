@@ -55,19 +55,6 @@ function getInitials(
   return name.slice(0, 2).toUpperCase();
 }
 
-// The role a staff member signed in with, humanised. Superadmin is special;
-// any other role (incl. custom ones) title-cases its slug so it shows the real
-// role rather than a generic "Admin".
-export function formatRole(role: string): string {
-  if (!role) return "Admin";
-  if (role === "superadmin") return "Superadmin";
-  return role
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
 export function TopbarProfile({
   email,
   role,
@@ -89,7 +76,8 @@ export function TopbarProfile({
   const name = getDisplayName(email, firstName, lastName);
   const short = getShortName(email, firstName, lastName);
   const initials = getInitials(email, firstName, lastName);
-  const roleLabel = formatRole(role);
+  // Already a NAME, resolved by the layout from the platform's role list.
+  const roleLabel = role || "Admin";
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {

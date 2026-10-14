@@ -16,7 +16,8 @@ import {
 } from "@/lib/auth/firebase-users";
 import { setUserClaims } from "@/lib/auth/firebase-claims";
 import { withService } from "@/lib/db/client";
-import { admins, roles } from "@/drizzle/schema";
+import { admins } from "@/drizzle/schema";
+import { getPlatformRole } from "@/lib/roles/platform-roles";
 import { buildPasswordResetEmail } from "@/lib/email/account-emails";
 import { fromAddress } from "@/lib/email/sender";
 import { getStoreBrand } from "@/lib/store/brand";
@@ -163,16 +164,16 @@ export async function changeUserRole(
   const gate = await requireSuperadminCaller();
   if ("error" in gate) return gate;
 
-  // The target role must be a real role OF THIS STORE. Fall back to the two
-  // built-in roles when the store's roles table hasn't been seeded yet.
-  const roleRows = await withService((db) =>
-    db
-      .select({ slug: roles.slug })
-      .from(roles)
-      .where(and(eq(roles.slug, role), eq(roles.storeId, gate.storeId)))
-      .limit(1),
-  ).catch(() => []);
-  if (!roleRows[0] && !["superadmin", "member"].includes(role)) {
+  // Only a DASHBOARD role from the platform's list (lib/roles/platform-roles.ts).
+  // A cashier or manager is a `pos_staff` row with a PIN, not an admins row,
+  // so moving someone between the two kinds is an invite, never a role change.
+  let targetRole;
+  try {
+    targetRole = await getPlatformRole(role);
+  } catch {
+    return { error: "Couldn't check that role. Please try again." };
+  }
+  if (!targetRole || targetRole.kind !== "dashboard") {
     return { error: "Invalid role" };
   }
 

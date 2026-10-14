@@ -23,6 +23,11 @@ import {
   assertCanInviteStaff,
   PlanEntitlementError,
 } from "@/lib/plans/entitlements";
+import { roleNoun, type StaffRole } from "@/lib/roles/catalog";
+import { getPlatformRole } from "@/lib/roles/platform-roles";
+import { inviteStaff } from "./pos-staff-actions";
+import { getCurrentStore } from "@/lib/store/resolve";
+import { getPosState, getStoreLocations } from "@/lib/pos/locations";
 
 function generateTempPassword(): string {
   const chars =
@@ -35,7 +40,59 @@ function generateTempPassword(): string {
   return password;
 }
 
-export async function inviteUser(formData: FormData) {
+/** One shape for both halves, so a caller never has to narrow a union. */
+type InviteResult = { success?: boolean; error?: string };
+
+function normalizedEmailOf(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/**
+ * The register half of an invite. Delegates to `inviteStaff`, whose own gate
+ * (`pos` manage) the superadmin caller already passes, after two checks that
+ * only make sense here: the store must actually have the register switched
+ * on, and "no shops ticked" means every shop — the same reading the location
+ * picker gives a dashboard admin, where absence is not restriction.
+ */
+async function invitePosStaff(input: {
+  storeId: string;
+  staffRole: StaffRole;
+  firstName: string;
+  lastName: string | null;
+  email: string;
+  locationIds: string[];
+}): Promise<InviteResult> {
+  // The caller's store must be the store this dashboard is for. `inviteStaff`
+  // scopes to the host store, so a mismatch would file the invite elsewhere.
+  const store = await getCurrentStore();
+  if (store.id !== input.storeId) {
+    return { error: "Invite register staff from your own store's dashboard." };
+  }
+  if (!getPosState(store).posEnabled) {
+    return {
+      error:
+        "Switch on Point of Sale before inviting a manager or cashier. Dashboard roles can be invited now.",
+    };
+  }
+
+  let locationIds = input.locationIds;
+  if (locationIds.length === 0) {
+    locationIds = (await getStoreLocations(input.storeId)).map((l) => l.id);
+  }
+
+  const result = await inviteStaff({
+    name: [input.firstName.trim(), input.lastName?.trim()]
+      .filter(Boolean)
+      .join(" "),
+    email: input.email,
+    role: input.staffRole.slug,
+    locationIds,
+  });
+  if (result.error) return { error: result.error };
+  return { success: true };
+}
+
+export async function inviteUser(formData: FormData): Promise<InviteResult> {
   const firstName = formData.get("firstName") as string;
   const lastName = (formData.get("lastName") as string) || null;
   const email = formData.get("email") as string;
@@ -56,7 +113,7 @@ export async function inviteUser(formData: FormData) {
     return { error: "Please provide a valid email address." };
   }
 
-  if (!role || !["superadmin", "member"].includes(role)) {
+  if (!role) {
     return { error: "Invalid role." };
   }
 
@@ -83,6 +140,37 @@ export async function inviteUser(formData: FormData) {
 
   // The invited admin joins the inviter's store.
   const storeId = callerProfile.store_id;
+
+  // A role from the platform's list (lib/roles/platform-roles.ts): the
+  // dashboard roles StoreMink defines, or one of the two register roles.
+  // Nothing else is a role, and a merchant cannot add one.
+  let staffRole: StaffRole | null;
+  try {
+    staffRole = await getPlatformRole(role);
+  } catch (err) {
+    console.error("inviteUser role lookup error:", err);
+    return { error: "Couldn't check that role. Please try again." };
+  }
+  if (!staffRole) {
+    return { error: "Invalid role." };
+  }
+
+  // ★ A CASHIER OR MANAGER IS A REGISTER ACCOUNT, NOT A DASHBOARD ONE. They
+  // get a `pos_staff` row and the self-registration link (password, phone
+  // code, PIN) rather than a temporary dashboard password — the flow in
+  // pos-staff-actions.ts, which also keeps the "a dashboard admin must not
+  // become a cashier" guard. Only the entry point moved: since 2026-10-14 the
+  // one Staff page invites every role.
+  if (staffRole.kind === "pos") {
+    return invitePosStaff({
+      storeId,
+      staffRole,
+      firstName,
+      lastName,
+      email: normalizedEmailOf(email),
+      locationIds,
+    });
+  }
 
   const tempPassword = generateTempPassword();
 
@@ -221,7 +309,9 @@ export async function inviteUser(formData: FormData) {
       firstName,
       lastName,
       email,
-      role,
+      // The role's name as it reads in a sentence ("a staff member"), not
+      // the slug — `member` is stored, "Staff" is what the role is called.
+      role: roleNoun(staffRole),
       tempPassword,
       signInUrl: `${appUrl}/dashboard`,
     });
@@ -244,7 +334,7 @@ export async function inviteUser(formData: FormData) {
     console.log("\n" + "=".repeat(60));
     console.log("📨 USER INVITED (email not configured - dev fallback)");
     console.log(`Email: ${email}`);
-    console.log(`Role: ${role}`);
+    console.log(`Role: ${staffRole.name}`);
     console.log(`Temporary Password: ${tempPassword}`);
     console.log("=".repeat(60) + "\n");
   }

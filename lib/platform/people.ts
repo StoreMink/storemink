@@ -36,7 +36,8 @@ export interface PlatformPerson {
   kind: PersonKind;
   name: string;
   email: string;
-  /** `superadmin`/`member`/a custom role for admins; `cashier`/`manager` for POS. */
+  /** A fixed catalog slug (lib/roles/catalog.ts): `superadmin`/`admin`/`member`
+   *  for admins; `cashier`/`manager` for POS. */
   role: string;
   status: string;
   createdAt: string;
