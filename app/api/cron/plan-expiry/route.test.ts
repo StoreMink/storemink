@@ -186,6 +186,65 @@ describe("/api/cron/plan-expiry", () => {
     });
   });
 
+  // ★★ An operator's timed grant on a store that is still PAYING falls back to
+  // the paid plan. Writing Free here downgraded a paying merchant (and emailed
+  // them so) until their next cycle turn.
+  it("falls back to the live paid subscription instead of Free", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: queues([
+        { id: "s1", plan: "pro", paidPlan: "basic", subState: "active" },
+      ]),
+      executeQueue: [[]],
+      returning: [{ id: "s1" }],
+    });
+    vi.mocked(resolveBillingEmail).mockResolvedValue({
+      email: "owner@acme.com",
+      storeName: "Acme",
+      slug: "acme",
+    } as any);
+
+    const res = await GET(req("Bearer s3cret"));
+
+    expect(await res.json()).toMatchObject({ expired: 1, fellBackToPaid: 1 });
+    expect(dbHolder.current.calls.set[0]).toEqual({
+      plan: "basic",
+      planSource: "paid",
+      planExpiresAt: null,
+    });
+    expect(dbHolder.current.calls.values[0][0]).toMatchObject({
+      fromPlan: "pro",
+      toPlan: "basic",
+    });
+    // Not a downgrade to Free, so no "now on Free" email.
+    expect(sendBillingEmail).not.toHaveBeenCalled();
+    expect(recordEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "store.comp_ended", storeId: "s1" }),
+    );
+  });
+
+  it("still lapses to Free once the subscription's grace has run out", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: queues([
+        {
+          id: "s1",
+          plan: "pro",
+          paidPlan: "basic",
+          subState: "grace",
+          graceEndsAt: "2000-01-01T00:00:00.000Z",
+        },
+      ]),
+      executeQueue: [[]],
+      returning: [{ id: "s1" }],
+    });
+
+    await GET(req("Bearer s3cret"));
+
+    expect(dbHolder.current.calls.set[0]).toEqual({
+      plan: "free",
+      planExpiresAt: null,
+    });
+  });
+
   it("audits the plan each store fell FROM", async () => {
     // The UPDATE returns new values, so the snapshot is taken first — auditing
     // off the update would record every store as falling from "free".

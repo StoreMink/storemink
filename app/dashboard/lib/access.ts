@@ -2,17 +2,22 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { withService, type UserIdentity } from "@/lib/db/client";
-import { admins, platformAdmins, roles } from "@/drizzle/schema";
+import { admins, platformAdmins } from "@/drizzle/schema";
 import { getServerUser } from "@/lib/auth/server-user";
 import { getCurrentStoreId } from "@/lib/store/resolve";
 import { logError } from "@/lib/observability/logger";
 import {
   can,
-  normalizePermissions,
   SUPERADMIN_SLUG,
   type PermissionAction,
   type RolePermissions,
 } from "./permissions";
+// Aliased: `getPlatformRole` below is the PLATFORM OPERATOR role (platform_admins),
+// a different question from "which staff role is this slug".
+import {
+  getPlatformRole as getStaffRole,
+  platformRolePermissions,
+} from "@/lib/roles/platform-roles";
 
 export interface ViewerProfile {
   email: string;
@@ -40,6 +45,11 @@ export interface ViewerContext {
    * "no access". See the note on getViewerContext.
    */
   dbError?: boolean;
+  /**
+   * The viewer has an admins row here but it is SUSPENDED. `profile` is null,
+   * so every gate refuses; the flag only lets the layout say why.
+   */
+  suspended?: boolean;
 }
 
 // Platform-operator role for the signed-in user (by JWT email), or null.
@@ -106,6 +116,7 @@ export const getViewerContext = cache(
 
     let isPlatformAdmin = false;
     let profile: ViewerProfile | undefined;
+    let suspended = false;
     try {
       isPlatformAdmin = (await getPlatformRole()) !== null;
 
@@ -119,12 +130,27 @@ export const getViewerContext = cache(
             first_name: admins.firstName,
             last_name: admins.lastName,
             store_id: admins.storeId,
+            is_suspended: admins.isSuspended,
           })
           .from(admins)
           .where(and(eq(admins.id, user.id), eq(admins.storeId, storeId)))
           .limit(1),
       );
-      profile = profileRows[0];
+      const row = profileRows[0];
+      // ★ A SUSPENDED ADMIN HAS NO ACCESS. The flag used to be read only by
+      // the notification fan-out, so "Suspend user" changed a badge and nothing
+      // else. Treating the row as absent sends every gate below (and the
+      // layout, Mink's actor, isStoreSuperadmin) down the no-access path.
+      if (row?.is_suspended) suspended = true;
+      else if (row) {
+        profile = {
+          email: row.email,
+          role: row.role,
+          first_name: row.first_name,
+          last_name: row.last_name,
+          store_id: row.store_id,
+        };
+      }
     } catch (error) {
       logError("dashboard: access lookup failed", error, {
         userId: user.id,
@@ -164,6 +190,7 @@ export const getViewerContext = cache(
         profile: null,
         isSuperadmin: false,
         permissions: {},
+        ...(suspended ? { suspended: true } : {}),
       };
     }
 
@@ -172,18 +199,15 @@ export const getViewerContext = cache(
 
     let permissions: RolePermissions = {};
     if (!isSuperadmin && roleSlug) {
-      // Same rule as above: an unreadable roles table means we don't KNOW this
-      // admin's permissions. Defaulting to {} would strip a staff member down to
-      // an empty dashboard and blame their role for it.
+      // The platform's role list (lib/roles/platform-roles.ts; operators own
+      // it, every store reads it). Same rule as above: an unreadable table
+      // means we don't KNOW this admin's permissions. Defaulting to {} would
+      // strip a staff member down to an empty dashboard and blame their role
+      // for it. An unknown slug, by contrast, resolves to no permissions on
+      // purpose: it widens nobody's access, and the Staff page shows the raw
+      // slug so an owner can see what to reassign.
       try {
-        const roleRows = await withService((db) =>
-          db
-            .select({ permissions: roles.permissions })
-            .from(roles)
-            .where(and(eq(roles.storeId, storeId), eq(roles.slug, roleSlug)))
-            .limit(1),
-        );
-        permissions = normalizePermissions(roleRows[0]?.permissions);
+        permissions = await platformRolePermissions(roleSlug);
       } catch (error) {
         logError("dashboard: role permissions lookup failed", error, {
           userId: user.id,
@@ -212,18 +236,6 @@ export const getViewerContext = cache(
  */
 export async function getActingStoreId(): Promise<string> {
   return getCurrentStoreId();
-}
-
-export interface Role {
-  id: string;
-  name: string;
-  slug: string;
-  description: string | null;
-  permissions: RolePermissions;
-  color: string;
-  is_system: boolean;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface ViewerAccess {
@@ -296,33 +308,23 @@ export async function getManagerIdentity(
   const storeId = await getCurrentStoreId();
   const profileRows = await withService((db) =>
     db
-      .select({ role: admins.role })
+      .select({ role: admins.role, isSuspended: admins.isSuspended })
       .from(admins)
       .where(and(eq(admins.id, user.id), eq(admins.storeId, storeId)))
       .limit(1),
   );
 
+  // A suspended admin manages nothing (getViewerContext's rule).
+  if (profileRows[0]?.isSuspended) return null;
   const slug = profileRows[0]?.role;
   if (!slug) return null;
   if (slug === SUPERADMIN_SLUG) return identity;
 
-  const roleRows = await withService((db) =>
-    db
-      .select({ permissions: roles.permissions })
-      .from(roles)
-      .where(and(eq(roles.storeId, storeId), eq(roles.slug, slug)))
-      .limit(1),
-  );
-
-  // Role found: enforce the permission map.
-  if (roleRows[0]) {
-    const perms = normalizePermissions(roleRows[0].permissions);
-    return can(perms, section, "manage") ? identity : null;
-  }
-
-  // Legacy fallback before the roles table is populated: "member" keeps rights.
-  if (slug === "member") return identity;
-  return null;
+  // The platform's role list decides; an unknown slug manages nothing. A
+  // failed read THROWS (getStaffRole swallows only "table not there yet").
+  const role = await getStaffRole(slug);
+  if (!role) return null;
+  return can(role.permissions, section, "manage") ? identity : null;
 }
 
 /**

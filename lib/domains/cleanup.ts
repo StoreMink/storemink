@@ -6,6 +6,8 @@ import { logError } from "@/lib/observability/logger";
 import { removeGoogleCustomDomain } from "@/lib/seo/search-engines";
 import { ROOT_DOMAIN } from "@/lib/store/host";
 import { deprovision, getCertConfig } from "./certificates";
+import { domainHosts } from "./domain";
+import { hostsConnectedToStores } from "./ownership";
 
 export interface DomainCleanupResult {
   failures: string[];
@@ -31,10 +33,29 @@ export async function cleanupDetachedDomain(
         reason: "custom-domain infrastructure is not configured",
       });
     } else {
-      const gone = await deprovision(domain);
-      if (gone.error) {
+      // ★★ KEEP WHAT ANOTHER STORE STILL SERVES. Certificate resources are named
+      // by hostname alone, so `www.acme.com` detached here may be the companion
+      // of `acme.com` that another store is live on — or this store's own new
+      // domain after an apex → www change. Runs after the caller's row dropped
+      // the domain, so "a store" here means "anyone still using it". An
+      // unanswerable check removes nothing: a leftover certificate costs cents,
+      // a deleted live one is an outage.
+      let keep: Set<string> | null = null;
+      try {
+        keep = await hostsConnectedToStores(domainHosts(domain));
+      } catch (err) {
         failures.push("TLS certificate resources");
-        logError(`${operation} (deprovision)`, gone.error, { domain });
+        logError(`${operation} (deprovision ownership check)`, err, { domain });
+      }
+      if (keep) {
+        const gone =
+          keep.size > 0
+            ? await deprovision(domain, { keep })
+            : await deprovision(domain);
+        if (gone.error) {
+          failures.push("TLS certificate resources");
+          logError(`${operation} (deprovision)`, gone.error, { domain });
+        }
       }
     }
 

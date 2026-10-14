@@ -33,6 +33,56 @@ export const storeNoSeq = pgSequence("store_no_seq", {
   cycle: false,
 });
 
+// ★ THE PLATFORM'S STAFF ROLES (migration 0207; lib/roles/catalog.ts for the
+// defaults, lib/roles/platform-roles.ts for the reads). Platform-global — no
+// store_id — and operator-owned: a store picks from this list and cannot add to
+// it. Service-only, the mink_plan_allowances posture. `slug` is the key that
+// admins.role (dashboard roles) and pos_staff.role (the two register roles)
+// store; the two register slugs are a code table, so an operator may edit their
+// name and description but never add a third.
+export const platformRoles = pgTable(
+  "platform_roles",
+  {
+    slug: text().primaryKey().notNull(),
+    name: text().notNull(),
+    description: text().default("").notNull(),
+    color: text().default("grey").notNull(),
+    kind: text().notNull(),
+    permissions: jsonb().default({}).notNull(),
+    isSystem: boolean("is_system").default(false).notNull(),
+    position: integer().default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedBy: text("updated_by"),
+  },
+  (table) => [
+    uniqueIndex("platform_roles_name_lower_key").using(
+      "btree",
+      sql`lower(name)`,
+    ),
+    check(
+      "platform_roles_slug_check",
+      sql`${table.slug} ~ '^[a-z][a-z0-9-]{1,39}$'`,
+    ),
+    check(
+      "platform_roles_kind_check",
+      sql`${table.kind} = ANY (ARRAY['dashboard'::text, 'pos'::text])`,
+    ),
+    check(
+      "platform_roles_color_check",
+      sql`${table.color} = ANY (ARRAY['grey'::text, 'blue'::text, 'green'::text, 'amber'::text, 'violet'::text])`,
+    ),
+    check(
+      "platform_roles_permissions_check",
+      sql`jsonb_typeof(${table.permissions}) = 'object'`,
+    ),
+  ],
+);
+
 export const admins = pgTable(
   "admins",
   {
@@ -104,10 +154,18 @@ export const admins = pgTable(
       for: "select",
       to: ["supabase_auth_admin"],
     }),
-    check(
-      "profiles_role_check",
-      sql`role = ANY (ARRAY['superadmin'::text, 'member'::text])`,
-    ),
+    // A DASHBOARD role from platform_roles (migration 0207). The old CHECK
+    // admitted only superadmin|member; roles are operator-defined now, so the
+    // reference is a foreign key: a role in use cannot be deleted, and a slug
+    // never changes anyway. "Dashboard kind" is enforced by the actions — a
+    // register role (cashier/manager) lives on pos_staff.role, never here.
+    foreignKey({
+      columns: [table.role],
+      foreignColumns: [platformRoles.slug],
+      name: "admins_role_fkey",
+    })
+      .onUpdate("cascade")
+      .onDelete("restrict"),
   ],
 );
 

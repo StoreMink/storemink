@@ -21,7 +21,10 @@ vi.mock("@/lib/store/resolve", () => ({
   getCurrentStoreId: vi.fn(async () => STORE),
 }));
 
-vi.mock("@/lib/observability/logger", () => ({ logError: vi.fn() }));
+vi.mock("@/lib/observability/logger", () => ({
+  logError: vi.fn(),
+  logWarn: vi.fn(),
+}));
 
 /** Rows returned per query, in call order (drizzle's builder is thenable). */
 function resolveWith(...batches: unknown[][]) {
@@ -140,7 +143,7 @@ describe("dashboard access gates", () => {
               store_id: STORE,
             },
           ];
-        throw new Error("ECONNRESET"); // roles
+        throw new Error("ECONNRESET"); // platform_roles
       };
       const { getViewerContext } = await freshAccess();
 
@@ -148,6 +151,64 @@ describe("dashboard access gates", () => {
 
       // Unknown permissions must not render as an admin with zero rights.
       expect(ctx?.dbError).toBe(true);
+      expect(ctx?.permissions).toEqual({});
+    });
+
+    // The role list is PLATFORM data (lib/roles/platform-roles.ts): a store's
+    // staff member carries whatever map the operators gave that role.
+    it("resolves a staff member's permissions from the platform role list", async () => {
+      resolveWith(
+        [], // platform_admins
+        [
+          {
+            email: USER.email,
+            role: "content-editor",
+            first_name: null,
+            last_name: null,
+            store_id: STORE,
+          },
+        ],
+        [
+          {
+            slug: "content-editor",
+            kind: "dashboard",
+            permissions: { blogs: ["view", "manage"], media: ["view"] },
+          },
+        ],
+      );
+      const { getViewerContext } = await freshAccess();
+
+      const ctx = await getViewerContext();
+
+      expect(ctx?.dbError).toBeUndefined();
+      expect(ctx?.isSuperadmin).toBe(false);
+      expect(ctx?.permissions).toEqual({
+        blogs: ["view", "manage"],
+        media: ["view"],
+      });
+    });
+
+    // A slug no role carries (a role deleted by hand, a typo) widens nobody's
+    // access, and is not an outage either.
+    it("gives an unknown role slug no permissions, without flagging an outage", async () => {
+      resolveWith(
+        [],
+        [
+          {
+            email: USER.email,
+            role: "ghost",
+            first_name: null,
+            last_name: null,
+            store_id: STORE,
+          },
+        ],
+        [],
+      );
+      const { getViewerContext } = await freshAccess();
+
+      const ctx = await getViewerContext();
+
+      expect(ctx?.dbError).toBeUndefined();
       expect(ctx?.permissions).toEqual({});
     });
 
@@ -179,6 +240,37 @@ describe("dashboard access gates", () => {
       const { getManagerUserId } = await freshAccess();
 
       await expect(getManagerUserId("orders")).rejects.toThrow("ECONNRESET");
+    });
+
+    it("passes a role whose platform map grants manage, and refuses one that does not", async () => {
+      resolveWith(
+        [],
+        [{ role: "ops" }],
+        [
+          {
+            slug: "ops",
+            kind: "dashboard",
+            permissions: { orders: ["manage"] },
+          },
+        ],
+      );
+      let access = await freshAccess();
+      expect(await access.getManagerUserId("orders")).toBe(USER.id);
+
+      resolveWith(
+        [],
+        [{ role: "ops" }],
+        [{ slug: "ops", kind: "dashboard", permissions: { orders: ["view"] } }],
+      );
+      access = await freshAccess();
+      expect(await access.getManagerUserId("orders")).toBeNull();
+    });
+
+    it("refuses a slug that is not a platform role", async () => {
+      resolveWith([], [{ role: "ghost" }], []);
+      const { getManagerUserId } = await freshAccess();
+
+      expect(await getManagerUserId("orders")).toBeNull();
     });
 
     it("returns null when the caller really has no admin row", async () => {

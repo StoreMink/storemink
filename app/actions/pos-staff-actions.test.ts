@@ -11,6 +11,10 @@ vi.mock("next/cache", () => ({
 vi.mock("@/app/dashboard/lib/access", () => ({
   getManagerIdentity: vi.fn(),
   getActingStoreId: vi.fn(async () => "store-1"),
+  isStoreSuperadmin: vi.fn(async () => true),
+}));
+vi.mock("@/lib/auth/identity-usage", () => ({
+  authIdsInUse: vi.fn(async () => new Set<string>()),
 }));
 vi.mock("@/lib/auth/server-user", () => ({ getServerUser: vi.fn() }));
 vi.mock("@/lib/pos/locations", () => ({
@@ -62,7 +66,11 @@ vi.mock("@/lib/db/client", () => ({
   withAnon: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
 }));
 
-import { getManagerIdentity } from "@/app/dashboard/lib/access";
+import {
+  getManagerIdentity,
+  isStoreSuperadmin,
+} from "@/app/dashboard/lib/access";
+import { authIdsInUse } from "@/lib/auth/identity-usage";
 import { getServerUser } from "@/lib/auth/server-user";
 import { setUserClaims } from "@/lib/auth/firebase-claims";
 import { deleteAuthUser } from "@/lib/auth/firebase-users";
@@ -87,6 +95,8 @@ describe("pos-staff-actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getManagerIdentity).mockResolvedValue(ID as any);
+    vi.mocked(isStoreSuperadmin).mockResolvedValue(true);
+    vi.mocked(authIdsInUse).mockResolvedValue(new Set<string>());
     // ⚠ clearAllMocks clears CALLS, not IMPLEMENTATIONS — a mockRejectedValue
     // set in one test would otherwise fail every later delete.
     vi.mocked(deleteAuthUser).mockResolvedValue(undefined);
@@ -242,7 +252,52 @@ describe("pos-staff-actions", () => {
     });
   });
 
+  // ★ The seeded Admin role holds `pos` manage to run the register; it must not
+  // also let them promote, deactivate or remove the people who work it.
+  describe("owner-only staff management", () => {
+    it("refuses a non-owner who holds pos manage", async () => {
+      vi.mocked(isStoreSuperadmin).mockResolvedValue(false);
+      const update = await updateStaff("s1", {
+        name: "Priya K",
+        role: "manager",
+        locationIds: ["loc-2"],
+      });
+      expect(update.error).toMatch(/permission/i);
+      const del = await deleteStaff("s1");
+      expect(del.error).toMatch(/permission/i);
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+    });
+  });
+
   describe("deleteStaff", () => {
+    // deleteUser's rule: the login may be this person's shopper account or
+    // another store's register login, so it is kept while anything uses it.
+    it("keeps a login that something else still uses", async () => {
+      dbHolder.current = makeDbMock({
+        returning: [{ user_id: "fb1", email: "p@x.com" }],
+        selectQueue: [[{ id: "other-store-staff" }]],
+      });
+      vi.mocked(authIdsInUse).mockResolvedValue(new Set(["fb1"]));
+      const r = await deleteStaff("s1");
+      expect(r.success).toBe(true);
+      expect(r.warning).toBeUndefined();
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+      // Still a register login elsewhere, so its claim stays.
+      expect(setUserClaims).not.toHaveBeenCalled();
+    });
+
+    it("drops the register claim of a kept login used only as a shopper", async () => {
+      dbHolder.current = makeDbMock({
+        returning: [{ user_id: "fb1", email: "p@x.com" }],
+        selectQueue: [[]],
+      });
+      vi.mocked(authIdsInUse).mockResolvedValue(new Set(["fb1"]));
+      await deleteStaff("s1");
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+      expect(setUserClaims).toHaveBeenCalledWith("fb1", { role: null });
+    });
+
     it("deletes store-scoped", async () => {
       const r = await deleteStaff("s1");
       expect(r.success).toBe(true);

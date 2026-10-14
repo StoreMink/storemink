@@ -116,9 +116,17 @@ export default async function PlatformDashboardLayout({
           icon: "analytics" as const,
         },
         {
+          // The staff roles every store picks from (lib/roles/catalog.ts):
+          // what each may reach, and any extra role StoreMink adds. Platform
+          // data since 2026-10-14 — a merchant cannot define their own.
+          href: "/dashboard/roles",
+          label: "Roles",
+          icon: "roles" as const,
+        },
+        {
           href: "/dashboard/operators",
           label: "Operators",
-          icon: "roles" as const,
+          icon: "users" as const,
         },
         {
           // StoreMink's OWN tax identity — what its subscription invoices say

@@ -271,8 +271,6 @@ export interface PlanLimits {
   customCode: boolean;
   /** May create and assign customer groups. */
   customerGroups: boolean;
-  /** May create and edit custom dashboard roles. */
-  customRoles: boolean;
   /** May connect Shiprocket for rates, fulfilment and tracking. */
   shippingIntegration: boolean;
   /** May customise the analytics dashboard and save layouts. */
@@ -318,7 +316,6 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     customerBlogSubmissions: false,
     customCode: false,
     customerGroups: false,
-    customRoles: false,
     shippingIntegration: false,
     analyticsCustomization: false,
     detailedAnalytics: false,
@@ -348,7 +345,6 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     customerBlogSubmissions: true,
     customCode: true,
     customerGroups: true,
-    customRoles: true,
     shippingIntegration: true,
     analyticsCustomization: true,
     detailedAnalytics: true,
@@ -374,7 +370,6 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     customerBlogSubmissions: true,
     customCode: true,
     customerGroups: true,
-    customRoles: true,
     shippingIntegration: true,
     analyticsCustomization: true,
     detailedAnalytics: true,
@@ -691,12 +686,6 @@ export function planFeatureMatrix(
           free: String(PLAN_LIMITS.free.maxStaff),
           basic: String(PLAN_LIMITS.basic.maxStaff),
           pro: "Unlimited",
-        },
-        {
-          label: "Custom roles and permissions",
-          free: PLAN_LIMITS.free.customRoles,
-          basic: PLAN_LIMITS.basic.customRoles,
-          pro: PLAN_LIMITS.pro.customRoles,
         },
         {
           label: "Core analytics dashboard",

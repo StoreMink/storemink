@@ -55,12 +55,22 @@ function clean(v: FormDataEntryValue | null): string | null {
   return s ? s : null;
 }
 
+function hexColor(v: FormDataEntryValue | null): string | null {
+  const s = clean(v);
+  return s && /^#[0-9a-fA-F]{6}$/.test(s) ? s : null;
+}
+
 // Persist branding from the dashboard editor. Merges into settings.brand,
 // preserves any other settings (and badges, which the editor doesn't expose
 // yet), and busts the store-lookup cache so the storefront updates at once.
 export async function saveStoreBranding(
   formData: FormData,
 ): Promise<ActionResult> {
+  // A "use server" export is a public endpoint: without this gate anyone, signed
+  // in or not, could rename any store and replace its logo, contact details and
+  // social links. Same permission the branding page offers the form under.
+  const userId = await getManagerUserId("branding");
+  if (!userId) return { error: "Not authenticated" };
   const storeId = await getActingStoreId();
 
   const name = clean(formData.get("name"));
@@ -89,7 +99,13 @@ export async function saveStoreBranding(
     ...existingBrand, // keep fields the editor doesn't manage (e.g. badges)
     name,
     logoUrl: clean(formData.get("logoUrl")),
-    primaryColor: clean(formData.get("primaryColor")) ?? "#1f7a5a",
+    // Renders into an inline style attribute, so only a hex survives (the
+    // saveBrandAppearance rule); anything else keeps the colour already saved.
+    primaryColor:
+      hexColor(formData.get("primaryColor")) ??
+      (typeof existingBrand.primaryColor === "string"
+        ? existingBrand.primaryColor
+        : "#1f7a5a"),
     tagline: clean(formData.get("tagline")),
     blurb: clean(formData.get("blurb")),
     legalName: clean(formData.get("legalName")),

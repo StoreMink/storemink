@@ -26,17 +26,23 @@ import "server-only";
  * would expire before the gateway call it was meant to protect. See `claimDue`.
  */
 
-import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
 import { withService, type Db } from "@/lib/db/client";
 import {
   billingInvoices,
   billingMandates,
   billingSubscriptions,
+  planEvents,
   posShifts,
   stores,
 } from "@/drizzle/schema";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
-import type { Plan } from "@/lib/plans";
+import {
+  effectivePlan,
+  limitsFor,
+  normalizePlan,
+  type Plan,
+} from "@/lib/plans";
 import {
   collectionCutoff,
   collectionRoute,
@@ -60,6 +66,7 @@ import {
 } from "./dunning";
 import { buildSubscriptionInvoice } from "./invoice";
 import { resolveNextCycle, type ScheduledFields } from "./next-cycle";
+import { billingMayApplyPlan } from "@/lib/payments/plan-change";
 
 /** How many subscriptions one pass will touch. Bounded so a Cloud Run request
  *  finishes; the cron self-chains while there is more. */
@@ -484,6 +491,9 @@ export async function evaluateCycleTurns(
   // rollback then un-started.
   const graced: { storeId: string; plan: string; graceEndsAt: Date }[] = [];
   const ending: { storeId: string; plan: string }[] = [];
+  // Plan changes made in the transaction, audited only once it has committed.
+  const audit: PlanChange[] = [];
+  let committed = false;
 
   try {
     await withService(async (db) => {
@@ -521,6 +531,7 @@ export async function evaluateCycleTurns(
             storeId: row.storeId,
             fromCycleSeq: row.currentCycleSeq,
             now,
+            audit,
           });
           if (ended) {
             ending.push({ storeId: row.storeId, plan: row.plan });
@@ -560,6 +571,7 @@ export async function evaluateCycleTurns(
             fromCycleSeq: row.currentCycleSeq,
             fromPeriodEnd: row.currentPeriodEnd!,
             now,
+            audit,
           });
           summary.advanced += 1;
           continue;
@@ -599,10 +611,12 @@ export async function evaluateCycleTurns(
         summary.graced += 1;
       }
     });
+    committed = true;
   } catch (err) {
     logError("billing.renewal.evaluate", err);
     summary.errors += 1;
   }
+  if (committed) await auditPlanChanges(audit);
 
   // ★ A cancellation reaching its end IS a downgrade from the merchant's point of
   // view — their plan stopped and they are on Free — so it reuses that notice
@@ -648,6 +662,8 @@ async function advanceCycle(
     fromCycleSeq: number;
     fromPeriodEnd: string;
     now: Date;
+    /** Collects the plan change, for the caller to audit after commit. */
+    audit?: PlanChange[];
   },
 ): Promise<boolean> {
   // ★★ ONE RESOLVER, so what was PRICED at T−4d is what is WRITTEN at T0. The
@@ -688,7 +704,190 @@ async function advanceCycle(
       ),
     )
     .returning({ storeId: billingSubscriptions.storeId });
-  return claimed.length > 0;
+  if (claimed.length === 0) return false;
+
+  // ★★ THE STORE ROW MOVES WITH THE CYCLE. Every gate reads `stores.plan`, and
+  // advancing only `billing_subscriptions` left two defects: a renewal that was
+  // PAID still lapsed to Free, because enrolment had stamped the first cycle's
+  // end into `plan_expires_at` and nothing ever moved it; and a downgrade booked
+  // for the cycle end changed what was billed but never what the store got.
+  const write = await syncPaidEntitlement(
+    db,
+    input.storeId,
+    shape.plan,
+    input.now,
+  );
+  if (write.change) input.audit?.push(write.change);
+  // ★ A booked move to a plan without Point of Sale stops the till here, so an
+  // open shift is closed in the same transaction, as at a downgrade.
+  if (hasPos(write.before) && !hasPos(write.after)) {
+    await closeOpenShifts(db, input.storeId, input.now, BOOKED_CHANGE_NOTE);
+  }
+  return true;
+}
+
+/** A plan change the worker made to `stores`, audited once it has committed. */
+export interface PlanChange {
+  storeId: string;
+  fromPlan: string;
+  toPlan: string;
+  note: string;
+}
+
+/** What an entitlement write did: its audit row, and the plan either side. */
+export interface EntitlementWrite {
+  change: PlanChange | null;
+  before: Plan;
+  after: Plan;
+}
+
+const ENTITLEMENT_COLUMNS = {
+  plan: stores.plan,
+  planSource: stores.planSource,
+  planExpiresAt: stores.planExpiresAt,
+  compPlan: stores.compPlan,
+  compExpiresAt: stores.compExpiresAt,
+};
+
+type EntitlementRow = {
+  plan: string;
+  planExpiresAt: string | null;
+  compPlan: string | null;
+  compExpiresAt: string | null;
+};
+
+/** The plan a row entitles the store to — paid plan or comp overlay. */
+function entitledTo(row: EntitlementRow, now: Date): Plan {
+  return effectivePlan(
+    {
+      plan: row.plan,
+      plan_expires_at: row.planExpiresAt,
+      comp_plan: row.compPlan,
+      comp_expires_at: row.compExpiresAt,
+    },
+    now,
+  );
+}
+
+function hasPos(plan: Plan): boolean {
+  return limitsFor(plan).posEnabled;
+}
+
+/**
+ * Write the worker's plan changes to `plan_events`.
+ *
+ * ★ Its OWN transaction, after the one that changed the plan has committed
+ * (the `auditEnrolment` rule): an audit failure must never undo a cycle turn
+ * or a downgrade, and a rolled-back change must never be audited.
+ * `source: "billing"`, never `"paid"` (§15).
+ */
+async function auditPlanChanges(changes: PlanChange[]): Promise<void> {
+  if (changes.length === 0) return;
+  try {
+    await withService((db) =>
+      db.insert(planEvents).values(
+        changes.map((c) => ({
+          storeId: c.storeId,
+          fromPlan: c.fromPlan,
+          toPlan: c.toPlan,
+          source: "billing",
+          actor: "billing-renewal",
+          note: c.note,
+        })),
+      ),
+    );
+  } catch (err) {
+    logError("billing.renewal.audit", err, { stores: changes.length });
+  }
+}
+
+/**
+ * Make `stores` carry the plan a live subscription pays for.
+ *
+ * ★★ `plan_expires_at` IS NULL FOR A PAID PLAN. That column is the end of an
+ * operator's TIMED GRANT, and the daily plan-expiry job flips anything past it
+ * to Free. A subscription's lifecycle belongs to this worker instead: the
+ * cancellation turn and the post-grace downgrade both drop the plan explicitly
+ * (`dropPaidEntitlement`), and a renewal still waiting on its payment keeps the
+ * plan it has, which is what grace promises.
+ *
+ * ★ THE COMP FLOOR HOLDS (`billingMayApplyPlan`): billing may raise a plan an
+ * operator granted, never lower it.
+ */
+export async function syncPaidEntitlement(
+  db: Db,
+  storeId: string,
+  plan: string,
+  now: Date = new Date(),
+): Promise<EntitlementWrite> {
+  const [store] = await db
+    .select(ENTITLEMENT_COLUMNS)
+    .from(stores)
+    .where(eq(stores.id, storeId))
+    .limit(1);
+  if (!store) {
+    const p = normalizePlan(plan);
+    return { change: null, before: p, after: p };
+  }
+  const before = entitledTo(store, now);
+  if (!billingMayApplyPlan(store.plan, store.planSource, plan)) {
+    return { change: null, before, after: before };
+  }
+  await db
+    .update(stores)
+    .set({ plan, planSource: "paid", planExpiresAt: null })
+    .where(eq(stores.id, storeId));
+  return {
+    change:
+      store.plan === plan
+        ? null
+        : {
+            storeId,
+            fromPlan: store.plan,
+            toPlan: plan,
+            note: "renewal: the subscription's plan applies",
+          },
+    before,
+    after: entitledTo({ ...store, plan, planExpiresAt: null }, now),
+  };
+}
+
+/**
+ * Take away the plan a subscription was paying for.
+ *
+ * ★ An operator's grant (`plan_source = 'comp'`) is not the subscription's to
+ * take away — it is the same floor `syncPaidEntitlement` respects. `after` is
+ * what the store is left with, so a caller can tell a store that still has a
+ * plan (and a till) from one that is now on Free. A row it cannot read is
+ * treated as landing on Free, which is what this did before it looked.
+ */
+async function dropPaidEntitlement(
+  db: Db,
+  storeId: string,
+  note: string,
+  now: Date,
+): Promise<EntitlementWrite> {
+  const [store] = await db
+    .select(ENTITLEMENT_COLUMNS)
+    .from(stores)
+    .where(eq(stores.id, storeId))
+    .limit(1);
+  await db
+    .update(stores)
+    .set({ plan: "free", planExpiresAt: null })
+    .where(and(eq(stores.id, storeId), ne(stores.planSource, "comp")));
+  if (!store) return { change: null, before: "free", after: "free" };
+  const before = entitledTo(store, now);
+  if (store.planSource === "comp")
+    return { change: null, before, after: before };
+  return {
+    change:
+      store.plan === "free"
+        ? null
+        : { storeId, fromPlan: store.plan, toPlan: "free", note },
+    before,
+    after: entitledTo({ ...store, plan: "free", planExpiresAt: null }, now),
+  };
 }
 
 /**
@@ -703,7 +902,12 @@ async function advanceCycle(
  */
 async function endSubscription(
   db: Db,
-  input: { storeId: string; fromCycleSeq: number; now: Date },
+  input: {
+    storeId: string;
+    fromCycleSeq: number;
+    now: Date;
+    audit?: PlanChange[];
+  },
 ): Promise<boolean> {
   const claimed = await db
     .update(billingSubscriptions)
@@ -732,10 +936,16 @@ async function endSubscription(
     .returning({ storeId: billingSubscriptions.storeId });
   if (claimed.length === 0) return false;
 
-  await db
-    .update(stores)
-    .set({ plan: "free", planExpiresAt: null })
-    .where(eq(stores.id, input.storeId));
+  const write = await dropPaidEntitlement(
+    db,
+    input.storeId,
+    "cancellation: the paid period ended",
+    input.now,
+  );
+  if (write.change) input.audit?.push(write.change);
+  if (!hasPos(write.after)) {
+    await closeOpenShifts(db, input.storeId, input.now, CANCELLED_NOTE);
+  }
   return true;
 }
 
@@ -756,8 +966,9 @@ export async function advanceAfterPayment(
   storeId: string,
   now: Date = new Date(),
 ): Promise<boolean> {
+  const audit: PlanChange[] = [];
   try {
-    return await withService(async (db) => {
+    const advanced = await withService(async (db) => {
       const [sub] = await db
         .select({
           storeId: billingSubscriptions.storeId,
@@ -807,8 +1018,11 @@ export async function advanceAfterPayment(
         fromCycleSeq: sub.currentCycleSeq,
         fromPeriodEnd: sub.currentPeriodEnd,
         now,
+        audit,
       });
     });
+    await auditPlanChanges(audit);
+    return advanced;
   } catch (err) {
     logError("billing.advance_after_payment", err, { storeId });
     return false;
@@ -882,23 +1096,45 @@ export async function downgradeExpired(
           sql`select billing_claim_downgrade(${storeId}::uuid, ${now.toISOString()}::timestamptz) as ok`,
         );
         const ok = (res.rows?.[0] as { ok?: boolean } | undefined)?.ok === true;
-        if (!ok) return false;
+        if (!ok) return null;
 
+        // ★★ THE STORE LOSES THE PLAN HERE. The claim only moves
+        // `billing_subscriptions`; it used to be `plan_expires_at` (the first
+        // cycle's end, never extended) that actually took the plan away — from
+        // payers and non-payers alike. Paid plans now carry no expiry, so this
+        // is the one place a non-payer is downgraded.
+        const write = await dropPaidEntitlement(
+          db,
+          storeId,
+          "renewal: unpaid when grace ended",
+          now,
+        );
         // ★ SAME TRANSACTION as the downgrade. posEnabled goes false, so the
         // till stops; an open shift holds uncounted cash and leaving it open
         // strands the drawer with no way to reconcile it (owner, 2026-08-11).
-        await closeOpenShifts(db, storeId, now);
-        return true;
+        // ★ Only when the till really stops: an operator's comp (on `plan` or
+        // as an overlay) keeps the store's plan, and its drawer stays open.
+        const closesTill = !hasPos(write.after);
+        if (closesTill) {
+          await closeOpenShifts(db, storeId, now, NON_PAYMENT_NOTE);
+        }
+        return { write, closesTill };
       });
 
       if (claimed) {
         summary.downgraded += 1;
-        summary.shiftsClosed += 1;
+        if (claimed.closesTill) summary.shiftsClosed += 1;
         logInfo("billing.downgraded", { storeId });
+        if (claimed.write.change)
+          await auditPlanChanges([claimed.write.change]);
         // ★ The claim is exactly-once, so this mails once. AFTER the
         // transaction commits — an email is a network call, and announcing a
         // downgrade a rollback then undid would be worse than saying nothing.
-        await notifyDowngraded({ storeId, fromPlan: plan });
+        // ★ And only to a store that is really on Free now: the notice says
+        // "Current plan: Free", which is false for a store an operator comped.
+        if (claimed.write.after === "free") {
+          await notifyDowngraded({ storeId, fromPlan: plan });
+        }
       }
     } catch (err) {
       logError("billing.renewal.downgrade", err, { storeId });
@@ -916,7 +1152,19 @@ export async function downgradeExpired(
  * nobody counted this drawer. The note says who closed it and why, so the
  * Z-report explains itself.
  */
-async function closeOpenShifts(db: Db, storeId: string, now: Date) {
+const NON_PAYMENT_NOTE =
+  "Closed automatically: the store was downgraded to the Free plan for non-payment, which turns off Point of Sale. Cash was not counted, so this shift records no variance.";
+const BOOKED_CHANGE_NOTE =
+  "Closed automatically: at its renewal the store moved to a plan without Point of Sale, as booked. Cash was not counted, so this shift records no variance.";
+const CANCELLED_NOTE =
+  "Closed automatically: the store's cancelled subscription ended, which turns off Point of Sale. Cash was not counted, so this shift records no variance.";
+
+async function closeOpenShifts(
+  db: Db,
+  storeId: string,
+  now: Date,
+  note: string,
+) {
   await db
     .update(posShifts)
     .set({
@@ -926,7 +1174,7 @@ async function closeOpenShifts(db: Db, storeId: string, now: Date) {
       closedByName: "System",
       countedCash: sql`coalesce(${posShifts.expectedCash}, 0)`,
       variance: 0,
-      note: "Closed automatically: the store was downgraded to the Free plan for non-payment, which turns off Point of Sale. Cash was not counted, so this shift records no variance.",
+      note,
     })
     .where(and(eq(posShifts.storeId, storeId), eq(posShifts.status, "open")));
 }

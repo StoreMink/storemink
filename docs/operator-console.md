@@ -36,6 +36,7 @@ single scroll, under a metric row. Three consequences, all of them real:
 |                    | ↳ Theme Studio | `/dashboard/themes/studio` | Draft new themes _(superadmin only)_    |
 |                    | Pricing        | `/dashboard/pricing`       | What StoreMink charges                  |
 |                    | Analytics      | `/dashboard/analytics`     | Platform Analytics availability         |
+|                    | Roles          | `/dashboard/roles`         | The staff roles every store picks from  |
 |                    | Operators      | `/dashboard/operators`     | Who runs the platform                   |
 |                    | Billing & tax  | `/dashboard/billing`       | StoreMink's own GST identity            |
 
@@ -140,6 +141,24 @@ has no Enable/Disable Mink control. Migration 0157 backfills existing stores
 and automatically provisions the complete tool registry for future signups.
 Staff permissions, credits, plan limits and exact human approvals apply.
 `MINK_AI_ENABLED` remains the deployment-wide emergency shutdown.
+
+### ★ Roles are platform data a store reads, never writes
+
+`/dashboard/roles` (`roles-console.tsx`, `app/actions/platform-role-actions.ts`)
+edits `platform_roles`, the ONE list of staff roles every store's Staff page
+offers and every dashboard gate reads (`lib/roles/platform-roles.ts`). A
+merchant cannot add a role; an operator can, and can change what an existing
+role may view or manage. Three things are fixed and the console says so: the
+five seeded roles cannot be deleted (and the database refuses to delete ANY
+role an `admins` row still references — `admins.role` is a foreign key with
+`ON DELETE RESTRICT`); the owner's map cannot be narrowed, because
+`superadmin` bypasses the map in code; and the two register roles (Manager,
+Cashier) keep an empty dashboard map — what they can do at the counter is the
+code table in `lib/pos/permissions.ts`, and `pos_staff.role` is a two-value
+check, so a third register role cannot be added. Superadmin-only to write, for
+pricing's reason: a saved map reaches every holder on every store on their
+next request. The People column counts holders across the platform, which is
+what deleting would cost.
 
 ### ★ Theme Studio is superadmin data, not a superadmin write
 

@@ -1,8 +1,10 @@
 // ---------------------------------------------------------------------------
 // Permission catalog — the single source of truth for which dashboard sections
-// exist and what can be done in each. Roles store a subset of this as their
-// `permissions` map. Pure module (no server imports) so it can be shared by
-// server components, server actions, and client editors alike.
+// exist and what can be done in each. The fixed staff roles in
+// lib/roles/catalog.ts each hold a subset of this as their `permissions` map
+// (there are no per-store custom roles since 2026-10-14). Pure module (no
+// server imports) so it can be shared by server components, server actions and
+// client components alike.
 // ---------------------------------------------------------------------------
 
 import type { NavIconKey } from "../nav-icons";
@@ -248,9 +250,12 @@ export const SECTIONS: DashboardSection[] = [
     icon: "pos",
     group: "Sell in person",
     actions: ["view", "manage"],
+    // ★ NO "Staff" CHILD ANY MORE (2026-10-14): cashiers and managers are
+    // invited from Settings → Staff with every other role, and a second entry
+    // pointing at the same page would be the duplicate the builder's retired
+    // Navigation entry exists to avoid. /dashboard/pos/staff redirects there.
     children: [
       { label: "Overview", href: "/dashboard/pos", icon: "pos" },
-      { label: "Staff", href: "/dashboard/pos/staff", icon: "customers" },
       { label: "Devices", href: "/dashboard/pos/devices", icon: "channels" },
       // Money events (Step 14) get their own page rather than a tab on
       // "Devices": an owner reconciling a drawer and an admin checking who
@@ -474,12 +479,16 @@ export const SECTIONS: DashboardSection[] = [
     parent: "settings",
   },
   {
+    // Read-only since 2026-10-14: the page shows what each of the five fixed
+    // roles can do (lib/roles/catalog.ts). There is nothing to manage, so
+    // `view` is the only action — the key stays, because the admin role and
+    // any stored grant name it.
     key: "roles",
     label: "Roles & permissions",
     href: "/dashboard/roles",
     icon: "roles",
     group: "Settings",
-    actions: ["view", "manage"],
+    actions: ["view"],
     parent: "settings",
   },
   {
@@ -644,6 +653,8 @@ export function getSection(key: string): DashboardSection | undefined {
 
 /** A role's permission map: section key -> granted actions. */
 export type RolePermissions = Record<string, PermissionAction[]>;
+
+/** The owner's slug. Full access is granted in code; its map is never consulted. */
 
 export const SUPERADMIN_SLUG = "superadmin";
 

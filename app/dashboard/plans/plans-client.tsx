@@ -206,7 +206,14 @@ export function PlansBillingClient({
     if (days === 1) return "tomorrow";
     return `in ${days} days`;
   })();
-  const expiresAt = data.planExpiresAt;
+  // A paid plan carries no `plan_expires_at` (the renewal worker owns it), so
+  // its date is the live subscription's cycle end; an operator's timed grant
+  // keeps its own expiry.
+  const expiresAt =
+    data.planExpiresAt ??
+    (data.planSource === "paid" && subscription.active
+      ? subscription.currentEnd
+      : null);
   const expired =
     plan === "free" && !!expiresAt && new Date(expiresAt).getTime() < now;
   // Whether that date is the next charge or the last day of service.

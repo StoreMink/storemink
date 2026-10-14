@@ -28,6 +28,8 @@ import {
   type SectionGroup,
 } from "./lib/permissions";
 import "./dashboard.css";
+import { getPlatformRoles } from "@/lib/roles/platform-roles";
+import { roleName } from "@/lib/roles/catalog";
 
 const dashFont = Inter({
   subsets: ["latin"],
@@ -114,12 +116,21 @@ export default async function DashboardLayout({
             🔒
           </div>
           <h1 className="text-lg font-bold">No access to this dashboard</h1>
-          <p className="text-sm text-[#5b6472]">
-            You&apos;re signed in as{" "}
-            <span className="font-medium text-[#111827]">{userEmail}</span>, but
-            this account isn&apos;t a staff member of this store. If this is
-            your store, sign in with the account you used to create it.
-          </p>
+          {ctx.suspended ? (
+            <p className="text-sm text-[#5b6472]">
+              You&apos;re signed in as{" "}
+              <span className="font-medium text-[#111827]">{userEmail}</span>,
+              but your access to this store has been suspended. Ask the store
+              owner to restore it.
+            </p>
+          ) : (
+            <p className="text-sm text-[#5b6472]">
+              You&apos;re signed in as{" "}
+              <span className="font-medium text-[#111827]">{userEmail}</span>,
+              but this account isn&apos;t a staff member of this store. If this
+              is your store, sign in with the account you used to create it.
+            </p>
+          )}
           <SwitchAccountButton />
         </div>
       </div>
@@ -195,6 +206,13 @@ export default async function DashboardLayout({
     ]);
   const { store, posState, locationCount } = resolvedStoreContext;
   const planId = effectivePlan(store);
+  // The role's NAME, from the platform's role list ("Owner", "Staff", or
+  // whatever an operator called a role they added). A failed read must not
+  // take the dashboard down over a label, so it falls back to the slug.
+  const roleLabel = roleName(
+    await getPlatformRoles().catch(() => []),
+    profile.role,
+  );
   const planName = PLAN_META[planId].name;
 
   // POS sidebar three-state: "Included in Pro" (upgrade) → "Enable POS" → live.
@@ -285,7 +303,7 @@ export default async function DashboardLayout({
           <MobileNavProvider>
             <DashboardTopbar
               email={profile.email}
-              role={profile.role ?? ""}
+              role={roleLabel}
               scopedLocations={scopedLocations}
               firstName={profile.first_name}
               lastName={profile.last_name}

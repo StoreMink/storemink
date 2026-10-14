@@ -1039,6 +1039,16 @@ describe("recordEvent", () => {
 // location and each admin's bindings through to it.
 describe("recordEvent — location scope", () => {
   const DELHI = "loc-delhi";
+  // The platform's role list: Staff may view orders. The old code let a bare
+  // "member" through with no roles row; the fan-out now reads platform_roles
+  // for everyone, so the fixture carries the row.
+  const memberRole = [
+    {
+      slug: "member",
+      kind: "dashboard",
+      permissions: { dashboard: ["view"], orders: ["view", "manage"] },
+    },
+  ];
   const staffRows = [
     {
       id: "uid-delhi",
@@ -1060,6 +1070,7 @@ describe("recordEvent — location scope", () => {
     const mock = setupDb({
       settings: [settingsRow()],
       staff: staffRows,
+      roles: memberRole,
       adminLocations: [{ admin_id: "uid-mumbai", location_id: "loc-mumbai" }],
     });
     await recordEvent({
@@ -1075,6 +1086,7 @@ describe("recordEvent — location scope", () => {
     const mock = setupDb({
       settings: [settingsRow({ routingScope: "event_location" })],
       staff: staffRows,
+      roles: memberRole,
       adminLocations: [
         { admin_id: "uid-delhi", location_id: DELHI },
         { admin_id: "uid-mumbai", location_id: "loc-mumbai" },
@@ -1096,6 +1108,7 @@ describe("recordEvent — location scope", () => {
     const mock = setupDb({
       settings: [settingsRow({ routingScope: "event_location" })],
       staff: staffRows,
+      roles: memberRole,
       adminLocations: [
         { admin_id: "uid-delhi", location_id: DELHI },
         { admin_id: "uid-mumbai", location_id: "loc-mumbai" },
@@ -1110,6 +1123,7 @@ describe("recordEvent — location scope", () => {
     const mock = setupDb({
       settings: [settingsRow({ routingScope: "event_location" })],
       staff: staffRows,
+      roles: memberRole,
       adminLocations: [{ admin_id: "uid-mumbai", location_id: "loc-mumbai" }],
     });
     await recordEvent({

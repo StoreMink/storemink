@@ -74,6 +74,7 @@ import { cleanupDetachedDomain } from "./cleanup";
 import { deprovision } from "./certificates";
 import { removeGoogleCustomDomain } from "@/lib/seo/search-engines";
 import { logError } from "@/lib/observability/logger";
+import { withService } from "@/lib/db/client";
 
 const PLATFORM = [
   "localhost",
@@ -243,5 +244,40 @@ describe("cleanupDetachedDomain — sign-in hosts", () => {
       failures: [],
     });
     expect(calls).toEqual([]);
+  });
+});
+
+describe("cleanupDetachedDomain — certificates another store still serves", () => {
+  // Certificate resources are named by hostname alone. A store detaching
+  // `www.acme.com` must not delete the certificate another store is live on
+  // for `acme.com` — or for the www form that store also serves.
+  it("keeps every hostname another store's domain covers", async () => {
+    stubIdentityPlatform(PLATFORM);
+    db.stores = [{ slug: "a", customDomain: "acme.com", settings: {} }];
+
+    await cleanupDetachedDomain("www.acme.com", "disconnectDomain");
+
+    expect(deprovision).toHaveBeenCalledWith("www.acme.com", {
+      keep: new Set(["www.acme.com", "acme.com"]),
+    });
+  });
+
+  it("removes everything when no other store uses the domain", async () => {
+    stubIdentityPlatform(PLATFORM);
+    db.stores = [{ slug: "a", customDomain: "shop.acme.com", settings: {} }];
+
+    await cleanupDetachedDomain("acme.com", "disconnectDomain");
+
+    expect(deprovision).toHaveBeenCalledWith("acme.com");
+  });
+
+  it("removes no certificate when ownership cannot be checked", async () => {
+    stubIdentityPlatform(PLATFORM);
+    vi.mocked(withService).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await cleanupDetachedDomain("acme.com", "disconnectDomain");
+
+    expect(deprovision).not.toHaveBeenCalled();
+    expect(res.failures).toContain("TLS certificate resources");
   });
 });

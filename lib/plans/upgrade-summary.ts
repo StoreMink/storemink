@@ -25,7 +25,6 @@ const FEATURE_LABELS: Record<BooleanFeature, string> = {
   shippingIntegration: "Shiprocket rates, labels and tracking",
   customDomain: "Your own domain",
   customerGroups: "Customer groups",
-  customRoles: "Custom staff roles",
   customCode: "Custom code sections",
   customerBlogSubmissions: "Customer blog submissions",
   analyticsCustomization: "Customisable analytics dashboard",
