@@ -14,7 +14,9 @@
  *       expected outcome, the words an answer must and must not carry, and a
  *       link the facts never gave. Needs ADC and GCP_PROJECT_ID; the model
  *       and location come from MINK_VERTEX_MODEL / MINK_VERTEX_LOCATION.
- *       One request per case, no retry, in order.
+ *       One attempt per case with the live path's own rule, in order: a second
+ *       attempt only after a stall (lib/whatsapp/mink-model.ts), and the
+ *       report records how many attempts each answer took.
  *
  * Options: --cases=id,id, --out=report.json. Exit code 1 when any case fails.
  *
@@ -37,7 +39,7 @@ import {
 import { minkGate } from "@/lib/whatsapp/mink-gate";
 import {
   buildMinkWhatsAppUserTurn,
-  callMinkWhatsAppModel,
+  callMinkWhatsAppModelWithRetry,
 } from "@/lib/whatsapp/mink-model";
 
 interface EvalCase {
@@ -71,6 +73,8 @@ interface Result {
   reason: string;
   problems: string[];
   latencyMs: number;
+  /** Model attempts the case took: 0 offline or at the gate, 2 after a stall. */
+  attempts: number;
 }
 
 async function main(): Promise<void> {
@@ -98,8 +102,8 @@ async function main(): Promise<void> {
   const report = (index: number, r: Result) => {
     console.error(
       `[${index + 1}/${cases.length}] ${r.id}: ${r.passed ? "pass" : "FAIL"} (${r.outcome}${
-        r.problems.length ? `; ${r.problems.join("; ")}` : ""
-      })`,
+        r.attempts > 1 ? `, ${r.attempts} attempts` : ""
+      }${r.problems.length ? `; ${r.problems.join("; ")}` : ""})`,
     );
   };
 
@@ -114,6 +118,7 @@ async function main(): Promise<void> {
         reason: "",
         problems: [`fixture ${c.fixture} is not in the set`],
         latencyMs: 0,
+        attempts: 0,
       });
       continue;
     }
@@ -135,6 +140,7 @@ async function main(): Promise<void> {
         reason: "",
         problems,
         latencyMs: Date.now() - started,
+        attempts: 0,
       });
       report(index, results[results.length - 1]);
       continue;
@@ -145,9 +151,10 @@ async function main(): Promise<void> {
     }
     const allowed = allowedUrlsIn(facts);
     let parsed: unknown;
+    let attempts = 0;
     if (live && gate.ok) {
       try {
-        const out = await callMinkWhatsAppModel(
+        const out = await callMinkWhatsAppModelWithRetry(
           config,
           {
             facts,
@@ -155,8 +162,9 @@ async function main(): Promise<void> {
             now: new Date(),
             timeZone: "Asia/Kolkata",
           },
-          AbortSignal.timeout(30_000),
+          { timeoutMs: 30_000 },
         );
+        attempts = out.attempts;
         parsed =
           out.finishReason === "STOP"
             ? out.parsed
@@ -204,6 +212,7 @@ async function main(): Promise<void> {
       reason: answer?.reason ?? "",
       problems,
       latencyMs: Date.now() - started,
+      attempts,
     });
     report(index, results[results.length - 1]);
   }
@@ -216,6 +225,8 @@ async function main(): Promise<void> {
     cases: results.length,
     passed: results.length - failed.length,
     failed: failed.length,
+    // Answers that needed the second attempt: a stall rate, not a failure.
+    stalledOnce: results.filter((r) => r.attempts > 1).length,
     // The one request the user turn would carry, for a reviewer: the first case.
     sampleUserTurnChars: cases[0]
       ? buildMinkWhatsAppUserTurn({

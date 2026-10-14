@@ -699,6 +699,86 @@ export function lintLongDashes(migration) {
   ];
 }
 
+/**
+ * ★★ A BODY EDIT MUST MOVE THE TIMESTAMP, OR THE HELP INDEX NEVER SEES IT.
+ *
+ * lib/help/embedding-worker.ts re-embeds a guide only when
+ * help_articles.updated_at differs from the chunks' source_updated_at. An
+ * UPDATE that rewrites `body` with replace() and leaves updated_at alone
+ * publishes new wording to the page while Help search and the dashboard's
+ * Help tool keep answering from the old one -- indefinitely, since nothing
+ * else moves the timestamp. Found on staging 2026-10-14: eight WhatsApp edits
+ * had done exactly that, and 20261014_0204 moved their timestamps by hand.
+ *
+ * The rule: a statement that assigns `body` on help_articles (a plain UPDATE,
+ * or the DO UPDATE half of an upsert) assigns `updated_at` in the same SET
+ * clause. An INSERT needs nothing: the column defaults to now(). The
+ * migrations that shipped before the rule are applied and cannot change, so
+ * they are listed in GRANDFATHERED_INDEX_TIMESTAMP; 0204 covers their rows.
+ */
+export const GRANDFATHERED_INDEX_TIMESTAMP = new Set([
+  "20261008_0178_whatsapp_inbox_help",
+  "20261013_0193_whatsapp_cod_confirmation_help",
+  "20261013_0194_whatsapp_stop_reply_help",
+  "20261013_0196_whatsapp_cod_followup_retention_help",
+  "20261013_0198_whatsapp_auto_replies_help",
+  "20261014_0200_whatsapp_menu_buttons_help",
+  "20261014_0201_whatsapp_template_manager_help",
+  "20261014_0203_whatsapp_mink_help",
+]);
+
+export const INDEX_TIMESTAMP_RULE = {
+  name: "index-timestamp",
+  message:
+    "rewrites a guide's body without moving updated_at. The Help index re-embeds a guide only when its timestamp changes, so Help search keeps answering from the old wording. Add `updated_at = now()` to the same SET clause.",
+};
+
+/**
+ * Every SET clause of a help_articles write in one statement: the UPDATE's
+ * own, and the DO UPDATE of an INSERT ... ON CONFLICT. Dollar-quoted copy and
+ * string literals are removed first, so a "body" inside a guide's own text
+ * cannot count.
+ */
+function helpArticleSetClauses(statement) {
+  const sqlOnly = withoutSqlComments(statement)
+    .replace(/\$([a-zA-Z_][a-zA-Z0-9_]*|)\$[\s\S]*?\$\1\$/g, " ")
+    .replace(/'(?:[^']|'')*'/g, "''");
+  if (!/\bhelp_articles\b/i.test(sqlOnly)) return [];
+  const clauses = [];
+  const update = sqlOnly.match(
+    /^\s*update\s+(?:public\.)?help_articles\b[\s\S]*?\bset\b([\s\S]*?)(?:\bwhere\b|;|$)/i,
+  );
+  if (update) clauses.push(update[1]);
+  const upsert = sqlOnly.match(
+    /\binsert\s+into\s+(?:public\.)?help_articles\b[\s\S]*?\bon\s+conflict\b[\s\S]*?\bdo\s+update\s+set\b([\s\S]*?)(?:\bwhere\b|;|$)/i,
+  );
+  if (upsert) clauses.push(upsert[1]);
+  return clauses;
+}
+
+export function lintIndexTimestamps(migration) {
+  if (GRANDFATHERED_INDEX_TIMESTAMP.has(migration.id)) return [];
+  if (!touchesHelpContent(migration.sql)) return [];
+  if (parseAllowMarkers(migration.sql).has(INDEX_TIMESTAMP_RULE.name))
+    return [];
+  const findings = [];
+  for (const statement of sqlStatements(migration.sql)) {
+    for (const clause of helpArticleSetClauses(statement)) {
+      if (/\bbody\s*=/i.test(clause) && !/\bupdated_at\s*=/i.test(clause)) {
+        findings.push({
+          rule: INDEX_TIMESTAMP_RULE.name,
+          message: INDEX_TIMESTAMP_RULE.message,
+          sample: withoutSqlComments(statement)
+            .trim()
+            .replace(/\s+/g, " ")
+            .slice(0, 120),
+        });
+      }
+    }
+  }
+  return findings;
+}
+
 export async function lintManifest(manifestPath) {
   const manifest = await loadManifest(manifestPath);
   const failures = [];
@@ -711,6 +791,7 @@ export async function lintManifest(manifestPath) {
       ...lintHelpSql(migration.sql, { id: migration.id }),
       ...(touches ? lintVerifyContract(migration) : []),
       ...lintUnwitnessedEdits(migration),
+      ...lintIndexTimestamps(migration),
       ...(afterDashCleanup ? lintLongDashes(migration) : []),
     ]) {
       failures.push({ id: migration.id, file: migration.file, ...finding });
@@ -750,6 +831,11 @@ async function main() {
         `    Re-read the current wording and quote only the sentence you are\n` +
           `    changing. There is no marker for this: a stale quote is not a\n` +
           `    style disagreement, it is an edit that will not happen.\n`,
+      );
+    } else if (f.rule === INDEX_TIMESTAMP_RULE.name) {
+      console.error(
+        `    Add \`updated_at = now()\` to the same SET clause. The Mink Help index\n` +
+          `    re-embeds a guide only when its timestamp moves (docs/help-centre.md §3).\n`,
       );
     } else if (f.rule !== "durable-verify-copy") {
       console.error(

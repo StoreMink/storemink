@@ -106,6 +106,14 @@ WHERE slug = 'a-guide' AND status = 'published'
   AND strpos(body, $old$<p>Set MINK_AI_ENABLED to switch this on.</p>$old$) > 0;
 ```
 
+**And move `updated_at` in the same statement**, as the example does. The Mink
+Help index (the public assistant and the dashboard's Help tool) re-embeds a
+guide only when its timestamp changes, so a `replace()` that leaves it alone
+publishes new wording to the page while Help search keeps answering from the
+old one, indefinitely. `help:lint` refuses such a statement (`index-timestamp`);
+`20261014_0204` moved the timestamps the eight WhatsApp edits before the rule
+had left behind.
+
 A guide past roughly **25,000 characters or 14 `<h2>` sections** has stopped
 being a guide. Split it by task rather than adding to it.
 
@@ -180,8 +188,9 @@ touch `help_articles` / `help_categories`, and only their string literals — SQ
 comments are stripped first, so explaining an internal detail to the next
 reader above a statement stays free. It skips literals tagged `$old$` (and
 `from` / `search` / `was`) so a cleanup migration is not flagged for containing
-the text it removes. It also runs the durable-`verify` rule in §4. Historical
-violations are listed in `GRANDFATHERED`, keyed `migration-id:rule`, because
+the text it removes. It also runs the durable-`verify` rule in §4 and the
+`index-timestamp` rule in §3 (a body write that does not move `updated_at`).
+Historical violations are listed in `GRANDFATHERED`, keyed `migration-id:rule`, because
 applied SQL cannot be edited; `20260910_0093` removed the text itself from the
 database.
 

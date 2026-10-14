@@ -7485,6 +7485,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261014_0204_help_reindex_whatsapp_guides",
+      "description": "Help: move the timestamp on the three WhatsApp guides edited without one, so the Help index re-embeds them",
+      "file": "sql/20261014_0204_help_reindex_whatsapp_guides.sql",
+      "transaction": true,
+      "requires": ["20261014_0203_whatsapp_mink_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "no touched guide keeps a timestamp older than this apply",
+            "sql": "select count(*)::text from public.help_articles where slug in ('send-order-updates-on-whatsapp','reply-to-whatsapp-messages','set-up-whatsapp-automatic-replies') and updated_at < now() - interval '1 minute'",
+            "equals": "0"
+          }
+        ]
+      }
     }
   ]
 }

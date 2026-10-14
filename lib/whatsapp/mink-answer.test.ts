@@ -112,7 +112,8 @@ vi.mock("./mink-drafts", () => ({
 }));
 vi.mock("./mink-model", () => ({
   MINK_WHATSAPP_MODEL_TIMEOUT_MS: 25_000,
-  callMinkWhatsAppModel: vi.fn(),
+  MINK_WHATSAPP_MODEL_ATTEMPTS: 2,
+  callMinkWhatsAppModelWithRetry: vi.fn(),
 }));
 vi.mock("./order-status-reply", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./order-status-reply")>()),
@@ -137,12 +138,13 @@ vi.mock("./order-status-reply", async (importOriginal) => ({
 }));
 
 import { answerWithMink } from "./mink-answer";
-import { callMinkWhatsAppModel } from "./mink-model";
+import { callMinkWhatsAppModelWithRetry } from "./mink-model";
 import { replyInChat } from "./auto-reply";
 import { chargeMinkAnswer, minkCreditHeadroom } from "./mink-drafts";
 import { rateLimit } from "@/lib/rate-limit";
 import { getMinkConfig } from "@/lib/mink/config";
 import { estimateProductDelivery } from "@/lib/shipping/product-delivery";
+import { logWarn } from "@/lib/observability/logger";
 
 const STORE = "11111111-1111-4111-8111-111111111111";
 const CONV = "22222222-2222-4222-8222-222222222222";
@@ -180,12 +182,13 @@ function setup(over: Record<string, unknown> = {}) {
 }
 
 const model = (parsed: unknown, finishReason = "STOP") =>
-  vi.mocked(callMinkWhatsAppModel).mockResolvedValue({
+  vi.mocked(callMinkWhatsAppModelWithRetry).mockResolvedValue({
     parsed,
     finishReason,
     model: "gemini-test",
     inputTokens: 900,
     outputTokens: 40,
+    attempts: 1,
   });
 
 const input = (over: Record<string, unknown> = {}) => ({
@@ -216,7 +219,7 @@ describe("answerWithMink: helps", () => {
     expect(r.answerId).toMatch(/^[0-9a-f-]{36}$/);
 
     // The sheet the model saw.
-    const call = vi.mocked(callMinkWhatsAppModel).mock.calls[0];
+    const call = vi.mocked(callMinkWhatsAppModelWithRetry).mock.calls[0];
     const facts = call[1].facts;
     expect(facts.store).toEqual({
       name: "Echoss",
@@ -325,7 +328,7 @@ describe("answerWithMink: helps", () => {
   it("★ the gate runs again here, so a caller cannot route a refund to the model", async () => {
     const r = await answerWithMink(input({ text: "I want a refund" }));
     expect(r).toMatchObject({ outcome: "handed_over", reason: "complaint" });
-    expect(callMinkWhatsAppModel).not.toHaveBeenCalled();
+    expect(callMinkWhatsAppModelWithRetry).not.toHaveBeenCalled();
   });
 
   it("★ a store with no credits costs nothing: no model call, a person reads it", async () => {
@@ -336,7 +339,7 @@ describe("answerWithMink: helps", () => {
       needsHuman: true,
       reason: "no_credits",
     });
-    expect(callMinkWhatsAppModel).not.toHaveBeenCalled();
+    expect(callMinkWhatsAppModelWithRetry).not.toHaveBeenCalled();
   });
 
   it("★ 'insufficient' at the charge keeps the answer as a draft and hands over", async () => {
@@ -366,7 +369,7 @@ describe("answerWithMink: helps", () => {
       outcome: "skipped",
       reason: "rate_limited",
     });
-    expect(callMinkWhatsAppModel).not.toHaveBeenCalled();
+    expect(callMinkWhatsAppModelWithRetry).not.toHaveBeenCalled();
 
     setup({ minkMode: "off" });
     expect(await answerWithMink(input())).toMatchObject({
@@ -399,17 +402,49 @@ describe("answerWithMink: helps", () => {
   });
 
   it("never throws: a provider error is a failure, a timeout is reported as one", async () => {
-    vi.mocked(callMinkWhatsAppModel).mockRejectedValueOnce(new Error("boom"));
+    vi.mocked(callMinkWhatsAppModelWithRetry).mockRejectedValueOnce(
+      new Error("boom"),
+    );
     expect(await answerWithMink(input())).toMatchObject({
       outcome: "failed",
       needsHuman: true,
       reason: "error",
     });
     setup();
-    const timeout = new Error("timed out");
-    timeout.name = "TimeoutError";
-    vi.mocked(callMinkWhatsAppModel).mockRejectedValueOnce(timeout);
-    expect(await answerWithMink(input())).toMatchObject({ reason: "timeout" });
+    const stalled = Object.assign(new Error("stalled twice"), {
+      name: "MinkWhatsAppModelStalled",
+      attempts: 2,
+    });
+    vi.mocked(callMinkWhatsAppModelWithRetry).mockRejectedValueOnce(stalled);
+    expect(await answerWithMink(input())).toMatchObject({
+      outcome: "failed",
+      needsHuman: true,
+      reason: "timeout",
+    });
+    expect(chargeMinkAnswer).not.toHaveBeenCalled();
+    expect(replyInChat).not.toHaveBeenCalled();
+    expect(logWarn).toHaveBeenCalledWith(
+      "whatsapp mink: model timed out",
+      expect.objectContaining({ attempts: 2 }),
+    );
+  });
+
+  it("★ an answer that needed the second attempt is sent, charged once and logged", async () => {
+    vi.mocked(callMinkWhatsAppModelWithRetry).mockResolvedValueOnce({
+      parsed: { outcome: "answer", reply: "₹120, in stock.", reason: "facts" },
+      finishReason: "STOP",
+      model: "gemini-test",
+      inputTokens: 900,
+      outputTokens: 40,
+      attempts: 2,
+    });
+    const r = await answerWithMink(input());
+    expect(r).toMatchObject({ outcome: "sent", needsHuman: false });
+    expect(chargeMinkAnswer).toHaveBeenCalledTimes(1);
+    expect(logWarn).toHaveBeenCalledWith(
+      "whatsapp mink: model stalled once, answered on the retry",
+      expect.objectContaining({ attempts: 2 }),
+    );
   });
 });
 
@@ -432,6 +467,6 @@ describe("answerWithMink: drafts", () => {
     vi.mocked(minkCreditHeadroom).mockResolvedValueOnce(0);
     const r = await answerWithMink(input({ mode: "drafts" }));
     expect(r.outcome).toBe("skipped");
-    expect(callMinkWhatsAppModel).not.toHaveBeenCalled();
+    expect(callMinkWhatsAppModelWithRetry).not.toHaveBeenCalled();
   });
 });
