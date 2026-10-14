@@ -166,7 +166,7 @@ history. Simulate a declined renewal that moves the store to Free.
 is deleted, reset, unpublished or reassigned. Every existing product remains
 visible and editable, but a new product and staff invite are refused at the
 Free caps; gated runtime features pause. Existing groups and memberships remain
-editable, unused custom roles can be deleted, and a retained custom-code section
+editable, and a retained custom-code section
 can stay or be removed while other page edits still save. Shiprocket checkout
 uses the retained manual/free option instead of exposing merchant plan copy to
 shoppers. Move to Basic: the original blog submissions, custom code, Shiprocket
@@ -578,14 +578,27 @@ Manually correct a tracked SKU to 0.
 **Expect:** the out-of-stock notification fires, exactly as if a sale had
 emptied it.
 
+**PS-5.7 ★ — Another store's product cannot be adjusted or transferred**
+As a manager of store A, call the stock adjustment (POS or dashboard inventory)
+and the transfer with a product id, variant id or location id that belongs to
+store B.
+**Expect:** the adjustment is refused with "That product or location is not part
+of this store." and the transfer returns false; store B's stock and ledger are
+unchanged. (Migration 0206: before it, store A could set store B's product
+stock.)
+
 ---
 
 ## 6. Staff, devices & the register shell
 
 **PS-6.1 — Invite a cashier**
-`/dashboard/pos/staff` → invite by name, email, role, locations.
+Settings → Staff → Invite user, choose **Cashier** (or **Manager**) under
+"Point of sale", tick locations (none ticked = every location).
 **Expect:** an email arrives with a `/pos/register?token=…` link. **The admin
-never sets or sees a PIN.**
+never sets or sees a PIN.** The two register roles are greyed out until POS is
+switched on; `/dashboard/pos/staff` redirects to the Staff page. The invited
+person appears in the same list as the dashboard admins, with a Cashier pill
+and a Pending status until they register.
 
 **PS-6.2 — Self-registration**
 Open the link → password twice → phone OTP → 8-digit PIN twice.
@@ -639,7 +652,7 @@ Revoke a device while its operator is mid-session.
 authorization — `pos_staff` is re-read on every resolve.
 
 **PS-6.9 — Deactivating a staff member ends their session**
-Same, via Staff → deactivate.
+Same, via Settings → Staff → the row's action menu → Deactivate.
 **Expect:** signed out on the next request, not when the token lapses.
 
 **PS-6.10 — Forgot PIN or password**

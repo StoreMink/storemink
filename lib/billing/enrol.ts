@@ -33,10 +33,11 @@ export type { MandateMethod } from "./mandate-types";
  * bill.
  */
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt, notInArray } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import {
   billingAccounts,
+  billingInvoices,
   billingMandates,
   billingPaymentAttempts,
   billingSubscriptions,
@@ -90,6 +91,9 @@ const FIRST_CYCLE = 1;
 
 /** States in which the store is already ON a paid cycle we are billing for. */
 const LIVE_STATES = ["active", "past_due", "grace"] as const;
+
+/** States a subscription is left in once it has ended. */
+const ENDED_STATES = ["downgraded", "cancelled"] as const;
 
 export interface EnrolmentStart {
   invoiceId: string;
@@ -211,12 +215,12 @@ export async function startEnrolment(input: {
   // ("already paid for") because cycle 1's invoice is long settled, leaving the
   // record changed and the money not taken. Changing tier mid-cycle is a
   // PRORATED plan change, a different operation from enrolling.
-  const existing = await currentState(input.storeId);
+  const existing = await currentSubscription(input.storeId);
   if (existing === null) {
     // Fails closed: unable to read means unable to rule out double-billing.
     return { ok: false, error: "Couldn't check your subscription. Try again." };
   }
-  if (LIVE_STATES.includes(existing as (typeof LIVE_STATES)[number])) {
+  if (LIVE_STATES.includes(existing.state as (typeof LIVE_STATES)[number])) {
     return {
       ok: false,
       error: "This store already has a subscription.",
@@ -314,7 +318,7 @@ export async function startEnrolment(input: {
   }
   const customerId = customer.id;
 
-  const cycle = cycleFrom(now, input.period, FIRST_CYCLE);
+  const cycle = cycleFrom(now, input.period, existing.enrolCycleSeq);
 
   // ★ No locations on a first cycle. Extra shops are bought AFTER a plan is
   // live, so billing for them here would charge for something nobody has.
@@ -398,7 +402,7 @@ export async function startEnrolment(input: {
   const invoice = await ensureRenewalInvoice({
     ...parties,
     storeId: input.storeId,
-    cycleSeq: FIRST_CYCLE,
+    cycleSeq: cycle.seq,
     periodStart: cycle.start,
     periodEnd: cycle.end,
     dueAt: now,
@@ -616,8 +620,8 @@ export async function startEnrolment(input: {
 const RESUMABLE_STATE = "processing";
 
 /**
- * The existing cycle-1 invoice, but ONLY when it no longer matches what is
- * being bought and can still be rewritten.
+ * The enrolled cycle's existing invoice, but ONLY when it no longer matches
+ * what is being bought and can still be rewritten.
  *
  * ★★ THE COMPARISON IS AMOUNT + CYCLE **LENGTH**, NEVER THE ENDPOINTS. A cycle
  * is anchored to the instant it was raised (`cycleFrom(now, …)`), so two
@@ -636,9 +640,9 @@ const RESUMABLE_STATE = "processing";
 async function staleEnrolmentInvoice(
   storeId: string,
   built: { totalPaise: number },
-  cycle: { start: Date; end: Date },
+  cycle: { start: Date; end: Date; seq: number },
 ): Promise<{ id: string } | null> {
-  const existing = await getCycleInvoice(storeId, FIRST_CYCLE);
+  const existing = await getCycleInvoice(storeId, cycle.seq);
   if (!existing || existing.status !== "draft") return null;
   const matches =
     existing.totalPaise === built.totalPaise &&
@@ -779,20 +783,59 @@ async function resumableAttempt(
 }
 
 /**
- * This store's subscription state, or "" when it has none.
+ * This store's subscription state ("" when it has none), and the cycle number
+ * an enrolment bills.
  *
  * Returns NULL on a read failure — distinct from "no subscription", because the
  * caller must fail closed rather than treat a database blip as a free pass.
+ *
+ * ★★ AN ENDED SUBSCRIPTION DOES NOT START AGAIN AT CYCLE 1. Invoices are one
+ * per (store, cycle_seq) for ever, so after a downgrade or a cancellation
+ * cycle 1 is the store's old PAID invoice and the next may be closed unpaid:
+ * re-enrolling at 1 handed that back and refused with "already paid for",
+ * leaving no way back onto a paid plan. An ended subscription continues after
+ * the highest cycle ever issued. A draft above it is this enrolment's own
+ * offer and is reused; a PAID one above the last activated cycle is a payment
+ * whose activation failed, and is returned so it is refused rather than
+ * charged twice. A store that never had a cycle starts at 1, as before.
  */
-async function currentState(storeId: string): Promise<string | null> {
+async function currentSubscription(
+  storeId: string,
+): Promise<{ state: string; enrolCycleSeq: number } | null> {
   try {
     return await withService(async (db) => {
       const [row] = await db
-        .select({ state: billingSubscriptions.state })
+        .select({
+          state: billingSubscriptions.state,
+          cycleSeq: billingSubscriptions.currentCycleSeq,
+        })
         .from(billingSubscriptions)
         .where(eq(billingSubscriptions.storeId, storeId))
         .limit(1);
-      return row?.state ?? "";
+      const state = row?.state ?? "";
+      if (!ENDED_STATES.includes(state as (typeof ENDED_STATES)[number])) {
+        return { state, enrolCycleSeq: FIRST_CYCLE };
+      }
+      const activated = row?.cycleSeq ?? 0;
+      const later = await db
+        .select({
+          seq: billingInvoices.cycleSeq,
+          status: billingInvoices.status,
+        })
+        .from(billingInvoices)
+        .where(
+          and(
+            eq(billingInvoices.storeId, storeId),
+            eq(billingInvoices.kind, "subscription"),
+            gt(billingInvoices.cycleSeq, activated),
+          ),
+        );
+      const paid = later.find((i) => i.status === "paid" && i.seq !== null);
+      if (paid?.seq) return { state, enrolCycleSeq: paid.seq };
+      const issued = later
+        .filter((i) => i.status !== "draft" && i.seq !== null)
+        .map((i) => i.seq as number);
+      return { state, enrolCycleSeq: Math.max(activated, ...issued) + 1 };
     });
   } catch (err) {
     logError("billing.current_state", err, { storeId });
@@ -820,7 +863,10 @@ async function seedSubscription(input: {
           // non-paid state — and which keeps the renewal worker away from a
           // subscription nobody has paid for.
           state: "free",
-          currentCycleSeq: 0,
+          // The cycle BEFORE the one being enrolled: 0 for a first
+          // subscription, and past every old cycle for one that ended, so
+          // activation (seq + 1) lands on the invoice being paid.
+          currentCycleSeq: input.cycle.seq - 1,
           planSource: "paid",
         })
         .onConflictDoUpdate({
@@ -828,8 +874,12 @@ async function seedSubscription(input: {
           set: {
             plan: input.plan,
             period: input.period,
+            currentCycleSeq: input.cycle.seq - 1,
             updatedAt: new Date().toISOString(),
           },
+          // A subscription that went live since the check above is left
+          // alone: rewriting its cycle number would rewind its renewals.
+          setWhere: notInArray(billingSubscriptions.state, [...LIVE_STATES]),
         });
     });
     return true;
@@ -1067,6 +1117,7 @@ async function activateSubscription(input: {
           period: billingSubscriptions.period,
           state: billingSubscriptions.state,
           currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
+          currentCycleSeq: billingSubscriptions.currentCycleSeq,
         })
         .from(billingSubscriptions)
         .where(eq(billingSubscriptions.storeId, input.storeId))
@@ -1082,13 +1133,16 @@ async function activateSubscription(input: {
         return { plan, periodEnd: sub.currentPeriodEnd };
       }
 
-      const cycle = cycleFrom(input.now, period, FIRST_CYCLE);
+      // The enrolled cycle. `seedSubscription` stored the one before it, so
+      // this is 1 for a first subscription and the next unused cycle for one
+      // that ended.
+      const cycle = cycleFrom(input.now, period, sub.currentCycleSeq + 1);
 
       await db
         .update(billingSubscriptions)
         .set({
           state: "active",
-          currentCycleSeq: FIRST_CYCLE,
+          currentCycleSeq: cycle.seq,
           currentPeriodStart: cycle.start.toISOString(),
           currentPeriodEnd: cycle.end.toISOString(),
           planSource: "paid",
@@ -1119,12 +1173,17 @@ async function activateSubscription(input: {
         return { plan: store.plan as Plan, periodEnd: cycle.end.toISOString() };
       }
 
+      // ★★ NO `plan_expires_at`. It used to be stamped with the FIRST cycle's
+      // end, and nothing ever moved it, so every paying store read as Free
+      // after 30 or 365 days and the daily plan-expiry job then downgraded it —
+      // renewal paid or not. That column is an operator grant's end; a
+      // subscription's plan is kept and taken away by the renewal worker.
       await db
         .update(stores)
         .set({
           plan,
           planSource: "paid",
-          planExpiresAt: cycle.end.toISOString(),
+          planExpiresAt: null,
         })
         .where(eq(stores.id, input.storeId));
 

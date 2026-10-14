@@ -874,12 +874,22 @@ describe("notification audience", () => {
             lastName: null,
           },
         ],
+        // platform_roles, in display order. The register roles never reach
+        // the dashboard, so they are not an audience.
         [
+          {
+            slug: "superadmin",
+            name: "Owner",
+            kind: "dashboard",
+            permissions: {},
+          },
           {
             slug: "ops",
             name: "Operations",
+            kind: "dashboard",
             permissions: { orders: ["view"] },
           },
+          { slug: "cashier", name: "Cashier", kind: "pos", permissions: {} },
         ],
       ],
     });

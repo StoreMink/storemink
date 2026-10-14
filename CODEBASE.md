@@ -2727,7 +2727,23 @@ wholesip/
 │   │   │                      # Permission section is still `promotions`
 │   │   ├── enquiries/         # enquiry inbox + @modal detail
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
-│   │   ├── admins/ roles/     # staff invites + role management
+│   │   ├── admins/ roles/     # ★ THE ONE STAFF PAGE + the read-only roles reference
+│   │   │                      # (§41). admins/ lists dashboard admins AND register
+│   │   │                      # staff (pos_staff) together, each with a role from
+│   │   │                      # the PLATFORM's list (platform_roles — operators
+│   │   │                      # define it, lib/roles/platform-roles.ts reads it),
+│   │   │                      # and its invite dialog offers every role on it
+│   │   │                      # (Manager/Cashier greyed until POS is on; `inviteUser`
+│   │   │                      # routes those two to the POS staff flow). roles/
+│   │   │                      # shows what each role can do; a store has no editor.
+│   │   │                      # ★ The delete / role / suspend actions
+│   │   │                      # (app/actions/user-management.ts) require a
+│   │   │                      # superadmin of the HOST store (isStoreSuperadmin) and
+│   │   │                      # scope every target read and write to that store; a
+│   │   │                      # login is deleted only when authIdsInUse says nothing
+│   │   │                      # else uses it. Before 2026-10-14 any store's
+│   │   │                      # superadmin could act on any admin, and delete any
+│   │   │                      # login, by uid.
 │   │   ├── storefront/        # ★ Storefront (§11; was themes/ until 2026-10-11 —
 │   │   │                      # next.config.ts 307s /dashboard/themes here on store
 │   │   │                      # hosts only, so the operator console's own
@@ -4523,7 +4539,22 @@ wholesip/
 │                              # WhatsApp 0176. 0187-0191 are the analytics parity
 │                              # work (§20): traffic dimensions, targets, saved
 │                              # reports, their Help guides, and the Overview
-│                              # refresh note. Next free: 0192.
+│                              # refresh note. 0192-0204 are the WhatsApp series
+│                              # on `dev`, not yet on main. 0205 stops paid plans
+│                              # lapsing after one cycle (downgrade claim checks the
+│                              # NEXT cycle's invoice and closes it; lapsed paid
+│                              # stores are restored); 0206 makes adjust_stock_at
+│                              # and transfer_stock refuse another store's product,
+│                              # variant or location; 0207 is the platform staff
+│                              # roles (§41). ⚠ ORDER WITH DEV'S 0192-0204: if
+│                              # 0205-0207 reach production first, list them AHEAD
+│                              # of dev's entries when dev merges into main
+│                              # (production applied them first, and a pending
+│                              # entry listed before an applied one is refused as
+│                              # out of order); staging, which applied dev's first,
+│                              # needs them listed AFTER until it has applied them
+│                              # too. Merging dev into main first avoids both.
+│                              # Next free: 0208.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -5341,6 +5372,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     and a fresh iframe announces `sm-chrome-ready` so the builder re-pushes the
     draft; without that a page switch shows published chrome under a draft
     outline.
+    `saveStoreBranding` requires `branding` manage (it had no gate at all
+    until 2026-10-14, so anyone could rename any store) and accepts only a
+    `#rrggbb` primary colour.
     The builder also shows a **Brand** row (colour + logo) saved through
     `saveBrandAppearance` — a PATCH, deliberately: `saveStoreBranding` rebuilds
     the whole brand object from a FormData carrying every field, so calling it
@@ -8690,8 +8724,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     (product/staff/AI/coupon caps plus every boolean product entitlement;
     `null` = unlimited). Product caps are **5 / 50 / unlimited**; custom
     domains are **Pro only**; customer blog submissions, customer groups,
-    custom roles/code, Shiprocket and detailed/custom analytics are
-    **Basic+**; email campaigns, advanced analytics and POS are **Pro**;
+    custom code, Shiprocket and detailed/custom analytics are
+    **Basic+** (custom ROLES were a Basic+ feature until 2026-10-14; every
+    store now has the same five fixed roles, §41); email campaigns, advanced analytics and POS are **Pro**;
     and AI-credit top-ups are available on every plan. AI caps are
     **3 / 10 / 50 per month** — pro is metered too; enforce server-side in
     the owning action). `lib/plans/entitlements.ts` resolves the effective plan
@@ -11019,7 +11054,12 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       thin wrappers delegating to the store's default location
       (`pos_ensure_default_location`) — so legacy checkout and order paths retain
       default-location compatibility. Dashboard inventory resolves and authorizes
-      an explicit shelf before calling the `_at` RPCs. `stock_movements` gained
+      an explicit shelf before calling the `_at` RPCs. ★★ Since migration 0206
+      `adjust_stock_at` RAISES unless the location, product and (if given)
+      variant all belong to `p_store`, and `transfer_stock` returns false for a
+      foreign product: before it, a row written under the caller's store for
+      another store's product id let one merchant set another's storefront
+      stock from the dashboard or the POS. `stock_movements` gained
       `location_id`; its dashboard history read now joins the location name and
       filters to the selected shelf. Post-create stock writes flow only through
       those RPCs (the product editor never writes existing stock).
@@ -11040,9 +11080,11 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       authorization.** POS is served at **`{slug}.storemink.com/pos`** — a
       SEPARATE app shell from `/dashboard` (outside the `(storefront)` group, so
       it gets only the root layout + its own dark chrome).
-      - **Staff have real accounts, created by invitation.** An admin adds a
-        cashier/manager by **name + email + role + locations**
-        (`inviteStaff`); the staff member gets an emailed link (Resend, the
+      - **Staff have real accounts, created by invitation.** The owner adds a
+        cashier/manager by **name + email + role + locations** — since
+        2026-10-14 from the ONE Staff page (Settings → Staff; `inviteUser`
+        delegates the two register roles to `inviteStaff`, §41) — and the
+        staff member gets an emailed link (Resend, the
         `inviteUser` pattern) to **`/pos/register?token=…`** and self-registers:
         **password (typed twice, must match) → phone OTP (Firebase Phone auth,
         the signup wizard's invisible-reCAPTCHA pattern) → their own 8-digit
@@ -11244,7 +11286,8 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
         `layout.tsx` (store + Pro + pos.enabled gate), `page.tsx` (operator gate
         → register shell + the owner's "authorize this device" card),
         `login/` (email + PIN pad / password), `register/` (the 3-step
-        self-registration wizard). Dashboard: `/dashboard/pos/staff` +
+        self-registration wizard). Dashboard: `/dashboard/admins` (the one
+        Staff page; `/dashboard/pos/staff` redirects there since 2026-10-14) +
         `/dashboard/pos/devices`.
     - **Phase 2 (v1, done) = the register.** `app/actions/pos-sale-actions.ts`
       is the sell path's trust boundary and mirrors `placeOrder` (§12) step for
@@ -14430,7 +14473,17 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       pending, its challenge record STAYS on screen under "Finish covering
       www.…", named by the host rather than the raw `_acme-challenge` name.
     - `deprovision` walks the same `domainHosts` list, so disconnecting can't
-      leave the www triple behind. Provisioning is sequential, primary first:
+      leave the www triple behind.
+    - **★★ ONE STORE PER HOSTNAME, COMPANIONS INCLUDED** (fixed 2026-10-14,
+      `lib/domains/ownership.ts`). Certificate Manager resources are named by
+      hostname alone and `stores.custom_domain` is unique only as an exact
+      string, so a second store could connect `www.acme.com` while another was
+      live on `acme.com`, adopt its resources, and on disconnect delete that
+      store's live certificate. `updateCustomDomain` now refuses a domain whose
+      apex/www set overlaps another store's (`hostsConnectedToStores`), and
+      `cleanupDetachedDomain` passes every hostname a store still serves to
+      `deprovision(domain, { keep })` — which also protects a store's own
+      apex → www change. An ownership read that fails removes nothing. Provisioning is sequential, primary first:
       Certificate Manager rate-limits per project and a burst of parallel
       creates is what later surfaces as RATE_LIMITED on a merchant's cert.
     - **★ CHANGING A DOMAIN RELEASES THE OLD ONE.** `deprovision` was wired only
@@ -15213,6 +15266,50 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       - **★ A ZERO PART PERIOD GRANTS IT INSTEAD OF CHARGING ₹0** — at the end of
         a cycle the proration rounds to nothing and Razorpay refuses a ₹0 order.
         The merchant gains a few hours; the next renewal bills it in full.
+    - **★★ PAID PLANS CARRY NO EXPIRY; THE RENEWAL WORKER OWNS THEM** (fixed
+      2026-10-14, migration 0205). Enrolment stamped the FIRST cycle's end into
+      `stores.plan_expires_at` and nothing moved it, so every paying store read
+      as Free after 30 or 365 days and the daily plan-expiry job then wrote
+      `plan = 'free'`, renewal paid or not. A booked downgrade likewise changed
+      what was billed but never `stores.plan`. Now: `confirmEnrolment` writes
+      `plan_expires_at = null`; `advanceCycle` calls `syncPaidEntitlement`
+      (plan the subscription pays for, `plan_source = 'paid'`, no expiry, comp
+      floor respected); `endSubscription` and `downgradeExpired` take the plan
+      away through `dropPaidEntitlement` (never an operator comp).
+      ★★ The expiry had also been the ONLY thing downgrading non-payers:
+      `billing_claim_downgrade()` checked the invoice for `current_cycle_seq`,
+      which is always the already-paid one because the cycle advances only once
+      the NEXT invoice is paid, so the claim never matched. It now checks
+      `current_cycle_seq + 1` and marks that open invoice `uncollectible` in the
+      same call, so a payment after the downgrade is refused by manual-pay
+      rather than taken for nothing. 0205 also restored stores whose paid
+      renewal had already lapsed (audited in `plan_events`, actor
+      `migration-0205`). ⚠ `plan_expires_at` remains the end of an operator's
+      timed grant; never write a subscription cycle into it again, and a
+      write that makes a plan PAID clears it (`applyNow` in
+      `lib/billing/plan-change.ts`), or an operator grant's old date drops a
+      paying store at that date. The daily plan-expiry job also checks the
+      subscription before taking a lapsed grant away: a store with a live paid
+      subscription falls back to that plan, not to Free, and is told by
+      `store.comp_ended`. Every renewal-driven plan change (cycle turn,
+      cancellation, downgrade) writes a `plan_events` row with source
+      `billing` AFTER its transaction commits. Only a store the change takes
+      off POS has its open shifts force-closed, each with the note for its
+      cause, and only a store actually left on Free gets the downgrade notice;
+      an operator comp keeps both its plan and its till. The Plans page shows
+      the paid cycle's end where `plan_expires_at` used to stand in for it.
+    - **★★ RE-SUBSCRIBING AFTER A PLAN ENDED CONTINUES THE CYCLE NUMBERS**
+      (`currentSubscription` in `lib/billing/enrol.ts`). Invoices are one per
+      (store, cycle) for ever, and enrolment always billed cycle 1, so a store
+      that had been downgraded or cancelled got its old PAID cycle-1 invoice
+      back and was refused "already paid for", with no way back onto a paid
+      plan. An ended subscription now enrols the cycle after the highest one
+      ever issued: a draft above the last activated cycle is that enrolment's
+      own and is reused, and a PAID one there (money in, activation failed) is
+      returned so the refusal still stops a second charge.
+      `seedSubscription` stores the cycle BEFORE the one enrolled (0 for a
+      first subscription), only on a row that is not live, and activation
+      takes the next one.
     - **★★ CANCELLING IS A FLAG, NOT A GATEWAY CALL** (`lib/billing/cancel.ts`).
       The old path asked Razorpay to cancel the Subscription, so it could fail for
       reasons unrelated to the merchant's intent — commonest being _"Subscription
@@ -15442,9 +15539,10 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         plan to free WITHOUT consulting `billing_subscriptions`, so the comp
         lapsing drops a live paid subscriber to Free. And writing a cycle puts the
         expiry cron and the renewal worker both in charge of `stores.plan`.
-      - **★ `stores.plan_expires_at` IS ALREADY OVERLOADED** — grant end for a
-        comp, CYCLE end for a paid plan (`enrol.ts` sets it to the cycle end on
-        every activation) — which is why a comp needs its own columns. `stores`
+      - **★ `stores.plan_expires_at` WAS OVERLOADED** — grant end for a comp,
+        and (until 2026-10-14) the first CYCLE end for a paid plan — which is why
+        a comp needs its own columns. A paid plan now carries no expiry at all
+        (see "Paid plans carry no expiry" below). `stores`
         gains `comp_plan`, `comp_duration_days`, `comp_offered_at`,
         `comp_starts_at` and `comp_expires_at`, and `effectivePlan` returns the
         higher-ranked of the paid entitlement and an active comp. **★★ THAT MAKES
@@ -17214,6 +17312,113 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       product text), CLI output in `scripts/`, and other content already
       stored in the database (pages, product descriptions, theme content).
       Those keep their dashes until edited.
+
+41. **Staff roles are platform data (2026-10-14, owner's decision).** Every
+    store picks from ONE list of roles that StoreMink operators own; a store
+    cannot create or edit a role. The list is the `platform_roles` table
+    (migration `20261014_0207`; platform-global, no store_id, service-only),
+    seeded with five: **Owner** (`superadmin`), **Admin** (`admin`) and
+    **Staff** (`member`) for the dashboard, **Manager** and **Cashier** for the
+    register. `lib/roles/catalog.ts` is the pure side (types, the seed
+    defaults, input validation, list helpers); `lib/roles/platform-roles.ts`
+    is the server-only reader; `app/actions/platform-role-actions.ts` +
+    `/dashboard/roles` on the platform host (`roles-console.tsx`) are the
+    operator's editor. A store's superadmin used to create their own roles in
+    a per-store `roles` table and tick View/Manage per section
+    (`role-actions.ts`, the role editor, `PLAN_LIMITS.customRoles`); all of
+    that is gone.
+    - **★ THE SLUG `member` STAYS THOUGH THE LABEL IS "Staff"** — the `themes` /
+      `promotions` / `activity` precedent: roles are stored by slug on
+      `admins.role` and in Firebase claims, so renaming it is a data rewrite
+      in the same release as the code that reads it. Every label comes from
+      the row's `name` (`roleName()`; the layout resolves the topbar's label
+      and hands the topbar a NAME); emails use `roleNoun()` ("a staff
+      member", never "a member").
+    - **★ `admins.role` IS A FOREIGN KEY TO `platform_roles.slug`** (ON UPDATE
+      CASCADE, ON DELETE RESTRICT). The old CHECK had only ever admitted
+      `superadmin|member`, which is why no row could hold a custom slug and
+      why 0207's data guard touches nothing. "A role in use cannot be deleted"
+      is therefore true at the database, not only in the console's count.
+      "Dashboard kind" is the actions' job: `changeUserRole` and `inviteUser`
+      refuse a register slug for an admins row.
+    - **★ EVERY READER TAKES THE PLATFORM LIST, WITH ONE FALLBACK.**
+      `getViewerContext` and `getManagerIdentity` (access.ts),
+      `storeAdminRecipients` (fan-out, on the caller's connection),
+      `getStoreNotificationAudience`, Mink's `revalidateWorkflowAuthority`,
+      the Staff page, its invite dialog and the seller's read-only Roles page
+      all read `platform_roles`. `listPlatformRoles`/`getPlatformRole` fall
+      back to `DEFAULT_STAFF_ROLES` ONLY on `isSchemaNotReady` (the table not
+      there yet: local dev before the migration), never on any other failure
+      — an unreachable database is not an access decision, so access.ts keeps
+      its "role lookup failed → dbError" branch. The `…With(db)` variants run
+      inside a transaction and never fall back (a failed statement has already
+      aborted it). `lib/roles/catalog.test.ts` reads 0207's seed back and
+      fails if it drifts from the defaults. ★ The owner's seeded map is the
+      FROZEN `ROLE_SEED_SECTION_KEYS`, not the live `SECTIONS`: a section added
+      later is in neither the seed nor any existing row, so the test fails
+      until a later migration grants it to the roles that should have it.
+    - **★★ THE DATABASE AGREES WITH THE ROLE LIST.** `is_store_admin()` (what
+      every store-admin RLS policy delegates to) admitted only `superadmin`
+      and `member` rows, so an Admin, or any role an operator adds, was
+      refused by RLS while the dashboard showed them the page. 0207 redefines
+      it to admit every DASHBOARD role in `platform_roles`, and it and
+      `is_store_superadmin()` refuse a suspended admin. ★ SUSPENSION IS
+      ENFORCED: `admins.is_suspended` was written by the Suspend action and
+      read by nothing. `getViewerContext` now treats a suspended row as no
+      access (the layout says why) and `getManagerIdentity` returns null.
+    - **★ STAFF CHANGES ARE THE OWNER'S.** Inviting (`inviteUser`) and every
+      register-staff change (`pos-staff-actions.ts`: invite, resend, update,
+      activate/deactivate, delete) need the store's superadmin, not only
+      `pos:manage` (`listStaff` keeps that). One email is one kind of staff
+      per store: a dashboard invite is refused for register staff here and a
+      register invite for an address that signs in to a dashboard. Deleting
+      register staff deletes the login only when nothing else uses it
+      (`authIdsInUse`), and otherwise strips the register claim once no other
+      till account uses it.
+    - **★ THE OPERATOR CAN ADD A DASHBOARD ROLE OR CHANGE ANY ROLE'S MAP; THREE
+      THINGS ARE FIXED.** Seeded roles cannot be deleted; the owner's map
+      cannot be narrowed (`superadmin` bypasses the map in code, so an edit
+      would only make the Roles page lie); Manager and Cashier keep an EMPTY
+      dashboard map — their capabilities are `lib/pos/permissions.ts`, and
+      `pos_staff.role` is a two-value CHECK, so no third register role. A new
+      role's slug is derived from its name (`slugifyRoleName`, `-2`, `-3` on
+      collision) and never changes. Superadmin operators only.
+    - **★ MANAGER AND CASHIER ARE ROLES, NOT A SEPARATE ENTITY — in the
+      product.** They are still `pos_staff` rows with a PIN (proxy.ts bounces
+      a cashier/manager claim to /pos), because a PIN on an authorised device
+      and an email + password login are different flows. What a merchant sees
+      is ONE Staff page (`app/dashboard/admins`, `shared.ts` → `StaffRow` with
+      `kind: "admin" | "pos"`) and ONE invite: the dialog's role picker is
+      grouped Dashboard / Point of sale with the register roles greyed until
+      POS is on, and `inviteUser` routes a register role to `inviteStaff`
+      (which keeps its own gate and its "a dashboard admin must not become a
+      cashier" registration guard). Row actions dispatch on `kind`: change
+      role moves WITHIN a kind (crossing is a new invite), Locations writes
+      `admin_locations` or `pos_staff_locations`, Suspend ↔ Deactivate, Resend
+      invitation for an unregistered till account. `/dashboard/pos/staff`
+      redirects; the POS sidebar lost its Staff child. Invites stay
+      owner-only (the store's superadmin).
+    - **★ "NOTHING TICKED" MEANS EVERY SHOP FOR BOTH KINDS**: unrestricted for
+      an admin (`lib/locations/scope.ts`), and for register staff — whose
+      flow refuses an empty assignment — the action fills in every location.
+      A register account that somehow has none says "No locations" (it can
+      sign in nowhere) and keeps its Locations item so it can be fixed; the
+      Staff page reads admin bindings straight from `admin_locations`.
+    - **The seller's `/dashboard/roles` is read-only** (section `roles`,
+      actions `["view"]`, key kept): the platform list with who holds each
+      role here, a page-by-page grid of the dashboard roles, and a
+      Manager/Cashier capability table from `posCan`.
+    - **Migration `20261014_0207_fixed_staff_roles`** creates and seeds
+      `platform_roles`, swaps the admins CHECK for the foreign key, redefines
+      the two store-admin RLS helpers, and edits
+      four Help guides in place (roles, staff invite, POS staff, plan). ⚠ The
+      per-store `roles` table and `supabase/roles_table.sql` are NOT dropped
+      here — the revision being replaced still reads the table during the
+      rollout — and need a follow-up contract migration. Four retired files
+      the tooling could not delete are `export {}` stubs to `git rm`:
+      `app/actions/role-actions.ts` (+ `.test.ts`),
+      `app/dashboard/roles/role-editor-dialog.tsx`,
+      `app/dashboard/pos/staff/staff-client.tsx`.
 
 ## 6. Commands
 

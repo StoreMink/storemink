@@ -1,44 +1,48 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import { admins, roles } from "@/drizzle/schema";
+import { adminLocations, admins } from "@/drizzle/schema";
 import { requireSectionAccess, getActingStoreId } from "../lib/access";
 import { UsersManagementView } from "./users-management-view";
-import { getStoreLocations } from "@/lib/pos/locations";
-import { listAdminLocations } from "@/app/actions/location-actions";
+import { getCurrentStore } from "@/lib/store/resolve";
+import { getPosState, getStoreLocations } from "@/lib/pos/locations";
+import { listStaff } from "@/app/actions/pos-staff-actions";
 import { getStorePlanContext } from "@/lib/plans/entitlements";
+import { posStaffToRow, type StaffRow } from "./shared";
+import { getPlatformRoles } from "@/lib/roles/platform-roles";
 
-export interface RoleOption {
-  slug: string;
-  name: string;
-  color: string;
-}
-
-export interface Profile {
-  id: string;
-  email: string;
-  first_name: string;
-  last_name: string | null;
-  role: string;
-  force_password_reset: boolean;
-  is_suspended: boolean;
-  created_at: string;
-}
-
+// ★ ONE STAFF LIST (2026-10-14). Dashboard admins (`admins`) and register
+// staff (`pos_staff`) render together, each with a role from the platform's
+// list (lib/roles/platform-roles.ts — StoreMink defines the roles; a store
+// picks). They are still two tables, because they sign in differently
+// (password vs PIN on an authorised device), but a merchant has one place to
+// look and one invite dialog.
 export default async function UsersPage() {
   const access = await requireSectionAccess("admins", "view");
   const canManage = access.can("admins", "manage");
   const storeId = await getActingStoreId();
-  const planContext = await getStorePlanContext(storeId);
+  const [store, planContext] = await Promise.all([
+    getCurrentStore(),
+    getStorePlanContext(storeId),
+  ]);
+  const posState = getPosState(store);
 
   // The admins (staff) table is RLS-scoped to own-row reads, so cross-row
   // listing goes through the service scope with an explicit store filter —
   // same pattern as the Users (customers) list. The page is already gated by
   // requireSectionAccess("admins", "view") above.
-  let profiles: Profile[];
-  let rolesData: RoleOption[];
+  let adminRows: {
+    id: string;
+    email: string;
+    first_name: string;
+    last_name: string | null;
+    role: string;
+    force_password_reset: boolean;
+    is_suspended: boolean | null;
+    created_at: string;
+  }[];
   try {
-    ({ profiles, rolesData } = await withService(async (db) => {
-      const profiles = await db
+    adminRows = await withService((db) =>
+      db
         .select({
           id: admins.id,
           email: admins.email,
@@ -51,65 +55,91 @@ export default async function UsersPage() {
         })
         .from(admins)
         .where(eq(admins.storeId, storeId))
-        .orderBy(desc(admins.createdAt));
-      const rolesData = await db
-        .select({
-          slug: roles.slug,
-          name: roles.name,
-          color: roles.color,
-        })
-        .from(roles)
-        .where(eq(roles.storeId, storeId))
-        .orderBy(desc(roles.isSystem), asc(roles.name));
-      return {
-        profiles: profiles as Profile[],
-        rolesData: rolesData as RoleOption[],
-      };
-    }));
+        .orderBy(desc(admins.createdAt)),
+    );
   } catch (err) {
     console.error("Failed to load admins:", err);
     return (
       <div className="max-w-md border border-destructive/20 bg-destructive/5 p-6 text-sm text-destructive">
         <div className="mb-1 flex items-center gap-2 font-semibold">
-          <span>⚠️</span> Failed to load users
+          <span>⚠️</span> Failed to load staff
         </div>
         <p className="leading-relaxed text-destructive/80">
-          Make sure you have superadmin access and the admins table exists in
-          your database.
+          Could not load the staff list. Please try again.
         </p>
       </div>
     );
   }
 
-  // Fall back to the two built-in roles if the roles table isn't seeded yet.
-  const roleOptions: RoleOption[] =
-    rolesData.length > 0
-      ? rolesData
-      : [
-          { slug: "superadmin", name: "Superadmin", color: "violet" },
-          { slug: "member", name: "Member", color: "blue" },
-        ];
-
-  // Only meaningful for a multi-shop store — the invite dialog hides the field
-  // entirely below two, because a scope picker with one option is a decision
-  // nobody has to make.
-  const locations = await getStoreLocations(storeId).catch(() => []);
   // Who is currently restricted to what, so the editor opens on today's answer
-  // rather than resetting anyone to unrestricted on save.
-  const { bindings } = await listAdminLocations();
+  // rather than resetting anyone to unrestricted on save. Register staff carry
+  // their assignments on the row already.
+  //
+  // ★ Read here, under the page's own `admins` view gate, rather than through
+  // `listAdminLocations` (a `manage` action): for a viewer without manage, such
+  // as the seeded Admin, that answered no bindings and the Where column called
+  // every restricted admin "All locations".
+  const [bindings, locations, pos, roles] = await Promise.all([
+    withService((db) =>
+      db
+        .select({
+          admin_id: adminLocations.adminId,
+          location_id: adminLocations.locationId,
+        })
+        .from(adminLocations)
+        .where(eq(adminLocations.storeId, storeId)),
+    )
+      .then((rows) => {
+        const map: Record<string, string[]> = {};
+        for (const r of rows) (map[r.admin_id] ??= []).push(r.location_id);
+        return map;
+      })
+      .catch((err) => {
+        console.error("Failed to load location access:", err);
+        return {} as Record<string, string[]>;
+      }),
+    getStoreLocations(storeId).catch(() => []),
+    // The register roles exist only on a plan that has POS. `listStaff` gates
+    // itself on the `pos` permission and answers an error rather than throw;
+    // either way the dashboard half of the list still renders.
+    posState.posAvailable ? listStaff() : Promise.resolve({ staff: [] }),
+    getPlatformRoles(),
+  ]);
+
+  const staff: StaffRow[] = [
+    ...adminRows.map(
+      (p): StaffRow => ({
+        kind: "admin",
+        id: p.id,
+        email: p.email,
+        first_name: p.first_name,
+        last_name: p.last_name,
+        role: p.role,
+        created_at: p.created_at,
+        locationIds: bindings[p.id] ?? [],
+        force_password_reset: p.force_password_reset,
+        is_suspended: p.is_suspended ?? false,
+        pos_status: null,
+        pos_active: true,
+      }),
+    ),
+    ...pos.staff.map(posStaffToRow),
+  ];
 
   return (
     <UsersManagementView
       currentUserId={access.userId}
-      profiles={profiles}
-      roleOptions={roleOptions}
+      staff={staff}
+      roles={roles}
       canManage={canManage}
       locations={locations.map((l) => ({ id: l.id, name: l.name }))}
-      bindings={bindings}
+      posEnabled={posState.posEnabled}
+      // The plan's staff cap counts DASHBOARD accounts (the owner included);
+      // register staff come with POS, which is Pro and uncapped.
       canInvite={
         canManage &&
         (planContext.limits.maxStaff === null ||
-          profiles.length < planContext.limits.maxStaff)
+          adminRows.length < planContext.limits.maxStaff)
       }
       staffLimit={planContext.limits.maxStaff}
     />

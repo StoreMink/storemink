@@ -7016,6 +7016,148 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261014_0205_paid_plan_renewal_entitlement",
+      "description": "Paid plans stop lapsing after one cycle: the overdue downgrade checks the next cycle's invoice and closes it, and stores whose paid renewal lapsed to Free get their plan back",
+      "file": "sql/20261014_0205_paid_plan_renewal_entitlement.sql",
+      "transaction": true,
+      "requires": ["20261012_0191_analytics_overview_refresh_help"],
+      "verify": {
+        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
+        "queries": [
+          {
+            "name": "the downgrade claim checks the next cycle's invoice and closes it",
+            "sql": "select count(*)::text from pg_proc where proname = 'billing_claim_downgrade' and pg_get_functiondef(oid) like '%cycle_seq = s.current_cycle_seq + 1%' and pg_get_functiondef(oid) like '%uncollectible%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
+        "queries": [
+          {
+            "name": "the downgrade claim checks the next cycle's invoice and closes it",
+            "sql": "select count(*)::text from pg_proc where proname = 'billing_claim_downgrade' and pg_get_functiondef(oid) like '%cycle_seq = s.current_cycle_seq + 1%' and pg_get_functiondef(oid) like '%uncollectible%'",
+            "equals": "1"
+          },
+          {
+            "name": "every store on a live paid subscription has its plan and no expiry",
+            "sql": "select count(*)::text from public.billing_subscriptions b join public.stores st on st.id = b.store_id where b.plan <> 'free' and st.plan_source = 'paid' and (b.state = 'active' or (b.state in ('past_due','grace') and b.grace_ends_at > now())) and (st.plan is distinct from b.plan or st.plan_expires_at is not null)",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0206_stock_rpc_store_ownership",
+      "description": "adjust_stock_at and transfer_stock refuse a product, variant or location that is not the calling store's",
+      "file": "sql/20261014_0206_stock_rpc_store_ownership.sql",
+      "transaction": true,
+      "requires": ["20261014_0205_paid_plan_renewal_entitlement"],
+      "verify": {
+        "functions": [
+          "adjust_stock_at(uuid,uuid,uuid,uuid,integer,text,text,text)",
+          "transfer_stock(uuid,uuid,uuid,uuid,uuid,integer,text,text)"
+        ],
+        "queries": [
+          {
+            "name": "adjust_stock_at checks the product and variant belong to the store",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.adjust_stock_at(uuid,uuid,uuid,uuid,integer,text,text,text)'::regprocedure and pg_get_functiondef(oid) like '%FROM public.products%' and pg_get_functiondef(oid) like '%product_id = p_product AND store_id = p_store%'",
+            "equals": "1"
+          },
+          {
+            "name": "transfer_stock checks the product and variant belong to the store",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.transfer_stock(uuid,uuid,uuid,uuid,uuid,integer,text,text)'::regprocedure and pg_get_functiondef(oid) like '%FROM public.products%' and pg_get_functiondef(oid) like '%product_id = p_product AND store_id = p_store%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261014_0207_fixed_staff_roles",
+      "description": "Platform-managed staff roles: the operator-owned platform_roles table seeded with Owner, Admin, Staff, Manager and Cashier, admins.role as a foreign key to it, per-store custom roles retired, the store-admin RLS helpers admitting every dashboard role and no suspended admin, and the Help guides edited for the one Staff page",
+      "file": "sql/20261014_0207_fixed_staff_roles.sql",
+      "transaction": true,
+      "requires": ["20261014_0206_stock_rpc_store_ownership"],
+      "verify": {
+        "columns": [
+          "platform_roles.slug",
+          "platform_roles.kind",
+          "platform_roles.permissions",
+          "platform_roles.is_system",
+          "platform_roles.position"
+        ],
+        "queries": [
+          {
+            "name": "admins.role references platform_roles and a role in use cannot be deleted",
+            "sql": "select count(*)::text from pg_constraint where conname = 'admins_role_fkey' and conrelid = 'public.admins'::regclass and confrelid = 'public.platform_roles'::regclass and confdeltype = 'r' and confupdtype = 'c'",
+            "equals": "1"
+          },
+          {
+            "name": "the old two-value role check is gone",
+            "sql": "select count(*)::text from pg_constraint where conname = 'profiles_role_check' and conrelid = 'public.admins'::regclass",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the five standard roles are seeded as system roles",
+            "sql": "select count(*)::text from public.platform_roles where is_system and slug in ('superadmin', 'admin', 'member', 'manager', 'cashier') and kind = case when slug in ('manager', 'cashier') then 'pos' else 'dashboard' end",
+            "equals": "5"
+          },
+          {
+            "name": "every admin holds a dashboard role",
+            "sql": "select count(*)::text from public.admins a where not exists (select 1 from public.platform_roles r where r.slug = a.role and r.kind = 'dashboard')",
+            "equals": "0"
+          },
+          {
+            "name": "is_store_admin admits every dashboard role and no suspended admin",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.is_store_admin(uuid)'::regprocedure and pg_get_functiondef(oid) like '%platform_roles%' and pg_get_functiondef(oid) like '%is_suspended%'",
+            "equals": "1"
+          },
+          {
+            "name": "is_store_superadmin admits no suspended admin",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.is_store_superadmin(uuid)'::regprocedure and pg_get_functiondef(oid) like '%is_suspended%'",
+            "equals": "1"
+          },
+          {
+            "name": "the roles guide describes the five fixed roles",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-roles-permissions-and-location-access' and status = 'published' and body like '%<h2>The standard roles</h2>%' and body like '%remove them from Staff first, then invite them again with the new role%' and body like '%an assignment to every location for a register user%' and body like '%Admin manages everything except staff and billing%'",
+            "equals": "1"
+          },
+          {
+            "name": "the roles guide no longer tells a merchant to create a role",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-roles-permissions-and-location-access' and (body like '%<h2>Create a role</h2>%' or body like '%custom role%' or body like '%Choose the saved role%')",
+            "equals": "0"
+          },
+          {
+            "name": "the staff guide invites every role from one list",
+            "sql": "select count(*)::text from public.help_articles where slug = 'invite-and-manage-dashboard-staff' and status = 'published' and body like '%invited from the same list%' and body like '%The register roles can be chosen once Point of Sale is switched on%' and body like '%the email carries a registration link%' and body like '%Managers and cashiers sign in at the register only%' and body like '%can also be resent from the same menu%' and body like '%Register roles need Point of Sale switched on%' and body like '%>Roles, permissions, and location access</a>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the staff guide no longer offers Admin or Superadmin as the only choice",
+            "sql": "select count(*)::text from public.help_articles where slug = 'invite-and-manage-dashboard-staff' and (body like '%built-in member role%' or body like '%Choose <strong>Admin</strong> or <strong>Superadmin</strong>%')",
+            "equals": "0"
+          },
+          {
+            "name": "the POS staff guide sends merchants to Settings, then Staff",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-pos-staff-and-pins' and status = 'published' and body like '%These two roles work the register%' and body like '%Deactivating a staff member from <strong>Settings</strong>%' and body not like '%Point of Sale → Staff%'",
+            "equals": "1"
+          },
+          {
+            "name": "the plan guide no longer lists custom roles",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%Customer groups, custom-code page sections%' and body like '%creating another group is paused.</li>%' and body not like '%custom role%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

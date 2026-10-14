@@ -15,17 +15,9 @@ import "server-only";
 
 import { and, eq, ne, or, isNull } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import {
-  adminLocations,
-  admins,
-  platformAdmins,
-  roles,
-} from "@/drizzle/schema";
-import {
-  can,
-  normalizePermissions,
-  SUPERADMIN_SLUG,
-} from "@/app/dashboard/lib/permissions";
+import { adminLocations, admins, platformAdmins } from "@/drizzle/schema";
+import { can, SUPERADMIN_SLUG } from "@/app/dashboard/lib/permissions";
+import { loadRoleMapWith } from "@/lib/roles/platform-roles";
 import type { Audience } from "./events";
 
 export interface Recipient {
@@ -76,10 +68,9 @@ export async function storeAdminRecipients(
         or(isNull(admins.isSuspended), eq(admins.isSuspended, false)),
       ),
     );
-  const roleRows = await db
-    .select({ slug: roles.slug, permissions: roles.permissions })
-    .from(roles)
-    .where(eq(roles.storeId, storeId));
+  // The platform's role list, on the caller's connection (no fallback here:
+  // a failed statement has already aborted the transaction).
+  const roleMap = await loadRoleMapWith(db);
   // Sequential for the same reason as above: one pooled connection.
   const locationRows = await db
     .select({
@@ -96,20 +87,17 @@ export async function storeAdminRecipients(
     locationsByAdmin.set(row.admin_id, list);
   }
 
-  const permsBySlug = new Map(
-    roleRows.map((r) => [r.slug, normalizePermissions(r.permissions)]),
-  );
-
   const out: Recipient[] = [];
   for (const admin of staff) {
     const slug = admin.role ?? "";
     const isSuperadmin = slug === SUPERADMIN_SLUG;
-    if (!isSuperadmin) {
-      const perms = permsBySlug.get(slug);
-      // Legacy stores predate the roles table: a bare "member" keeps access,
-      // mirroring the same fallback in getManagerIdentity.
-      if (perms ? !can(perms, section, "view") : slug !== "member") continue;
-    }
+    // The platform's role list decides — the same map that gates the page,
+    // so an unknown slug hears about nothing.
+    if (
+      !isSuperadmin &&
+      !can(roleMap.get(slug)?.permissions ?? {}, section, "view")
+    )
+      continue;
     out.push({
       id: admin.id,
       type: "admin",

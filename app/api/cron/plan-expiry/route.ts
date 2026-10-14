@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
-import { and, gt, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lte, ne, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import { planEvents, stores } from "@/drizzle/schema";
+import { billingSubscriptions, planEvents, stores } from "@/drizzle/schema";
 import { STORE_TAG } from "@/lib/store/resolve";
 import { recordEvent } from "@/lib/notifications/record";
 import {
@@ -52,16 +52,35 @@ async function handle(request: Request) {
   // the plan it was actually on.
   const compsEnded = await endLapsedComps(nowIso);
 
-  let lapsed: { id: string; plan: string }[];
+  let lapsed: { id: string; plan: string; target: string }[];
   let flippedIds: Set<string>;
   try {
     ({ lapsed, flippedIds } = await withService(async (db) => {
       // Snapshot the lapsed stores first — the UPDATE returns new values, and
       // the audit rows need the plan each store is falling FROM.
-      const lapsed = await db
-        .select({ id: stores.id, plan: stores.plan })
+      const rows = await db
+        .select({
+          id: stores.id,
+          plan: stores.plan,
+          paidPlan: billingSubscriptions.plan,
+          subState: billingSubscriptions.state,
+          graceEndsAt: billingSubscriptions.graceEndsAt,
+        })
         .from(stores)
+        .leftJoin(
+          billingSubscriptions,
+          eq(billingSubscriptions.storeId, stores.id),
+        )
         .where(and(ne(stores.plan, "free"), lte(stores.planExpiresAt, nowIso)));
+      // ★★ A GRANT THAT ENDS ON A PAYING STORE FALLS BACK TO WHAT IS PAID FOR.
+      // An operator's timed grant at or above the subscribed plan is left in
+      // place by billing (the comp floor), expiry and all, so writing Free here
+      // would downgrade a store that is paying, until its next cycle turn.
+      const lapsed = rows.map((r) => ({
+        id: r.id,
+        plan: r.plan,
+        target: livePaidPlan(r, nowIso) ?? "free",
+      }));
       if (lapsed.length === 0) {
         return { lapsed, flippedIds: new Set<string>() };
       }
@@ -69,20 +88,34 @@ async function handle(request: Request) {
       // Re-check the expiry inside the UPDATE so a store whose plan was extended
       // between the snapshot and now is left alone; .returning() gives only the
       // rows actually flipped, which is what gets audited.
-      const flipped = await db
-        .update(stores)
-        .set({ plan: "free", planExpiresAt: null })
-        .where(
-          and(
-            inArray(
-              stores.id,
-              lapsed.map((s) => s.id),
-            ),
-            ne(stores.plan, "free"),
-            lte(stores.planExpiresAt, nowIso),
-          ),
-        )
-        .returning({ id: stores.id });
+      const stillLapsed = and(
+        ne(stores.plan, "free"),
+        lte(stores.planExpiresAt, nowIso),
+      );
+      const toFree = lapsed.filter((s) => s.target === "free");
+      const flipped = toFree.length
+        ? await db
+            .update(stores)
+            .set({ plan: "free", planExpiresAt: null })
+            .where(
+              and(
+                inArray(
+                  stores.id,
+                  toFree.map((s) => s.id),
+                ),
+                stillLapsed,
+              ),
+            )
+            .returning({ id: stores.id })
+        : [];
+      for (const s of lapsed.filter((x) => x.target !== "free")) {
+        const kept = await db
+          .update(stores)
+          .set({ plan: s.target, planSource: "paid", planExpiresAt: null })
+          .where(and(eq(stores.id, s.id), stillLapsed))
+          .returning({ id: stores.id });
+        flipped.push(...kept);
+      }
       return { lapsed, flippedIds: new Set(flipped.map((s) => s.id)) };
     }));
   } catch (err) {
@@ -106,10 +139,13 @@ async function handle(request: Request) {
     .map((s) => ({
       storeId: s.id,
       fromPlan: s.plan,
-      toPlan: "free",
+      toPlan: s.target,
       source: "system",
       actor: "plan-expiry-cron",
-      note: "plan expired",
+      note:
+        s.target === "free"
+          ? "plan expired"
+          : "plan expired; the paid subscription applies",
     }));
   if (events.length) {
     // Best-effort audit trail — the flip itself is the source of truth.
@@ -123,20 +159,37 @@ async function handle(request: Request) {
     }
     revalidateTag(STORE_TAG, "max");
 
-    // Tell each merchant their plan lapsed to free (best-effort).
+    // A grant ending onto the plan they pay for is the comp-ended notice, not
+    // a downgrade: it names the plan they land on. Nothing to say when the two
+    // are the same plan.
+    for (const ev of events) {
+      if (ev.toPlan === "free" || ev.toPlan === ev.fromPlan) continue;
+      await recordEvent({
+        type: "store.comp_ended",
+        storeId: ev.storeId,
+        payload: {
+          comp_plan: PLAN_META[normalizePlan(ev.fromPlan)].name,
+          plan: PLAN_META[normalizePlan(ev.toPlan)].name,
+        },
+      });
+    }
+
+    // Tell each merchant whose plan lapsed to free (best-effort).
     await Promise.all(
-      events.map(async (ev) => {
-        const recip = await resolveBillingEmail(ev.storeId);
-        if (!recip) return;
-        await sendBillingEmail(
-          recip.email,
-          planDowngradedTemplate({
-            storeName: recip.storeName,
-            fromPlanName: PLAN_META[normalizePlan(ev.fromPlan)].name,
-            manageUrl: manageUrl(recip.slug),
-          }),
-        );
-      }),
+      events
+        .filter((ev) => ev.toPlan === "free")
+        .map(async (ev) => {
+          const recip = await resolveBillingEmail(ev.storeId);
+          if (!recip) return;
+          await sendBillingEmail(
+            recip.email,
+            planDowngradedTemplate({
+              storeName: recip.storeName,
+              fromPlanName: PLAN_META[normalizePlan(ev.fromPlan)].name,
+              manageUrl: manageUrl(recip.slug),
+            }),
+          );
+        }),
     );
   }
 
@@ -145,9 +198,35 @@ async function handle(request: Request) {
   return NextResponse.json({
     ok: true,
     expired: events.length,
+    fellBackToPaid: events.filter((ev) => ev.toPlan !== "free").length,
     compsEnded,
     warned,
   });
+}
+
+/**
+ * The plan a store's subscription is paying for right now, or null. Live means
+ * the merchant has not lost it: active, or overdue but still inside grace —
+ * the same reading migration 20261014_0205 repairs against.
+ */
+function livePaidPlan(
+  sub: {
+    paidPlan: string | null;
+    subState: string | null;
+    graceEndsAt: string | null;
+  },
+  nowIso: string,
+): string | null {
+  if (!sub.paidPlan || normalizePlan(sub.paidPlan) === "free") return null;
+  if (sub.subState === "active") return normalizePlan(sub.paidPlan);
+  if (
+    (sub.subState === "past_due" || sub.subState === "grace") &&
+    sub.graceEndsAt &&
+    new Date(sub.graceEndsAt).getTime() > new Date(nowIso).getTime()
+  ) {
+    return normalizePlan(sub.paidPlan);
+  }
+  return null;
 }
 
 /**
