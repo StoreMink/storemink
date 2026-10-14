@@ -571,7 +571,15 @@ export async function reissueCertificate(
  * Best effort and order-tolerant: a resource that is already gone is a success,
  * so a half-finished earlier cleanup completes rather than wedging.
  */
-export async function deprovision(domain: string): Promise<{ error?: string }> {
+export async function deprovision(
+  domain: string,
+  opts: {
+    /** Hostnames another store still serves. Their resources are SHARED (the
+     *  names are derived from the hostname alone), so deleting them would take
+     *  that store's live certificate down. See lib/domains/ownership.ts. */
+    keep?: ReadonlySet<string>;
+  } = {},
+): Promise<{ error?: string }> {
   const cfg = getCertConfig();
   if (!cfg) return {};
 
@@ -579,7 +587,8 @@ export async function deprovision(domain: string): Promise<{ error?: string }> {
   // certificate nothing references is the kind of leak that only shows up on an
   // invoice. `domainHosts` is the same list provisioning used, so the two cannot
   // drift; a host that was never provisioned just 404s, which counts as success.
-  const targets = domainHosts(domain).flatMap((host) => [
+  const hosts = domainHosts(domain).filter((host) => !opts.keep?.has(host));
+  const targets = hosts.flatMap((host) => [
     `${parent(cfg)}/certificateMaps/${cfg.certificateMap}/certificateMapEntries/${resourceId("entry", host)}`,
     `${parent(cfg)}/certificates/${resourceId("cert", host)}`,
     `${parent(cfg)}/dnsAuthorizations/${resourceId("auth", host)}`,

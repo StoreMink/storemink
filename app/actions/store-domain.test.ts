@@ -207,7 +207,8 @@ describe("updateCustomDomain", () => {
     expect(dbHolder.current.calls.set[0].settings).toEqual({
       theme: "classic",
     });
-    expect(sqlParamValues(dbHolder.current.calls.where[0])).toContain(
+    // where[0] is the ownership read; [1] is the UPDATE, scoped to this store.
+    expect(sqlParamValues(dbHolder.current.calls.where[1])).toContain(
       "store-1",
     );
     expect(revalidateTag).toHaveBeenCalledWith("stores", "max");
@@ -234,6 +235,31 @@ describe("updateCustomDomain", () => {
     await updateCustomDomain("ACME.COM");
     expect(deprovision).not.toHaveBeenCalled();
     expect(removeGoogleCustomDomain).not.toHaveBeenCalled();
+  });
+
+  it("★★ refuses the www/apex companion of another store's domain", async () => {
+    // Store A serves acme.com AND www.acme.com with resources named by
+    // hostname. Letting this store claim www.acme.com let it delete A's live
+    // certificate on disconnect.
+    dbHolder.current = makeDbMock({
+      selectQueue: [[{ customDomain: "acme.com" }]],
+    });
+
+    const result = await updateCustomDomain("www.acme.com");
+
+    expect(result.error).toMatch(/already connected to another store/i);
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+    // Every form of the domain is checked, excluding this store's own row.
+    expect(sqlParamValues(dbHolder.current.calls.where[0])).toEqual(
+      expect.arrayContaining(["www.acme.com", "acme.com", "store-1"]),
+    );
+  });
+
+  it("refuses to save when the ownership check cannot run", async () => {
+    dbHolder.current = makeDbMock({ selectQueue: [new Error("offline")] });
+    const result = await updateCustomDomain("acme.com");
+    expect(result.error).toMatch(/couldn't check that domain/i);
+    expect(dbHolder.current.calls.update).toHaveLength(0);
   });
 
   it("does not touch the database if the current row cannot be read", async () => {

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { makeDbMock } from "./_test-helpers";
+import { makeDbMock, sqlParamValues } from "./_test-helpers";
 
 vi.mock("@/lib/auth/firebase-users", () => ({
   deleteAuthUser: vi.fn(async () => {}),
@@ -14,6 +14,12 @@ vi.mock("@/lib/auth/firebase-claims", () => ({
 vi.mock("@/lib/auth/server-user", () => ({ getServerUser: vi.fn() }));
 vi.mock("@/app/dashboard/lib/access", () => ({
   getActingStoreId: vi.fn(async () => "store-1"),
+  // The caller gate: superadmin of the HOST store (platform operators count).
+  isStoreSuperadmin: vi.fn(async () => true),
+}));
+// Which logins something else on the platform still uses.
+vi.mock("@/lib/auth/identity-usage", () => ({
+  authIdsInUse: vi.fn(async () => new Set<string>()),
 }));
 // The password reset is sent through the real builder; only the send itself
 // and the store brand are stubbed.
@@ -50,12 +56,19 @@ import {
 } from "@/lib/auth/firebase-users";
 import { setUserClaims } from "@/lib/auth/firebase-claims";
 import { getServerUser } from "@/lib/auth/server-user";
+import { isStoreSuperadmin } from "@/app/dashboard/lib/access";
+import { authIdsInUse } from "@/lib/auth/identity-usage";
 
 const CALLER_ID = "superadmin-123";
-const superadmin = [{ role: "superadmin" }];
+const member = [{ role: "member", email: "Staff@Example.com" }];
 
-function setup(selectQueue: any[][]) {
-  dbHolder.current = makeDbMock({ selectQueue });
+function setup(selectQueue: any[][], returningQueue?: any[][]) {
+  dbHolder.current = makeDbMock({ selectQueue, returningQueue });
+}
+
+/** Every bound value in the WHERE of the Nth recorded where() call. */
+function whereParams(n: number): unknown[] {
+  return sqlParamValues(dbHolder.current.calls.where[n]);
 }
 
 describe("User Management Actions", () => {
@@ -68,10 +81,36 @@ describe("User Management Actions", () => {
       phoneConfirmed: true,
       metadata: {},
     } as any);
+    vi.mocked(isStoreSuperadmin).mockResolvedValue(true);
+    vi.mocked(authIdsInUse).mockResolvedValue(new Set());
     vi.mocked(deleteAuthUser).mockResolvedValue();
     vi.mocked(setUserClaims).mockResolvedValue();
-    // Default: caller is superadmin, target is a plain member.
-    setup([superadmin, [{ role: "member" }]]);
+    // Default: the target is a plain member of THIS store.
+    setup([member]);
+  });
+
+  describe("the caller gate", () => {
+    it("refuses a superadmin of ANOTHER store — the gate is the host store's", async () => {
+      // isStoreSuperadmin answers for the host store; a superadmin row
+      // elsewhere on the platform makes it false here.
+      vi.mocked(isStoreSuperadmin).mockResolvedValue(false);
+
+      for (const run of [
+        () => deleteUser("user-1"),
+        () => changeUserRole("user-1", "superadmin"),
+        () => toggleUserSuspension("user-1", true),
+      ]) {
+        expect((await run()).error).toBe("Unauthorized");
+      }
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+      expect(dbHolder.current.calls.update).toHaveLength(0);
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the access lookup throws", async () => {
+      vi.mocked(isStoreSuperadmin).mockRejectedValue(new Error("db down"));
+      expect((await deleteUser("user-1")).error).toBe("Unauthorized");
+    });
   });
 
   describe("deleteUser", () => {
@@ -81,60 +120,128 @@ describe("User Management Actions", () => {
       expect(result.error).toBe("Not authenticated");
     });
 
-    it("should fail if caller is not superadmin", async () => {
-      setup([[{ role: "member" }]]); // caller gate → member
-      const result = await deleteUser("user-1");
-      expect(result.error).toBe("Unauthorized");
-    });
-
-    it("should delete user if caller is superadmin", async () => {
+    it("should delete a member of this store and their unused login", async () => {
       const result = await deleteUser("user-1");
       expect((result as any).success).toBe(true);
-      // Profile row removed (Cloud SQL) AND the login (Identity Platform).
+      // The target read AND the delete are both scoped to the host store.
+      expect(whereParams(0)).toEqual(
+        expect.arrayContaining(["user-1", "store-1"]),
+      );
       expect(dbHolder.current.calls.delete).toHaveLength(1);
+      expect(whereParams(1)).toEqual(
+        expect.arrayContaining(["user-1", "store-1"]),
+      );
+      expect(authIdsInUse).toHaveBeenCalledWith(
+        new Map([["user-1", new Set(["staff@example.com"])]]),
+      );
       expect(deleteAuthUser).toHaveBeenCalledWith("user-1");
     });
 
+    it("refuses a uid that is not an admin of this store, touching nothing", async () => {
+      // Another store's admin, or a shopper's uid: no row here.
+      setup([[]]);
+      const result = await deleteUser("someone-elses");
+      expect(result.error).toMatch(/isn't a member of this store/);
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+    });
+
+    it("refuses when the target cannot be read, rather than assuming", async () => {
+      setup([new Error("read failed") as any]);
+      const result = await deleteUser("user-1");
+      expect(result.error).toMatch(/couldn't load/i);
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+    });
+
+    it("keeps a login something else still uses, and drops its role claim", async () => {
+      // e.g. the same person shops on a storefront with this login.
+      vi.mocked(authIdsInUse).mockResolvedValue(new Set(["user-1"]));
+      const result = await deleteUser("user-1");
+      expect((result as any).success).toBe(true);
+      expect(dbHolder.current.calls.delete).toHaveLength(1);
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+      expect(setUserClaims).toHaveBeenCalledWith("user-1", { role: null });
+    });
+
+    it("keeps the login when the usage check fails", async () => {
+      vi.mocked(authIdsInUse).mockRejectedValue(new Error("db down"));
+      const result = await deleteUser("user-1");
+      expect((result as any).success).toBe(true);
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+    });
+
     it("should not allow deleting your own account", async () => {
-      setup([superadmin]); // only the gate read happens before the self-check
       const result = await deleteUser(CALLER_ID);
       expect(result.error).toBe("You cannot delete your own account.");
       expect(deleteAuthUser).not.toHaveBeenCalled();
     });
 
-    it("should not allow deleting the last superadmin", async () => {
-      // gate, target is superadmin, count = 1.
-      setup([superadmin, [{ role: "superadmin" }], [{ n: 1 }]]);
+    it("counts superadmins in THIS store for the last-superadmin guard", async () => {
+      // target is superadmin, this store's count = 1.
+      setup([[{ role: "superadmin", email: "a@x.com" }], [{ n: 1 }]]);
       const result = await deleteUser("user-1");
       expect(result.error).toBe("Cannot delete the last superadmin.");
+      expect(whereParams(1)).toEqual(
+        expect.arrayContaining(["superadmin", "store-1"]),
+      );
       expect(deleteAuthUser).not.toHaveBeenCalled();
     });
   });
 
   describe("changeUserRole", () => {
     it("should fail if role is invalid", async () => {
-      // gate, roles-table lookup empty → unknown non-builtin role rejected.
-      setup([superadmin, []]);
+      // roles-table lookup empty → unknown non-builtin role rejected.
+      setup([[]]);
       const result = await changeUserRole("user-1", "invalid-role");
       expect(result.error).toBe("Invalid role");
     });
 
+    it("looks the role up in THIS store's roles", async () => {
+      setup([[{ slug: "editor" }], member]);
+      await changeUserRole("user-1", "editor");
+      expect(whereParams(0)).toEqual(
+        expect.arrayContaining(["editor", "store-1"]),
+      );
+    });
+
     it("should change role successfully and sync the claim", async () => {
-      // gate, roles lookup (member is builtin so [] is fine), target=member.
-      setup([superadmin, [], [{ role: "member" }]]);
+      // roles lookup (member is builtin so [] is fine), target=member.
+      setup([[], member]);
       const result = await changeUserRole("user-1", "member");
       expect((result as any).success).toBe(true);
       expect(dbHolder.current.calls.set[0]).toEqual({ role: "member" });
+      // target read + update, both store-scoped
+      expect(whereParams(2)).toEqual(
+        expect.arrayContaining(["user-1", "store-1"]),
+      );
       expect(setUserClaims).toHaveBeenCalledWith("user-1", { role: "member" });
+    });
+
+    it("refuses to change the role of another store's admin", async () => {
+      setup([[], []]);
+      const result = await changeUserRole("other-store-owner", "member");
+      expect(result.error).toMatch(/isn't a member of this store/);
+      expect(dbHolder.current.calls.update).toHaveLength(0);
+      expect(setUserClaims).not.toHaveBeenCalled();
     });
   });
 
   describe("toggleUserSuspension", () => {
-    it("should toggle suspension successfully", async () => {
-      setup([superadmin]);
+    it("should toggle suspension of a member of this store", async () => {
+      setup([], [[{ id: "user-1" }]]);
       const result = await toggleUserSuspension("user-1", true);
       expect((result as any).success).toBe(true);
       expect(dbHolder.current.calls.set[0]).toEqual({ isSuspended: true });
+      expect(whereParams(0)).toEqual(
+        expect.arrayContaining(["user-1", "store-1"]),
+      );
+    });
+
+    it("reports a uid outside this store as not found", async () => {
+      setup([], [[]]);
+      const result = await toggleUserSuspension("other-store-owner", true);
+      expect(result.error).toMatch(/isn't a member of this store/);
     });
   });
 

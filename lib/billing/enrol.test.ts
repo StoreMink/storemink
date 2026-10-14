@@ -1121,7 +1121,10 @@ describe("confirmEnrolment", () => {
     expect(sub).toMatchObject({ state: "active", planSource: "paid" });
     expect(sub.currentPeriodEnd).toBe(CYCLE_END);
     expect(ent).toMatchObject({ plan: "pro", planSource: "paid" });
-    expect(ent.planExpiresAt).toBe(CYCLE_END);
+    // ★★ NO expiry on a paid plan. Stamping the first cycle's end here (and
+    // never moving it) is what lapsed every paying store to Free after one
+    // cycle; the renewal worker owns a subscription's plan instead.
+    expect(ent.planExpiresAt).toBeNull();
   });
 
   it("★★ a COMP is a FLOOR — subscribing to a cheaper tier does not lower it", async () => {

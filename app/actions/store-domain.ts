@@ -17,9 +17,11 @@ import {
   validateDomain,
   routingRecords,
   dnsRecordName,
+  domainHosts,
 } from "@/lib/domains/domain";
 import { getCertConfig } from "@/lib/domains/certificates";
 import { cleanupDetachedDomain } from "@/lib/domains/cleanup";
+import { hostsConnectedToStores } from "@/lib/domains/ownership";
 import {
   reconcileDomainForStore,
   readStoreDomainRow,
@@ -101,6 +103,27 @@ export async function updateCustomDomain(
   if (cleanDomain) {
     const { allowed } = await storeAllowsCustomDomain(storeId);
     if (!allowed) return { error: UPGRADE_MESSAGE };
+  }
+
+  // ★★ ONE STORE PER HOSTNAME, COMPANIONS INCLUDED. `stores.custom_domain` is
+  // unique only as an exact string, but a store on `acme.com` is also served on
+  // `www.acme.com` with resources named by hostname alone. Letting another store
+  // claim the other form let it adopt those resources and then delete the first
+  // store's live certificate on disconnect (lib/domains/ownership.ts).
+  if (cleanDomain) {
+    let taken: Set<string>;
+    try {
+      taken = await hostsConnectedToStores(domainHosts(cleanDomain), {
+        exceptStoreId: storeId,
+      });
+    } catch {
+      return { error: "Couldn't check that domain. Please try again." };
+    }
+    if (taken.size > 0) {
+      return {
+        error: `${[...taken].join(" and ")} is already connected to another store. Each domain, with or without www, can belong to one store.`,
+      };
+    }
   }
 
   // 1. Get existing info

@@ -1119,12 +1119,17 @@ async function activateSubscription(input: {
         return { plan: store.plan as Plan, periodEnd: cycle.end.toISOString() };
       }
 
+      // ★★ NO `plan_expires_at`. It used to be stamped with the FIRST cycle's
+      // end, and nothing ever moved it, so every paying store read as Free
+      // after 30 or 365 days and the daily plan-expiry job then downgraded it —
+      // renewal paid or not. That column is an operator grant's end; a
+      // subscription's plan is kept and taken away by the renewal worker.
       await db
         .update(stores)
         .set({
           plan,
           planSource: "paid",
-          planExpiresAt: cycle.end.toISOString(),
+          planExpiresAt: null,
         })
         .where(eq(stores.id, input.storeId));
 

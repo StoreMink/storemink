@@ -578,6 +578,15 @@ Manually correct a tracked SKU to 0.
 **Expect:** the out-of-stock notification fires, exactly as if a sale had
 emptied it.
 
+**PS-5.7 ★ — Another store's product cannot be adjusted or transferred**
+As a manager of store A, call the stock adjustment (POS or dashboard inventory)
+and the transfer with a product id, variant id or location id that belongs to
+store B.
+**Expect:** the adjustment is refused with "That product or location is not part
+of this store." and the transfer returns false; store B's stock and ledger are
+unchanged. (Migration 0193: before it, store A could set store B's product
+stock.)
+
 ---
 
 ## 6. Staff, devices & the register shell

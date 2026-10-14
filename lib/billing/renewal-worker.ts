@@ -26,7 +26,7 @@ import "server-only";
  * would expire before the gateway call it was meant to protect. See `claimDue`.
  */
 
-import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
 import { withService, type Db } from "@/lib/db/client";
 import {
   billingInvoices,
@@ -60,6 +60,7 @@ import {
 } from "./dunning";
 import { buildSubscriptionInvoice } from "./invoice";
 import { resolveNextCycle, type ScheduledFields } from "./next-cycle";
+import { billingMayApplyPlan } from "@/lib/payments/plan-change";
 
 /** How many subscriptions one pass will touch. Bounded so a Cloud Run request
  *  finishes; the cron self-chains while there is more. */
@@ -688,7 +689,59 @@ async function advanceCycle(
       ),
     )
     .returning({ storeId: billingSubscriptions.storeId });
-  return claimed.length > 0;
+  if (claimed.length === 0) return false;
+
+  // ★★ THE STORE ROW MOVES WITH THE CYCLE. Every gate reads `stores.plan`, and
+  // advancing only `billing_subscriptions` left two defects: a renewal that was
+  // PAID still lapsed to Free, because enrolment had stamped the first cycle's
+  // end into `plan_expires_at` and nothing ever moved it; and a downgrade booked
+  // for the cycle end changed what was billed but never what the store got.
+  await syncPaidEntitlement(db, input.storeId, shape.plan);
+  return true;
+}
+
+/**
+ * Make `stores` carry the plan a live subscription pays for.
+ *
+ * ★★ `plan_expires_at` IS NULL FOR A PAID PLAN. That column is the end of an
+ * operator's TIMED GRANT, and the daily plan-expiry job flips anything past it
+ * to Free. A subscription's lifecycle belongs to this worker instead: the
+ * cancellation turn and the post-grace downgrade both drop the plan explicitly
+ * (`dropPaidEntitlement`), and a renewal still waiting on its payment keeps the
+ * plan it has, which is what grace promises.
+ *
+ * ★ THE COMP FLOOR HOLDS (`billingMayApplyPlan`): billing may raise a plan an
+ * operator granted, never lower it.
+ */
+export async function syncPaidEntitlement(
+  db: Db,
+  storeId: string,
+  plan: string,
+): Promise<void> {
+  const [store] = await db
+    .select({ plan: stores.plan, planSource: stores.planSource })
+    .from(stores)
+    .where(eq(stores.id, storeId))
+    .limit(1);
+  if (!store) return;
+  if (!billingMayApplyPlan(store.plan, store.planSource, plan)) return;
+  await db
+    .update(stores)
+    .set({ plan, planSource: "paid", planExpiresAt: null })
+    .where(eq(stores.id, storeId));
+}
+
+/**
+ * Take away the plan a subscription was paying for.
+ *
+ * ★ An operator's grant (`plan_source = 'comp'`) is not the subscription's to
+ * take away — it is the same floor `syncPaidEntitlement` respects.
+ */
+async function dropPaidEntitlement(db: Db, storeId: string): Promise<void> {
+  await db
+    .update(stores)
+    .set({ plan: "free", planExpiresAt: null })
+    .where(and(eq(stores.id, storeId), ne(stores.planSource, "comp")));
 }
 
 /**
@@ -732,10 +785,7 @@ async function endSubscription(
     .returning({ storeId: billingSubscriptions.storeId });
   if (claimed.length === 0) return false;
 
-  await db
-    .update(stores)
-    .set({ plan: "free", planExpiresAt: null })
-    .where(eq(stores.id, input.storeId));
+  await dropPaidEntitlement(db, input.storeId);
   return true;
 }
 
@@ -888,6 +938,12 @@ export async function downgradeExpired(
         // till stops; an open shift holds uncounted cash and leaving it open
         // strands the drawer with no way to reconcile it (owner, 2026-08-11).
         await closeOpenShifts(db, storeId, now);
+        // ★★ AND THE STORE LOSES THE PLAN HERE. The claim only moves
+        // `billing_subscriptions`; it used to be `plan_expires_at` (the first
+        // cycle's end, never extended) that actually took the plan away — from
+        // payers and non-payers alike. Paid plans now carry no expiry, so this
+        // is the one place a non-payer is downgraded.
+        await dropPaidEntitlement(db, storeId);
         return true;
       });
 

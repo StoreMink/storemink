@@ -7016,6 +7016,66 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261014_0192_paid_plan_renewal_entitlement",
+      "description": "Paid plans stop lapsing after one cycle: the overdue downgrade checks the next cycle's invoice and closes it, and stores whose paid renewal lapsed to Free get their plan back",
+      "file": "sql/20261014_0192_paid_plan_renewal_entitlement.sql",
+      "transaction": true,
+      "requires": ["20261012_0191_analytics_overview_refresh_help"],
+      "verify": {
+        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
+        "queries": [
+          {
+            "name": "the downgrade claim checks the next cycle's invoice and closes it",
+            "sql": "select count(*)::text from pg_proc where proname = 'billing_claim_downgrade' and pg_get_functiondef(oid) like '%cycle_seq = s.current_cycle_seq + 1%' and pg_get_functiondef(oid) like '%uncollectible%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
+        "queries": [
+          {
+            "name": "the downgrade claim checks the next cycle's invoice and closes it",
+            "sql": "select count(*)::text from pg_proc where proname = 'billing_claim_downgrade' and pg_get_functiondef(oid) like '%cycle_seq = s.current_cycle_seq + 1%' and pg_get_functiondef(oid) like '%uncollectible%'",
+            "equals": "1"
+          },
+          {
+            "name": "every store on a live paid subscription has its plan and no expiry",
+            "sql": "select count(*)::text from public.billing_subscriptions b join public.stores st on st.id = b.store_id where b.plan <> 'free' and st.plan_source = 'paid' and (b.state = 'active' or (b.state in ('past_due','grace') and b.grace_ends_at > now())) and (st.plan is distinct from b.plan or st.plan_expires_at is not null)",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0193_stock_rpc_store_ownership",
+      "description": "adjust_stock_at and transfer_stock refuse a product, variant or location that is not the calling store's",
+      "file": "sql/20261014_0193_stock_rpc_store_ownership.sql",
+      "transaction": true,
+      "requires": ["20261014_0192_paid_plan_renewal_entitlement"],
+      "verify": {
+        "functions": [
+          "adjust_stock_at(uuid,uuid,uuid,uuid,integer,text,text,text)",
+          "transfer_stock(uuid,uuid,uuid,uuid,uuid,integer,text,text)"
+        ],
+        "queries": [
+          {
+            "name": "adjust_stock_at checks the product and variant belong to the store",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.adjust_stock_at(uuid,uuid,uuid,uuid,integer,text,text,text)'::regprocedure and pg_get_functiondef(oid) like '%FROM public.products%' and pg_get_functiondef(oid) like '%product_id = p_product AND store_id = p_store%'",
+            "equals": "1"
+          },
+          {
+            "name": "transfer_stock checks the product and variant belong to the store",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.transfer_stock(uuid,uuid,uuid,uuid,uuid,integer,text,text)'::regprocedure and pg_get_functiondef(oid) like '%FROM public.products%' and pg_get_functiondef(oid) like '%product_id = p_product AND store_id = p_store%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": []
+      }
     }
   ]
 }

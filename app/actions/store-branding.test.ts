@@ -161,6 +161,35 @@ describe("store-branding", () => {
   });
 
   describe("saveStoreBranding", () => {
+    it("refuses a caller without the branding permission, before any read", async () => {
+      // A server action is a public endpoint: with no session at all this used
+      // to rename the store and replace its logo and contact details.
+      vi.mocked(getManagerUserId).mockResolvedValue(null);
+
+      const result = await saveStoreBranding(form({ name: "Pwned" }));
+
+      expect(result.error).toMatch(/not authenticated/i);
+      expect(getManagerUserId).toHaveBeenCalledWith("branding");
+      expect(dbHolder.current.calls.select).toHaveLength(0);
+      expect(dbHolder.current.calls.update).toHaveLength(0);
+      expect(revalidateTag).not.toHaveBeenCalled();
+    });
+
+    it("drops a colour that is not a hex and keeps the saved one", async () => {
+      // primaryColor renders into an inline style attribute.
+      dbHolder.current = makeDbMock({
+        selectQueue: [[{ settings: { brand: { primaryColor: "#111111" } } }]],
+      });
+
+      await saveStoreBranding(
+        form({ name: "Acme", primaryColor: "red; background:url(x)" }),
+      );
+
+      expect(
+        (dbHolder.current.calls.set[0].settings as any).brand.primaryColor,
+      ).toBe("#111111");
+    });
+
     it("requires a store name", async () => {
       const result = await saveStoreBranding(form({ name: "   " }));
 

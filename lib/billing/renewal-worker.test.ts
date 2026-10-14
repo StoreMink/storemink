@@ -14,7 +14,8 @@
 // which outcome maps to which consequence.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { makeDbMock } from "@/app/actions/_test-helpers";
+import { makeDbMock, sqlParamValues } from "@/app/actions/_test-helpers";
+import { stores } from "@/drizzle/schema";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -522,6 +523,61 @@ describe("evaluateCycleTurns — the boundary", () => {
     expect(set.scheduledLocations).toBeNull();
   });
 
+  describe("★★ the store row moves with the cycle", () => {
+    // Every gate reads `stores.plan`. Advancing only billing_subscriptions let a
+    // PAID renewal lapse to Free (the first cycle's end sat in plan_expires_at,
+    // never moved) and left a booked downgrade billed but never applied.
+    it("keeps the paid plan and clears any expiry when the renewal was paid", async () => {
+      seed([
+        [TURNED],
+        [{ status: "paid" }],
+        [{ plan: "pro", planSource: "paid" }],
+      ]);
+      await evaluateCycleTurns({ now: NOW });
+      expect(dbHolder.current.calls.update[1]).toBe(stores);
+      expect(dbHolder.current.calls.set[1]).toEqual({
+        plan: "pro",
+        planSource: "paid",
+        planExpiresAt: null,
+      });
+    });
+
+    it("★★ applies a booked downgrade to the STORE, not only to the bill", async () => {
+      seed([
+        [{ ...TURNED, scheduledPlan: "basic" }],
+        [{ status: "paid" }],
+        [{ plan: "pro", planSource: "paid" }],
+      ]);
+      await evaluateCycleTurns({ now: NOW });
+      expect(dbHolder.current.calls.set[1]).toMatchObject({ plan: "basic" });
+    });
+
+    it("★ never lowers an operator's comp", async () => {
+      seed([
+        [{ ...TURNED, scheduledPlan: "basic" }],
+        [{ status: "paid" }],
+        [{ plan: "pro", planSource: "comp" }],
+      ]);
+      await evaluateCycleTurns({ now: NOW });
+      expect(dbHolder.current.calls.update).toEqual([
+        expect.anything(), // the subscription
+      ]);
+    });
+
+    it("★ touches the store only when the advance claim was WON", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [TURNED],
+          [{ status: "paid" }],
+          [{ plan: "pro", planSource: "paid" }],
+        ],
+        returning: [],
+      });
+      await evaluateCycleTurns({ now: NOW });
+      expect(dbHolder.current.calls.update).not.toContain(stores);
+    });
+  });
+
   it("★ starts grace on an OPEN (attempted, unpaid) invoice", async () => {
     seed([[TURNED], [{ status: "open" }]]);
     const s = await evaluateCycleTurns({ now: NOW });
@@ -740,6 +796,25 @@ describe("downgradeExpired", () => {
     const set = dbHolder.current.calls.set[0];
     expect(set.status).toBe("closed");
     expect(set.closedByName).toBe("System");
+  });
+
+  it("★★ takes the plan off the STORE — the claim alone moves only the bill", async () => {
+    // It used to be plan_expires_at that removed the plan, from payers and
+    // non-payers alike. Paid plans carry no expiry now, so this is the
+    // downgrade. An operator's comp is not the subscription's to take.
+    seed([[{ storeId: STORE, plan: "pro" }]]);
+    dbHolder.current.db.execute = vi.fn(async () => ({ rows: [{ ok: true }] }));
+    await downgradeExpired({ now: NOW });
+    const i = dbHolder.current.calls.update.indexOf(stores);
+    expect(i).toBeGreaterThan(-1);
+    expect(dbHolder.current.calls.set[i]).toEqual({
+      plan: "free",
+      planExpiresAt: null,
+    });
+    // The stores write is the last statement of the transaction.
+    expect(sqlParamValues(dbHolder.current.calls.where.at(-1))).toEqual(
+      expect.arrayContaining([STORE, "comp"]),
+    );
   });
 
   it("★★ tells the merchant, naming the plan they LOST", async () => {

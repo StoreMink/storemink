@@ -2727,7 +2727,14 @@ wholesip/
 │   │   │                      # Permission section is still `promotions`
 │   │   ├── enquiries/         # enquiry inbox + @modal detail
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
-│   │   ├── admins/ roles/     # staff invites + role management
+│   │   ├── admins/ roles/     # staff invites + role management. ★ The delete /
+│   │   │                      # role / suspend actions (app/actions/user-management.ts)
+│   │   │                      # require a superadmin of the HOST store
+│   │   │                      # (isStoreSuperadmin) and scope every target read and
+│   │   │                      # write to that store; a login is deleted only when
+│   │   │                      # authIdsInUse says nothing else uses it. Before
+│   │   │                      # 2026-10-14 any store's superadmin could act on any
+│   │   │                      # admin, and delete any login, by uid.
 │   │   ├── storefront/        # ★ Storefront (§11; was themes/ until 2026-10-11 —
 │   │   │                      # next.config.ts 307s /dashboard/themes here on store
 │   │   │                      # hosts only, so the operator console's own
@@ -4523,7 +4530,12 @@ wholesip/
 │                              # WhatsApp 0176. 0187-0191 are the analytics parity
 │                              # work (§20): traffic dimensions, targets, saved
 │                              # reports, their Help guides, and the Overview
-│                              # refresh note. Next free: 0192.
+│                              # refresh note. 0192 stops paid plans lapsing after
+│                              # one cycle (downgrade claim checks the NEXT cycle's
+│                              # invoice and closes it; lapsed paid stores are
+│                              # restored); 0193 makes adjust_stock_at and
+│                              # transfer_stock refuse another store's product,
+│                              # variant or location. Next free: 0194.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -5341,6 +5353,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     and a fresh iframe announces `sm-chrome-ready` so the builder re-pushes the
     draft; without that a page switch shows published chrome under a draft
     outline.
+    `saveStoreBranding` requires `branding` manage (it had no gate at all
+    until 2026-10-14, so anyone could rename any store) and accepts only a
+    `#rrggbb` primary colour.
     The builder also shows a **Brand** row (colour + logo) saved through
     `saveBrandAppearance` — a PATCH, deliberately: `saveStoreBranding` rebuilds
     the whole brand object from a FormData carrying every field, so calling it
@@ -11019,7 +11034,12 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       thin wrappers delegating to the store's default location
       (`pos_ensure_default_location`) — so legacy checkout and order paths retain
       default-location compatibility. Dashboard inventory resolves and authorizes
-      an explicit shelf before calling the `_at` RPCs. `stock_movements` gained
+      an explicit shelf before calling the `_at` RPCs. ★★ Since migration 0193
+      `adjust_stock_at` RAISES unless the location, product and (if given)
+      variant all belong to `p_store`, and `transfer_stock` returns false for a
+      foreign product: before it, a row written under the caller's store for
+      another store's product id let one merchant set another's storefront
+      stock from the dashboard or the POS. `stock_movements` gained
       `location_id`; its dashboard history read now joins the location name and
       filters to the selected shelf. Post-create stock writes flow only through
       those RPCs (the product editor never writes existing stock).
@@ -14430,7 +14450,17 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       pending, its challenge record STAYS on screen under "Finish covering
       www.…", named by the host rather than the raw `_acme-challenge` name.
     - `deprovision` walks the same `domainHosts` list, so disconnecting can't
-      leave the www triple behind. Provisioning is sequential, primary first:
+      leave the www triple behind.
+    - **★★ ONE STORE PER HOSTNAME, COMPANIONS INCLUDED** (fixed 2026-10-14,
+      `lib/domains/ownership.ts`). Certificate Manager resources are named by
+      hostname alone and `stores.custom_domain` is unique only as an exact
+      string, so a second store could connect `www.acme.com` while another was
+      live on `acme.com`, adopt its resources, and on disconnect delete that
+      store's live certificate. `updateCustomDomain` now refuses a domain whose
+      apex/www set overlaps another store's (`hostsConnectedToStores`), and
+      `cleanupDetachedDomain` passes every hostname a store still serves to
+      `deprovision(domain, { keep })` — which also protects a store's own
+      apex → www change. An ownership read that fails removes nothing. Provisioning is sequential, primary first:
       Certificate Manager rate-limits per project and a burst of parallel
       creates is what later surfaces as RATE_LIMITED on a merchant's cert.
     - **★ CHANGING A DOMAIN RELEASES THE OLD ONE.** `deprovision` was wired only
@@ -15213,6 +15243,26 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       - **★ A ZERO PART PERIOD GRANTS IT INSTEAD OF CHARGING ₹0** — at the end of
         a cycle the proration rounds to nothing and Razorpay refuses a ₹0 order.
         The merchant gains a few hours; the next renewal bills it in full.
+    - **★★ PAID PLANS CARRY NO EXPIRY; THE RENEWAL WORKER OWNS THEM** (fixed
+      2026-10-14, migration 0192). Enrolment stamped the FIRST cycle's end into
+      `stores.plan_expires_at` and nothing moved it, so every paying store read
+      as Free after 30 or 365 days and the daily plan-expiry job then wrote
+      `plan = 'free'`, renewal paid or not. A booked downgrade likewise changed
+      what was billed but never `stores.plan`. Now: `confirmEnrolment` writes
+      `plan_expires_at = null`; `advanceCycle` calls `syncPaidEntitlement`
+      (plan the subscription pays for, `plan_source = 'paid'`, no expiry, comp
+      floor respected); `endSubscription` and `downgradeExpired` take the plan
+      away through `dropPaidEntitlement` (never an operator comp).
+      ★★ The expiry had also been the ONLY thing downgrading non-payers:
+      `billing_claim_downgrade()` checked the invoice for `current_cycle_seq`,
+      which is always the already-paid one because the cycle advances only once
+      the NEXT invoice is paid, so the claim never matched. It now checks
+      `current_cycle_seq + 1` and marks that open invoice `uncollectible` in the
+      same call, so a payment after the downgrade is refused by manual-pay
+      rather than taken for nothing. 0192 also restored stores whose paid
+      renewal had already lapsed (audited in `plan_events`, actor
+      `migration-0192`). ⚠ `plan_expires_at` remains the end of an operator's
+      timed grant; never write a subscription cycle into it again.
     - **★★ CANCELLING IS A FLAG, NOT A GATEWAY CALL** (`lib/billing/cancel.ts`).
       The old path asked Razorpay to cancel the Subscription, so it could fail for
       reasons unrelated to the merchant's intent — commonest being _"Subscription
@@ -15442,9 +15492,10 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         plan to free WITHOUT consulting `billing_subscriptions`, so the comp
         lapsing drops a live paid subscriber to Free. And writing a cycle puts the
         expiry cron and the renewal worker both in charge of `stores.plan`.
-      - **★ `stores.plan_expires_at` IS ALREADY OVERLOADED** — grant end for a
-        comp, CYCLE end for a paid plan (`enrol.ts` sets it to the cycle end on
-        every activation) — which is why a comp needs its own columns. `stores`
+      - **★ `stores.plan_expires_at` WAS OVERLOADED** — grant end for a comp,
+        and (until 2026-10-14) the first CYCLE end for a paid plan — which is why
+        a comp needs its own columns. A paid plan now carries no expiry at all
+        (see "Paid plans carry no expiry" below). `stores`
         gains `comp_plan`, `comp_duration_days`, `comp_offered_at`,
         `comp_starts_at` and `comp_expires_at`, and `effectivePlan` returns the
         higher-ranked of the paid entitlement and an active comp. **★★ THAT MAKES
