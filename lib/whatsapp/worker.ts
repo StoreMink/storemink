@@ -11,6 +11,8 @@ import {
 import { sendWhatsAppTemplate } from "./send";
 import { codOrderFromPayloads } from "./cod-payload";
 import { markCodConfirmationRequested } from "./cod-confirmation";
+import { fileTemplateInThread } from "./inbox";
+import { renderWhatsAppBody } from "./template-catalog";
 import { textablePhone } from "@/lib/phone";
 
 // ---------------------------------------------------------------------------
@@ -196,6 +198,27 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
       // with the buttons has really gone, never merely because it was queued.
       const codOrderId = codOrderFromPayloads(row.button_payloads);
       if (codOrderId) await markCodConfirmationRequested(storeId, codOrderId);
+      // ★ FILED IN THE CUSTOMER'S THREAD, quietly (slice 6): staff see the
+      // update the customer replies to, and the welcome no longer greets that
+      // reply as a first message. Customers only: a team alert is addressed
+      // to staff, who have no conversation. Best effort, after the send.
+      if (row.audience === "customer") {
+        const values = Array.isArray(row.values) ? row.values.map(String) : [];
+        await withService((db) =>
+          fileTemplateInThread(db, {
+            storeId,
+            phone: to,
+            templateId: template.id,
+            body: renderWhatsAppBody(template.body, values),
+            providerMessageId: out.messageId,
+          }),
+        ).catch((err) =>
+          logError("whatsapp worker: thread filing failed", err, {
+            storeId,
+            id: row.id,
+          }),
+        );
+      }
       continue;
     }
 

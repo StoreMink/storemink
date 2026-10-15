@@ -44,6 +44,10 @@ import { WELCOME_QUIET_DAYS } from "./auto-reply-settings";
 // Written by every inbound message, never by a send or an echo (plan §10): a
 // template we sent does not open the window, and neither does the merchant
 // typing on their phone. The reply action reads it; the list shows it.
+// Since slice 6 a template the spine sends IS filed in the thread
+// (fileTemplateInThread, from worker.ts), quietly: the thread shows the
+// order update the customer replies to, and the welcome no longer greets
+// that reply as a first message.
 //
 // ── ★ STOP IS A MARKETING OPT-OUT, NOT A SILENCE ───────────────────────────
 // "stop" in the inbox vocabulary (inbox-intent.ts) sets marketing_opt_out_at.
@@ -543,7 +547,8 @@ export async function recordOutboundMessage(
     storeId: string;
     conversationId: string;
     source: "dashboard" | "template" | "automation";
-    kind: "text" | "template" | "interactive";
+    kind: "text" | "template" | "interactive" | "image" | "document";
+    /** The text, or a photo's caption (may be empty for a file). */
     body: string;
     providerMessageId: string | null;
     status: "sent" | "failed";
@@ -553,6 +558,18 @@ export async function recordOutboundMessage(
     /** For an interactive message: the buttons it carried, so the thread can
      *  show them under the text. */
     payload?: Record<string, unknown> | null;
+    /** A file sent from the dashboard: our copy in the bucket, so the thread
+     *  shows what went out exactly as it shows what came in. */
+    media?: { path: string; mime: string; name: string | null } | null;
+    /** The message this one replied to, by Meta's id. */
+    quotedProviderId?: string | null;
+    /** ★ The message answers nobody: a template the notification spine sent
+     *  (worker.ts) or an automatic reply. The conversation's status and
+     *  unread count are left alone, exactly as for `automation`; only a
+     *  brand-new conversation (nothing filed yet) is opened, because the
+     *  column default is `needs_reply` and nobody is waiting on a reply to
+     *  an order update. */
+    quiet?: boolean;
   },
 ): Promise<string> {
   const now = new Date().toISOString();
@@ -564,8 +581,12 @@ export async function recordOutboundMessage(
       direction: "out",
       source: input.source,
       kind: input.kind,
-      body: input.body,
+      body: input.body || null,
+      mediaPath: input.media?.path ?? null,
+      mediaMime: input.media?.mime ?? null,
+      mediaName: input.media?.name ?? null,
       payload: input.payload ?? null,
+      quotedProviderId: input.quotedProviderId ?? null,
       providerMessageId: input.providerMessageId,
       status: input.status,
       error: input.error ?? null,
@@ -576,13 +597,15 @@ export async function recordOutboundMessage(
     .onConflictDoNothing()
     .returning({ id: whatsappMessages.id });
   const id = rows[0]?.id ?? "";
-  if (input.status === "sent" && input.source === "automation") {
+  const quiet = input.source === "automation" || input.quiet === true;
+  if (input.status === "sent" && quiet) {
     await db.execute(sql`
       update public.whatsapp_conversations set
+        status = case when last_message_at is null then 'open' else status end,
         last_message_at = ${now}::timestamptz,
         last_outbound_at = ${now}::timestamptz,
         last_preview = case when status = 'needs_reply' then last_preview
-                            else ${previewOf(input.body, input.kind)} end,
+                            else ${previewOf(input.body || null, input.kind)} end,
         updated_at = now()
       where id = ${input.conversationId}::uuid
         and store_id = ${input.storeId}::uuid
@@ -594,13 +617,60 @@ export async function recordOutboundMessage(
         unread_count = 0,
         last_message_at = ${now}::timestamptz,
         last_outbound_at = ${now}::timestamptz,
-        last_preview = ${previewOf(input.body, input.kind)},
+        last_preview = ${previewOf(input.body || null, input.kind)},
         updated_at = now()
       where id = ${input.conversationId}::uuid
         and store_id = ${input.storeId}::uuid
     `);
   }
   return id;
+}
+
+/**
+ * File a template the notification spine sent (an order update, a pickup
+ * notice, a COD confirmation) in the customer's thread, so staff can see
+ * what the customer is replying to and the welcome does not greet a reply
+ * to it as a first message. Called by the worker AFTER the send succeeded,
+ * best effort: the message went, and a filing failure must not fail the
+ * drain or re-send anything.
+ *
+ * ★ IT NEVER MOVES THE WINDOW CLOCK (the contact's `last_inbound_at` is
+ * written by inbound messages only) and it never asks for a reply.
+ */
+export async function fileTemplateInThread(
+  db: Db,
+  input: {
+    storeId: string;
+    /** E.164, as the queue row carries it. */
+    phone: string;
+    templateId: string | null;
+    /** The rendered body, as the log stores it. */
+    body: string;
+    providerMessageId: string;
+  },
+): Promise<string> {
+  const contact = await upsertContact(db, {
+    storeId: input.storeId,
+    phone: input.phone,
+    // Meta's wa_id is the number's digits; the next inbound message replaces
+    // it with the one Meta reports.
+    waId: input.phone.replace(/\D/g, ""),
+    profileName: null,
+    referral: null,
+    inboundAt: null,
+  });
+  const conversation = await ensureConversation(db, input.storeId, contact.id);
+  return recordOutboundMessage(db, {
+    storeId: input.storeId,
+    conversationId: conversation.id,
+    source: "template",
+    kind: "template",
+    body: input.body,
+    providerMessageId: input.providerMessageId,
+    status: "sent",
+    templateId: input.templateId,
+    quiet: true,
+  });
 }
 
 /**

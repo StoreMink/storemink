@@ -34,6 +34,7 @@ import {
   useRef,
   useState,
   useTransition,
+  type ReactNode,
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -41,6 +42,7 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowLeft,
+  Bookmark,
   Check,
   CheckCheck,
   ChevronDown,
@@ -48,12 +50,18 @@ import {
   Info,
   Lock,
   MessageCircle,
+  Paperclip,
+  Reply,
   Search,
   Send,
   Settings2,
   Smartphone,
   Sparkles,
+  StickyNote,
+  Tag,
+  Trash2,
   User,
+  X,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePoll } from "@/lib/pos/use-poll";
@@ -61,25 +69,42 @@ import { isTouchPrimary } from "@/lib/pos/keyboard-wedge";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { formatPrice } from "@/lib/pricing";
 import {
+  addInboxNote,
+  assignInboxConversation,
+  deleteInboxNote,
   discardMinkDraft,
   getInboxThread,
   markInboxRead,
   sendInboxReply,
   sendInboxTemplate,
   sendMinkDraft,
+  setInboxConversationLabels,
   setInboxConversationStatus,
 } from "@/app/actions/inbox-actions";
 import {
+  INBOX_MEDIA_ACCEPT,
+  INBOX_NOTE_SOURCE,
   INBOX_REPLY_MAX_CHARS,
+  type InboxCannedReply,
   type InboxConversationRow,
   type InboxFilter,
+  type InboxLabel,
   type InboxListResult,
   type InboxMessageRow,
   type InboxMinkDraft,
+  type InboxSendResult,
   type InboxTemplateOption,
   type InboxThread,
+  type InboxWorkspace,
 } from "@/lib/whatsapp/inbox-types";
+import {
+  INBOX_CAPTION_MAX,
+  INBOX_NOTE_MAX,
+  fillCannedReply,
+  splitSnippet,
+} from "@/lib/whatsapp/inbox-workspace";
 import { ListPagination } from "../components/list-pagination";
+import { InboxManageButtons } from "./inbox-manage";
 import "./inbox.css";
 
 const LIST_POLL_MS = 15_000;
@@ -95,12 +120,15 @@ const FILTERS: { key: InboxFilter; label: string }[] = [
 export function InboxClient({
   initial,
   templates,
+  workspace: initialWorkspace,
   canManage,
   channelLive,
   initialConversationId,
 }: {
   initial: InboxListResult & { error?: string };
   templates: InboxTemplateOption[];
+  /** The team, the labels and the saved replies of this store. */
+  workspace: InboxWorkspace;
   canManage: boolean;
   /** False while the number is paused or needs reconnecting: reading works,
    *  sending is refused, and the composer says why. */
@@ -112,6 +140,14 @@ export function InboxClient({
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
+  const [assignee, setAssignee] = useState("");
+  const [label, setLabel] = useState("");
+  const [workspace, setWorkspace] = useState(initialWorkspace);
+  // A search hit INSIDE a conversation: the message to scroll to once the
+  // thread opens, keyed on the conversation it belongs to.
+  const [jump, setJump] = useState<{ id: string; messageId: string } | null>(
+    null,
+  );
   const [list, setList] = useState<InboxListResult & { error?: string }>(
     initial,
   );
@@ -140,6 +176,8 @@ export function InboxClient({
         filter,
         q,
         page: String(page),
+        assignee,
+        label,
       });
       const res = await fetch(`/api/dashboard/inbox/live?${params}`, {
         signal,
@@ -148,7 +186,7 @@ export function InboxClient({
       if (!res.ok) throw new Error(String(res.status));
       return (await res.json()) as InboxListResult;
     },
-    [filter, q, page],
+    [filter, q, page, assignee, label],
   );
 
   // A filter, search or page change refreshes at once.
@@ -240,13 +278,22 @@ export function InboxClient({
       .catch(() => undefined);
   }, [selectedId, fetchList]);
 
-  const select = (id: string | null) => {
+  const select = (id: string | null, messageId?: string | null) => {
     setSelectedId(id);
+    setJump(id && messageId ? { id, messageId } : null);
     const url = id
       ? `/dashboard/inbox?c=${encodeURIComponent(id)}`
       : "/dashboard/inbox";
     window.history.replaceState(null, "", url);
   };
+
+  const patchRow = (patch: Partial<InboxConversationRow>) =>
+    setList((l) => ({
+      ...l,
+      rows: l.rows.map((row) =>
+        row.id === selectedId ? { ...row, ...patch } : row,
+      ),
+    }));
 
   const threadPane = selectedId ? (
     <ThreadPane
@@ -254,17 +301,15 @@ export function InboxClient({
       thread={thread}
       error={threadError}
       templates={templates}
+      workspace={workspace}
       canManage={canManage}
       channelLive={channelLive}
+      jumpToMessageId={jump?.id === selectedId ? jump.messageId : null}
       onClose={() => select(null)}
       onChanged={refreshThread}
+      onRow={patchRow}
       onStatus={(status) => {
-        setList((l) => ({
-          ...l,
-          rows: l.rows.map((row) =>
-            row.id === selectedId ? { ...row, status } : row,
-          ),
-        }));
+        patchRow({ status });
         router.refresh();
       }}
     />
@@ -285,13 +330,20 @@ export function InboxClient({
           <h1>Inbox</h1>
           <p>Customer conversations on your WhatsApp number.</p>
         </div>
-        <Link
-          href="/dashboard/inbox/settings"
-          className="dash-btn dash-btn-ghost dash-btn-sm shrink-0"
-        >
-          <Settings2 className="h-4 w-4" />
-          Automatic replies
-        </Link>
+        <div className="inbox-page-actions">
+          <InboxManageButtons
+            workspace={workspace}
+            canManage={canManage}
+            onChanged={setWorkspace}
+          />
+          <Link
+            href="/dashboard/inbox/settings"
+            className="dash-btn dash-btn-ghost dash-btn-sm shrink-0"
+          >
+            <Settings2 className="h-4 w-4" />
+            Automatic replies
+          </Link>
+        </div>
       </header>
 
       {/* `has-thread` lets a narrow card show one pane at a time (inbox.css);
@@ -319,7 +371,7 @@ export function InboxClient({
               <input
                 name="q"
                 defaultValue={q}
-                placeholder="Search name or number"
+                placeholder="Search name, number or message"
                 aria-label="Search conversations"
               />
             </form>
@@ -343,13 +395,56 @@ export function InboxClient({
                 </button>
               ))}
             </div>
+            {(workspace.assignees.length > 0 ||
+              workspace.labels.length > 0) && (
+              <div className="inbox-tools">
+                <select
+                  className="inbox-select is-sm"
+                  value={assignee}
+                  onChange={(e) => {
+                    setAssignee(e.target.value);
+                    setPage(1);
+                  }}
+                  aria-label="Assigned to"
+                >
+                  <option value="">Anyone</option>
+                  <option value="me">Mine</option>
+                  <option value="unassigned">Unassigned</option>
+                  {workspace.assignees
+                    .filter((a) => a.id !== workspace.me.id)
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                </select>
+                {workspace.labels.length > 0 && (
+                  <select
+                    className="inbox-select is-sm"
+                    value={label}
+                    onChange={(e) => {
+                      setLabel(e.target.value);
+                      setPage(1);
+                    }}
+                    aria-label="Label"
+                  >
+                    <option value="">Any label</option>
+                    {workspace.labels.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
           </div>
 
           {list.error ? (
             <p className="inbox-note is-error">{list.error}</p>
           ) : list.rows.length === 0 ? (
             <p className="inbox-note">
-              {q || filter !== "all"
+              {q || filter !== "all" || assignee || label
                 ? "No conversations match."
                 : "No messages yet. Customers who reply to an order update, scan your QR code or tap the chat button will appear here."}
             </p>
@@ -360,7 +455,8 @@ export function InboxClient({
                   key={row.id}
                   row={row}
                   active={row.id === selectedId}
-                  onSelect={() => select(row.id)}
+                  workspace={workspace}
+                  onSelect={() => select(row.id, row.match?.messageId)}
                 />
               ))}
             </ul>
@@ -403,13 +499,19 @@ export function InboxClient({
 function ConversationRow({
   row,
   active,
+  workspace,
   onSelect,
 }: {
   row: InboxConversationRow;
   active: boolean;
+  workspace: InboxWorkspace;
   onSelect: () => void;
 }) {
   const name = row.contact.name ?? row.contact.phoneLabel;
+  const labels = labelsOf(row.labelIds, workspace.labels);
+  const assignee = row.assignedAdminId
+    ? (workspace.assignees.find((a) => a.id === row.assignedAdminId) ?? null)
+    : null;
   return (
     <li>
       <button
@@ -429,17 +531,58 @@ function ConversationRow({
             </span>
           </span>
           <span className="inbox-row-bottom">
-            <span className="inbox-row-preview">{row.lastPreview ?? "-"}</span>
+            {row.match ? (
+              <span className="inbox-row-preview inbox-row-snippet">
+                {splitSnippet(row.match.snippet).map((part, i) =>
+                  part.hit ? <mark key={i}>{part.text}</mark> : part.text,
+                )}
+              </span>
+            ) : (
+              <span className="inbox-row-preview">
+                {row.lastPreview ?? "-"}
+              </span>
+            )}
             {row.unreadCount > 0 ? (
               <span className="inbox-row-unread">{row.unreadCount}</span>
             ) : row.status === "closed" ? (
               <span className="inbox-row-closed">Closed</span>
             ) : null}
           </span>
+          {(labels.length > 0 || assignee || row.assignedAdminId) && (
+            <span className="inbox-row-tags">
+              {labels.map((l) => (
+                <span
+                  key={l.id}
+                  className={`inbox-dot is-${l.color}`}
+                  title={l.name}
+                  aria-label={l.name}
+                />
+              ))}
+              {row.assignedAdminId && (
+                <span
+                  className="inbox-row-assignee"
+                  title={`Assigned to ${assignee?.name ?? "somebody no longer on the store"}`}
+                >
+                  {assignee
+                    ? assignee.id === workspace.me.id
+                      ? "Me"
+                      : (initials(assignee.name) ?? "?")
+                    : "?"}
+                </span>
+              )}
+            </span>
+          )}
         </span>
       </button>
     </li>
   );
+}
+
+/** The store's labels among a conversation's ids, in the store's order. */
+function labelsOf(ids: string[], all: InboxLabel[]): InboxLabel[] {
+  if (ids.length === 0) return [];
+  const set = new Set(ids);
+  return all.filter((l) => set.has(l.id));
 }
 
 /** Initials on a soft colour fixed by the contact, or a person outline when
@@ -473,25 +616,36 @@ function ThreadPane({
   thread,
   error,
   templates,
+  workspace,
   canManage,
   channelLive,
+  jumpToMessageId,
   onClose,
   onChanged,
+  onRow,
   onStatus,
 }: {
   conversationId: string;
   thread: InboxThread | null;
   error: string | null;
   templates: InboxTemplateOption[];
+  workspace: InboxWorkspace;
   canManage: boolean;
   channelLive: boolean;
+  /** A search hit to scroll to once the thread is open. */
+  jumpToMessageId: string | null;
   onClose: () => void;
   onChanged: () => Promise<void>;
+  /** The list's copy of this conversation changed (labels, assignee). */
+  onRow: (patch: Partial<InboxConversationRow>) => void;
   onStatus: (status: "open" | "closed") => void;
 }) {
   const [showCustomer, setShowCustomer] = useState(false);
+  const [showLabels, setShowLabels] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showJump, setShowJump] = useState(false);
+  // The message a reply will quote, chosen with the bubble's Reply button.
+  const [replyTo, setReplyTo] = useState<InboxMessageRow | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   // What the scroll position was last settled for, and whether the reader is
   // at the bottom. Refs, so a scroll does not re-render the thread.
@@ -528,6 +682,26 @@ function ThreadPane({
     settled.current = { id: conversationId, count };
   }, [thread, conversationId, count, lastOut, toBottom]);
 
+  // ★ A search hit opens the chat AT the matching message, not at the end,
+  // and marks it; an older hit beyond the loaded 200 is simply not there,
+  // and the chat opens at the end as usual.
+  const jumped = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!thread || !jumpToMessageId) return;
+    const key = `${conversationId}:${jumpToMessageId}`;
+    if (jumped.current === key) return;
+    const el = scroller.current?.querySelector<HTMLElement>(
+      `[data-message-id="${jumpToMessageId}"]`,
+    );
+    if (!el) return;
+    jumped.current = key;
+    if (typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ block: "center" });
+    }
+    el.classList.add("is-hit");
+    atBottom.current = false;
+  }, [thread, conversationId, jumpToMessageId]);
+
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
@@ -563,6 +737,10 @@ function ThreadPane({
 
   const c = thread.conversation;
   const name = c.contact.name ?? c.contact.phoneLabel;
+  const applied = labelsOf(c.labelIds, workspace.labels);
+  const assignee = c.assignedAdminId
+    ? (workspace.assignees.find((a) => a.id === c.assignedAdminId) ?? null)
+    : null;
 
   async function setStatus(status: "open" | "closed") {
     setBusy(true);
@@ -573,6 +751,48 @@ function ThreadPane({
       return;
     }
     onStatus(status);
+    await onChanged();
+  }
+
+  async function assign(adminId: string) {
+    setBusy(true);
+    const r = await assignInboxConversation({
+      conversationId,
+      adminId: adminId || null,
+    });
+    setBusy(false);
+    if (!r.ok) {
+      toast.error(r.error ?? "Couldn't assign the conversation.");
+      return;
+    }
+    onRow({ assignedAdminId: r.assignedAdminId ?? null });
+    await onChanged();
+  }
+
+  async function toggleLabel(labelId: string) {
+    const next = c.labelIds.includes(labelId)
+      ? c.labelIds.filter((id) => id !== labelId)
+      : [...c.labelIds, labelId];
+    setBusy(true);
+    const r = await setInboxConversationLabels({
+      conversationId,
+      labelIds: next,
+    });
+    setBusy(false);
+    if (!r.ok) {
+      toast.error(r.error ?? "Couldn't update the labels.");
+      return;
+    }
+    onRow({ labelIds: r.labelIds ?? next });
+    await onChanged();
+  }
+
+  async function removeNote(noteId: string) {
+    const r = await deleteInboxNote(noteId);
+    if (!r.ok) {
+      toast.error(r.error ?? "Couldn't delete the note.");
+      return;
+    }
     await onChanged();
   }
 
@@ -597,9 +817,52 @@ function ThreadPane({
               : c.status === "closed"
                 ? "Closed"
                 : "Open"}
+            {!canManage && c.assignedAdminId
+              ? ` · ${assignee ? `Assigned to ${assignee.name}` : "Assigned"}`
+              : ""}
           </p>
+          {applied.length > 0 && (
+            <span className="inbox-thread-labels" aria-label="Labels">
+              {applied.map((l) => (
+                <span key={l.id} className={`inbox-chip is-sm is-${l.color}`}>
+                  {l.name}
+                </span>
+              ))}
+            </span>
+          )}
         </div>
         <div className="inbox-thread-actions">
+          {canManage && workspace.assignees.length > 0 && (
+            <select
+              className="inbox-select is-sm inbox-assignee"
+              value={c.assignedAdminId ?? ""}
+              onChange={(e) => assign(e.target.value)}
+              disabled={busy}
+              aria-label="Assigned to"
+            >
+              <option value="">Unassigned</option>
+              {workspace.assignees.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.id === workspace.me.id ? "Me" : a.name}
+                </option>
+              ))}
+              {c.assignedAdminId && !assignee && (
+                <option value={c.assignedAdminId}>Somebody who left</option>
+              )}
+            </select>
+          )}
+          {canManage && (
+            <button
+              type="button"
+              className="inbox-text-btn"
+              onClick={() => setShowLabels((v) => !v)}
+              aria-expanded={showLabels}
+              aria-label="Labels"
+            >
+              <Tag className="h-3.5 w-3.5" />
+              <span className="inbox-text-label">Label</span>
+            </button>
+          )}
           <button
             type="button"
             className="inbox-text-btn"
@@ -633,6 +896,32 @@ function ThreadPane({
         </div>
       </header>
 
+      {showLabels && canManage && (
+        <div className="inbox-labels-bar" role="group" aria-label="Labels">
+          {workspace.labels.length === 0 ? (
+            <span className="inbox-customer-hint">
+              No labels yet. Add some with the Labels button above the inbox.
+            </span>
+          ) : (
+            workspace.labels.map((l) => {
+              const on = c.labelIds.includes(l.id);
+              return (
+                <button
+                  key={l.id}
+                  type="button"
+                  className={`inbox-chip is-${l.color} ${on ? "is-on" : "is-off"}`}
+                  aria-pressed={on}
+                  disabled={busy}
+                  onClick={() => toggleLabel(l.id)}
+                >
+                  {l.name}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+
       {showCustomer && <CustomerStrip thread={thread} />}
 
       <div className="inbox-messages-wrap">
@@ -646,7 +935,14 @@ function ThreadPane({
           {thread.messages.length === 0 ? (
             <p className="inbox-note">No messages yet.</p>
           ) : (
-            <MessageList messages={thread.messages} onMediaLoad={onMediaLoad} />
+            <MessageList
+              messages={thread.messages}
+              contactName={name}
+              canManage={canManage}
+              onMediaLoad={onMediaLoad}
+              onReply={canManage ? setReplyTo : null}
+              onDeleteNote={canManage ? removeNote : null}
+            />
           )}
         </div>
         {showJump && (
@@ -678,9 +974,16 @@ function ThreadPane({
         windowOpen={thread.window.open}
         closesAt={thread.window.closesAt}
         templates={templates}
+        cannedReplies={workspace.cannedReplies}
+        contactName={c.contact.name}
+        replyTo={replyTo}
+        onClearReply={() => setReplyTo(null)}
         canManage={canManage}
         channelLive={channelLive}
-        onSent={onChanged}
+        onSent={async () => {
+          setReplyTo(null);
+          await onChanged();
+        }}
       />
     </div>
   );
@@ -856,21 +1159,47 @@ function CustomerStrip({ thread }: { thread: InboxThread }) {
  *  first bubble carries the tail and the sender label). */
 function MessageList({
   messages,
+  contactName,
+  canManage,
   onMediaLoad,
+  onReply,
+  onDeleteNote,
 }: {
   messages: InboxMessageRow[];
+  contactName: string;
+  canManage: boolean;
   onMediaLoad: () => void;
+  onReply: ((m: InboxMessageRow) => void) | null;
+  onDeleteNote: ((id: string) => void) | null;
 }) {
   const days = useMemo(() => groupByDay(messages), [messages]);
+  // Quoted replies name the message they answer by Meta's id.
+  const byProvider = useMemo(() => {
+    const map = new Map<string, InboxMessageRow>();
+    for (const m of messages) {
+      if (m.providerMessageId) map.set(m.providerMessageId, m);
+    }
+    return map;
+  }, [messages]);
   return (
     <>
       {days.map((day) => (
         <section key={day.key} className="inbox-day" aria-label={day.label}>
           <span className="inbox-day-label">{day.label}</span>
           {day.messages.map((m, i) => {
+            if (m.source === INBOX_NOTE_SOURCE) {
+              return (
+                <NoteBubble
+                  key={m.id}
+                  m={m}
+                  onDelete={canManage && onDeleteNote ? onDeleteNote : null}
+                />
+              );
+            }
             const prev = day.messages[i - 1];
             const continues =
               !!prev &&
+              prev.source !== INBOX_NOTE_SOURCE &&
               prev.direction === m.direction &&
               new Date(m.sentAt).getTime() - new Date(prev.sentAt).getTime() <
                 RUN_GAP_MS;
@@ -881,9 +1210,16 @@ function MessageList({
               <Bubble
                 key={m.id}
                 m={m}
+                quoted={
+                  m.quotedProviderId
+                    ? (byProvider.get(m.quotedProviderId) ?? null)
+                    : null
+                }
+                contactName={contactName}
                 continues={continues}
                 showLabel={showLabel}
                 onMediaLoad={onMediaLoad}
+                onReply={m.providerMessageId && onReply ? onReply : null}
               />
             );
           })}
@@ -893,16 +1229,73 @@ function MessageList({
   );
 }
 
+/** A private note between the messages it was written between: a yellow
+ *  card, never a bubble, so nobody mistakes it for something the customer
+ *  received. */
+function NoteBubble({
+  m,
+  onDelete,
+}: {
+  m: InboxMessageRow;
+  onDelete: ((id: string) => void) | null;
+}) {
+  return (
+    <div className="inbox-note-row" data-message-id={m.id}>
+      <div className="inbox-note-card">
+        <span className="inbox-note-head">
+          <StickyNote className="h-3 w-3" />
+          Note{m.sentBy ? ` · ${m.sentBy}` : ""}
+          <time dateTime={m.sentAt} title={fullWhen(m.sentAt)}>
+            {timeOnly(m.sentAt)}
+          </time>
+          {onDelete && (
+            <button
+              type="button"
+              className="inbox-note-delete"
+              onClick={() => {
+                if (window.confirm("Delete this note?")) onDelete(m.id);
+              }}
+              aria-label="Delete note"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </span>
+        <p className="inbox-bubble-text">{m.body}</p>
+      </div>
+    </div>
+  );
+}
+
+/** One line that says what a message was, for a quote strip or a reply-to
+ *  bar: its text, or its kind when it had none. */
+function messageGist(m: InboxMessageRow): string {
+  if (m.body) return m.body.split(/\r?\n/)[0] ?? "";
+  if (m.kind === "image" || m.kind === "sticker") return "📷 Photo";
+  if (m.kind === "video") return "🎥 Video";
+  if (m.kind === "audio") return "🎤 Voice message";
+  if (m.kind === "document") return `📄 ${m.mediaName ?? "Document"}`;
+  if (m.kind === "location") return "📍 Location";
+  return "Message";
+}
+
 function Bubble({
   m,
+  quoted,
+  contactName,
   continues,
   showLabel,
   onMediaLoad,
+  onReply,
 }: {
   m: InboxMessageRow;
+  /** The message this one replied to, when it is in the loaded thread. */
+  quoted: InboxMessageRow | null;
+  contactName: string;
   continues: boolean;
   showLabel: boolean;
   onMediaLoad: () => void;
+  onReply: ((m: InboxMessageRow) => void) | null;
 }) {
   const out = m.direction === "out";
   const intent =
@@ -930,6 +1323,7 @@ function Bubble({
       className={`inbox-bubble-row ${out ? "is-out" : "is-in"} ${
         continues ? "is-cont" : ""
       }`}
+      data-message-id={m.id}
     >
       <div
         className={`inbox-bubble ${m.status === "failed" ? "is-failed" : ""} ${
@@ -937,6 +1331,31 @@ function Bubble({
         } ${hasMedia ? "has-media" : ""}`}
       >
         {showLabel && <SenderLabel m={m} />}
+        {m.quotedProviderId && (
+          <span className="inbox-quote">
+            <span className="inbox-quote-who">
+              {quoted
+                ? quoted.direction === "out"
+                  ? "You"
+                  : contactName
+                : "Earlier message"}
+            </span>
+            {quoted && (
+              <span className="inbox-quote-text">{messageGist(quoted)}</span>
+            )}
+          </span>
+        )}
+        {onReply && (
+          <button
+            type="button"
+            className="inbox-bubble-reply"
+            onClick={() => onReply(m)}
+            aria-label="Reply to this message"
+            title="Reply"
+          >
+            <Reply className="h-3.5 w-3.5" />
+          </button>
+        )}
         <Media m={m} onLoad={onMediaLoad} />
         {m.body && (
           <p className="inbox-bubble-text">
@@ -1106,6 +1525,10 @@ function Composer({
   windowOpen,
   closesAt,
   templates,
+  cannedReplies,
+  contactName,
+  replyTo,
+  onClearReply,
   canManage,
   channelLive,
   onSent,
@@ -1114,6 +1537,11 @@ function Composer({
   windowOpen: boolean;
   closesAt: string | null;
   templates: InboxTemplateOption[];
+  cannedReplies: InboxCannedReply[];
+  contactName: string | null;
+  /** The message the next reply quotes, or null. */
+  replyTo: InboxMessageRow | null;
+  onClearReply: () => void;
   canManage: boolean;
   channelLive: boolean;
   onSent: () => Promise<void>;
@@ -1123,8 +1551,40 @@ function Composer({
   const [forceTemplate, setForceTemplate] = useState(false);
   const [templateId, setTemplateId] = useState("");
   const [values, setValues] = useState<string[]>([]);
+  // "note": the box writes a private note rather than a message.
+  const [mode, setMode] = useState<"message" | "note">("message");
+  // A photo or PDF chosen for the next send; the box is then its caption.
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [, tick] = useState(0);
   const box = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  // The saved-reply picker: open on "/", or on the bookmark button. "/" at
+  // the start filters by shortcut or title; choosing one fills the box with
+  // the customer's name in place.
+  const slashQuery = text.startsWith("/")
+    ? (text.slice(1).split(/\s/)[0]?.toLowerCase() ?? "")
+    : null;
+  const pickerVisible =
+    cannedReplies.length > 0 && (pickerOpen || slashQuery !== null);
+  const pickerItems = useMemo(() => {
+    if (!pickerVisible) return [];
+    const needle = slashQuery ?? "";
+    return cannedReplies
+      .filter(
+        (r) =>
+          !needle ||
+          r.shortcut.startsWith(needle) ||
+          r.title.toLowerCase().includes(needle),
+      )
+      .slice(0, 8);
+  }, [cannedReplies, pickerVisible, slashQuery]);
+  const pick = (r: InboxCannedReply) => {
+    setText(fillCannedReply(r.body, { name: contactName }));
+    setPickerOpen(false);
+    box.current?.focus();
+  };
 
   // The box grows with what is typed, up to its CSS max-height, then scrolls.
   // ★ Only from a real measurement: a box measured while hidden (or before
@@ -1162,11 +1622,49 @@ function Composer({
       </div>
     );
   }
+
+  // The mode switch sits above whatever the composer shows: a note can be
+  // written whether or not the number can send right now.
+  const modeSwitch = (
+    <div className="inbox-mode" role="tablist" aria-label="Write">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === "message"}
+        className={`inbox-mode-tab ${mode === "message" ? "is-active" : ""}`}
+        onClick={() => setMode("message")}
+      >
+        Message
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === "note"}
+        className={`inbox-mode-tab is-note ${mode === "note" ? "is-active" : ""}`}
+        onClick={() => setMode("note")}
+      >
+        <StickyNote className="h-3.5 w-3.5" /> Note
+      </button>
+    </div>
+  );
+
+  if (mode === "note") {
+    return (
+      <NoteComposer
+        key="note"
+        conversationId={conversationId}
+        modeSwitch={modeSwitch}
+        onSaved={onSent}
+      />
+    );
+  }
+
   if (!channelLive) {
     return (
       <div className="inbox-composer is-locked">
-        <Lock className="h-4 w-4" />
-        <span>
+        {modeSwitch}
+        <span className="inbox-locked-line">
+          <Lock className="h-4 w-4" />
           Your WhatsApp number is paused or needs reconnecting. Resume it under
           Settings → Channels to reply.
         </span>
@@ -1177,12 +1675,42 @@ function Composer({
   const useTemplate = !windowOpen || forceTemplate;
   const remaining = closesAt ? countdown(closesAt) : null;
 
+  async function sendFile(file: File): Promise<InboxSendResult> {
+    const form = new FormData();
+    form.set("conversationId", conversationId);
+    form.set("file", file, file.name);
+    form.set("caption", text);
+    if (replyTo) form.set("replyTo", replyTo.id);
+    try {
+      const res = await fetch("/api/dashboard/inbox/media", {
+        method: "POST",
+        body: form,
+      });
+      const body = (await res
+        .json()
+        .catch(() => null)) as InboxSendResult | null;
+      if (body && typeof body.ok === "boolean") return body;
+      return { ok: false, error: `Couldn't send the file (${res.status}).` };
+    } catch {
+      return {
+        ok: false,
+        error: "Couldn't send the file. Check your connection.",
+      };
+    }
+  }
+
   async function send() {
     if (sending) return;
     setSending(true);
     const r = useTemplate
       ? await sendInboxTemplate({ conversationId, templateId, values })
-      : await sendInboxReply({ conversationId, text });
+      : attachment
+        ? await sendFile(attachment)
+        : await sendInboxReply({
+            conversationId,
+            text,
+            replyToMessageId: replyTo?.id ?? null,
+          });
     setSending(false);
     if (!r.ok) {
       toast.error(r.error ?? "Couldn't send.");
@@ -1193,11 +1721,18 @@ function Composer({
     setText("");
     setTemplateId("");
     setForceTemplate(false);
+    setAttachment(null);
     await onSent();
   }
 
+  const chooseFile = (file: File | null) => {
+    setAttachment(file);
+    if (file) setForceTemplate(false);
+  };
+
   return (
     <div className="inbox-composer">
+      {modeSwitch}
       <div className="inbox-window">
         {windowOpen ? (
           <>
@@ -1302,38 +1837,223 @@ function Composer({
           )}
         </div>
       ) : (
-        <div className="inbox-compose-row">
-          <textarea
-            ref={box}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              // Enter sends on a keyboard; on a phone it is a new line and
-              // the button sends, as in WhatsApp.
-              if (e.key === "Enter" && !e.shiftKey && !isTouchPrimary()) {
-                e.preventDefault();
-                if (text.trim()) void send();
+        <>
+          {replyTo && (
+            <div className="inbox-replyto">
+              <Reply className="h-3.5 w-3.5" />
+              <span className="inbox-replyto-text">
+                <span className="inbox-quote-who">
+                  Replying to{" "}
+                  {replyTo.direction === "out"
+                    ? "you"
+                    : (contactName ?? "the customer")}
+                </span>
+                {messageGist(replyTo)}
+              </span>
+              <button
+                type="button"
+                className="inbox-icon-btn is-sm"
+                onClick={onClearReply}
+                aria-label="Don't quote this message"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+          {attachment && (
+            <div className="inbox-attachment">
+              <Paperclip className="h-3.5 w-3.5" />
+              <span className="inbox-attachment-name">
+                {attachment.name}
+                <span className="inbox-attachment-size">
+                  {" "}
+                  · {fileSize(attachment.size)}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="inbox-icon-btn is-sm"
+                onClick={() => chooseFile(null)}
+                aria-label="Remove the file"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+          {pickerVisible && (
+            <ul
+              className="inbox-canned"
+              role="listbox"
+              aria-label="Saved replies"
+            >
+              {pickerItems.length === 0 ? (
+                <li className="inbox-canned-empty">No saved reply matches.</li>
+              ) : (
+                pickerItems.map((r) => (
+                  <li key={r.id} role="option" aria-selected={false}>
+                    <button type="button" onClick={() => pick(r)}>
+                      <code>/{r.shortcut}</code>
+                      <span className="inbox-canned-title">{r.title}</span>
+                      <span className="inbox-canned-body">{r.body}</span>
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+          )}
+          <div className="inbox-compose-row">
+            <input
+              ref={fileInput}
+              type="file"
+              accept={INBOX_MEDIA_ACCEPT}
+              className="sr-only"
+              tabIndex={-1}
+              aria-hidden="true"
+              onChange={(e) => {
+                chooseFile(e.target.files?.[0] ?? null);
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              className="inbox-icon-btn inbox-attach"
+              onClick={() => fileInput.current?.click()}
+              disabled={sending}
+              aria-label="Attach a photo or PDF"
+              title="Photo or PDF"
+            >
+              <Paperclip className="h-5 w-5" />
+            </button>
+            {cannedReplies.length > 0 && (
+              <button
+                type="button"
+                className="inbox-icon-btn inbox-attach"
+                onClick={() => setPickerOpen((v) => !v)}
+                disabled={sending}
+                aria-label="Saved replies"
+                aria-expanded={pickerVisible}
+                title="Saved replies (or type /)"
+              >
+                <Bookmark className="h-5 w-5" />
+              </button>
+            )}
+            <textarea
+              ref={box}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && pickerVisible) {
+                  setPickerOpen(false);
+                  if (slashQuery !== null) setText("");
+                  return;
+                }
+                // Enter with the picker open takes the first saved reply.
+                if (e.key === "Enter" && !e.shiftKey && pickerVisible) {
+                  e.preventDefault();
+                  const first = pickerItems[0];
+                  if (first) pick(first);
+                  return;
+                }
+                // Enter sends on a keyboard; on a phone it is a new line and
+                // the button sends, as in WhatsApp.
+                if (e.key === "Enter" && !e.shiftKey && !isTouchPrimary()) {
+                  e.preventDefault();
+                  if (text.trim() || attachment) void send();
+                }
+              }}
+              placeholder={
+                attachment ? "Add a caption (optional)" : "Type a message"
               }
-            }}
-            placeholder="Type a message"
-            title="Enter to send, Shift+Enter for a new line"
-            rows={1}
-            maxLength={INBOX_REPLY_MAX_CHARS}
-            aria-label="Reply"
-          />
-          <button
-            type="button"
-            className="inbox-send"
-            disabled={sending || !text.trim()}
-            onClick={send}
-            aria-label="Send"
-          >
-            <Send className="h-4 w-4" />
-          </button>
-        </div>
+              title="Enter to send, Shift+Enter for a new line"
+              rows={1}
+              maxLength={attachment ? INBOX_CAPTION_MAX : INBOX_REPLY_MAX_CHARS}
+              aria-label="Reply"
+            />
+            <button
+              type="button"
+              className="inbox-send"
+              disabled={sending || (!text.trim() && !attachment)}
+              onClick={send}
+              aria-label="Send"
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
+}
+
+/** The composer in note mode: a yellow box whose text goes to the thread as
+ *  a private note and never to the customer. */
+function NoteComposer({
+  conversationId,
+  modeSwitch,
+  onSaved,
+}: {
+  conversationId: string;
+  modeSwitch: ReactNode;
+  onSaved: () => Promise<void>;
+}) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (busy || !text.trim()) return;
+    setBusy(true);
+    const r = await addInboxNote({ conversationId, body: text });
+    setBusy(false);
+    if (!r.ok) {
+      toast.error(r.error ?? "Couldn't save the note.");
+      return;
+    }
+    setText("");
+    await onSaved();
+  }
+
+  return (
+    <div className="inbox-composer is-note">
+      {modeSwitch}
+      <div className="inbox-window">
+        <span>
+          Only your team sees a note. The customer is not sent anything.
+        </span>
+      </div>
+      <div className="inbox-compose-row">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !isTouchPrimary()) {
+              e.preventDefault();
+              void save();
+            }
+          }}
+          placeholder="Write a private note"
+          rows={2}
+          maxLength={INBOX_NOTE_MAX}
+          aria-label="Note"
+          disabled={busy}
+        />
+        <button
+          type="button"
+          className="inbox-send is-note"
+          disabled={busy || !text.trim()}
+          onClick={save}
+          aria-label="Add note"
+        >
+          <StickyNote className="h-4 w-4" /> Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function fileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

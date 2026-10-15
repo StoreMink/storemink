@@ -20,6 +20,9 @@ vi.mock("./send", () => ({ sendWhatsAppTemplate: vi.fn() }));
 vi.mock("./cod-confirmation", () => ({
   markCodConfirmationRequested: vi.fn(async () => undefined),
 }));
+vi.mock("./inbox", () => ({
+  fileTemplateInThread: vi.fn(async () => "m-thread"),
+}));
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
@@ -32,6 +35,7 @@ import {
 } from "./channel";
 import { sendWhatsAppTemplate } from "./send";
 import { markCodConfirmationRequested } from "./cod-confirmation";
+import { fileTemplateInThread } from "./inbox";
 import { RETRYABLE_META_CODES, runWhatsAppWorker } from "./worker";
 
 const ROW = {
@@ -100,6 +104,57 @@ describe("runWhatsAppWorker", () => {
       /update public\.notification_whatsapp_queue/,
     );
     expect(sqlParamValues(dbHolder.current.calls.execute[1])).toContain("sent");
+  });
+
+  it("★ a sent customer template is filed in the thread, rendered, quietly", async () => {
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: true,
+      messageId: "wamid.1",
+      logId: "l1",
+    });
+    await runWhatsAppWorker();
+    expect(fileTemplateInThread).toHaveBeenCalledWith(expect.anything(), {
+      storeId: "store-1",
+      phone: "+919876543210",
+      templateId: "t1",
+      body: "Thanks Acme ORD1",
+      providerMessageId: "wamid.1",
+    });
+  });
+
+  it("a team template is addressed to staff and is filed in no thread", async () => {
+    setup([{ ...ROW, audience: "team" }]);
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: true,
+      messageId: "wamid.1",
+      logId: "l1",
+    });
+    await runWhatsAppWorker();
+    expect(fileTemplateInThread).not.toHaveBeenCalled();
+  });
+
+  it("★ a failed filing never fails the send or re-sends: the row is settled sent", async () => {
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: true,
+      messageId: "wamid.1",
+      logId: "l1",
+    });
+    vi.mocked(fileTemplateInThread).mockRejectedValueOnce(new Error("db"));
+    const r = await runWhatsAppWorker();
+    expect(r).toMatchObject({ sent: 1, failed: 0 });
+    expect(sendWhatsAppTemplate).toHaveBeenCalledTimes(1);
+    expect(sqlParamValues(dbHolder.current.calls.execute[1])).toContain("sent");
+  });
+
+  it("a refused send files nothing", async () => {
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: false,
+      outcome: "rejected",
+      error: "no",
+      code: 131026,
+    });
+    await runWhatsAppWorker();
+    expect(fileTemplateInThread).not.toHaveBeenCalled();
   });
 
   it("does nothing when the queue is empty", async () => {

@@ -29,6 +29,7 @@ vi.mock("./graph", () => ({
 
 import {
   applyStatusToMessage,
+  fileTemplateInThread,
   handOverConversation,
   inboundMediaPath,
   recordEchoMessage,
@@ -687,8 +688,13 @@ describe("recordOutboundMessage: an automatic message", () => {
     });
     const text = sqlText(dbHolder.current.calls.execute[0]);
     expect(text).not.toContain("unread_count");
-    // No `status =` assignment of its own (the CASE below only reads it).
-    expect(text).not.toMatch(/^\s*status =/m);
+    // The status moves only for a brand-new conversation (nothing filed yet,
+    // so the column default `needs_reply` would read as waiting); an existing
+    // one keeps exactly what it had.
+    expect(text).toContain(
+      "status = case when last_message_at is null then 'open' else status end",
+    );
+    expect(text).not.toContain("'needs_reply' end");
     expect(text).toContain("last_outbound_at");
     // While the customer waits, the list keeps showing what THEY said.
     expect(text).toContain("when status = 'needs_reply' then last_preview");
@@ -715,6 +721,96 @@ describe("recordOutboundMessage: the menu", () => {
       kind: "interactive",
       payload: { buttons },
     });
+  });
+});
+
+describe("recordOutboundMessage: a file and a quote (slice 6)", () => {
+  it("files a photo with our copy's path and the quoted id, and previews it as a photo", async () => {
+    dbHolder.current = makeDbMock({ returning: [{ id: "m-img" }] });
+    const id = await recordOutboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      conversationId: "c1",
+      source: "dashboard",
+      kind: "image",
+      body: "",
+      providerMessageId: "wamid.img",
+      status: "sent",
+      sentByAdminId: "admin-1",
+      media: {
+        path: "stores/s/whatsapp/c1/out-x.jpg",
+        mime: "image/jpeg",
+        name: "p.jpg",
+      },
+      quotedProviderId: "wamid.in1",
+    });
+    expect(id).toBe("m-img");
+    expect(dbHolder.current.calls.values[0]).toMatchObject({
+      kind: "image",
+      body: null,
+      mediaPath: "stores/s/whatsapp/c1/out-x.jpg",
+      mediaMime: "image/jpeg",
+      mediaName: "p.jpg",
+      quotedProviderId: "wamid.in1",
+    });
+    // The list's preview names the photo, not an empty caption.
+    expect(sqlParamValues(dbHolder.current.calls.execute[0])).toContain(
+      "📷 Photo",
+    );
+  });
+});
+
+describe("fileTemplateInThread (slice 6)", () => {
+  it("★ files a sent order update quietly: a new conversation opens, nothing is unread, the window clock does not move", async () => {
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c-new", status: "needs_reply", last_message_at: null }],
+        [],
+      ],
+      returning: [{ id: "m-t" }],
+    });
+    const id = await fileTemplateInThread(dbHolder.current.db, {
+      storeId: STORE,
+      phone: "+919876543210",
+      templateId: "t1",
+      body: "Thanks for your order ORD1.",
+      providerMessageId: "wamid.t1",
+    });
+    expect(id).toBe("m-t");
+    const { calls } = dbHolder.current;
+    // The contact upsert carries NO inbound time: a send never opens the window.
+    expect(sqlText(calls.execute[0])).toContain(
+      "insert into public.whatsapp_contacts",
+    );
+    expect(sqlParamValues(calls.execute[0])).toContain(null);
+    expect(sqlParamValues(calls.execute[0])).toContain("919876543210");
+    expect(calls.values[0]).toMatchObject({
+      direction: "out",
+      source: "template",
+      kind: "template",
+      body: "Thanks for your order ORD1.",
+      providerMessageId: "wamid.t1",
+      templateId: "t1",
+      status: "sent",
+    });
+    // The quiet bump: a brand-new conversation becomes open (never waiting on
+    // a reply to an order update); an existing one keeps its status and its
+    // unread count, and a waiting one keeps the customer's preview.
+    const bump = sqlText(calls.execute[2]);
+    expect(bump).toContain(
+      "case when last_message_at is null then 'open' else status end",
+    );
+    expect(bump).not.toContain("unread_count = 0");
+    expect(bump).toContain(
+      "case when status = 'needs_reply' then last_preview",
+    );
   });
 });
 

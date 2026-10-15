@@ -43,6 +43,8 @@ export async function GET(req: NextRequest) {
           filter: filter as InboxFilter,
           q: params.get("q") ?? "",
           page: Number(params.get("page") ?? "1") || 1,
+          assignee: params.get("assignee") ?? "",
+          label: params.get("label") ?? "",
         });
         return respond(res, res.error);
       }

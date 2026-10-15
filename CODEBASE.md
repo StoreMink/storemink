@@ -92,6 +92,108 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### WhatsApp Commerce — Phase 2 slice 6: The full inbox (2026-10-15)
+
+Plan §4's "Inbox: Full" and §11's last bullet, and the last slice of Phase 2:
+what a TEAM needs once more than one person works the inbox. Migration
+`20261015_0209` adds four service-only tables (`whatsapp_labels`,
+`whatsapp_conversation_labels`, `whatsapp_conversation_notes`,
+`whatsapp_canned_replies`), the assignee index the "Mine" filter reads and a
+GIN index over message bodies; `0210` edits the inbox guide in place.
+`lib/whatsapp/inbox-workspace.ts` is the pure vocabulary (label and saved-
+reply validators the dialog and the action both run, `fillCannedReply`,
+`inboxSearchQuery`, `splitSnippet`); `inbox-team.ts` the writes; `inbox-read.ts`
+gained the lists, the filters and the search; `inbox-gate.ts` is the view/
+manage/send gate the actions and the media route share, so a photo and a text
+cannot differ about who may send or how fast.
+★ ASSIGNMENT IS A POINTER, NOT A PERMISSION. `whatsapp_conversations.
+assigned_admin_id` (0177 made it, "nullable now so the column needs no later
+migration") names one of the store's admins whose role includes Inbox, or an
+owner (`listInboxAssignees` joins `platform_roles`); the write refuses a
+person not on the store rather than storing a stale pointer, and reads the
+previous assignee under a row lock so `assignInboxConversation` can tell the
+person it was GIVEN to, and nobody else: `whatsapp.conversation_assigned`
+(registry, section `inbox`, in-app only) is emitted with
+`restrictToAdminIds: [adminId]` (§24), never for a self-assignment. The list
+filters by `me` / `unassigned` / an id and the row shows initials. An
+assigned conversation stays readable and answerable by everyone with Inbox.
+★ LABELS: at most 20 per store, a 30-character name unique per store
+ignoring case (a unique index on `lower(name)`), one of eight colours checked
+by the database; `setConversationLabels` replaces a conversation's set with
+exactly what was sent, keeping only ids that are the store's own, with the
+count taken under a per-store advisory lock so two people adding the
+twentieth cannot make twenty-one. Deleting a label cascades its links.
+★ NOTES ARE NEVER MESSAGES. `whatsapp_messages`' source CHECK keeps them
+out of the wire record; `whatsapp_conversation_notes` holds them, and
+`loadThread` MERGES them into the message list in time order as rows with
+`source === INBOX_NOTE_SOURCE` (`"note"`), author resolved best-effort by
+`adminNames` like `sent_by_admin_id`. The composer's **Note** tab writes one
+(2,000 characters) whether or not the number can send. Readable by anyone
+with Inbox view; deletable, not editable.
+★ SAVED REPLIES: at most 50 per store, a shortcut `^[a-z0-9][a-z0-9_-]{0,29}$`
+unique per store, a body within WhatsApp's 4,096. Typing `/` in the box
+opens the picker filtered by shortcut or title, Enter takes the first, the
+bookmark button opens the whole list, and `fillCannedReply` puts the
+customer's WhatsApp first name in for `{{name}}`, or drops the token WITH its
+leading space ("Hi {{name}}," → "Hi,") when WhatsApp gave none. Unknown
+tokens stay visible rather than vanishing.
+★★ A PHOTO OR A PDF GOES META FIRST, OUR COPY SECOND, THE SEND LAST
+(`inbox-media.ts`, `POST /api/dashboard/inbox/media`, a route because a
+server action's body caps at 6 MB and a PDF may be 16 MB, and a 20-second
+upload must not queue in front of Send). `prepareOutboundMedia` decides by
+the BYTES, not the declared type: a photo (JPEG, PNG, WebP, ≤ 5 MB) is
+decoded by sharp, oriented, stripped of metadata (a staff phone's photo
+carries GPS) and re-encoded as a JPEG no wider than 2,048 px; a PDF (≤ 16 MB)
+must start with `%PDF-`. `uploadMedia` (graph.ts, multipart; `graphRequest`
+gained `form`) returns the id the send needs, so a refused upload stores and
+files nothing; the copy is written to `conversationMediaPrefix` as
+`out-<uuid>.<ext>` BEFORE the send so the thread never shows a photo it
+cannot display (Meta's media URLs expire and need the token: the inbound
+rule, applied outbound); `sendWhatsAppMedia` is the fourth entry of the
+choke point (`send-coverage.test.ts` now greps `sendMediaMessage` too, and
+holds `uploadMedia` to `inbox-media.ts`), and a refused send is filed as a
+failed message WITH the copy. `recordOutboundMessage` gained `media`,
+`quotedProviderId` and kinds `image` / `document`. Window-open only, like
+text; the caption is WhatsApp's 1,024. Retention deletes the folder with the
+conversation as before.
+★ SEARCH INSIDE MESSAGES: `inboxSearchQuery` reduces each word to letters
+and digits of ANY script (so no operator can be typed), at most six, each a
+prefix, all required (`stoc:* & almond:*`), over `to_tsvector('simple', body)`
+through the GIN index. 'simple' deliberately: customers write English,
+Hinglish and Devanagari in one thread and a language stemmer stems the wrong
+language. The list's search then matches the name, the number OR a
+conversation with a matching message, and a `left join lateral` returns the
+newest matching message with `ts_headline` marking the words in « », which
+the row shows and the chat scrolls to (`data-message-id`, outlined) when it
+is within the 200 loaded.
+★ QUOTED REPLIES: `sendTextMessage` always carried `context.message_id`;
+`sendInboxReply` now takes `replyToMessageId`, looked up by
+`loadQuotableProviderId` under the store AND the conversation (an id from
+the browser can quote only a message of the thread it was clicked in), and
+a message not there quotes nothing rather than failing the reply. The thread
+draws a quote strip from `quotedProviderId` against the loaded messages'
+`providerMessageId` (both now on `InboxMessageRow`), for inbound replies too.
+★★ ORDER UPDATES ARE FILED IN THE THREAD, QUIETLY, which closes the gap
+recorded on 2026-10-13 ("a customer's first reply to one counts as a first
+message and gets the welcome"). After a successful customer send, `worker.ts`
+calls `fileTemplateInThread` (inbox.ts): the contact upsert passes NO inbound
+time (a send never opens the window), the message is filed `source:
+"template"` with the rendered body and Meta's id, and `recordOutboundMessage`'s
+new `quiet` flag applies the automation rule (status and unread untouched, the
+customer's preview kept while they wait) plus one addition: a brand-new
+conversation becomes `open`, because the column default is `needs_reply` and
+nobody is waiting on a reply to an order update. Team templates are filed
+nowhere; a filing failure is logged and never fails or repeats the send.
+`inbox-manage.tsx` holds the two dialogs (Labels, Saved replies) above the
+inbox; `inbox-client.tsx` the filters, chips, the labels bar, the note cards,
+the reply-to bar, the attachment row and the `/` picker. Help: `0210`
+replaces two sentences in `reply-to-whatsapp-messages` and adds one section.
+Stories WA-9.x. ⚠ Not built: voice, video and non-PDF files from the
+dashboard; editing a note; loading history past the latest 200; a per-person
+private note. ⚠ The media upload and send shapes follow Meta's reference and
+have not run against live Meta; `docs/whatsapp-dev-live-test.md` Part L17 is
+that run.
+
 ### WhatsApp Commerce — Phase 2 slice 5: Customer-facing Mink (2026-10-14)
 
 Plan §13: **Inbox → Automatic replies** gains **Mink AI answers**, off, with
@@ -3367,6 +3469,10 @@ wholesip/
 │   │   │                      # settings/ = Automatic replies (welcome, away message
 │   │   │                      # with business hours, order status, Mink AI answers),
 │   │   │                      # linked from the Inbox header; auto-replies-form.tsx.
+│   │   │                      # inbox-manage.tsx = the Labels and Saved replies
+│   │   │                      # dialogs (slice 6); the client also filters by
+│   │   │                      # assignee and label, searches inside messages, and
+│   │   │                      # writes notes, quotes and photo/PDF replies.
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
 │   │   ├── admins/ roles/     # ★ THE ONE STAFF PAGE + the read-only roles reference
 │   │   │                      # (§41). admins/ lists dashboard admins AND register
@@ -3704,8 +3810,11 @@ wholesip/
 │   │   │                      # server-side) the welcome, away + hours, order status
 │   │   ├── inbox-actions.ts   # ★ the WhatsApp inbox (`inbox` view/manage): list,
 │   │   │                      # thread, mark read, close/reopen, sendInboxReply (window
-│   │   │                      # re-checked server-side) and sendInboxTemplate (approved
-│   │   │                      # customer templates only, every value filled). Tested.
+│   │   │                      # re-checked server-side, may quote one message) and
+│   │   │                      # sendInboxTemplate (approved customer templates only,
+│   │   │                      # every value filled); the team actions (assign, labels,
+│   │   │                      # notes, saved replies, getInboxWorkspace) on the gate in
+│   │   │                      # lib/whatsapp/inbox-gate.ts. Tested.
 │   │   ├── customer-whatsapp-actions.ts # ★ the shopper's own WhatsApp choices on the
 │   │   │                      # account page; session phone + host store, written
 │   │   │                      # through recordWhatsAppConsent with the page's own words
@@ -3958,6 +4067,10 @@ wholesip/
 │       ├── dashboard/inbox/live/ # ★ the inbox's polls (list, thread, needs-reply
 │       │                  # count) over one authenticated GET — a route, not an
 │       │                  # action, so a refresh never queues ahead of Send
+│       ├── dashboard/inbox/media/ # ★ a photo or PDF from the inbox (slice 6): a
+│       │                  # route because a server action's body caps at 6 MB;
+│       │                  # the SAME gate as a text reply (inbox-gate.ts), then
+│       │                  # prepare → Meta upload → our copy → send → file
 │       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 2 credits
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
@@ -4120,6 +4233,18 @@ wholesip/
 │   │                          # one-credit charge) and mink-answer.ts (the
 │   │                          # orchestration: gate, headroom, facts, model, charge,
 │   │                          # send or hand over).
+│   │                          # The full inbox (slice 6): inbox-workspace.ts (pure:
+│   │                          # label/saved-reply validators, {{name}} fill, the
+│   │                          # prefix search query, snippet split), inbox-team.ts
+│   │                          # (assign, labels, notes, saved replies, store-scoped
+│   │                          # writes), inbox-gate.ts (the view/manage/send gate the
+│   │                          # actions and the media route share), inbox-media.ts
+│   │                          # (prepare a photo/PDF by its bytes; Meta upload, our
+│   │                          # copy, send, file, in that order); inbox.ts gained
+│   │                          # fileTemplateInThread (order updates in the thread,
+│   │                          # from worker.ts) and recordOutboundMessage media/quote
+│   │                          # fields; graph.ts uploadMedia + sendMediaMessage;
+│   │                          # send.ts sendWhatsAppMedia.
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
 │   │                          # positional render, carrier match, 6-char sender header
 │   │                          # and segment cost, plus the one send choke point, queue,
@@ -5389,7 +5514,12 @@ wholesip/
 │                              # 0207 seed, and replaces the inbox guide's sentence
 │                              # about a role editor stores no longer have. It
 │                              # requires both 0207 and 0204, so it stays last in
-│                              # both orders. Next free: 0209.
+│                              # both orders. 0209 adds the full inbox's four
+│                              # service-only tables (labels, conversation labels,
+│                              # notes, saved replies), the assignee index and the
+│                              # GIN search index over message bodies; 0210 edits
+│                              # the inbox guide in place for it. Both follow 0208.
+│                              # Next free: 0211.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

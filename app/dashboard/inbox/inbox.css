@@ -940,3 +940,547 @@
     display: none;
   }
 }
+
+/* ── Working as a team (slice 6) ────────────────────────────────────────── */
+
+.inbox-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* The assignee and label filters under the status tabs. */
+.inbox-tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.inbox-select.is-sm {
+  padding: 5px 8px;
+  font-size: 12.5px;
+  border-radius: 999px;
+  max-width: 100%;
+}
+.inbox-assignee {
+  max-width: 150px;
+}
+
+/* Label chips: one colour per label, a pale fill with legible ink. */
+.inbox-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: default;
+}
+.inbox-chip.is-sm {
+  padding: 1px 7px;
+  font-size: 11px;
+}
+button.inbox-chip {
+  cursor: pointer;
+}
+button.inbox-chip.is-off {
+  background: var(--dash-surface);
+  border-color: var(--dash-border-strong);
+  color: var(--dash-text-2);
+}
+button.inbox-chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.inbox-chip.is-grey {
+  background: #e5e7eb;
+  color: #1f2937;
+}
+.inbox-chip.is-red {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.inbox-chip.is-orange {
+  background: #ffedd5;
+  color: #9a3412;
+}
+.inbox-chip.is-yellow {
+  background: #fef3c7;
+  color: #92400e;
+}
+.inbox-chip.is-green {
+  background: #dcfce7;
+  color: #166534;
+}
+.inbox-chip.is-blue {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.inbox-chip.is-purple {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+.inbox-chip.is-pink {
+  background: #fce7f3;
+  color: #9d174d;
+}
+
+/* The same colours as a dot on a list row. */
+.inbox-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+.inbox-dot.is-grey {
+  background: #9ca3af;
+}
+.inbox-dot.is-red {
+  background: #ef4444;
+}
+.inbox-dot.is-orange {
+  background: #f97316;
+}
+.inbox-dot.is-yellow {
+  background: #eab308;
+}
+.inbox-dot.is-green {
+  background: #22c55e;
+}
+.inbox-dot.is-blue {
+  background: #3b82f6;
+}
+.inbox-dot.is-purple {
+  background: #8b5cf6;
+}
+.inbox-dot.is-pink {
+  background: #ec4899;
+}
+
+.inbox-swatches {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.inbox-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.inbox-swatch.is-on {
+  border-color: var(--dash-text);
+}
+.inbox-swatch.is-grey {
+  background: #9ca3af;
+}
+.inbox-swatch.is-red {
+  background: #ef4444;
+}
+.inbox-swatch.is-orange {
+  background: #f97316;
+}
+.inbox-swatch.is-yellow {
+  background: #eab308;
+}
+.inbox-swatch.is-green {
+  background: #22c55e;
+}
+.inbox-swatch.is-blue {
+  background: #3b82f6;
+}
+.inbox-swatch.is-purple {
+  background: #8b5cf6;
+}
+.inbox-swatch.is-pink {
+  background: #ec4899;
+}
+
+.inbox-row-tags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  min-height: 14px;
+}
+.inbox-row-assignee {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--dash-text-2);
+  background: var(--inbox-bar);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+.inbox-row-snippet mark {
+  background: #fef08a;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.inbox-thread-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+.inbox-labels-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--inbox-bar);
+  border-bottom: 1px solid var(--dash-border);
+}
+
+/* A private note between the bubbles. */
+.inbox-note-row {
+  display: flex;
+  justify-content: center;
+  padding: 4px 8px;
+}
+.inbox-note-card {
+  max-width: min(78%, 520px);
+  background: #fef9c3;
+  color: #713f12;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  padding: 7px 12px 8px;
+  font-size: 13.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.inbox-note-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.inbox-note-head time {
+  font-weight: 400;
+  opacity: 0.8;
+}
+.inbox-note-delete {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+  display: inline-flex;
+  padding: 2px;
+}
+.inbox-note-delete:hover {
+  opacity: 1;
+}
+
+/* A quoted message inside a bubble, WhatsApp's bar-and-strip. */
+.inbox-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-left: 3px solid var(--inbox-green);
+  background: rgba(11, 20, 26, 0.05);
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  max-width: 100%;
+}
+.inbox-quote-who {
+  font-weight: 600;
+  color: var(--inbox-green-hover);
+  font-size: 12px;
+}
+.inbox-quote-text {
+  color: var(--dash-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Reply appears on hover (and on focus); on touch it is always there. */
+.inbox-bubble {
+  position: relative;
+}
+.inbox-bubble-reply {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  border: 0;
+  background: var(--dash-surface);
+  color: var(--dash-text-2);
+  border-radius: 999px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--inbox-bubble-shadow);
+  opacity: 0;
+}
+.inbox-bubble:hover .inbox-bubble-reply,
+.inbox-bubble-reply:focus-visible,
+.inbox-bubble:focus-within .inbox-bubble-reply {
+  opacity: 1;
+}
+@media (hover: none) {
+  .inbox-bubble-reply {
+    opacity: 0.7;
+  }
+}
+.inbox-bubble-row.is-hit .inbox-bubble {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+}
+.inbox-note-row.is-hit .inbox-note-card {
+  outline: 2px solid #f59e0b;
+}
+
+/* The composer's modes, reply-to bar, attachment row and picker. */
+.inbox-mode {
+  display: flex;
+  gap: 4px;
+}
+.inbox-mode-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--dash-text-2);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.inbox-mode-tab.is-active {
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  box-shadow: var(--inbox-bubble-shadow);
+}
+.inbox-mode-tab.is-note.is-active {
+  background: #fef9c3;
+  color: #713f12;
+}
+.inbox-composer.is-note {
+  background: #fefce8;
+}
+.inbox-composer.is-note textarea {
+  background: #fffbeb;
+}
+.inbox-send.is-note {
+  background: #ca8a04;
+}
+.inbox-composer.is-locked .inbox-locked-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.inbox-replyto,
+.inbox-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--dash-surface);
+  border: 1px solid var(--dash-border);
+  border-left: 3px solid var(--inbox-green);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--dash-text-2);
+  min-width: 0;
+}
+.inbox-replyto-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inbox-attachment-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dash-text);
+}
+.inbox-attachment-size {
+  color: var(--dash-text-3);
+}
+.inbox-icon-btn.is-sm {
+  width: 28px;
+  height: 28px;
+}
+.inbox-attach {
+  flex-shrink: 0;
+  height: 42px;
+  width: 42px;
+}
+.inbox-canned {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  background: var(--dash-surface);
+  border: 1px solid var(--dash-border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(11, 20, 26, 0.1);
+  max-height: 220px;
+  overflow-y: auto;
+}
+.inbox-canned li button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--dash-text);
+  font-size: 13px;
+}
+.inbox-canned li button:hover,
+.inbox-canned li button:focus-visible {
+  background: var(--inbox-bar);
+}
+.inbox-canned code {
+  color: var(--inbox-green-hover);
+  font-weight: 600;
+  font-size: 12px;
+}
+.inbox-canned-title {
+  font-weight: 500;
+}
+.inbox-canned-body {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--dash-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inbox-canned-empty {
+  padding: 6px 8px;
+  font-size: 12.5px;
+  color: var(--dash-text-3);
+}
+
+/* The managers (labels, saved replies). */
+.inbox-dialog-wide {
+  max-width: 640px;
+}
+.inbox-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.inbox-manage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.inbox-manage-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--dash-border);
+}
+.inbox-manage-list li > form {
+  flex: 1;
+}
+.inbox-manage-row-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+}
+.inbox-manage-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0;
+}
+.inbox-manage-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 8px;
+}
+.inbox-manage-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.inbox-field textarea {
+  border: 1px solid var(--dash-border-strong);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+.inbox-shortcut-input {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--dash-border-strong);
+  background: var(--dash-surface);
+  border-radius: 8px;
+  padding-left: 10px;
+  color: var(--dash-text-3);
+}
+.inbox-shortcut-input input {
+  border: 0;
+  background: transparent;
+  padding: 8px 10px 8px 2px;
+  font-size: 13px;
+  color: var(--dash-text);
+  min-width: 0;
+  flex: 1;
+}
+.inbox-manage-reply {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.inbox-manage-reply-head {
+  font-size: 13px;
+  font-weight: 500;
+}
+.inbox-manage-reply-head code {
+  color: var(--inbox-green-hover);
+  margin-right: 4px;
+}
+.inbox-manage-reply-body {
+  font-size: 12.5px;
+  color: var(--dash-text-3);
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

@@ -46,6 +46,7 @@ interface GraphErrorBody {
 }
 
 const TIMEOUT_MS = 20_000;
+const UPLOAD_TIMEOUT_MS = 60_000;
 
 export interface GraphRequest {
   method?: "GET" | "POST" | "DELETE";
@@ -57,6 +58,8 @@ export interface GraphRequest {
   query?: Record<string, string>;
   /** JSON body (POST). */
   body?: unknown;
+  /** A multipart body (the media upload); fetch sets the boundary header. */
+  form?: FormData;
 }
 
 /**
@@ -76,14 +79,21 @@ export async function graphRequest<T>(
   const headers: Record<string, string> = {};
   if (req.token) headers.authorization = `Bearer ${req.token}`;
   if (req.body !== undefined) headers["content-type"] = "application/json";
+  const hasBody = req.body !== undefined || req.form !== undefined;
 
   let res: Response;
   try {
     res = await fetch(url, {
-      method: req.method ?? (req.body !== undefined ? "POST" : "GET"),
+      method: req.method ?? (hasBody ? "POST" : "GET"),
       headers,
-      body: req.body !== undefined ? JSON.stringify(req.body) : undefined,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      body:
+        req.form !== undefined
+          ? req.form
+          : req.body !== undefined
+            ? JSON.stringify(req.body)
+            : undefined,
+      // An upload carries up to 16 MB; a message is a few hundred bytes.
+      signal: AbortSignal.timeout(req.form ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS),
     });
   } catch (err) {
     // Never reached Meta, or never heard back. The request may have landed.
@@ -554,6 +564,87 @@ export async function sendInteractiveMessage(
 }
 
 // ── Media ───────────────────────────────────────────────────────────────────
+
+export type OutboundMediaKind = "image" | "document";
+
+export interface SendMediaInput {
+  /** Digits only. */
+  to: string;
+  kind: OutboundMediaKind;
+  /** The id Meta returned from `uploadMedia`. */
+  mediaId: string;
+  caption?: string | null;
+  /** Shown to the customer for a document. */
+  filename?: string | null;
+  replyToProviderId?: string | null;
+}
+
+/**
+ * One photo or document, by the media id an upload returned. Only
+ * lib/whatsapp/send.ts may call this (send-coverage.test.ts).
+ */
+export async function sendMediaMessage(
+  token: string,
+  phoneNumberId: string,
+  input: SendMediaInput,
+): Promise<GraphResult<SendMessageData>> {
+  const media: Record<string, string> = { id: input.mediaId };
+  if (input.caption) media.caption = input.caption;
+  if (input.kind === "document" && input.filename) {
+    media.filename = input.filename;
+  }
+  return graphRequest<SendMessageData>({
+    method: "POST",
+    path: `/${encodeURIComponent(phoneNumberId)}/messages`,
+    token,
+    body: {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: input.to,
+      type: input.kind,
+      ...(input.replyToProviderId
+        ? { context: { message_id: input.replyToProviderId } }
+        : {}),
+      [input.kind]: media,
+    },
+  });
+}
+
+/**
+ * Upload a file to Meta ahead of sending it (Cloud API media endpoint). The
+ * id it returns is good for 30 days and can be sent to any number on the
+ * same phone number id. The bytes go to Meta ONLY: our own copy is written
+ * to the bucket by the caller.
+ */
+export async function uploadMedia(
+  token: string,
+  phoneNumberId: string,
+  input: { bytes: Uint8Array; mime: string; filename: string },
+): Promise<GraphResult<{ id: string }>> {
+  const form = new FormData();
+  form.set("messaging_product", "whatsapp");
+  form.set("type", input.mime);
+  form.set(
+    "file",
+    new Blob([input.bytes as BlobPart], { type: input.mime }),
+    input.filename,
+  );
+  const r = await graphRequest<{ id?: string }>({
+    method: "POST",
+    path: `/${encodeURIComponent(phoneNumberId)}/media`,
+    token,
+    form,
+  });
+  if (!r.ok) return r;
+  if (!r.data.id) {
+    return {
+      ok: false,
+      outcome: "unknown",
+      error: "Meta returned no media id.",
+    };
+  }
+  return { ok: true, data: { id: r.data.id } };
+}
 
 export interface MediaInfo {
   id: string;

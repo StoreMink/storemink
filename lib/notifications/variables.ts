@@ -319,6 +319,13 @@ const EVENT_VARIABLES: Partial<Record<EventKey, TemplateVariable[]>> = {
       sample: "Is the blue one back in stock?",
     },
   ],
+  "whatsapp.conversation_assigned": [
+    {
+      name: "assigned_by",
+      description: "Who assigned the conversation.",
+      sample: "Priya Sharma",
+    },
+  ],
   "blog.submitted": [
     {
       name: "slug",
@@ -474,6 +481,7 @@ const SUBJECT_LABEL_SAMPLES: Partial<Record<EventKey, string>> = {
   "customer.signed_up": "Priya Sharma",
   "enquiry.received": "Bulk order question",
   "whatsapp.message_received": "Priya Sharma",
+  "whatsapp.conversation_assigned": "Rohan",
   "blog.submitted": "How we cold-press our juice",
   "blog.published": "How we cold-press our juice",
   "blog.approved": "How we cold-press our juice",

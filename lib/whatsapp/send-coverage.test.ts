@@ -39,9 +39,12 @@ function filesCalling(pattern: string): string[] {
 
 describe("whatsapp send coverage", () => {
   it("nothing sends a WhatsApp message outside the choke point", () => {
-    // Both Graph sends: the template one the notification spine uses and the
-    // free-form one the inbox uses (slice 3).
-    const rogue = filesCalling("send(Template|Text|Interactive)Message\\(");
+    // Every Graph send: the template one the notification spine uses, the
+    // free-form and reply-button ones the inbox and the automatic replies
+    // use, and the photo/document one the inbox uses (slice 6).
+    const rogue = filesCalling(
+      "send(Template|Text|Interactive|Media)Message\\(",
+    );
     expect(
       rogue,
       rogue.length
@@ -51,6 +54,15 @@ describe("whatsapp send coverage", () => {
             `\n\nUse sendWhatsAppTemplate() from lib/whatsapp/send.ts instead.\n`
         : "",
     ).toEqual([]);
+  });
+
+  it("nothing uploads a file to Meta outside the inbox media path", () => {
+    // An upload is not a send, but it is the only way a file reaches a
+    // customer, so it stays beside the one module that then sends it.
+    const rogue = filesCalling("uploadMedia\\(").filter(
+      (f) => f !== "lib/whatsapp/inbox-media.ts",
+    );
+    expect(rogue).toEqual([]);
   });
 
   // The Graph API is reached by URL as well as by function name, so a new

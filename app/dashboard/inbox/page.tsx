@@ -5,6 +5,7 @@ import { pickParam } from "../lib/list-params";
 import {
   getInboxConversations,
   getInboxTemplates,
+  getInboxWorkspace,
 } from "@/app/actions/inbox-actions";
 import { getWhatsAppChannelState } from "@/app/actions/whatsapp-provider-actions";
 import { InboxClient } from "./inbox-client";
@@ -22,10 +23,11 @@ export default async function InboxPage({
   const sp = await searchParams;
   const open = pickParam(sp.c);
 
-  const [channel, list, templates] = await Promise.all([
+  const [channel, list, templates, workspace] = await Promise.all([
     getWhatsAppChannelState(),
     getInboxConversations({ filter: "all", q: "", page: 1 }),
     getInboxTemplates(),
+    getInboxWorkspace(),
   ]);
 
   if (!channel.connected) {
@@ -64,6 +66,7 @@ export default async function InboxPage({
     <InboxClient
       initial={list}
       templates={templates.templates}
+      workspace={workspace.workspace}
       canManage={access.can("inbox", "manage")}
       channelLive={channel.enabled && channel.status === "connected"}
       initialConversationId={open || null}

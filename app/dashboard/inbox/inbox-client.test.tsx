@@ -18,16 +18,58 @@ vi.mock("@/app/actions/inbox-actions", () => ({
   sendMinkDraft: vi.fn(async () => ({ ok: true, messageId: "m" })),
   discardMinkDraft: vi.fn(async () => ({ ok: true })),
   setInboxConversationStatus: vi.fn(async () => ({ ok: true })),
+  assignInboxConversation: vi.fn(async (input: { adminId: string | null }) => ({
+    ok: true,
+    assignedAdminId: input.adminId,
+  })),
+  setInboxConversationLabels: vi.fn(async (input: { labelIds: string[] }) => ({
+    ok: true,
+    labelIds: input.labelIds,
+  })),
+  addInboxNote: vi.fn(async () => ({ ok: true, id: "n9" })),
+  deleteInboxNote: vi.fn(async () => ({ ok: true })),
+  getInboxWorkspace: vi.fn(),
 }));
+// The managers are their own component; here they would only add dialogs.
+vi.mock("./inbox-manage", () => ({ InboxManageButtons: () => null }));
 
 import { InboxClient } from "./inbox-client";
 import {
+  addInboxNote,
+  assignInboxConversation,
   discardMinkDraft,
   getInboxThread,
   sendInboxReply,
   sendMinkDraft,
+  setInboxConversationLabels,
 } from "@/app/actions/inbox-actions";
-import type { InboxListResult, InboxThread } from "@/lib/whatsapp/inbox-types";
+import type {
+  InboxListResult,
+  InboxMessageRow,
+  InboxThread,
+  InboxWorkspace,
+} from "@/lib/whatsapp/inbox-types";
+
+const WS: InboxWorkspace = {
+  me: { id: "admin-1", name: "Priya" },
+  assignees: [
+    { id: "admin-1", name: "Priya" },
+    { id: "admin-2", name: "Arjun Mehta" },
+  ],
+  labels: [
+    { id: "l1", name: "VIP", color: "purple" },
+    { id: "l2", name: "Wholesale", color: "blue" },
+  ],
+  cannedReplies: [
+    {
+      id: "r1",
+      shortcut: "hours",
+      title: "Opening hours",
+      body: "Hi {{name}}, 10 to 7.",
+    },
+    { id: "r2", shortcut: "ship", title: "Shipping", body: "Ships in 2 days." },
+  ],
+};
 
 const CONV = "22222222-2222-4222-8222-222222222222";
 
@@ -46,6 +88,8 @@ const row = (over: Record<string, unknown> = {}) => ({
     userId: null,
   },
   windowOpen: true,
+  assignedAdminId: null,
+  labelIds: [],
   ...over,
 });
 
@@ -72,6 +116,8 @@ const thread = (over: Partial<InboxThread> = {}): InboxThread => ({
       error: null,
       sentAt: new Date().toISOString(),
       sentBy: null,
+      providerMessageId: "wamid.in1",
+      quotedProviderId: null,
     },
   ],
   window: {
@@ -101,6 +147,7 @@ describe("InboxClient", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage
         channelLive
         initialConversationId={null}
@@ -117,6 +164,7 @@ describe("InboxClient", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage
         channelLive
         initialConversationId={null}
@@ -135,6 +183,7 @@ describe("InboxClient", () => {
       expect(sendInboxReply).toHaveBeenCalledWith({
         conversationId: CONV,
         text: "Yes, in stock",
+        replyToMessageId: null,
       }),
     );
   });
@@ -155,6 +204,7 @@ describe("InboxClient", () => {
             variables: ["customer_name"],
           },
         ]}
+        workspace={WS}
         canManage
         channelLive
         initialConversationId={CONV}
@@ -172,6 +222,7 @@ describe("InboxClient", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage={false}
         channelLive
         initialConversationId={CONV}
@@ -222,6 +273,7 @@ describe("InboxClient", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage
         channelLive
         initialConversationId={CONV}
@@ -253,6 +305,7 @@ describe("InboxClient", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage
         channelLive
         initialConversationId={CONV}
@@ -272,6 +325,7 @@ describe("InboxClient", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage
         channelLive
         initialConversationId={null}
@@ -293,6 +347,7 @@ describe("InboxClient", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage
         channelLive={false}
         initialConversationId={CONV}
@@ -325,6 +380,7 @@ describe("InboxClient: Mink's draft", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage
         channelLive
         initialConversationId={CONV}
@@ -357,6 +413,7 @@ describe("InboxClient: Mink's draft", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage
         channelLive
         initialConversationId={CONV}
@@ -383,6 +440,7 @@ describe("InboxClient: Mink's draft", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage={false}
         channelLive
         initialConversationId={CONV}
@@ -402,6 +460,7 @@ describe("InboxClient: Mink's draft", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage
         channelLive
         initialConversationId={CONV}
@@ -433,6 +492,8 @@ describe("InboxClient: Mink's draft", () => {
             error: null,
             sentAt: new Date().toISOString(),
             sentBy: null,
+            providerMessageId: null,
+            quotedProviderId: null,
           },
           {
             id: "m3",
@@ -448,6 +509,8 @@ describe("InboxClient: Mink's draft", () => {
             error: null,
             sentAt: new Date(Date.now() + 10 * 60_000).toISOString(),
             sentBy: "Priya",
+            providerMessageId: null,
+            quotedProviderId: null,
           },
         ],
       }),
@@ -456,6 +519,7 @@ describe("InboxClient: Mink's draft", () => {
       <InboxClient
         initial={list()}
         templates={[]}
+        workspace={WS}
         canManage
         channelLive
         initialConversationId={CONV}
@@ -463,5 +527,299 @@ describe("InboxClient: Mink's draft", () => {
     );
     expect(await screen.findByText("Mink AI")).toBeInTheDocument();
     expect(screen.getByText("Priya · from a Mink draft")).toBeInTheDocument();
+  });
+});
+
+describe("InboxClient: working as a team (slice 6)", () => {
+  const out = (over: Partial<InboxMessageRow>): InboxMessageRow => ({
+    id: "o1",
+    direction: "out",
+    source: "dashboard",
+    kind: "text",
+    body: "Yes, in stock",
+    mediaUrl: null,
+    mediaMime: null,
+    mediaName: null,
+    payload: null,
+    status: "sent",
+    error: null,
+    sentAt: new Date(Date.now() + 60_000).toISOString(),
+    sentBy: "Priya",
+    providerMessageId: "wamid.out1",
+    quotedProviderId: null,
+    ...over,
+  });
+
+  it("the assignee and label filters go to the list route", async () => {
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={null}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Assigned to"), {
+      target: { value: "me" },
+    });
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some((c) => String(c[0]).includes("assignee=me")),
+      ).toBe(true),
+    );
+    fireEvent.change(screen.getByLabelText("Label"), {
+      target: { value: "l2" },
+    });
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some((c) => String(c[0]).includes("label=l2")),
+      ).toBe(true),
+    );
+  });
+
+  it("a row shows its labels, its assignee and a search hit's line", () => {
+    render(
+      <InboxClient
+        initial={list([
+          row({
+            labelIds: ["l1"],
+            assignedAdminId: "admin-2",
+            match: { messageId: "m1", snippet: "is it in «stock»?" },
+          }),
+        ])}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={null}
+      />,
+    );
+    expect(screen.getByLabelText("VIP")).toBeInTheDocument();
+    expect(screen.getByTitle("Assigned to Arjun Mehta")).toHaveTextContent(
+      "AM",
+    );
+    expect(screen.getByText("stock").tagName).toBe("MARK");
+  });
+
+  it("★ assigning and labelling from the thread call the actions and update the row", async () => {
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    await screen.findByLabelText("Reply");
+    // The thread's assignee select (the list's filter has the same label).
+    const selects = screen.getAllByLabelText("Assigned to");
+    const threadSelect = selects[selects.length - 1]!;
+    fireEvent.change(threadSelect, { target: { value: "admin-2" } });
+    await waitFor(() =>
+      expect(assignInboxConversation).toHaveBeenCalledWith({
+        conversationId: CONV,
+        adminId: "admin-2",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Labels" }));
+    fireEvent.click(screen.getByRole("button", { name: "Wholesale" }));
+    await waitFor(() =>
+      expect(setInboxConversationLabels).toHaveBeenCalledWith({
+        conversationId: CONV,
+        labelIds: ["l2"],
+      }),
+    );
+  });
+
+  it("★ a note reads as a note, and the Note tab writes one without sending", async () => {
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({
+        messages: [
+          ...thread().messages,
+          out({
+            id: "n1",
+            source: "note",
+            kind: "note",
+            body: "Regular, wants bulk pricing",
+            status: "note",
+            providerMessageId: null,
+          }),
+        ],
+      }),
+    });
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    expect(
+      await screen.findByText("Regular, wants bulk pricing"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Note · Priya/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Note/ }));
+    fireEvent.change(screen.getByLabelText("Note"), {
+      target: { value: "Call back Monday" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Note"), { key: "Enter" });
+    await waitFor(() =>
+      expect(addInboxNote).toHaveBeenCalledWith({
+        conversationId: CONV,
+        body: "Call back Monday",
+      }),
+    );
+    expect(sendInboxReply).not.toHaveBeenCalled();
+  });
+
+  it("★ a reply can quote a message, and a quote is drawn with who said it", async () => {
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({
+        messages: [
+          ...thread().messages,
+          out({ quotedProviderId: "wamid.in1" }),
+        ],
+      }),
+    });
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    await screen.findByLabelText("Reply");
+    // The sent reply quotes the customer's message: their name and its text.
+    expect(
+      screen.getByText("Rohan", { selector: ".inbox-quote-who" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Reply to this message" })[0]!,
+    );
+    expect(screen.getByText(/Replying to Rohan/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Reply"), {
+      target: { value: "Yes" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Reply"), { key: "Enter" });
+    await waitFor(() =>
+      expect(sendInboxReply).toHaveBeenCalledWith({
+        conversationId: CONV,
+        text: "Yes",
+        replyToMessageId: "m1",
+      }),
+    );
+  });
+
+  it("★ '/' opens the saved replies, Enter takes the first, with the customer's name filled in", async () => {
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    const box = await screen.findByLabelText("Reply");
+    fireEvent.change(box, { target: { value: "/ho" } });
+    expect(
+      screen.getByRole("listbox", { name: "Saved replies" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Shipping")).not.toBeInTheDocument();
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect((box as HTMLTextAreaElement).value).toBe("Hi Rohan, 10 to 7.");
+    expect(sendInboxReply).not.toHaveBeenCalled();
+  });
+
+  it("★ a chosen file goes to the media route with the caption, never through the text action", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).includes("/inbox/media")
+          ? {
+              ok: true,
+              status: 200,
+              json: async () => ({ ok: true, messageId: "m" }),
+            }
+          : { ok: true, json: async () => list() },
+      ),
+    );
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    await screen.findByLabelText("Reply");
+    const input =
+      document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const file = new File([new Uint8Array([1, 2, 3])], "size-chart.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(screen.getByText("size-chart.pdf")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Reply"), {
+      target: { value: "Here you go" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => {
+      const call = vi
+        .mocked(fetch)
+        .mock.calls.find((c) => String(c[0]).includes("/inbox/media"));
+      expect(call).toBeTruthy();
+      const body = (call![1] as RequestInit).body as FormData;
+      expect(body.get("conversationId")).toBe(CONV);
+      expect(body.get("caption")).toBe("Here you go");
+      expect((body.get("file") as File).name).toBe("size-chart.pdf");
+    });
+    expect(sendInboxReply).not.toHaveBeenCalled();
+  });
+
+  it("a viewer sees labels and the assignee but no controls", async () => {
+    render(
+      <InboxClient
+        initial={list([row({ labelIds: ["l1"], assignedAdminId: "admin-2" })])}
+        templates={[]}
+        workspace={WS}
+        canManage={false}
+        channelLive
+        initialConversationId={null}
+      />,
+    );
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({
+        conversation: row({
+          labelIds: ["l1"],
+          assignedAdminId: "admin-2",
+        }) as any,
+      }),
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Rohan/ }));
+    expect(
+      await screen.findByText(/Assigned to Arjun Mehta/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Labels" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Note/ })).not.toBeInTheDocument();
   });
 });

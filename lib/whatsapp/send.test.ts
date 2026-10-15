@@ -11,14 +11,23 @@ vi.mock("./graph", () => ({
   sendTemplateMessage: vi.fn(),
   sendTextMessage: vi.fn(),
   sendInteractiveMessage: vi.fn(),
+  sendMediaMessage: vi.fn(),
 }));
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
 }));
 
-import { sendInteractiveMessage, sendTemplateMessage } from "./graph";
-import { sendWhatsAppInteractive, sendWhatsAppTemplate } from "./send";
+import {
+  sendInteractiveMessage,
+  sendMediaMessage,
+  sendTemplateMessage,
+} from "./graph";
+import {
+  sendWhatsAppInteractive,
+  sendWhatsAppMedia,
+  sendWhatsAppTemplate,
+} from "./send";
 import { whatsappLogs } from "@/drizzle/schema";
 
 const INPUT = {
@@ -188,5 +197,87 @@ describe("sendWhatsAppInteractive", () => {
       await sendWhatsAppInteractive({ ...MENU, buttons: [] }),
     ).toMatchObject({ sent: false, outcome: "skipped", error: "No buttons." });
     expect(sendInteractiveMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("sendWhatsAppMedia (slice 6)", () => {
+  const PHOTO = {
+    storeId: "store-1",
+    to: "+919876543210",
+    token: "tok",
+    phoneNumberId: "P",
+    kind: "image" as const,
+    mediaId: "MEDIA1",
+    caption: "  Here it is  ",
+    replyToProviderId: "wamid.in1",
+  };
+
+  it("★ sends by media id with the caption and the quote, and logs the caption as the body", async () => {
+    vi.mocked(sendMediaMessage).mockResolvedValue({
+      ok: true,
+      data: { messages: [{ id: "wamid.img" }] },
+    });
+    const r = await sendWhatsAppMedia(PHOTO);
+    expect(r).toEqual({ sent: true, messageId: "wamid.img", logId: "log-1" });
+    expect(sendMediaMessage).toHaveBeenCalledWith("tok", "P", {
+      to: "919876543210",
+      kind: "image",
+      mediaId: "MEDIA1",
+      caption: "Here it is",
+      filename: null,
+      replyToProviderId: "wamid.in1",
+    });
+    expect(loggedRow()).toMatchObject({
+      body: "Here it is",
+      category: "SERVICE",
+      status: "sent",
+      providerMessageId: "wamid.img",
+    });
+  });
+
+  it("a document with no caption is logged by its name, so the log answers 'did it go?'", async () => {
+    vi.mocked(sendMediaMessage).mockResolvedValue({
+      ok: true,
+      data: { messages: [{ id: "wamid.doc" }] },
+    });
+    await sendWhatsAppMedia({
+      ...PHOTO,
+      kind: "document",
+      caption: null,
+      filename: "size-chart.pdf",
+      replyToProviderId: null,
+    });
+    expect(sendMediaMessage).toHaveBeenCalledWith(
+      "tok",
+      "P",
+      expect.objectContaining({
+        kind: "document",
+        caption: null,
+        filename: "size-chart.pdf",
+      }),
+    );
+    expect(loggedRow()).toMatchObject({
+      body: "📄 size-chart.pdf",
+      status: "sent",
+    });
+  });
+
+  it("skips with a log row when there is no file id, and never calls Meta", async () => {
+    const r = await sendWhatsAppMedia({ ...PHOTO, mediaId: "" });
+    expect(r).toMatchObject({ sent: false, outcome: "skipped" });
+    expect(sendMediaMessage).not.toHaveBeenCalled();
+    expect(loggedRow()).toMatchObject({ status: "skipped" });
+  });
+
+  it("a rejection is logged failed with Meta's code", async () => {
+    vi.mocked(sendMediaMessage).mockResolvedValue({
+      ok: false,
+      outcome: "rejected",
+      error: "Unsupported media",
+      code: 131053,
+    });
+    const r = await sendWhatsAppMedia(PHOTO);
+    expect(r).toMatchObject({ sent: false, outcome: "rejected", code: 131053 });
+    expect(loggedRow()).toMatchObject({ status: "failed", errorCode: 131053 });
   });
 });

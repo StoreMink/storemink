@@ -7674,6 +7674,108 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261015_0209_whatsapp_inbox_full",
+      "description": "WhatsApp inbox, the full version: labels, conversation labels, private notes and saved replies (four service-only tables), the assignee index, and a GIN index over message bodies for search inside conversations",
+      "file": "sql/20261015_0209_whatsapp_inbox_full.sql",
+      "transaction": true,
+      "requires": ["20261015_0208_inbox_role_grants"],
+      "verify": {
+        "tables": [
+          "whatsapp_labels",
+          "whatsapp_conversation_labels",
+          "whatsapp_conversation_notes",
+          "whatsapp_canned_replies"
+        ],
+        "columns": [
+          "whatsapp_labels.color",
+          "whatsapp_conversation_notes.admin_id",
+          "whatsapp_canned_replies.shortcut"
+        ],
+        "constraints": [
+          "whatsapp_labels_name_check",
+          "whatsapp_labels_color_check",
+          "whatsapp_conversation_labels_pkey",
+          "whatsapp_conversation_notes_body_check",
+          "whatsapp_canned_replies_shortcut_check",
+          "whatsapp_canned_replies_title_check",
+          "whatsapp_canned_replies_body_check"
+        ],
+        "rlsTables": [
+          "whatsapp_labels",
+          "whatsapp_conversation_labels",
+          "whatsapp_conversation_notes",
+          "whatsapp_canned_replies"
+        ],
+        "queries": [
+          {
+            "name": "message bodies carry a GIN search index over the simple configuration",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and indexname = 'whatsapp_messages_body_search_idx' and indexdef like '%USING gin%' and indexdef like '%to_tsvector(''simple''::regconfig%'",
+            "equals": "1"
+          },
+          {
+            "name": "conversations carry the assignee index",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and indexname = 'whatsapp_conversations_store_assignee_idx'",
+            "equals": "1"
+          },
+          {
+            "name": "a label name is unique per store ignoring case, a shortcut unique per store",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and indexname in ('whatsapp_labels_store_name_key','whatsapp_canned_replies_store_shortcut_key') and indexdef like 'CREATE UNIQUE INDEX%'",
+            "equals": "2"
+          },
+          {
+            "name": "app_user holds no privilege on the four new tables",
+            "sql": "select count(*)::text from information_schema.role_table_grants where grantee = 'app_user' and table_schema = 'public' and table_name in ('whatsapp_labels','whatsapp_conversation_labels','whatsapp_conversation_notes','whatsapp_canned_replies')",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261015_0210_whatsapp_full_inbox_help",
+      "description": "The inbox guide edited in place for the full inbox: photo and PDF replies, search inside conversations, and a team section (assign, label, note, saved replies, quoted replies, order updates in the thread)",
+      "file": "sql/20261015_0210_whatsapp_full_inbox_help.sql",
+      "transaction": true,
+      "requires": ["20261015_0209_whatsapp_inbox_full"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the inbox guide explains sending a photo or PDF from the dashboard",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%paperclip beside the message box%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide no longer says dashboard replies are text only",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%to send a photo or file, reply from your phone%'",
+            "equals": "0"
+          },
+          {
+            "name": "the inbox guide has the team section",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%<h2>Work on conversations as a team</h2>%' and body like '%type <strong>/</strong> in the message box to pick one%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide says search reaches a word inside a conversation",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%a word from any message%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old search sentence is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%search by name or phone number.%'",
+            "equals": "0"
+          },
+          {
+            "name": "the STOP section still follows the team section exactly once",
+            "sql": "select (length(body) - length(replace(body, '<h2>When a customer writes STOP</h2>', ''))) / length('<h2>When a customer writes STOP</h2>') from public.help_articles where slug = 'reply-to-whatsapp-messages'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

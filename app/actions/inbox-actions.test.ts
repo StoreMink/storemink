@@ -39,7 +39,35 @@ vi.mock("@/lib/whatsapp/inbox-read", () => ({
   listReplyTemplates: vi.fn(async () => []),
   loadConversation: vi.fn(),
   loadThread: vi.fn(),
+  loadQuotableProviderId: vi.fn(async () => null),
+  listInboxLabels: vi.fn(async () => [
+    { id: "l1", name: "VIP", color: "purple" },
+  ]),
+  listInboxAssignees: vi.fn(async () => [
+    { id: "admin-1", name: "Priya" },
+    { id: "admin-2", name: "Arjun" },
+  ]),
+  listCannedReplies: vi.fn(async () => []),
 }));
+vi.mock("@/lib/whatsapp/inbox-team", () => ({
+  assignConversation: vi.fn(async () => ({
+    ok: true,
+    value: { changed: true, previous: null },
+  })),
+  setConversationLabels: vi.fn(
+    async (_db: unknown, i: { labelIds: string[] }) => ({
+      ok: true,
+      value: { labelIds: i.labelIds },
+    }),
+  ),
+  saveLabel: vi.fn(async () => ({ ok: true, value: { id: "l-new" } })),
+  deleteLabel: vi.fn(async () => ({ ok: true, value: null })),
+  addNote: vi.fn(async () => ({ ok: true, value: { id: "n1" } })),
+  deleteNote: vi.fn(async () => ({ ok: true, value: null })),
+  saveCannedReply: vi.fn(async () => ({ ok: true, value: { id: "r1" } })),
+  deleteCannedReply: vi.fn(async () => ({ ok: true, value: null })),
+}));
+vi.mock("@/lib/notifications/record", () => ({ emitEvent: vi.fn() }));
 vi.mock("@/lib/whatsapp/send", () => ({
   sendWhatsAppText: vi.fn(),
   sendWhatsAppTemplate: vi.fn(),
@@ -54,14 +82,28 @@ vi.mock("@/lib/whatsapp/mink-drafts", () => ({
 const DRAFT_ID = vi.hoisted(() => "44444444-4444-4444-8444-444444444444");
 
 import {
+  addInboxNote,
+  assignInboxConversation,
   discardMinkDraft,
   getInboxConversations,
+  getInboxWorkspace,
   markInboxRead,
+  saveInboxCannedReply,
+  saveInboxLabel,
   sendInboxReply,
   sendInboxTemplate,
   sendMinkDraft,
+  setInboxConversationLabels,
   setInboxConversationStatus,
 } from "./inbox-actions";
+import { emitEvent } from "@/lib/notifications/record";
+import {
+  addNote,
+  assignConversation,
+  saveCannedReply,
+  saveLabel,
+  setConversationLabels,
+} from "@/lib/whatsapp/inbox-team";
 import {
   chargeMinkAnswer,
   claimMinkDraft,
@@ -71,7 +113,11 @@ import {
 import { getViewerAccess } from "@/app/dashboard/lib/access";
 import { loadWhatsAppSender } from "@/lib/whatsapp/channel";
 import { recordOutboundMessage } from "@/lib/whatsapp/inbox";
-import { listConversations, loadConversation } from "@/lib/whatsapp/inbox-read";
+import {
+  listConversations,
+  loadConversation,
+  loadQuotableProviderId,
+} from "@/lib/whatsapp/inbox-read";
 import { sendWhatsAppTemplate, sendWhatsAppText } from "@/lib/whatsapp/send";
 
 const CONV = "22222222-2222-4222-8222-222222222222";
@@ -84,6 +130,8 @@ const core = (lastInboundAt: string | null) => ({
   lastMessageAt: lastInboundAt,
   lastInboundAt,
   lastPreview: "hi",
+  assignedAdminId: null,
+  labelIds: [],
   contact: {
     id: "k1",
     phone: "+919876543210",
@@ -166,6 +214,7 @@ describe("sendInboxReply", () => {
       token: "tok",
       phoneNumberId: "PN",
       body: "Yes, in stock",
+      replyToProviderId: null,
     });
     expect(recordOutboundMessage).toHaveBeenCalledWith(
       expect.anything(),
@@ -546,5 +595,173 @@ describe("discardMinkDraft, and a reply by hand", () => {
     expect(vi.mocked(discardMinkDrafts).mock.calls[0][1]).not.toHaveProperty(
       "draftId",
     );
+  });
+});
+
+describe("working as a team (slice 6)", () => {
+  const MSG = "55555555-5555-4555-8555-555555555555";
+  const LABEL = "66666666-6666-4666-8666-666666666666";
+
+  it("the list passes the assignee and label filters and who is asking", async () => {
+    await getInboxConversations({
+      filter: "open",
+      assignee: "me",
+      label: LABEL,
+    });
+    expect(listConversations).toHaveBeenCalledWith("s1", {
+      filter: "open",
+      q: "",
+      page: 1,
+      assignee: "me",
+      label: LABEL,
+      viewerId: "admin-1",
+    });
+  });
+
+  it("the workspace names the viewer among the store's people", async () => {
+    const r = await getInboxWorkspace();
+    expect(r.workspace.me).toEqual({ id: "admin-1", name: "Priya" });
+    expect(r.workspace.labels).toHaveLength(1);
+  });
+
+  it("★ a reply that quotes a message looks the message up in ITS conversation and sends the quote", async () => {
+    vi.mocked(loadQuotableProviderId).mockResolvedValue("wamid.in1");
+    const r = await sendInboxReply({
+      conversationId: CONV,
+      text: "Yes",
+      replyToMessageId: MSG,
+    });
+    expect(r.ok).toBe(true);
+    expect(loadQuotableProviderId).toHaveBeenCalledWith("s1", CONV, MSG);
+    expect(sendWhatsAppText).toHaveBeenCalledWith(
+      expect.objectContaining({ replyToProviderId: "wamid.in1" }),
+    );
+    expect(recordOutboundMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ quotedProviderId: "wamid.in1" }),
+    );
+  });
+
+  it("a quote of a message that is not in the thread quotes nothing rather than failing", async () => {
+    vi.mocked(loadQuotableProviderId).mockResolvedValue(null);
+    const r = await sendInboxReply({
+      conversationId: CONV,
+      text: "Yes",
+      replyToMessageId: MSG,
+    });
+    expect(r.ok).toBe(true);
+    expect(sendWhatsAppText).toHaveBeenCalledWith(
+      expect.objectContaining({ replyToProviderId: null }),
+    );
+  });
+
+  it("★ assigning tells only the person it was given to, never the whole team, and not yourself", async () => {
+    const r = await assignInboxConversation({
+      conversationId: CONV,
+      adminId: "admin-2",
+    });
+    expect(r).toEqual({ ok: true, assignedAdminId: "admin-2" });
+    expect(assignConversation).toHaveBeenCalledWith(expect.anything(), {
+      storeId: "s1",
+      conversationId: CONV,
+      adminId: "admin-2",
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "whatsapp.conversation_assigned",
+        storeId: "s1",
+        restrictToAdminIds: ["admin-2"],
+        payload: { assignedBy: "Priya" },
+        subject: expect.objectContaining({ id: CONV, label: "Rohan" }),
+      }),
+    );
+    vi.mocked(emitEvent).mockClear();
+    await assignInboxConversation({ conversationId: CONV, adminId: "admin-1" });
+    expect(emitEvent).not.toHaveBeenCalled();
+    await assignInboxConversation({ conversationId: CONV, adminId: null });
+    expect(emitEvent).not.toHaveBeenCalled();
+  });
+
+  it("assignment needs Inbox manage, and a refused assignee is reported", async () => {
+    access(true, false);
+    expect(
+      (await assignInboxConversation({ conversationId: CONV, adminId: "x" }))
+        .ok,
+    ).toBe(false);
+    access(true, true);
+    vi.mocked(assignConversation).mockResolvedValueOnce({
+      ok: false,
+      code: "not_found",
+      error: "That person is not on this store.",
+    });
+    const r = await assignInboxConversation({
+      conversationId: CONV,
+      adminId: "x",
+    });
+    expect(r).toMatchObject({
+      ok: false,
+      error: "That person is not on this store.",
+    });
+    expect(emitEvent).not.toHaveBeenCalled();
+  });
+
+  it("labels: only well-formed ids reach the write, as one exact set", async () => {
+    const r = await setInboxConversationLabels({
+      conversationId: CONV,
+      labelIds: [LABEL, "junk", LABEL],
+    });
+    expect(r).toEqual({ ok: true, labelIds: [LABEL] });
+    expect(setConversationLabels).toHaveBeenCalledWith(expect.anything(), {
+      storeId: "s1",
+      conversationId: CONV,
+      labelIds: [LABEL],
+    });
+  });
+
+  it("a note is written under the person who wrote it", async () => {
+    const r = await addInboxNote({ conversationId: CONV, body: "Bulk buyer" });
+    expect(r).toEqual({ ok: true, id: "n1" });
+    expect(addNote).toHaveBeenCalledWith(expect.anything(), {
+      storeId: "s1",
+      conversationId: CONV,
+      adminId: "admin-1",
+      body: "Bulk buyer",
+    });
+  });
+
+  it("labels and saved replies are saved under the store, and a bad id is refused before any write", async () => {
+    await saveInboxLabel({ name: "VIP", color: "purple" });
+    expect(saveLabel).toHaveBeenCalledWith(expect.anything(), {
+      storeId: "s1",
+      id: null,
+      name: "VIP",
+      color: "purple",
+    });
+    expect(
+      (await saveInboxLabel({ id: "nope", name: "x", color: "red" })).ok,
+    ).toBe(false);
+    await saveInboxCannedReply({
+      shortcut: "hours",
+      title: "Hours",
+      body: "10 to 7",
+    });
+    expect(saveCannedReply).toHaveBeenCalledWith(expect.anything(), {
+      storeId: "s1",
+      id: null,
+      adminId: "admin-1",
+      shortcut: "hours",
+      title: "Hours",
+      body: "10 to 7",
+    });
+    // A duplicate name is the unique index speaking, in merchant words.
+    vi.mocked(saveLabel).mockRejectedValueOnce(
+      Object.assign(new Error("dup"), { code: "23505" }),
+    );
+    expect(
+      await saveInboxLabel({ name: "VIP", color: "purple" }),
+    ).toMatchObject({
+      ok: false,
+      error: "A label with that name already exists.",
+    });
   });
 });

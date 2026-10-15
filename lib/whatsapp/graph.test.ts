@@ -14,8 +14,10 @@ import {
   isTokenError,
   registerPhoneNumber,
   sendInteractiveMessage,
+  sendMediaMessage,
   sendTemplateMessage,
   subscribeAppToWaba,
+  uploadMedia,
 } from "./graph";
 
 function reply(status: number, body: unknown) {
@@ -268,5 +270,93 @@ describe("deleteMessageTemplate", () => {
     expect(String(url)).toBe(
       "https://graph.facebook.com/v26.0/W/message_templates?name=delivery_delay",
     );
+  });
+});
+
+describe("media out (slice 6)", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  const OLD = { ...process.env };
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.WHATSAPP_GRAPH_VERSION = "v26.0";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...OLD };
+  });
+
+  it("★ uploadMedia posts the bytes as multipart to the number's media endpoint and returns Meta's id", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, { id: "MEDIA1" }));
+    const r = await uploadMedia("TOK", "PN", {
+      bytes: new Uint8Array([1, 2, 3]),
+      mime: "image/jpeg",
+      filename: "p.jpg",
+    });
+    expect(r).toEqual({ ok: true, data: { id: "MEDIA1" } });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("https://graph.facebook.com/v26.0/PN/media");
+    expect(init?.method).toBe("POST");
+    const headers = init?.headers as Record<string, string>;
+    expect(headers.authorization).toBe("Bearer TOK");
+    // fetch sets the multipart boundary itself; a JSON content type would
+    // make Meta read the form as a broken JSON body.
+    expect(headers["content-type"]).toBeUndefined();
+    const form = init?.body as FormData;
+    expect(form.get("messaging_product")).toBe("whatsapp");
+    expect(form.get("type")).toBe("image/jpeg");
+    expect((form.get("file") as File).name).toBe("p.jpg");
+  });
+
+  it("an upload Meta answers without an id is unknown, never a success", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, {}));
+    const r = await uploadMedia("TOK", "PN", {
+      bytes: new Uint8Array([1]),
+      mime: "application/pdf",
+      filename: "a.pdf",
+    });
+    expect(r).toMatchObject({ ok: false, outcome: "unknown" });
+  });
+
+  it("sendMediaMessage names the media by id under its kind, with caption, filename and the quote", async () => {
+    fetchMock.mockResolvedValueOnce(
+      reply(200, { messages: [{ id: "wamid.d" }] }),
+    );
+    await sendMediaMessage("TOK", "PN", {
+      to: "919876543210",
+      kind: "document",
+      mediaId: "MEDIA1",
+      caption: "Size chart",
+      filename: "size-chart.pdf",
+      replyToProviderId: "wamid.in1",
+    });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
+    expect(body).toEqual({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: "919876543210",
+      type: "document",
+      context: { message_id: "wamid.in1" },
+      document: {
+        id: "MEDIA1",
+        caption: "Size chart",
+        filename: "size-chart.pdf",
+      },
+    });
+  });
+
+  it("an image carries no filename and no empty caption", async () => {
+    fetchMock.mockResolvedValueOnce(
+      reply(200, { messages: [{ id: "wamid.i" }] }),
+    );
+    await sendMediaMessage("TOK", "PN", {
+      to: "919876543210",
+      kind: "image",
+      mediaId: "MEDIA2",
+      caption: null,
+      filename: "ignored.jpg",
+    });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
+    expect(body.image).toEqual({ id: "MEDIA2" });
+    expect(body.context).toBeUndefined();
   });
 });

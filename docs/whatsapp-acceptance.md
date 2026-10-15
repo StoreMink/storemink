@@ -680,6 +680,116 @@ of both._
 
 ---
 
+## Phase 2, slice 6 — The full inbox (2026-10-15)
+
+**WA-9.1 — Assign.** A conversation can be put on one of the store's people
+(an admin whose role includes Inbox, or an owner) from the chat's header,
+or taken off; the list shows an assignee's initials on the row, and the
+**Assigned to** filter beside the status tabs shows **Mine**, **Unassigned**
+or one person. The person assigned gets an in-app notification, and nobody
+else; assigning to yourself tells nobody. An assigned conversation is still
+readable and answerable by anyone with Inbox: assignment is a pointer, not
+a permission. _Pinned by `inbox-team.test.ts` ("checks the person is on THIS
+store before writing"), `inbox-actions.test.ts` ("assigning tells only the
+person it was given to, never the whole team, and not yourself") and
+`inbox-client.test.tsx` ("the assignee and label filters go to the list
+route")._
+
+**WA-9.2 — Labels.** The **Labels** button above the inbox creates, renames
+and deletes the store's labels (a name of up to 30 characters, one of eight
+colours, at most 20 per store; two names that differ only in case are one
+label). The **Label** button in a chat toggles each one; the row shows a
+coloured dot per label and the chat's header the chips; the list filters by
+one label. Deleting a label removes it from every conversation. _Pinned by
+`inbox-team.test.ts` ("keeps only the store's own labels, deletes the rest
+and inserts the set idempotently", "refuses the twenty-first"),
+`inbox-workspace.test.ts` and the rolled-back probe of 0209 on local
+Postgres (a duplicate ignoring case, a 31-character name, an untrimmed name
+and an unknown colour each refused; the link cascades with the label)._
+
+**WA-9.3 — Notes.** The message box has a **Note** tab. A note (up to 2,000
+characters) appears in the conversation in time order as a yellow card
+naming who wrote it, is sent to nobody, and can be deleted by anyone with
+Inbox manage. It is read by anyone who can see the inbox. _Pinned by
+`inbox-team.test.ts` ("writes the note through the conversation's own
+store, bounded") and `inbox-client.test.tsx` ("a note reads as a note, and
+the Note tab writes one without sending")._
+
+**WA-9.4 — Saved replies.** The **Saved replies** button above the inbox
+creates, edits and deletes replies, each with a shortcut (lowercase letters,
+digits, dashes and underscores, up to 30 characters, unique per store), a
+title and a body of up to 4,096 characters; at most 50 per store. Typing
+`/` in the message box opens the list filtered by shortcut or title; Enter
+takes the first, the bookmark button opens the whole list, and the chosen
+body lands in the box with `{{name}}` replaced by the customer's first name
+(or removed cleanly when WhatsApp gave none), still editable before Send.
+_Pinned by `inbox-workspace.test.ts` ("fills the first name and drops the
+token cleanly"), `inbox-team.test.ts` ("refuses a shortcut another reply
+already uses", "the fifty-first is refused") and `inbox-client.test.tsx`
+("'/' opens the saved replies, Enter takes the first")._
+
+**WA-9.5 — Photos and PDFs from the dashboard.** The paperclip beside the
+message box takes a JPEG, PNG or WebP photo (up to 5 MB) or a PDF (up to
+16 MB) inside the 24-hour window; what is typed goes as the caption (up to
+1,024 characters). A photo is re-encoded as a JPEG no wider than 2,048 px
+with its metadata stripped, a PDF must be one by its bytes; the file goes
+to Meta first, then a copy to our bucket under the conversation's folder,
+and only then is the message sent and filed, so a refused upload stores
+and sends nothing and a refused send is filed as failed with the copy.
+Outside the window a file is refused exactly as text is. Voice notes,
+videos and other kinds of file stay the phone's job. _Pinned by
+`inbox-media.test.ts` ("a photo comes out as a JPEG no wider than 2,048px",
+"the bytes decide, not the declared type", "Meta first, our copy second,
+the send last"), `route.test.ts` for the media route ("outside the 24-hour
+window a file is refused like text, before it is prepared"),
+`graph.test.ts` ("uploadMedia posts the bytes as multipart") and
+`send.test.ts` ("sendWhatsAppMedia")._
+
+**WA-9.6 — Search inside messages.** The search box also finds a
+conversation by a word inside any of its messages, as a prefix ("stoc"
+finds "stock") in any script, every word required; the row shows the line
+it was found in with the words marked, and opening it scrolls the chat to
+that message and outlines it. A hit older than the 200 messages the chat
+loads is named on the row and the chat opens at its end. _Pinned by
+`inbox-workspace.test.ts` ("builds a prefix query of required words and
+strips anything that is not a letter or digit"), the rolled-back probe of
+0209 (the GIN index is used; a Devanagari word matches; the snippet marks
+the hit) and `inbox-client.test.tsx` ("a row shows its labels, its assignee
+and a search hit's line")._
+
+**WA-9.7 — Quoted replies.** **Reply** on a message (shown on hover; always
+on touch) puts a reply-to bar above the box; the reply quotes that message
+on the customer's phone, and in the thread a quoted message shows who said
+it and its first line. A quote of a message that is not in this
+conversation quotes nothing rather than failing the reply. _Pinned by
+`inbox-actions.test.ts` ("a reply that quotes a message looks the message
+up in ITS conversation and sends the quote", "a quote of a message that is
+not in the thread quotes nothing rather than failing") and
+`inbox-client.test.tsx` ("a reply can quote a message, and a quote is
+drawn with who said it")._
+
+**WA-9.8 — Order updates in the thread.** A template the notification spine
+sends to a customer (an order update, a pickup notice, a COD confirmation)
+appears in their conversation as sent, labelled as an order update, once
+Meta has accepted it: staff see what the customer is replying to, and a
+reply to one no longer counts as a first message, so the welcome is not
+sent in answer to it. The filing never opens the 24-hour window, never
+counts as unread and never asks for a reply; a brand-new conversation is
+opened rather than left waiting; a team template is filed in no thread; a
+filing that fails never fails or repeats the send. _Pinned by
+`inbox.test.ts` ("fileTemplateInThread") and `worker.test.ts` ("a sent
+customer template is filed in the thread, rendered, quietly", "a failed
+filing never fails the send or re-sends")._
+
+**WA-9.9 — A viewer reads everything and changes nothing.** With Inbox view
+only, labels, the assignee and notes are shown; the assignee picker, the
+Label button, the Note tab, the paperclip and the saved-reply picker are
+not, and every write action refuses. _Pinned by `inbox-client.test.tsx`
+("a viewer sees labels and the assignee but no controls") and
+`inbox-actions.test.ts` ("assignment needs Inbox manage")._
+
+---
+
 ## Known gaps
 
 | Gap                                                                                                                                                                                                               | Since      | Status                       |
@@ -687,15 +797,12 @@ of both._
 | The connect flow has not run against a live Embedded Signup popup; dev has carried the configuration ID since 2026-10-13                                                                                          | 2026-10-08 | Waiting on a live run on dev |
 | An unreachable database reads as "not connected" on the Channels card (the SMS card's documented gap, shared)                                                                                                     | 2026-10-08 | Open                         |
 | Template submission, the status webhook, echoes and media download follow Meta's published shapes but have not run against live Meta                                                                              | 2026-10-08 | With the live verification   |
-| Dashboard replies are text only; a photo or file must be sent from the phone                                                                                                                                      | 2026-10-08 | Phase 2                      |
 | Coexistence contact/history sync (`smb_app_state_sync`) is recorded, not processed — a thread starts at the first message after connecting                                                                        | 2026-10-08 | Phase 2                      |
-| No assignment, labels, notes, canned replies or search inside messages; the thread shows the latest 200 messages                                                                                                  | 2026-10-08 | Phase 2                      |
 | Inbound media is kept in the public media bucket at an unguessable path, like the Media Library; a customer's photo is as public as a product photo                                                               | 2026-10-08 | Open                         |
 | COD confirmation has not run against live Meta: the button payload shapes follow Meta's reference                                                                                                                 | 2026-10-13 | With the live verification   |
 | A COD customer who did not tick WhatsApp updates is never asked to confirm (SMS has no buttons)                                                                                                                   | 2026-10-13 | By design                    |
 | The COD reminder and automatic cancellation run only where the hourly order sweep is scheduled, which is production; on dev the route must be called by hand                                                      | 2026-10-13 | By design                    |
 | Automatic replies are in English, whatever language the customer wrote in; the order question is understood in English, Hinglish and Devanagari Hindi                                                             | 2026-10-13 | Open                         |
-| Order updates sent as templates are not filed in the thread, so a customer's first reply to one counts as a first message and gets the welcome                                                                    | 2026-10-13 | Open                         |
 | Automatic replies have not run against live Meta; they use the same free-text send as inbox replies, which has                                                                                                    | 2026-10-13 | With the live verification   |
 | Menu buttons are WhatsApp's three reply buttons; a list of up to ten options is not offered                                                                                                                       | 2026-10-14 | Open                         |
 | A tap on a button the merchant has since changed or removed hands the chat to a person rather than doing what the old button did                                                                                  | 2026-10-14 | By design                    |
@@ -707,3 +814,9 @@ of both._
 | Mink's facts are text only: it does not see a photo the customer sent, and a question about a picture waits for a person                                                                                          | 2026-10-14 | By design                    |
 | Mink answers from the published products' price and stock totals; a per-location shelf count, a size the store never listed as an option, and a product the question does not name by a word are not in its facts | 2026-10-14 | Open                         |
 | The deterministic gate reads English, Hinglish and Devanagari; a complaint in another script reaches the model, whose instruction then hands it over                                                              | 2026-10-14 | Open                         |
+| A photo or PDF sent from the dashboard follows Meta's media upload and send shapes but has not run against live Meta                                                                                              | 2026-10-15 | With the live verification   |
+| Voice notes, videos and files other than PDFs are sent from the phone only; the dashboard sends a photo or a PDF                                                                                                  | 2026-10-15 | By design                    |
+| The thread shows the latest 200 messages and notes; a search hit older than that is named on the row but the chat opens at its end                                                                                | 2026-10-15 | Open                         |
+| A note is readable by anyone with Inbox view and can only be deleted, not edited; assignment is a pointer, not a permission, so an assigned conversation is still answerable by everyone                          | 2026-10-15 | By design                    |
+| Order updates sent before the full inbox shipped are not in the thread; only sends from then on are filed                                                                                                         | 2026-10-15 | By design                    |
+| Search matches whole-word prefixes in the 'simple' text-search configuration: a word inside another word, or a word split by punctuation, is not found                                                            | 2026-10-15 | By design                    |

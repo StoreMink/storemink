@@ -5,16 +5,18 @@ import { logError } from "@/lib/observability/logger";
 import { whatsappLogs } from "@/drizzle/schema";
 import {
   sendInteractiveMessage,
+  sendMediaMessage,
   sendTemplateMessage,
   sendTextMessage,
   type InteractiveButton,
+  type OutboundMediaKind,
 } from "./graph";
 import { renderWhatsAppBody, whatsAppParameterText } from "./template-catalog";
 
 // ---------------------------------------------------------------------------
 // ★★ THE CHOKE POINT. Every WhatsApp message this platform sends leaves
-// through `sendWhatsAppTemplate`, `sendWhatsAppText` or
-// `sendWhatsAppInteractive`, and every attempt lands in `whatsapp_logs` —
+// through `sendWhatsAppTemplate`, `sendWhatsAppText`, `sendWhatsAppInteractive`
+// or `sendWhatsAppMedia`, and every attempt lands in `whatsapp_logs` —
 // sent, failed or skipped alike. `send-coverage.test.ts` fails on any other
 // caller of the Graph send, for the reason lib/sms/send.ts and lib/email/send.ts
 // give: a log with a hole in it is worse than no log, because a merchant who
@@ -229,6 +231,67 @@ export async function sendWhatsAppInteractive(
     input.phoneNumberId,
     { to, body, buttons: input.buttons },
   );
+  return settle(logInput, body, result);
+}
+
+export interface SendWhatsAppMediaInput {
+  storeId: string;
+  /** E.164. */
+  to: string;
+  token: string;
+  phoneNumberId: string;
+  kind: OutboundMediaKind;
+  /** The id Meta's media upload returned. */
+  mediaId: string;
+  caption?: string | null;
+  /** For a document: what the customer sees it called. */
+  filename?: string | null;
+  replyToProviderId?: string | null;
+}
+
+/**
+ * One photo or document from the inbox, by the media id the upload returned.
+ * The SAME choke point and the same log row; the log's body is the caption,
+ * or the file's name when there is none, so a "did it go?" question has an
+ * answer in WhatsApp logs. Inside the 24-hour window only, like free text.
+ */
+export async function sendWhatsAppMedia(
+  input: SendWhatsAppMediaInput,
+): Promise<SendWhatsAppResult> {
+  const to = input.to.replace(/\D/g, "");
+  const caption = (input.caption ?? "").trim();
+  const body =
+    caption ||
+    (input.kind === "image"
+      ? "📷 Photo"
+      : `📄 ${input.filename ?? "Document"}`);
+  const logInput: SendWhatsAppInput = {
+    storeId: input.storeId,
+    to: input.to,
+    token: input.token,
+    phoneNumberId: input.phoneNumberId,
+    template: { id: "", name: "", language: "", body },
+    values: [],
+    eventKey: null,
+    category: "SERVICE",
+  };
+  if (!to) {
+    await writeLog(logInput, body, { status: "skipped" }, "No phone number.");
+    return { sent: false, outcome: "skipped", error: "No phone number." };
+  }
+  if (!input.mediaId) {
+    await writeLog(logInput, body, { status: "skipped" }, "No file.");
+    return { sent: false, outcome: "skipped", error: "No file." };
+  }
+
+  const result = await sendMediaMessage(input.token, input.phoneNumberId, {
+    to,
+    kind: input.kind,
+    mediaId: input.mediaId,
+    caption: caption || null,
+    filename: input.filename ?? null,
+    replyToProviderId: input.replyToProviderId ?? null,
+  });
   return settle(logInput, body, result);
 }
 

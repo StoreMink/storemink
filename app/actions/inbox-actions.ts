@@ -14,34 +14,56 @@
 //
 // ── ★ A REPLY IS RATE-LIMITED PER PERSON ───────────────────────────────────
 // Sixty a minute is more than anyone types and less than a stuck key or a
-// script produces; the store's own Meta tier is the real ceiling.
+// script produces; the store's own Meta tier is the real ceiling. The gate
+// itself lives in lib/whatsapp/inbox-gate.ts, shared with the media route.
 // ---------------------------------------------------------------------------
 
 import { and, eq, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import { getActingStoreId, getViewerAccess } from "@/app/dashboard/lib/access";
 import { whatsappConversations, whatsappTemplates } from "@/drizzle/schema";
-import { rateLimit } from "@/lib/rate-limit";
 import { logError } from "@/lib/observability/logger";
-import { loadWhatsAppSender, bodyFromComponents } from "@/lib/whatsapp/channel";
+import { emitEvent } from "@/lib/notifications/record";
+import { bodyFromComponents } from "@/lib/whatsapp/channel";
 import {
   needsReplyCount,
   recordOutboundMessage,
   serviceWindow,
 } from "@/lib/whatsapp/inbox";
 import {
+  inboxGate as gate,
+  inboxSendGate as sendGate,
+  isUuid,
+} from "@/lib/whatsapp/inbox-gate";
+import {
+  listCannedReplies,
   listConversations,
+  listInboxAssignees,
+  listInboxLabels,
   listReplyTemplates,
   loadConversation,
+  loadQuotableProviderId,
   loadThread,
 } from "@/lib/whatsapp/inbox-read";
+import {
+  addNote,
+  assignConversation,
+  deleteCannedReply as deleteCannedReplyRow,
+  deleteLabel as deleteLabelRow,
+  deleteNote,
+  saveCannedReply as saveCannedReplyRow,
+  saveLabel as saveLabelRow,
+  setConversationLabels,
+} from "@/lib/whatsapp/inbox-team";
 import {
   INBOX_REPLY_MAX_CHARS,
   type InboxConversationStatus,
   type InboxFilter,
+  type InboxListQuery,
   type InboxListResult,
+  type InboxSendResult,
   type InboxTemplateOption,
   type InboxThread,
+  type InboxWorkspace,
 } from "@/lib/whatsapp/inbox-types";
 import { sendWhatsAppTemplate, sendWhatsAppText } from "@/lib/whatsapp/send";
 import { renderWhatsAppBody } from "@/lib/whatsapp/template-catalog";
@@ -58,28 +80,14 @@ import {
 } from "@/lib/whatsapp/mink-drafts";
 import { MINK_ANSWER_CREDITS } from "@/lib/whatsapp/auto-reply-settings";
 
-type Gate =
-  | { ok: true; storeId: string; userId: string }
-  | { ok: false; error: string };
-
-async function gate(action: "view" | "manage"): Promise<Gate> {
-  const access = await getViewerAccess();
-  if (!access || !access.can("inbox", action)) {
-    return {
-      ok: false,
-      error:
-        action === "manage"
-          ? "You don't have permission to reply in the inbox."
-          : "You don't have permission to view the inbox.",
-    };
-  }
-  return { ok: true, storeId: await getActingStoreId(), userId: access.userId };
-}
-
 export async function getInboxConversations(input: {
   filter?: InboxFilter;
   q?: string;
   page?: number;
+  /** "" anyone · "me" · "unassigned" · an admin id. */
+  assignee?: string;
+  /** A label id. */
+  label?: string;
 }): Promise<InboxListResult & { error?: string }> {
   const g = await gate("view");
   const empty: InboxListResult = {
@@ -90,13 +98,19 @@ export async function getInboxConversations(input: {
   if (!g.ok) return { ...empty, error: g.error };
   const filter = input.filter ?? "all";
   try {
-    return await listConversations(g.storeId, {
+    const query: InboxListQuery = {
       filter:
         filter === "needs_reply" || filter === "open" || filter === "closed"
           ? filter
           : "all",
-      q: input.q ?? "",
-      page: input.page ?? 1,
+      q: typeof input.q === "string" ? input.q : "",
+      page: Number(input.page ?? 1) || 1,
+      assignee: typeof input.assignee === "string" ? input.assignee : "",
+      label: typeof input.label === "string" ? input.label : "",
+    };
+    return await listConversations(g.storeId, {
+      ...query,
+      viewerId: g.userId,
     });
   } catch (err) {
     logError("inbox: list failed", err, { storeId: g.storeId });
@@ -143,6 +157,43 @@ export async function getInboxTemplates(): Promise<{
   } catch {
     return { templates: [], error: "Couldn't load templates." };
   }
+}
+
+/**
+ * Who works this inbox, its labels and its saved replies, in one read for
+ * the screen. Each list fails to empty on its own, never the whole screen.
+ */
+export async function getInboxWorkspace(): Promise<{
+  workspace: InboxWorkspace;
+  error?: string;
+}> {
+  const g = await gate("view");
+  const empty: InboxWorkspace = {
+    me: { id: "", name: "" },
+    assignees: [],
+    labels: [],
+    cannedReplies: [],
+  };
+  if (!g.ok) return { workspace: empty, error: g.error };
+  const [assignees, labels, cannedReplies] = await Promise.all([
+    listInboxAssignees(g.storeId).catch((err) => {
+      logError("inbox: assignees failed", err, { storeId: g.storeId });
+      return [];
+    }),
+    listInboxLabels(g.storeId).catch((err) => {
+      logError("inbox: labels failed", err, { storeId: g.storeId });
+      return [];
+    }),
+    listCannedReplies(g.storeId).catch((err) => {
+      logError("inbox: saved replies failed", err, { storeId: g.storeId });
+      return [];
+    }),
+  ]);
+  const me = assignees.find((a) => a.id === g.userId) ?? {
+    id: g.userId,
+    name: "You",
+  };
+  return { workspace: { me, assignees, labels, cannedReplies } };
 }
 
 /** Opening a conversation clears its unread count. Status is untouched:
@@ -209,60 +260,12 @@ export async function setInboxConversationStatus(
   }
 }
 
-export interface InboxSendResult {
-  ok: boolean;
-  messageId?: string;
-  /** `window_closed` tells the composer to switch to templates. */
-  code?: "window_closed" | "not_connected" | "refused";
-  error?: string;
-}
-
-async function sendGate(conversationId: string): Promise<
-  | {
-      ok: true;
-      storeId: string;
-      userId: string;
-      core: NonNullable<Awaited<ReturnType<typeof loadConversation>>>;
-      sender: NonNullable<Awaited<ReturnType<typeof loadWhatsAppSender>>>;
-    }
-  | { ok: false; result: InboxSendResult }
-> {
-  const g = await gate("manage");
-  if (!g.ok) return { ok: false, result: { ok: false, error: g.error } };
-  if (!isUuid(conversationId)) {
-    return { ok: false, result: { ok: false, error: "Not found." } };
-  }
-  const allowed = await rateLimit(`inbox-send:${g.storeId}:${g.userId}`, {
-    max: 60,
-    windowSeconds: 60,
-  });
-  if (!allowed.allowed) {
-    return {
-      ok: false,
-      result: { ok: false, error: "Slow down - too many messages at once." },
-    };
-  }
-  const core = await loadConversation(g.storeId, conversationId);
-  if (!core) return { ok: false, result: { ok: false, error: "Not found." } };
-  const sender = await withService((db) => loadWhatsAppSender(db, g.storeId));
-  if (!sender) {
-    return {
-      ok: false,
-      result: {
-        ok: false,
-        code: "not_connected",
-        error:
-          "WhatsApp is paused, not connected, or not included in your plan. Check Settings → Channels.",
-      },
-    };
-  }
-  return { ok: true, storeId: g.storeId, userId: g.userId, core, sender };
-}
-
-/** A free-form reply — inside the 24-hour window only. */
+/** A free-form reply — inside the 24-hour window only. `replyToMessageId`
+ *  quotes one message of the same conversation, WhatsApp's reply-to. */
 export async function sendInboxReply(input: {
   conversationId: string;
   text: string;
+  replyToMessageId?: string | null;
 }): Promise<InboxSendResult> {
   const text = (input.text ?? "").trim();
   if (!text) return { ok: false, error: "Type a message first." };
@@ -285,12 +288,26 @@ export async function sendInboxReply(input: {
     };
   }
 
+  // ★ The quoted message must be one of THIS conversation's: the id from
+  // the browser is looked up under the store and the conversation, and a
+  // message that is not there (or one Meta never gave an id) quotes nothing
+  // rather than failing the reply.
+  const quotedProviderId =
+    input.replyToMessageId && isUuid(input.replyToMessageId)
+      ? await loadQuotableProviderId(
+          s.storeId,
+          s.core.id,
+          input.replyToMessageId,
+        ).catch(() => null)
+      : null;
+
   const out = await sendWhatsAppText({
     storeId: s.storeId,
     to: s.core.contact.phone,
     token: s.sender.token,
     phoneNumberId: s.sender.phoneNumberId,
     body: text,
+    replyToProviderId: quotedProviderId,
   });
 
   const messageId = await withService((db) =>
@@ -304,6 +321,7 @@ export async function sendInboxReply(input: {
       status: out.sent ? "sent" : "failed",
       error: out.sent ? null : out.error,
       sentByAdminId: s.userId,
+      quotedProviderId,
     }),
   ).catch((err) => {
     logError("inbox: record reply failed", err, { storeId: s.storeId });
@@ -460,6 +478,235 @@ export async function sendInboxTemplate(input: {
   }
   await supersedeMinkDrafts(s.storeId, s.core.id);
   return { ok: true, messageId };
+}
+
+// ── Working as a team ─────────────────────────────────────────────────────
+//
+// Assignment, labels, notes and saved replies (slice 6). All with Inbox
+// manage; every write goes through lib/whatsapp/inbox-team.ts under the
+// trusted store id, and the browser's ids are claims checked there.
+
+export interface InboxTeamResult {
+  ok: boolean;
+  error?: string;
+}
+
+/** Put a person on a conversation (null = nobody). The person is told,
+ *  in-app, unless they assigned it to themselves. */
+export async function assignInboxConversation(input: {
+  conversationId: string;
+  adminId: string | null;
+}): Promise<InboxTeamResult & { assignedAdminId?: string | null }> {
+  const g = await gate("manage");
+  if (!g.ok) return { ok: false, error: g.error };
+  if (!isUuid(input.conversationId)) return { ok: false, error: "Not found." };
+  const adminId =
+    typeof input.adminId === "string" && input.adminId.trim()
+      ? input.adminId.trim().slice(0, 128)
+      : null;
+  try {
+    const r = await withService((db) =>
+      assignConversation(db, {
+        storeId: g.storeId,
+        conversationId: input.conversationId,
+        adminId,
+      }),
+    );
+    if (!r.ok) return { ok: false, error: r.error };
+    if (r.value.changed && adminId && adminId !== g.userId) {
+      const [assignee, core] = await Promise.all([
+        listInboxAssignees(g.storeId)
+          .then((all) => all.find((a) => a.id === g.userId) ?? null)
+          .catch(() => null),
+        loadConversation(g.storeId, input.conversationId).catch(() => null),
+      ]);
+      const label = core
+        ? (core.contact.name ?? core.contact.phone)
+        : "A conversation";
+      emitEvent({
+        type: "whatsapp.conversation_assigned",
+        storeId: g.storeId,
+        actor: { type: "admin", id: g.userId, label: assignee?.name ?? null },
+        subject: {
+          type: "whatsapp_conversation",
+          id: input.conversationId,
+          label,
+        },
+        payload: { assignedBy: assignee?.name ?? "" },
+        // ★ Only the person it was given to, never the whole team.
+        restrictToAdminIds: [adminId],
+      });
+    }
+    return { ok: true, assignedAdminId: adminId };
+  } catch (err) {
+    logError("inbox: assign failed", err, { storeId: g.storeId });
+    return { ok: false, error: "Couldn't assign the conversation." };
+  }
+}
+
+/** Replace a conversation's labels with exactly this set. */
+export async function setInboxConversationLabels(input: {
+  conversationId: string;
+  labelIds: string[];
+}): Promise<InboxTeamResult & { labelIds?: string[] }> {
+  const g = await gate("manage");
+  if (!g.ok) return { ok: false, error: g.error };
+  if (!isUuid(input.conversationId)) return { ok: false, error: "Not found." };
+  const labelIds = [
+    ...new Set(
+      (Array.isArray(input.labelIds) ? input.labelIds : []).filter(
+        (id): id is string => typeof id === "string" && isUuid(id),
+      ),
+    ),
+  ].slice(0, 50);
+  try {
+    const r = await withService((db) =>
+      setConversationLabels(db, {
+        storeId: g.storeId,
+        conversationId: input.conversationId,
+        labelIds,
+      }),
+    );
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, labelIds: r.value.labelIds };
+  } catch (err) {
+    logError("inbox: labels failed", err, { storeId: g.storeId });
+    return { ok: false, error: "Couldn't update the labels." };
+  }
+}
+
+export async function saveInboxLabel(input: {
+  id?: string | null;
+  name: string;
+  color: string;
+}): Promise<InboxTeamResult & { id?: string }> {
+  const g = await gate("manage");
+  if (!g.ok) return { ok: false, error: g.error };
+  const id = input.id && isUuid(input.id) ? input.id : null;
+  if (input.id && !id) return { ok: false, error: "Not found." };
+  try {
+    const r = await withService((db) =>
+      saveLabelRow(db, {
+        storeId: g.storeId,
+        id,
+        name: input.name,
+        color: input.color,
+      }),
+    );
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, id: r.value.id };
+  } catch (err) {
+    // The unique index: two labels that differ only in case are one label.
+    if (String((err as { code?: string })?.code) === "23505") {
+      return { ok: false, error: "A label with that name already exists." };
+    }
+    logError("inbox: save label failed", err, { storeId: g.storeId });
+    return { ok: false, error: "Couldn't save the label." };
+  }
+}
+
+export async function deleteInboxLabel(id: string): Promise<InboxTeamResult> {
+  const g = await gate("manage");
+  if (!g.ok) return { ok: false, error: g.error };
+  if (!isUuid(id)) return { ok: false, error: "Not found." };
+  try {
+    const r = await withService((db) =>
+      deleteLabelRow(db, { storeId: g.storeId, id }),
+    );
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
+  } catch (err) {
+    logError("inbox: delete label failed", err, { storeId: g.storeId });
+    return { ok: false, error: "Couldn't delete the label." };
+  }
+}
+
+/** A private note on a conversation. Never sent. */
+export async function addInboxNote(input: {
+  conversationId: string;
+  body: string;
+}): Promise<InboxTeamResult & { id?: string }> {
+  const g = await gate("manage");
+  if (!g.ok) return { ok: false, error: g.error };
+  if (!isUuid(input.conversationId)) return { ok: false, error: "Not found." };
+  try {
+    const r = await withService((db) =>
+      addNote(db, {
+        storeId: g.storeId,
+        conversationId: input.conversationId,
+        adminId: g.userId,
+        body: input.body,
+      }),
+    );
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, id: r.value.id };
+  } catch (err) {
+    logError("inbox: add note failed", err, { storeId: g.storeId });
+    return { ok: false, error: "Couldn't save the note." };
+  }
+}
+
+export async function deleteInboxNote(id: string): Promise<InboxTeamResult> {
+  const g = await gate("manage");
+  if (!g.ok) return { ok: false, error: g.error };
+  if (!isUuid(id)) return { ok: false, error: "Not found." };
+  try {
+    const r = await withService((db) =>
+      deleteNote(db, { storeId: g.storeId, id }),
+    );
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
+  } catch (err) {
+    logError("inbox: delete note failed", err, { storeId: g.storeId });
+    return { ok: false, error: "Couldn't delete the note." };
+  }
+}
+
+export async function saveInboxCannedReply(input: {
+  id?: string | null;
+  shortcut: string;
+  title: string;
+  body: string;
+}): Promise<InboxTeamResult & { id?: string }> {
+  const g = await gate("manage");
+  if (!g.ok) return { ok: false, error: g.error };
+  const id = input.id && isUuid(input.id) ? input.id : null;
+  if (input.id && !id) return { ok: false, error: "Not found." };
+  try {
+    const r = await withService((db) =>
+      saveCannedReplyRow(db, {
+        storeId: g.storeId,
+        id,
+        adminId: g.userId,
+        shortcut: input.shortcut,
+        title: input.title,
+        body: input.body,
+      }),
+    );
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, id: r.value.id };
+  } catch (err) {
+    if (String((err as { code?: string })?.code) === "23505") {
+      return { ok: false, error: "That shortcut is already in use." };
+    }
+    logError("inbox: save reply failed", err, { storeId: g.storeId });
+    return { ok: false, error: "Couldn't save the reply." };
+  }
+}
+
+export async function deleteInboxCannedReply(
+  id: string,
+): Promise<InboxTeamResult> {
+  const g = await gate("manage");
+  if (!g.ok) return { ok: false, error: g.error };
+  if (!isUuid(id)) return { ok: false, error: "Not found." };
+  try {
+    const r = await withService((db) =>
+      deleteCannedReplyRow(db, { storeId: g.storeId, id }),
+    );
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
+  } catch (err) {
+    logError("inbox: delete reply failed", err, { storeId: g.storeId });
+    return { ok: false, error: "Couldn't delete the reply." };
+  }
 }
 
 // ── Mink drafts ───────────────────────────────────────────────────────────
@@ -622,10 +869,4 @@ export async function discardMinkDraft(input: {
     logError("inbox: discard draft failed", err, { storeId: g.storeId });
     return { ok: false, error: "Couldn't discard the draft. Try again." };
   }
-}
-
-function isUuid(v: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    v ?? "",
-  );
 }

@@ -2052,6 +2052,88 @@ Expect: every case passes. The report's `stalledOnce` counts answers that
 needed the second attempt; record it with the latencies. Attach the report to
 the results. (WA-8.9)
 
+### Part L17: The full inbox (WA-9.1 to WA-9.9)
+
+Built 2026-10-15 (`docs/whatsapp-acceptance.md` WA-9.x). Needs the dev
+revision at or after the commit that added `lib/whatsapp/inbox-team.ts`,
+with `20261015_0209` and `20261015_0210` applied by that build (L0.3's
+`Applied` lines), and a SECOND dashboard login on the dev store with a role
+that includes Inbox (Settings → Staff; an Admin will do), so assignment has
+somebody to assign to. Run after L4 (phone A has a conversation) and L3
+(phone A holds an order, for L17.8).
+
+**L17.1 Labels.** Operator laptop, **Inbox → Labels**: add "VIP" (purple)
+and "Wholesale" (blue); try adding "vip" again and expect "A label with
+that name already exists." Open phone A's conversation, press **Label**,
+tick VIP. Expect: a purple chip under the name in the chat header, a purple
+dot on the row, and the **Any label** filter set to VIP shows only this
+conversation. Untick it: all three go. (WA-9.2)
+
+**L17.2 Assign.** In the chat header's **Assigned to** select, choose the
+second login's name. Expect: the row shows their initials; the filter
+**Mine** shows nothing for you and, signed in as them in another browser,
+shows this conversation and a bell notification "WhatsApp conversation
+assigned to you" that opens it. Choose **Me**: no notification for you.
+Choose **Unassigned**. (WA-9.1)
+
+**L17.3 A note.** In the message box press **Note**, type "Regular, asks
+for bulk pricing", Enter. Expect: a yellow card in the conversation with
+your name and the time; NOTHING on phone A; the second login sees the same
+card. Delete it with its bin icon and confirm. (WA-9.3)
+
+**L17.4 Saved replies.** **Inbox → Saved replies**: add shortcut `hours`,
+title "Opening hours", body "Hi {{name}}, we're open 10 to 7, Monday to
+Saturday." Try `Has Space` as a shortcut: refused with the rule. In the
+message box type `/ho`: the list shows Opening hours only; press Enter:
+the box reads "Hi <phone A's WhatsApp first name>, we're open …". Send.
+Expect it on phone A. Then, with a conversation whose contact has NO
+WhatsApp name (a new number with the profile name hidden, if available),
+pick the same reply and expect "Hi, we're open …" with no stray space or
+comma. (WA-9.4)
+
+**L17.5 A photo and a PDF.** Press the paperclip, choose a photo over 2 MB
+(a phone camera shot), type "Here's the shelf" and send. Expect: the photo
+on phone A with the caption, within a few seconds; in the thread a photo
+bubble under your name with two ticks that turn blue once read; in
+**Settings → Channels → WhatsApp logs** a sent row whose body is the
+caption. Press the paperclip again, choose a PDF (a size chart) with no
+caption, send. Expect: the PDF on phone A named as the file; the log row's
+body is "📄 <file name>". Choose a .mp4 or a .docx: refused before anything
+is sent, with the sentence naming photos and PDFs. (WA-9.5)
+
+**L17.6 Outside the window.** Use a conversation whose last customer
+message is more than 24 hours old (L5 left one). Press the paperclip,
+choose a photo, send. Expect: refused with the 24-hour sentence and the
+composer switching to templates; nothing on the phone; no log row. (WA-9.5)
+
+**L17.7 Search inside messages.** Phone A sends "do you have the almond
+shake in one litre". In the inbox search box type "litr" and press Enter.
+Expect: phone A's conversation in the list with the row's second line
+reading the message with "litre" highlighted; opening it scrolls to that
+message, outlined for a moment. Search "almond litre": the same; search
+"ltr": nothing. (WA-9.6)
+
+**L17.8 Quote a message.** Hover phone A's "almond shake" message, press
+the reply arrow, type "Yes, 1 litre is in stock", Enter. Expect: on phone A
+your reply shows WhatsApp's quote of their message above it; in the thread
+your bubble carries a strip "Rohan: do you have the almond shake…" (their
+name as WhatsApp gives it). (WA-9.7)
+
+**L17.9 An order update in the thread.** Place an order on the dev store as
+phone A (or move L3's order to Shipped). Expect: the order update arrives
+on phone A as before AND appears in phone A's conversation in the inbox as
+an outgoing message labelled "Order update", with the row's preview
+updated; the conversation is NOT in Needs reply, unread did not change, the
+bell did not ring. Phone A replies "thanks" to it: the reply arrives in the
+thread under the update, rings the bell, and does NOT get the welcome
+message even if the welcome is on and 14 quiet days have passed (it is not
+a first message now). (WA-9.8)
+
+**L17.10 A viewer.** Sign in as a login with Inbox: view only. Expect:
+labels, the assignee and notes are visible; no assignee select, Label
+button, Note tab, paperclip or bookmark; the message box says you can read
+but not reply. (WA-9.9)
+
 ## 4. Cleanup
 
 Do this whether or not every step ran.

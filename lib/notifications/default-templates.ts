@@ -68,6 +68,8 @@ const INTRO: Record<string, string> = {
   "enquiry.received": "Someone has sent you a message through your store.",
   "whatsapp.message_received":
     "A customer has written to your WhatsApp number and is waiting for a reply.",
+  "whatsapp.conversation_assigned":
+    "A WhatsApp conversation has been assigned to you in Inbox.",
   "blog.submitted":
     "A customer has submitted a blog post. It's waiting for approval.",
   "blog.published": "A blog post is now live on your storefront.",

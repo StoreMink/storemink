@@ -6,6 +6,7 @@ import {
   admins,
   customerCreditBalances,
   orders,
+  platformRoles,
   whatsappContacts,
   whatsappConversations,
   whatsappMessages,
@@ -22,16 +23,21 @@ import {
 } from "./custom-template";
 import { serviceWindow } from "./inbox";
 import { loadMinkDraft } from "./mink-drafts";
-import type {
-  InboxConversationRow,
-  InboxConversationStatus,
-  InboxCounts,
-  InboxCustomerPanel,
-  InboxFilter,
-  InboxListResult,
-  InboxMessageRow,
-  InboxTemplateOption,
-  InboxThread,
+import { inboxSearchQuery } from "./inbox-workspace";
+import {
+  INBOX_NOTE_SOURCE,
+  type InboxAssignee,
+  type InboxCannedReply,
+  type InboxConversationRow,
+  type InboxConversationStatus,
+  type InboxCounts,
+  type InboxCustomerPanel,
+  type InboxLabel,
+  type InboxListQuery,
+  type InboxListResult,
+  type InboxMessageRow,
+  type InboxTemplateOption,
+  type InboxThread,
 } from "./inbox-types";
 
 // ---------------------------------------------------------------------------
@@ -54,25 +60,87 @@ function asStatus(s: string): InboxConversationStatus {
   return s === "open" || s === "closed" ? s : "needs_reply";
 }
 
+/** A Postgres array as pg returns it, or as text when it comes back unparsed. */
+function asIdList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === "string" && value.startsWith("{")) {
+    return value
+      .slice(1, -1)
+      .split(",")
+      .map((v) => v.replace(/^"|"$/g, ""))
+      .filter(Boolean);
+  }
+  return [];
+}
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The label ids a conversation carries, as a subquery on its alias. */
+const LABEL_IDS = sql`
+  coalesce((select array_agg(cl.label_id::text order by cl.created_at)
+              from public.whatsapp_conversation_labels cl
+             where cl.conversation_id = c.id), '{}'::text[])`;
+
 export async function listConversations(
   storeId: string,
-  input: { filter: InboxFilter; q: string; page: number },
+  input: InboxListQuery & {
+    /** Who is asking, for the "me" assignee filter. */
+    viewerId?: string;
+  },
 ): Promise<InboxListResult> {
   const page = Math.max(1, input.page);
   const offset = (page - 1) * INBOX_PAGE_SIZE;
   const q = input.q.trim().slice(0, 80);
   const qDigits = q.replace(/\D/g, "");
+  // ★ The search box finds a conversation by WHO (name, number) or by WHAT
+  // was said: a prefix text-search over every message body, so "stoc" finds
+  // the chat where somebody asked about stock. The hit's line comes back with
+  // the row so the list can show why it matched.
+  const tsq = q ? inboxSearchQuery(q) : null;
+  const assignee = (input.assignee ?? "").slice(0, 128);
+  const label = input.label && UUID_RE.test(input.label) ? input.label : "";
 
   const where = sql`
     c.store_id = ${storeId}::uuid
     ${input.filter === "all" ? sql`` : sql`and c.status = ${input.filter}`}
     ${
+      assignee === "me" && input.viewerId
+        ? sql`and c.assigned_admin_id = ${input.viewerId}`
+        : assignee === "unassigned"
+          ? sql`and c.assigned_admin_id is null`
+          : assignee && assignee !== "me"
+            ? sql`and c.assigned_admin_id = ${assignee}`
+            : sql``
+    }
+    ${
+      label
+        ? sql`and exists (select 1 from public.whatsapp_conversation_labels cl
+                           where cl.conversation_id = c.id and cl.label_id = ${label}::uuid)`
+        : sql``
+    }
+    ${
       q
         ? sql`and (k.profile_name ilike ${"%" + q + "%"}
-                   ${qDigits.length >= 3 ? sql`or k.phone like ${"%" + qDigits + "%"}` : sql``})`
+                   ${qDigits.length >= 3 ? sql`or k.phone like ${"%" + qDigits + "%"}` : sql``}
+                   ${tsq ? sql`or mm.id is not null` : sql``})`
         : sql``
     }
   `;
+  // The newest message in the conversation that matches, with its line.
+  const matchJoin = tsq
+    ? sql`left join lateral (
+          select m.id,
+                 ts_headline('simple', coalesce(m.body, ''), to_tsquery('simple', ${tsq}),
+                             'MaxFragments=1, MaxWords=14, MinWords=6, StartSel=«, StopSel=», FragmentDelimiter=…') as snippet
+            from public.whatsapp_messages m
+           where m.conversation_id = c.id
+             and m.store_id = c.store_id
+             and to_tsvector('simple', coalesce(m.body, '')) @@ to_tsquery('simple', ${tsq})
+           order by m.sent_at desc
+           limit 1
+        ) mm on true`
+    : sql``;
 
   return withService(async (db) => {
     const rows = asRows<{
@@ -82,20 +150,28 @@ export async function listConversations(
       last_message_at: string | null;
       last_inbound_at: string | null;
       last_preview: string | null;
+      assigned_admin_id: string | null;
+      label_ids: unknown;
       contact_id: string;
       phone: string;
       profile_name: string | null;
       user_id: string | null;
       contact_last_inbound_at: string | null;
+      match_id: string | null;
+      match_snippet: string | null;
       total: number;
     }>(
       await db.execute(sql`
         select c.id, c.status, c.unread_count, c.last_message_at, c.last_inbound_at,
-               c.last_preview, c.contact_id, k.phone, k.profile_name, k.user_id,
+               c.last_preview, c.assigned_admin_id, c.contact_id,
+               ${LABEL_IDS} as label_ids,
+               k.phone, k.profile_name, k.user_id,
                k.last_inbound_at as contact_last_inbound_at,
+               ${tsq ? sql`mm.id as match_id, mm.snippet as match_snippet,` : sql`null as match_id, null as match_snippet,`}
                count(*) over()::int as total
           from public.whatsapp_conversations c
           join public.whatsapp_contacts k on k.id = c.contact_id
+          ${matchJoin}
          where ${where}
          order by c.last_message_at desc nulls last, c.created_at desc
          limit ${INBOX_PAGE_SIZE} offset ${offset}
@@ -131,6 +207,12 @@ export async function listConversations(
           userId: r.user_id,
         },
         windowOpen: serviceWindow(r.contact_last_inbound_at).open,
+        assignedAdminId: r.assigned_admin_id,
+        labelIds: asIdList(r.label_ids),
+        match:
+          r.match_id && r.match_snippet
+            ? { messageId: r.match_id, snippet: r.match_snippet }
+            : null,
       })),
       total: Number(rows[0]?.total ?? 0),
       counts,
@@ -145,6 +227,8 @@ export interface ConversationCore {
   lastMessageAt: string | null;
   lastInboundAt: string | null;
   lastPreview: string | null;
+  assignedAdminId: string | null;
+  labelIds: string[];
   contact: {
     id: string;
     phone: string;
@@ -172,6 +256,10 @@ export async function loadConversation(
         lastMessageAt: whatsappConversations.lastMessageAt,
         lastInboundAt: whatsappConversations.lastInboundAt,
         lastPreview: whatsappConversations.lastPreview,
+        assignedAdminId: whatsappConversations.assignedAdminId,
+        labelIds: sql<unknown>`coalesce((select array_agg(cl.label_id::text order by cl.created_at)
+              from public.whatsapp_conversation_labels cl
+             where cl.conversation_id = ${whatsappConversations.id}), '{}'::text[])`,
         contactId: whatsappContacts.id,
         phone: whatsappContacts.phone,
         name: whatsappContacts.profileName,
@@ -204,6 +292,8 @@ export async function loadConversation(
     lastMessageAt: r.lastMessageAt,
     lastInboundAt: r.lastInboundAt,
     lastPreview: r.lastPreview,
+    assignedAdminId: r.assignedAdminId,
+    labelIds: asIdList(r.labelIds),
     contact: {
       id: r.contactId,
       phone: r.phone,
@@ -234,6 +324,8 @@ function toRow(core: ConversationCore): InboxConversationRow {
       userId: core.contact.userId,
     },
     windowOpen: serviceWindow(core.contact.lastInboundAt).open,
+    assignedAdminId: core.assignedAdminId,
+    labelIds: core.labelIds,
   };
 }
 
@@ -244,21 +336,75 @@ export async function loadThread(
   const core = await loadConversation(storeId, conversationId);
   if (!core) return null;
 
-  const [messages, customer, minkDraft] = await Promise.all([
+  const [messages, notes, customer, minkDraft] = await Promise.all([
     loadMessages(storeId, conversationId),
+    // Notes that cannot be read are notes not shown, never a thread that
+    // fails to open; the same for a draft.
+    loadNotes(storeId, conversationId).catch(() => []),
     loadCustomerPanel(storeId, core),
-    // A draft that cannot be read is a draft not shown, never a thread that
-    // fails to open.
     loadMinkDraft(storeId, conversationId).catch(() => null),
   ]);
 
+  // ★ A note rides in the thread IN TIME ORDER, as a row with its own source
+  // and kind: it is read beside the messages it was written between, which
+  // is where it means something. It is never a whatsapp_messages row.
+  const merged = notes.length === 0 ? messages : mergeByTime(messages, notes);
+
   return {
     conversation: toRow(core),
-    messages,
+    messages: merged,
     window: serviceWindow(core.contact.lastInboundAt),
     customer,
     minkDraft,
   };
+}
+
+function mergeByTime(
+  a: InboxMessageRow[],
+  b: InboxMessageRow[],
+): InboxMessageRow[] {
+  const out: InboxMessageRow[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    const x = a[i];
+    const y = b[j];
+    if (!y || (x && Date.parse(x.sentAt) <= Date.parse(y.sentAt))) {
+      out.push(x as InboxMessageRow);
+      i++;
+    } else {
+      out.push(y);
+      j++;
+    }
+  }
+  return out;
+}
+
+/** People by name, for a thread's senders and note authors. One bounded
+ *  read; a person no longer on the store is shown as nobody. */
+async function adminNames(
+  storeId: string,
+  ids: string[],
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  const distinct = [...new Set(ids.filter(Boolean))];
+  if (distinct.length === 0) return names;
+  const people = await withService((db) =>
+    db
+      .select({
+        id: admins.id,
+        firstName: admins.firstName,
+        lastName: admins.lastName,
+        email: admins.email,
+      })
+      .from(admins)
+      .where(and(eq(admins.storeId, storeId), inArray(admins.id, distinct))),
+  ).catch(() => []);
+  for (const p of people) {
+    const name = [p.firstName, p.lastName].filter(Boolean).join(" ").trim();
+    names.set(p.id, name || p.email);
+  }
+  return names;
 }
 
 async function loadMessages(
@@ -281,6 +427,8 @@ async function loadMessages(
         error: whatsappMessages.error,
         sentAt: whatsappMessages.sentAt,
         sentByAdminId: whatsappMessages.sentByAdminId,
+        providerMessageId: whatsappMessages.providerMessageId,
+        quotedProviderId: whatsappMessages.quotedProviderId,
       })
       .from(whatsappMessages)
       .where(
@@ -295,27 +443,10 @@ async function loadMessages(
   rows.reverse();
 
   // Who replied, by name. One bounded read for the distinct ids in view.
-  const adminIds = [
-    ...new Set(rows.map((r) => r.sentByAdminId).filter(Boolean)),
-  ] as string[];
-  const names = new Map<string, string>();
-  if (adminIds.length > 0) {
-    const people = await withService((db) =>
-      db
-        .select({
-          id: admins.id,
-          firstName: admins.firstName,
-          lastName: admins.lastName,
-          email: admins.email,
-        })
-        .from(admins)
-        .where(and(eq(admins.storeId, storeId), inArray(admins.id, adminIds))),
-    ).catch(() => []);
-    for (const p of people) {
-      const name = [p.firstName, p.lastName].filter(Boolean).join(" ").trim();
-      names.set(p.id, name || p.email);
-    }
-  }
+  const names = await adminNames(
+    storeId,
+    rows.map((r) => r.sentByAdminId).filter(Boolean) as string[],
+  );
 
   return rows.map((r) => ({
     id: r.id,
@@ -334,6 +465,155 @@ async function loadMessages(
     error: r.error,
     sentAt: r.sentAt,
     sentBy: r.sentByAdminId ? (names.get(r.sentByAdminId) ?? null) : null,
+    providerMessageId: r.providerMessageId,
+    quotedProviderId: r.quotedProviderId,
+  }));
+}
+
+/** A conversation's private notes, as thread rows. */
+async function loadNotes(
+  storeId: string,
+  conversationId: string,
+): Promise<InboxMessageRow[]> {
+  const rows = asRows<{
+    id: string;
+    admin_id: string;
+    body: string;
+    created_at: string;
+  }>(
+    await withService((db) =>
+      db.execute(sql`
+        select id, admin_id, body, created_at
+          from public.whatsapp_conversation_notes
+         where store_id = ${storeId}::uuid
+           and conversation_id = ${conversationId}::uuid
+         order by created_at desc
+         limit ${THREAD_LIMIT}
+      `),
+    ),
+  );
+  rows.reverse();
+  const names = await adminNames(
+    storeId,
+    rows.map((r) => r.admin_id),
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    direction: "out" as const,
+    source: INBOX_NOTE_SOURCE,
+    kind: INBOX_NOTE_SOURCE,
+    body: r.body,
+    mediaUrl: null,
+    mediaMime: null,
+    mediaName: null,
+    payload: { adminId: r.admin_id },
+    status: INBOX_NOTE_SOURCE,
+    error: null,
+    sentAt: r.created_at,
+    sentBy: names.get(r.admin_id) ?? null,
+    providerMessageId: null,
+    quotedProviderId: null,
+  }));
+}
+
+/**
+ * Meta's id of one message in a conversation, for a reply that quotes it.
+ * Store- and conversation-scoped, so a message id from the browser can name
+ * only a message in the thread it was clicked in.
+ */
+export async function loadQuotableProviderId(
+  storeId: string,
+  conversationId: string,
+  messageId: string,
+): Promise<string | null> {
+  const rows = await withService((db) =>
+    db
+      .select({ providerMessageId: whatsappMessages.providerMessageId })
+      .from(whatsappMessages)
+      .where(
+        and(
+          eq(whatsappMessages.storeId, storeId),
+          eq(whatsappMessages.conversationId, conversationId),
+          eq(whatsappMessages.id, messageId),
+        ),
+      )
+      .limit(1),
+  );
+  return rows[0]?.providerMessageId ?? null;
+}
+
+// ── The team's vocabulary ────────────────────────────────────────────────
+
+export async function listInboxLabels(storeId: string): Promise<InboxLabel[]> {
+  const rows = asRows<{ id: string; name: string; color: string }>(
+    await withService((db) =>
+      db.execute(sql`
+        select id, name, color from public.whatsapp_labels
+         where store_id = ${storeId}::uuid
+         order by position, lower(name)
+      `),
+    ),
+  );
+  return rows.map((r) => ({ id: r.id, name: r.name, color: r.color }));
+}
+
+/**
+ * Who a conversation can be assigned to: the store's dashboard admins whose
+ * role includes the Inbox, plus every owner (an owner's role may bypass the
+ * permission map), never a suspended one. Names as the thread shows them.
+ */
+export async function listInboxAssignees(
+  storeId: string,
+): Promise<InboxAssignee[]> {
+  const rows = await withService((db) =>
+    db
+      .select({
+        id: admins.id,
+        firstName: admins.firstName,
+        lastName: admins.lastName,
+        email: admins.email,
+        role: admins.role,
+        permissions: platformRoles.permissions,
+      })
+      .from(admins)
+      .leftJoin(platformRoles, eq(platformRoles.slug, admins.role))
+      .where(
+        and(
+          eq(admins.storeId, storeId),
+          sql`coalesce(${admins.isSuspended}, false) = false`,
+          sql`(${admins.role} = 'superadmin' or coalesce(${platformRoles.permissions}, '{}'::jsonb) ? 'inbox')`,
+        ),
+      )
+      .orderBy(admins.firstName, admins.lastName, admins.email),
+  );
+  return rows.map((p) => {
+    const name = [p.firstName, p.lastName].filter(Boolean).join(" ").trim();
+    return { id: p.id, name: name || p.email };
+  });
+}
+
+export async function listCannedReplies(
+  storeId: string,
+): Promise<InboxCannedReply[]> {
+  const rows = asRows<{
+    id: string;
+    shortcut: string;
+    title: string;
+    body: string;
+  }>(
+    await withService((db) =>
+      db.execute(sql`
+        select id, shortcut, title, body from public.whatsapp_canned_replies
+         where store_id = ${storeId}::uuid
+         order by position, shortcut
+      `),
+    ),
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    shortcut: r.shortcut,
+    title: r.title,
+    body: r.body,
   }));
 }
 
