@@ -4,9 +4,27 @@ import "server-only";
 // not decide whether vector search should run and never throws provider errors:
 // callers can keep lexical retrieval available whenever embeddings are
 // unconfigured, throttled, malformed, or temporarily unavailable.
+//
+// ★★ THE MODEL IS gemini-embedding-2, THROUGH embedContent ON BOTH BACKENDS
+// (2026-10-15). It was gemini-embedding-001 through Vertex's legacy `predict`
+// endpoint, and Google has since capped that model at FIVE requests a minute
+// per project, at the global location and in every region alike (measured on
+// storemink-prod: `online_prediction_requests_per_base_model` and
+// `global_embed_content_requests_per_minute_per_base_model`, base model
+// `gemini-embedding`, effective limit 5). The reconciler sends five chunk
+// requests at a time, so it could index one short guide per run and then hit
+// 429 on the next, forever; the same bucket served every Help question's
+// query embedding. gemini-embedding-2 is GA, answers this project at `global`
+// with 768 dimensions, and carries a 300,000-a-minute bucket, but Vertex serves
+// it only through `embedContent` (the `predict` endpoint reports it as not
+// found), one input per request, with no batch form. So the Vertex path now
+// sends the same EmbedContentRequest the Gemini Developer API path sends, and
+// the per-document concurrency stays bounded rather than batched.
+// ⚠ Chunks record the model they were embedded with, so changing this default
+// re-embeds every guide on the next reconciler run; nothing else is needed.
 
 export const HELP_EMBEDDING_DIMENSIONS = 768 as const;
-export const DEFAULT_HELP_EMBEDDING_MODEL = "gemini-embedding-001";
+export const DEFAULT_HELP_EMBEDDING_MODEL = "gemini-embedding-2";
 export const HELP_EMBEDDING_MAX_TITLE_CHARS = 500;
 export const HELP_EMBEDDING_MAX_DOCUMENTS = 100;
 
@@ -51,10 +69,12 @@ export interface HelpEmbeddingDocument {
   text: string;
 }
 
+type EmbedMethod = "embedContent" | "batchEmbedContents";
+
 interface Provider {
   backend: HelpEmbeddingBackend;
   model: string;
-  url: (method: "embedContent" | "batchEmbedContents" | "predict") => string;
+  url: (method: EmbedMethod) => string;
   headers: Record<string, string>;
 }
 
@@ -166,8 +186,9 @@ async function resolveProvider(): Promise<InternalResult<Provider>> {
     value: {
       backend: "vertex-ai",
       model,
-      url: () =>
-        `https://${host}/v1/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:predict`,
+      // One EmbedContentRequest per call; Vertex has no batch form of it.
+      url: (method) =>
+        `https://${host}/v1/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:${method}`,
       headers: { Authorization: `Bearer ${token}` },
     },
   };
@@ -225,7 +246,7 @@ function fetchFailure(error: unknown): InternalFailure {
 
 async function postJson(
   provider: Provider,
-  method: "embedContent" | "batchEmbedContents" | "predict",
+  method: EmbedMethod,
   body: unknown,
 ): Promise<InternalResult<unknown>> {
   let response: Response;
@@ -260,8 +281,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-/** Validate and unit-normalize every vector. Gemini Embedding 001 requires
- * manual normalization when requesting a reduced dimension such as 768. */
+/** Validate and unit-normalize every vector. A Gemini embedding requested at
+ * a reduced dimension such as 768 is not unit length, so it is normalized here
+ * before storage or comparison. */
 function embeddingVector(value: unknown): number[] | null {
   if (!isRecord(value)) return null;
   const statistics = value.statistics;
@@ -284,13 +306,14 @@ function embeddingVector(value: unknown): number[] | null {
   return values.map((item) => item / norm);
 }
 
-function developerRequest(
-  provider: Provider,
+/** The EmbedContentRequest both backends accept. Vertex's embedContent honours
+ * the same `embedContentConfig` block (verified on storemink-prod: 768
+ * dimensions back, 3072 without it). */
+function embedContentRequest(
   input: { text: string; title?: string },
   task: EmbeddingTask,
 ) {
   return {
-    model: `models/${provider.model}`,
     content: { parts: [{ text: input.text }] },
     // This is the REST wire field from EmbedContentRequest. The Google GenAI
     // JavaScript SDK calls its convenience input `config`, but serializes it
@@ -306,28 +329,20 @@ function developerRequest(
   };
 }
 
-function vertexRequest(
+/** The Developer API names the model in the body as well; its batch form
+ * requires it on every entry. */
+function developerRequest(
+  provider: Provider,
   input: { text: string; title?: string },
   task: EmbeddingTask,
 ) {
   return {
-    instances: [
-      {
-        content: input.text,
-        task_type: task,
-        ...(task === "RETRIEVAL_DOCUMENT" && input.title
-          ? { title: input.title }
-          : {}),
-      },
-    ],
-    parameters: {
-      autoTruncate: false,
-      outputDimensionality: HELP_EMBEDDING_DIMENSIONS,
-    },
+    model: `models/${provider.model}`,
+    ...embedContentRequest(input, task),
   };
 }
 
-function parseDeveloperSingle(value: unknown): InternalResult<number[]> {
+function parseSingleEmbedding(value: unknown): InternalResult<number[]> {
   const vector = isRecord(value) && embeddingVector(value.embedding);
   return vector
     ? { ok: true, value: vector }
@@ -360,45 +375,19 @@ function parseDeveloperBatch(
       );
 }
 
-function parseVertexSingle(value: unknown): InternalResult<number[]> {
-  const predictions = isRecord(value) ? value.predictions : null;
-  if (!Array.isArray(predictions) || predictions.length !== 1) {
-    return failure(
-      "invalid-response",
-      "Vertex AI returned an incomplete embedding response.",
-      true,
-    );
-  }
-  const prediction = predictions[0];
-  const vector = isRecord(prediction) && embeddingVector(prediction.embeddings);
-  return vector
-    ? { ok: true, value: vector }
-    : failure(
-        "invalid-response",
-        "Vertex AI returned an invalid embedding vector.",
-        true,
-      );
-}
-
 async function embedOne(
   provider: Provider,
   input: { text: string; title?: string },
   task: EmbeddingTask,
 ): Promise<InternalResult<number[]>> {
-  if (provider.backend === "gemini-api") {
-    const response = await postJson(
-      provider,
-      "embedContent",
-      developerRequest(provider, input, task),
-    );
-    return response.ok ? parseDeveloperSingle(response.value) : response;
-  }
   const response = await postJson(
     provider,
-    "predict",
-    vertexRequest(input, task),
+    "embedContent",
+    provider.backend === "gemini-api"
+      ? developerRequest(provider, input, task)
+      : embedContentRequest(input, task),
   );
-  return response.ok ? parseVertexSingle(response.value) : response;
+  return response.ok ? parseSingleEmbedding(response.value) : response;
 }
 
 /** Embed one end-user retrieval query. Failure is data, never an exception, so
@@ -425,8 +414,8 @@ export async function embedHelpQuery(
 }
 
 /** Embed published Help Centre chunks. The Gemini Developer API uses its
- * synchronous batch endpoint; Vertex's gemini-embedding-001 REST endpoint
- * accepts one input per prediction, so those calls run in small bounded groups. */
+ * synchronous batch endpoint; Vertex's embedContent takes one input per
+ * request and has no batch form, so those calls run in small bounded groups. */
 export async function embedHelpDocuments(
   rawDocuments: readonly HelpEmbeddingDocument[],
 ): Promise<HelpEmbeddingResult<number[][]>> {
@@ -483,9 +472,9 @@ export async function embedHelpDocuments(
     return success(provider, vectors);
   }
 
-  // The Vertex REST contract for gemini-embedding-001 allows only one input
-  // per :predict request. Bounded concurrency keeps backfills useful without
-  // producing an unbounded request spike.
+  // Vertex's embedContent allows one input per request and has no batch
+  // form. Bounded concurrency keeps backfills useful without an unbounded
+  // request spike; the model's bucket is 300,000 requests a minute.
   for (
     let offset = 0;
     offset < documents.length;

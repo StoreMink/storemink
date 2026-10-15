@@ -148,7 +148,7 @@ gcloud builds submit --project storemink-prod --region global --config=cloudbuil
 > | `storemink-send-emails`       | `* * * * *`  | ✅ fixed 2026-09-08   |
 > | `storemink-search-metrics`    | `30 2 * * *` | **PAUSED**            |
 > | `storemink-analytics-rollup`  | `40 * * * *` | **PAUSED**            |
-> | `storemink-help-embeddings`   | `50 * * * *` | **absent**            |
+> | `storemink-help-embeddings`   | `50 * * * *` | ✅ created 2026-10-15 |
 > | `storemink-mink-publications` | `* * * * *`  | **absent**            |
 > | `storemink-mink-workflows`    | `* * * * *`  | ✅ created 2026-09-08 |
 >
@@ -282,11 +282,20 @@ service and others nearly a day less notice than the 48 hours they are promised.
 It runs at :20 to stay clear of the on-the-hour `domain-reconcile`.
 
 **The pre-existing jobs exist** (verified against `gcloud scheduler jobs list`,
-2026-08-21), but ⚠ **`storemink-help-embeddings` is new in the 2026-08-25
-working tree and does not exist in Cloud Scheduler yet. Create it only after the
-route and migrations `20260825_0017_help_article_embeddings` plus
-`20260826_0018_help_embedding_hardening` reach the target environment; until
-then it would 404 or query an incomplete table.** Also,
+2026-08-21). ⚠ **`storemink-help-embeddings` was documented here on 2026-08-25
+and not created until 2026-10-15**, seven weeks in which no guide edited by a
+migration was ever re-embedded on production: the only other caller of the
+reconciler is the Help console's save action. It was created with the command
+below (GET, bearer, 300 s, 3 retries) and run once by hand straight after; the
+first run's counts are in the Cloud Logging line `help.embedding worker
+complete`. ★ Its first four runs all answered 503: the worker indexed one
+guide and then got 429 from Vertex, because Google had capped
+`gemini-embedding-001` at five requests a minute per project. The fix was a
+model switch to `gemini-embedding-2` through `embedContent`
+(`lib/help/embeddings.ts`, CODEBASE.md §21), not a quota request; once that
+code is deployed the job re-embeds every guide on its own. Production only:
+dev has no scheduler, so dev's index is refreshed by hand when it matters.
+Also,
 **`storemink-mink-publications` is new in Phase 5D and must stay absent/paused
 until migration `20260901_0052_mink_phase_5d_blog_publication` and the matching
 route are deployed. Create it with the same CRON_SECRET bearer contract only

@@ -11657,7 +11657,29 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       reviewed StoreMink aliases (including POS ↔ point of
       sale/register/checkout), with Gemini selection/query expansion only as an
       additive layer. `lib/help/vector-search.ts` supplies semantic paraphrase
-      and multilingual recall from `gemini-embedding-001` at 768 dimensions.
+      and multilingual recall from `gemini-embedding-2` at 768 dimensions.
+      ★★ IT WAS `gemini-embedding-001` UNTIL 2026-10-15, AND BY THEN GOOGLE HAD
+      CAPPED THAT MODEL AT FIVE REQUESTS A MINUTE PER PROJECT, at `global` and in
+      every region alike (measured on storemink-prod through the Service Usage
+      API: `online_prediction_requests_per_base_model` and
+      `global_embed_content_requests_per_minute_per_base_model`, base model
+      `gemini-embedding`, effective 5; the model is no longer in Google's
+      publisher catalogue at all). The reconciler sends five chunk requests at
+      a time, so on production it indexed one short guide per run and then hit
+      429 on the next, every run, and the same bucket served every Help
+      question's query embedding, so more than five questions a minute
+      platform-wide fell back to keyword search. Found the day the
+      `storemink-help-embeddings` scheduler job was finally created (it had been
+      documented as absent since 2026-08-25). `gemini-embedding-2` is GA, answers
+      this project at `global` with 768 dimensions and a 300,000-a-minute
+      bucket, and needs no access or quota request, but Vertex serves it only
+      through `embedContent` (one input per request, no batch form; `predict`
+      reports it as not found), so `lib/help/embeddings.ts` now sends the same
+      EmbedContentRequest on both backends. Chunks record their model, so the
+      switch re-embeds every guide on the next reconciler run with no migration.
+      The 0.55 similarity floor was kept after a six-guide measurement
+      (`lib/help/vector-search.ts` records it; 0.60 is the override to try once
+      a real retrieval evaluation set exists).
       It filters by current source revision, embedding model, and explicit
       chunker/index version, and caps each article at its best three chunks
       before the global result limit so one long guide cannot crowd out other
@@ -18529,7 +18551,9 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   `roles/aiplatform.user` on the runtime credentials (see
   `docs/gcp-migration-phase5-6.md`). Mink AI embeddings use the same backend
   precedence and credentials through `lib/help/embeddings.ts`, with
-  **`GEMINI_EMBEDDING_MODEL`** defaulting to `gemini-embedding-001` and a fixed
+  **`GEMINI_EMBEDDING_MODEL`** defaulting to `gemini-embedding-2` (served only
+  through Vertex's `embedContent`; the former `gemini-embedding-001` is capped at
+  five requests a minute, see §21) and a fixed
   768-dimensional schema contract. **`HELP_VECTOR_MIN_SIMILARITY`** optionally
   overrides the conservative `0.55` semantic-match floor (0–1); leave it unset
   until the retrieval evaluation set justifies a tuned value.

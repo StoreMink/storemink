@@ -7,6 +7,15 @@ import { HELP_CHUNK_INDEX_VERSION } from "@/lib/help/chunks";
 import { embedHelpQuery } from "@/lib/help/embeddings";
 import { logInfo, logWarn } from "@/lib/observability/logger";
 
+// Measured with gemini-embedding-2 on 2026-10-15 (six published guides, six
+// paraphrased questions, one in Hinglish, embedded through the live
+// endpoint): the right guide scored 0.68 to 0.80, the wrong guides 0.52 to
+// 0.70, and the right guide ranked first for five of six. At 0.55 every right
+// pair passes and 22 of 30 wrong pairs do too; at 0.60 every right pair still
+// passes and only 6 of 30 wrong ones. The floor stays at 0.55 because the
+// fusion ranks (reciprocal rank, three chunks per article) and six questions
+// are not a retrieval evaluation set; HELP_VECTOR_MIN_SIMILARITY=0.6 is the
+// override to try once one exists.
 const DEFAULT_MIN_SIMILARITY = 0.55;
 const MAX_CHUNKS_PER_ARTICLE = 3;
 const MAX_VECTOR_MATCHES = 40;
