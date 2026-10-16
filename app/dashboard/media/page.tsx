@@ -1,54 +1,63 @@
-import { count, desc, eq } from "drizzle-orm";
-import { withService } from "@/lib/db/client";
-import { mediaAssets } from "@/drizzle/schema";
 import { requireSectionAccess, getActingStoreId } from "../lib/access";
 import { DASHBOARD_PAGE_SIZE, pickPage } from "../lib/list-params";
-import { MediaLibraryView } from "./media-library-view";
-import type { MediaAsset } from "@/app/actions/media-actions";
+import { MediaLibraryView, type LibraryTile } from "./media-library-view";
+import { countLibraryAssets, listLibraryAssets } from "@/lib/media/library";
+import {
+  countProductImages,
+  listProductImages,
+  productImageUsage,
+} from "@/lib/media/product-images";
+import type { ProductImageItem } from "@/lib/media/library-types";
 
+// Two tabs: the Library (uploads and the pictures Mink AI made or refined; chat
+// attachments and resized copies are not listed, lib/media/sources.ts) and
+// Product images (every photo a product uses, read from the products, so a
+// photo uploaded in the product editor is here without a library row).
 export default async function MediaDashboardPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireSectionAccess("media", "view");
+  const access = await requireSectionAccess("media", "view");
 
   const sp = await searchParams;
   const page = pickPage(sp.page);
   const pageSize = DASHBOARD_PAGE_SIZE;
-  const from = (page - 1) * pageSize;
   const storeId = await getActingStoreId();
+  // Product images names products, so it follows the products permission.
+  const canSeeProducts = access.can("products", "view");
+  const tab = sp.tab === "products" && canSeeProducts ? "products" : "library";
 
-  let assets: MediaAsset[] = [];
-  let total = 0;
+  let assets: LibraryTile[] = [];
+  let productImages: ProductImageItem[] = [];
+  let libraryTotal = 0;
+  let productTotal = 0;
+  let loadError = false;
   try {
-    const result = await withService(async (db) => {
-      // Sequential (not Promise.all): one pooled connection serialises queries
-      // anyway, so parallelising only trips pg's in-flight-query deprecation.
-      const rows = await db
-        .select({
-          id: mediaAssets.id,
-          url: mediaAssets.url,
-          path: mediaAssets.path,
-          filename: mediaAssets.filename,
-          content_type: mediaAssets.contentType,
-          size_bytes: mediaAssets.sizeBytes,
-          created_at: mediaAssets.createdAt,
-        })
-        .from(mediaAssets)
-        .where(eq(mediaAssets.storeId, storeId))
-        .orderBy(desc(mediaAssets.createdAt))
-        .limit(pageSize)
-        .offset(from);
-      const countRows = await db
-        .select({ n: count() })
-        .from(mediaAssets)
-        .where(eq(mediaAssets.storeId, storeId));
-      return { rows, total: countRows[0]?.n ?? 0 };
-    });
-    assets = result.rows as unknown as MediaAsset[];
-    total = result.total;
+    if (tab === "library") {
+      const listed = await listLibraryAssets(storeId, { page, pageSize });
+      libraryTotal = listed.total;
+      // ★ Best-effort: without it the tiles lose their "used by" note, and
+      //   deleteMediaAsset still refuses an image a product uses.
+      const usage = await productImageUsage(
+        storeId,
+        listed.assets.map((a) => a.url),
+      ).catch(() => new Map());
+      assets = listed.assets.map((asset) => ({
+        ...asset,
+        products: usage.get(asset.url) ?? [],
+      }));
+      if (canSeeProducts) {
+        productTotal = await countProductImages(storeId).catch(() => 0);
+      }
+    } else {
+      const listed = await listProductImages(storeId, { page, pageSize });
+      productImages = listed.items;
+      productTotal = listed.total;
+      libraryTotal = await countLibraryAssets(storeId).catch(() => 0);
+    }
   } catch (err) {
+    loadError = true;
     console.error(
       "MediaDashboardPage load:",
       err instanceof Error ? err.message : err,
@@ -57,8 +66,13 @@ export default async function MediaDashboardPage({
 
   return (
     <MediaLibraryView
+      tab={tab}
       assets={assets}
-      total={total}
+      productImages={productImages}
+      libraryTotal={libraryTotal}
+      productTotal={productTotal}
+      canSeeProducts={canSeeProducts}
+      loadError={loadError}
       page={page}
       pageSize={pageSize}
     />

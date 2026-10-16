@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import {
+  useMemo,
+  useState,
+  useTransition,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -13,6 +19,7 @@ import {
   Search,
   Truck,
   MessageSquare,
+  MessageCircle,
   Copy,
   RefreshCw,
   type LucideIcon,
@@ -38,6 +45,12 @@ import {
   syncShiprocketPickupLocations,
   type ShiprocketChannelState,
 } from "@/app/actions/logistics-provider-actions";
+import {
+  setWhatsAppEnabled,
+  type WhatsAppChannelState,
+} from "@/app/actions/whatsapp-provider-actions";
+import { WhatsAppModal } from "./whatsapp-modal";
+import type { EditorSetting } from "@/app/actions/store-settings";
 
 // ---------------------------------------------------------------------------
 // Channel catalog — data-driven so new channels (logistics, SMS, marketplace…)
@@ -49,6 +62,7 @@ type Category =
   | "inventory"
   | "logistics"
   | "sms"
+  | "messaging"
   | "email"
   | "ecommerce"
   | "marketplace";
@@ -98,6 +112,21 @@ const TWILIO_CHANNEL: ChannelDef = {
   logoAspect: 99.7 / 30,
 };
 
+const WHATSAPP_CHANNEL: ChannelDef = {
+  id: "whatsapp",
+  name: "WhatsApp",
+  category: "messaging",
+  tagline: "Order updates, chat and ordering on your own number",
+  accent: "#25D366",
+  // Fallback only — the glyph below wins whenever it loads.
+  icon: MessageCircle,
+  // Meta's own inline logo (Digital_Inline_Green_RGB_2026.svg from the WhatsApp
+  // Brand Resource Center logo pack), byte for byte: Meta's guidelines forbid
+  // modifying it. The artwork fills its viewBox, so the aspect is the viewBox's.
+  logo: "/channels/whatsapp.svg",
+  logoAspect: 1487.13 / 346,
+};
+
 const CHANNELS: ChannelDef[] = [
   {
     id: "razorpay",
@@ -110,6 +139,7 @@ const CHANNELS: ChannelDef[] = [
     logoAspect: 132 / 38, // Razorpay wordmark
   },
   SHIPROCKET_CHANNEL,
+  WHATSAPP_CHANNEL,
   TWILIO_CHANNEL,
 ];
 
@@ -165,6 +195,7 @@ const CATEGORY_LABEL: Record<Category, string> = {
   inventory: "Inventory",
   logistics: "Logistics",
   sms: "SMS",
+  messaging: "Messaging",
   email: "Email",
   ecommerce: "Ecommerce",
   marketplace: "Marketplace",
@@ -175,10 +206,34 @@ const CATEGORY_BADGE: Record<Category, string> = {
   inventory: "bg-sky-50 text-sky-700",
   logistics: "bg-amber-50 text-amber-700",
   sms: "bg-pink-50 text-pink-700",
+  messaging: "bg-green-50 text-green-700",
   email: "bg-violet-50 text-violet-700",
   ecommerce: "bg-blue-50 text-blue-700",
   marketplace: "bg-orange-50 text-orange-700",
 };
+
+/**
+ * A channel's state, seeded from the server and re-seeded whenever the server
+ * sends it again.
+ *
+ * ★ router.refresh() RE-RENDERS THE PAGE BUT KEEPS CLIENT STATE, and a
+ * useState initialiser runs once, so a copy taken on the first render never
+ * saw the refreshed props: after connecting, Refresh from Meta or Set up
+ * templates the card and modal kept the facts the actions had patched in by
+ * hand (no verified name or QR box, old template counts, still "Live" after
+ * Refresh had found a revoked token) until a full reload. The local setter
+ * still applies an action's result at once; the next server answer replaces
+ * it. Re-seeded during render, React's pattern for state that follows a prop.
+ */
+function useServerState<T>(server: T): [T, Dispatch<SetStateAction<T>>] {
+  const [state, setState] = useState(server);
+  const [seeded, setSeeded] = useState(server);
+  if (seeded !== server) {
+    setSeeded(server);
+    setState(server);
+  }
+  return [state, setState];
+}
 
 // Small iOS-style toggle used on active channel cards.
 function Toggle({
@@ -217,20 +272,29 @@ export function ChannelsClient({
   initialState,
   initialShiprocketState,
   initialSmsState,
+  initialWhatsAppState,
+  whatsAppSettings,
   canManage,
 }: {
   initialState: ChannelState;
   initialShiprocketState: ShiprocketChannelState;
   initialSmsState: SmsChannelState;
+  initialWhatsAppState: WhatsAppChannelState;
+  /** The "WhatsApp" registry group, shown inside the card once connected. */
+  whatsAppSettings?: { plan: string; settings: EditorSetting[] };
   canManage: boolean;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [state, setState] = useState(initialState);
-  const [shiprocketState, setShiprocketState] = useState(
+  // Every channel follows the server after a refresh (useServerState); each
+  // action's own result still lands at once through the setter.
+  const [state, setState] = useServerState(initialState);
+  const [shiprocketState, setShiprocketState] = useServerState(
     initialShiprocketState,
   );
-  const [smsState, setSmsState] = useState(initialSmsState);
+  const [smsState, setSmsState] = useServerState(initialSmsState);
+  const [whatsAppState, setWhatsAppState] =
+    useServerState(initialWhatsAppState);
   const [tab, setTab] = useState<"all" | Category>("all");
   const [query, setQuery] = useState("");
   // Which channel's connect/manage modal is open.
@@ -245,7 +309,9 @@ export function ChannelsClient({
         ? shiprocketState.connected
         : id === "twilio"
           ? smsState.connected
-          : false;
+          : id === "whatsapp"
+            ? whatsAppState.connected
+            : false;
   const isEnabled = (id: string) =>
     id === "razorpay"
       ? state.enabled
@@ -253,7 +319,11 @@ export function ChannelsClient({
         ? shiprocketState.enabled && shiprocketState.availableOnPlan
         : id === "twilio"
           ? smsState.enabled
-          : false;
+          : id === "whatsapp"
+            ? whatsAppState.enabled &&
+              whatsAppState.planAllows &&
+              whatsAppState.status !== "needs_reauth"
+            : false;
 
   const categories = useMemo(() => {
     const present = new Set(CHANNELS.map((c) => c.category));
@@ -279,7 +349,9 @@ export function ChannelsClient({
     const res =
       id === "shiprocket"
         ? await setShiprocketEnabled(next)
-        : await setRazorpayEnabled(next);
+        : id === "whatsapp"
+          ? await setWhatsAppEnabled(next)
+          : await setRazorpayEnabled(next);
     if (res.error) {
       toast.error(res.error);
       return;
@@ -287,6 +359,9 @@ export function ChannelsClient({
     if (id === "shiprocket") {
       setShiprocketState((s) => ({ ...s, enabled: next }));
       toast.success(next ? "Shiprocket enabled." : "Shiprocket paused.");
+    } else if (id === "whatsapp") {
+      setWhatsAppState((s) => ({ ...s, enabled: next }));
+      toast.success(next ? "WhatsApp enabled." : "WhatsApp paused.");
     } else {
       setState((s) => ({ ...s, enabled: next }));
       toast.success(
@@ -360,7 +435,10 @@ export function ChannelsClient({
               }
               toggle={
                 canManage &&
-                (c.id !== "shiprocket" || shiprocketState.availableOnPlan) ? (
+                (c.id !== "shiprocket" || shiprocketState.availableOnPlan) &&
+                (c.id !== "whatsapp" ||
+                  (whatsAppState.planAllows &&
+                    whatsAppState.status !== "needs_reauth")) ? (
                   <Toggle
                     on={isEnabled(c.id)}
                     onClick={() => handleToggle(c.id)}
@@ -388,7 +466,13 @@ export function ChannelsClient({
                   ? { text: "Basic plan onwards", tone: "amber", icon: Lock }
                   : c.id === "shiprocket" && !shiprocketState.availableOnPlan
                     ? { text: "Basic plan onwards", tone: "amber", icon: Lock }
-                    : undefined
+                    : c.id === "whatsapp" && !whatsAppState.planAllows
+                      ? {
+                          text: "Basic plan onwards",
+                          tone: "amber",
+                          icon: Lock,
+                        }
+                      : undefined
               }
               cta="Connect"
               onClick={() => setOpenId(c.id)}
@@ -421,6 +505,16 @@ export function ChannelsClient({
           canManage={canManage}
           onClose={() => setOpenId(null)}
           onState={setSmsState}
+          onRefresh={refresh}
+        />
+      )}
+      {openId === "whatsapp" && (
+        <WhatsAppModal
+          state={whatsAppState}
+          settings={whatsAppSettings}
+          canManage={canManage}
+          onClose={() => setOpenId(null)}
+          onState={setWhatsAppState}
           onRefresh={refresh}
         />
       )}

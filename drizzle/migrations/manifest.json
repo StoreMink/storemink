@@ -7158,6 +7158,847 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261008_0174_whatsapp_accounts",
+      "description": "WhatsApp Commerce slice 1: per-store WhatsApp account, Meta templates and raw inbound webhook events (service-only)",
+      "file": "sql/20261008_0174_whatsapp_accounts.sql",
+      "transaction": true,
+      "requires": ["20261008_0173_owner_password_help"],
+      "verify": {
+        "tables": [
+          "store_whatsapp_accounts",
+          "whatsapp_templates",
+          "whatsapp_inbound_events"
+        ],
+        "constraints": [
+          "store_whatsapp_accounts_pkey",
+          "store_whatsapp_accounts_status_check",
+          "store_whatsapp_accounts_rate_check",
+          "store_whatsapp_accounts_phone_number_id_key",
+          "whatsapp_templates_category_check",
+          "whatsapp_templates_status_check",
+          "whatsapp_templates_audience_check",
+          "whatsapp_templates_name_language_key",
+          "whatsapp_inbound_events_event_id_key"
+        ],
+        "indexes": [
+          "store_whatsapp_accounts_waba_idx",
+          "whatsapp_templates_event_idx",
+          "whatsapp_templates_provider_idx",
+          "whatsapp_inbound_events_pending_idx",
+          "whatsapp_inbound_events_store_idx"
+        ],
+        "rlsTables": [
+          "store_whatsapp_accounts",
+          "whatsapp_templates",
+          "whatsapp_inbound_events"
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "app_user holds no privilege on the account table",
+            "sql": "select count(*)::text from information_schema.role_table_grants where table_schema='public' and table_name='store_whatsapp_accounts' and grantee='app_user'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261008_0175_whatsapp_notify",
+      "description": "WhatsApp Commerce slice 2: contacts with consent, the notification WhatsApp queue, a send log with Meta's delivery timeline, and template sync columns (service-only)",
+      "file": "sql/20261008_0175_whatsapp_notify.sql",
+      "transaction": true,
+      "requires": ["20261008_0174_whatsapp_accounts"],
+      "verify": {
+        "tables": [
+          "whatsapp_contacts",
+          "notification_whatsapp_queue",
+          "whatsapp_logs"
+        ],
+        "columns": [
+          "whatsapp_templates.sync_error",
+          "whatsapp_templates.last_synced_at"
+        ],
+        "constraints": [
+          "whatsapp_contacts_store_phone_key",
+          "notification_whatsapp_queue_status_check",
+          "notification_whatsapp_queue_audience_check",
+          "whatsapp_logs_status_check"
+        ],
+        "indexes": [
+          "whatsapp_contacts_user_idx",
+          "notification_whatsapp_queue_claim_idx",
+          "notification_whatsapp_queue_created_idx",
+          "whatsapp_logs_store_created_idx",
+          "whatsapp_logs_status_idx",
+          "whatsapp_logs_provider_message_key",
+          "whatsapp_logs_created_idx",
+          "whatsapp_inbound_events_received_idx"
+        ],
+        "rlsTables": [
+          "whatsapp_contacts",
+          "notification_whatsapp_queue",
+          "whatsapp_logs"
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "app_user holds no privilege on the three new tables",
+            "sql": "select count(*)::text from information_schema.role_table_grants where table_schema='public' and table_name in ('whatsapp_contacts','notification_whatsapp_queue','whatsapp_logs') and grantee='app_user'",
+            "equals": "0"
+          },
+          {
+            "name": "the contact row follows a claimed customer id",
+            "sql": "select confupdtype from pg_constraint where conrelid='public.whatsapp_contacts'::regclass and contype='f' and confrelid='public.users'::regclass",
+            "equals": "c"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261008_0176_whatsapp_notify_help",
+      "description": "Help: send order updates on WhatsApp (connect, templates, notification switches, checkout opt-in, logs)",
+      "file": "sql/20261008_0176_whatsapp_notify_help.sql",
+      "transaction": true,
+      "requires": ["20261008_0175_whatsapp_notify"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "WhatsApp order-updates guide is published under Marketing",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id=a.category_id where a.slug='send-order-updates-on-whatsapp' and a.status='published' and c.slug='marketing' and a.body like '%ticked by default%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261008_0177_whatsapp_inbox",
+      "description": "WhatsApp Commerce slice 3: one conversation per contact and every message in both directions, service-only (the inbox)",
+      "file": "sql/20261008_0177_whatsapp_inbox.sql",
+      "transaction": true,
+      "requires": ["20261008_0175_whatsapp_notify"],
+      "verify": {
+        "tables": ["whatsapp_conversations", "whatsapp_messages"],
+        "constraints": [
+          "whatsapp_conversations_status_check",
+          "whatsapp_conversations_unread_check",
+          "whatsapp_conversations_store_contact_key",
+          "whatsapp_messages_direction_check",
+          "whatsapp_messages_source_check",
+          "whatsapp_messages_kind_check",
+          "whatsapp_messages_status_check"
+        ],
+        "indexes": [
+          "whatsapp_conversations_store_status_idx",
+          "whatsapp_conversations_store_recent_idx",
+          "whatsapp_messages_conversation_idx",
+          "whatsapp_messages_store_created_idx",
+          "whatsapp_messages_provider_message_key"
+        ],
+        "rlsTables": ["whatsapp_conversations", "whatsapp_messages"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "app_user holds no privilege on the two inbox tables",
+            "sql": "select count(*)::text from information_schema.role_table_grants where table_schema='public' and table_name in ('whatsapp_conversations','whatsapp_messages') and grantee='app_user'",
+            "equals": "0"
+          },
+          {
+            "name": "a message cannot outlive its conversation",
+            "sql": "select confdeltype from pg_constraint where conrelid='public.whatsapp_messages'::regclass and contype='f' and confrelid='public.whatsapp_conversations'::regclass",
+            "equals": "c"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261008_0178_whatsapp_inbox_help",
+      "description": "Help: reply to WhatsApp messages (inbox, 24-hour window, phone replies, STOP, chat button and QR); the order-updates guide names the account-page choices",
+      "file": "sql/20261008_0178_whatsapp_inbox_help.sql",
+      "transaction": true,
+      "requires": ["20261008_0176_whatsapp_notify_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "WhatsApp inbox guide is published under Marketing",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id=a.category_id where a.slug='reply-to-whatsapp-messages' and a.status='published' and c.slug='marketing' and a.body like '%restarts the 24 hours%'",
+            "equals": "1"
+          },
+          {
+            "name": "the order-updates guide names the account-page choices",
+            "sql": "select count(*)::text from public.help_articles where slug='send-order-updates-on-whatsapp' and body like '%under <strong>My account</strong> on your store%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261012_0186_help_no_long_dashes_after_whatsapp",
+      "description": "Help: repeat the 0184 em dash rewrite for the WhatsApp order-updates guide, which production publishes after 0184",
+      "file": "sql/20261012_0186_help_no_long_dashes_after_whatsapp.sql",
+      "transaction": true,
+      "requires": [
+        "20261008_0176_whatsapp_notify_help",
+        "20261011_0184_help_no_long_dashes"
+      ],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "No Help article holds an em dash",
+            "sql": "select count(*)::text from public.help_articles where strpos(coalesce(title, '') || coalesce(excerpt, '') || coalesce(body, '') || coalesce(seo_title, '') || coalesce(seo_description, ''), chr(8212)) > 0",
+            "equals": "0"
+          },
+          {
+            "name": "No Help category holds an em dash",
+            "sql": "select count(*)::text from public.help_categories where strpos(coalesce(title, '') || coalesce(description, ''), chr(8212)) > 0",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261013_0192_whatsapp_cod_confirmation",
+      "description": "WhatsApp cash-on-delivery confirmation: where the customer's Confirm/Cancel answer stands on the order, and the payloads a queued message's buttons carry",
+      "file": "sql/20261013_0192_whatsapp_cod_confirmation.sql",
+      "transaction": true,
+      "requires": ["20261012_0191_analytics_overview_refresh_help"],
+      "verify": {
+        "columns": [
+          "notification_whatsapp_queue.button_payloads",
+          "orders.cod_confirmation",
+          "orders.cod_confirmation_at"
+        ],
+        "constraints": [
+          "notification_whatsapp_queue_button_payloads_check",
+          "orders_cod_confirmation_check"
+        ]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261013_0193_whatsapp_cod_confirmation_help",
+      "description": "Help: the order-updates guide explains asking cash-on-delivery customers to confirm or cancel on WhatsApp, and the label the order list shows",
+      "file": "sql/20261013_0193_whatsapp_cod_confirmation_help.sql",
+      "transaction": true,
+      "requires": ["20261013_0192_whatsapp_cod_confirmation"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the order-updates guide explains the COD confirmation setting",
+            "sql": "select count(*)::text from public.help_articles where slug='send-order-updates-on-whatsapp' and body like '%Ask cash-on-delivery customers to confirm on WhatsApp%' and body like '%<h2>If a customer has both SMS and WhatsApp</h2>%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261013_0194_whatsapp_stop_reply_help",
+      "description": "Help: the inbox guide says a customer's STOP gets an automatic reply and does not wait in Needs reply",
+      "file": "sql/20261013_0194_whatsapp_stop_reply_help.sql",
+      "transaction": true,
+      "requires": ["20261013_0193_whatsapp_cod_confirmation_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the inbox guide says STOP is answered automatically",
+            "sql": "select count(*)::text from public.help_articles where slug='reply-to-whatsapp-messages' and body like '%automatic reply on WhatsApp confirming it%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261013_0195_whatsapp_cod_followup",
+      "description": "WhatsApp COD follow-up: when the one reminder was claimed, an 'expired' answer for the automatic cancellation, and the sweep's partial index",
+      "file": "sql/20261013_0195_whatsapp_cod_followup.sql",
+      "transaction": true,
+      "requires": ["20261013_0194_whatsapp_stop_reply_help"],
+      "verify": {
+        "columns": ["orders.cod_reminded_at"],
+        "constraints": ["orders_cod_confirmation_check"],
+        "indexes": ["orders_cod_awaiting_idx"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261013_0196_whatsapp_cod_followup_retention_help",
+      "description": "Help: the order-updates guide explains the COD reminder and the optional automatic cancellation, and the inbox guide says closed conversations are deleted after two years",
+      "file": "sql/20261013_0196_whatsapp_cod_followup_retention_help.sql",
+      "transaction": true,
+      "requires": ["20261013_0195_whatsapp_cod_followup"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the order-updates guide explains the COD reminder and automatic cancellation",
+            "sql": "select count(*)::text from public.help_articles where slug='send-order-updates-on-whatsapp' and body like '%Cancel orders not confirmed within 48 hours%' and body like '%gets the message once more%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide says when closed conversations are deleted",
+            "sql": "select count(*)::text from public.help_articles where slug='reply-to-whatsapp-messages' and body like '%deleted two years after its last message%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261013_0197_whatsapp_auto_replies",
+      "description": "WhatsApp automatic replies: a service-only settings row per store (welcome, away message and business hours, order-status answers) and when each conversation last got the welcome and the away message",
+      "file": "sql/20261013_0197_whatsapp_auto_replies.sql",
+      "transaction": true,
+      "requires": ["20261013_0196_whatsapp_cod_followup_retention_help"],
+      "verify": {
+        "tables": ["whatsapp_auto_replies"],
+        "columns": [
+          "whatsapp_conversations.welcome_sent_at",
+          "whatsapp_conversations.away_sent_at"
+        ],
+        "constraints": [
+          "whatsapp_auto_replies_welcome_length_check",
+          "whatsapp_auto_replies_away_length_check",
+          "whatsapp_auto_replies_welcome_text_check",
+          "whatsapp_auto_replies_away_text_check",
+          "whatsapp_auto_replies_hours_check"
+        ],
+        "rlsTables": ["whatsapp_auto_replies"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "app_user holds no privilege on the automatic-replies table",
+            "sql": "select count(*)::text from information_schema.role_table_grants where table_schema='public' and table_name='whatsapp_auto_replies' and grantee='app_user'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261013_0198_whatsapp_auto_replies_help",
+      "description": "Help: set up WhatsApp automatic replies (welcome, away message and business hours, order status); the inbox guide's Reply section points to it",
+      "file": "sql/20261013_0198_whatsapp_auto_replies_help.sql",
+      "transaction": true,
+      "requires": ["20261013_0197_whatsapp_auto_replies"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the automatic-replies guide is published under Marketing",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id=a.category_id where a.slug='set-up-whatsapp-automatic-replies' and a.status='published' and c.slug='marketing' and a.body like '%does not get it again until you have been open since%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide points to it",
+            "sql": "select count(*)::text from public.help_articles where slug='reply-to-whatsapp-messages' and body like '%/help/marketing/set-up-whatsapp-automatic-replies%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0199_whatsapp_menu_buttons",
+      "description": "WhatsApp menu buttons: up to three reply buttons on the automatic-replies row, sent with the welcome message and when a customer asks for the menu",
+      "file": "sql/20261014_0199_whatsapp_menu_buttons.sql",
+      "transaction": true,
+      "requires": ["20261013_0198_whatsapp_auto_replies_help"],
+      "verify": {
+        "columns": [
+          "whatsapp_auto_replies.menu_enabled",
+          "whatsapp_auto_replies.menu_buttons"
+        ],
+        "constraints": [
+          "whatsapp_auto_replies_menu_shape_check",
+          "whatsapp_auto_replies_menu_on_check"
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every existing settings row keeps the menu off with no buttons",
+            "sql": "select count(*)::text from public.whatsapp_auto_replies where menu_enabled or jsonb_array_length(menu_buttons) > 0",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0200_whatsapp_menu_buttons_help",
+      "description": "Help: the automatic-replies guide gains a Menu buttons section",
+      "file": "sql/20261014_0200_whatsapp_menu_buttons_help.sql",
+      "transaction": true,
+      "requires": ["20261014_0199_whatsapp_menu_buttons"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the automatic-replies guide describes menu buttons",
+            "sql": "select count(*)::text from public.help_articles where slug='set-up-whatsapp-automatic-replies' and status='published' and body like '%<h2>Menu buttons</h2>%' and body like '%Tapped a button%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0201_whatsapp_template_manager_help",
+      "description": "Help: manage your WhatsApp templates (the template manager); the order-updates guide's card sentence names the page",
+      "file": "sql/20261014_0201_whatsapp_template_manager_help.sql",
+      "transaction": true,
+      "requires": ["20261014_0200_whatsapp_menu_buttons_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the template-manager guide is published under Marketing",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id=a.category_id where a.slug='manage-your-whatsapp-templates' and a.status='published' and c.slug='marketing' and a.body like '%Send to Meta for review%'",
+            "equals": "1"
+          },
+          {
+            "name": "the order-updates guide names the page",
+            "sql": "select count(*)::text from public.help_articles where slug='send-order-updates-on-whatsapp' and body like '%/help/marketing/manage-your-whatsapp-templates%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0202_whatsapp_mink_answers",
+      "description": "Customer-facing Mink on WhatsApp: the mink_mode switch, the answers ledger and the one-credit charge function",
+      "file": "sql/20261014_0202_whatsapp_mink_answers.sql",
+      "transaction": true,
+      "requires": ["20261014_0201_whatsapp_template_manager_help"],
+      "verify": {
+        "tables": ["whatsapp_mink_answers"],
+        "columns": ["whatsapp_auto_replies.mink_mode"],
+        "constraints": [
+          "whatsapp_auto_replies_mink_mode_check",
+          "whatsapp_mink_answers_pkey",
+          "whatsapp_mink_answers_mode_check",
+          "whatsapp_mink_answers_outcome_check",
+          "whatsapp_mink_answers_credits_check",
+          "whatsapp_mink_answers_source_check",
+          "whatsapp_mink_answers_period_check"
+        ],
+        "functions": [
+          "consume_mink_whatsapp_answer(uuid,uuid,text,integer,integer)"
+        ],
+        "rlsTables": ["whatsapp_mink_answers"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every existing settings row keeps Mink off",
+            "sql": "select count(*)::text from public.whatsapp_auto_replies where mink_mode <> 'off'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0203_whatsapp_mink_help",
+      "description": "Help: the automatic-replies guide gains an Answers from Mink AI section; the inbox guide's reply section names the draft card",
+      "file": "sql/20261014_0203_whatsapp_mink_help.sql",
+      "transaction": true,
+      "requires": ["20261014_0202_whatsapp_mink_answers"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the automatic-replies guide describes Mink's two ways of helping",
+            "sql": "select count(*)::text from public.help_articles where slug='set-up-whatsapp-automatic-replies' and status='published' and body like '%<h2>Answers from Mink AI</h2>%' and body like '%Drafts replies for you</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide names the draft card",
+            "sql": "select count(*)::text from public.help_articles where slug='reply-to-whatsapp-messages' and body like '%Mink AI drafted a reply%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0204_help_reindex_whatsapp_guides",
+      "description": "Help: move the timestamp on the three WhatsApp guides edited without one, so the Help index re-embeds them",
+      "file": "sql/20261014_0204_help_reindex_whatsapp_guides.sql",
+      "transaction": true,
+      "requires": ["20261014_0203_whatsapp_mink_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "no touched guide keeps a timestamp older than this apply",
+            "sql": "select count(*)::text from public.help_articles where slug in ('send-order-updates-on-whatsapp','reply-to-whatsapp-messages','set-up-whatsapp-automatic-replies') and updated_at < now() - interval '1 minute'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261015_0208_inbox_role_grants",
+      "description": "Staff roles: give Owner and Admin the Inbox section added after the roles were seeded, and correct the inbox guide sentence about who can see it",
+      "file": "sql/20261015_0208_inbox_role_grants.sql",
+      "transaction": true,
+      "requires": [
+        "20261014_0207_fixed_staff_roles",
+        "20261014_0204_help_reindex_whatsapp_guides"
+      ],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the owner and admin roles include the Inbox",
+            "sql": "select count(*)::text from public.platform_roles where slug in ('superadmin','admin') and permissions ? 'inbox'",
+            "equals": "2"
+          },
+          {
+            "name": "the inbox guide says which roles can use it",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%shows every role that includes Inbox%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide no longer sends merchants to edit a role",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%Settings → Staff → Roles%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261015_0209_whatsapp_inbox_full",
+      "description": "WhatsApp inbox, the full version: labels, conversation labels, private notes and saved replies (four service-only tables), the assignee index, and a GIN index over message bodies for search inside conversations",
+      "file": "sql/20261015_0209_whatsapp_inbox_full.sql",
+      "transaction": true,
+      "requires": ["20261015_0208_inbox_role_grants"],
+      "verify": {
+        "tables": [
+          "whatsapp_labels",
+          "whatsapp_conversation_labels",
+          "whatsapp_conversation_notes",
+          "whatsapp_canned_replies"
+        ],
+        "columns": [
+          "whatsapp_labels.color",
+          "whatsapp_conversation_notes.admin_id",
+          "whatsapp_canned_replies.shortcut"
+        ],
+        "constraints": [
+          "whatsapp_labels_name_check",
+          "whatsapp_labels_color_check",
+          "whatsapp_conversation_labels_pkey",
+          "whatsapp_conversation_notes_body_check",
+          "whatsapp_canned_replies_shortcut_check",
+          "whatsapp_canned_replies_title_check",
+          "whatsapp_canned_replies_body_check"
+        ],
+        "rlsTables": [
+          "whatsapp_labels",
+          "whatsapp_conversation_labels",
+          "whatsapp_conversation_notes",
+          "whatsapp_canned_replies"
+        ],
+        "queries": [
+          {
+            "name": "message bodies carry a GIN search index over the simple configuration",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and indexname = 'whatsapp_messages_body_search_idx' and indexdef like '%USING gin%' and indexdef like '%to_tsvector(''simple''::regconfig%'",
+            "equals": "1"
+          },
+          {
+            "name": "conversations carry the assignee index",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and indexname = 'whatsapp_conversations_store_assignee_idx'",
+            "equals": "1"
+          },
+          {
+            "name": "a label name is unique per store ignoring case, a shortcut unique per store",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and indexname in ('whatsapp_labels_store_name_key','whatsapp_canned_replies_store_shortcut_key') and indexdef like 'CREATE UNIQUE INDEX%'",
+            "equals": "2"
+          },
+          {
+            "name": "app_user holds no privilege on the four new tables",
+            "sql": "select count(*)::text from information_schema.role_table_grants where grantee = 'app_user' and table_schema = 'public' and table_name in ('whatsapp_labels','whatsapp_conversation_labels','whatsapp_conversation_notes','whatsapp_canned_replies')",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261015_0210_whatsapp_full_inbox_help",
+      "description": "The inbox guide edited in place for the full inbox: photo and PDF replies, search inside conversations, and a team section (assign, label, note, saved replies, quoted replies, order updates in the thread)",
+      "file": "sql/20261015_0210_whatsapp_full_inbox_help.sql",
+      "transaction": true,
+      "requires": ["20261015_0209_whatsapp_inbox_full"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the inbox guide explains sending a photo or PDF from the dashboard",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%paperclip beside the message box%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide no longer says dashboard replies are text only",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%to send a photo or file, reply from your phone%'",
+            "equals": "0"
+          },
+          {
+            "name": "the inbox guide has the team section",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%<h2>Work on conversations as a team</h2>%' and body like '%type <strong>/</strong> in the message box to pick one%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide says search reaches a word inside a conversation",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%a word from any message%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old search sentence is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%search by name or phone number.%'",
+            "equals": "0"
+          },
+          {
+            "name": "the STOP section still follows the team section exactly once",
+            "sql": "select ((length(body) - length(replace(body, '<h2>When a customer writes STOP</h2>', ''))) / length('<h2>When a customer writes STOP</h2>'))::text from public.help_articles where slug = 'reply-to-whatsapp-messages'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261016_0211_whatsapp_review_fixes",
+      "description": "WhatsApp review fixes: the held SMS fallback and Meta's message id on the WhatsApp queue, retry bookkeeping on inbound events, a sending lease on Mink answers, the 'undelivered' COD answer and the per-order WhatsApp updates choice on orders, the number PIN table, and the retention skip mark on conversations",
+      "file": "sql/20261016_0211_whatsapp_review_fixes.sql",
+      "transaction": true,
+      "requires": ["20261015_0210_whatsapp_full_inbox_help"],
+      "verify": {
+        "tables": ["whatsapp_number_pins"],
+        "columns": [
+          "notification_whatsapp_queue.provider_message_id",
+          "notification_whatsapp_queue.fallback_sms",
+          "notification_whatsapp_queue.fallback_state",
+          "notification_whatsapp_queue.fallback_settled_at",
+          "whatsapp_inbound_events.attempts",
+          "whatsapp_inbound_events.next_attempt_at",
+          "whatsapp_mink_answers.sending_started_at",
+          "orders.whatsapp_updates",
+          "whatsapp_number_pins.pin_enc",
+          "whatsapp_conversations.retention_failed_at"
+        ],
+        "constraints": [
+          "notification_whatsapp_queue_fallback_check",
+          "whatsapp_inbound_events_attempts_check",
+          "orders_cod_confirmation_check",
+          "whatsapp_number_pins_pkey",
+          "whatsapp_number_pins_phone_check",
+          "whatsapp_number_pins_pin_check"
+        ],
+        "rlsTables": ["whatsapp_number_pins"],
+        "queries": [
+          {
+            "name": "the COD answer admits undelivered",
+            "sql": "select count(*)::text from pg_constraint where conname = 'orders_cod_confirmation_check' and pg_get_constraintdef(oid) like '%undelivered%'",
+            "equals": "1"
+          },
+          {
+            "name": "a delivery status finds its queue row by Meta's id",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and indexname = 'notification_whatsapp_queue_provider_idx'",
+            "equals": "1"
+          },
+          {
+            "name": "app_user holds no privilege on the number PINs",
+            "sql": "select count(*)::text from information_schema.role_table_grants where grantee = 'app_user' and table_schema = 'public' and table_name = 'whatsapp_number_pins'",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every number we registered has its PIN kept",
+            "sql": "select count(*)::text from public.store_whatsapp_accounts a where a.coexistence = false and a.registered_at is not null and length(a.two_fa_pin_enc) > 0 and not exists (select 1 from public.whatsapp_number_pins p where p.phone_number_id = a.phone_number_id)",
+            "equals": "0"
+          },
+          {
+            "name": "no queue row holds an SMS yet",
+            "sql": "select count(*)::text from public.notification_whatsapp_queue where fallback_state is not null",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261016_0212_whatsapp_review_fixes_help",
+      "description": "The four WhatsApp guides edited in place for the review fixes: updates go to the checkout phone, Set up templates follows what is still to submit, the undelivered COD label and when follow-ups run, a Cancel tap after a declined request, the SMS sent when a WhatsApp fails, Not submitted templates and a change of account, STOP-worded buttons, marketing templates need a yes to offers, and the offers Mink may mention",
+      "file": "sql/20261016_0212_whatsapp_review_fixes_help.sql",
+      "transaction": true,
+      "requires": ["20261016_0211_whatsapp_review_fixes"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the card's button follows the templates still to submit",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%choose <strong>Set up templates</strong> to send them.%'",
+            "equals": "1"
+          },
+          {
+            "name": "an order's updates go to the number entered at checkout",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%Updates for an order go to the mobile number entered for it at checkout%'",
+            "equals": "1"
+          },
+          {
+            "name": "a Cancel tap after a declined request waits for a person",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%or after you declined their request to cancel it%'",
+            "equals": "1"
+          },
+          {
+            "name": "the undelivered COD label is explained",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%<strong>WhatsApp message not delivered</strong> and is never reminded or cancelled automatically%'",
+            "equals": "1"
+          },
+          {
+            "name": "the COD reminder runs only while the number is connected",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%still pending and your number is connected and switched on%'",
+            "equals": "1"
+          },
+          {
+            "name": "the COD auto-cancel runs only while the number is connected",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%: while your number is connected and switched on, a pending order%'",
+            "equals": "1"
+          },
+          {
+            "name": "an SMS goes when Meta reports the WhatsApp failed",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%Meta reports that the WhatsApp message failed%'",
+            "equals": "1"
+          },
+          {
+            "name": "the template list names the Not submitted state",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-whatsapp-templates' and body like '%or <strong>Not submitted</strong> when Meta has not received it on this account.%'",
+            "equals": "1"
+          },
+          {
+            "name": "a STOP or START worded button is for marketing templates only",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-whatsapp-templates' and body like '%can be added only to a marketing template%'",
+            "equals": "1"
+          },
+          {
+            "name": "the template guide says marketing templates need a yes to offers",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-whatsapp-templates' and body like '%for anyone else it is greyed out with the reason%'",
+            "equals": "1"
+          },
+          {
+            "name": "the template guide covers a change of WhatsApp Business account",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-whatsapp-templates' and body like '%your own templates show as <strong>Not submitted</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide counts a tapped STOP button",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%or taps a button worded that way such as \"Stop promotions\"%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide says marketing templates need a yes to offers",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%you fill in the details they need. A marketing template can be sent only to a customer who agreed to offers%'",
+            "equals": "1"
+          },
+          {
+            "name": "Mink mentions only offers a shopper can see",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-whatsapp-automatic-replies' and body like '%a code only when <strong>Show this coupon on my storefront</strong> is ticked%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old offers wording is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-whatsapp-automatic-replies' and body like '%the offers running now,%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261016_0213_media_library_sources",
+      "description": "media_assets.source records where a Media Library row came from (upload, Mink chat attachment, generated, refined, prepared copy) so the Library can hide chat attachments and resized copies while every row still proves the store owns the image; existing rows backfilled from their folder and, for chat attachments, from the sent message",
+      "file": "sql/20261016_0213_media_library_sources.sql",
+      "transaction": true,
+      "requires": ["20261016_0212_whatsapp_review_fixes_help"],
+      "verify": {
+        "columns": ["media_assets.source"],
+        "constraints": ["media_assets_source_check"],
+        "queries": [
+          {
+            "name": "the source vocabulary admits chat attachments",
+            "sql": "select count(*)::text from pg_constraint where conname = 'media_assets_source_check' and pg_get_constraintdef(oid) like '%mink_attachment%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "no generated picture is left labelled as an upload",
+            "sql": "select count(*)::text from public.media_assets where source = 'upload' and path like 'stores/%/mink-generated/%'",
+            "equals": "0"
+          },
+          {
+            "name": "no refined photo is left labelled as an upload",
+            "sql": "select count(*)::text from public.media_assets where source = 'upload' and path like 'stores/%/refined/%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261016_0214_media_library_product_images_help",
+      "description": "The Media guide, the product images guide and one sentence of the Mink guide edited in place: what the Library and Product images tabs show, the product editor's choice between uploading and the Media Library, an image a product uses cannot be deleted, and attached chat images are not listed in the Library",
+      "file": "sql/20261016_0214_media_library_product_images_help.sql",
+      "transaction": true,
+      "requires": ["20261016_0213_media_library_sources"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the Media guide picks images from the product editor",
+            "sql": "select count(*)::text from public.help_articles where slug = 'upload-and-manage-store-media' and body like '%pick the image straight from the product editor: select the image box%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Media guide explains the two tabs",
+            "sql": "select count(*)::text from public.help_articles where slug = 'upload-and-manage-store-media' and body like '%<h2>What the library shows</h2>%' and body like '%The <strong>Product images</strong> tab lists every photo your products use%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Media guide says a product image cannot be deleted",
+            "sql": "select count(*)::text from public.help_articles where slug = 'upload-and-manage-store-media' and body like '%An image that a product still uses cannot be deleted%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product images guide explains the two ways to add a photo",
+            "sql": "select count(*)::text from public.help_articles where slug = 'add-product-images-and-variants' and body like '%Selecting an image box asks where the photo comes from: <strong>Upload from computer</strong>, or <strong>Choose from Media Library</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product images guide says a library photo stays when removed",
+            "sql": "select count(*)::text from public.help_articles where slug = 'add-product-images-and-variants' and body like '%or that another product also uses, stays where it is%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Mink guide says attached images are not listed in the Library",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and body like '%Attached images are not listed in your Media Library%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

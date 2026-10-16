@@ -35,6 +35,7 @@
     "test:watch": "vitest",
     "test:shuffle": "vitest run --coverage=false --sequence.shuffle --sequence.seed=20260813",
     "mink:eval": "node scripts/mink-eval.mjs",
+    "mink:whatsapp-eval": "tsx --tsconfig tsconfig.scripts.json scripts/mink-whatsapp-eval.ts",
     "theme-studio:model-check": "node scripts/theme-studio-model-check.mjs",
     "email:gallery": "tsx --tsconfig tsconfig.scripts.json scripts/email-gallery.ts",
     "theme-studio:eval": "tsx --tsconfig tsconfig.scripts.json scripts/theme-studio-eval.ts",
@@ -52,7 +53,9 @@
     "help:lint": "node scripts/help-content-lint.mjs",
     "help:audit:local": "DB_HOST=127.0.0.1 DB_PORT=5544 DB_NAME=storemink_local DB_ADMIN_USER=postgres node scripts/help-content-audit.mjs",
     "help:audit:staging": "DB_HOST=127.0.0.1 DB_PORT=6543 DB_NAME=storemink_staging DB_ADMIN_PASSWORD=\"$(gcloud secrets versions access latest --secret=CLOUDSQL_PROD_POSTGRES_PW --project=storemink-prod)\" DB_ADMIN_USER=postgres node scripts/help-content-audit.mjs",
-    "help:audit:prod": "DB_HOST=127.0.0.1 DB_PORT=6543 DB_NAME=storemink DB_ADMIN_PASSWORD=\"$(gcloud secrets versions access latest --secret=CLOUDSQL_PROD_POSTGRES_PW --project=storemink-prod)\" DB_ADMIN_USER=postgres node scripts/help-content-audit.mjs"
+    "help:audit:prod": "DB_HOST=127.0.0.1 DB_PORT=6543 DB_NAME=storemink DB_ADMIN_PASSWORD=\"$(gcloud secrets versions access latest --secret=CLOUDSQL_PROD_POSTGRES_PW --project=storemink-prod)\" DB_ADMIN_USER=postgres node scripts/help-content-audit.mjs",
+    "whatsapp:smoke": "node scripts/whatsapp-smoke.mjs",
+    "whatsapp:media-to-private": "node scripts/whatsapp-media-to-private.mjs"
   },
   "browserslist": [
     "chrome >= 111",

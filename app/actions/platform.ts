@@ -76,7 +76,7 @@ import {
   type TaxSettingsInput,
 } from "@/lib/billing/platform-settings";
 import { deleteStorageUrls } from "@/lib/storage/cleanup";
-import { gcsDeletePrefix } from "@/lib/storage/gcs";
+import { gcsDeletePrefix, gcsPrivateConfigured } from "@/lib/storage/gcs";
 import { storeStoragePrefix } from "@/lib/storage/paths";
 import { cleanupDetachedDomain } from "@/lib/domains/cleanup";
 import { ROOT_DOMAIN } from "@/lib/store/host";
@@ -834,6 +834,16 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   const prefixCleanup = await gcsDeletePrefix(storeStoragePrefix(storeId));
   if (prefixCleanup.error || prefixCleanup.failed > 0) {
     cleanupFailures.push("store media prefix");
+  }
+  // WhatsApp chat media lives in the private bucket under the same prefix.
+  if (gcsPrivateConfigured) {
+    const privateCleanup = await gcsDeletePrefix(
+      storeStoragePrefix(storeId),
+      "private",
+    );
+    if (privateCleanup.error || privateCleanup.failed > 0) {
+      cleanupFailures.push("store private media prefix");
+    }
   }
 
   if (customDomain || legacyResendDomainId) {

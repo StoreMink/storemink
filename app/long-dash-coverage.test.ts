@@ -104,19 +104,28 @@ describe("★★ no em dash in product text", () => {
     }
   });
 
-  it("uses a hyphen, comma or colon instead of an em dash", () => {
-    const offenders: string[] = [];
-    for (const file of files) {
-      const text = readFileSync(file, "utf8");
-      // Cheap filter first: most files carry dashes only in comments, and a
-      // file with none at all needs no parse. "—" is the escaped form.
-      if (!text.includes(EM_DASH) && !text.includes("\\u2014")) continue;
-      offenders.push(...literalDashes(file, text));
-    }
-    expect(
-      offenders,
-      'StoreMink copy never uses an em dash. Write " - ", a comma or a colon in ' +
-        'a sentence, "-" for an empty cell, and " · " in a page title.',
-    ).toEqual([]);
-  });
+  // Parses every file that holds a dash, comments included, so it grows with
+  // the codebase: ~4.7s under CI coverage on main, past vitest's 5s default
+  // once the whatsapp merge added its files.
+  it(
+    "uses a hyphen, comma or colon instead of an em dash",
+    {
+      timeout: 30_000,
+    },
+    () => {
+      const offenders: string[] = [];
+      for (const file of files) {
+        const text = readFileSync(file, "utf8");
+        // Cheap filter first: most files carry dashes only in comments, and a
+        // file with none at all needs no parse. "—" is the escaped form.
+        if (!text.includes(EM_DASH) && !text.includes("\\u2014")) continue;
+        offenders.push(...literalDashes(file, text));
+      }
+      expect(
+        offenders,
+        'StoreMink copy never uses an em dash. Write " - ", a comma or a colon in ' +
+          'a sentence, "-" for an empty cell, and " · " in a page title.',
+      ).toEqual([]);
+    },
+  );
 });

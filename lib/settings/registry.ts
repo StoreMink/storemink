@@ -67,6 +67,11 @@ export const SETTING_KEYS = [
   "offers.showNearMiss",
   "offers.onSalePrice",
   "offers.maxTotalDiscountPercent",
+  "whatsapp.updatePrecedence",
+  "whatsapp.chatButton",
+  "whatsapp.codConfirmation",
+  "whatsapp.codReminder",
+  "whatsapp.codAutoCancel",
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];
@@ -685,6 +690,101 @@ export const SETTINGS: readonly SettingDef[] = [
     defaultValue: 50,
     min: 0,
     max: 100,
+  },
+  {
+    // ★ WHICH ONE MESSAGE a customer opted into both channels receives
+    // (docs/whatsapp-commerce-plan.md §8, §19.3). `whatsapp_first` is the
+    // owner's call and the default: WhatsApp carries the delivery receipt SMS
+    // never can, and a customer who gave both numbers did not ask to be told
+    // twice. SMS is the fallback whenever WhatsApp cannot deliver — no
+    // consent, no approved template, a paused number. `both` exists for a
+    // store that genuinely wants the duplicate; it is never the default.
+    key: "whatsapp.updatePrecedence",
+    label: "When a customer has both WhatsApp and SMS",
+    description:
+      "Which channel carries an order update when the customer can receive it on both. The other is used only when the first cannot deliver.",
+    group: "WhatsApp",
+    section: "channels",
+    type: "select",
+    defaultValue: "whatsapp_first",
+    options: [
+      {
+        value: "whatsapp_first",
+        label: "WhatsApp, with SMS as the fallback",
+        description:
+          "Send on WhatsApp when the customer opted in and the template is approved; otherwise send the SMS.",
+      },
+      {
+        value: "sms_first",
+        label: "SMS, with WhatsApp as the fallback",
+        description:
+          "Send the SMS when your Twilio connection and DLT template can carry it; otherwise send on WhatsApp.",
+      },
+      {
+        value: "both",
+        label: "Both",
+        description: "Send on every channel the customer can receive.",
+      },
+    ],
+  },
+  {
+    // The storefront's floating "chat on WhatsApp" button (plan §6B, slice 3).
+    // ★ DEFAULT ON, and that is not the migration-bug-in-a-config-hat this
+    // file warns about: the button renders only on a store with a CONNECTED,
+    // enabled number, and no store had one before this shipped — connecting
+    // is itself the merchant's act. A merchant who wants enquiries through
+    // the form instead switches it off here.
+    key: "whatsapp.chatButton",
+    label: "Show a WhatsApp chat button on the storefront",
+    description:
+      "A button on every page of your store that opens a chat with your connected WhatsApp number. Shown only while the number is connected and live.",
+    group: "WhatsApp",
+    section: "channels",
+    type: "boolean",
+    defaultValue: true,
+  },
+  {
+    // ★ OFF BY DEFAULT: a Cancel button that cancels an order is new
+    // behaviour on a live store, and that is the merchant's call. Turning it
+    // on is also the consent for customers to cancel unshipped COD orders
+    // from WhatsApp, separately from `orders.allowCustomerCancellation`.
+    key: "whatsapp.codConfirmation",
+    label: "Ask cash-on-delivery customers to confirm on WhatsApp",
+    description:
+      "Website cash-on-delivery orders get a WhatsApp message with Confirm order and Cancel order buttons instead of the usual order message. Cancel order cancels it straight away if it hasn't shipped. Sent only to customers who agreed to WhatsApp updates, once Meta approves the message.",
+    group: "WhatsApp",
+    section: "channels",
+    type: "boolean",
+    defaultValue: false,
+  },
+  {
+    // ON by default once confirmation is on: the same message once more, to
+    // somebody who has not answered, is part of asking. Resends the approved
+    // COD template, so it needs no new approval (it is a paid utility message).
+    key: "whatsapp.codReminder",
+    label: "Remind customers who haven't answered after 24 hours",
+    description:
+      "Sends the confirmation message once more to a customer whose cash-on-delivery order is still waiting for an answer 24 hours later.",
+    group: "WhatsApp",
+    section: "channels",
+    type: "boolean",
+    defaultValue: true,
+    dependsOn: "whatsapp.codConfirmation",
+  },
+  {
+    // ★ OFF BY DEFAULT: cancelling an order nobody asked to cancel is the
+    // merchant's decision to make, not ours. Only orders still pending, and
+    // only 48 to 72 hours after the message (lib/whatsapp/cod-sweep.ts), so
+    // switching it on never cancels last week's orders.
+    key: "whatsapp.codAutoCancel",
+    label: "Cancel orders not confirmed within 48 hours",
+    description:
+      "Cancels a pending cash-on-delivery order whose customer has not confirmed it on WhatsApp 48 hours after the message. Its stock goes back on sale and the customer is told.",
+    group: "WhatsApp",
+    section: "channels",
+    type: "boolean",
+    defaultValue: false,
+    dependsOn: "whatsapp.codConfirmation",
   },
 ];
 

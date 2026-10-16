@@ -59,6 +59,7 @@ describe("saveMinkGeneratedImage", () => {
     const insert = sqlText(dbHolder.current.calls.execute[0]);
     expect(insert).toMatch(/insert into media_assets/i);
     expect(insert).toMatch(/where not exists/i);
+    expect(insert).toMatch(/'mink_generated'/);
   });
 
   it("★ REQUIRES MEDIA MANAGE, NOT MERELY A DRAFT ID", async () => {

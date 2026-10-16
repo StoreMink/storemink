@@ -36,6 +36,12 @@ vi.mock("@/lib/credit/store-credit", () => ({
   issueCredit: vi.fn(async () => ({ ok: true })),
 }));
 vi.mock("./coupon-actions", () => ({ validateCoupon: vi.fn() }));
+// The WhatsApp boxes are recorded after the order lands, by a module with its
+// own tests; here only the hand-off is asserted.
+vi.mock("@/lib/whatsapp/consent", () => ({ recordWhatsAppConsent: vi.fn() }));
+vi.mock("@/lib/whatsapp/channel", () => ({
+  storeCanSendWhatsApp: vi.fn(async () => false),
+}));
 // The fan-out is fire-and-forget, so stubbing it changes nothing about the
 // order write — but it is the only way to assert WHO gets told WHAT, which is
 // the whole point of the "unpaid gateway order" tests below.
@@ -180,6 +186,7 @@ import {
 import { getServerUser } from "@/lib/auth/server-user";
 import { rateLimit } from "@/lib/rate-limit";
 import { validateCoupon } from "./coupon-actions";
+import { recordWhatsAppConsent } from "@/lib/whatsapp/consent";
 import { getLiveStoreGateway, getStoreGateway } from "@/lib/payments/provider";
 import {
   rzpCreateOrder,
@@ -284,6 +291,70 @@ describe("placeOrder", () => {
       .mocked(emitEvent)
       .mock.calls.filter((c: any[]) => c[0]?.type === "order.placed");
     expect(placed).toHaveLength(1);
+  });
+
+  it("records the WhatsApp boxes against the delivery phone, after the order", async () => {
+    // The shopper's own signed-in number: theirs to link and to change.
+    vi.mocked(getServerUser).mockResolvedValue({
+      id: "user-1",
+      phone: "+919876543210",
+    } as any);
+    await placeOrder(
+      validForm,
+      [oneItem()],
+      undefined,
+      "cod",
+      null,
+      null,
+      null,
+      null,
+      { updates: true, marketing: false },
+    );
+    expect(recordWhatsAppConsent).toHaveBeenCalledTimes(1);
+    expect(recordWhatsAppConsent).toHaveBeenCalledWith({
+      storeId: STORE,
+      phone: "9876543210",
+      userId: "user-1",
+      verified: true,
+      consent: { updates: true, marketing: false },
+    });
+  });
+
+  it("★★ a delivery phone that is not the shopper's: updates only, unlinked; offers go to their own number", async () => {
+    vi.mocked(getServerUser).mockResolvedValue({
+      id: "user-1",
+      phone: "+919000000001",
+    } as any);
+    await placeOrder(
+      validForm,
+      [oneItem()],
+      undefined,
+      "cod",
+      null,
+      null,
+      null,
+      null,
+      { updates: true, marketing: true },
+    );
+    expect(recordWhatsAppConsent).toHaveBeenCalledWith({
+      storeId: STORE,
+      phone: "9876543210",
+      userId: null,
+      verified: false,
+      consent: { updates: true },
+    });
+    expect(recordWhatsAppConsent).toHaveBeenCalledWith({
+      storeId: STORE,
+      phone: "+919000000001",
+      userId: "user-1",
+      verified: true,
+      consent: { marketing: true },
+    });
+  });
+
+  it("records no WhatsApp consent when the store showed no boxes", async () => {
+    await placeOrder(validForm, [oneItem()]);
+    expect(recordWhatsAppConsent).not.toHaveBeenCalled();
   });
 
   it("rejects an anonymous caller", async () => {
@@ -1358,6 +1429,29 @@ describe("placeOrder — store credit", () => {
       (v: any) => v && v.paymentMethod === "store_credit",
     );
     expect(paid).toBeUndefined();
+  });
+
+  it("★ announces a fully-covered order as paid by store credit, not cash on delivery", async () => {
+    // The confirmation's payment line and the WhatsApp COD buttons both read
+    // this: "Cash on delivery" with Confirm/Cancel for an order with nothing
+    // to collect is wrong twice.
+    seedWithCredit(500);
+    await placeOrder(validForm, [oneItem()]);
+    const placed = vi
+      .mocked(emitEvent)
+      .mock.calls.map((c) => c[0])
+      .find((e) => e.type === "order.placed");
+    expect(placed?.payload?.paymentMethod).toBe("store_credit");
+  });
+
+  it("a partly-covered COD order is still announced as cash on delivery", async () => {
+    seedWithCredit(50);
+    await placeOrder(validForm, [oneItem()]);
+    const placed = vi
+      .mocked(emitEvent)
+      .mock.calls.map((c) => c[0])
+      .find((e) => e.type === "order.placed");
+    expect(placed?.payload?.paymentMethod).toBe("cod");
   });
 
   it("doesn't look up a balance for a signed-out shopper", async () => {

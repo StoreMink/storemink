@@ -6,6 +6,7 @@
 // cleanup must run on both sides of that choice.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { makeDbMock } from "@/app/actions/_test-helpers";
 
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
@@ -26,7 +27,10 @@ vi.mock("@/lib/payments/issue-refund", () => ({
 vi.mock("@/lib/payments/refund-reconcile", () => ({
   refundDueForOrder: vi.fn(async () => 0),
 }));
-vi.mock("@/lib/notifications/record", () => ({ emitEvent: vi.fn() }));
+vi.mock("@/lib/notifications/record", () => ({
+  emitEvent: vi.fn(),
+  recordEvent: vi.fn(async () => "evt-1"),
+}));
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
   logInfo: vi.fn(),
@@ -35,6 +39,7 @@ vi.mock("@/lib/observability/logger", () => ({
 
 import { releaseCancelledOrder } from "@/lib/orders/cancel";
 import { issueRefund } from "@/lib/payments/issue-refund";
+import { emitEvent, recordEvent } from "@/lib/notifications/record";
 import { approveCancellation } from "./approve-cancellation";
 
 const CLAIMED = {
@@ -71,6 +76,103 @@ beforeEach(() => {
 });
 
 describe("approveCancellation", () => {
+  const claimSql = () =>
+    new PgDialect().sqlToQuery(dbHolder.current.calls.where[0]).sql;
+
+  it("★ the COD auto-cancel claims only an order still awaiting an answer", async () => {
+    await approveCancellation(input({ onlyWhileCodAwaited: true }));
+    // Inside the claim, so a Confirm tap that landed first wins.
+    expect(claimSql()).toContain('"orders"."cod_confirmation" = ');
+  });
+
+  it("an ordinary cancellation does not look at the COD answer", async () => {
+    await approveCancellation(input());
+    expect(claimSql()).not.toContain("cod_confirmation");
+  });
+
+  const claimParams = () =>
+    new PgDialect().sqlToQuery(dbHolder.current.calls.where[0]).params;
+
+  // ★★ The sweep reads only pending orders, but staff (or a Shiprocket
+  // booking) can move one to processing before this claim runs. That order
+  // is one the shop has decided to ship; cancelling and restocking it would
+  // overrule them.
+  it("★★ the COD auto-cancel claims only a PENDING order, never a processing one", async () => {
+    await approveCancellation(input({ onlyWhileCodAwaited: true }));
+    expect(claimSql()).toMatch(/"orders"\."status" = \$\d/);
+    expect(claimSql()).not.toMatch(/"orders"\."status" in/);
+    expect(claimParams()).toContain("pending");
+    expect(claimParams()).not.toContain("processing");
+  });
+
+  it("an ordinary cancellation still claims a processing order", async () => {
+    await approveCancellation(input());
+    expect(claimSql()).toMatch(/"orders"\."status" in \(/);
+    expect(claimParams()).toEqual(
+      expect.arrayContaining(["pending", "processing"]),
+    );
+  });
+
+  // ★★ Written after the cancellation, the label left a window (and, on a
+  // failed write, for ever) in which a Confirm tap read a cancelled order
+  // still 'requested' and got "already cancelled" with nobody asked to look.
+  it("★★ the COD auto-cancel labels the order 'expired' in the statement that cancels it", async () => {
+    await approveCancellation(input({ onlyWhileCodAwaited: true }));
+    expect(dbHolder.current.calls.update).toHaveLength(1);
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      status: "cancelled",
+      codConfirmation: "expired",
+    });
+    expect(dbHolder.current.calls.set[0]).toHaveProperty("codConfirmationAt");
+  });
+
+  it("an ordinary cancellation leaves the COD answer alone", async () => {
+    await approveCancellation(input());
+    expect(dbHolder.current.calls.set[0]).not.toHaveProperty("codConfirmation");
+    expect(dbHolder.current.calls.set[0]).not.toHaveProperty(
+      "codConfirmationAt",
+    );
+  });
+
+  // ★★ A decline is final (cancellation.ts). The check is in the claim, so a
+  // decline that lands after the caller's own read still wins.
+  it("★★ a cancellation the customer started never overrides a declined request", async () => {
+    await approveCancellation(input({ fromRequest: true }));
+    expect(claimSql()).toMatch(
+      /"cancellation_status" is distinct from 'declined'/,
+    );
+  });
+
+  it("the merchant's own Cancel can still cancel after declining a request", async () => {
+    await approveCancellation(input());
+    expect(claimSql()).not.toContain("cancellation_status");
+  });
+
+  it("an automatic cancellation is recorded as the system", async () => {
+    await approveCancellation(
+      input({ bySystem: true, actorId: null, actorLabel: "Not confirmed" }),
+    );
+    expect(vi.mocked(emitEvent).mock.calls[0][0].actor).toEqual({
+      type: "system",
+      id: null,
+      label: "Not confirmed",
+    });
+  });
+
+  it("★ a cron records the notification before returning, not in after()", async () => {
+    await approveCancellation(input({ notifyInline: true }));
+    expect(recordEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "order.cancelled" }),
+    );
+    expect(emitEvent).not.toHaveBeenCalled();
+  });
+
+  it("everyone else defers it", async () => {
+    await approveCancellation(input());
+    expect(emitEvent).toHaveBeenCalledTimes(1);
+    expect(recordEvent).not.toHaveBeenCalled();
+  });
+
   it("★★ runs financial and hold cleanup even when stock must not be restocked", async () => {
     const res = await approveCancellation(input({ restock: false }));
     expect(res.success).toBe(true);

@@ -148,6 +148,7 @@ export async function createMinkMediaImageProposal(
         contentType: image.mimeType,
         sizeBytes: image.bytes.length,
         createdBy: input.actor.adminId,
+        source: "mink_generated",
       }),
     );
   } catch (error) {

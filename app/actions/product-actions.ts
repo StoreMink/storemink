@@ -35,6 +35,7 @@ import {
   type ProductOption,
 } from "@/lib/products/options";
 import { deleteStorageUrls } from "@/lib/storage/cleanup";
+import { productImagesSafeToDelete } from "@/lib/media/product-images";
 import {
   FOREIGN_IMAGE_ERROR,
   firstForeignStoreImageUrl,
@@ -839,10 +840,15 @@ export async function updateProduct(
         formData.variants,
       );
     }
-    // Purge files that are no longer referenced after the save.
+    // Purge files that are no longer referenced after the save. A file the
+    // Media Library or another product still uses stays: dropping it from
+    // THIS product says nothing about them.
     const kept = new Set(await fetchProductImageUrls(admin, id));
     await deleteStorageUrls(
-      oldImageUrls.filter((u) => !kept.has(u)),
+      await productImagesSafeToDelete(
+        storeId,
+        oldImageUrls.filter((u) => !kept.has(u)),
+      ),
       {
         ownedByStoreId: storeId,
       },
@@ -915,14 +921,16 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
     return { error: dbErrorMessage(err, "Failed to delete product.") };
   }
 
-  // Files won't cascade — remove them from storage too.
-  await deleteStorageUrls(imageUrls, {
-    ownedByStoreId: await getActingStoreId(),
+  // Files won't cascade — remove them from storage too, except any the Media
+  // Library or another product still uses.
+  const storeId = await getActingStoreId();
+  await deleteStorageUrls(await productImagesSafeToDelete(storeId, imageUrls), {
+    ownedByStoreId: storeId,
   });
 
   emitEvent({
     type: "product.deleted",
-    storeId: await getActingStoreId(),
+    storeId,
     actor: { type: "admin", id: admin.uid, label: admin.email },
     subject: { type: "product", id, label: deletedName },
   });
@@ -1086,7 +1094,10 @@ export async function bulkDeleteProducts(ids: string[]): Promise<ActionResult> {
     console.error("bulkDeleteProducts error:", err);
     return { error: dbErrorMessage(err, "Failed to delete products.") };
   }
-  await deleteStorageUrls(urls, { ownedByStoreId: await getActingStoreId() });
+  const storeId = await getActingStoreId();
+  await deleteStorageUrls(await productImagesSafeToDelete(storeId, urls), {
+    ownedByStoreId: storeId,
+  });
   revalidateProduct();
   return {
     success: true,

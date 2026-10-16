@@ -189,6 +189,21 @@ export const SECTIONS: DashboardSection[] = [
     parent: "users",
   },
   {
+    // WhatsApp conversations (docs/whatsapp-commerce-plan.md §11). Its own
+    // section, not a child of Enquiries: an enquiry is a form somebody filled
+    // in once, a conversation is live and needs answering, and a staff member
+    // trusted to read the one is not automatically trusted to speak as the
+    // store on the other. `view` reads, `manage` replies and closes. The
+    // layout shows it only once a WhatsApp number is connected, with the
+    // needs-reply count as its badge (app/dashboard/layout.tsx).
+    key: "inbox",
+    label: "Inbox",
+    href: "/dashboard/inbox",
+    icon: "inbox",
+    group: "Workspace",
+    actions: ["view", "manage"],
+  },
+  {
     key: "analytics",
     label: "Analytics",
     href: "/dashboard/analytics",

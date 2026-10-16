@@ -93,14 +93,14 @@ describe("Help Centre embeddings", () => {
     });
     if (!result.ok) throw new Error("Expected an embedding");
     expect(result.value).toHaveLength(768);
-    // Reduced gemini-embedding-001 vectors are normalized before storage/use.
+    // Reduced-dimension vectors are normalized before storage/use.
     expect(result.value[0]).toBeCloseTo(0.6);
     expect(result.value[1]).toBeCloseTo(0.8);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent",
+      `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_HELP_EMBEDDING_MODEL}:embedContent`,
     );
     expect(init.headers).toMatchObject({
       "Content-Type": "application/json",
@@ -109,7 +109,7 @@ describe("Help Centre embeddings", () => {
     expect(init.cache).toBe("no-store");
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(String(init.body))).toEqual({
-      model: "models/gemini-embedding-001",
+      model: `models/${DEFAULT_HELP_EMBEDDING_MODEL}`,
       content: { parts: [{ text: "How do I process a POS sale?" }] },
       embedContentConfig: {
         taskType: "RETRIEVAL_QUERY",
@@ -146,7 +146,7 @@ describe("Help Centre embeddings", () => {
     const body = JSON.parse(String(init.body));
     expect(body.requests).toHaveLength(2);
     expect(body.requests[0]).toEqual({
-      model: "models/gemini-embedding-001",
+      model: `models/${DEFAULT_HELP_EMBEDDING_MODEL}`,
       content: { parts: [{ text: "Open Sell and add items." }] },
       embedContentConfig: {
         taskType: "RETRIEVAL_DOCUMENT",
@@ -161,21 +161,15 @@ describe("Help Centre embeddings", () => {
     });
   });
 
-  it("uses ADC and Vertex prediction requests when no Gemini API key is set", async () => {
+  it("★ uses ADC and Vertex embedContent, one request per document, when no Gemini API key is set", async () => {
     process.env.GCP_PROJECT_ID = "storemink-prod";
     process.env.GCP_LOCATION = "asia-south1";
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
-      const first = body.instances[0].title === "First" ? 1 : 0;
+      const first = body.embedContentConfig.title === "First" ? 1 : 0;
       return jsonResponse({
-        predictions: [
-          {
-            embeddings: {
-              values: vector(first, first ? 0 : 1),
-              statistics: { truncated: false, token_count: 5 },
-            },
-          },
-        ],
+        embedding: { values: vector(first, first ? 0 : 1) },
+        usageMetadata: { promptTokenCount: 5 },
       });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -188,6 +182,7 @@ describe("Help Centre embeddings", () => {
     expect(result).toMatchObject({
       ok: true,
       backend: "vertex-ai",
+      model: DEFAULT_HELP_EMBEDDING_MODEL,
       dimensions: 768,
     });
     if (!result.ok) throw new Error("Expected document embeddings");
@@ -197,22 +192,48 @@ describe("Help Centre embeddings", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     for (const [url, init] of fetchMock.mock.calls as [string, RequestInit][]) {
+      // ★ embedContent, never the legacy predict endpoint: gemini-embedding-2
+      // is not served by predict, and the model it replaced is capped at five
+      // requests a minute there.
       expect(url).toBe(
-        "https://asia-south1-aiplatform.googleapis.com/v1/projects/storemink-prod/locations/asia-south1/publishers/google/models/gemini-embedding-001:predict",
+        `https://asia-south1-aiplatform.googleapis.com/v1/projects/storemink-prod/locations/asia-south1/publishers/google/models/${DEFAULT_HELP_EMBEDDING_MODEL}:embedContent`,
       );
       expect(init.headers).toMatchObject({
         Authorization: "Bearer adc-token",
       });
       const body = JSON.parse(String(init.body));
-      expect(body.instances).toHaveLength(1);
-      expect(body.instances[0]).toMatchObject({
-        task_type: "RETRIEVAL_DOCUMENT",
+      // The same EmbedContentRequest the Developer API gets, minus the model
+      // name, which Vertex takes from the URL.
+      expect(body).not.toHaveProperty("model");
+      expect(body).not.toHaveProperty("instances");
+      expect(body.content).toEqual({
+        parts: [{ text: expect.stringMatching(/document$/) }],
       });
-      expect(body.parameters).toEqual({
-        autoTruncate: false,
+      expect(body.embedContentConfig).toMatchObject({
+        taskType: "RETRIEVAL_DOCUMENT",
         outputDimensionality: 768,
+        autoTruncate: false,
       });
     }
+  });
+
+  it("the default model is gemini-embedding-2 and the global Vertex host is used for the global location", async () => {
+    expect(DEFAULT_HELP_EMBEDDING_MODEL).toBe("gemini-embedding-2");
+    process.env.GCP_PROJECT_ID = "storemink-prod";
+    process.env.GCP_LOCATION = "global";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ embedding: { values: vector() } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await embedHelpQuery("where is my order");
+    expect(result).toMatchObject({ ok: true, backend: "vertex-ai" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      "https://aiplatform.googleapis.com/v1/projects/storemink-prod/locations/global/publishers/google/models/gemini-embedding-2:embedContent",
+    );
+    expect(JSON.parse(String(init.body)).embedContentConfig.taskType).toBe(
+      "RETRIEVAL_QUERY",
+    );
   });
 
   it("fails soft when embeddings are not configured or input is invalid", async () => {

@@ -256,6 +256,7 @@ export async function sweepExpiredPickups(limit = 200): Promise<number> {
     pickup_location_id: string | null;
     total: number | null;
     payment_status: string | null;
+    location_name: string | null;
   }> = [];
 
   try {
@@ -287,6 +288,14 @@ export async function sweepExpiredPickups(limit = 200): Promise<number> {
           // Needed to work out what the store now owes — see below.
           total: orders.total,
           payment_status: orders.paymentStatus,
+          // ★ The shop it was waiting at, read in the claim itself (the
+          // reminder sweep's way), so naming it costs no round trip per
+          // order. Without it the WhatsApp message read "was not collected
+          // from - by its deadline" and the email dropped the row.
+          location_name: sql<string | null>`(
+            select l.name from ${storeLocations} l
+             where l.id = ${orders.pickupLocationId}
+          )`,
         }),
     );
   } catch (err) {
@@ -335,6 +344,7 @@ export async function sweepExpiredPickups(limit = 200): Promise<number> {
       payload: {
         orderRef: order.order_ref ?? "",
         currency: "INR",
+        pickupLocation: order.location_name ?? "",
         ...(refundDue > 0 ? { refund_due: refundDue } : {}),
       },
     });

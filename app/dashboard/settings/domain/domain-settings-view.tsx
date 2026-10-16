@@ -539,14 +539,17 @@ function RecordRow({
       <span className="w-16 shrink-0 rounded-md bg-[#f3f4f6] px-2 py-1 text-center text-xs font-semibold text-[#111827]">
         {record.type}
       </span>
-      <div className="min-w-0 flex-1">
+      {/* 12rem floors: on a phone the Value drops onto its own line rather
+          than both columns shrinking until the value is cut off. Nothing is
+          truncated, because a merchant types these at their registrar. */}
+      <div className="min-w-[12rem] flex-1">
         <p className="text-xs uppercase tracking-wide text-[#5b6472]">Name</p>
         <CopyLine text={record.name} />
-        <p className="mt-1 truncate text-xs text-[#6b7280]" title={record.fqdn}>
+        <p className="mt-1 break-all text-xs text-[#6b7280]">
           Creates {record.fqdn}
         </p>
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-[12rem] flex-1">
         <p className="text-xs uppercase tracking-wide text-[#5b6472]">Value</p>
         <CopyLine text={record.value} />
       </div>
@@ -562,11 +565,15 @@ function CopyLine({ text }: { text: string }) {
         void navigator.clipboard.writeText(text);
         toast.success("Copied");
       }}
-      className="group flex w-full min-w-0 items-center gap-2 text-left"
+      className="group flex w-full min-w-0 items-center gap-2 text-left pointer-coarse:min-h-11"
       title="Copy"
     >
-      <code className="truncate font-mono text-sm text-[#111827]">{text}</code>
-      <Copy className="h-3.5 w-3.5 shrink-0 text-[#5b6472] opacity-0 transition group-hover:opacity-100" />
+      <code className="min-w-0 break-all font-mono text-sm text-[#111827]">
+        {text}
+      </code>
+      {/* No hover on a touchscreen, so the icon stays visible there: it is
+          the only sign that tapping copies. */}
+      <Copy className="h-3.5 w-3.5 shrink-0 text-[#5b6472] opacity-0 transition group-hover:opacity-100 pointer-coarse:opacity-100" />
     </button>
   );
 }

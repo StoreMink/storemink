@@ -278,6 +278,7 @@ export async function refineStoreImage(input: {
           contentType: "image/webp",
           sizeBytes: output.length,
           createdBy: actor.adminId,
+          source: "mink_refined",
         });
       }
       return charged;

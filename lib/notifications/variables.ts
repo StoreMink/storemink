@@ -20,6 +20,12 @@ export interface TemplateVariable {
   description: string;
   /** Shown in the console's palette and used to render the preview. */
   sample: string;
+  /**
+   * Another variable of the same event whose value this one takes when the
+   * event did not carry it (`withVariableFallbacks`). Only between variables
+   * formatted the same way, because the formatted text is what is copied.
+   */
+  fallback?: string;
 }
 
 /**
@@ -69,6 +75,19 @@ export const BASE_VARIABLES: readonly TemplateVariable[] = [
 const EVENT_VARIABLES: Partial<Record<EventKey, TemplateVariable[]>> = {
   "order.placed": [
     { name: "total", description: "Order total.", sample: "₹1,240.00" },
+    {
+      // ★ NOT THE TOTAL WHEN STORE CREDIT PAID PART OF IT. Credit is a
+      // payment, so orders.total stays the full goods value (CODEBASE §29) and
+      // the courier collects the total less the credit. The COD confirmation's
+      // "Amount to pay on delivery" reads this, never `total`.
+      name: "amount_due",
+      description:
+        "What the customer pays: the order total less any store credit used. The same as the total when no credit was used.",
+      sample: "₹1,240.00",
+      // An event emitted before checkout carried it, or by another emitter
+      // (a till sale), has no credit to take off: the total is the answer.
+      fallback: "total",
+    },
     { name: "currency", description: "Currency code.", sample: "INR" },
     {
       name: "items",
@@ -312,6 +331,20 @@ const EVENT_VARIABLES: Partial<Record<EventKey, TemplateVariable[]>> = {
       sample: "Bulk order question",
     },
   ],
+  "whatsapp.message_received": [
+    {
+      name: "preview",
+      description: "The first line of the customer's message.",
+      sample: "Is the blue one back in stock?",
+    },
+  ],
+  "whatsapp.conversation_assigned": [
+    {
+      name: "assigned_by",
+      description: "Who assigned the conversation.",
+      sample: "Priya Sharma",
+    },
+  ],
   "blog.submitted": [
     {
       name: "slug",
@@ -466,6 +499,8 @@ const SUBJECT_LABEL_SAMPLES: Partial<Record<EventKey, string>> = {
   "customer.review_submitted": "almond-shake",
   "customer.signed_up": "Priya Sharma",
   "enquiry.received": "Bulk order question",
+  "whatsapp.message_received": "Priya Sharma",
+  "whatsapp.conversation_assigned": "Rohan",
   "blog.submitted": "How we cold-press our juice",
   "blog.published": "How we cold-press our juice",
   "blog.approved": "How we cold-press our juice",
@@ -499,6 +534,35 @@ export function variablesFor(key: string): TemplateVariable[] {
 /** Fast membership check for the template validator. */
 export function variableNamesFor(key: string): Set<string> {
   return new Set(variablesFor(key).map((v) => v.name));
+}
+
+/**
+ * Fill each variable the event did not carry from the one it falls back to.
+ *
+ * ★ APPLIED WHERE NAMED VALUES ARE RESOLVED, FOR EVERY CHANNEL. What
+ * {{amount_due}} means on an event is a fact about the variable, so an email
+ * template, an SMS mapping and a WhatsApp placeholder must all read the same
+ * value. format.ts cannot do it (it formats one value and never sees the
+ * others), and a WhatsApp-only fallback would leave the email blank.
+ *
+ * Takes the FORMATTED values (template.ts `templateValues`) and returns a new
+ * map; a blank value counts as absent, because a blank is what renders as
+ * "-" in a WhatsApp parameter. A fallback that is itself absent invents
+ * nothing.
+ */
+export function withVariableFallbacks(
+  key: string,
+  values: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const out: Record<string, string> = { ...values };
+  for (const variable of variablesFor(key)) {
+    if (!variable.fallback || (out[variable.name] ?? "").trim() !== "") {
+      continue;
+    }
+    const from = out[variable.fallback];
+    if (from !== undefined && from.trim() !== "") out[variable.name] = from;
+  }
+  return out;
 }
 
 /** Sample values for the console's live preview. */

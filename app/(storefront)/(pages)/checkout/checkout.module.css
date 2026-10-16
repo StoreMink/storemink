@@ -827,6 +827,33 @@
   margin: 0 0 0.75rem;
 }
 
+/* WhatsApp opt-in, beneath the policy line and above the button for the same
+   reason: what the shopper is agreeing to and the action that binds it should
+   be one glance apart. */
+.whatsappConsent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0 0 0.75rem;
+}
+.consentRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--sm-ink-soft);
+}
+.consentRow input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  cursor: pointer;
+  accent-color: var(--sm-accent);
+}
+
 /* ---- Delivery method: Ship / Pickup ------------------------------------- */
 /* A segmented control, not two big cards: it is one question with two answers,
    and the answer changes what the rest of the step asks for. */

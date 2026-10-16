@@ -19,6 +19,8 @@ vi.mock("@/lib/email/notification-worker", () => ({
 }));
 vi.mock("@/lib/email/trigger-worker", () => ({ triggerEmailWorker: vi.fn() }));
 vi.mock("@/lib/sms/worker", () => ({ runSmsWorker: vi.fn() }));
+vi.mock("@/lib/whatsapp/worker", () => ({ runWhatsAppWorker: vi.fn() }));
+vi.mock("@/lib/whatsapp/inbound", () => ({ drainInboundEvents: vi.fn() }));
 vi.mock("@/lib/announcements/worker", () => ({
   processAnnouncements: vi.fn(),
 }));
@@ -27,6 +29,8 @@ import { GET, POST } from "./route";
 import { processEmailQueue } from "@/lib/email/campaign-worker";
 import { processNotificationEmails } from "@/lib/email/notification-worker";
 import { runSmsWorker } from "@/lib/sms/worker";
+import { runWhatsAppWorker } from "@/lib/whatsapp/worker";
+import { drainInboundEvents } from "@/lib/whatsapp/inbound";
 import { processAnnouncements } from "@/lib/announcements/worker";
 import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 
@@ -46,12 +50,28 @@ describe("/api/cron/send-emails", () => {
 
   beforeEach(() => {
     // ⚠ clearAllMocks clears CALLS, not IMPLEMENTATIONS.
+    vi.mocked(runWhatsAppWorker).mockResolvedValue({
+      claimed: 0,
+      sent: 0,
+      failed: 0,
+      unknown: 0,
+      skipped: 0,
+      smsReleased: 0,
+      requeued: 0,
+    });
     vi.mocked(runSmsWorker).mockResolvedValue({
       claimed: 0,
       sent: 0,
       failed: 0,
       unknown: 0,
       skipped: 0,
+    });
+    vi.mocked(drainInboundEvents).mockResolvedValue({
+      claimed: 0,
+      processed: 0,
+      failed: 0,
+      retrying: 0,
+      smsReleased: 0,
     });
     vi.mocked(processAnnouncements).mockResolvedValue({
       processed: 0,
@@ -130,6 +150,24 @@ describe("/api/cron/send-emails", () => {
       // one more Cloud Scheduler entry is one more thing to forget, which
       // docs/cron-jobs.md records happening three times already.
       sms: { claimed: 0, sent: 0, failed: 0, unknown: 0, skipped: 0 },
+      // WhatsApp rides it too (slice 2), a third provider on the same beat.
+      whatsapp: {
+        claimed: 0,
+        sent: 0,
+        failed: 0,
+        unknown: 0,
+        skipped: 0,
+        smsReleased: 0,
+        requeued: 0,
+      },
+      // And the WhatsApp webhook events the webhook's after() missed.
+      inbound: {
+        claimed: 0,
+        processed: 0,
+        failed: 0,
+        retrying: 0,
+        smsReleased: 0,
+      },
       // Announcements ride it too, for the same reason.
       announcements: { processed: 0, sent: 0, failed: 0, remaining: 0 },
     });
@@ -203,6 +241,26 @@ describe("/api/cron/send-emails", () => {
     await GET(req("Bearer s3cret"));
 
     expect(afterCalls.fns).toHaveLength(0);
+  });
+
+  it("★ drains inbound WhatsApp, then outbound WhatsApp, then SMS (a released SMS goes in the same run)", async () => {
+    await GET(req("Bearer s3cret"));
+    const order = [drainInboundEvents, runWhatsAppWorker, runSmsWorker].map(
+      (f) => vi.mocked(f as any).mock.invocationCallOrder[0],
+    );
+    expect([...order].sort((a, b) => a! - b!)).toEqual(order);
+  });
+
+  it("chains another run when a full inbound batch suggests more", async () => {
+    vi.mocked(drainInboundEvents).mockResolvedValue({
+      claimed: 50,
+      processed: 50,
+      failed: 0,
+      retrying: 0,
+      smsReleased: 0,
+    });
+    await GET(req("Bearer s3cret"));
+    expect(afterCalls.fns).toHaveLength(1);
   });
 
   it("chains another run when campaigns have work left", async () => {

@@ -45,9 +45,15 @@ import {
   storefrontEvents,
   storefrontOrderAttribution,
   storeSearchMetrics,
+  whatsappInboundEvents,
+  whatsappLogs,
 } from "@/drizzle/schema";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
+import {
+  CLOSED_CONVERSATION_RETENTION_DAYS,
+  pruneClosedConversations,
+} from "@/lib/whatsapp/retention";
 
 /** Rows deleted per statement. Bounds both the IN list and the lock window. */
 export const BATCH_SIZE = 1000;
@@ -195,7 +201,9 @@ function batchDeleter(
     | typeof billingWebhookEvents
     | typeof storefrontEvents
     | typeof storefrontOrderAttribution
-    | typeof posParkedSales,
+    | typeof posParkedSales
+    | typeof whatsappLogs
+    | typeof whatsappInboundEvents,
   key: AnyPgColumn,
   ts: AnyPgColumn,
 ): (floorIso: string, limit: number) => Promise<number> {
@@ -319,6 +327,45 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       "Holds rendered BODIES, so it is the heaviest of the three and gets the shortest " +
       "life. 90 days still answers 'did last quarter's order confirmation go out?'.",
     deleteBatch: batchDeleter(emailLogs, emailLogs.id, emailLogs.createdAt),
+  },
+  {
+    table: "whatsapp_logs",
+    days: 90,
+    reason:
+      "Holds rendered message bodies, like email_logs, and gets the same 90 days - " +
+      "long enough to answer 'did last quarter's order update reach them?'.",
+    deleteBatch: batchDeleter(
+      whatsappLogs,
+      whatsappLogs.id,
+      whatsappLogs.createdAt,
+    ),
+  },
+  {
+    table: "whatsapp_inbound_events",
+    days: 30,
+    reason:
+      "Raw webhook payloads carry customer message text and exist as evidence for " +
+      "'why did nothing happen?'; a month covers any such question, and the facts " +
+      "they produced live on the account, template, log and (later) inbox rows.",
+    deleteBatch: batchDeleter(
+      whatsappInboundEvents,
+      whatsappInboundEvents.id,
+      whatsappInboundEvents.receivedAt,
+    ),
+  },
+  {
+    // ★ ONLY CLOSED ones, by their LAST MESSAGE, and their messages and media
+    // go with them (lib/whatsapp/retention.ts). The contact and its consent
+    // record stay. Small batches: each conversation cascades its messages
+    // and may need a bucket folder emptied first.
+    table: "whatsapp_conversations",
+    days: CLOSED_CONVERSATION_RETENTION_DAYS,
+    batchSize: 50,
+    reason:
+      "A closed chat is kept two years after its last message (owner's decision, " +
+      "2026-10-13); one still waiting on the shop, or still going, is kept " +
+      "whatever its age, and a closed one reopens when the customer writes.",
+    deleteBatch: pruneClosedConversations,
   },
   {
     table: "mink_csv_files",

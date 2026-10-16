@@ -3,6 +3,7 @@
 // shaped for the location reads, and this needs an UPDATE … RETURNING.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { makeDbMock } from "@/app/actions/_test-helpers";
 
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
@@ -67,6 +68,46 @@ describe("sweepExpiredPickups", () => {
       unknown
     >;
     expect(payload).not.toHaveProperty("refund_due");
+  });
+
+  // ★ The customer's WhatsApp read "was not collected from - by its deadline"
+  // (and the email dropped its "Pickup location" row) because this was the
+  // one pickup emitter that never said where.
+  it("★ names the shop the order was waiting at", async () => {
+    dbHolder.current = makeDbMock({
+      returning: [{ ...expiredRow, location_name: "Connaught Place" }],
+    });
+    await sweepExpiredPickups();
+    expect(vi.mocked(recordEvent).mock.calls[0][0]).toMatchObject({
+      type: "order.pickup_expired",
+      payload: { orderRef: "ORD1", pickupLocation: "Connaught Place" },
+    });
+  });
+
+  it("★ reads the name in the claim itself, with no read per order", async () => {
+    await sweepExpiredPickups();
+    const mock = dbHolder.current;
+    expect(mock.calls.select).toHaveLength(0);
+    // update → set → where → returning(projection)
+    const setStep =
+      mock.db.update.mock.results[0].value.set.mock.results[0].value;
+    const whereStep = setStep.where.mock.results[0].value;
+    const projection = whereStep.returning.mock.calls[0][0];
+    const text = new PgDialect()
+      .sqlToQuery(projection.location_name)
+      .sql.replace(/\s+/g, " ");
+    expect(text).toMatch(/select l\.name from "store_locations" l/);
+    expect(text).toMatch(/where l\.id = "orders"\."pickup_location_id"/);
+  });
+
+  it("a shop with no name on record still sends the rest", async () => {
+    dbHolder.current = makeDbMock({
+      returning: [{ ...expiredRow, location_name: null }],
+    });
+    expect(await sweepExpiredPickups()).toBe(1);
+    expect(vi.mocked(recordEvent).mock.calls[0][0].payload).toMatchObject({
+      pickupLocation: "",
+    });
   });
 
   it("a cleanup failure does not stop the merchant being told", async () => {

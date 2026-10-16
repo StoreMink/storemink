@@ -25,17 +25,17 @@ stores, 0 orders, 0 lapsed plans, 0 pending razorpay orders, 0 campaign
 recipients.** Nothing was lost, because production has no real traffic yet — but
 each job is a landmine the moment it does:
 
-| Job                       | What its absence would have cost under real traffic                                                                                                                                                                                                    |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `send-emails`             | Coupon email campaigns never send; Phase 5E scheduled campaigns also miss their reviewed delivery time.                                                                                                                                                |
-| `plan-expiry`             | A lapsed timed plan keeps its paid features **forever** — the durable half of the plan gate (`lib/plans.ts` `effectivePlan` covers reads only).                                                                                                        |
-| `expire-pending-payments` | Unpaid Razorpay orders are never reaped, so their stock reservations and coupon uses are held **permanently** — and it also carries the PICKUP sweeps, so expired collections never lapse and no collection reminder is ever sent.                     |
-| `domain-reconcile`        | A merchant's custom domain **never goes live** unless they happen to keep the settings tab open for the whole of Google's issuance window.                                                                                                             |
-| `import-worker`           | A CSV import whose worker chain broke mid-file (a deploy, an OOM, a kick that never landed) **never resumes** — it sits half-applied until someone notices.                                                                                            |
-| `seo-refresh`             | No sitemap is ever submitted to Google, so nothing on the platform, the help centre or any launched store gets discovered.                                                                                                                             |
-| `billing`                 | **No merchant is ever charged.** No renewal invoice is issued, no cycle advances, no grace window opens and no unpaid plan is downgraded — the entire subscription business stops silently, looking exactly like nobody has renewed yet.               |
-| `help-embeddings`         | Existing published guides never receive semantic chunks after the initial migration, and a failed article-save refresh is never retried. Mink AI still falls back to lexical/category search, but paraphrase and multilingual recall silently degrade. |
-| `mink-publications`       | Approved scheduled Mink blogs remain private drafts forever. No data is lost, but the merchant's reviewed publication time is silently missed until the worker runs.                                                                                   |
+| Job                       | What its absence would have cost under real traffic                                                                                                                                                                                                                                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `send-emails`             | Coupon email campaigns never send; Phase 5E scheduled campaigns also miss their reviewed delivery time.                                                                                                                                                                                                                                  |
+| `plan-expiry`             | A lapsed timed plan keeps its paid features **forever** — the durable half of the plan gate (`lib/plans.ts` `effectivePlan` covers reads only).                                                                                                                                                                                          |
+| `expire-pending-payments` | Unpaid Razorpay orders are never reaped, so their stock reservations and coupon uses are held **permanently** — and it also carries the PICKUP sweeps (expired collections never lapse, no collection reminder is sent) and the WhatsApp COD follow-up (no reminder to a customer who has not confirmed, and no automatic cancellation). |
+| `domain-reconcile`        | A merchant's custom domain **never goes live** unless they happen to keep the settings tab open for the whole of Google's issuance window.                                                                                                                                                                                               |
+| `import-worker`           | A CSV import whose worker chain broke mid-file (a deploy, an OOM, a kick that never landed) **never resumes** — it sits half-applied until someone notices.                                                                                                                                                                              |
+| `seo-refresh`             | No sitemap is ever submitted to Google, so nothing on the platform, the help centre or any launched store gets discovered.                                                                                                                                                                                                               |
+| `billing`                 | **No merchant is ever charged.** No renewal invoice is issued, no cycle advances, no grace window opens and no unpaid plan is downgraded — the entire subscription business stops silently, looking exactly like nobody has renewed yet.                                                                                                 |
+| `help-embeddings`         | Existing published guides never receive semantic chunks after the initial migration, and a failed article-save refresh is never retried. Mink AI still falls back to lexical/category search, but paraphrase and multilingual recall silently degrade.                                                                                   |
+| `mink-publications`       | Approved scheduled Mink blogs remain private drafts forever. No data is lost, but the merchant's reviewed publication time is silently missed until the worker runs.                                                                                                                                                                     |
 
 > ⚠ **STALE as of 2026-09-08 — see the measured note under "The jobs" below.**
 > Production DOES have the notification system: `notification_email_queue`,
@@ -148,7 +148,7 @@ gcloud builds submit --project storemink-prod --region global --config=cloudbuil
 > | `storemink-send-emails`       | `* * * * *`  | ✅ fixed 2026-09-08   |
 > | `storemink-search-metrics`    | `30 2 * * *` | **PAUSED**            |
 > | `storemink-analytics-rollup`  | `40 * * * *` | **PAUSED**            |
-> | `storemink-help-embeddings`   | `50 * * * *` | **absent**            |
+> | `storemink-help-embeddings`   | `50 * * * *` | ✅ created 2026-10-15 |
 > | `storemink-mink-publications` | `* * * * *`  | **absent**            |
 > | `storemink-mink-workflows`    | `* * * * *`  | ✅ created 2026-09-08 |
 >
@@ -282,11 +282,20 @@ service and others nearly a day less notice than the 48 hours they are promised.
 It runs at :20 to stay clear of the on-the-hour `domain-reconcile`.
 
 **The pre-existing jobs exist** (verified against `gcloud scheduler jobs list`,
-2026-08-21), but ⚠ **`storemink-help-embeddings` is new in the 2026-08-25
-working tree and does not exist in Cloud Scheduler yet. Create it only after the
-route and migrations `20260825_0017_help_article_embeddings` plus
-`20260826_0018_help_embedding_hardening` reach the target environment; until
-then it would 404 or query an incomplete table.** Also,
+2026-08-21). ⚠ **`storemink-help-embeddings` was documented here on 2026-08-25
+and not created until 2026-10-15**, seven weeks in which no guide edited by a
+migration was ever re-embedded on production: the only other caller of the
+reconciler is the Help console's save action. It was created with the command
+below (GET, bearer, 300 s, 3 retries) and run once by hand straight after; the
+first run's counts are in the Cloud Logging line `help.embedding worker
+complete`. ★ Its first four runs all answered 503: the worker indexed one
+guide and then got 429 from Vertex, because Google had capped
+`gemini-embedding-001` at five requests a minute per project. The fix was a
+model switch to `gemini-embedding-2` through `embedContent`
+(`lib/help/embeddings.ts`, CODEBASE.md §21), not a quota request; once that
+code is deployed the job re-embeds every guide on its own. Production only:
+dev has no scheduler, so dev's index is refreshed by hand when it matters.
+Also,
 **`storemink-mink-publications` is new in Phase 5D and must stay absent/paused
 until migration `20260901_0052_mink_phase_5d_blog_publication` and the matching
 route are deployed. Create it with the same CRON_SECRET bearer contract only
@@ -734,6 +743,8 @@ and never wired to anything:
 | `email_logs`                     | 90 days                  | Holds rendered message BODIES, so it is much the heaviest of the three and gets the shortest window.      |
 | `store_search_metrics`           | 488 days                 | Matches the source product's roughly 16-month Search Console history window.                              |
 | `theme_studio_image_checkpoints` | 30 days after settlement | Private raw originals; queued/running retry ancestors are protected. Run usage and settled assets remain. |
+| `whatsapp_logs`                  | 90 days                  | Rendered WhatsApp message bodies with Meta's delivery timeline — email_logs' window, for its reason.      |
+| `whatsapp_inbound_events`        | 30 days                  | Raw webhook payloads (customer text); the facts they produced live on the account, template and log rows. |
 
 `supabase/email_logs.sql` documented the 90-day intent and even carries an
 `email_logs_created_idx` built "for retention sweeps". `pruneNotifications` had

@@ -139,6 +139,8 @@ export const EVENT_KEYS = [
   "customer.signed_up",
   "customer.review_submitted",
   "enquiry.received",
+  "whatsapp.message_received",
+  "whatsapp.conversation_assigned",
   // ── Content ─────────────────────────────────────────────────────────────
   "blog.submitted",
   "blog.published",
@@ -453,6 +455,33 @@ export const EVENTS: readonly EventDef[] = [
     section: "enquiries",
     severity: "info",
     audiences: { "store-admins": BOTH },
+  },
+  {
+    // A WhatsApp conversation that moved into "needs reply" (slice 3). Fired
+    // for the FIRST message since staff last answered, not for every message
+    // — a chatty customer must not ring the bell five times — and in-app
+    // only by default: the inbox is where it is read, and an email per
+    // message is how a channel gets muted.
+    key: "whatsapp.message_received",
+    label: "New WhatsApp message",
+    description: "A customer messaged your WhatsApp number and is waiting.",
+    group: "Customers",
+    section: "inbox",
+    severity: "info",
+    audiences: { "store-admins": IN_APP },
+  },
+  {
+    // A conversation was put on a named person (slice 6). Delivered to THAT
+    // person only (the emitter narrows the team audience with
+    // restrictToAdminIds), in-app only: it is a nudge to open the inbox,
+    // and the inbox is where the work is.
+    key: "whatsapp.conversation_assigned",
+    label: "WhatsApp conversation assigned to you",
+    description: "A WhatsApp conversation in Inbox was assigned to you.",
+    group: "Customers",
+    section: "inbox",
+    severity: "info",
+    audiences: { "store-admins": IN_APP },
   },
 
   // ── Content ─────────────────────────────────────────────────────────────

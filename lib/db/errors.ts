@@ -21,6 +21,14 @@ export function pgErrorCode(err: unknown): string | undefined {
   return e.code ?? e.cause?.code;
 }
 
+/** The name of the constraint a thrown DB error violated, if pg named one. */
+export function pgConstraint(err: unknown): string | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const e = err as { constraint?: unknown; cause?: { constraint?: unknown } };
+  const name = e.constraint ?? e.cause?.constraint;
+  return typeof name === "string" ? name : undefined;
+}
+
 export function isUniqueViolation(err: unknown): boolean {
   return pgErrorCode(err) === UNIQUE_VIOLATION;
 }

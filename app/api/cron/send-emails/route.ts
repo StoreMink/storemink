@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { processEmailQueue } from "@/lib/email/campaign-worker";
 import { processNotificationEmails } from "@/lib/email/notification-worker";
 import { runSmsWorker } from "@/lib/sms/worker";
+import { runWhatsAppWorker } from "@/lib/whatsapp/worker";
+import { drainInboundEvents } from "@/lib/whatsapp/inbound";
 import { processAnnouncements } from "@/lib/announcements/worker";
 import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 
@@ -11,6 +13,9 @@ import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 //   • notification emails       (notification_email_queue — CODEBASE.md §22)
 //   • platform announcements    (platform_announcement_recipients — §38)
 //   • notification SMS          (notification_sms_queue — §37)
+//   • notification WhatsApp     (notification_whatsapp_queue — WhatsApp slice 2)
+//   • WhatsApp webhook events   (whatsapp_inbound_events — what the webhook's
+//                                after() missed, and rows whose retry is due)
 //
 // One route, because they share a trigger, a secret, and a self-chaining
 // pattern — and because the cron plan allows few schedules (Vercel Hobby caps
@@ -23,8 +28,9 @@ import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 //   2. Self-chaining: if work remains after a run, kick another via after() so
 //      a large campaign (or a burst of notifications) drains in minutes rather
 //      than on the cron cadence.
-//   3. On demand: emitting a notification with an instant email channel calls
-//      triggerEmailWorker(), so "new order" mail goes out in seconds.
+//   3. On demand: emitting a notification that queues an instant email, an
+//      SMS or a WhatsApp message calls triggerEmailWorker(), so "new order"
+//      goes out in seconds.
 //
 // Auth: requires `Authorization: Bearer <CRON_SECRET>`. Vercel Cron is
 // configured to send this header. Set CRON_SECRET in the environment.
@@ -50,6 +56,18 @@ async function handle(request: Request) {
   const campaigns = await processEmailQueue();
   const notifications = await processNotificationEmails();
 
+  // ★ INBOUND WHATSAPP FIRST, THEN OUTBOUND WHATSAPP, THEN SMS. A delivery
+  // status that reports a failed WhatsApp, and a send the worker could not
+  // make, both RELEASE the SMS held behind that message (0211); draining in
+  // this order sends that SMS in the same run instead of a minute later.
+  // Bounded so a backlog cannot eat the whole request.
+  const inbound = await drainInboundEvents(15_000).catch(() => null);
+
+  // ★ WHATSAPP RIDES THE SAME HEARTBEAT, for the SMS reason below. Meta is a
+  // third provider with its own limits, so this shares nothing with the two
+  // Resend queues; sequential only so one failure cannot mask another.
+  const whatsapp = await runWhatsAppWorker().catch(() => null);
+
   // ★ SMS RIDES THE SAME HEARTBEAT rather than getting its own schedule. It is
   // the same job — drain what the fan-out queued — and a separate Cloud
   // Scheduler entry is one more thing to create and one more thing to forget,
@@ -72,7 +90,9 @@ async function handle(request: Request) {
     campaigns.remaining > 0 ||
     notifications.remaining > 0 ||
     (announcements?.remaining ?? 0) > 0 ||
-    (sms?.claimed ?? 0) >= 50
+    (sms?.claimed ?? 0) >= 50 ||
+    (whatsapp?.claimed ?? 0) >= 50 ||
+    (inbound?.claimed ?? 0) >= 50
   ) {
     after(() => triggerEmailWorker());
   }
@@ -82,6 +102,8 @@ async function handle(request: Request) {
     campaigns,
     notifications,
     sms,
+    whatsapp,
+    inbound,
     announcements,
   });
 }

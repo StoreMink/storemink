@@ -521,6 +521,16 @@ describe("saving notification configuration", () => {
       ).error,
     ).toMatch(/Connect Twilio in Channels/i);
 
+    // ★ WhatsApp follows the SMS rule: available platform-wide, refused per
+    // store until a number is connected.
+    expect(
+      (
+        await saveNotificationConfig("order.placed", {
+          audiences: { customer: { channels: { whatsapp: true } } },
+        })
+      ).error,
+    ).toMatch(/Connect your WhatsApp number in Channels/i);
+
     // Push has no per-store connection at all, so it keeps the old refusal.
     expect(
       (
@@ -529,6 +539,42 @@ describe("saving notification configuration", () => {
         })
       ).error,
     ).toMatch(/isn't connected yet/i);
+  });
+
+  it("★ a channel saved ON before the connection lapsed does not block other edits", async () => {
+    // The console sends the whole channel map on every save. A WhatsApp or SMS
+    // switch saved while the number worked comes back as `true` after the
+    // number is paused or the plan lapses; refusing it would lock every other
+    // field of this notification. Only switching a channel ON is refused.
+    vi.mocked(resolveNotification).mockResolvedValue({
+      ...RESOLVED,
+      audiences: {
+        ...RESOLVED.audiences,
+        customer: {
+          ...RESOLVED.audiences.customer,
+          channels: {
+            ...RESOLVED.audiences.customer.channels,
+            whatsapp: true,
+            sms: true,
+          },
+        },
+      },
+    });
+    const result = await saveNotificationConfig("order.placed", {
+      digest: "hourly",
+      audiences: {
+        customer: { channels: { email: true, whatsapp: true, sms: true } },
+      },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+
+    // The same save for the TEAM audience, where it was saved off, is refused:
+    // that is switching it on.
+    const team = await saveNotificationConfig("order.placed", {
+      audiences: { team: { channels: { whatsapp: true } } },
+    });
+    expect(team.error).toMatch(/Connect your WhatsApp number in Channels/i);
   });
 
   it("does not allow a mandatory security notification to be switched off", async () => {

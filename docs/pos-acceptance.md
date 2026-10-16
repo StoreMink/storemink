@@ -1719,6 +1719,15 @@ Let a pickup pass `pickup_expires_at`, then run
 capability now exists (§10c), but wiring it into expiry is deliberately a
 prompt, not an automatic payout on a schedule.
 
+**PS-8.11a ★★ — Expiry and the nudge run on a quiet hour too**
+With NO online payment stuck anywhere on the platform (the ordinary hour), let
+a pickup pass `pickup_expires_at` and leave another 20 hours from expiry, then
+run `/api/cron/expire-pending-payments`.
+**Expect:** the first is cancelled and the second reminded, and the response
+reports `pickupsExpired` and `pickupsWarned`. Until 2026-10-13 both ran only on
+an hour that also found a stuck online payment, so on most stores neither
+happened. _Pinned by the cron route's test._
+
 **PS-8.12 ★ — The nudge fires once**
 Run the cron twice with an order 20 hours from expiry.
 **Expect:** exactly one reminder. The claim on `pickup_warned_at` is what

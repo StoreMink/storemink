@@ -260,6 +260,29 @@ export function renderNotification(
           : "/dashboard/enquiries",
       };
 
+    case "whatsapp.message_received":
+      return {
+        title: "New WhatsApp message",
+        // The preview is bounded at emit time; the sender's name or number is
+        // the subject label.
+        body: [subject, str(p.preview)].filter(Boolean).join(" · ") || null,
+        url: str(event.subjectId)
+          ? `/dashboard/inbox?c=${encodeURIComponent(str(event.subjectId) ?? "")}`
+          : "/dashboard/inbox",
+      };
+
+    case "whatsapp.conversation_assigned":
+      return {
+        title: "WhatsApp conversation assigned to you",
+        body:
+          [subject, str(p.assignedBy) ? `by ${str(p.assignedBy)}` : null]
+            .filter(Boolean)
+            .join(" · ") || null,
+        url: str(event.subjectId)
+          ? `/dashboard/inbox?c=${encodeURIComponent(str(event.subjectId) ?? "")}`
+          : "/dashboard/inbox",
+      };
+
     // ── Content ───────────────────────────────────────────────────────────
     case "blog.submitted":
       return {

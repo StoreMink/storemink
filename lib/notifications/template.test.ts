@@ -885,3 +885,28 @@ describe("variable catalog", () => {
     }
   });
 });
+
+describe("{{amount_due}} (what the courier collects)", () => {
+  const envelope = {
+    storeName: "Acme",
+    actorLabel: null,
+    subjectLabel: "ORD1",
+    eventName: "Order placed",
+    date: "2026-10-16T10:00:00.000Z",
+    link: null,
+  };
+
+  it("is the amount due when the order says so", () => {
+    const v = templateValues("order.placed", envelope, {
+      total: 500,
+      amountDue: 300,
+    });
+    expect(v.amount_due).toBe("₹300.00");
+    expect(v.total).toBe("₹500.00");
+  });
+
+  it("★ falls back to the total, never a blank", () => {
+    const v = templateValues("order.placed", envelope, { total: 500 });
+    expect(v.amount_due).toBe("₹500.00");
+  });
+});

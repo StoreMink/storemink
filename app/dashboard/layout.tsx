@@ -12,6 +12,7 @@ import { MobileNavProvider } from "./dashboard-mobile-nav";
 import { getViewerContext } from "./lib/access";
 import { SwitchAccountButton } from "./switch-account-button";
 import { getNewEnquiriesCount } from "./enquiries/data";
+import { inboxSidebarSummary } from "@/lib/whatsapp/inbox";
 import { getPosState, getStoreLocations } from "@/lib/pos/locations";
 import { outstandingDocs } from "@/lib/legal/store";
 import { getMinkConfig } from "@/lib/mink/config";
@@ -185,11 +186,23 @@ export default async function DashboardLayout({
       : 0;
     return { store, posState, locationCount };
   });
-  const [scopedLocations, newEnquiries, resolvedStoreContext] =
+  // The Inbox entry exists only once a WhatsApp number is connected — a
+  // sidebar item leading to "connect WhatsApp first" would be a dead entry on
+  // most stores — and carries the needs-reply count as its badge: a number
+  // that demands action and goes away (§22's badge rule). One query answers
+  // both; it fails to "hidden" rather than failing the page.
+  const canViewInbox = can(permissions, "inbox", "view", isSuperadmin);
+  const inboxContext = storeContext.then(({ store }) =>
+    canViewInbox
+      ? inboxSidebarSummary(store.id)
+      : Promise.resolve({ connected: false, needsReply: 0 }),
+  );
+  const [scopedLocations, newEnquiries, resolvedStoreContext, inbox] =
     await Promise.all([
       getViewerLocationNames(),
       canViewEnquiries ? getNewEnquiriesCount() : Promise.resolve(0),
       storeContext,
+      inboxContext,
     ]);
   const { store, posState, locationCount } = resolvedStoreContext;
   const planId = effectivePlan(store);
@@ -226,6 +239,7 @@ export default async function DashboardLayout({
         // Folded into another screen — key kept for roles, entry hidden here.
         !s.hiddenInNav &&
         (s.key !== "locations" || showLocations) &&
+        (s.key !== "inbox" || inbox.connected) &&
         (s.key === "dashboard" ||
           can(permissions, s.key, "view", isSuperadmin)),
     ).map((s) => {
@@ -233,6 +247,13 @@ export default async function DashboardLayout({
         return {
           ...s,
           badge: String(newEnquiries),
+          badgeTone: "amber" as const,
+        };
+      }
+      if (s.key === "inbox" && inbox.needsReply > 0) {
+        return {
+          ...s,
+          badge: String(inbox.needsReply),
           badgeTone: "amber" as const,
         };
       }

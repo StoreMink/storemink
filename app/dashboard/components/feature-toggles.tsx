@@ -12,7 +12,8 @@ import {
 } from "@/app/actions/store-settings";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
 
-function Toggle({
+/** The settings switch every dashboard settings card uses. */
+export function Toggle({
   on,
   disabled,
   onChange,

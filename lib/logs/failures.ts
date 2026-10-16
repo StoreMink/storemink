@@ -35,6 +35,7 @@ import {
   stores,
   billingPaymentAttempts,
   smsLogs,
+  whatsappLogs,
 } from "@/drizzle/schema";
 import { logError } from "@/lib/observability/logger";
 import { ROOT_DOMAIN } from "@/lib/store/host";
@@ -146,6 +147,43 @@ export const FAILURE_SOURCES: FailureSource[] = [
           occurredAt: r.createdAt,
           storeId: r.storeId,
           href: "/dashboard/logs/sms-logs?status=failed",
+        }));
+      }),
+  },
+  {
+    ...meta("whatsapp"),
+    fetch: (scope, limit) =>
+      withService(async (db) => {
+        const rows = await db
+          .select({
+            id: whatsappLogs.id,
+            storeId: whatsappLogs.storeId,
+            to: whatsappLogs.toPhone,
+            eventKey: whatsappLogs.eventKey,
+            error: whatsappLogs.error,
+            errorCode: whatsappLogs.errorCode,
+            createdAt: whatsappLogs.createdAt,
+            failedAt: whatsappLogs.failedAt,
+          })
+          .from(whatsappLogs)
+          .where(
+            and(
+              eq(whatsappLogs.status, "failed"),
+              storeFilter(scope, whatsappLogs.storeId),
+            ),
+          )
+          // A send can be reported failed by Meta hours later; the failure
+          // time is what belongs on a time-ordered feed.
+          .orderBy(desc(whatsappLogs.failedAt), desc(whatsappLogs.createdAt))
+          .limit(limit);
+        return rows.map((r) => ({
+          id: `whatsapp:${r.id}`,
+          source: "whatsapp" as const,
+          title: `${r.eventKey ?? "WhatsApp message"} to ${r.to} failed`,
+          detail: r.errorCode ? `${r.errorCode}: ${r.error ?? ""}` : r.error,
+          occurredAt: r.failedAt ?? r.createdAt,
+          storeId: r.storeId,
+          href: "/dashboard/logs/whatsapp-logs?status=failed",
         }));
       }),
   },

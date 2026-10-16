@@ -75,9 +75,11 @@ export async function saveMinkGeneratedImage(
       //   not worth a unique index over a column that has never had one.
       const inserted = await db.execute(sql`
         insert into media_assets
-          (store_id, url, path, filename, content_type, size_bytes, created_by)
+          (store_id, url, path, filename, content_type, size_bytes, created_by,
+           source)
         select ${storeId}::uuid, ${image.url}, ${image.path}, ${image.filename},
-               ${image.contentType}, ${image.sizeBytes}, ${userId}
+               ${image.contentType}, ${image.sizeBytes}, ${userId},
+               'mink_generated'
         where not exists (
           select 1 from media_assets
           where store_id = ${storeId}::uuid and path = ${image.path}

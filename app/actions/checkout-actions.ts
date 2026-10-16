@@ -81,10 +81,16 @@ import {
   recordStorePolicyConsent,
   getCheckoutPolicies,
 } from "@/lib/legal/store-consent";
+import {
+  recordWhatsAppConsent,
+  storedWhatsAppConsent,
+} from "@/lib/whatsapp/consent";
+import { storeCanSendWhatsApp } from "@/lib/whatsapp/channel";
+import type { WhatsAppConsentInput } from "@/lib/whatsapp/consent-copy";
 import { summariseItems } from "@/lib/notifications/format";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
 import type { OrderPlacedEvent } from "@/lib/orders/mark-paid";
-import { formatIndianMobile } from "@/lib/phone";
+import { formatIndianMobile, textablePhone } from "@/lib/phone";
 import {
   rowToBillingSettings,
   rowToTaxClass,
@@ -670,6 +676,13 @@ export interface CheckoutConfig {
    *  screen reads this to explain instead of rendering a button that always
    *  fails; placeOrder enforces it, so this is a courtesy, not the boundary. */
   demo: boolean;
+  /** True when the store can send WhatsApp updates — the checkout shows the
+   *  opt-in boxes ONLY then (docs/whatsapp-commerce-plan.md §19.2): no consent
+   *  is collected for a channel that cannot deliver. */
+  whatsapp: boolean;
+  /** What the signed-in shopper's own number has already said, so the boxes
+   *  start from it rather than the defaults; null = never answered. */
+  whatsappConsent: WhatsAppConsentInput | null;
   /** True while the store has not opened and this visitor holds no password
    *  grant; placeOrder refuses in that state. Courtesy only, like `demo`. */
   closed: boolean;
@@ -685,13 +698,20 @@ export async function getCheckoutConfig(): Promise<CheckoutConfig> {
   // amount actually applied is recomputed and deducted atomically in
   // placeOrder, so a stale figure on screen can't overspend a balance.
   const user = await getServerUser();
-  const storeCredit = user ? await getCreditBalance(store.id, user.id) : 0;
+  const [storeCredit, whatsapp] = await Promise.all([
+    user ? getCreditBalance(store.id, user.id) : Promise.resolve(0),
+    storeCanSendWhatsApp(store.id),
+  ]);
+  const whatsappConsent =
+    whatsapp && user ? await storedWhatsAppConsent(store.id, user.phone) : null;
   return {
     onlinePayments: !!creds,
     keyId: creds?.keyId ?? null,
     storeName: store.name,
     storeCredit,
     demo: isDemoStore(store),
+    whatsapp,
+    whatsappConsent,
     closed:
       isStorefrontGated(store) && (await storefrontAccess(store)) === "locked",
   };
@@ -856,6 +876,11 @@ export async function placeOrder(
   /** Displayed amount paired with the selected id. A changed provider quote is
    *  shown again instead of silently charging more than the shopper accepted. */
   selectedShippingRateAmount?: number | null,
+  /** The WhatsApp boxes at checkout: order updates (ticked by default) and
+   *  offers (never by default). Null when the store showed no boxes. Recorded
+   *  against the delivery phone AFTER the order lands, and only when the store
+   *  really can send — the server re-checks, so a forged value writes nothing. */
+  whatsappConsent?: WhatsAppConsentInput | null,
 ): Promise<CheckoutResult> {
   // Authenticate the shopper via the identity seam (session-backed).
   const user = await getServerUser();
@@ -1903,6 +1928,13 @@ export async function placeOrder(
           ? sql`now() + make_interval(days => ${readyDays + holdDays})`
           : null,
         notes,
+        // The WhatsApp updates box for THIS order (0211): false stops this
+        // order's WhatsApp updates whatever the number's consent says (a
+        // gift's recipient is not told about the surprise). Null when the
+        // boxes were not shown.
+        whatsappUpdates: whatsappConsent
+          ? Boolean(whatsappConsent.updates)
+          : null,
         // This order goes through the reserve flow below; mark it so that
         // cancellation restocks it exactly once (and never restocks legacy
         // orders, which stay 'none'). If the reserve loop fails, the order row
@@ -2259,13 +2291,46 @@ export async function placeOrder(
     policies: await getCheckoutPolicies(storeId),
   });
 
+  // The WhatsApp boxes. Same placement and the same best-effort rule as the
+  // policy consent above.
+  //
+  // ★ UPDATES go with the number this order's updates go to (the phone typed
+  // here, the owner's decision of 2026-10-16); OFFERS go with the shopper's
+  // own number. Only when the typed phone IS the shopper's signed-in phone is
+  // it theirs to link and to change both ways (lib/whatsapp/consent.ts).
+  if (whatsappConsent) {
+    const accountPhone = textablePhone(user.phone);
+    const own =
+      accountPhone !== null && textablePhone(form.phone) === accountPhone;
+    await recordWhatsAppConsent({
+      storeId,
+      phone: form.phone,
+      userId: own ? user.id : null,
+      verified: own,
+      consent: own
+        ? {
+            updates: Boolean(whatsappConsent.updates),
+            marketing: Boolean(whatsappConsent.marketing),
+          }
+        : { updates: Boolean(whatsappConsent.updates) },
+    });
+    if (!own && accountPhone) {
+      await recordWhatsAppConsent({
+        storeId,
+        phone: accountPhone,
+        userId: user.id,
+        verified: true,
+        consent: { marketing: Boolean(whatsappConsent.marketing) },
+      });
+    }
+  }
+
   // True when money still has to come through the gateway before this order is
   // real. Credit covering the whole total is NOT waiting on anything — the
   // balance already paid it, and the razorpay branch below skips the gateway
   // entirely for exactly that case.
-  const awaitsGatewayPayment =
-    paymentMethod === "razorpay" &&
-    !(creditApplied > 0 && total - creditApplied <= 0);
+  const creditCoversAll = creditApplied > 0 && total - creditApplied <= 0;
+  const awaitsGatewayPayment = paymentMethod === "razorpay" && !creditCoversAll;
 
   // ★★ AN UNPAID GATEWAY ORDER IS NOT A PLACED ORDER — DO NOT ANNOUNCE IT.
   //
@@ -2310,9 +2375,18 @@ export async function placeOrder(
     customerId: user.id,
     payload: {
       total,
+      // What the courier collects on a cash-on-delivery order: store credit
+      // already paid part of it (orders.total stays the full goods value,
+      // §29), so "Amount to pay on delivery" must not quote the total.
+      amountDue: Math.max(0, Math.round((total - creditApplied) * 100) / 100),
       currency: "INR",
       items: summariseItems(orderItemsToInsert),
-      paymentMethod,
+      // ★ HOW IT WAS PAID, not what was picked at checkout. Credit covering the
+      // whole total makes the row `store_credit` (below), and saying "Cash on
+      // delivery" here put that line in the confirmation and sent a COD
+      // customer WhatsApp Confirm/Cancel buttons for an order with nothing to
+      // collect (record.ts reads this to decide).
+      paymentMethod: creditCoversAll ? "store_credit" : paymentMethod,
       // Only on a pickup. A delivery order's fact list is unchanged — an empty
       // "Pickup location" row on every confirmation would be noise.
       // A delivery confirmation names where it's going; a collection names
@@ -2394,7 +2468,7 @@ export async function placeOrder(
   // Without this the gateway would be asked for ₹0 (which it refuses, minimum
   // ₹1) and a COD order would tell the courier to collect nothing. The order
   // is already paid, by the balance.
-  if (creditApplied > 0 && total - creditApplied <= 0) {
+  if (creditCoversAll) {
     await withService((db) =>
       db
         .update(orders)

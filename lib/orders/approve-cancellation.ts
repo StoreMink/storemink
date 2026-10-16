@@ -27,7 +27,7 @@ import { orders } from "@/drizzle/schema";
 import { releaseCancelledOrder } from "@/lib/orders/cancel";
 import { issueRefund } from "@/lib/payments/issue-refund";
 import { refundDueForOrder } from "@/lib/payments/refund-reconcile";
-import { emitEvent } from "@/lib/notifications/record";
+import { emitEvent, recordEvent } from "@/lib/notifications/record";
 import { logError } from "@/lib/observability/logger";
 import {
   cancelReasonLabel,
@@ -51,8 +51,39 @@ export interface ApproveCancellationInput {
   restock: boolean;
   notify: boolean;
   staffNote?: string | null;
-  /** True when this came from a customer request rather than the merchant. */
+  /**
+   * True when this came from a customer request rather than the merchant.
+   * ★ Such a cancellation never overrides a request the merchant DECLINED: a
+   * decline is final (lib/orders/cancellation.ts), and the check is inside the
+   * claim so a decline landing after the caller's own read still wins.
+   */
   fromRequest?: boolean;
+  /** True when nobody pressed anything: a store's automation decided (the
+   *  COD auto-cancel). Recorded as the system, not as an admin with no id. */
+  bySystem?: boolean;
+  /**
+   * ★ Cancel only while the order is still awaiting a WhatsApp COD answer.
+   * The COD auto-cancel sets it, so a customer who taps Confirm a moment
+   * before the sweep reaches the order keeps it: the check is inside the
+   * claim, not a read beforehand that a tap could slip past.
+   *
+   * ★ Only a PENDING order, never `processing`: an order staff (or a
+   * Shiprocket booking) moved on between the sweep's read and this claim is
+   * one the shop has decided to ship (lib/whatsapp/cod-sweep.ts).
+   *
+   * ★ And the claim itself labels it `cod_confirmation = 'expired'`, in the
+   * same statement that cancels it. Written afterwards, a Confirm tap handled
+   * during the rest of the cancellation (or after a failed label write) read
+   * a cancelled order still marked `requested` and was told "already
+   * cancelled", with no hand-over to a person.
+   */
+  onlyWhileCodAwaited?: boolean;
+  /**
+   * Record the notification before returning instead of deferring it with
+   * after(). A cron sets it: once its response is sent there is nothing
+   * after() can rely on to run (CODEBASE §24, recordEvent in crons).
+   */
+  notifyInline?: boolean;
 }
 
 export interface ApproveCancellationResult {
@@ -101,12 +132,24 @@ export async function approveCancellation(
           cancelReason: input.reasonCode,
           cancelRefundDestination: input.refundDestination,
           ...(input.staffNote ? { cancelStaffNote: input.staffNote } : {}),
+          ...(input.onlyWhileCodAwaited
+            ? { codConfirmation: "expired", codConfirmationAt: sql`now()` }
+            : {}),
         })
         .where(
           and(
             eq(orders.id, orderId),
             eq(orders.storeId, storeId),
-            inArray(orders.status, [...CANCELLABLE_FROM]),
+            input.onlyWhileCodAwaited
+              ? eq(orders.status, "pending")
+              : inArray(orders.status, [...CANCELLABLE_FROM]),
+            input.onlyWhileCodAwaited
+              ? eq(orders.codConfirmation, "requested")
+              : undefined,
+            // NULL (never asked) passes: `<> 'declined'` would not.
+            input.fromRequest
+              ? sql`${orders.cancellationStatus} is distinct from 'declined'`
+              : undefined,
           ),
         )
         .returning({
@@ -216,12 +259,14 @@ export async function approveCancellation(
   }).catch(() => 0);
 
   if (input.notify) {
-    emitEvent({
+    const event: Parameters<typeof emitEvent>[0] = {
       type: "order.cancelled",
       storeId,
       actor: input.fromRequest
         ? { type: "customer", id: input.actorId, label: input.actorLabel }
-        : { type: "admin", id: input.actorId, label: input.actorLabel },
+        : input.bySystem
+          ? { type: "system", id: null, label: input.actorLabel }
+          : { type: "admin", id: input.actorId, label: input.actorLabel },
       subject: { type: "order", id: orderId, label: claimed.order_ref },
       customerId,
       payload: {
@@ -237,7 +282,14 @@ export async function approveCancellation(
       },
       // ★ The staff note is NOT in the payload. It is internal, and the payload
       // feeds customer-facing templates.
-    });
+    };
+    if (input.notifyInline) {
+      await recordEvent(event).catch((err) =>
+        logError("approveCancellation: notify failed", err, { orderId }),
+      );
+    } else {
+      emitEvent(event);
+    }
   }
 
   return {

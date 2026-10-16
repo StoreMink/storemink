@@ -37,6 +37,7 @@ import {
 import { locationAddressLines } from "@/lib/locations/address";
 import { RefundPanel } from "./refund-panel";
 import { PickupBadge, isPickupOrder, pickupStageLabel } from "./pickup-badge";
+import { CodConfirmationTag } from "./cod-confirmation";
 import { ShipmentPanel } from "./shipment-panel";
 
 const ORDER_STATUSES = [
@@ -443,6 +444,10 @@ export function OrderDetailDrawer({
                     {detail.razorpay_payment_id}
                   </div>
                 )}
+                <CodConfirmationTag
+                  value={detail.cod_confirmation}
+                  className="pt-0.5"
+                />
               </dl>
               {/* Money out. Its own component because it reconciles pending
                   gateway refunds on mount and owns a form — the drawer stays

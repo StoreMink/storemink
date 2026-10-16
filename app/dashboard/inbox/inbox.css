@@ -1,0 +1,1486 @@
+/* The WhatsApp inbox. Scoped under .inbox-* so nothing here reaches another
+   page. Laid out like WhatsApp: one card with the conversation list and the
+   open chat side by side from 768px, and on a phone the list fills the page
+   while a chat opens full screen over it.
+
+   ★★ THE PAGE HAS A FIXED HEIGHT AND ONLY THE MESSAGES SCROLL. The page fills
+   .dash-content exactly (`height: 100%`, which resolves because .dash-content
+   is a flex item with a definite size), the card takes what the header leaves
+   (`flex: 1 1 0` with `min-height: 0`), and the grid row is `minmax(0, 1fr)`.
+   An earlier version set `height: calc(100dvh - 180px)` AND `flex: 1` on the
+   card: inside a column flex parent of unknown height the flex basis wins over
+   `height` and resolves to the content height, so the whole page grew with
+   every message and the composer ended up below the fold. */
+
+/* WhatsApp's palette, on the page and on the phone sheet (which is portalled
+   outside the page, so it cannot inherit these). */
+.inbox-page,
+.inbox-sheet {
+  --inbox-wallpaper: #efeae2;
+  --inbox-bubble-in: #ffffff;
+  --inbox-bubble-out: #d9fdd3;
+  --inbox-bubble-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+  --inbox-bar: #f0f2f5;
+  --inbox-green: #008069;
+  --inbox-green-hover: #006e5a;
+  --inbox-read: #53bdeb;
+  --inbox-meta: #5b6472;
+}
+
+.inbox-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  min-height: 440px;
+}
+
+.inbox-page-header {
+  flex-shrink: 0;
+}
+
+.inbox-shell {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  padding: 0;
+  overflow: hidden;
+  /* The panes follow the CARD's width, not the window's: the sidebar and the
+     Mink panel both narrow it, so a window breakpoint is wrong as soon as
+     either moves (the dashboard tables' rule). */
+  container: inbox-shell / inline-size;
+}
+
+/* ── Conversation list ─────────────────────────────────────────────────── */
+
+.inbox-list {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: clamp(280px, 36%, 380px);
+  min-height: 0;
+  min-width: 0;
+  border-right: 1px solid var(--dash-border);
+  background: var(--dash-surface);
+}
+
+.inbox-list-head {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--dash-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inbox-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.inbox-search svg {
+  position: absolute;
+  left: 12px;
+  color: var(--inbox-meta);
+  pointer-events: none;
+}
+.inbox-search input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: var(--inbox-bar);
+  color: var(--dash-text);
+  border-radius: 8px;
+  padding: 8px 12px 8px 36px;
+  font-size: 13px;
+  outline: none;
+}
+.inbox-search input:focus {
+  border-color: var(--inbox-green);
+  background: var(--dash-surface);
+}
+
+.inbox-filters {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.inbox-filters::-webkit-scrollbar {
+  display: none;
+}
+.inbox-filter {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  color: var(--dash-text-2);
+  background: var(--inbox-bar);
+  cursor: pointer;
+}
+.inbox-filter.is-active {
+  background: #d9fdd3;
+  color: #0a5c4a;
+  font-weight: 600;
+}
+.inbox-filter-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+.inbox-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  flex: 1;
+  min-height: 0;
+}
+.inbox-rows.is-busy {
+  opacity: 0.6;
+}
+.inbox-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 0 0 0 14px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dash-text);
+}
+.inbox-row:hover {
+  background: #f5f6f6;
+}
+.inbox-row.is-active {
+  background: #f0f2f5;
+}
+.inbox-row:focus-visible {
+  outline: 2px solid var(--inbox-green);
+  outline-offset: -2px;
+}
+.inbox-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 12px 14px 12px 0;
+  border-bottom: 1px solid var(--dash-border);
+}
+.inbox-rows li:last-child .inbox-row-body {
+  border-bottom-color: transparent;
+}
+.inbox-row-top,
+.inbox-row-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.inbox-row-name {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-row.needs-reply .inbox-row-name {
+  font-weight: 600;
+}
+.inbox-row-when {
+  font-size: 11.5px;
+  color: var(--inbox-meta);
+  flex-shrink: 0;
+}
+.inbox-row.has-unread .inbox-row-when {
+  color: var(--inbox-green);
+  font-weight: 600;
+}
+.inbox-row-preview {
+  font-size: 13px;
+  color: var(--inbox-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-row-unread {
+  flex-shrink: 0;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--inbox-green);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.inbox-row-closed {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--inbox-meta);
+}
+
+.inbox-list .dash-pagination {
+  flex-shrink: 0;
+  border-top: 1px solid var(--dash-border);
+}
+
+/* ── Avatars ───────────────────────────────────────────────────────────── */
+
+.inbox-avatar {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+.inbox-avatar.is-sm {
+  width: 38px;
+  height: 38px;
+  font-size: 14px;
+}
+
+/* ── Notes and empty states ────────────────────────────────────────────── */
+
+.inbox-note {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--dash-text-2);
+}
+.inbox-note.is-error {
+  color: #b91c1c;
+}
+.inbox-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 16px;
+  font-size: 13.5px;
+  color: var(--dash-text-2);
+  background: var(--inbox-bar);
+  text-align: center;
+}
+.inbox-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dash-surface);
+  color: var(--inbox-green);
+}
+.inbox-empty-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dash-text);
+}
+.inbox-empty p {
+  margin: 0;
+}
+
+/* ── The open chat ─────────────────────────────────────────────────────── */
+
+.inbox-thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.inbox-thread-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  height: 100%;
+  background: var(--inbox-wallpaper);
+}
+.inbox-thread-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 14px;
+  min-height: 60px;
+  background: var(--inbox-bar);
+  border-bottom: 1px solid var(--dash-border);
+}
+.inbox-thread-who {
+  flex: 1;
+  min-width: 0;
+}
+.inbox-thread-name {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--dash-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-thread-sub {
+  font-size: 12.5px;
+  color: var(--inbox-meta);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-thread-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.inbox-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: var(--dash-text-2);
+  cursor: pointer;
+}
+.inbox-icon-btn:hover {
+  background: rgba(11, 20, 26, 0.06);
+}
+/* Back to the list exists only where the chat covers it: the phone sheet.
+   After .inbox-icon-btn, which would otherwise display it again. */
+.inbox-icon-btn.inbox-thread-back {
+  display: none;
+}
+.inbox-sheet .inbox-icon-btn.inbox-thread-back {
+  display: inline-flex;
+  margin-left: -6px;
+}
+.inbox-text-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--dash-border-strong);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.inbox-text-btn[aria-expanded="true"] {
+  border-color: var(--inbox-green);
+  color: var(--inbox-green);
+}
+.inbox-text-btn:disabled {
+  opacity: 0.5;
+}
+.inbox-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 12.5px;
+  color: var(--inbox-green);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* Customer details: a panel under the header, capped so the chat always
+   keeps most of the height and the panel scrolls on its own. */
+.inbox-customer {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--dash-border);
+  background: var(--dash-surface);
+  font-size: 12.5px;
+}
+.inbox-customer-label {
+  margin: 0 0 2px;
+  color: var(--inbox-meta);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.inbox-customer-value {
+  margin: 0 0 8px;
+  color: var(--dash-text);
+}
+.inbox-customer-hint {
+  margin: 0;
+  color: var(--dash-text-2);
+}
+.inbox-orders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.inbox-orders li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  color: var(--dash-text-2);
+}
+
+/* ── Messages ──────────────────────────────────────────────────────────── */
+
+.inbox-messages-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.inbox-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 6% 16px;
+}
+.inbox-day {
+  display: flex;
+  flex-direction: column;
+}
+/* The date pill floats at the top while its day is on screen, and is pushed
+   off by the next day's, like WhatsApp. Sticky inside its own day group. */
+.inbox-day-label {
+  position: sticky;
+  top: 6px;
+  z-index: 2;
+  align-self: center;
+  margin: 10px 0 8px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--inbox-meta);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: var(--inbox-bubble-shadow);
+}
+
+.inbox-bubble-row {
+  display: flex;
+  margin-top: 10px;
+  padding: 0 8px;
+}
+.inbox-bubble-row.is-cont {
+  margin-top: 2px;
+}
+.inbox-bubble-row.is-out {
+  justify-content: flex-end;
+}
+.inbox-bubble {
+  position: relative;
+  max-width: min(65%, 560px);
+  min-width: 72px;
+  border-radius: 8px;
+  padding: 6px 8px 8px 9px;
+  background: var(--inbox-bubble-in);
+  box-shadow: var(--inbox-bubble-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #111b21;
+}
+.is-out .inbox-bubble {
+  background: var(--inbox-bubble-out);
+}
+/* The tail, on the first bubble of a run only. */
+.inbox-bubble-row:not(.is-cont).is-in .inbox-bubble {
+  border-top-left-radius: 0;
+}
+.inbox-bubble-row:not(.is-cont).is-out .inbox-bubble {
+  border-top-right-radius: 0;
+}
+.inbox-bubble-row:not(.is-cont) .inbox-bubble::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 13px;
+  background: inherit;
+}
+.inbox-bubble-row:not(.is-cont).is-in .inbox-bubble::before {
+  left: -8px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+.inbox-bubble-row:not(.is-cont).is-out .inbox-bubble::before {
+  right: -8px;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+.inbox-bubble.is-failed {
+  box-shadow:
+    0 0 0 1px #fca5a5,
+    var(--inbox-bubble-shadow);
+}
+.inbox-bubble.has-media {
+  padding: 4px 4px 6px;
+}
+.inbox-bubble.has-media .inbox-bubble-text,
+.inbox-bubble.has-media .inbox-bubble-source {
+  padding: 0 5px;
+}
+
+.inbox-bubble-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Room at the end of the last line for the time, which sits over it at the
+   bottom right (WhatsApp's layout): short messages stay one line. */
+.inbox-bubble-spacer {
+  display: inline-block;
+  width: 58px;
+  height: 1px;
+}
+.is-out .inbox-bubble-spacer {
+  width: 76px;
+}
+.inbox-bubble-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  /* The darker green: the lighter one is 4.4:1 on an outgoing bubble. */
+  color: var(--inbox-green-hover);
+}
+.inbox-bubble-flag {
+  font-size: 11.5px;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 6px;
+  padding: 1px 6px;
+  align-self: flex-start;
+}
+/* The store's menu as it was sent: WhatsApp draws reply buttons as a row of
+   rounded chips under the text, so the thread does too. Not clickable here;
+   they are what the customer saw. */
+.inbox-bubble-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.inbox-bubble-button {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--inbox-green-hover);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 128, 105, 0.25);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+/* A merchant's own template may carry a header and a footer; the composer
+   shows them above and below the body as WhatsApp will. */
+.inbox-template-header {
+  font-weight: 600;
+}
+.inbox-template-footer {
+  font-size: 12px;
+  color: var(--inbox-meta);
+}
+.inbox-bubble-error {
+  font-size: 11.5px;
+  color: #b91c1c;
+}
+.inbox-bubble-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  align-self: flex-end;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--inbox-meta);
+  white-space: nowrap;
+}
+.inbox-bubble.has-tail-meta .inbox-bubble-meta {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+}
+.inbox-tick {
+  width: 16px;
+  height: 16px;
+}
+.inbox-tick.is-read {
+  color: var(--inbox-read);
+}
+.inbox-tick.is-failed {
+  color: #b91c1c;
+}
+.inbox-media {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 6px;
+  display: block;
+}
+.inbox-audio {
+  max-width: 100%;
+  min-width: 220px;
+}
+
+/* Jump back to the newest message after scrolling up. */
+.inbox-jump {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  z-index: 3;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 0;
+  background: #ffffff;
+  color: var(--inbox-meta);
+  box-shadow: 0 1px 3px rgba(11, 20, 26, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* ── Mink's draft ──────────────────────────────────────────────────────── */
+
+/* A reply Mink wrote and did not send, above the composer. Lavender, the
+   dashboard's Mink colour, so it never reads as a message in the thread. */
+.inbox-mink {
+  flex-shrink: 0;
+  margin: 0 12px 6px;
+  padding: 8px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid rgba(87, 60, 240, 0.25);
+  border-radius: 10px;
+  background: rgba(87, 60, 240, 0.06);
+}
+.inbox-mink-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #4530c7;
+}
+.inbox-mink-reason {
+  font-weight: 400;
+  color: var(--dash-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.inbox-mink-reason::before {
+  content: "· ";
+}
+.inbox-mink-facts {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dash-text-2);
+}
+.inbox-mink-text {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 8px;
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.inbox-mink-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.inbox-mink-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--dash-text-3);
+}
+.inbox-mink-send {
+  width: auto;
+  padding: 0 14px;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ── Composer ──────────────────────────────────────────────────────────── */
+
+.inbox-composer {
+  flex-shrink: 0;
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--inbox-bar);
+  border-top: 1px solid var(--dash-border);
+}
+.inbox-composer.is-locked {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  color: var(--dash-text-2);
+}
+.inbox-window {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 11.5px;
+  color: var(--inbox-meta);
+  padding: 0 4px;
+}
+.inbox-compose-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.inbox-compose-row textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border: 0;
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  border-radius: 22px;
+  padding: 11px 16px;
+  font-size: 14px;
+  line-height: 20px;
+  min-height: 42px;
+  max-height: 140px;
+  overflow-y: auto;
+  outline: none;
+  font-family: inherit;
+}
+.inbox-compose-row textarea:focus {
+  box-shadow: 0 0 0 2px rgba(0, 128, 105, 0.35);
+}
+.inbox-send {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 42px;
+  min-width: 42px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--inbox-green);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.inbox-send:hover:not(:disabled) {
+  background: var(--inbox-green-hover);
+}
+.inbox-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.inbox-template {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+.inbox-select {
+  border: 1px solid var(--dash-border-strong);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.inbox-template-body {
+  margin: 0;
+  font-size: 13px;
+  color: #111b21;
+  white-space: pre-wrap;
+  background: var(--inbox-bubble-out);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.inbox-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--dash-text-2);
+}
+.inbox-field input {
+  border: 1px solid var(--dash-border-strong);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.inbox-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Phones ────────────────────────────────────────────────────────────── */
+
+/* The chat covers the whole screen, like opening a chat in WhatsApp. */
+.inbox-sheet {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: 100dvh !important;
+  padding: 0;
+  gap: 0;
+  border: 0 !important;
+  background: var(--inbox-wallpaper);
+}
+.inbox-sheet .inbox-thread-head {
+  padding-top: max(8px, env(safe-area-inset-top));
+}
+.inbox-sheet .inbox-composer {
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+
+@media (max-width: 767px) {
+  .inbox-page {
+    gap: 10px;
+    min-height: 360px;
+  }
+  .inbox-page-header p {
+    display: none;
+  }
+  .inbox-messages {
+    padding: 6px 2px 12px;
+  }
+  .inbox-bubble {
+    max-width: 85%;
+  }
+  .inbox-customer {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: 45%;
+  }
+  .inbox-text-label,
+  .inbox-window-more {
+    display: none;
+  }
+  .inbox-compose-row textarea,
+  .inbox-search input,
+  .inbox-field input,
+  .inbox-select {
+    font-size: 16px;
+  }
+}
+
+/* At the end, so it beats the base pane rules it overrides. */
+/* ★ Narrow card: one pane at a time, like WhatsApp in a narrow window. The
+   list until a chat is open, then the chat with a back arrow. */
+@container inbox-shell (max-width: 640px) {
+  .inbox-list {
+    width: 100%;
+    border-right: 0;
+  }
+  .inbox-shell.has-thread .inbox-list,
+  .inbox-shell:not(.has-thread) .inbox-thread {
+    display: none;
+  }
+  .inbox-shell .inbox-icon-btn.inbox-thread-back {
+    display: inline-flex;
+    margin-left: -6px;
+  }
+  .inbox-text-label,
+  .inbox-window-more {
+    display: none;
+  }
+}
+
+/* ── Working as a team (slice 6) ────────────────────────────────────────── */
+
+.inbox-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* The assignee and label filters under the status tabs. */
+.inbox-tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.inbox-select.is-sm {
+  padding: 5px 8px;
+  font-size: 12.5px;
+  border-radius: 999px;
+  max-width: 100%;
+}
+.inbox-assignee {
+  max-width: 150px;
+}
+
+/* Label chips: one colour per label, a pale fill with legible ink. */
+.inbox-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: default;
+}
+.inbox-chip.is-sm {
+  padding: 1px 7px;
+  font-size: 11px;
+}
+button.inbox-chip {
+  cursor: pointer;
+}
+button.inbox-chip.is-off {
+  background: var(--dash-surface);
+  border-color: var(--dash-border-strong);
+  color: var(--dash-text-2);
+}
+button.inbox-chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.inbox-chip.is-grey {
+  background: #e5e7eb;
+  color: #1f2937;
+}
+.inbox-chip.is-red {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.inbox-chip.is-orange {
+  background: #ffedd5;
+  color: #9a3412;
+}
+.inbox-chip.is-yellow {
+  background: #fef3c7;
+  color: #92400e;
+}
+.inbox-chip.is-green {
+  background: #dcfce7;
+  color: #166534;
+}
+.inbox-chip.is-blue {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.inbox-chip.is-purple {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+.inbox-chip.is-pink {
+  background: #fce7f3;
+  color: #9d174d;
+}
+
+/* The same colours as a dot on a list row. */
+.inbox-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+.inbox-dot.is-grey {
+  background: #9ca3af;
+}
+.inbox-dot.is-red {
+  background: #ef4444;
+}
+.inbox-dot.is-orange {
+  background: #f97316;
+}
+.inbox-dot.is-yellow {
+  background: #eab308;
+}
+.inbox-dot.is-green {
+  background: #22c55e;
+}
+.inbox-dot.is-blue {
+  background: #3b82f6;
+}
+.inbox-dot.is-purple {
+  background: #8b5cf6;
+}
+.inbox-dot.is-pink {
+  background: #ec4899;
+}
+
+.inbox-swatches {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.inbox-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.inbox-swatch.is-on {
+  border-color: var(--dash-text);
+}
+.inbox-swatch.is-grey {
+  background: #9ca3af;
+}
+.inbox-swatch.is-red {
+  background: #ef4444;
+}
+.inbox-swatch.is-orange {
+  background: #f97316;
+}
+.inbox-swatch.is-yellow {
+  background: #eab308;
+}
+.inbox-swatch.is-green {
+  background: #22c55e;
+}
+.inbox-swatch.is-blue {
+  background: #3b82f6;
+}
+.inbox-swatch.is-purple {
+  background: #8b5cf6;
+}
+.inbox-swatch.is-pink {
+  background: #ec4899;
+}
+
+.inbox-row-tags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  min-height: 14px;
+}
+.inbox-row-assignee {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--dash-text-2);
+  background: var(--inbox-bar);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+.inbox-row-snippet mark {
+  background: #fef08a;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.inbox-thread-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+.inbox-labels-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--inbox-bar);
+  border-bottom: 1px solid var(--dash-border);
+}
+
+/* A private note between the bubbles. */
+.inbox-note-row {
+  display: flex;
+  justify-content: center;
+  padding: 4px 8px;
+}
+.inbox-note-card {
+  max-width: min(78%, 520px);
+  background: #fef9c3;
+  color: #713f12;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  padding: 7px 12px 8px;
+  font-size: 13.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.inbox-note-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.inbox-note-head time {
+  font-weight: 400;
+  opacity: 0.8;
+}
+.inbox-note-delete {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+  display: inline-flex;
+  padding: 2px;
+}
+.inbox-note-delete:hover {
+  opacity: 1;
+}
+
+/* A quoted message inside a bubble, WhatsApp's bar-and-strip. */
+.inbox-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-left: 3px solid var(--inbox-green);
+  background: rgba(11, 20, 26, 0.05);
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  max-width: 100%;
+}
+.inbox-quote-who {
+  font-weight: 600;
+  color: var(--inbox-green-hover);
+  font-size: 12px;
+}
+.inbox-quote-text {
+  color: var(--dash-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Reply appears on hover (and on focus); on touch it is always there. */
+.inbox-bubble {
+  position: relative;
+}
+.inbox-bubble-reply {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  border: 0;
+  background: var(--dash-surface);
+  color: var(--dash-text-2);
+  border-radius: 999px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--inbox-bubble-shadow);
+  opacity: 0;
+}
+.inbox-bubble:hover .inbox-bubble-reply,
+.inbox-bubble-reply:focus-visible,
+.inbox-bubble:focus-within .inbox-bubble-reply {
+  opacity: 1;
+}
+@media (hover: none) {
+  .inbox-bubble-reply {
+    opacity: 0.7;
+  }
+}
+.inbox-bubble-row.is-hit .inbox-bubble {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+}
+.inbox-note-row.is-hit .inbox-note-card {
+  outline: 2px solid #f59e0b;
+}
+
+/* The composer's modes, reply-to bar, attachment row and picker. */
+.inbox-mode {
+  display: flex;
+  gap: 4px;
+}
+.inbox-mode-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--dash-text-2);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.inbox-mode-tab.is-active {
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  box-shadow: var(--inbox-bubble-shadow);
+}
+.inbox-mode-tab.is-note.is-active {
+  background: #fef9c3;
+  color: #713f12;
+}
+.inbox-composer.is-note {
+  background: #fefce8;
+}
+.inbox-composer.is-note textarea {
+  background: #fffbeb;
+}
+.inbox-send.is-note {
+  background: #ca8a04;
+}
+.inbox-composer.is-locked .inbox-locked-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.inbox-replyto,
+.inbox-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--dash-surface);
+  border: 1px solid var(--dash-border);
+  border-left: 3px solid var(--inbox-green);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--dash-text-2);
+  min-width: 0;
+}
+.inbox-replyto-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inbox-attachment-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dash-text);
+}
+.inbox-attachment-size {
+  color: var(--dash-text-3);
+}
+.inbox-icon-btn.is-sm {
+  width: 28px;
+  height: 28px;
+}
+.inbox-attach {
+  flex-shrink: 0;
+  height: 42px;
+  width: 42px;
+}
+.inbox-canned {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  background: var(--dash-surface);
+  border: 1px solid var(--dash-border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(11, 20, 26, 0.1);
+  max-height: 220px;
+  overflow-y: auto;
+}
+.inbox-canned li button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--dash-text);
+  font-size: 13px;
+}
+.inbox-canned li button:hover,
+.inbox-canned li button:focus-visible {
+  background: var(--inbox-bar);
+}
+.inbox-canned code {
+  color: var(--inbox-green-hover);
+  font-weight: 600;
+  font-size: 12px;
+}
+.inbox-canned-title {
+  font-weight: 500;
+}
+.inbox-canned-body {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--dash-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inbox-canned-empty {
+  padding: 6px 8px;
+  font-size: 12.5px;
+  color: var(--dash-text-3);
+}
+
+/* The managers (labels, saved replies). */
+.inbox-dialog-wide {
+  max-width: 640px;
+}
+.inbox-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.inbox-manage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.inbox-manage-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--dash-border);
+}
+.inbox-manage-list li > form {
+  flex: 1;
+}
+.inbox-manage-row-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+}
+.inbox-manage-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0;
+}
+.inbox-manage-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 8px;
+}
+.inbox-manage-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.inbox-field textarea {
+  border: 1px solid var(--dash-border-strong);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+.inbox-shortcut-input {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--dash-border-strong);
+  background: var(--dash-surface);
+  border-radius: 8px;
+  padding-left: 10px;
+  color: var(--dash-text-3);
+}
+.inbox-shortcut-input input {
+  border: 0;
+  background: transparent;
+  padding: 8px 10px 8px 2px;
+  font-size: 13px;
+  color: var(--dash-text);
+  min-width: 0;
+  flex: 1;
+}
+.inbox-manage-reply {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.inbox-manage-reply-head {
+  font-size: 13px;
+  font-weight: 500;
+}
+.inbox-manage-reply-head code {
+  color: var(--inbox-green-hover);
+  margin-right: 4px;
+}
+.inbox-manage-reply-body {
+  font-size: 12.5px;
+  color: var(--dash-text-3);
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

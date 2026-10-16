@@ -27,6 +27,8 @@
  */
 const MONEY = new Set([
   "total",
+  // What the customer still pays: the total less store credit (variables.ts).
+  "amount_due",
   "subtotal",
   "amount",
   "discount",
@@ -57,6 +59,7 @@ const PAYMENT_METHODS: Record<string, string> = {
   cash_on_delivery: "Cash on delivery",
   pay_at_store: "Pay at store",
   razorpay: "Online payment",
+  store_credit: "Store credit",
   pos: "In store",
   cash: "Cash",
   card: "Card",

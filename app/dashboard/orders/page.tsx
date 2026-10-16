@@ -39,6 +39,8 @@ export interface OrderRow {
   /** 'delivery' for everything that isn't a collection. */
   fulfilment_type: string;
   pickup_status: string | null;
+  /** The COD customer's WhatsApp answer, or null when never asked. */
+  cod_confirmation?: string | null;
 }
 
 export default async function OrdersPage({

@@ -92,6 +92,1014 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### Media Library: product images, Choose from library, hidden chat attachments (2026-10-16)
+
+Three merchant asks in one change. Schema in migration
+`20261016_0213_media_library_sources`; Help edits in `0214`.
+★★ `media_assets.source` SAYS WHERE A ROW CAME FROM (`lib/media/sources.ts`:
+`upload`, `mink_attachment`, `mink_generated`, `mink_refined`,
+`mink_prepared`; a CHECK holds the list). The Library lists everything except
+`LIBRARY_HIDDEN_SOURCES` (chat attachments and the 1:1/16:9 copies
+`media-preparation.ts` makes), filtered in ONE place, `listLibraryAssets`
+(`lib/media/library.ts`), so the page and the picker cannot disagree. ★ The
+rows are KEPT: Mink's ownership checks (`selectOwnedStorefrontImageUrls`, the
+image reference resolver, `propose_product_create`) accept an image because a
+`media_assets` row says the store owns it, so hiding is a display question,
+never ownership. The composer sends `purpose=mink_attachment` to
+`uploadMediaAsset` (a label, not a permission: the gate, path and ownership are
+identical); each Mink writer sets its own source. 0213 backfills by folder
+(`mink-generated/`, `refined/`, `media/mink-prepared/`) and marks a `media/`
+upload as an attachment only when a user message carries the composer's
+saved-image marker AND the exact `"url":"…"` JSON, so a Library URL the
+merchant merely pasted into chat stays listed. Attachments in conversations
+already pruned stay listed.
+★★ PRODUCT IMAGES ARE DERIVED, NEVER COPIED (`lib/media/product-images.ts`).
+A photo uploaded in the product editor has no `media_assets` row; reading the
+products themselves (primary, gallery, each variant's photos, and the photos
+per colour inside `products.options`) is always right with no backfill.
+`listProductImages` / `countProductImages` feed the Media page's new
+**Product images** tab (`?tab=products`, shown only with Products view; one
+tile per URL, "used by" names, links to the product, no delete there);
+`productImageUsage` names the products using given URLs (Library tile badges,
+the picker, the delete guard).
+★★ THE PRODUCT CLEAN-UP NO LONGER DELETES A FILE SOMETHING ELSE USES.
+`updateProduct`, `deleteProduct` and `bulkDeleteProducts` used to delete every
+image the product stopped using, so a Library image (Mink already put them on
+products) or a photo shared with another product broke in both places.
+`productImagesSafeToDelete` now drops any URL that is a `media_assets` row for
+the store or is used by any product, variant or colour photo in the store,
+asked AFTER the write commits; a read failure keeps every file (an orphan costs
+storage, a deleted file breaks a storefront). Another STORE's reference never
+counts.
+★ `deleteMediaAsset` REFUSES an image a product uses, naming the products, and
+refuses when it cannot tell; the Library's delete dialog says so first.
+★ EVERY ADD-IMAGE CONTROL IN THE PRODUCT EDITOR ASKS WHERE THE PHOTO COMES
+FROM (`components/ui/image-source-menu.tsx`): **Upload from computer** opens
+the file dialog (inside the click, so the browser allows it), **Choose from
+Media Library** opens the picker. `ImageUpload` shows it only when given
+`onChooseFromLibrary`, so every other upload box (categories, Builder, blog)
+still opens the file dialog straight away. Used by the primary image (single
+pick), the gallery (several), each variant's photo strip and each colour's
+photos (`max` = room left). The picker
+(`app/dashboard/components/media-library-picker.tsx`, read through
+`getMediaPickerPage` in media-actions.ts) has two tabs:
+Media Library (needs Media view; file names can name suppliers) and Product
+images (Products view). Already-added photos are shown and not pickable. The
+picker only returns URLs: the product save's `firstForeignStoreImageUrl` stays
+the boundary. Mount it only while open. The primary `ImageUpload` is keyed by
+the URL, because it reads its preview once on mount.
+Tests: `media-actions.test.ts`, `product-actions.test.ts` (the sweep guard),
+`media-library-picker.test.tsx`, `product-editor-form.test.tsx`, the composer
+test (the purpose label), and the opt-in rollback-only
+`lib/media/media-library.local.test.ts` (`MEDIA_LIBRARY_LOCAL_TEST=1`, local
+DB on 5544), which applies 0213 and runs every new query. ⚠ Not built: a
+retention sweep for hidden chat attachments (their files stay in storage), and
+the same in-use guard for category, blog and Builder image clean-ups.
+
+### WhatsApp Commerce: PR #283 review fixes (2026-10-16)
+
+The fixes for the review of the WhatsApp branch (PR #283). Schema in migration
+`20261016_0211_whatsapp_review_fixes`; merchant-facing Help edits in `0212`.
+Each slice section below still describes its feature; this section is what
+changed, and the slice text points here where it no longer holds.
+★★ CHAT MEDIA IS PRIVATE (owner's decision). The media bucket grants
+allUsers objectViewer, which includes LISTING, so every store's chat photos,
+voice notes and PDFs were enumerable and downloadable by anyone. Inbound
+copies (`storeInboundMedia`) and staff uploads (`inbox-media.ts`) now go to
+the private bucket (`GCS_PRIVATE_BUCKET`, `gcsPrivateUploadObject`), same
+path; with no private bucket configured nothing is stored (the message keeps
+its caption and an error), never a public copy. Every view goes through
+`GET /api/dashboard/inbox/media/[messageId]`: a signed-in viewer (401 for a
+poll that lost its session) with Inbox view on the host store (403), a
+message of that store (404 for anything else, saying nothing about other
+stores), the private bucket first and the public one only for a legacy file
+not yet moved. Only types WhatsApp carries are served inline
+(`INLINE_TYPES`); anything else is an `attachment` as
+`application/octet-stream`; every response is `nosniff`, `Cross-Origin-
+Resource-Policy: same-origin`, `private, max-age=3600`, and a CSP sandbox
+except for PDFs (a viewer will not open inside one). One byte range is
+honoured (`lib/http/byte-range.ts`; 206/416) because Safari will not play a
+voice note without it. `inboxMediaUrl(id)` is what the thread renders;
+`loadInboxMessageMedia` is the store-scoped read. `deleteStore` purges the
+store's private prefix too; retention deletes a conversation's folder in
+BOTH buckets, and a folder it could not empty marks
+`whatsapp_conversations.retention_failed_at` and leaves that chat out of the
+batch for `RETRY_FAILED_AFTER_DAYS` (7), so one stuck chat cannot hold every
+run. Existing files move with `npm run whatsapp:media-to-private` (dry run;
+`--commit` copies, checks the size, deletes the public copy; re-runnable).
+Cloud Build passes `_GCS_PRIVATE_BUCKET` (default empty, so an unset trigger
+stores no media rather than storing it publicly). A transparent photo a staff
+member sends is flattened onto white before the JPEG re-encode.
+★★ THE SMS IS HELD BEHIND THE WHATSAPP, NOT THROWN AWAY. Under
+`whatsapp_first`, a customer reachable on both channels used to get the
+WhatsApp and no SMS even when Meta then refused or failed it. The fan-out now
+stores the SMS on the WhatsApp queue row (`fallback_sms`, `fallback_state =
+'held'`, `heldSmsFrom`), and `lib/whatsapp/sms-fallback.ts` settles it
+exactly once by a conditional claim: `releaseHeldSms` (one statement moves
+held to released and inserts the SMS queue row from the same RETURNING) when
+the worker gets a refusal or Meta posts `failed`, `dropHeldSms` on
+`delivered` or `read`. ★ An UNKNOWN send outcome keeps it held (the WhatsApp
+may have arrived; §26's retry rule). The worker records Meta's message id on
+the queue row (`provider_message_id`, partial index), which is how a status
+finds its row; a release from either path kicks the email worker
+(`smsReleased`). A CHECK keeps the three columns consistent and NULL-safe.
+★★ INBOUND EVENTS RETRY, UNDER A LEASE. A delivery that failed to process
+used to be marked failed for good. The claim is now ONE `update … returning`
+over `for update skip locked` that sets `attempts + 1` and
+`next_attempt_at = now() + 2 min` (the lease), so a crashed run's events come
+back; failures back off 1, 5, 15 and 60 minutes and give up after
+`MAX_INBOUND_ATTEMPTS` (5). `processPendingInboundEvents` still runs in the
+webhook's `after()`, and `/api/cron/send-emails` now drains first
+(`drainInboundEvents(15_000)`) and chains while a batch reaches 50.
+★ ROUTING BY THE NUMBER THE EVENT NAMES (`routeInboundEvent`): an event
+naming a number goes to that number's store only; a WABA-level event (a
+template or account change) goes to every store on that WABA, since two
+stores can share one. ★ META'S RE-READ IS THE TRUTH: a template event runs
+`syncWhatsAppTemplates` and a number or account event `refreshWhatsAppAccount`,
+each once per store per batch, instead of writing the payload; a failed
+refresh of an `account_update` (PARTNER*REMOVED, ACCOUNT_DELETED,
+VERIFIED_ACCOUNT) applies the payload, and any other failed re-read throws so
+the event retries. Webhook secrets are read trimmed (`whatsappConfig()`).
+★ STATUSES (`applyMessageStatus` → `settleQueuedMessage`): `failed` releases a
+held SMS and marks a COD order `undelivered`, only over `requested` and only
+when no copy of that order's message was delivered or read; `delivered` and
+`read` drop a held SMS.
+★★ THE CUSTOMER'S PHONE IS THE ONE TYPED AT CHECKOUT (owner's decision). A
+customer update for an order goes to that order's delivery phone
+(`shipping_address->>'phone'`), the account phone only as the fallback (a till
+sale has none), and `orders.whatsapp_updates` records the box for THAT order:
+`false` means no customer WhatsApp for it, whatever the number agreed before
+(a gift's recipient is not told). `recordWhatsAppConsent` takes `verified`:
+a VERIFIED phone (the session's own, on the account page or at a checkout
+whose phone is the account's) links the user and changes both choices either
+way; an UNVERIFIED one (a delivery phone that is not the account's) is never
+linked to the shopper, records the updates yes only when that number never
+answered, never withdraws, and never takes marketing (offers are recorded
+for the account phone instead). Returns `{ok}`, so the account page reports a
+save that did not land. Checkout prefills both boxes from what the session's
+phone already chose, until the shopper touches them.
+★ THE FAN-OUT (`record.ts`): SMS and WhatsApp candidates are collected before
+the web/email skip; a phone that said STOP to this store's SMS
+(`sms_suppressions`) counts as unreachable by SMS, so precedence falls to
+WhatsApp; the COD confirmation goes to a website COD customer whenever
+`whatsapp.codConfirmation` is on, whatever the Order placed WhatsApp tick or
+the precedence (`codOnly`: it never falls back to the plain template). Reads
+that may fail run in SAVEPOINTs (`isolated`), so one failed lookup cannot
+abort the fan-out's transaction.
+★ THE WORKER: the sender, template and consent are read STRICT, so a read
+failure requeues (and fails only after the attempts run out) instead of
+dropping a message as "not approved"; Meta's token error (190) marks the
+account `needs_reauth` (`markNeedsReauth`) and fails that store's other
+rows in the batch as not connected, so their held SMS go out instead.
+★ COD (`cod-confirmation.ts`, `cod-sweep.ts`, `approve-cancellation.ts`): a
+fifth answer, `undelivered` ("WhatsApp message not delivered", rose), is
+never reminded or auto-cancelled; the reminder and auto-cancel run only while
+the number is connected and switched on (joined in the sweep's SQL, before
+the LIMIT); a Cancel tap after the shop DECLINED a cancellation request does
+not cancel (`fromRequest` puts `cancellation_status is distinct from
+'declined'` inside the claim) and hands over with outcome `declined`. The
+COD message's amount is `amount_due` (the total less store credit, what the
+courier collects); `withVariableFallbacks` falls back to `total` for an event
+emitted without it, and `templateRowVariables` lets the CURRENT catalogue
+row read the catalogue's mapping, so the change reaches stores that
+connected earlier without a new template version. Meta's REINSTATED reads as
+APPROVED.
+★ NOTIFICATION CONSOLE: switching WhatsApp or SMS ON is refused when the
+store cannot send; a switch already saved on is kept, so a lapsed
+connection no longer blocks every other edit of that notification (the
+fan-out still checks at send).
+★ CONNECT AND TEMPLATES: templates belong to one WABA, and a store whose
+account moves to another resets every row filed under another WABA in the
+same commit (`resetTemplatesForWaba`: Meta id cleared, PENDING, a
+`sync_error` note; also first in bootstrap and sync); StoreMink's templates
+are resubmitted, a merchant's own are not (their note asks for a delete and
+re-add). The Coexistence finish event that names only the WABA is accepted:
+the server lists the WABA's numbers under the proven token and connects the
+only one (none or several refuse, nothing saved). Each number's two-step PIN
+is kept in `whatsapp_number_pins` (service-only, one row per number,
+backfilled by 0211), reused on reconnect and stored before register, so
+disconnect-then-connect no longer trips Meta's PIN check; a number another
+store holds is refused before anything changes at Meta. Disconnect
+unsubscribes our app from a WABA only when no other store's account uses it.
+A template is deleted at Meta only by its id on the current WABA. The card
+counts `unsubmitted` (no Meta id) and offers Set up templates while any are
+left; the manager labels such rows "Not submitted" (`ManagedTemplate.
+submitted`) and says a delete removes them only here. Template listing follows
+Meta's cursor (on our own path, never a `next` URL), up to 20 pages. The
+unique-violation message reads the constraint through `pgConstraint`
+(lib/db/errors.ts). All four channel cards re-seed from the server after
+`router.refresh()` (`useServerState`).
+★ CUSTOM TEMPLATES: a quick reply worded like STOP or START may only be on a
+MARKETING template, because a tap is read by its label (below).
+★ AUTOMATIC REPLIES AND INTENT: a negation in any spelling (wasn't, wasn’t,
+wasnt, cannot, nahi, नहीं, …) keeps "where is my order" for a person; the
+danda (। ॥) is punctuation; a typed "menu" that gets no menu (paused number,
+unreadable settings, menu switched off, buttons that could not follow a long
+welcome) hands over; the away message counts a staff template as a recent
+reply; a tapped button whose LABEL reads as STOP or START (e.g. "Stop
+promotions") records the offers choice like the typed word, COD and menu taps
+excepted by prefix; a conversation started by a quiet message (an order
+update) shows it as its preview.
+★ CUSTOMER-FACING MINK: offers come from `readMinkShopperOffers`
+(`lib/mink/offers-read.ts`), which returns only what a shopper could see on
+the storefront: live and within budget, online, an automatic offer only while
+`offers.autoApply` is on, a code only when "Show this coupon on my
+storefront" is ticked, never a group- or location-limited offer, each line
+with its conditions, per-customer cap and end date (`readMinkCurrentOffers`,
+the dashboard's read, is unchanged). In `helps` the sender is loaded FIRST,
+so a number that cannot send costs no headroom read, model call or credit.
+★★ THE SEND IS A LEASE, NOT A ROW LOCK: `claimMinkDraft` is one conditional
+UPDATE setting `whatsapp_mink_answers.sending_started_at` on a still-draft
+row with no live lease (`MINK_SEND_LEASE_MINUTES` 2), and it refuses a draft
+a person has already answered (`personRepliedSince`: an outbound dashboard
+or phone_app message, or any send with `sent_by_admin_id`, not failed, after
+the customer's message). `releaseMinkDraftClaim` gives the lease back,
+`markMinkAnswerSent` moves only still-draft rows, `discardMinkDrafts` skips a
+live lease and `loadMinkDraft` hides a leased or answered draft. Both the
+automatic send and a staff Send go through it, so one answer cannot go out
+twice: released on no credits (inside the claim's transaction) and on a
+definite refusal, KEPT on an unknown outcome, and a draft whose send went out
+but whose filing failed is still marked sent. A person who replies while the
+model runs makes Mink record its answer as `discarded`, with nothing sent or
+charged. The delivery quote uses a product's first in-stock option
+(`deliveryCheckVariant`) and names it; a failed order or offer read says so
+in the facts sheet rather than reading as none; replies and reasons pass
+through `withoutLongDashes`, and the prompt carries the same rule (rule 8).
+The gate (`mink-gate.ts`) keeps emoji-only and short all-pleasantry messages
+("ok thanks", "ठीक है") from the model, and its `normalise` closes "n't"
+under any apostrophe (and "did'nt"), treats a danda as a full stop, and hands
+over negated delivery complaints in English, Hinglish and Hindi in either
+word order (`NEGATED_ARRIVAL`; bare "no", "can" and "samajh nahi aaya"
+excluded). `inbox-intent.ts` takes the same misplaced apostrophe and the chat
+shorthand (dint, dnt, havnt, hvnt) as negations.
+★ THE INBOX (`inbox-actions.ts`, `inbox-read.ts`, `inbox-team.ts`,
+`inbox-workspace.ts`, `inbox-client.tsx`): a MARKETING template is refused
+unless the contact's offers yes is in force (`templateBlockedReason` with
+`consented()`; the picker lists it greyed out with the reason, and
+`listReplyTemplates` returns each template's category). Labels change ONE at
+a time (`setConversationLabel` / `setInboxConversationLabel`: the
+conversation row locked under the store, another store's label refused, the
+20-label cap counted under the lock), so a stale screen cannot remove labels
+it did not touch; the whole-set write is gone. The page reads its own
+connection state behind the Inbox gate (`getInboxChannelState` →
+`loadInboxChannelState`), so a role with Inbox but not Channels can open it,
+and links to Channels or Plans show only to someone who can open them.
+Duplicate label and shortcut errors are read through Drizzle's wrapper
+(`isUniqueViolation`); the inbox and WhatsApp-log searches escape `%`, `*`and`\` (`likePattern`); `fillCannedReply` inserts a name containing `$` as typed;
+the media upload route normalises line endings before the 1,024-character
+caption check and refuses an over-long one with a 400 before any upload. On
+screen: a refresh or poll is dropped once its conversation is no longer open,
+list results are kept only for the query that asked, a deleted filter label
+clears the filter, a load error clears on the next read, the thread pane is
+keyed by conversation (a quote cannot follow you to another chat), Enter
+during input-method composition does not send, and a quoted sticker reads
+"Sticker".
+
+### WhatsApp Commerce — Phase 2 slice 6: The full inbox (2026-10-15)
+
+Plan §4's "Inbox: Full" and §11's last bullet, and the last slice of Phase 2:
+what a TEAM needs once more than one person works the inbox. Migration
+`20261015_0209` adds four service-only tables (`whatsapp_labels`,
+`whatsapp_conversation_labels`, `whatsapp_conversation_notes`,
+`whatsapp_canned_replies`), the assignee index the "Mine" filter reads and a
+GIN index over message bodies; `0210` edits the inbox guide in place.
+`lib/whatsapp/inbox-workspace.ts` is the pure vocabulary (label and saved-
+reply validators the dialog and the action both run, `fillCannedReply`,
+`inboxSearchQuery`, `splitSnippet`); `inbox-team.ts` the writes; `inbox-read.ts`
+gained the lists, the filters and the search; `inbox-gate.ts` is the view/
+manage/send gate the actions and the media route share, so a photo and a text
+cannot differ about who may send or how fast.
+★ ASSIGNMENT IS A POINTER, NOT A PERMISSION. `whatsapp_conversations.
+assigned_admin_id` (0177 made it, "nullable now so the column needs no later
+migration") names one of the store's admins whose role includes Inbox, or an
+owner (`listInboxAssignees` joins `platform_roles`); the write refuses a
+person not on the store rather than storing a stale pointer, and reads the
+previous assignee under a row lock so `assignInboxConversation` can tell the
+person it was GIVEN to, and nobody else: `whatsapp.conversation_assigned`
+(registry, section `inbox`, in-app only) is emitted with
+`restrictToAdminIds: [adminId]` (§24), never for a self-assignment. The list
+filters by `me` / `unassigned` / an id and the row shows initials. An
+assigned conversation stays readable and answerable by everyone with Inbox.
+★ LABELS: at most 20 per store, a 30-character name unique per store
+ignoring case (a unique index on `lower(name)`), one of eight colours checked
+by the database; `setConversationLabel` (since the review fixes; the
+whole-set `setConversationLabels` is gone) adds or removes ONE label, only
+the store's own, under a lock on the conversation, with the count taken
+under that lock so two people adding the twentieth cannot make twenty-one. Deleting a label cascades its links.
+★ NOTES ARE NEVER MESSAGES. `whatsapp_messages`' source CHECK keeps them
+out of the wire record; `whatsapp_conversation_notes` holds them, and
+`loadThread` MERGES them into the message list in time order as rows with
+`source === INBOX_NOTE_SOURCE` (`"note"`), author resolved best-effort by
+`adminNames` like `sent_by_admin_id`. The composer's **Note** tab writes one
+(2,000 characters) whether or not the number can send. Readable by anyone
+with Inbox view; deletable, not editable.
+★ SAVED REPLIES: at most 50 per store, a shortcut `^[a-z0-9][a-z0-9_-]{0,29}$`
+unique per store, a body within WhatsApp's 4,096. Typing `/` in the box
+opens the picker filtered by shortcut or title, Enter takes the first, the
+bookmark button opens the whole list, and `fillCannedReply` puts the
+customer's WhatsApp first name in for `{{name}}`, or drops the token WITH its
+leading space ("Hi {{name}}," → "Hi,") when WhatsApp gave none. Unknown
+tokens stay visible rather than vanishing.
+★★ A PHOTO OR A PDF GOES META FIRST, OUR COPY SECOND, THE SEND LAST
+(`inbox-media.ts`, `POST /api/dashboard/inbox/media`, a route because a
+server action's body caps at 6 MB and a PDF may be 16 MB, and a 20-second
+upload must not queue in front of Send). `prepareOutboundMedia` decides by
+the BYTES, not the declared type: a photo (JPEG, PNG, WebP, ≤ 5 MB) is
+decoded by sharp, oriented, stripped of metadata (a staff phone's photo
+carries GPS) and re-encoded as a JPEG no wider than 2,048 px; a PDF (≤ 16 MB)
+must start with `%PDF-`. `uploadMedia` (graph.ts, multipart; `graphRequest`
+gained `form`) returns the id the send needs, so a refused upload stores and
+files nothing; the copy is written to `conversationMediaPrefix` as
+`out-<uuid>.<ext>` BEFORE the send so the thread never shows a photo it
+cannot display (Meta's media URLs expire and need the token: the inbound
+rule, applied outbound); `sendWhatsAppMedia` is the fourth entry of the
+choke point (`send-coverage.test.ts` now greps `sendMediaMessage` too, and
+holds `uploadMedia` to `inbox-media.ts`), and a refused send is filed as a
+failed message WITH the copy. `recordOutboundMessage` gained `media`,
+`quotedProviderId` and kinds `image` / `document`. Window-open only, like
+text; the caption is WhatsApp's 1,024. Retention deletes the folder with the
+conversation as before.
+★ SEARCH INSIDE MESSAGES: `inboxSearchQuery` reduces each word to letters
+and digits of ANY script (so no operator can be typed), at most six, each a
+prefix, all required (`stoc:* & almond:*`), over `to_tsvector('simple', body)`
+through the GIN index. 'simple' deliberately: customers write English,
+Hinglish and Devanagari in one thread and a language stemmer stems the wrong
+language. The list's search then matches the name, the number OR a
+conversation with a matching message, and a `left join lateral` returns the
+newest matching message with `ts_headline` marking the words in « », which
+the row shows and the chat scrolls to (`data-message-id`, outlined) when it
+is within the 200 loaded.
+★ QUOTED REPLIES: `sendTextMessage` always carried `context.message_id`;
+`sendInboxReply` now takes `replyToMessageId`, looked up by
+`loadQuotableProviderId` under the store AND the conversation (an id from
+the browser can quote only a message of the thread it was clicked in), and
+a message not there quotes nothing rather than failing the reply. The thread
+draws a quote strip from `quotedProviderId` against the loaded messages'
+`providerMessageId` (both now on `InboxMessageRow`), for inbound replies too.
+★★ ORDER UPDATES ARE FILED IN THE THREAD, QUIETLY, which closes the gap
+recorded on 2026-10-13 ("a customer's first reply to one counts as a first
+message and gets the welcome"). After a successful customer send, `worker.ts`
+calls `fileTemplateInThread` (inbox.ts): the contact upsert passes NO inbound
+time (a send never opens the window), the message is filed `source:
+"template"` with the rendered body and Meta's id, and `recordOutboundMessage`'s
+new `quiet` flag applies the automation rule (status and unread untouched, the
+customer's preview kept while they wait) plus one addition: a brand-new
+conversation becomes `open`, because the column default is `needs_reply` and
+nobody is waiting on a reply to an order update. Team templates are filed
+nowhere; a filing failure is logged and never fails or repeats the send.
+`inbox-manage.tsx` holds the two dialogs (Labels, Saved replies) above the
+inbox; `inbox-client.tsx` the filters, chips, the labels bar, the note cards,
+the reply-to bar, the attachment row and the `/` picker. Help: `0210`
+replaces two sentences in `reply-to-whatsapp-messages` and adds one section.
+Stories WA-9.x. ⚠ Not built: voice, video and non-PDF files from the
+dashboard; editing a note; loading history past the latest 200; a per-person
+private note. ⚠ The media upload and send shapes follow Meta's reference and
+have not run against live Meta; `docs/whatsapp-dev-live-test.md` Part L17 is
+that run.
+
+### WhatsApp Commerce — Phase 2 slice 5: Customer-facing Mink (2026-10-14)
+
+Plan §13: **Inbox → Automatic replies** gains **Mink AI answers**, off, with
+two ways on: `helps` (Mink answers a customer's question from the store's own
+facts and hands over the rest) and `drafts` (Mink never sends; every message
+waits for a person with Mink's draft above the message box). Stored as
+`whatsapp_auto_replies.mink_mode` (migration `20261014_0202`, CHECK
+off|helps|drafts; `MINK_MODES` in auto-reply-settings.ts), read with the
+other flags BEFORE a message is filed (`loadAutoReplyFlags`, now once per
+TEXT message, never for a photo).
+★★ ANSWER-ONLY, BY CONSTRUCTION. `lib/whatsapp/mink-answer.ts` is a new
+bounded actor: it reads the facts itself, scoped to the store and to the
+PHONE that wrote (the order-status rule), builds one sheet
+(`mink-facts.ts`, pure: the customer's orders in order-status-reply's words,
+products matched by the words they share with the question with the card's
+price/options/stock/return rule/link, delivery to a six-digit PIN the
+message names through `lib/shipping/product-delivery.ts` (the core of the
+PDP's PIN check, extracted so the action and Mink quote identically),
+running offers from `readMinkCurrentOffers` (since the review fixes
+`readMinkShopperOffers`, only what a shopper can see; its actor narrowed to
+`Pick<"storeId"|"effectivePlan">`), the published policies as text, the
+hours, the last six messages), and makes ONE Vertex call
+(`mink-model.ts`: no tools, no session, `responseJsonSchema`, LOW thinking,
+25 s per attempt, one more attempt only after a stall) with the system
+instruction from
+`docs/mink-ai-whatsapp-prompt.md` (`lib/mink/whatsapp-prompt.ts`, the
+image-prompt loader's shape; one-pass render, traced into standalone and
+the Docker context) and the facts, the recent exchange and the customer's
+message each in their own fence in the USER turn. There is nothing it could
+call, so a cancel, a refund, a reprice, a code or an address change is a
+hand-over whatever the model says.
+★★ HAND OVER IS THE DEFAULT, IN THREE LAYERS. (1) `mink-gate.ts` (pure, run
+at FILING in inbox.ts) keeps a complaint, a refund, a return of goods in
+hand ("return" + my/this/want to/order; "can I return the cookies?" is a
+policy question and passes), a cancellation or order change, a payment
+problem, "talk to a person", a bare greeting, an empty or a 1,000-character
+message for a person with no model call: filed exactly as before. (2) The
+instruction hands over anything outside the sheet, another customer's
+business and "ignore your rules". (3) `parseMinkWhatsAppAnswer` turns a
+reply carrying a link not in the sheet, a `{{` token or over 1,000
+characters into a hand-over. A hand-over keeps whatever the model drafted.
+★★ FILED LIKE A COD TAP IN `helps`, AS BEFORE IN `drafts`.
+`recordInboundMessage` sets `minkAnswer` for a text message nothing above
+already answers and the gate lets through; `helps` makes it `automated`
+(no unread, no Needs reply, no bell) and `afterFiled` runs Mink AFTER
+`answerAutomatically` (so a first message reads welcome, then answer) and
+hands over on `needsHuman`; `drafts` files normally (the bell rings) and
+only attaches the draft. Mink's own answer is filed through `replyInChat`
+as `automation` with `payload.mink` (the thread labels it **Mink AI**); a
+staff send of a draft is a `dashboard` message with the same marker ("Priya
+· from a Mink draft").
+★★ ONE CREDIT PER SENT ANSWER, FAILING CLOSED (plan §19.6).
+`whatsapp_mink_answers` (0202; service-only) is one row per question asked:
+mode, outcome (draft|sent|discarded|handed_over|failed), answer, facts
+labels, model, tokens, the charge. `minkCreditHeadroom` is asked BEFORE the
+model (a store with nothing left costs nothing); `consume_mink_whatsapp_answer`
+(the refine function's shape, keyed on the answer row, idempotent, same pool
+and order: plan cycle then top-ups) is called just before the send, and
+`insufficient` leaves a draft. `mink-drafts.ts` holds the ledger reads, the
+claim (a two-minute send lease since the review fixes, no longer
+`FOR UPDATE` on `outcome = 'draft'`) and the charge, so the inbox
+actions use them without the model. Probed on local Postgres: insufficient,
+plan, idempotent, unlimited, mixed with a top-up, an unknown id raises, every
+CHECK, app_user unprivileged. Rate limits: 20/conversation/hour,
+300/store/hour, 3,000/hour platform-wide.
+★ THE DRAFT CARD. `InboxThread.minkDraft` (`loadMinkDraft`, newest pending)
+renders above the composer (`MinkDraftCard`, lavender): "Based on: …",
+editable, **Send** (`sendMinkDraft`: claim + charge in one transaction,
+free when the credit was already taken by a send Meta refused, then the
+ordinary text send filed under the person) and **Discard**. A person's own
+reply or template discards the conversation's drafts (`supersedeMinkDrafts`).
+A viewer never sees it; a closed window or a paused number disables Send.
+★ A STALLED CALL IS ASKED ONCE MORE (2026-10-14). The first live eval run
+had 3 of 15 model cases hang past the budget while every other case
+answered in 2 to 17 s, and all three answered on a re-run minutes later: a
+stall is the provider not answering, not a slow generation.
+`callMinkWhatsAppModelWithRetry` gives each attempt its own 25 s and asks
+again only when the attempt's own signal fired (`isModelStall` reads the
+signal, not the error's name, because the SDK surfaces the abort as a plain
+"This operation was aborted"); a refusal, a 4xx or unreadable JSON is final.
+Nothing is charged for a stall, so the retry spends tokens, never a credit,
+and `whatsapp_mink_answers` is unchanged. The eval reports `attempts` per
+case and `stalledOnce` in its summary.
+★ Evals: `evals/mink/whatsapp.json` (21 cases; gate cases name their
+reason, answer cases their outcome and words) through
+`scripts/mink-whatsapp-eval.ts` (`npm run mink:whatsapp-eval`, offline;
+`-- --live --yes` sends the exact live request). Help: `20261014_0203`
+adds an Answers from Mink AI section to the automatic-replies guide and one
+sentence on the draft card to the inbox guide. Stories WA-8.x. ⚠ Not built:
+reading a photo the customer sent, per-location stock in the sheet, a
+question that names no product word, a gate for scripts beyond English,
+Hinglish and Devanagari. ⚠ Not yet run against live Vertex from a WhatsApp
+message; `docs/whatsapp-dev-live-test.md` Part L16 is that run.
+
+### WhatsApp Commerce — Phase 2 slice 4: The template manager (2026-10-14)
+
+Plan §4's "template manager": **Channels → WhatsApp → Manage templates**
+(`app/dashboard/channels/whatsapp/templates/`, `channels` view to read,
+`channels` manage to change) lists every template the number holds, newest
+first, catalogue and merchant alike, with Meta's status, its reason and the
+words (header, body, footer, buttons), and lets the merchant **add their
+own**, **delete their own** and **refresh** statuses. `getWhatsAppTemplateManager`
+/ `submitWhatsAppTemplate` / `deleteWhatsAppTemplate` /
+`refreshWhatsAppTemplates` in `whatsapp-provider-actions.ts`;
+`listStoreTemplates` / `submitCustomTemplate` / `deleteStoreTemplate` in
+`lib/whatsapp/templates.ts`; `deleteMessageTemplate` in graph.ts (by `hsm_id`
+when the row holds Meta's id, so one language goes, never every language of
+the name).
+★★ `lib/whatsapp/custom-template.ts` IS THE ONE SHAPE (pure, client-safe):
+`validateCustomTemplate` is what the editor runs before Send AND what the
+action runs again (the editor is not the boundary); `customTemplateComponents`
+builds Meta's components (HEADER text, BODY with `example.body_text`,
+FOOTER, BUTTONS); the readers (`templateHeaderText`, `templateFooterText`,
+`templateButtonsOf`) read any stored components back. A merchant may author a
+text header, a body with `{{n}}` placeholders (each with a label, which
+becomes the `variables` entry the composer shows, and a sample Meta reviews
+with), a footer, and up to three buttons: quick reply, https link, phone.
+★ WHAT IS NOT OFFERED, AND WHY: a picture header, a link with a placeholder,
+a copy-code button and a carousel each need a value at send time that the
+inbox composer has no field for, so they are withheld at authoring rather
+than offered and refused on Send. `templateNeedsSendParameters` is that
+rule, and `composerCanSend` is the ONE rule the picker (`listReplyTemplates`)
+and the send action (`sendInboxTemplate`) share: a catalogue template with
+buttons never (its payloads are the order flow's; a hand-sent COD Confirm
+would come back as two words), a merchant's with quick replies yes (its
+payload is `custom:<label>`, `quickReplyPayloadsFor`, so a tap files as an
+ordinary customer message saying what was chosen), a merchant's needing a
+send-time value no. `InboxTemplateOption` gained `headerText`, `footerText`
+and `buttons`, which the composer draws above the fields.
+★★ THE BODY RULES ARE THE CATALOGUE'S. `templateBodyProblem` in
+template-catalog.ts holds the rules Meta applies at review (placeholders
+numbered in order, none first/last/adjacent, a sample each, 1,024
+characters) in the merchant's words; the catalogue test asserts every
+StoreMink body passes it, and the custom validator asks it, so the two
+cannot drift. Names use Meta's `^[a-z0-9_]+$` and may not start with `sm_`
+(`catalogEntryForName` would otherwise read a merchant's row as a catalogue
+version). Quick replies must come before link/call buttons, so the composer's
+payload list lines up with button indices.
+★ A custom row is `event_key NULL, audience 'customer'` (nothing automatic
+ever picks it; the composer does once APPROVED), written PENDING before
+Meta is asked (the status webhook has a row to land on), ON CONFLICT DO
+NOTHING on (store, name, language) so a duplicate name is refused before
+Meta. A submission Meta refuses keeps the row with `sync_error` for the
+merchant to read and delete. Submits are rate-limited at 20 per store per
+hour: Meta reviews by hand, and a WABA that submits junk is one Meta stops
+trusting. ★ A catalogue template is never deletable here (the spine sends
+it; switch the message off under Notifications instead).
+★★ AND THE STATUS WEBHOOK NO LONGER FAILS ON META'S EXTRA WORDS.
+`applyAccountEvent` wrote `event` raw into `status`; Meta also posts
+FLAGGED, ARCHIVED and words it adds later, none in the 0174 CHECK, so such a
+delivery failed on the constraint and was marked failed. `knownTemplateStatus`
+(the one status vocabulary, shared with `normalizeStatus`) keeps a word the
+row can hold, in Meta's casing, and an unknown one changes nothing. The
+notification console's WhatsApp tab links a paused, rejected or disabled
+template to the manager. Help: `20261014_0201` publishes
+`manage-your-whatsapp-templates` and widens the order-updates guide's card
+sentence in place. Stories WA-7.x. ⚠ Not built: importing templates authored
+in WhatsApp Manager (the sync updates only rows we hold), media headers,
+dynamic-URL and copy-code buttons, carousels, editing a submitted template
+(Meta's edit endpoint; a change is a new name). ⚠ Not yet run against live
+Meta.
+
+### WhatsApp Commerce — Phase 2 slice 3: Menu buttons (2026-10-14)
+
+Plan §4's "menu buttons": **Inbox → Automatic replies** gains a **Menu
+buttons** card (off, no buttons, until the merchant turns it on). Up to THREE
+reply buttons (WhatsApp's limit on one message; labels of 20 characters), each
+doing one of three things when tapped: **Check my order** (the order-status
+answer, from the phone's own orders), **Talk to a person** (an acknowledgement,
+the merchant's or a default, then `needs_reply` with the bell) or **Send a
+message** (the merchant's text). Stored on `whatsapp_auto_replies`
+(`menu_enabled`, `menu_buttons` jsonb; migration `20261014_0199`, CHECKs for
+the type, the count and that a menu which is on has a button; probed on local
+Postgres). `lib/whatsapp/auto-reply-settings.ts` `validateMenuButtons` is the
+one rule the form and the save action share; `normalizeMenuButtons` reads a
+stored menu leniently (a row an older revision wrote has none; a button that
+no longer validates is dropped, never the whole menu).
+★★ THE BUTTONS RIDE WITH THE WELCOME AS ONE MESSAGE. `answerAutomatically`
+sends the joined welcome (+ away) text as a reply-button message (Meta's
+`interactive`/`button` type: `sendInteractiveMessage` in graph.ts,
+`sendWhatsAppInteractive` in send.ts, the same choke point and `whatsapp_logs`
+row as free text; `send-coverage.test.ts` now greps all three Graph sends)
+whenever the welcome is claimed and the menu is on, and again when the
+customer asks for the menu (`inbox-intent.ts` gained `menu`: "menu",
+"options", "help", ≤2 words after courtesy words, English/Hinglish/Devanagari)
+under the welcome's words, or `MENU_PROMPT_TEXT` when the welcome is off.
+⚠ A button message's body is capped at 1,024 characters while welcome + away
+may reach ~2,000: then the words go first as text and the buttons follow in a
+second message under the prompt, rather than being dropped. `replyInChat` takes
+`buttons` and files the message as kind `interactive` with `payload.buttons`,
+which the inbox thread draws as chips under the bubble (`inbox-bubble-buttons`).
+★★ A TAP IS FILED LIKE A COD TAP. The reply id is `menu:<button id>`
+(`menu-payload.ts`, the cod-payload.ts shape: it names a button and authorises
+nothing). `recordInboundMessage` parses it off an `interactive` message
+(`menuReply`), and `"menu"` typed to a store whose menu is on
+(`loadAutoReplyFlags`, read BEFORE the transaction with the order-status flag,
+failing to all-off), and files both as automated: no unread, no Needs reply,
+no bell. `afterFiled` routes a button tap to `menu-reply.ts handleMenuReply`,
+which looks the button up in the store's CURRENT settings (a removed button
+or a switched-off menu hands over with no reply; the tap is in the thread as
+the label with a "Tapped a button" mark) and hands over only for Talk to a
+person, an order nobody can find, or a send Meta refused.
+★★ AND THE FIRST MESSAGE OF A NEW CONVERSATION NOW RINGS (a fix to slice 3,
+the live-test script's P1/P2). `whatsapp_conversations` rows are created with
+the column default `status = 'needs_reply'`, and the bell needs a prior status
+other than `needs_reply`, so a brand-new conversation's first message never
+rang, and an automated first message (a STOP, a COD tap) left it in Needs
+reply with nothing unread. `recordInboundMessage` judges a new conversation
+(`last_message_at IS NULL`) as `open`, and an automated first message sets it
+`open`, so a hand-over from it rings. Help: `20261014_0200` adds one Menu
+buttons section to `set-up-whatsapp-automatic-replies`. Stories WA-6.x.
+⚠ Not built: list messages (up to ten rows); a per-button answer in the
+customer's language. ⚠ Not yet run against live Meta: the interactive shapes
+follow Meta's reference; `docs/whatsapp-dev-live-test.md` Part L14 tests them.
+
+### WhatsApp Commerce — Phase 2 slice 2: Automatic replies (2026-10-13)
+
+**Inbox → Automatic replies** (`app/dashboard/inbox/settings/`, linked from the
+Inbox header; read with `inbox` view, saved with `inbox` manage through
+`app/actions/whatsapp-auto-reply-actions.ts`) holds three replies, ALL OFF until
+the merchant turns one on (new behaviour on a live store is theirs to choose):
+a **welcome message**, an **away message** with weekly **business hours**, and
+**order status**, which answers "where is my order?" from the customer's own
+orders. Stored in service-only `whatsapp_auto_replies` (one row per store,
+migration `20261013_0197`, CHECKs refuse an enabled reply with no text), kept
+apart from `store_whatsapp_accounts` so a reconnect loses nothing. The texts are
+sent exactly as written (no tokens); defaults name the store.
+★★ ONE ORCHESTRATOR, CALLED AFTER FILING. `inbound.ts afterFiled` routes a
+customer message to exactly one answerer: STOP/START → `opt-out-reply.ts`, a
+COD tap → `cod-confirmation.ts`, anything else → `answer-automatically.ts`,
+which joins whatever applies into ONE message (welcome, then the order answer,
+then away). The answer now goes BEFORE the media copy, so a customer is not kept
+waiting on a twenty-second download.
+★★ EACH REPLY IS CLAIMED BEFORE IT IS SENT, on the conversation
+(`welcome_sent_at`, `away_sent_at`): the welcome by a conditional UPDATE (once
+per `WELCOME_QUIET_DAYS`, 14, the WhatsApp Business app's own greeting rule;
+`welcomeEligible` is computed at filing from the conversation's PREVIOUS
+`last_message_at`), the away message by read-then-compare-and-set, sent again
+only once an opening time has passed since the last one (`openedBetween`, so
+once per closed spell) and never within `AWAY_AFTER_HUMAN_REPLY_HOURS` (2) of a
+dashboard or phone reply. Two messages arriving together get one reply, and two
+businesses' away messages stop after one round. ★ Nothing is claimed when there
+is no sender (paused number, lapsed plan), so a paused store's customer is
+welcomed once the number is back.
+★ `lib/whatsapp/business-hours.ts` (pure): one span per day, `close < open`
+runs into the next day and BELONGS TO THE DAY IT BEGINS ON (the offers
+`time_window` rule), "Open all day" is 00:00 to 24:00, times in the store's
+`settings.business.timeZone` (India - Kolkata by default, never the container's
+UTC). An unreadable zone counts as OPEN, so nothing ever claims a shop is
+closed when it cannot tell.
+★★ "WHERE IS MY ORDER" IS FILED LIKE A COD TAP. `inbox-intent.ts` gained
+`order_status`, recognised by parts (an order word plus a progress word, or
+where/when plus "my"), in English, Hinglish and Devanagari, at most 8 words,
+and NEVER when a complaint word is present ("not delivered", "cancel",
+"refund"): those always wait for a person. The store's setting is read BEFORE
+the filing transaction (`auto-reply-store.ts answersOrderQuestions`, fails to
+false), so a failed read can never stop a message being recorded. Filed as
+automated (no unread, no Needs reply, no bell); `order-status-reply.ts` reads
+the orders the PHONE owns (account phone or delivery phone, this store only,
+no till sales, no unpaid online payments; the rule the COD buttons and the
+customer panel use) and answers in `lib/orders/customer-status.ts`'s words,
+which the storefront order pages now share (moved there and re-exported, so a
+chat and the order page can never disagree). Order number, placed date, status,
+courier and an https-only tracking link; never items, amounts or addresses. No
+order found, a failed lookup, a delivery in trouble (NDR, RTO, lost) or a send
+that failed HANDS OVER (`handOverConversation`).
+★★ AND AN AUTOMATIC MESSAGE ANSWERS NOBODY (a fix to slice 1).
+`recordOutboundMessage` treated `source: automation` like a staff reply:
+`open`, unread 0. So a customer who asked a question and then tapped Confirm
+on a COD message dropped out of Needs reply with the question unanswered.
+Automation now moves only `last_message_at`/`last_outbound_at`, leaves status
+and unread alone, and keeps the list preview on the customer's words while the
+conversation waits. ★ `handOverConversation` returns whether it MOVED the
+conversation into needs_reply (row-locked read of the prior status), so a
+hand-over of a conversation already waiting does not ring the bell twice; the
+COD path uses it too. Both verified against local Postgres in a rolled-back
+transaction, with the claims and the four CHECKs. Help:
+`20261013_0198` publishes `set-up-whatsapp-automatic-replies` and points the
+inbox guide's Reply section at it. Stories WA-5.x. ⚠ Not built: menu buttons
+(interactive messages), replies in the customer's language, and filing
+template order updates in the thread (so a first reply to one is greeted).
+
+### WhatsApp Commerce — Phase 2 slice 1: COD confirmation (2026-10-13)
+
+Plan §16 Phase 2's first item: a website **cash-on-delivery** order can be
+confirmed or cancelled by the customer from two WhatsApp buttons. Off by
+default: `whatsapp.codConfirmation` (registry, group WhatsApp, section
+`channels`, rendered inside the Channels → WhatsApp card), because a Cancel
+button that cancels an order is new behaviour on a live store, and switching it
+on is the merchant's consent to customers cancelling unshipped COD orders from
+WhatsApp, separately from `orders.allowCustomerCancellation`.
+★★ IT REPLACES THE ORDER-PLACED MESSAGE, NEVER JOINS IT. The catalogue gained
+a VARIANT (`WhatsAppTemplateDef.variant`, `COD_CONFIRM_VARIANT`,
+`sm_order_placed_customer_cod_confirm_v1`, UTILITY, two QUICK_REPLY buttons
+"Confirm order" / "Cancel order"; probed on the dev test account before
+shipping and accepted as UTILITY). `record.ts`'s WhatsApp branch picks it for a
+customer when `codConfirmationOrderId` says so (event `order.placed`, sender's
+`codConfirmation` on, `paymentMethod === "cod"`, not `fulfilment: "pickup"`, a
+subject order id) AND the store holds an approved row of it; otherwise the
+plain message goes, so a store whose variant is still in review loses nothing.
+★ `paymentMethod` on the event is how the order was PAID, not what checkout
+picked: an order store credit covers in full is announced as `store_credit`
+(the row says so too), so it gets neither the COD buttons nor a "Cash on
+delivery" line in its confirmation.
+Consent is unchanged: the customer's own WhatsApp yes is still required.
+★ VARIANTS ARE SEPARATE FAMILIES. `templateFamily` strips `_vN`;
+`catalogEntryForName` maps any stored version back to its entry, and
+`loadWhatsAppTemplates(…, variant?)` and the console read
+(`getWhatsAppTemplatesForEvent`) both filter rows to the wording asked for, so
+the plain message's approval can never stand in for the variant or the other
+way round (pinned both ways, mutation-checked). `catalogTemplateFor` takes the
+variant as a third argument.
+★ THE BUTTONS CARRY OUR PAYLOADS. `notification_whatsapp_queue.button_payloads`
+(jsonb array, migration `20261013_0192`) is written at enqueue
+(`codButtonPayloads`: `cod:confirm:<order id>`, `cod:cancel:<order id>`, in
+button order) because the order is known there and nowhere downstream; the
+worker passes them through `sendWhatsAppTemplate` → `sendTemplateMessage` as
+`quick_reply` button components, and once a send SUCCEEDS stamps
+`orders.cod_confirmation = 'requested'` (only over NULL, so a resend never
+resets an answer, and never on an order already cancelled). The worker now re-reads the queued template BY ID
+(`loadWhatsAppTemplateById`), not by event, because an event has two
+customer wordings.
+★★ THE PAYLOAD NAMES THE ORDER; THE PHONE AUTHORISES THE TAP. A tap arrives as
+an inbound `button` message. `recordInboundMessage` parses its payload
+(`parseCodPayload`, pure: exact prefix, action, UUID) and files the message as
+AUTOMATED: no unread count, no `needs_reply`, no bell. `afterFiled`
+(inbound.ts) then calls `handleCodReply` (`lib/whatsapp/cod-confirmation.ts`),
+which acts only when the order is in the store the tap arrived for, is cash
+on delivery, and the tapping phone is the order's own (account
+phone or delivery phone, compared through `textablePhone`). ★★ The ROW says
+`payment_method = 'cash_on_delivery'`; only checkout's choice and the event
+payload say `cod`. The handler first compared the row against `cod` and so
+refused every real tap, found on dev 2026-10-13 (`COD_PAYMENT_METHODS`). Confirm sets
+`cod_confirmation = 'confirmed'` with the status guard INSIDE the update, so a
+Cancel that won a race leaves it matching nothing. Cancel, from `pending` /
+`processing` only, goes through `approveCancellation` (its fourth caller, as
+plan §1 said): refund destination `later` (nothing was paid), restock,
+`order.cancelled` to team and customer, store credit used on the order
+reinstated by the cleanup; then `cod_confirmation = 'cancelled'`. A refused
+cancellation re-reads the order so the customer is told the truth.
+★ Every outcome is answered in the chat through the choke point
+(`sendWhatsAppText`, inside the 24-hour window the tap just opened) and filed
+as an `automation` message, so staff reading Inbox see exactly what was said.
+A tap that is refused (wrong phone, not COD, unknown order), too late (shipped)
+or failed hands the conversation to a person: `needs_reply`, unread + 1, and
+the bell. A wrong phone gets NO reply: nothing is said about an order to a
+phone that does not own it.
+★ The inbox never offers a template with buttons (`templateHasButtons`), in
+the picker or at the send action: a quick reply sent by hand carries no
+payload, so it would come back as two words nobody can act on.
+Orders: `cod_confirmation` in the list and drawer columns, rendered by
+`app/dashboard/orders/cod-confirmation.tsx` as "Awaiting confirmation on
+WhatsApp" / "Confirmed on WhatsApp" / "Cancelled on WhatsApp" / "Not confirmed
+on WhatsApp" (`expired`, below) / "WhatsApp message not delivered"
+(`undelivered`, the review fixes above), and NOTHING when NULL (never asked
+must not read as a customer who ignored us). The
+notification console's WhatsApp tab shows the variant as a second card,
+"Cash-on-delivery orders", with its buttons. Help: `20261013_0193` adds one
+section to `send-order-updates-on-whatsapp`. Stories WA-4.x in
+`docs/whatsapp-acceptance.md`.
+★★ AND NOBODY ANSWERING IS FOLLOWED UP (2026-10-13; `lib/whatsapp/cod-sweep.ts`,
+migration `20261013_0195`, run by the hourly
+`/api/cron/expire-pending-payments`). 24 hours after the message, a pending
+order still awaiting an answer gets it ONCE more (`whatsapp.codReminder`, on
+by default under the COD switch): a copy of the queue row that went out, same
+approved template, phone, values and button payloads, so no new Meta approval,
+and the worker re-checks consent and approval at send. `orders.cod_reminded_at`
+is claimed in the same transaction that queues the copy. 48 hours after it,
+`whatsapp.codAutoCancel` (OFF by default: cancelling an order nobody asked to
+cancel is the merchant's call) cancels through `approveCancellation` as the
+SYSTEM (`bySystem`), reason `not_confirmed`, nothing refunded, the customer
+told, then `cod_confirmation = 'expired'`. ★ `onlyWhileCodAwaited` puts
+`cod_confirmation = 'requested'` INSIDE the cancellation's claim, so a Confirm
+tapped a moment before the sweep keeps the order. ★ Each action has a 24-hour
+window rather than "older than", so switching a setting on never reminds or
+cancels last week's orders at once. ★ `notifyInline` makes
+`approveCancellation` await `recordEvent` instead of `emitEvent`, because a
+cron has no after() to rely on (§24). A Confirm tapped after the automatic
+cancellation is answered "cancelled because it was not confirmed in time" and
+handed to a person (outcome `expired`), since only the shop can put it back.
+Help: `20261013_0196` extends one sentence of the COD section. ⚠ Not built:
+the same buttons for POS or pickup orders. ⚠ Not yet run against live Meta:
+the button payload shapes follow Meta's reference; the template itself was
+accepted on the test account.
+
+### WhatsApp Commerce — Phase 1 slice 3: The inbox (2026-10-08)
+
+Plan §11 built: the moment a customer receives "Order confirmed" they reply
+to it, and until now that reply was a `whatsapp_inbound_events` row nobody
+read. **Dashboard → Inbox** (permission section `inbox`, group Workspace,
+view/manage; shown only once a number is connected, with the needs-reply
+count as its badge — a count that demands action and goes away) lists one
+conversation per contact and the open thread beside it, with the customer's
+recent orders, store credit and consent in a strip above the messages.
+★★ ONE CONVERSATION PER CONTACT, FOUND BY UPSERT (migration `20261008_0177`:
+`whatsapp_conversations` UNIQUE on (store, contact); `whatsapp_messages`
+UNIQUE partial on (store, provider*message_id)). `lib/whatsapp/inbox.ts`
+`recordInboundMessage` upserts the contact (wa_id, profile name, `user_id`
+matched through `storedPhoneVariants` with a real account winning over a
+`pos*`row, and`last_inbound_at`— the 24-hour window clock, moved by
+inbound messages ONLY), upserts the conversation, then inserts the message
+with DO NOTHING; only an INSERTED message bumps`unread_count`, reopens the
+conversation as `needs_reply` and rings the bell, so Meta's week-long
+redeliveries change nothing twice. The bell (`whatsapp.message_received`,
+section `inbox`, in-app only) fires for the FIRST message since staff last
+answered, not per message. ★ Media is fetched AFTER the recording
+transaction commits (`storeInboundMedia`: `GET /{media_id}`→ bearer
+download, capped at 25 MB, hosts pinned to Meta's so a forged payload cannot
+make us present the token elsewhere) into`stores/{id}/whatsapp/…`in our
+bucket (the PRIVATE one since the review fixes, read through`/api/dashboard/inbox/media/[messageId]`) — Meta's URLs expire and need the
+token; a failed fetch leaves the
+message with its caption and an error, never lost. ★ COEXISTENCE ECHOES
+(`smb_message_echoes`) are exploded one row per message and filed as
+outbound `source = phone_app`: the merchant answered from the WhatsApp
+Business app, so the conversation becomes `open`, the window clock does
+NOT move, nothing is unread. `smb_app_state_sync` stays unhandled (pending
+rows, pruned at 30 days). The status webhook now also advances the thread's
+copy of a sent message (`applyStatusToMessage`, forward-only rank, outbound
+only). ★ STOP IS A MARKETING OPT-OUT, NOT A SILENCE (plan §10):
+`classifyWhatsAppInbound` (`inbox-intent.ts`, pure; English, Hinglish and
+Devanagari; ≤3 words after a courtesy word; **"cancel" is deliberately NOT
+an opt-out** — on WhatsApp it is about an order) sets `marketing_opt_out_at`;
+order updates continue, and START re-opts-in only a contact who had opted
+in before. ★ A STOP (or a START that worked) is ANSWERED BY THE SYSTEM: it is
+classified before the conversation is touched, filed like a COD tap (no
+unread, no `needs_reply`, no bell), and `opt-out-reply.ts`confirms it in the
+chat. The reply never offers START, which works only for somebody who agreed
+to offers before. Both automatic answers (this and the COD replies) go out
+through`auto-reply.ts` `replyInChat`: the choke point, then filed as an
+`automation`message, best effort.`inbox-parse.ts`(pure) turns every Meta message type — text,
+five media kinds, location, contacts, button/interactive replies, catalogue
+orders, reactions, unsupported — into one bounded row (4,096-char body,
+200-char name, 50-item payloads).
+★★ REPLIES GO THROUGH THE SAME CHOKE POINT.`sendWhatsAppText`joins`sendWhatsAppTemplate`in`send.ts`(one log row each;`send-coverage.test.ts`now greps both Graph sends).`app/actions/inbox-actions.ts` re-checks the
+window server-side (`serviceWindow`, 24 h from the contact's
+`last_inbound_at`; the composer's countdown is a hint) and answers
+`window_closed`, after which only an APPROVED customer-audience template may
+be sent, with every `{{n}}`filled by staff; a reply is rate-limited at 60 a
+minute per admin, refused on a paused/lapsed number before any send, and
+filed by`recordOutboundMessage`(sent → the conversation is`open`and
+read; failed → the row carries Meta's reason). Reading is not answering:`markInboxRead`clears unread and leaves status alone;`needs_reply` is
+never set by hand. ★ POLLING IS A ROUTE (`/api/dashboard/inbox/live`,
+`need=list|thread|count`, the `/api/pos/live`rule) riding`usePoll`'s
+visibility/online gates and back-off; a signed-out poll gets a 401, not the
+login page's HTML. ★★ THE SCREEN IS A FIXED HEIGHT AND ONLY THE MESSAGES
+SCROLL (2026-10-13). It shipped with `height: calc(100dvh - 180px)`AND`flex: 1`on the panes' wrapper; inside a column flex parent of unknown height
+the flex basis wins over`height`and resolves to the content height, so the
+whole page grew with every message and the composer fell below the fold.`.inbox-page`now fills`.dash-content` (`height: 100%`), the card takes the
+rest (`flex: 1 1 0; min-height: 0`), and it is laid out like WhatsApp: one
+card, list and chat side by side, avatars, day pills, runs of bubbles with the
+time inside, a composer that grows with the text, and a jump-to-latest button
+once the reader scrolls up (new messages follow only while they are at the
+bottom). ★ The panes follow the CARD's width, by container query, not the
+window's: below 640px it shows one pane at a time with a back arrow, so the
+sidebar or the Mink panel narrowing it never squeezes two panes. Phones get
+the list, and the chat opens full screen (`100dvh`) in a sheet; there Enter is
+a new line and the button sends.
+Three ways in for customers: `whatsapp.chatButton` (registry, default ON —
+the button renders only on a connected, enabled number, and no store had one
+before this shipped) puts a floating wa.me link on every storefront page
+(`lib/whatsapp/storefront.ts`: switch and plan read off the store row, so a
+store with it off costs no query; never in the builder preview); the
+Channels card shows the same link as a QR (`whatsapp-qr.tsx`, zxing's
+writer, the collection-code precedent); and the shopper's account page gains
+a WhatsApp card (`customer-whatsapp-actions.ts`) that writes through the one
+`recordWhatsAppConsent` with the account page's own words
+(`whatsAppConsentCopy("account")`) — three surfaces, three snapshots. Help:
+`20261008_0178`publishes`reply-to-whatsapp-messages`and edits one
+sentence of the order-updates guide in place. ⚠ Not built: dashboard
+replies with media, assignment/labels/notes, search inside messages, and
+the pending`smb_app_state_sync` handler (Phase 2). ⚠ Not run against live
+Meta: echo and media shapes follow Meta's reference; the inbound text path
+is the one Phase 0 proved end to end.
+
+★ A CLOSED conversation is deleted two years after its last message
+(`lib/whatsapp/retention.ts`, a `whatsapp_conversations` entry in
+`RETENTION_POLICIES`, owner's decision 2026-10-13), with its messages (FK
+cascade) and its media folder (`stores/{store}/whatsapp/{conversation}/`,
+`conversationMediaPrefix`, which `inboundMediaPath` also builds from). Media
+goes FIRST and a conversation whose folder could not be emptied keeps its
+rows (since the review fixes: in the PRIVATE bucket, the legacy public one
+too, and skipped for 7 days by `retention_failed_at`). Open and
+needs-reply conversations are kept whatever their age, and the contact with
+its consent record is never deleted. Help: `20261013_0196`.
+
+★ FLOATING CONTROLS SHARE ONE SET OF RULES (2026-10-13, storefront-theme.css
+"Floating controls", pinned by `app/(storefront)/floating-controls.test.ts`).
+The chat button owns the bottom-right; the consent **Privacy choices** button
+(merchant-tracking.tsx) moved to the bottom-left, at the chat button's layer
+(z-35, under every drawer and sheet), because the two sat on top of each
+other. Both lift above the phone Add to cart bar while it shows (it hid the
+chat button, and the privacy button sat on Add to cart), and the privacy
+button lifts above a blog's reaction bar on narrow phones. ★★ The privacy
+button renders OUTSIDE `.storefront-root`, so a rule that moves it starts at
+`body:has(…)`: the old `.sm-atc-sticky:has(…) [data-sm-privacy-pill]` lift
+could never match. ★ The end of the page keeps its last line clear: the
+footer credit (`data-sm="footer-credit"`) takes the room (80px when either
+button shows, 84px under the Add to cart bar alone, 148px under the bar with
+a button), reserved whenever the bar CAN show so the page never changes
+length mid-scroll. It replaces the bar's spacer, which sat above the footer
+and so never kept it clear. Measured in Chrome on all five footer variants at
+320, 375 and 1280px: before, the privacy button covered "Powered by" on
+phones and the chat button covered the compact footer's Privacy and Terms
+links on desktop. No merchant-visible change, no Help Centre update.
+
+### WhatsApp Commerce — Phase 1 slice 2: Order updates (2026-10-08)
+
+Plan §8 built: a WhatsApp notification is the SMS channel with a better
+provider, so it rides the same spine — fan-out branch, queue, worker, choke
+point, log, Failures source, log rail — and `lib/notifications/channels.ts`
+flips `whatsapp` to **available** on the same reasoning SMS flipped on: that
+flag is a platform statement, and deliverability per store is resolved at
+fan-out in `lib/whatsapp/channel.ts` by FOUR conditions (SMS has three): a
+connected, enabled number on a plan that still includes WhatsApp; the
+merchant's per-event per-audience switch; an **APPROVED** template for that
+event and audience; and, for a customer, their own opt-in.
+★★ THE TEMPLATE IS THE SWITCH, AND STOREMINK HOLDS IT. Meta approves exact
+wording, so unlike DLT (where the merchant mirrors an approval they obtained
+elsewhere) `lib/whatsapp/template-catalog.ts` is the one place the copy
+lives: 19 UTILITY templates (12 customer, 7 team), positional `{{n}}` bodies
+mapped onto `variableNamesFor` names exactly as `renderDltBody` maps `{#var#}`,
+one example per placeholder for Meta's review, named
+`sm_<event>_<audience>_v1`. `template-catalog.test.ts` pins every rule Meta
+applies at review (lowercase names, sequential never-adjacent placeholders,
+none first or last, ≤1024 chars) because a refused submission is a store
+whose updates silently never send. `templates.ts` bootstraps them on
+connect (best-effort, after the account row lands) and from the card's
+**Set up templates**; Meta's "already exists" (subcode 2388023) reads as
+existing, a dead token (190) stops the loop and marks `needs_reauth`, a
+refusal lands in the new `sync_error` column — distinct from
+`rejection_reason`, which is Meta turning DOWN a template it accepted for
+review. Status comes from Meta only: the create response, `sync` (listing by
+name on Refresh), or the status webhook 0174 already handled.
+★★ CHANGED WORDING IS A NEW NAME, ONE ENTRY AT A TIME (2026-10-13). Meta
+fixes a name's wording once submitted, so `def()` takes a per-entry
+`version`; bumping the shared `WHATSAPP_TEMPLATE_VERSION` would rename and
+resubmit all 19. Two versions of one template then coexist in
+`whatsapp_templates`, so `pickTemplateRow` is the ONE rule the send path
+(`loadWhatsAppTemplates`), the card's count (current catalogue names only)
+and the console's WhatsApp tab all use: the current version once APPROVED,
+an older APPROVED one until then (Meta does not withdraw it), else the
+current row. First use: Meta rejected the pickup-ready template as
+INCORRECT_CATEGORY at submission, TWICE. v1 opened "Good news from…"
+(marketing) and asked to "Show the code…"; v2 dropped the opener and still
+carried the collection code as a "pickup reference", and was refused the same
+way. Throwaway probes on the test account without the code were accepted as
+UTILITY, so the code itself reads as AUTHENTICATION to Meta however it is
+worded. `_v3` names the order number instead, which the counter accepts as
+well as the code, with the hand-over still OTP-verified (§23); the code stays
+in the email and on the collect page. `template-catalog.test.ts` now refuses a
+promotional opener, "code {{n}}" or a `collection_code` variable in any
+UTILITY body. ⚠ A store already connected gets a new version only from
+**Set up templates** (or a reconnect); nothing resubmits on its own.
+★ A CUSTOMER NEEDS THEIR OWN YES (`whatsapp_contacts`, migration 0175): the
+checkout shows two boxes ONLY when `getCheckoutConfig().whatsapp` is true —
+updates ticked by default, offers never (§19.2) — and `placeOrder` records
+them AFTER the order lands via `recordWhatsAppConsent`, which snapshots the
+exact label beside the timestamp (the §25 shape) and re-checks
+`storeCanSendWhatsApp` so a forged field writes nothing for a channel that
+cannot deliver. An untick withdraws only an opt-in currently in force (since
+the review fixes: only for a verified phone; a delivery phone is recorded
+unverified, and an order's update goes to its delivery phone). Staff
+need no opt-in (plan §8). `textablePhone` normalises both sides, so a
+legacy ten-digit `users.phone` still matches the E.164 contact.
+★★ ONE MESSAGE PER PERSON PER EVENT. `whatsapp.updatePrecedence` (registry,
+group WhatsApp, section `channels`; `whatsapp_first` default, `sms_first`,
+`both`) decides at fan-out: `record.ts` queues the first channel for everyone
+it can reach and the second only for whoever the first could not — no
+consent, no approved template, no connection. (Since the review fixes, under
+`whatsapp_first` the SMS is HELD on the WhatsApp row and sent if Meta refuses
+or fails the WhatsApp; see that section.) Phones are looked up ONCE for
+both channels. `record-whatsapp.test.ts` pins all three orders and every
+fallback. ★ `loadWhatsAppSender` reads the precedence and the plan in the same
+query as the token, so a lapsed plan pauses the channel without deleting it.
+★★ THE LOG IS A TIMELINE. `sendWhatsAppTemplate` (`send.ts`, the choke point;
+`send-coverage.test.ts` fails on any other caller of the Graph send or any
+other file naming `graph.facebook.com`) writes `whatsapp_logs` with the
+provider message id, and `inbound.ts` now processes `messages` rows of kind
+`status` — sent/delivered/read/failed — onto that row by id, ranked in SQL so
+a late `delivered` cannot demote a `read`, with Meta's error code and title on
+a failure. Inbound MESSAGE rows stay unprocessed for slice 3. The worker
+(`worker.ts`, on the send-emails heartbeat) re-checks consent at send, refuses
+a template no longer approved or no longer the id queued, treats `unknown` as
+terminal, and retries only Meta's throttle codes (`RETRYABLE_META_CODES`) —
+a number not on WhatsApp is still not on WhatsApp in five minutes.
+Surfaces: a **WhatsApp** tab on each notification (`whatsapp-template-panel.tsx`:
+the approved wording rendered with sample values, Meta's review state and
+advice per state; the switch is refused without a connection, mirroring the
+SMS rule, but NOT on approval — Meta decides that on its own clock and the
+fan-out reads it); `/dashboard/logs/whatsapp-logs` (seventh rail entry,
+`activity` permission, store-scoped only — the platform has no number);
+`whatsapp` in `FAILURE_SOURCES` ordered by `failed_at`; the Channels card's
+template count. Retention: `whatsapp_logs` 90 days, `whatsapp_inbound_events`
+30 days. Migration `20261008_0175` (contacts with `ON UPDATE CASCADE` to
+`users.id` so a claimed till customer carries their consent, queue, log with a
+UNIQUE partial index on `provider_message_id`, template sync columns) and
+`20261008_0176` (one Help guide, `send-order-updates-on-whatsapp`, under
+Marketing). ⚠ Not yet run against live Meta: template submission and the
+status webhook shapes follow Meta's published reference; the first real
+bootstrap on dev is slice 2's live verification, now that dev carries the
+Embedded Signup configuration (2026-10-13).
+
+### WhatsApp Commerce — Phase 1 slice 1: Connect (2026-10-08)
+
+Spec `docs/whatsapp-commerce-plan.md`; console runbook `docs/whatsapp-phase0.md`
+(Phase 0's dev gate passed 2026-10-08); stories `docs/whatsapp-acceptance.md`;
+live dev test script `docs/whatsapp-dev-live-test.md`.
+Dashboard → Channels gains a **WhatsApp** card (category Messaging) whose
+modal asks ONE question before Meta's popup — _is this number already on the
+WhatsApp Business app?_ — because Coexistence is a different onboarding flow
+and asking afterwards hands the merchant a Meta error they cannot act on
+(plan §7). `app/dashboard/channels/embedded-signup.ts` loads Meta's JS SDK,
+opens Embedded Signup with the environment's configuration id and joins the
+two things the popup returns by two routes (the CODE from `FB.login`, the WABA
+and phone-number ids from a `message` event — ★ read only from a
+`*.facebook.com` origin). `connectWhatsApp` → `lib/whatsapp/connect.ts`
+exchanges the code server-side with the app secret, ★ PROVES the WABA id
+against the token's `granular_scopes` (a page can post any id), reads the
+WABA and number, ★★ **subscribes our app to the WABA** (Phase 0's finding —
+without it the inbox is silent and nothing reports it), registers the number
+with a generated six-digit PIN (skipped under Coexistence, which the app
+already registered), and upserts `store_whatsapp_accounts` with the token and
+PIN encrypted under `PAYMENT_CRED_KEY`. Nothing is stored until every step
+has passed; an `unknown` Meta outcome says "nothing was saved, try again".
+★ `phone_number_id` is globally UNIQUE because it is the webhook routing key;
+a second store claiming a number is refused by the database and named in the
+error. Plan gates: `PLAN_LIMITS.whatsapp` (Basic+, like `onlinePayments`) and
+`whatsappBroadcasts` (Pro, like `emailCampaigns`); the plan matrix on the
+pricing page deliberately gains no row until the feature is merchant-usable.
+The webhook now persists: one `whatsapp_inbound_events` row per message,
+status or change, idempotent on Meta's ids, routed by phone number id or WABA
+id, acked at once and processed in `after()` (retried under a lease, and
+re-read from Meta rather than taken from the payload, since the review fixes);
+template status/quality/
+category, number quality/name and account events update the account and
+template rows (`PARTNER_REMOVED` → `needs_reauth`), and `messages` rows are
+deliberately left for slices 2–3. Migration `20261008_0174` (three
+service-only tables, RLS forced, app_user revoked), probed against local
+Postgres: unique phone, both CHECKs, template uniqueness, event dedupe, store
+cascade, zero app_user grants. Slice 2 (above) flipped
+`lib/notifications/channels.ts`'s `whatsapp` to available and published the
+Help guide.
+
 ### Mink credit charging — ON by default (2026-09-21)
 
 **★★ THE CHAT PANEL'S CHROME IS THINNER (2026-09-21).** Measured against
@@ -1799,6 +2807,24 @@ settings** panels, a wrapping toolbar and a phone-width writing surface without
 remounting the editor. Publish/save still use the existing flows and permissions.
 Help wording is updated in forward migration `20261004_0156_dashboard_mobile`.
 
+**Phone sweep (2026-10-16).** Every merchant dashboard route was measured at
+390px in Chrome (layout overflow, offenders, targets under 24px). Fixes, all
+presentation only: the phone block of `dashboard.css` gives dropdown-menu items,
+the analytics header buttons and filter pills 44px targets, and every
+`button[role="switch"]` an invisible 44px-tall `::after` hit area (each switch is
+`position: relative`; only 4px is added sideways because My notifications puts
+two switches 24px apart). `.dash-an-head` / `.dash-an-actions` wrap and
+`.dash-an-btn` does not break mid-label. Domain settings' DNS rows give Name and
+Value a 12rem floor, so on a phone Value drops onto its own line, and nothing in
+them truncates (the merchant types these at a registrar); on touch screens the
+copy icon stays visible and each copy line is 44px tall. Customer-group colour
+chips are 44px tall on touch screens. Every product thumbnail that can come from
+an old host passes `unoptimized={!canOptimizeImage(url)}`, because next/image
+throws on a host outside `remotePatterns` (a store with legacy Supabase photos
+took the Media Library's Product images tab down). ⚠ Found, not fixed: on
+`http://*.localtest.me` (not a secure context) `crypto.randomUUID` is undefined,
+so `/dashboard/mink-memories` crashes in local dev; production is HTTPS.
+
 ### Simple Mink Website Builder application (2026-09-13)
 
 Mink's Website Builder layout, design and existing custom-code proposal cards
@@ -2692,7 +3718,10 @@ wholesip/
 │   │   ├── categories/ colors/ blogs/ media/   # content management (media/ = the
 │   │   │                      # per-store Media Library: confirm-first upload + grid +
 │   │   │                      # view + copy-URL + delete (media_assets row + GCS object),
-│   │   │                      # via app/actions/media-actions.ts).
+│   │   │                      # via app/actions/media-actions.ts; a Library tab that
+│   │   │                      # hides Mink chat attachments and a Product images tab
+│   │   │                      # derived from the products; an image a product uses
+│   │   │                      # cannot be deleted. See "Media Library" above).
 │   │   │                      # ★ colors/ is RETIRED (2026-10-06): it only redirects to
 │   │   │                      # Products. Card colours had no visible effect once every
 │   │   │                      # card style painted its own background, so the editor
@@ -2726,6 +3755,19 @@ wholesip/
 │   │   │                      # route page files export only valid Next entries.
 │   │   │                      # Permission section is still `promotions`
 │   │   ├── enquiries/         # enquiry inbox + @modal detail
+│   │   ├── inbox/             # ★ the WhatsApp inbox (slice 3): page.tsx gates on
+│   │   │                      # `inbox`, inbox-client.tsx = list + thread + composer
+│   │   │                      # (free text inside the 24-hour window, templates after),
+│   │   │                      # polled through /api/dashboard/inbox/live, a sheet on
+│   │   │                      # phones; inbox.css. Shown in the sidebar only once a
+│   │   │                      # number is connected, with the needs-reply badge.
+│   │   │                      # settings/ = Automatic replies (welcome, away message
+│   │   │                      # with business hours, order status, Mink AI answers),
+│   │   │                      # linked from the Inbox header; auto-replies-form.tsx.
+│   │   │                      # inbox-manage.tsx = the Labels and Saved replies
+│   │   │                      # dialogs (slice 6); the client also filters by
+│   │   │                      # assignee and label, searches inside messages, and
+│   │   │                      # writes notes, quotes and photo/PDF replies.
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
 │   │   ├── admins/ roles/     # ★ THE ONE STAFF PAGE + the read-only roles reference
 │   │   │                      # (§41). admins/ lists dashboard admins AND register
@@ -2758,7 +3800,11 @@ wholesip/
 │   │   ├── branding/          # per-store branding editor (logo, colors)
 │   │   ├── billing/           # ★ Invoices & Billing (§17): tax config + tax-class
 │   │   │                      # manager + invoice-template editor (billing.css)
-│   │   ├── channels/          # ★ Channels (§18/§35): connect the store's OWN Razorpay
+│   │   ├── channels/          # ★ Channels (§18/§35/WhatsApp): connect the store's OWN Razorpay,
+│   │                          # whatsapp/templates/ = the template manager (every
+│   │                          # template with Meta's answer; add, delete, refresh);
+│   │                      # Shiprocket, Twilio and WhatsApp (whatsapp-modal.tsx +
+│   │                      # embedded-signup.ts — Meta's popup, Coexistence asked first);
 │   │   │                      # and Shiprocket accounts; pause/resume, sync warehouse
 │   │   │                      # pickup mappings and configure the tracking webhook
 │   │   ├── ai/                # RETIRED as a destination; credit usage lives in plans/
@@ -2773,7 +3819,9 @@ wholesip/
 │   │   │                      # there'd be two navigations for the same six rail views.
 │   │   │                      # page.tsx = activity_events audit feed (§22, day-
 │   │   │                      # grouped); email-logs/ = what was SENT (§24);
-│   │   │                      # ★ import-export/ = CSV job history + [jobId] per-ROW
+│   │   │                      # whatsapp-logs/ = every WhatsApp send with Meta's
+│   │                      # delivery timeline (WhatsApp slice 2);
+│   │                      # ★ import-export/ = CSV job history + [jobId] per-ROW
 │   │   │                      # error log (§31), split into Import/Export by ?kind=;
 │   │   │                      # ★ failures/ = everything that DIDN'T work, read
 │   │   │                      # across the other tables (§33). SIX views, ONE
@@ -3044,6 +4092,27 @@ wholesip/
 │   │   │                      # credentials, rotate webhook tokens, sync warehouses
 │   │   │                      # and expose only safe connection state. Tested across
 │   │   │                      # permissions, validation, rotation and location mapping.
+│   │   ├── whatsapp-provider-actions.ts # ★ Channels → WhatsApp: state (never the
+│   │   │                      # token/PIN), connectWhatsApp (the gate in front of
+│   │   │                      # lib/whatsapp/connect.ts; plan-gated Basic+), pause/
+│   │   │                      # resume, refresh from Meta (+ template sync), disconnect,
+│   │   │                      # setupWhatsAppTemplates, getWhatsAppTemplatesForEvent
+│   │   │                      # (the notification console's WhatsApp tab). Tested.
+│   │   ├── whatsapp-log-actions.ts # ★ the WhatsApp log read (`activity` view, store-
+│   │   │                      # scoped only — the platform has no number of its own)
+│   │   ├── whatsapp-auto-reply-actions.ts # ★ Inbox → Automatic replies: read
+│   │   │                      # (`inbox` view) and save (`inbox` manage, validated
+│   │   │                      # server-side) the welcome, away + hours, order status
+│   │   ├── inbox-actions.ts   # ★ the WhatsApp inbox (`inbox` view/manage): list,
+│   │   │                      # thread, mark read, close/reopen, sendInboxReply (window
+│   │   │                      # re-checked server-side, may quote one message) and
+│   │   │                      # sendInboxTemplate (approved customer templates only,
+│   │   │                      # every value filled); the team actions (assign, labels,
+│   │   │                      # notes, saved replies, getInboxWorkspace) on the gate in
+│   │   │                      # lib/whatsapp/inbox-gate.ts. Tested.
+│   │   ├── customer-whatsapp-actions.ts # ★ the shopper's own WhatsApp choices on the
+│   │   │                      # account page; session phone + host store, written
+│   │   │                      # through recordWhatsAppConsent with the page's own words
 │   │   ├── shipping-actions.ts # ★ §35 Shipping settings + authoritative checkout and
 │   │   │                      # public PDP PIN quotes (stock/origin/parcel/COD aware). Tested.
 │   │   ├── shipment-actions.ts # ★ §35 pack/book/AWB/label/pickup/manifest/tracking/NDR;
@@ -3186,6 +4255,18 @@ wholesip/
 │       ├── webhooks/logistics/[connectionId]/ # ★ §35 authenticated carrier events;
 │       │                      # provider-neutral URL accepted by Shiprocket; duplicate and
 │       │                      # out-of-order safe, raw payload service-only
+│       ├── webhooks/whatsapp/ # ★ WhatsApp Cloud API, ONE URL for every merchant
+│       │                      # (docs/whatsapp-commerce-plan.md §9; Phase 0 runbook
+│       │                      # docs/whatsapp-phase0.md). GET answers Meta's handshake
+│       │                      # against WHATSAPP_VERIFY_TOKEN; POST verifies
+│       │                      # X-Hub-Signature-256 over the RAW body with
+│       │                      # WHATSAPP_APP_SECRET, writes one whatsapp_inbound_events
+│       │                      # row per message/status/change (idempotent on Meta's ids,
+│       │                      # routed to a store by metadata.phone_number_id or the WABA
+│       │                      # id), acks, and processes in after(). 503 only when the
+│       │                      # rows could not be WRITTEN, so Meta retries; a row we hold
+│       │                      # but failed to process is never a retry. The log line is a
+│       │                      # content-free summary — counts and ids, never text/wa_id.
 │       ├── cron/send-emails/  # Minute Cloud Scheduler heartbeat for outbound queues:
 │       │                      # coupon campaigns + notification emails (§22).
 │       │                      # Phase 5E promotes due campaigns atomically and
@@ -3195,7 +4276,12 @@ wholesip/
 │       │                      # orders: mark paid if captured (capturing an authorized
 │       │                      # payment of the exact amount), skip if the gateway can't
 │       │                      # be READ, else cancel through releaseCancelledOrder; then
-│       │                      # records payments that landed after expiry (§18)
+│       │                      # records payments that landed after expiry (§18).
+│       │                      # ★ standingSweeps() (late payments, pickup expiry +
+│       │                      # reminders, WhatsApp COD follow-up, refunds, holds)
+│       │                      # runs on EVERY hour: it used to run pickups only when
+│       │                      # some online payment was stuck, so on a quiet store
+│       │                      # uncollected pickups never expired
 │       ├── cron/seo-refresh/  # ★ Daily Google reconciliation: platform/help/themes
 │       │                      # sitemaps + every launched store; custom-domain META
 │       │                      # verification/property creation; 503 triggers retries
@@ -3250,7 +4336,8 @@ wholesip/
 │       │                      # still ISSUES invoices payable on /dashboard/plans
 │       ├── cron/prune-logs/   # ★ DAILY log retention (§32): the ONLY caller of
 │       │                      # lib/retention/prune.ts. notifications 90d,
-│       │                      # activity_events 365d, email_logs 90d (+ pos_parked_sales 7d,
+│       │                      # activity_events 365d, email_logs 90d (+ closed
+│       │                      # whatsapp_conversations 730d, pos_parked_sales 7d,
 │                              # Step 15 — the 20-per-counter CAP is what runs
 │                              # out, not the disk) — windows
 │       │                      # that were documented for months and enforced by
@@ -3272,6 +4359,17 @@ wholesip/
 │       ├── og/                # Dynamic branded OG card (ImageResponse; ?d=JSON
 │       │                      # {title,subtitle,color}) — default share image for
 │       │                      # homepage/custom pages/platform (lib/seo/og-card.ts)
+│       ├── dashboard/inbox/live/ # ★ the inbox's polls (list, thread, needs-reply
+│       │                  # count) over one authenticated GET — a route, not an
+│       │                  # action, so a refresh never queues ahead of Send
+│       ├── dashboard/inbox/media/ # ★ a photo or PDF from the inbox (slice 6): a
+│       │                  # route because a server action's body caps at 6 MB;
+│       │                  # the SAME gate as a text reply (inbox-gate.ts), then
+│       │                  # prepare → Meta upload → our copy → send → file
+│       │   └── [messageId]/ # ★ GET: the ONLY way to read chat media (the
+│       │                  # private bucket): Inbox view on the host store, the
+│       │                  # message's own store, inline only for WhatsApp's
+│       │                  # types, nosniff + sandbox CSP, one byte range
 │       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 2 credits
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
@@ -3352,7 +4450,104 @@ wholesip/
 │   │                          # /api/plans/pricing quote, charge per period, the yearly
 │   │                          # saving label; never quotes compiled-in prices
 │   ├── shipping/              # ★ §35 checkout policy/types + pure rate translation +
-│   │                          # server-only origin-aware Shiprocket quotation
+│   │                          # server-only origin-aware Shiprocket quotation;
+│   │                          # product-delivery.ts = one product to one PIN (the
+│   │                          # PDP's PIN check and WhatsApp Mink quote through it)
+│   ├── whatsapp/              # ★ WhatsApp Commerce (docs/whatsapp-commerce-plan.md).
+│   │                          # config.ts (the one env reader; app id + config id are
+│   │                          # public, app secret + verify token never leave the
+│   │                          # server), graph.ts (Graph API over fetch with the
+│   │                          # three-way rejected/unknown/ok outcome — the token is an
+│   │                          # argument, never module state, because one process serves
+│   │                          # every merchant's WABA), connect.ts (Embedded Signup's
+│   │                          # server half: exchange code → PROVE the WABA against the
+│   │                          # token's granular_scopes → read WABA/number → ★★ subscribe
+│   │                          # our app to the WABA → register with a generated PIN →
+│   │                          # store encrypted; refresh and disconnect), inbound.ts
+│   │                          # (explodeWebhook → idempotent rows; processPendingInbound-
+│   │                          # Events handles template/number/account fields and, since
+│   │                          # slice 2, delivery STATUSES onto whatsapp_logs; inbound
+│   │                          # messages wait for slice 3), webhook-signature.ts (the two
+│   │                          # Meta verifiers, constant-time, raw body), webhook-events.ts
+│   │                          # (content-free summary, pinned by test).
+│   │                          # Slice 2: template-catalog.ts (PURE, client-safe: the 19
+│   │                          # UTILITY templates StoreMink registers per store, positional
+│   │                          # bodies + examples; every Meta review rule pinned by test),
+│   │                          # templates.ts (bootstrap on connect / Set up templates, sync
+│   │                          # by name on Refresh; "already exists" = existing, 190 =
+│   │                          # needs_reauth), channel.ts (sender + plan + precedence in one
+│   │                          # read, APPROVED-only templates, consent by E.164, the
+│   │                          # fail-closed storeCanSendWhatsApp gate), send.ts (★★ THE
+│   │                          # CHOKE POINT — every send writes whatsapp_logs with Meta's
+│   │                          # message id; send-coverage.test.ts), worker.ts (send-emails
+│   │                          # heartbeat; consent re-checked at send; unknown terminal;
+│   │                          # only throttle codes retried), consent-copy.ts (the exact
+│   │                          # checkout wording, client-safe) + consent.ts (the record,
+│   │                          # written after the order, only for a store that can send;
+│   │                          # verified vs unverified phone since the review fixes),
+│   │                          # sms-fallback.ts (the SMS held behind a WhatsApp under
+│   │                          # whatsapp_first: released on failure, dropped on
+│   │                          # delivery, once, by a conditional claim).
+│   │                          # Slice 3 (the inbox): inbox-types.ts (wire shapes, pure),
+│   │                          # inbox-parse.ts (every Meta message type → one bounded
+│   │                          # row; echo parse; previews), inbox-intent.ts (STOP/START
+│   │                          # in English, Hinglish, Devanagari — "cancel" is an order,
+│   │                          # not an opt-out), inbox.ts (★★ record inbound/echo/
+│   │                          # outbound by upsert with the dedupe on provider id, the
+│   │                          # 24-hour serviceWindow, media copy into our bucket after
+│   │                          # commit, the sidebar summary), inbox-read.ts (list,
+│   │                          # thread, customer panel, approved reply templates),
+│   │                          # chat-link.ts (wa.me, client-safe) + storefront.ts (the
+│   │                          # chat button's three gates: switch, plan, live number).
+│   │                          # Phase 2: cod-payload.ts (pure: the Confirm/Cancel
+│   │                          # button payloads and their parser) + cod-confirmation.ts
+│   │                          # (what a tap does: same store, a COD order, the order's
+│   │                          # own phone; confirm, or cancel through
+│   │                          # approve-cancellation; answered in the chat).
+│   │                          # opt-out-reply.ts (the STOP/START confirmation) and
+│   │                          # auto-reply.ts (replyInChat: every automatic answer,
+│   │                          # through the choke point, filed as `automation`).
+│   │                          # cod-sweep.ts (the hourly COD reminder + optional
+│   │                          # auto-cancel) and retention.ts (closed conversations
+│   │                          # deleted two years after their last message, media
+│   │                          # first; a RETENTION_POLICIES entry).
+│   │                          # Automatic replies: business-hours.ts (pure: weekly
+│   │                          # hours, isOpenAt, openedBetween), auto-reply-settings.ts
+│   │                          # (pure: shape, defaults, validation), auto-reply-store.ts
+│   │                          # (the whatsapp_auto_replies row), order-status-reply.ts
+│   │                          # ("where is my order": the phone's own orders, the
+│   │                          # answer, the hand-over cases) and answer-automatically.ts
+│   │                          # (welcome + order answer + away as ONE message, each
+│   │                          # claimed on the conversation before it is sent, with
+│   │                          # the menu's buttons under it). Menu buttons:
+│   │                          # menu-payload.ts (pure: the `menu:<id>` reply id and
+│   │                          # its parser) + menu-reply.ts (what a tap does: check
+│   │                          # my order, talk to a person, send a message; looked
+│   │                          # up in the store's current settings).
+│   │                          # The template manager: custom-template.ts (pure: a
+│   │                          # merchant's own template, its validator, Meta's
+│   │                          # components, the readers, and composerCanSend);
+│   │                          # templates.ts gained list/submit/delete.
+│   │                          # Customer-facing Mink (plan §13): mink-gate.ts (pure:
+│   │                          # what never reaches a model), mink-facts.ts (pure: the
+│   │                          # facts sheet, product matching, the answer parser),
+│   │                          # mink-model.ts (the one Vertex call, no database),
+│   │                          # mink-drafts.ts (the answers ledger, the claim, the
+│   │                          # one-credit charge) and mink-answer.ts (the
+│   │                          # orchestration: gate, headroom, facts, model, charge,
+│   │                          # send or hand over).
+│   │                          # The full inbox (slice 6): inbox-workspace.ts (pure:
+│   │                          # label/saved-reply validators, {{name}} fill, the
+│   │                          # prefix search query, snippet split), inbox-team.ts
+│   │                          # (assign, labels, notes, saved replies, store-scoped
+│   │                          # writes), inbox-gate.ts (the view/manage/send gate the
+│   │                          # actions and the media route share), inbox-media.ts
+│   │                          # (prepare a photo/PDF by its bytes; Meta upload, our
+│   │                          # copy, send, file, in that order); inbox.ts gained
+│   │                          # fileTemplateInThread (order updates in the thread,
+│   │                          # from worker.ts) and recordOutboundMessage media/quote
+│   │                          # fields; graph.ts uploadMedia + sendMediaMessage;
+│   │                          # send.ts sendWhatsAppMedia.
 │   ├── sms/                   # ★ §37 India DLT + BYO Twilio: pure template check,
 │   │                          # positional render, carrier match, 6-char sender header
 │   │                          # and segment cost, plus the one send choke point, queue,
@@ -3376,6 +4571,9 @@ wholesip/
 │   │                          # refused). The first one read a stored
 │   │                          # +6591234567 as the ten digits 6591234567, so
 │   │                          # the POS OTP texted +916591234567 — see §23
+│   ├── http/byte-range.ts     # PURE: one HTTP Range header against a size (single
+│   │                          # range, suffix; several ranges → the whole file;
+│   │                          # "unsatisfiable" → 416). Used by the inbox media route
 │   ├── csv/                   # ★ §31: PURE RFC 4180 codec. parse.ts (BOM, CRLF/LF/CR,
 │   │                          # quoted fields w/ embedded delimiters+newlines, quote-
 │   │                          # aware delimiter sniffing for Excel's semicolons, ragged
@@ -3499,7 +4697,10 @@ wholesip/
 │   │                          # DEFAULT (defaultRestockLocation, pure). ONE list
 │   │                          # feeds both the picker and the action's
 │   │                          # validation, so they cannot drift.
-│   ├── orders/                # ★ cancel.ts (§26): the ONE implementation of what
+│   ├── orders/                # ★ customer-status.ts: how a SHOPPER reads a status
+│   │                          # (shared by the storefront order pages and the
+│   │                          # WhatsApp order-status answer).
+│   │                          # ★ cancel.ts (§26): the ONE implementation of what
 │   │                          # cancelling DOES to stock — reserved stock released
 │   │                          # AT THE LOCATION THAT RESERVED IT, pickup holds
 │   │                          # released instead (their units never left the shelf).
@@ -3520,7 +4721,8 @@ wholesip/
 │   │                          # the permission set, never widens),
 │   │                          # channels.ts (email/web live; SMS configurable only with
 │   │                          # the store's enabled Twilio + mirrored DLT template;
-│   │                          # push/WhatsApp remain locked), config.ts
+│   │                          # WhatsApp only with a connected number + approved template
+│   │                          # + customer opt-in; push remains locked), config.ts
 │   │                          # (registry ← platform definition ← store
 │   │                          # settings), variables.ts + template.ts (merchant
 │   │                          # {{token}} copy, validated at save). Tested,
@@ -3557,7 +4759,11 @@ wholesip/
 │   │                          # lib/supabase/ removed, Supabase fully out of code):
 │   │                          # gcs.ts — gcsConfigured/gcsUploadObject/gcsSignUploadUrl/
 │   │                          # gcsDownloadObject/gcsDeletePaths/gcsDeletePrefix/
-│   │                          # gcsPublicUrl/gcsPathFromUrl
+│   │                          # gcsPublicUrl/gcsPathFromUrl, plus the PRIVATE bucket
+│   │                          # (GCS_PRIVATE_BUCKET: gcsPrivateConfigured/
+│   │                          # gcsPrivateUploadObject/gcsObjectInfo/gcsObjectStream;
+│   │                          # delete helpers take a bucket kind) for WhatsApp chat
+│   │                          # media, which is never public
 │   │                          # (ADC or
 │   │                          # GCP_SA_KEY; public bucket; lazy SDK import). uploads.ts —
 │   │                          # client helpers (uploadImage POSTs /api/upload; uploadVideo
@@ -3787,11 +4993,22 @@ wholesip/
 │   │                          # microsecond precision for exact optimistic checkpoints.
 │   ├── media/image-specs.ts   # ★ the exact size every dashboard image slot renders at;
 │   │                          # read by ImageUpload and by Refine with Mink AI
+│   ├── media/sources.ts       # where a media_assets row came from + which the Library hides
+│   │                          # (the "computer or Media Library" add-image menu is
+│   │                          # components/ui/image-source-menu.tsx)
+│   ├── media/library-types.ts # client-safe shapes (MediaAsset, ProductImageItem, picker)
+│   ├── media/library.ts       # server-only Library listing (hidden sources filtered here)
+│   ├── media/product-images.ts # server-only: photos products use (derived), usage by URL,
+│   │                          # and the "still in use" guard for product image clean-up
+│   ├── media/image-hosts.ts   # client-safe canOptimizeImage(): may next/image optimise
+│   │                          # this URL? Mirrors next.config.ts remotePatterns (a test
+│   │                          # reads that file); any other host renders `unoptimized`
 │   ├── mink/                  # ★ Dashboard agent foundation (docs/mink-ai-dashboard-plan.md):
 │   │                          # default-on global + fail-closed invited-store access;
-│   │                          # system-prompt.ts and image-prompt.ts validate/render the
-│   │                          # marked runtime templates in docs/mink-ai-system-prompt.md
-│   │                          # and docs/mink-ai-image-prompt.md; trusted actor,
+│   │                          # system-prompt.ts, image-prompt.ts and whatsapp-prompt.ts
+│   │                          # validate/render the marked runtime templates in
+│   │                          # docs/mink-ai-system-prompt.md, docs/mink-ai-image-prompt.md
+│   │                          # and docs/mink-ai-whatsapp-prompt.md; trusted actor,
 │   │                          # route and selected product/order construction; bounded
 │   │                          # orchestrator; official Google Gen AI SDK Vertex client;
 │   │                          # abort-aware one-retry transport + hard run/tool timeouts;
@@ -4240,6 +5457,7 @@ wholesip/
 │   │                          # pattern). Worker-only: RLS on, NO policies
 │   ├── media_assets.sql       # ★ per-store Media Library table (RLS is_store_admin; NOT
 │   │                          # public — object URLs are public, the listing is admin-only)
+│   │                          # `source` column added by migration 20261016_0213
 │   ├── invoicing.sql          # ★ tax_classes + products.tax_class_id + order_items tax
 │   │                          # cols + orders.tax_inclusive + store_billing_settings — §17
 │   ├── billing_01_foundation.sql   # ★ §34 platform_billing_settings (operator GST
@@ -4502,7 +5720,16 @@ wholesip/
 │                              # `set constraints all deferred` in its transaction;
 │                              # everywhere else the checks stay immediate, so deleting
 │                              # ONE ordered product is still refused (verified both
-│                              # ways against a copy of production). 0179 edits the
+│                              # ways against a copy of production). 0174 adds the
+│                              # service-only WhatsApp account, template and inbound-event
+│                              # tables (Phase 1 slice 1); 0175 adds contacts with consent,
+│                              # the WhatsApp notification queue, the send log with Meta's
+│                              # delivery timeline and template sync columns; 0176
+│                              # publishes the order-updates Help guide. 0177 adds the
+│                              # inbox (one conversation per contact, every message in
+│                              # both directions); 0178 publishes the inbox Help guide
+│                              # and edits one sentence of the order-updates guide in
+│                              # place. 0179 edits the
 │                              # section guide for nested blocks and the new sections;
 │                              # 0180 edits the branding guide's layout step in place
 │                              # for the page templates (plan Phase 2e) and the
@@ -4519,42 +5746,109 @@ wholesip/
 │                              # store, the five grouped go-live tasks, and a
 │                              # "What your first theme adds" section in the theme
 │                              # guide (a first install follows its own rules).
-│                              # ★★ 0174-0178 BELONG TO THE `whatsapp` BRANCH. This
-│                              # branch's four pending entries were renumbered from
-│                              # 0174/0175/0179/0180 to 0179-0182 (2026-10-10) because
-│                              # the whatsapp branch had already taken 0174-0178. Safe
-│                              # only because no shared database had recorded them.
-│                              # ⚠ When both branches merge, manifest.json conflicts:
-│                              # whichever lands second must append its entries AFTER
-│                              # every applied one and fix `requires`, or the runner's
-│                              # out-of-order check refuses. 0184 rewrites every
-│                              # em dash in Help articles and categories (§5.40); every
-│                              # Help migration after it is held to no em dash by
-│                              # help:lint. 0185 is the refund and store-credit
-│                              # integrity pass (§26, §29): `cashback_reversal`,
-│                              # reverse_customer_cashback(), orders.cashback_amount
-│                              # plus the orders_issue_cashback trigger,
-│                              # order_returns.idempotency_key, and five Help
-│                              # sentence edits. 0186 repeats the em dash pass for
-│                              # WhatsApp 0176. 0187-0191 are the analytics parity
+│                              # ★★ IN manifest.json 0174-0178 COME AFTER 0179-0185,
+│                              # out of number order, and that is deliberate. The
+│                              # `whatsapp` branch took 0174-0178 while `main`'s four
+│                              # pending entries were renumbered 0179-0182 to avoid the
+│                              # clash (2026-10-10); 0183 followed, and all five reached
+│                              # production and staging first (by 2026-10-11). Merging
+│                              # main into whatsapp therefore appended the WhatsApp block
+│                              # after them: an applied entry listed after a pending one
+│                              # is what the runner refuses as out_of_order. `requires`
+│                              # was not rewired — both blocks hang off 0173 in the shared
+│                              # base, and `requires` is part of each entry's checksum.
+│                              # 0184 and 0185 came from `main` after that merge and sit
+│                              # between 0183 and the WhatsApp block (0184 requires 0183):
+│                              # production applied them first (2026-10-11) and has
+│                              # 0174-0178 still pending, so this is ITS order.
+│                              # ★ STAGING APPLIED THE TWO BLOCKS THE OTHER WAY ROUND.
+│                              # dev deployed the WhatsApp block before main merged in,
+│                              # so storemink_staging had 0174-0178 but not 0184/0185,
+│                              # and no single order passed both runners. Resolved with
+│                              # two dev pushes (2026-10-12): one dev build ran with
+│                              # 0184/0185 listed after 0178 so staging applied them,
+│                              # then the order went back to this one, which staging
+│                              # accepts because nothing is pending there. Moving an
+│                              # entry is safe once every database has applied it, or
+│                              # while it is pending everywhere; checksums exclude
+│                              # position. The two blocks share no tables, functions or
+│                              # Help articles, so either order builds the same schema.
+│                              # ⚠ Do not reorder for a local database: one that applied
+│                              # 0174-0178 before 0183-0185 reports them out_of_order
+│                              # until it applies 0183-0185 too.
+│                              # 0184 rewrites every em dash in Help articles and
+│                              # categories (§5.40); every Help migration after it (in
+│                              # manifest order, so 0176 and 0178 too) is held to no em
+│                              # dash by help:lint. 0176 has one and is grandfathered
+│                              # (staging recorded its checksum); 0186 repeats the 0184
+│                              # pass so production, which applies 0176 after 0184,
+│                              # loses the dash too (a no-op on staging). 0185 is the
+│                              # refund and store-credit integrity pass (§26, §29):
+│                              # `cashback_reversal`, reverse_customer_cashback(),
+│                              # orders.cashback_amount plus the orders_issue_cashback
+│                              # trigger, order_returns.idempotency_key, and five Help
+│                              # sentence edits. 0187-0191 are the analytics parity
 │                              # work (§20): traffic dimensions, targets, saved
 │                              # reports, their Help guides, and the Overview
-│                              # refresh note. 0192-0204 are the WhatsApp series
-│                              # on `dev`, not yet on main. 0205 stops paid plans
-│                              # lapsing after one cycle (downgrade claim checks the
-│                              # NEXT cycle's invoice and closes it; lapsed paid
-│                              # stores are restored); 0206 makes adjust_stock_at
-│                              # and transfer_stock refuse another store's product,
-│                              # variant or location; 0207 is the platform staff
-│                              # roles (§41). ⚠ ORDER WITH DEV'S 0192-0204: if
-│                              # 0205-0207 reach production first, list them AHEAD
-│                              # of dev's entries when dev merges into main
-│                              # (production applied them first, and a pending
-│                              # entry listed before an applied one is refused as
-│                              # out of order); staging, which applied dev's first,
-│                              # needs them listed AFTER until it has applied them
-│                              # too. Merging dev into main first avoids both.
-│                              # Next free: 0208.
+│                              # refresh note. They reached the two databases in
+│                              # opposite orders again: production applied them
+│                              # straight after 0185 (main never had the WhatsApp
+│                              # block), staging after 0186. Since 2026-10-16 they
+│                              # are listed straight after 0185 again, production's
+│                              # order (pending there: 0174-0178, 0186); staging
+│                              # accepts it because everything before 0209 is
+│                              # applied there. Simulated against both ledgers with
+│                              # migrationPlan: 0 out of order, 0 drift.
+│                              # 0192 adds orders.cod_confirmation(+_at) and
+│                              # notification_whatsapp_queue.button_payloads (WhatsApp
+│                              # COD confirmation); 0193 edits the order-updates Help
+│                              # guide for it. Both come after 0191 and require it.
+│                              # 0194 edits the inbox guide for the automatic STOP
+│                              # reply; 0195 adds orders.cod_reminded_at, the
+│                              # 'expired' COD answer and orders_cod_awaiting_idx;
+│                              # 0196 edits the COD and inbox guides for the
+│                              # follow-up and the two-year conversation deletion.
+│                              # 0197 adds whatsapp_auto_replies and the conversation's
+│                              # welcome_sent_at / away_sent_at; 0198 publishes the
+│                              # automatic-replies guide and points the inbox guide
+│                              # at it. 0199 adds menu buttons, 0200 their Help;
+│                              # 0201 the template-manager Help; 0202 customer-facing
+│                              # Mink (mink_mode, whatsapp_mink_answers, the charge
+│                              # function) and 0203 its Help. 0204 moves the timestamp
+│                              # on the three WhatsApp guides those Help edits had
+│                              # rewritten without one, so the Mink Help index
+│                              # re-embeds them (help:lint's index-timestamp rule).
+│                              # 0205 stops paid plans lapsing after one cycle
+│                              # (downgrade claim checks the NEXT cycle's invoice
+│                              # and closes it; lapsed paid stores are restored);
+│                              # 0206 makes adjust_stock_at and transfer_stock
+│                              # refuse another store's product, variant or
+│                              # location; 0207 is the platform staff roles (§41).
+│                              # They came from main, where production applied them
+│                              # straight after 0191; since 2026-10-16 they sit there
+│                              # again (with 0187-0191 after 0185, above), ahead of
+│                              # 0174-0178, 0186 and 0192-0204, which are what
+│                              # production has pending. 0208 gives Owner and
+│                              # Admin the Inbox section, which dev added after the
+│                              # 0207 seed, and replaces the inbox guide's sentence
+│                              # about a role editor stores no longer have. It
+│                              # requires both 0207 and 0204, so it stays last in
+│                              # both orders. 0209 adds the full inbox's four
+│                              # service-only tables (labels, conversation labels,
+│                              # notes, saved replies), the assignee index and the
+│                              # GIN search index over message bodies; 0210 edits
+│                              # the inbox guide in place for it. Both follow 0208.
+│                              # 0211 is the schema for the PR #283 review
+│                              # fixes: the held SMS fallback and Meta's id on
+│                              # the WhatsApp queue, inbound retry bookkeeping,
+│                              # the Mink send lease, the 'undelivered' COD
+│                              # answer, orders.whatsapp_updates, the number PIN
+│                              # table and the retention skip mark. 0212 edits
+│                              # the four WhatsApp guides in place for them.
+│                              # 0213 adds media_assets.source (Library hides Mink chat
+│                              # attachments and resized copies) with a backfill;
+│                              # 0214 edits the Media, product images and Mink guides.
+│                              # Next free: 0215.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -4707,6 +6001,11 @@ wholesip/
 │                              # Own package.json (playwright-core) and Dockerfile; not in
 │                              # the web image. Runbook: docs/theme-studio-capture-job.md
 ├── scripts/
+│   ├── whatsapp-media-to-private.mjs # `npm run whatsapp:media-to-private`: move
+│   │                          # WhatsApp chat media (stores/*/whatsapp/**) from the
+│   │                          # public bucket to GCS_PRIVATE_BUCKET, same path. Dry run
+│   │                          # unless --commit; checks each copy's size before
+│   │                          # deleting the public one; safe to re-run
 │   ├── sync-auth-hosts.ts     # `npm run auth:sync-hosts`: add every active store's exact
 │   │                          # sign-in hosts to the Firebase project's authorizedDomains
 │   │                          # (§30). Dry run unless --commit --confirm-project <project>;
@@ -4797,6 +6096,13 @@ wholesip/
 │   │                          # ⚠ It cannot prove a check is SUFFICIENT — the pattern may
 │   │                          # also occur elsewhere in the article, which needs the real
 │   │                          # body (`help:audit:*`), not CI.
+│   │                          # ★★ AND A BODY WRITE MUST MOVE `updated_at`
+│   │                          # (`lintIndexTimestamps`, rule `index-timestamp`).
+│   │                          # The Help index re-embeds a guide only when its
+│   │                          # timestamp differs from the chunks' source
+│   │                          # timestamp, so a replace() that leaves it alone
+│   │                          # updates the page and never the index. Eight
+│   │                          # WhatsApp edits did; 0204 moved their timestamps.
 │   ├── help-content-audit.mjs # ★ The same rules against the rows a DATABASE serves —
 │   │                          # catches Help-console operator edits and the ASSEMBLED
 │   │                          # result of many migrations appending to one guide, which
@@ -7815,7 +9121,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
         click-to-magnify, and native pinch on phones. Universal on purpose — at
         rest it shows the same first photo. `[slug]/sticky-add-to-cart.tsx` is
         the phone buy bar, shown once the page's own buttons scroll away ABOVE the
-        shopper; it calls the page's own handler. Opt-in theme layout keys
+        shopper; it calls the page's own handler. The room it needs at the end
+        of the page is the footer's, and the floating buttons lift above it
+        (storefront-theme.css "Floating controls", WhatsApp slice 3). Opt-in theme layout keys
         `stickyAddToCart`, `gridColumnsMobile` (1|2) and `gridColumnsDesktop`
         (3|4|5) resolve through `resolveStorefrontAppearance` into root classes
         `sm-atc-sticky` / `sm-grid-m2` / `sm-grid-d3|d5`, with a compact card for
@@ -10674,6 +11982,18 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       nothing, so `help:lint` requires one that changes value when the edit
       lands. ⚠ `verify` is the wrong home for it — that block is re-checked
       forever and freezes the wording it names.
+    - **★★ AND A BODY WRITE MUST MOVE `updated_at`, OR THE INDEX NEVER SEES
+      IT.** `lib/help/embedding-worker.ts` re-embeds a guide only when
+      `help_articles.updated_at` differs from the chunks' `source_updated_at`.
+      Eight WhatsApp Help migrations (0178 to 0203) rewrote a body with
+      `replace()` and left the timestamp alone, so after the 2026-10-14 dev
+      deploy the pages showed the new sections while the public assistant and
+      the dashboard's Help tool still answered from the old wording, with
+      nothing to report it. `lintIndexTimestamps` (`index-timestamp`) now
+      refuses a SET clause that assigns `body` without `updated_at` on a plain
+      UPDATE or an upsert's DO UPDATE; an INSERT needs nothing, the column
+      defaults. The eight are grandfathered (applied, so unchangeable) and
+      `20261014_0204` moved their rows' timestamps by hand.
     - **★★ NEVER ASSERT PUBLISHED WORDING IN A DURABLE `verify` BLOCK.** It is
       re-checked for every applied migration on every status/verify/drift run
       in every environment, and it is part of that migration's checksum — so
@@ -10801,7 +12121,29 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       reviewed StoreMink aliases (including POS ↔ point of
       sale/register/checkout), with Gemini selection/query expansion only as an
       additive layer. `lib/help/vector-search.ts` supplies semantic paraphrase
-      and multilingual recall from `gemini-embedding-001` at 768 dimensions.
+      and multilingual recall from `gemini-embedding-2` at 768 dimensions.
+      ★★ IT WAS `gemini-embedding-001` UNTIL 2026-10-15, AND BY THEN GOOGLE HAD
+      CAPPED THAT MODEL AT FIVE REQUESTS A MINUTE PER PROJECT, at `global` and in
+      every region alike (measured on storemink-prod through the Service Usage
+      API: `online_prediction_requests_per_base_model` and
+      `global_embed_content_requests_per_minute_per_base_model`, base model
+      `gemini-embedding`, effective 5; the model is no longer in Google's
+      publisher catalogue at all). The reconciler sends five chunk requests at
+      a time, so on production it indexed one short guide per run and then hit
+      429 on the next, every run, and the same bucket served every Help
+      question's query embedding, so more than five questions a minute
+      platform-wide fell back to keyword search. Found the day the
+      `storemink-help-embeddings` scheduler job was finally created (it had been
+      documented as absent since 2026-08-25). `gemini-embedding-2` is GA, answers
+      this project at `global` with 768 dimensions and a 300,000-a-minute
+      bucket, and needs no access or quota request, but Vertex serves it only
+      through `embedContent` (one input per request, no batch form; `predict`
+      reports it as not found), so `lib/help/embeddings.ts` now sends the same
+      EmbedContentRequest on both backends. Chunks record their model, so the
+      switch re-embeds every guide on the next reconciler run with no migration.
+      The 0.55 similarity floor was kept after a six-guide measurement
+      (`lib/help/vector-search.ts` records it; 0.60 is the override to try once
+      a real retrieval evaluation set exists).
       It filters by current source revision, embedding model, and explicit
       chunker/index version, and caps each article at its best three chunks
       before the global result limit so one long guide cannot crowd out other
@@ -12505,7 +13847,9 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       side table would mean every order read either joins it or silently
       ignores a whole fulfilment mode. `lib/fulfilment/pickup.ts` decides
       where; `/pos/pickups` hands it over; the sweep rides on
-      `/api/cron/expire-pending-payments`. Config:
+      `/api/cron/expire-pending-payments`, every hour (until 2026-10-13 it ran
+      only on an hour that also found a stuck online payment, so on most
+      stores pickups never expired and no reminder went). Config:
       `fulfilment.offerPickup` + `fulfilment.pickupHoldDays` (section
       `locations`, rendered on Locations → Online fulfilment).
       - **★★ HAND-OVER REQUIRES THE ORDER PHONE'S OTP.**
@@ -13111,8 +14455,14 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       workers filter, failing OPEN. Failed rows surface in a panel on the
       notifications page (`getDeliveryHealth` + `retryFailedEmail`) that renders
       only when mail actually failed.
-    - **"INSTANT" RESTS ON THE WORKER KICK.** The cron heartbeat is DAILY, so if
-      `triggerEmailWorker` doesn't land, mail waits up to 24 h — silently.
+    - **"INSTANT" RESTS ON THE WORKER KICK.** The production heartbeat is once a
+      minute and dev has no scheduler at all, so if `triggerEmailWorker`
+      doesn't land, a message waits for the next tick on production and
+      indefinitely on dev, silently. ★ `fanOut` kicks for an instant EMAIL **or
+      any SMS or WhatsApp row** (2026-10-13): neither of those queues has a
+      digest window, and counting only email left a WhatsApp-only update (a
+      pickup-ready notice to a customer with no email) sitting in its queue.
+      `record-whatsapp.test.ts` pins it, mutation-checked.
       The origin is **the current request's host** (`getRequestOrigin()`), not a
       configured one: resolving it from env made a local dev order POST the kick
       to `https://staging.storemink.com`, telling another environment to drain a
@@ -14705,7 +16055,8 @@ way — an entry there is a deliberate act, not a way to silence the guard.
 32. **Log retention — the policy that was written down three times and enforced
     nowhere.** `lib/retention/prune.ts`, driven daily by
     `/api/cron/prune-logs` (03:00 UTC). Windows: `notifications` 90 days,
-    `activity_events` 365, `email_logs` 90. Full operational detail —
+    `activity_events` 365, `email_logs` 90, closed `whatsapp_conversations`
+    730 (by last message; media first, see the inbox section). Full operational detail —
     the schedule, the `gcloud` command, how to read a response — is in
     `docs/cron-jobs.md`.
     - **★ IT WAS DOCUMENTED, INDEXED, AND DEAD.** `supabase/email_logs.sql`
@@ -16212,6 +17563,8 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
     - **★ SMS RIDES THE EMAIL HEARTBEAT** rather than taking a new Cloud
       Scheduler entry; `docs/cron-jobs.md` records a job being documented but
       never created three times. It cannot take the email queues down with it.
+      Queuing an SMS (or a WhatsApp message) kicks that worker at once, like an
+      instant email does.
     - **★ THE SMS TAB IS ITS OWN EDITOR**, not the Subject/Body fields beside
       it: a DLT body has no subject and is not authored here, so the generic
       form would invite a merchant to write something a carrier silently drops.
@@ -17306,7 +18659,10 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       migration AFTER 0184 (manifest order) to no em dash, published or
       quoted, since a quoted dash names text that no longer exists
       (`lintLongDashes`, `GRANDFATHERED_LONG_DASH` for an already-applied
-      migration merged from another branch); `help:audit` reports one in
+      migration merged from another branch: today only
+      `20261008_0176_whatsapp_notify_help`, whose dash
+      `20261012_0186_help_no_long_dashes_after_whatsapp` removes again on
+      production, where 0176 lands after 0184); `help:audit` reports one in
       published rows, which is the only check that sees a console edit.
     - **⚠ Not changed, deliberately:** code comments and internal docs (not
       product text), CLI output in `scripts/`, and other content already
@@ -17375,6 +18731,12 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       register staff deletes the login only when nothing else uses it
       (`authIdsInUse`), and otherwise strips the register claim once no other
       till account uses it.
+    - **★ INBOX REACHED THE ROLES BY MIGRATION 0208.** dev added the Inbox
+      section (WhatsApp conversations) after the 0207 seed, which the catalog
+      guard caught on the merge. 0208 grants it, view and manage, to Owner and
+      Admin only, leaving any role that already lists it alone; Staff does not
+      get it, matching the old per-store member role, which never had it. An
+      operator adds it to Staff, or to a role of their own, in the console.
     - **★ THE OPERATOR CAN ADD A DASHBOARD ROLE OR CHANGE ANY ROLE'S MAP; THREE
       THINGS ARE FIXED.** Seeded roles cannot be deleted; the owner's map
       cannot be narrowed (`superadmin` bypasses the map in code, so an edit
@@ -17641,6 +19003,13 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   legacy media renders until the backfill. Bucket needs CORS (PUT from the app
   origin) for direct video uploads. No bulk migration of existing objects yet (a
   pre-decommission backfill copies old objects + rewrites DB URLs).
+  **`GCS_PRIVATE_BUCKET`** names a SECOND, private bucket (public access
+  prevention on, uniform access, the runtime service account with object
+  admin on it) for WhatsApp chat media, which is never written to the public
+  one and is read only through `/api/dashboard/inbox/media/[messageId]`.
+  Cloud Build passes `_GCS_PRIVATE_BUCKET` (empty by default, so a trigger
+  without it stores no chat media rather than storing it publicly);
+  `docs/gcp-ci-cd.md` names the bucket per environment.
 - **Gemini / Vertex AI**: AI copy generation (`lib/ai/gemini.ts`, dual backend).
   **Backend precedence: the free Gemini Developer API key wins whenever one is
   set** — so **local + staging set `GEMINI_API_KEY`** (a Google AI Studio key,
@@ -17653,7 +19022,9 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   `roles/aiplatform.user` on the runtime credentials (see
   `docs/gcp-migration-phase5-6.md`). Mink AI embeddings use the same backend
   precedence and credentials through `lib/help/embeddings.ts`, with
-  **`GEMINI_EMBEDDING_MODEL`** defaulting to `gemini-embedding-001` and a fixed
+  **`GEMINI_EMBEDDING_MODEL`** defaulting to `gemini-embedding-2` (served only
+  through Vertex's `embedContent`; the former `gemini-embedding-001` is capped at
+  five requests a minute, see §21) and a fixed
   768-dimensional schema contract. **`HELP_VECTOR_MIN_SIMILARITY`** optionally
   overrides the conservative `0.55` semantic-match floor (0–1); leave it unset
   until the retrieval evaluation set justifies a tuned value.
@@ -17733,6 +19104,28 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   only) is env **`RAZORPAY_KEY_ID`** / **`RAZORPAY_KEY_SECRET`**. Cron routes
   (`/api/cron/*`) require **`CRON_SECRET`** (Vercel Cron sends it as a Bearer
   header).
+- **WhatsApp** (docs/whatsapp-commerce-plan.md; Phase 0 as of 2026-10-08):
+  the webhook reads **`WHATSAPP_VERIFY_TOKEN`** (ours — a high-entropy string
+  pasted into the Meta console, used only for the GET handshake) and
+  **`WHATSAPP_APP_SECRET`** (Meta's, signs every POST). ⚠ They are two
+  different secrets for two different proofs — the token proves we own the
+  URL, the secret proves a delivery came from Meta — and both are per
+  environment, since a Meta app has exactly one callback URL (dev and prod are
+  two Meta apps). With either unset the route answers 503 — deliveries carry
+  data (orders, opt-outs, statuses) a silent ack would lose, so Meta is told
+  to retry. Wired in `cloudbuild.yaml` since 2026-10-08
+  (`_WHATSAPP_APP_SECRET_SECRET`, `_WHATSAPP_VERIFY_TOKEN_SECRET`, defaults
+  `*_STAGING`; the prod trigger overrides to `*_PROD`) — the Secret Manager
+  entries were created FIRST because Cloud Run refuses a revision whose
+  `--set-secrets` names a missing secret. Dev and prod are two Meta apps
+  (`1045672501851798` / `2663634187475548`), so **`WHATSAPP_APP_ID`** and
+  **`WHATSAPP_CONFIG_ID`** (Embedded Signup; set on the dev trigger since
+  2026-10-13, empty on prod until the production app has a configuration) are public identifiers riding as plain substitutions.
+  `whatsappConnectConfigured()` needs app id + secret + config id, and the
+  Channels card disables Connect without all three rather than opening a
+  popup the server cannot finish. `npm run whatsapp:smoke`
+  takes `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` from the shell
+  only, never from `.env`; `WHATSAPP_GRAPH_VERSION` defaults to `v26.0`.
 - **POS** (§22): the `/pos` device + operator cookies are HMAC-signed with env
   **`POS_SESSION_SECRET`** (any high-entropy string; `openssl rand -base64 32`).
   Required for the register to work; when unset, cookie VERIFY returns null

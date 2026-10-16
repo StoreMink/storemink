@@ -1,0 +1,1189 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  makeDbMock,
+  sqlParamValues,
+  sqlText,
+} from "@/app/actions/_test-helpers";
+
+vi.mock("@/lib/observability/logger", () => ({
+  logError: vi.fn(),
+  logWarn: vi.fn(),
+  logInfo: vi.fn(),
+}));
+const dbHolder = vi.hoisted(() => ({ current: null as any }));
+vi.mock("@/lib/db/client", () => ({
+  withService: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
+}));
+vi.mock("@/lib/storage/gcs", () => ({
+  gcsPrivateConfigured: true,
+  gcsPrivateUploadObject: vi.fn(async () => undefined),
+}));
+vi.mock("@/lib/payments/crypto", () => ({
+  decryptSecret: vi.fn(() => "tok"),
+}));
+vi.mock("./graph", () => ({
+  getMediaInfo: vi.fn(),
+  downloadMedia: vi.fn(),
+}));
+
+import {
+  applyStatusToMessage,
+  fileTemplateInThread,
+  handOverConversation,
+  inboundMediaPath,
+  recordEchoMessage,
+  recordInboundMessage,
+  recordOutboundMessage,
+  serviceWindow,
+  storeInboundMedia,
+} from "./inbox";
+import { downloadMedia, getMediaInfo } from "./graph";
+import { gcsPrivateUploadObject } from "@/lib/storage/gcs";
+
+const STORE = "11111111-1111-4111-8111-111111111111";
+
+const inbound = (over: Record<string, unknown> = {}) => ({
+  kind: "message",
+  contacts: [{ profile: { name: "Rohan" }, wa_id: "919876543210" }],
+  message: {
+    from: "919876543210",
+    id: "wamid.1",
+    timestamp: "1760000000",
+    type: "text",
+    text: { body: "Is it in stock?" },
+    ...over,
+  },
+});
+
+describe("serviceWindow", () => {
+  it("opens for 24 hours from the customer's last message, exactly", () => {
+    const now = Date.parse("2026-10-08T10:00:00Z");
+    const at = new Date(now - 23 * 3600_000).toISOString();
+    expect(serviceWindow(at, now)).toEqual({
+      open: true,
+      closesAt: new Date(now + 3600_000).toISOString(),
+    });
+    expect(
+      serviceWindow(new Date(now - 24 * 3600_000).toISOString(), now).open,
+    ).toBe(false);
+    expect(serviceWindow(null, now)).toEqual({ open: false, closesAt: null });
+    expect(serviceWindow("junk", now).open).toBe(false);
+  });
+});
+
+describe("recordInboundMessage", () => {
+  beforeEach(() => {
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        // contact upsert
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        // conversation ensure — it was OPEN, so this message makes it needs_reply
+        [{ id: "c1", status: "open" }],
+        // the bump
+        [],
+      ],
+      returningQueue: [[{ id: "m1" }]],
+    });
+  });
+
+  it("files the message, bumps the conversation and asks for the bell", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound(),
+    });
+    expect(r).toMatchObject({
+      inserted: true,
+      contactId: "k1",
+      conversationId: "c1",
+      messageId: "m1",
+      needsNotify: true,
+      kind: "text",
+      preview: "Is it in stock?",
+      contactLabel: "Rohan",
+    });
+    const { calls } = dbHolder.current;
+    // ★ The window clock moves on the CONTACT, with the message's time.
+    const contactSql = sqlText(calls.execute[0]);
+    expect(contactSql).toContain("insert into public.whatsapp_contacts");
+    expect(contactSql).toContain("last_inbound_at");
+    expect(sqlParamValues(calls.execute[0])).toContain("+919876543210");
+    // The message row carries Meta's id, which is the dedupe key.
+    expect(calls.values[0]).toMatchObject({
+      direction: "in",
+      source: "customer",
+      kind: "text",
+      providerMessageId: "wamid.1",
+      status: "received",
+    });
+    // The bump reopens and counts.
+    const bump = sqlText(calls.execute[2]);
+    expect(bump).toContain("else 'needs_reply' end");
+    expect(bump).toMatch(
+      /unread_count = unread_count \+ case when .* then 0 else 1 end/,
+    );
+    // An ordinary message is not automated: it asks for a reply and counts.
+    expect(sqlParamValues(calls.execute[2])).toContain(false);
+  });
+
+  it("★ a COD button tap is filed but neither counts nor asks for a reply", async () => {
+    const ORDER = "22222222-3333-4444-8555-666666666666";
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: { text: "Confirm order", payload: `cod:confirm:${ORDER}` },
+      }),
+    });
+    expect(r).toMatchObject({
+      inserted: true,
+      kind: "button",
+      needsNotify: false,
+      codReply: { action: "confirm", orderId: ORDER },
+      phone: "+919876543210",
+    });
+    // The bump is told this message was automated.
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(true);
+  });
+
+  it("★ a tap on a menu button is filed like a COD tap, carrying the button's id", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "interactive",
+        text: undefined,
+        interactive: {
+          type: "button_reply",
+          button_reply: { id: "menu:b1", title: "Check my order" },
+        },
+      }),
+    });
+    expect(r).toMatchObject({
+      inserted: true,
+      kind: "interactive",
+      needsNotify: false,
+      menuReply: "b1",
+      codReply: null,
+    });
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(true);
+  });
+
+  it("a reply to some other interactive message is an ordinary message", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "interactive",
+        text: undefined,
+        interactive: {
+          type: "button_reply",
+          button_reply: { id: "something-else", title: "Yes" },
+        },
+      }),
+    });
+    expect(r.menuReply).toBeNull();
+    expect(r.needsNotify).toBe(true);
+  });
+
+  it("★ 'menu' is answered by the system only on a store whose menu is on", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "Menu" } }),
+      hasMenu: true,
+    });
+    expect(r).toMatchObject({ menuReply: "menu", needsNotify: false });
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(true);
+
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c1", status: "open" }],
+        [],
+      ],
+      returningQueue: [[{ id: "m1" }]],
+    });
+    const r2 = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "Menu" } }),
+    });
+    expect(r2).toMatchObject({ menuReply: null, needsNotify: true });
+  });
+
+  it("a button tap we did not write is an ordinary message", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: { text: "Yes", payload: "something-else" },
+      }),
+    });
+    expect(r.codReply).toBeNull();
+    expect(r.needsNotify).toBe(true);
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(false);
+  });
+
+  it("★ a quick reply tapped on a merchant's template opts out like the words typed", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: {
+          text: "Stop promotions",
+          payload: "custom:Stop promotions",
+        },
+      }),
+    });
+    expect(r).toMatchObject({
+      optOut: "stop",
+      codReply: null,
+      needsNotify: false,
+      phone: "+919876543210",
+    });
+    const { calls } = dbHolder.current;
+    expect(calls.set[0]).toMatchObject({
+      marketingOptOutAt: expect.any(String),
+    });
+    // The tap keeps what it carried, beside the flag the thread reads.
+    expect(calls.set[1]).toEqual({
+      payload: { buttonPayload: "custom:Stop promotions", intent: "stop" },
+    });
+    // Answered by the system: no unread, no Needs reply.
+    expect(sqlParamValues(calls.execute[2])).toContain(true);
+  });
+
+  it("★ it reads the LABEL, not the payload, and an interactive reply too", async () => {
+    // Meta's default payload is the label; any payload names nothing.
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: { text: "Unsubscribe", payload: "stop" },
+      }),
+    });
+    expect(r.optOut).toBe("stop");
+
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c1", status: "open" }],
+        [],
+      ],
+      returningQueue: [[{ id: "m1" }]],
+    });
+    const notStop = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: { text: "Yes please", payload: "STOP" },
+      }),
+    });
+    expect(notStop.optOut).toBeNull();
+    expect(notStop.needsNotify).toBe(true);
+
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c1", status: "open" }],
+        [],
+      ],
+      returningQueue: [[{ id: "m1" }]],
+    });
+    const interactive = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "interactive",
+        text: undefined,
+        interactive: {
+          type: "button_reply",
+          button_reply: { id: "promo-off", title: "Stop offers" },
+        },
+      }),
+    });
+    expect(interactive).toMatchObject({ optOut: "stop", menuReply: null });
+    expect(dbHolder.current.calls.set[1]).toEqual({
+      payload: { replyId: "promo-off", replyType: "button", intent: "stop" },
+    });
+  });
+
+  it("★ our own buttons keep their own path, whatever their label says", async () => {
+    const ORDER = "22222222-3333-4444-8555-666666666666";
+    const fresh = () => {
+      dbHolder.current = makeDbMock({
+        executeQueue: [
+          [
+            {
+              id: "k1",
+              user_id: null,
+              marketing_opt_in_at: null,
+              marketing_opt_out_at: null,
+            },
+          ],
+          [{ id: "c1", status: "open" }],
+          [],
+        ],
+        returningQueue: [[{ id: "m1" }]],
+      });
+    };
+    // A COD tap is a COD tap.
+    fresh();
+    const cod = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: { text: "Stop", payload: `cod:cancel:${ORDER}` },
+      }),
+    });
+    expect(cod).toMatchObject({
+      optOut: null,
+      codReply: { action: "cancel", orderId: ORDER },
+    });
+    expect(dbHolder.current.calls.set).toHaveLength(0);
+    // One shaped like ours but not parseable stays an ordinary message.
+    fresh();
+    const odd = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: { text: "STOP", payload: "cod:stop" },
+      }),
+    });
+    expect(odd).toMatchObject({ optOut: null, codReply: null });
+    expect(odd.needsNotify).toBe(true);
+    expect(dbHolder.current.calls.set).toHaveLength(0);
+    // A menu tap is the menu's.
+    fresh();
+    const menu = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "interactive",
+        text: undefined,
+        interactive: {
+          type: "button_reply",
+          button_reply: { id: "menu:b1", title: "Stop offers" },
+        },
+      }),
+    });
+    expect(menu).toMatchObject({ optOut: null, menuReply: "b1" });
+    expect(dbHolder.current.calls.set).toHaveLength(0);
+  });
+
+  it("a tap is read for STOP and START only: a 'Track my order' label waits for a person", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: { text: "Track my order", payload: "custom:Track my order" },
+      }),
+      answersOrderQuestions: true,
+      minkMode: "helps",
+    });
+    expect(r).toMatchObject({
+      optOut: null,
+      orderQuestion: false,
+      minkAnswer: null,
+      needsNotify: true,
+    });
+  });
+
+  it("★ a START tap re-opts in only somebody who had opted in before", async () => {
+    const tap = inbound({
+      type: "button",
+      text: undefined,
+      button: { text: "Subscribe", payload: "custom:Subscribe" },
+    });
+    // Never opted in: an ordinary message, nothing written to the contact.
+    const never = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: tap,
+    });
+    expect(never).toMatchObject({ optOut: null, needsNotify: true });
+    expect(dbHolder.current.calls.set).toHaveLength(0);
+
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: "2026-01-01T00:00:00Z",
+            marketing_opt_out_at: "2026-02-01T00:00:00Z",
+          },
+        ],
+        [{ id: "c1", status: "open" }],
+        [],
+      ],
+      returningQueue: [[{ id: "m3" }]],
+    });
+    const back = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: tap,
+    });
+    expect(back).toMatchObject({ optOut: "start", needsNotify: false });
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      marketingOptInAt: expect.any(String),
+      marketingOptOutAt: null,
+    });
+    expect(dbHolder.current.calls.set[1]).toEqual({
+      payload: { buttonPayload: "custom:Subscribe", intent: "start" },
+    });
+  });
+
+  it("★ a conversation already waiting does not ring the bell again", async () => {
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: "u1",
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c1", status: "needs_reply" }],
+        [],
+      ],
+      returningQueue: [[{ id: "m2" }]],
+    });
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ id: "wamid.2" }),
+    });
+    expect(r.inserted).toBe(true);
+    expect(r.needsNotify).toBe(false);
+    expect(r.userId).toBe("u1");
+  });
+
+  it("★ the first message of a brand-new conversation rings the bell", async () => {
+    // The row was just created: it carries the column default needs_reply and
+    // has never held a message. That is not "already waiting".
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c1", status: "needs_reply", last_message_at: null }],
+        [],
+      ],
+      returningQueue: [[{ id: "m1" }]],
+    });
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound(),
+    });
+    expect(r.needsNotify).toBe(true);
+  });
+
+  it("★ an automated first message opens the new conversation rather than leaving it waiting with nothing unread", async () => {
+    const ORDER = "22222222-3333-4444-8555-666666666666";
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c1", status: "needs_reply", last_message_at: null }],
+        [],
+      ],
+      returningQueue: [[{ id: "m1" }]],
+    });
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "button",
+        text: undefined,
+        button: { text: "Confirm order", payload: `cod:confirm:${ORDER}` },
+      }),
+    });
+    expect(r.needsNotify).toBe(false);
+    const bump = sqlText(dbHolder.current.calls.execute[2]);
+    expect(bump).toContain("then 'open' else status end");
+    // automated = true, isNew = true
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toEqual(
+      expect.arrayContaining([true]),
+    );
+  });
+
+  it("★ a redelivered message changes nothing: no bump, no bell", async () => {
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c1", status: "open" }],
+      ],
+      // DO NOTHING matched the UNIQUE: nothing returned.
+      returningQueue: [[]],
+    });
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound(),
+    });
+    expect(r.inserted).toBe(false);
+    expect(r.needsNotify).toBe(false);
+    expect(dbHolder.current.calls.execute).toHaveLength(2);
+  });
+
+  it("STOP marks the contact out of offers and flags the message", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "STOP" } }),
+    });
+    expect(r.inserted).toBe(true);
+    const { calls } = dbHolder.current;
+    expect(calls.set[0]).toMatchObject({
+      marketingOptOutAt: expect.any(String),
+    });
+    expect(calls.set[1]).toEqual({ payload: { intent: "stop" } });
+  });
+
+  it("★ STOP is answered by the system: reported for a reply, never Needs reply or the bell", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "STOP" } }),
+    });
+    expect(r).toMatchObject({
+      optOut: "stop",
+      needsNotify: false,
+      phone: "+919876543210",
+    });
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(true);
+  });
+
+  it("START from somebody who never agreed to offers is an ordinary message", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "start" } }),
+    });
+    expect(r.optOut).toBeNull();
+    expect(r.needsNotify).toBe(true);
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(false);
+  });
+
+  it("★ START re-opts in only somebody who had opted in before", async () => {
+    await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "start" } }),
+    });
+    // Never opted in → nothing written to the contact.
+    expect(dbHolder.current.calls.set).toHaveLength(0);
+
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: "2026-01-01T00:00:00Z",
+            marketing_opt_out_at: "2026-02-01T00:00:00Z",
+          },
+        ],
+        [{ id: "c1", status: "open" }],
+        [],
+      ],
+      returningQueue: [[{ id: "m3" }]],
+    });
+    await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "start" } }),
+    });
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      marketingOptInAt: expect.any(String),
+      marketingOptOutAt: null,
+    });
+  });
+
+  it("★ 'where is my order' from a store that answers it is filed like a COD tap", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "Where is my order?" } }),
+      answersOrderQuestions: true,
+    });
+    expect(r).toMatchObject({
+      orderQuestion: true,
+      needsNotify: false,
+      phone: "+919876543210",
+    });
+    // The bump is told this message was automated: no unread, no Needs reply.
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(true);
+  });
+
+  it("the same question to a store that does not answer it waits for a person", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "Where is my order?" } }),
+    });
+    expect(r.orderQuestion).toBe(false);
+    expect(r.needsNotify).toBe(true);
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(false);
+  });
+
+  it("★ with Mink answering, a question is filed like a COD tap and carries its words", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        text: { body: "Do you have the almond shake in 500ml?" },
+      }),
+      minkMode: "helps",
+    });
+    expect(r).toMatchObject({
+      minkAnswer: "helps",
+      body: "Do you have the almond shake in 500ml?",
+      needsNotify: false,
+    });
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(true);
+  });
+
+  it("★ with Mink drafting, the message waits for a person as before, and Mink is asked", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "Do you deliver to Pune?" } }),
+      minkMode: "drafts",
+    });
+    expect(r).toMatchObject({ minkAnswer: "drafts", needsNotify: true });
+    expect(sqlParamValues(dbHolder.current.calls.execute[2])).toContain(false);
+  });
+
+  it("★ the gate keeps a complaint, a greeting and a non-text message for a person, whatever the mode", async () => {
+    for (const body of ["I want a refund", "hi", "cancel my order"]) {
+      dbHolder.current = makeDbMock({
+        executeQueue: [
+          [
+            {
+              id: "k1",
+              user_id: null,
+              marketing_opt_in_at: null,
+              marketing_opt_out_at: null,
+            },
+          ],
+          [{ id: "c1", status: "open" }],
+          [],
+        ],
+        returningQueue: [[{ id: "m1" }]],
+      });
+      const r = await recordInboundMessage(dbHolder.current.db, {
+        storeId: STORE,
+        value: inbound({ text: { body } }),
+        minkMode: "helps",
+      });
+      expect(r.minkAnswer).toBeNull();
+      expect(r.needsNotify).toBe(true);
+    }
+    // A message the system already answers (an order question) is not Mink's.
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c1", status: "open" }],
+        [],
+      ],
+      returningQueue: [[{ id: "m1" }]],
+    });
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "where is my order" } }),
+      answersOrderQuestions: true,
+      minkMode: "helps",
+    });
+    expect(r).toMatchObject({ orderQuestion: true, minkAnswer: null });
+    // Mink off: nothing changes.
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c1", status: "open" }],
+        [],
+      ],
+      returningQueue: [[{ id: "m1" }]],
+    });
+    const off = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({ text: { body: "Do you deliver to Pune?" } }),
+    });
+    expect(off).toMatchObject({ minkAnswer: null, needsNotify: true });
+  });
+
+  it("★ a welcome is due on a first message, or after 14 quiet days", async () => {
+    const at = (lastMessageAt: string | null) => {
+      dbHolder.current = makeDbMock({
+        executeQueue: [
+          [
+            {
+              id: "k1",
+              user_id: null,
+              marketing_opt_in_at: null,
+              marketing_opt_out_at: null,
+            },
+          ],
+          [{ id: "c1", status: "open", last_message_at: lastMessageAt }],
+          [],
+        ],
+        returningQueue: [[{ id: "m1" }]],
+      });
+      // The message was sent at 1760000000 (2025-10-09T08:53:20Z).
+      return recordInboundMessage(dbHolder.current.db, {
+        storeId: STORE,
+        value: inbound(),
+      });
+    };
+    expect((await at(null)).welcomeEligible).toBe(true);
+    expect((await at("2025-10-08T08:53:20Z")).welcomeEligible).toBe(false);
+    expect((await at("2025-09-24T08:53:20Z")).welcomeEligible).toBe(true);
+    // The conversation read carries the time of the message BEFORE this one.
+    expect(sqlText(dbHolder.current.calls.execute[1])).toContain(
+      "returning id, status, last_message_at",
+    );
+  });
+
+  it("hands media back to be fetched after the commit", async () => {
+    const r = await recordInboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: inbound({
+        type: "image",
+        image: { id: "media-9", mime_type: "image/jpeg" },
+        text: undefined,
+      }),
+    });
+    expect(r.media).toEqual({
+      id: "media-9",
+      mime: "image/jpeg",
+      filename: null,
+    });
+    expect(r.kind).toBe("image");
+    expect(r.preview).toBe("📷 Photo");
+  });
+
+  it("throws on an item that is not a message, so the event is marked with the error", async () => {
+    await expect(
+      recordInboundMessage(dbHolder.current.db, {
+        storeId: STORE,
+        value: { kind: "message", message: { type: "text" } },
+      }),
+    ).rejects.toThrow(/no id or sender/);
+  });
+});
+
+describe("recordEchoMessage", () => {
+  it("files the merchant's phone message as outbound and marks the conversation answered", async () => {
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c1", status: "needs_reply" }],
+        [],
+      ],
+      returningQueue: [[{ id: "m1" }]],
+    });
+    const r = await recordEchoMessage(dbHolder.current.db, {
+      storeId: STORE,
+      value: {
+        kind: "echo",
+        message: {
+          from: "919000000000",
+          to: "919876543210",
+          id: "wamid.e",
+          timestamp: "1760000000",
+          type: "text",
+          text: { body: "Yes" },
+        },
+      },
+    });
+    expect(r).toMatchObject({ inserted: true, needsNotify: false });
+    const { calls } = dbHolder.current;
+    // ★ The window clock does NOT move for an echo.
+    expect(sqlParamValues(calls.execute[0])).toContain(null);
+    expect(calls.values[0]).toMatchObject({
+      direction: "out",
+      source: "phone_app",
+      status: "sent",
+    });
+    expect(sqlText(calls.execute[2])).toContain("status = 'open'");
+    expect(sqlText(calls.execute[2])).not.toContain("unread_count + 1");
+  });
+});
+
+describe("recordOutboundMessage", () => {
+  it("a sent reply opens the conversation and clears unread; a failed one records only itself", async () => {
+    dbHolder.current = makeDbMock({ returningQueue: [[{ id: "m1" }]] });
+    await recordOutboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      conversationId: "c1",
+      source: "dashboard",
+      kind: "text",
+      body: "Hello",
+      providerMessageId: "wamid.o",
+      status: "sent",
+      sentByAdminId: "a1",
+    });
+    expect(sqlText(dbHolder.current.calls.execute[0])).toContain(
+      "unread_count = 0",
+    );
+
+    dbHolder.current = makeDbMock({ returningQueue: [[{ id: "m2" }]] });
+    await recordOutboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      conversationId: "c1",
+      source: "dashboard",
+      kind: "text",
+      body: "Hello",
+      providerMessageId: null,
+      status: "failed",
+      error: "131047",
+    });
+    expect(dbHolder.current.calls.execute).toHaveLength(0);
+  });
+});
+
+describe("recordOutboundMessage: an automatic message", () => {
+  it("★ answers nobody: status and unread are left as they were", async () => {
+    dbHolder.current = makeDbMock({ returningQueue: [[{ id: "m1" }]] });
+    await recordOutboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      conversationId: "c1",
+      source: "automation",
+      kind: "text",
+      body: "Hi, thanks for messaging us!",
+      providerMessageId: "wamid.a",
+      status: "sent",
+    });
+    const text = sqlText(dbHolder.current.calls.execute[0]);
+    expect(text).not.toContain("unread_count");
+    // The status moves only for a brand-new conversation (nothing filed yet,
+    // so the column default `needs_reply` would read as waiting); an existing
+    // one keeps exactly what it had.
+    expect(text).toContain(
+      "status = case when last_message_at is null then 'open' else status end",
+    );
+    expect(text).not.toContain("'needs_reply' end");
+    expect(text).toContain("last_outbound_at");
+    // While the customer waits, the list keeps showing what THEY said.
+    expect(text).toContain(
+      "when status = 'needs_reply' and last_message_at is not null then last_preview",
+    );
+  });
+});
+
+describe("recordOutboundMessage: the menu", () => {
+  it("files a reply-button message with its buttons, as automation", async () => {
+    dbHolder.current = makeDbMock({ returning: [{ id: "o1" }] });
+    const buttons = [{ id: "menu:b1", title: "Check my order" }];
+    await recordOutboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      conversationId: "c1",
+      source: "automation",
+      kind: "interactive",
+      body: "How can we help?",
+      payload: { buttons },
+      providerMessageId: "wamid.9",
+      status: "sent",
+    });
+    expect(dbHolder.current.calls.values[0]).toMatchObject({
+      direction: "out",
+      source: "automation",
+      kind: "interactive",
+      payload: { buttons },
+    });
+  });
+});
+
+describe("recordOutboundMessage: a file and a quote (slice 6)", () => {
+  it("files a photo with our copy's path and the quoted id, and previews it as a photo", async () => {
+    dbHolder.current = makeDbMock({ returning: [{ id: "m-img" }] });
+    const id = await recordOutboundMessage(dbHolder.current.db, {
+      storeId: STORE,
+      conversationId: "c1",
+      source: "dashboard",
+      kind: "image",
+      body: "",
+      providerMessageId: "wamid.img",
+      status: "sent",
+      sentByAdminId: "admin-1",
+      media: {
+        path: "stores/s/whatsapp/c1/out-x.jpg",
+        mime: "image/jpeg",
+        name: "p.jpg",
+      },
+      quotedProviderId: "wamid.in1",
+    });
+    expect(id).toBe("m-img");
+    expect(dbHolder.current.calls.values[0]).toMatchObject({
+      kind: "image",
+      body: null,
+      mediaPath: "stores/s/whatsapp/c1/out-x.jpg",
+      mediaMime: "image/jpeg",
+      mediaName: "p.jpg",
+      quotedProviderId: "wamid.in1",
+    });
+    // The list's preview names the photo, not an empty caption.
+    expect(sqlParamValues(dbHolder.current.calls.execute[0])).toContain(
+      "📷 Photo",
+    );
+  });
+});
+
+describe("fileTemplateInThread (slice 6)", () => {
+  it("★ files a sent order update quietly: a new conversation opens, nothing is unread, the window clock does not move", async () => {
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c-new", status: "needs_reply", last_message_at: null }],
+        [],
+      ],
+      returning: [{ id: "m-t" }],
+    });
+    const id = await fileTemplateInThread(dbHolder.current.db, {
+      storeId: STORE,
+      phone: "+919876543210",
+      templateId: "t1",
+      body: "Thanks for your order ORD1.",
+      providerMessageId: "wamid.t1",
+    });
+    expect(id).toBe("m-t");
+    const { calls } = dbHolder.current;
+    // The contact upsert carries NO inbound time: a send never opens the window.
+    expect(sqlText(calls.execute[0])).toContain(
+      "insert into public.whatsapp_contacts",
+    );
+    expect(sqlParamValues(calls.execute[0])).toContain(null);
+    expect(sqlParamValues(calls.execute[0])).toContain("919876543210");
+    expect(calls.values[0]).toMatchObject({
+      direction: "out",
+      source: "template",
+      kind: "template",
+      body: "Thanks for your order ORD1.",
+      providerMessageId: "wamid.t1",
+      templateId: "t1",
+      status: "sent",
+    });
+    // The quiet bump: a brand-new conversation becomes open (never waiting on
+    // a reply to an order update); an existing one keeps its status and its
+    // unread count, and a waiting one keeps the customer's preview.
+    const bump = sqlText(calls.execute[2]);
+    expect(bump).toContain(
+      "case when last_message_at is null then 'open' else status end",
+    );
+    expect(bump).not.toContain("unread_count = 0");
+    expect(bump).toContain(
+      "case when status = 'needs_reply' and last_message_at is not null then last_preview",
+    );
+  });
+
+  it("★ a chat an order update starts shows the update in the list, not '-'", async () => {
+    // SET reads the row as it was: a new conversation still reads the column
+    // default `needs_reply`, so a status-only rule kept its NULL preview. The
+    // keep-branch now also needs a message on file; the update is the else.
+    dbHolder.current = makeDbMock({
+      executeQueue: [
+        [
+          {
+            id: "k1",
+            user_id: null,
+            marketing_opt_in_at: null,
+            marketing_opt_out_at: null,
+          },
+        ],
+        [{ id: "c-new", status: "needs_reply", last_message_at: null }],
+        [],
+      ],
+      returning: [{ id: "m-t" }],
+    });
+    await fileTemplateInThread(dbHolder.current.db, {
+      storeId: STORE,
+      phone: "+919876543210",
+      templateId: "t1",
+      body: "Your order ORD1 has shipped.\nTrack it here.",
+      providerMessageId: "wamid.t2",
+    });
+    const bump = dbHolder.current.calls.execute[2];
+    expect(sqlText(bump)).toMatch(
+      /last_preview = case when status = 'needs_reply' and last_message_at is not null then last_preview\s+else /,
+    );
+    expect(sqlParamValues(bump)).toContain("Your order ORD1 has shipped.");
+  });
+});
+
+describe("handOverConversation", () => {
+  const run = async (rows: any[]) => {
+    dbHolder.current = makeDbMock({ executeQueue: [rows] });
+    const moved = await handOverConversation(dbHolder.current.db, STORE, "c1");
+    return { moved, text: sqlText(dbHolder.current.calls.execute[0]) };
+  };
+
+  it("needs a reply, one more unread, read under a row lock", async () => {
+    const { moved, text } = await run([{ prior: "open" }]);
+    expect(moved).toBe(true);
+    expect(text).toContain("status = 'needs_reply'");
+    expect(text).toContain("unread_count = c.unread_count + 1");
+    expect(text).toContain("for update");
+  });
+
+  it("★ a conversation already waiting is not announced twice", async () => {
+    expect((await run([{ prior: "needs_reply" }])).moved).toBe(false);
+    expect((await run([])).moved).toBe(false);
+  });
+});
+
+describe("applyStatusToMessage", () => {
+  it("only ever moves an OUTBOUND message forward", async () => {
+    dbHolder.current = makeDbMock();
+    await applyStatusToMessage(dbHolder.current.db, {
+      storeId: STORE,
+      providerMessageId: "wamid.o",
+      status: "delivered",
+    });
+    const text = sqlText(dbHolder.current.calls.execute[0]);
+    expect(text).toContain("direction = 'out'");
+    expect(text).toContain("< ");
+    expect(sqlParamValues(dbHolder.current.calls.execute[0])).toContain(
+      "delivered",
+    );
+  });
+  it("ignores a status it does not know", async () => {
+    dbHolder.current = makeDbMock();
+    await applyStatusToMessage(dbHolder.current.db, {
+      storeId: STORE,
+      providerMessageId: "x",
+      status: "warning",
+    });
+    expect(dbHolder.current.calls.execute).toHaveLength(0);
+  });
+});
+
+describe("storeInboundMedia", () => {
+  it("copies the file under the store's own prefix and points the message at it", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [[{ tokenEnc: "enc", status: "connected" }]],
+    });
+    vi.mocked(getMediaInfo).mockResolvedValue({
+      ok: true,
+      data: {
+        id: "media-9",
+        url: "https://lookaside.fbsbx.com/x",
+        mime_type: "image/jpeg",
+        file_size: 10,
+      },
+    });
+    vi.mocked(downloadMedia).mockResolvedValue({
+      ok: true,
+      data: { bytes: new Uint8Array([1, 2, 3]), contentType: "image/jpeg" },
+    });
+    await storeInboundMedia({
+      storeId: STORE,
+      conversationId: "c1",
+      messageId: "m1",
+      media: { id: "media-9", mime: "image/jpeg", filename: null },
+    });
+    // ★ The PRIVATE bucket: the public one can be listed by anyone.
+    expect(gcsPrivateUploadObject).toHaveBeenCalledWith(
+      `stores/${STORE}/whatsapp/c1/m1.jpg`,
+      expect.any(Uint8Array),
+      "image/jpeg",
+    );
+    expect(dbHolder.current.calls.set.at(-1)).toMatchObject({
+      mediaPath: `stores/${STORE}/whatsapp/c1/m1.jpg`,
+    });
+  });
+
+  it("a failed fetch leaves the message with an error, never a half-path", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [[{ tokenEnc: "enc", status: "connected" }]],
+    });
+    vi.mocked(getMediaInfo).mockResolvedValue({
+      ok: false,
+      outcome: "rejected",
+      error: "gone",
+    });
+    await storeInboundMedia({
+      storeId: STORE,
+      conversationId: "c1",
+      messageId: "m1",
+      media: { id: "media-9", mime: null, filename: null },
+    });
+    expect(gcsPrivateUploadObject).not.toHaveBeenCalledTimes(2);
+    expect(dbHolder.current.calls.set.at(-1)).toMatchObject({
+      error: expect.stringContaining("gone"),
+    });
+  });
+
+  it("inboundMediaPath keeps a safe extension", () => {
+    expect(inboundMediaPath("s", "c", "m", "application/pdf")).toBe(
+      "stores/s/whatsapp/c/m.pdf",
+    );
+    expect(inboundMediaPath("s", "c", "m", "text/html")).toBe(
+      "stores/s/whatsapp/c/m",
+    );
+  });
+});

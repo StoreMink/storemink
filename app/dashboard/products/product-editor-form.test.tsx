@@ -8,18 +8,51 @@ import type { Product } from "./page";
 vi.mock("@/components/ui/image-upload", () => ({
   ImageUpload: ({
     onUploadSuccess,
+    onChooseFromLibrary,
   }: {
     onUploadSuccess: (url: string) => void;
+    onChooseFromLibrary?: () => void;
   }) => (
-    <button
-      type="button"
-      onClick={() => onUploadSuccess("https://example.test/new-photo.webp")}
-    >
-      Upload fixture image
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => onUploadSuccess("https://example.test/new-photo.webp")}
+      >
+        Upload fixture image
+      </button>
+      {onChooseFromLibrary && (
+        <button type="button" onClick={onChooseFromLibrary}>
+          Library option of the upload box
+        </button>
+      )}
+    </>
   ),
 }));
 vi.mock("@/lib/storage/uploads", () => ({ uploadImage: vi.fn() }));
+vi.mock("@/app/actions/media-actions", () => ({
+  getMediaPickerPage: vi.fn(async ({ tab }: { tab: string }) => ({
+    items:
+      tab === "library"
+        ? [
+            {
+              url: "https://example.test/library-a.webp",
+              filename: "library-a.webp",
+              label: "Made by Mink AI",
+              products: [],
+            },
+            {
+              url: "https://example.test/library-b.webp",
+              filename: "library-b.webp",
+              label: null,
+              products: [],
+            },
+          ]
+        : [],
+    total: tab === "library" ? 2 : 0,
+    page: 1,
+    pageSize: 24,
+  })),
+}));
 vi.mock("@/app/actions/product-actions", () => ({
   createProduct: vi.fn(),
   updateProduct: vi.fn(),
@@ -232,5 +265,64 @@ it("updates a single variant primary photo and retains its extra photos", async 
   expect(saved.variants[0].images).toEqual([
     "https://example.test/new-photo.webp",
     "https://example.test/detail.webp",
+  ]);
+});
+
+function renderEditor() {
+  render(
+    <ProductEditorForm
+      product={product}
+      categories={[
+        { id: "category-1", name: "Coffee", slug: "coffee", status: "active" },
+      ]}
+      taxClasses={[]}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Media" }));
+}
+
+// ★ A photo already in the Media Library (or on another product) can be used
+//   without uploading it again.
+it("sets the primary photo from the library and saves it to the single variant", async () => {
+  vi.mocked(updateProduct).mockResolvedValue({ success: true });
+  renderEditor();
+  fireEvent.click(
+    screen.getAllByRole("button", {
+      name: "Library option of the upload box",
+    })[0],
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "library-b.webp" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Use photo" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(updateProduct).toHaveBeenCalled());
+  const saved = vi.mocked(updateProduct).mock.calls.at(-1)![1];
+  expect(saved.image_url).toBe("https://example.test/library-b.webp");
+  expect(saved.variants[0].images[0]).toBe(
+    "https://example.test/library-b.webp",
+  );
+});
+
+it("adds several library photos to the gallery at once", async () => {
+  vi.mocked(updateProduct).mockResolvedValue({ success: true });
+  renderEditor();
+  fireEvent.click(
+    screen.getAllByRole("button", {
+      name: "Library option of the upload box",
+    })[1],
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "library-a.webp" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "library-b.webp" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add 2 photos" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(updateProduct).toHaveBeenCalled());
+  expect(vi.mocked(updateProduct).mock.calls.at(-1)![1].images).toEqual([
+    "https://example.test/library-a.webp",
+    "https://example.test/library-b.webp",
   ]);
 });

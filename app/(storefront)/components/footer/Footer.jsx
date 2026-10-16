@@ -276,7 +276,9 @@ export default function Footer() {
             </div>
           </div>
         </div>
-        <div className={styles.credit}>
+        {/* The page's last line: storefront-theme.css ("Floating controls")
+            pads it clear of what floats over the bottom edge. */}
+        <div className={styles.credit} data-sm="footer-credit">
           {creditLine === "Powered by StoreMink" ? (
             <>
               <strong>Powered by</strong>

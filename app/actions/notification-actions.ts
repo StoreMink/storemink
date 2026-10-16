@@ -101,6 +101,7 @@ import {
 import { validateTemplate } from "@/lib/notifications/template";
 import { sanitizeBlogContent } from "@/lib/sanitize";
 import { storeCanSendSms } from "@/lib/sms/channel";
+import { storeCanSendWhatsApp } from "@/lib/whatsapp/channel";
 import { notificationSettings } from "@/drizzle/schema";
 
 /** Store scope for this request, or null on the platform host. */
@@ -445,6 +446,9 @@ export interface NotificationDetail {
   /** Whether this store has a working SMS connection — so the SMS tab can say
    *  "nothing will send yet" instead of letting someone configure in the dark. */
   smsConnected: boolean;
+  /** Whether this store has a live WhatsApp number — the WhatsApp tab's
+   *  "nothing will send yet" notice, and the guard on its switch. */
+  whatsappConnected: boolean;
   error?: string;
 }
 
@@ -489,6 +493,7 @@ export async function getNotificationDetail(
       audience: await getStoreNotificationAudience(),
       canManage: access.can("notifications", "manage"),
       smsConnected: storeId ? await storeCanSendSms(storeId) : false,
+      whatsappConnected: storeId ? await storeCanSendWhatsApp(storeId) : false,
     };
   } catch (error) {
     logError("notifications: detail read failed", error, { key });
@@ -588,6 +593,28 @@ export async function saveNotificationConfig(
     Record<string, ChannelTemplate>
   > = {};
 
+  // What this notification has SAVED, read only when a refusal is in play.
+  // The console sends the whole channel map on every save, so a switch that
+  // was on while the number worked arrives again as `true` after the
+  // connection lapses; refusing that would lock every other field of this
+  // notification until the merchant switched the channel off. Only switching
+  // a channel ON is refused. Keeping it on stores intent and sends nothing:
+  // the fan-out checks the connection again at send. A failed read counts as
+  // "was off", which refuses, as before.
+  let saved: ResolvedNotification | null | undefined;
+  const wasOn = async (audienceKey: AudienceKey, channelKey: string) => {
+    if (saved === undefined) {
+      saved =
+        (await withService((db) =>
+          resolveNotification(db, storeId, def.key),
+        ).catch(() => null)) ?? null;
+    }
+    const channels = saved?.audiences[audienceKey]?.channels as
+      | Record<string, boolean>
+      | undefined;
+    return channels?.[channelKey] === true;
+  };
+
   for (const audienceKey of AUDIENCE_KEYS) {
     const audienceInput = input.audiences?.[audienceKey];
     if (!audienceInput) continue;
@@ -606,10 +633,31 @@ export async function saveNotificationConfig(
         // `canRequirePrepaid` makes for the prepaid pickup policy (§23): a
         // setting that does nothing is worse than one you cannot set, because
         // the merchant believes they turned it on.
-        if (channelKey === "sms" && on && !(await storeCanSendSms(storeId))) {
+        if (
+          channelKey === "sms" &&
+          on &&
+          !(await storeCanSendSms(storeId)) &&
+          !(await wasOn(audienceKey, channelKey))
+        ) {
           return {
             error:
               "Connect Twilio in Channels first - SMS also needs your DLT sender header and Entity ID.",
+          };
+        }
+        // ★ THE SAME RULE FOR WHATSAPP: a switch that cannot deliver is
+        // refused, not stored. The template's approval is NOT checked here —
+        // Meta decides that on its own clock, and a merchant who switched the
+        // channel on while a template was still in review should not have to
+        // come back and switch it on again; the fan-out reads the status.
+        if (
+          channelKey === "whatsapp" &&
+          on &&
+          !(await storeCanSendWhatsApp(storeId)) &&
+          !(await wasOn(audienceKey, channelKey))
+        ) {
+          return {
+            error:
+              "Connect your WhatsApp number in Channels first. It needs the Basic plan or above.",
           };
         }
         if (!channel.available && on) {

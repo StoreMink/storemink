@@ -80,7 +80,9 @@ Refund twice cannot send the money twice", not "uses an idempotency reference".
 Published Help content is database-backed, so changes go through a new
 forward-only migration in `drizzle/migrations/sql/` — never an edit to an
 applied one. Within that migration, **`replace()` the paragraph that is now
-inaccurate.** Appending or prepending a section is what produced the 36-section
+inaccurate** and set `updated_at = now()` in the same statement: the Help
+index re-embeds a guide only when its timestamp moves, and `npm run help:lint`
+refuses a body write without it. Appending or prepending a section is what produced the 36-section
 guide, and it leaves the old, wrong section in place directly above the new
 one. Dollar-quote the text you are removing as `$old$…$old$` so the lint knows
 it is being deleted rather than published.

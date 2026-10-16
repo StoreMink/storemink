@@ -268,6 +268,13 @@ describe("RETENTION_POLICIES", () => {
     );
   });
 
+  it("keeps a closed WhatsApp conversation two years after its last message", () => {
+    const byTable = new Map(
+      RETENTION_POLICIES.map((policy) => [policy.table, policy.days]),
+    );
+    expect(byTable.get("whatsapp_conversations")).toBe(730);
+  });
+
   it("documents why every window is what it is", () => {
     // The number and its reason live together so they cannot drift apart.
     for (const policy of RETENTION_POLICIES) {

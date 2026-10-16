@@ -9,6 +9,7 @@ import {
   useTransition,
 } from "react";
 import Image from "next/image";
+import { canOptimizeImage } from "@/lib/media/image-hosts";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
@@ -32,6 +33,8 @@ import {
 import { uploadImage } from "@/lib/storage/uploads";
 import { Button } from "@/components/ui/button";
 import { ImageUpload } from "@/components/ui/image-upload";
+import { ImageSourceMenu } from "@/components/ui/image-source-menu";
+import { MediaLibraryPicker } from "../components/media-library-picker";
 import { NumberField } from "@/components/ui/number-field";
 import { slugify } from "@/lib/slug";
 import {
@@ -316,6 +319,7 @@ function VariantGallery({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [picking, setPicking] = useState(false);
 
   const handleFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -342,7 +346,13 @@ function VariantGallery({
           key={url}
           className="relative h-11 w-11 overflow-hidden rounded-md border border-[#e5e7eb]"
         >
-          <Image src={url} alt="" fill className="object-cover" />
+          <Image
+            src={url}
+            unoptimized={!canOptimizeImage(url)}
+            alt=""
+            fill
+            className="object-cover"
+          />
           <button
             type="button"
             onClick={() => onChange(images.filter((u) => u !== url))}
@@ -361,10 +371,12 @@ function VariantGallery({
         onChange={handleFiles}
         className="hidden"
       />
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        title="Add image(s) for this variant"
+      <ImageSourceMenu
+        label="Add image(s) for this variant"
+        align="start"
+        disabled={uploading}
+        onUpload={() => inputRef.current?.click()}
+        onChooseFromLibrary={() => setPicking(true)}
         className="flex h-11 w-11 items-center justify-center rounded-md border border-dashed border-[#d1d5db] bg-[#f9fafb] text-[#9ca3af] hover:border-[#4f46e5] hover:text-[#4f46e5]"
       >
         {uploading ? (
@@ -372,7 +384,17 @@ function VariantGallery({
         ) : (
           <ImageIcon className="h-4 w-4" />
         )}
-      </button>
+      </ImageSourceMenu>
+      {picking && (
+        <MediaLibraryPicker
+          open
+          multiple
+          title="Choose variant photos"
+          exclude={images}
+          onClose={() => setPicking(false)}
+          onSelect={(urls) => onChange([...images, ...urls])}
+        />
+      )}
     </div>
   );
 }
@@ -411,6 +433,10 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
     const [slugTouched, setSlugTouched] = useState(!!product);
     // Active editor tab + the tab a failed save jumped to (marked with a dot).
     const [tab, setTab] = useState<TabId>("basics");
+    // Which photo slot the Media Library picker is filling, if any.
+    const [libraryFor, setLibraryFor] = useState<"primary" | "gallery" | null>(
+      null,
+    );
     const [errorTab, setErrorTab] = useState<TabId | null>(null);
     const descriptionRef = useRef<HTMLTextAreaElement>(null);
     const isEditing = !!product;
@@ -918,11 +944,15 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
               <div className="space-y-4">
                 <div>
                   <label className={labelClass}>Primary image</label>
+                  {/* Keyed by the photo so a pick from the library shows here:
+                      the upload box reads its preview once, on mount. */}
                   <ImageUpload
+                    key={`primary:${form.image_url || "none"}`}
                     folder="product-images"
                     spec={photoSpec}
                     defaultImage={form.image_url || undefined}
                     onUploadSuccess={(url) => set("image_url", url)}
+                    onChooseFromLibrary={() => setLibraryFor("primary")}
                   />
                 </div>
 
@@ -937,6 +967,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                         >
                           <Image
                             src={url}
+                            unoptimized={!canOptimizeImage(url)}
                             alt="Gallery image"
                             fill
                             className="object-cover"
@@ -957,9 +988,36 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                     spec={photoSpec}
                     onUploadSuccess={addGalleryImage}
                     onReplace={replaceGalleryImage}
+                    onChooseFromLibrary={() => setLibraryFor("gallery")}
                   />
                 </div>
               </div>
+              {libraryFor && (
+                <MediaLibraryPicker
+                  open
+                  multiple={libraryFor === "gallery"}
+                  title={
+                    libraryFor === "primary"
+                      ? "Choose the primary image"
+                      : "Add gallery images"
+                  }
+                  exclude={
+                    libraryFor === "primary"
+                      ? form.image_url
+                        ? [form.image_url]
+                        : []
+                      : [form.image_url, ...form.images].filter(Boolean)
+                  }
+                  onClose={() => setLibraryFor(null)}
+                  onSelect={(urls) => {
+                    if (libraryFor === "primary") {
+                      if (urls[0]) set("image_url", urls[0]);
+                    } else {
+                      urls.forEach(addGalleryImage);
+                    }
+                  }}
+                />
+              )}
             </Section>
           </div>
 

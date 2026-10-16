@@ -183,7 +183,10 @@ describe("refineStoreImage", () => {
     expect(result.url).toContain(`stores/${STORE}/refined/`);
     const meta = await sharp(state.uploads[0].bytes).metadata();
     expect([meta.width, meta.height]).toEqual([1200, 1600]);
-    expect(state.inserts[0]).toMatchObject({ storeId: STORE });
+    expect(state.inserts[0]).toMatchObject({
+      storeId: STORE,
+      source: "mink_refined",
+    });
     // Asked for the slot's aspect, with adults allowed (the merchant's own
     // model shot) and prominent people still blocked.
     const config = state.generate.mock.calls[0][0].config;

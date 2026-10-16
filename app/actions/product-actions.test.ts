@@ -33,6 +33,12 @@ vi.mock("@/lib/storage/gcs", () => ({
 vi.mock("@/lib/storage/cleanup", () => ({
   deleteStorageUrls: vi.fn().mockResolvedValue(undefined),
 }));
+// By default nothing else uses a dropped photo, so the sweep sees every one.
+vi.mock("@/lib/media/product-images", () => ({
+  productImagesSafeToDelete: vi.fn(
+    async (_storeId: string, urls: readonly string[]) => [...urls],
+  ),
+}));
 vi.mock("fs/promises", () => {
   const readFile = vi.fn().mockResolvedValue("");
   return { readFile, default: { readFile } };
@@ -80,6 +86,7 @@ import {
 } from "./product-actions";
 import { getManagerIdentity } from "@/app/dashboard/lib/access";
 import { deleteStorageUrls } from "@/lib/storage/cleanup";
+import { productImagesSafeToDelete } from "@/lib/media/product-images";
 import { getBrandSoulForStore } from "@/lib/ai/brand-voice";
 import { consumeAiQuota } from "@/lib/ai/quota";
 import { callGemini } from "@/lib/ai/gemini";
@@ -754,5 +761,58 @@ describe("product image ownership", () => {
     expect(deleteStorageUrls).toHaveBeenCalledWith(expect.any(Array), {
       ownedByStoreId: STORE_ID,
     });
+  });
+
+  // ★★ A photo picked from the Media Library, or shared with another
+  // product, must survive this product letting go of it. The guard decides;
+  // the sweep only ever sees what the guard returns.
+  it("deleting a product keeps a photo the library or another product uses", async () => {
+    const libraryPhoto = `https://storage.googleapis.com/bkt/stores/${STORE_ID}/media/lib.webp`;
+    vi.mocked(productImagesSafeToDelete).mockImplementationOnce(
+      async (_storeId, urls) =>
+        urls.filter((u) => u !== libraryPhoto) as string[],
+    );
+    dbHolder.current = makeDbMock({
+      selectQueue: [[{ image_url: own, images: [libraryPhoto] }], []],
+    });
+    await deleteProduct("p1");
+    expect(productImagesSafeToDelete).toHaveBeenCalledWith(
+      STORE_ID,
+      expect.arrayContaining([own, libraryPhoto]),
+    );
+    const swept = vi.mocked(deleteStorageUrls).mock.calls[0][0];
+    expect(swept).toContain(own);
+    expect(swept).not.toContain(libraryPhoto);
+  });
+
+  it("saving a product sweeps only the dropped photos nothing else uses", async () => {
+    const shared = `https://storage.googleapis.com/bkt/stores/${STORE_ID}/uploads/shared.webp`;
+    const solo = `https://storage.googleapis.com/bkt/stores/${STORE_ID}/uploads/solo.webp`;
+    vi.mocked(productImagesSafeToDelete).mockImplementationOnce(
+      async (_storeId, urls) => urls.filter((u) => u !== shared) as string[],
+    );
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [],
+        [{ published_at: null }],
+        [{ image_url: own, images: [shared, solo] }],
+        [],
+        [{ image_url: own, images: [] }],
+        [],
+      ],
+    });
+    const result = await updateProduct("p1", {
+      ...validForm,
+      image_url: own,
+      images: [],
+    });
+    expect(result.error).toBeUndefined();
+    expect(productImagesSafeToDelete).toHaveBeenCalledWith(
+      STORE_ID,
+      expect.arrayContaining([shared, solo]),
+    );
+    const swept = vi.mocked(deleteStorageUrls).mock.calls[0][0];
+    expect(swept).toContain(solo);
+    expect(swept).not.toContain(shared);
   });
 });

@@ -3,11 +3,14 @@ import {
   GRANDFATHERED,
   GRANDFATHERED_VERIFY,
   GRANDFATHERED_LONG_DASH,
+  GRANDFATHERED_INDEX_TIMESTAMP,
   GRANDFATHERED_WITNESS,
   HELP_LINT_RULES,
+  INDEX_TIMESTAMP_RULE,
   LONG_DASH_CLEANUP_ID,
   extractReplacements,
   lintHelpSql,
+  lintIndexTimestamps,
   lintLongDashes,
   lintManifest,
   lintStaleQuotes,
@@ -518,7 +521,123 @@ describe("help content lint", () => {
       });
       const ids = manifest.default.migrations.map((m) => m.id);
       expect(ids).toContain(LONG_DASH_CLEANUP_ID);
-      expect(GRANDFATHERED_LONG_DASH.size).toBe(0);
+      // Only 0176, applied on staging before the cleanup existed; 0186 takes
+      // its dash back out on production, where it lands after 0184.
+      expect([...GRANDFATHERED_LONG_DASH]).toEqual([
+        "20261008_0176_whatsapp_notify_help",
+      ]);
+      expect(
+        ids.indexOf("20261012_0186_help_no_long_dashes_after_whatsapp"),
+      ).toBeGreaterThan(ids.indexOf("20261008_0176_whatsapp_notify_help"));
     });
+  });
+});
+
+describe("index-timestamp: a body write must move updated_at", () => {
+  const mig = (id, sql) => ({ id, file: `sql/${id}.sql`, sql });
+  const edit = (set) =>
+    `UPDATE public.help_articles SET ${set} WHERE slug = 'g' AND strpos(body, $old$<p>x</p>$old$) > 0;`;
+
+  test("★★ a replace() that leaves the timestamp alone is refused", () => {
+    const findings = lintIndexTimestamps(
+      mig(
+        "x",
+        edit("body = replace(body, $old$<p>x</p>$old$, $new$<p>y</p>$new$)"),
+      ),
+    );
+    expect(findings.map((f) => f.rule)).toEqual([INDEX_TIMESTAMP_RULE.name]);
+    expect(findings[0].sample).toMatch(/^UPDATE public\.help_articles/);
+  });
+
+  test("the same edit with updated_at = now() in the SET clause passes", () => {
+    expect(
+      lintIndexTimestamps(
+        mig(
+          "x",
+          edit(
+            "body = replace(body, $old$<p>x</p>$old$, $new$<p>y</p>$new$), updated_at = now()",
+          ),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("an upsert's DO UPDATE half is held to the same rule; a plain INSERT is not", () => {
+    const insert =
+      "INSERT INTO public.help_articles (slug, body) VALUES ('g', $guide$<p>new guide</p>$guide$)";
+    expect(lintIndexTimestamps(mig("x", `${insert};`))).toEqual([]);
+    expect(
+      lintIndexTimestamps(
+        mig(
+          "x",
+          `${insert} ON CONFLICT (slug) DO UPDATE SET body = excluded.body;`,
+        ),
+      ).map((f) => f.rule),
+    ).toEqual([INDEX_TIMESTAMP_RULE.name]);
+    expect(
+      lintIndexTimestamps(
+        mig(
+          "x",
+          `${insert} ON CONFLICT (slug) DO UPDATE SET body = excluded.body, updated_at = now();`,
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("the word body inside the guide's own copy, or a status-only update, does not count", () => {
+    expect(
+      lintIndexTimestamps(
+        mig(
+          "x",
+          "UPDATE public.help_articles SET status = 'published' WHERE slug = 'g' AND body like '%updated_at = now()%';",
+        ),
+      ),
+    ).toEqual([]);
+    expect(
+      lintIndexTimestamps(
+        mig(
+          "x",
+          "UPDATE public.help_articles SET excerpt = $t$the body = of a guide$t$, updated_at = now() WHERE slug = 'g';",
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("only help_articles writes are inspected, and a marker needs a reason", () => {
+    expect(
+      lintIndexTimestamps(
+        mig("x", "UPDATE public.help_categories SET body = 'x';"),
+      ),
+    ).toEqual([]);
+    const allowed = `-- help-lint: allow index-timestamp — an HTML comment only, nothing a reader or the index sees\n${edit(
+      "body = replace(body, $old$<p>x</p>$old$, $new$<p>y</p>$new$)",
+    )}`;
+    expect(lintIndexTimestamps(mig("x", allowed))).toEqual([]);
+  });
+
+  test("★ the grandfather list is exactly the eight applied WhatsApp edits, and only they violate", async () => {
+    expect([...GRANDFATHERED_INDEX_TIMESTAMP]).toEqual([
+      "20261008_0178_whatsapp_inbox_help",
+      "20261013_0193_whatsapp_cod_confirmation_help",
+      "20261013_0194_whatsapp_stop_reply_help",
+      "20261013_0196_whatsapp_cod_followup_retention_help",
+      "20261013_0198_whatsapp_auto_replies_help",
+      "20261014_0200_whatsapp_menu_buttons_help",
+      "20261014_0201_whatsapp_template_manager_help",
+      "20261014_0203_whatsapp_mink_help",
+    ]);
+    const { loadManifest } = await import("./db-migrations-core.mjs");
+    const manifest = await loadManifest();
+    const ids = new Set(manifest.migrations.map((m) => m.id));
+    for (const id of GRANDFATHERED_INDEX_TIMESTAMP) {
+      expect(ids.has(id), id).toBe(true);
+      // Each one really does violate: a grandfather entry that excuses
+      // nothing is one that outlives its reason.
+      const migration = manifest.migrations.find((m) => m.id === id);
+      expect(
+        lintIndexTimestamps({ ...migration, id: `${id}:ungrandfathered` }),
+        id,
+      ).not.toEqual([]);
+    }
   });
 });
