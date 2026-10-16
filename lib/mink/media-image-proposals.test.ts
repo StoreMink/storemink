@@ -136,6 +136,8 @@ describe("createMinkMediaImageProposal", () => {
           new RegExp(`^stores/${STORE}/mink-generated/`),
         ),
         createdBy: actor.adminId,
+        // Listed in the Library as a picture Mink made.
+        source: "mink_generated",
       }),
     ]);
     expect(proposal.url).toMatch(

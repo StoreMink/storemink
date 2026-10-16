@@ -102,7 +102,7 @@ export function GroupForm({ group }: Props) {
                   key={c}
                   type="button"
                   onClick={() => set("color", c)}
-                  className={`dash-badge ${groupBadgeClass(c)} capitalize ${
+                  className={`dash-badge ${groupBadgeClass(c)} capitalize pointer-coarse:min-h-11 ${
                     form.color === c
                       ? "ring-2 ring-[#4f46e5] ring-offset-1"
                       : "opacity-70"

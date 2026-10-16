@@ -13,6 +13,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { Button } from "./button";
+import { ImageSourceMenu } from "./image-source-menu";
 import { useImageRefineAvailable } from "./image-refine-context";
 import {
   IMAGE_REFINE_CREDITS,
@@ -38,6 +39,12 @@ interface ImageUploadProps {
    * `onUploadSuccess` APPENDS, or accepting a refine would add a second copy.
    */
   onReplace?: (previousUrl: string, nextUrl: string) => void;
+  /**
+   * When set, clicking the empty box asks where the image comes from: the
+   * computer or the Media Library (the caller opens its picker). Without it
+   * the box opens the file dialog straight away, as before.
+   */
+  onChooseFromLibrary?: () => void;
 }
 
 type RefineResult = { url: string; chargedCredits: number };
@@ -49,6 +56,7 @@ export function ImageUpload({
   className = "",
   spec,
   onReplace,
+  onChooseFromLibrary,
 }: ImageUploadProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(
@@ -354,6 +362,8 @@ export function ImageUpload({
   }
 
   // — Empty / idle state —
+  const dropzoneClass = `flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-lg cursor-pointer transition-colors
+          ${error ? "border-destructive/50 bg-destructive/5" : "border-border hover:bg-muted/50"}`;
   return (
     <div className={`w-full ${className}`}>
       <input
@@ -363,20 +373,33 @@ export function ImageUpload({
         accept="image/png, image/jpeg, image/webp, image/svg+xml"
         className="hidden"
       />
-      <div
-        onClick={triggerFileInput}
-        className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-lg cursor-pointer transition-colors
-          ${error ? "border-destructive/50 bg-destructive/5" : "border-border hover:bg-muted/50"}`}
-      >
-        <div className="flex flex-col items-center justify-center pt-5 pb-6 text-muted-foreground">
-          <UploadCloud className="w-8 h-8 mb-3" />
-          <p className="mb-1 text-sm font-medium">
-            <span className="text-primary">Click to upload</span> or drag and
-            drop
-          </p>
-          <p className="text-xs">PNG, JPG, WEBP, SVG (MAX. 5MB)</p>
+      {onChooseFromLibrary ? (
+        <ImageSourceMenu
+          onUpload={triggerFileInput}
+          onChooseFromLibrary={onChooseFromLibrary}
+          className={`${dropzoneClass} w-full`}
+        >
+          <div className="flex flex-col items-center justify-center pt-5 pb-6 text-muted-foreground">
+            <UploadCloud className="w-8 h-8 mb-3" />
+            <p className="mb-1 text-sm font-medium">
+              <span className="text-primary">Add an image</span>
+            </p>
+            <p className="text-xs">From your computer or your Media Library</p>
+            <p className="mt-1 text-xs">PNG, JPG, WEBP, SVG (MAX. 5MB)</p>
+          </div>
+        </ImageSourceMenu>
+      ) : (
+        <div onClick={triggerFileInput} className={dropzoneClass}>
+          <div className="flex flex-col items-center justify-center pt-5 pb-6 text-muted-foreground">
+            <UploadCloud className="w-8 h-8 mb-3" />
+            <p className="mb-1 text-sm font-medium">
+              <span className="text-primary">Click to upload</span> or drag and
+              drop
+            </p>
+            <p className="text-xs">PNG, JPG, WEBP, SVG (MAX. 5MB)</p>
+          </div>
         </div>
-      </div>
+      )}
       {sizeLine}
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
     </div>

@@ -168,6 +168,11 @@ describe("ChatGPT-style Mink attachments", () => {
     );
     await stageImage();
     await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    // ★ Labelled as a chat attachment, so the Media Library does not list it;
+    //   the row is still written, which is what lets Mink use the image.
+    const form = media.upload.mock.calls[0][0] as FormData;
+    expect(form.get("purpose")).toBe("mink_attachment");
+    expect(form.get("file")).toBeInstanceOf(File);
     expect(fetchMock).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());

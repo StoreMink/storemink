@@ -3342,6 +3342,7 @@ a.customer-detail-field:hover {
 /* ---------- Page head ---------- */
 .dashboard-shell .dash-an-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -3358,6 +3359,7 @@ a.customer-detail-field:hover {
 
 .dashboard-shell .dash-an-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -3624,6 +3626,7 @@ a.customer-detail-field:hover {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
   height: 32px;
   padding: 0 12px;
   font-size: 13px;
@@ -7139,6 +7142,35 @@ a.customer-detail-field:hover {
   .dashboard-shell [data-slot="button"],
   .dashboard-shell .dash-row-menu-btn {
     min-height: 44px;
+  }
+  /* Menu choices (row actions, "Upload from computer / Choose from Media
+     Library") are finger targets too. The popup portals out of the page but
+     carries the dashboard-shell class, so this reaches it. */
+  .dashboard-shell [data-slot="dropdown-menu-item"] {
+    min-height: 44px;
+  }
+  /* Analytics: its header buttons and filter pills are drawn at 32px for a
+     mouse; a finger needs 44. */
+  .dashboard-shell .dash-an-btn,
+  .dashboard-shell .dash-an-pill {
+    height: auto;
+    min-height: 44px;
+  }
+  .dashboard-shell .dash-an-btn.is-icon {
+    width: 44px;
+  }
+  /* Toggle switches are drawn 20-24px tall; an invisible layer gives them a
+     44px finger target without changing how they look. Every dashboard switch
+     is position: relative, which this relies on. Only 4px is added sideways,
+     because My notifications puts two switches 24px apart. */
+  .dashboard-shell button[role="switch"]::after {
+    content: "";
+    position: absolute;
+    left: -4px;
+    right: -4px;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
   }
   .dashboard-shell
     :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]):not(

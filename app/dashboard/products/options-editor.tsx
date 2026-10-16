@@ -14,6 +14,8 @@ import {
   type ProductOption,
 } from "@/lib/products/options";
 import { uploadImage } from "@/lib/storage/uploads";
+import { ImageSourceMenu } from "@/components/ui/image-source-menu";
+import { MediaLibraryPicker } from "../components/media-library-picker";
 
 // ---------------------------------------------------------------------------
 // The option axes of a product — "Size: S, M, L", "Colour: Black, Tan" — as a
@@ -317,6 +319,7 @@ function ValuePhotos({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [picking, setPicking] = useState(false);
   const room = MAX_VALUE_IMAGES - images.length;
 
   const upload = async (files: FileList | null) => {
@@ -370,19 +373,33 @@ function ValuePhotos({
           </span>
         ))}
         {room > 0 && (
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
+          <ImageSourceMenu
+            label={`Add photos for ${value}`}
+            align="start"
             disabled={uploading}
+            onUpload={() => inputRef.current?.click()}
+            onChooseFromLibrary={() => setPicking(true)}
             className="flex h-12 w-10 items-center justify-center rounded border border-dashed border-[#d1d5db] text-[#6b7280] hover:border-[#4f46e5] hover:text-[#4f46e5]"
-            aria-label={`Add photos for ${value}`}
           >
             {uploading ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
             ) : (
               <ImagePlus className="h-4 w-4" aria-hidden />
             )}
-          </button>
+          </ImageSourceMenu>
+        )}
+        {picking && (
+          <MediaLibraryPicker
+            open
+            multiple
+            max={room}
+            title={`Choose photos for ${value}`}
+            exclude={images}
+            onClose={() => setPicking(false)}
+            onSelect={(urls) =>
+              onChange([...images, ...urls].slice(0, MAX_VALUE_IMAGES))
+            }
+          />
         )}
         <input
           ref={inputRef}

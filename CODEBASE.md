@@ -92,6 +92,70 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### Media Library: product images, Choose from library, hidden chat attachments (2026-10-16)
+
+Three merchant asks in one change. Schema in migration
+`20261016_0213_media_library_sources`; Help edits in `0214`.
+★★ `media_assets.source` SAYS WHERE A ROW CAME FROM (`lib/media/sources.ts`:
+`upload`, `mink_attachment`, `mink_generated`, `mink_refined`,
+`mink_prepared`; a CHECK holds the list). The Library lists everything except
+`LIBRARY_HIDDEN_SOURCES` (chat attachments and the 1:1/16:9 copies
+`media-preparation.ts` makes), filtered in ONE place, `listLibraryAssets`
+(`lib/media/library.ts`), so the page and the picker cannot disagree. ★ The
+rows are KEPT: Mink's ownership checks (`selectOwnedStorefrontImageUrls`, the
+image reference resolver, `propose_product_create`) accept an image because a
+`media_assets` row says the store owns it, so hiding is a display question,
+never ownership. The composer sends `purpose=mink_attachment` to
+`uploadMediaAsset` (a label, not a permission: the gate, path and ownership are
+identical); each Mink writer sets its own source. 0213 backfills by folder
+(`mink-generated/`, `refined/`, `media/mink-prepared/`) and marks a `media/`
+upload as an attachment only when a user message carries the composer's
+saved-image marker AND the exact `"url":"…"` JSON, so a Library URL the
+merchant merely pasted into chat stays listed. Attachments in conversations
+already pruned stay listed.
+★★ PRODUCT IMAGES ARE DERIVED, NEVER COPIED (`lib/media/product-images.ts`).
+A photo uploaded in the product editor has no `media_assets` row; reading the
+products themselves (primary, gallery, each variant's photos, and the photos
+per colour inside `products.options`) is always right with no backfill.
+`listProductImages` / `countProductImages` feed the Media page's new
+**Product images** tab (`?tab=products`, shown only with Products view; one
+tile per URL, "used by" names, links to the product, no delete there);
+`productImageUsage` names the products using given URLs (Library tile badges,
+the picker, the delete guard).
+★★ THE PRODUCT CLEAN-UP NO LONGER DELETES A FILE SOMETHING ELSE USES.
+`updateProduct`, `deleteProduct` and `bulkDeleteProducts` used to delete every
+image the product stopped using, so a Library image (Mink already put them on
+products) or a photo shared with another product broke in both places.
+`productImagesSafeToDelete` now drops any URL that is a `media_assets` row for
+the store or is used by any product, variant or colour photo in the store,
+asked AFTER the write commits; a read failure keeps every file (an orphan costs
+storage, a deleted file breaks a storefront). Another STORE's reference never
+counts.
+★ `deleteMediaAsset` REFUSES an image a product uses, naming the products, and
+refuses when it cannot tell; the Library's delete dialog says so first.
+★ EVERY ADD-IMAGE CONTROL IN THE PRODUCT EDITOR ASKS WHERE THE PHOTO COMES
+FROM (`components/ui/image-source-menu.tsx`): **Upload from computer** opens
+the file dialog (inside the click, so the browser allows it), **Choose from
+Media Library** opens the picker. `ImageUpload` shows it only when given
+`onChooseFromLibrary`, so every other upload box (categories, Builder, blog)
+still opens the file dialog straight away. Used by the primary image (single
+pick), the gallery (several), each variant's photo strip and each colour's
+photos (`max` = room left). The picker
+(`app/dashboard/components/media-library-picker.tsx`, read through
+`getMediaPickerPage` in media-actions.ts) has two tabs:
+Media Library (needs Media view; file names can name suppliers) and Product
+images (Products view). Already-added photos are shown and not pickable. The
+picker only returns URLs: the product save's `firstForeignStoreImageUrl` stays
+the boundary. Mount it only while open. The primary `ImageUpload` is keyed by
+the URL, because it reads its preview once on mount.
+Tests: `media-actions.test.ts`, `product-actions.test.ts` (the sweep guard),
+`media-library-picker.test.tsx`, `product-editor-form.test.tsx`, the composer
+test (the purpose label), and the opt-in rollback-only
+`lib/media/media-library.local.test.ts` (`MEDIA_LIBRARY_LOCAL_TEST=1`, local
+DB on 5544), which applies 0213 and runs every new query. ⚠ Not built: a
+retention sweep for hidden chat attachments (their files stay in storage), and
+the same in-use guard for category, blog and Builder image clean-ups.
+
 ### WhatsApp Commerce: PR #283 review fixes (2026-10-16)
 
 The fixes for the review of the WhatsApp branch (PR #283). Schema in migration
@@ -2743,6 +2807,24 @@ settings** panels, a wrapping toolbar and a phone-width writing surface without
 remounting the editor. Publish/save still use the existing flows and permissions.
 Help wording is updated in forward migration `20261004_0156_dashboard_mobile`.
 
+**Phone sweep (2026-10-16).** Every merchant dashboard route was measured at
+390px in Chrome (layout overflow, offenders, targets under 24px). Fixes, all
+presentation only: the phone block of `dashboard.css` gives dropdown-menu items,
+the analytics header buttons and filter pills 44px targets, and every
+`button[role="switch"]` an invisible 44px-tall `::after` hit area (each switch is
+`position: relative`; only 4px is added sideways because My notifications puts
+two switches 24px apart). `.dash-an-head` / `.dash-an-actions` wrap and
+`.dash-an-btn` does not break mid-label. Domain settings' DNS rows give Name and
+Value a 12rem floor, so on a phone Value drops onto its own line, and nothing in
+them truncates (the merchant types these at a registrar); on touch screens the
+copy icon stays visible and each copy line is 44px tall. Customer-group colour
+chips are 44px tall on touch screens. Every product thumbnail that can come from
+an old host passes `unoptimized={!canOptimizeImage(url)}`, because next/image
+throws on a host outside `remotePatterns` (a store with legacy Supabase photos
+took the Media Library's Product images tab down). ⚠ Found, not fixed: on
+`http://*.localtest.me` (not a secure context) `crypto.randomUUID` is undefined,
+so `/dashboard/mink-memories` crashes in local dev; production is HTTPS.
+
 ### Simple Mink Website Builder application (2026-09-13)
 
 Mink's Website Builder layout, design and existing custom-code proposal cards
@@ -3636,7 +3718,10 @@ wholesip/
 │   │   ├── categories/ colors/ blogs/ media/   # content management (media/ = the
 │   │   │                      # per-store Media Library: confirm-first upload + grid +
 │   │   │                      # view + copy-URL + delete (media_assets row + GCS object),
-│   │   │                      # via app/actions/media-actions.ts).
+│   │   │                      # via app/actions/media-actions.ts; a Library tab that
+│   │   │                      # hides Mink chat attachments and a Product images tab
+│   │   │                      # derived from the products; an image a product uses
+│   │   │                      # cannot be deleted. See "Media Library" above).
 │   │   │                      # ★ colors/ is RETIRED (2026-10-06): it only redirects to
 │   │   │                      # Products. Card colours had no visible effect once every
 │   │   │                      # card style painted its own background, so the editor
@@ -4908,6 +4993,16 @@ wholesip/
 │   │                          # microsecond precision for exact optimistic checkpoints.
 │   ├── media/image-specs.ts   # ★ the exact size every dashboard image slot renders at;
 │   │                          # read by ImageUpload and by Refine with Mink AI
+│   ├── media/sources.ts       # where a media_assets row came from + which the Library hides
+│   │                          # (the "computer or Media Library" add-image menu is
+│   │                          # components/ui/image-source-menu.tsx)
+│   ├── media/library-types.ts # client-safe shapes (MediaAsset, ProductImageItem, picker)
+│   ├── media/library.ts       # server-only Library listing (hidden sources filtered here)
+│   ├── media/product-images.ts # server-only: photos products use (derived), usage by URL,
+│   │                          # and the "still in use" guard for product image clean-up
+│   ├── media/image-hosts.ts   # client-safe canOptimizeImage(): may next/image optimise
+│   │                          # this URL? Mirrors next.config.ts remotePatterns (a test
+│   │                          # reads that file); any other host renders `unoptimized`
 │   ├── mink/                  # ★ Dashboard agent foundation (docs/mink-ai-dashboard-plan.md):
 │   │                          # default-on global + fail-closed invited-store access;
 │   │                          # system-prompt.ts, image-prompt.ts and whatsapp-prompt.ts
@@ -5362,6 +5457,7 @@ wholesip/
 │   │                          # pattern). Worker-only: RLS on, NO policies
 │   ├── media_assets.sql       # ★ per-store Media Library table (RLS is_store_admin; NOT
 │   │                          # public — object URLs are public, the listing is admin-only)
+│   │                          # `source` column added by migration 20261016_0213
 │   ├── invoicing.sql          # ★ tax_classes + products.tax_class_id + order_items tax
 │   │                          # cols + orders.tax_inclusive + store_billing_settings — §17
 │   ├── billing_01_foundation.sql   # ★ §34 platform_billing_settings (operator GST
@@ -5749,7 +5845,10 @@ wholesip/
 │                              # answer, orders.whatsapp_updates, the number PIN
 │                              # table and the retention skip mark. 0212 edits
 │                              # the four WhatsApp guides in place for them.
-│                              # Next free: 0213.
+│                              # 0213 adds media_assets.source (Library hides Mink chat
+│                              # attachments and resized copies) with a backfill;
+│                              # 0214 edits the Media, product images and Mink guides.
+│                              # Next free: 0215.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

@@ -7925,6 +7925,80 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261016_0213_media_library_sources",
+      "description": "media_assets.source records where a Media Library row came from (upload, Mink chat attachment, generated, refined, prepared copy) so the Library can hide chat attachments and resized copies while every row still proves the store owns the image; existing rows backfilled from their folder and, for chat attachments, from the sent message",
+      "file": "sql/20261016_0213_media_library_sources.sql",
+      "transaction": true,
+      "requires": ["20261016_0212_whatsapp_review_fixes_help"],
+      "verify": {
+        "columns": ["media_assets.source"],
+        "constraints": ["media_assets_source_check"],
+        "queries": [
+          {
+            "name": "the source vocabulary admits chat attachments",
+            "sql": "select count(*)::text from pg_constraint where conname = 'media_assets_source_check' and pg_get_constraintdef(oid) like '%mink_attachment%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "no generated picture is left labelled as an upload",
+            "sql": "select count(*)::text from public.media_assets where source = 'upload' and path like 'stores/%/mink-generated/%'",
+            "equals": "0"
+          },
+          {
+            "name": "no refined photo is left labelled as an upload",
+            "sql": "select count(*)::text from public.media_assets where source = 'upload' and path like 'stores/%/refined/%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261016_0214_media_library_product_images_help",
+      "description": "The Media guide, the product images guide and one sentence of the Mink guide edited in place: what the Library and Product images tabs show, the product editor's choice between uploading and the Media Library, an image a product uses cannot be deleted, and attached chat images are not listed in the Library",
+      "file": "sql/20261016_0214_media_library_product_images_help.sql",
+      "transaction": true,
+      "requires": ["20261016_0213_media_library_sources"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the Media guide picks images from the product editor",
+            "sql": "select count(*)::text from public.help_articles where slug = 'upload-and-manage-store-media' and body like '%pick the image straight from the product editor: select the image box%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Media guide explains the two tabs",
+            "sql": "select count(*)::text from public.help_articles where slug = 'upload-and-manage-store-media' and body like '%<h2>What the library shows</h2>%' and body like '%The <strong>Product images</strong> tab lists every photo your products use%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Media guide says a product image cannot be deleted",
+            "sql": "select count(*)::text from public.help_articles where slug = 'upload-and-manage-store-media' and body like '%An image that a product still uses cannot be deleted%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product images guide explains the two ways to add a photo",
+            "sql": "select count(*)::text from public.help_articles where slug = 'add-product-images-and-variants' and body like '%Selecting an image box asks where the photo comes from: <strong>Upload from computer</strong>, or <strong>Choose from Media Library</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product images guide says a library photo stays when removed",
+            "sql": "select count(*)::text from public.help_articles where slug = 'add-product-images-and-variants' and body like '%or that another product also uses, stays where it is%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Mink guide says attached images are not listed in the Library",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and body like '%Attached images are not listed in your Media Library%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

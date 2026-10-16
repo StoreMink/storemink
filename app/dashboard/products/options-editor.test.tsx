@@ -1,8 +1,26 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { OptionsEditor } from "./options-editor";
 import type { ProductOption } from "@/lib/products/options";
+
+vi.mock("@/lib/storage/uploads", () => ({ uploadImage: vi.fn() }));
+vi.mock("@/app/actions/media-actions", () => ({
+  getMediaPickerPage: vi.fn(async () => ({
+    items: [
+      {
+        url: "https://example.test/black-front.webp",
+        filename: "black-front.webp",
+        label: null,
+        products: [],
+      },
+    ],
+    total: 1,
+    page: 1,
+    pageSize: 24,
+  })),
+}));
 
 function renderEditor(options: ProductOption[], legacyNames: string[] = []) {
   const onChange = vi.fn();
@@ -86,5 +104,38 @@ describe("OptionsEditor", () => {
     expect(
       screen.queryByRole("button", { name: /add another option/i }),
     ).toBeNull();
+  });
+
+  // ★ One add tile per colour, asking where the photos come from.
+  it("adds a colour's photos from the Media Library through the add tile", async () => {
+    const user = userEvent.setup();
+    const onChange = renderEditor([
+      {
+        name: "Colour",
+        values: ["Black"],
+        swatches: { Black: "#000000" },
+      },
+    ]);
+    await user.click(
+      screen.getByRole("button", { name: "Add photos for Black" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Upload from computer" }),
+    ).toBeTruthy();
+    await user.click(
+      screen.getByRole("menuitem", { name: "Choose from Media Library" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "black-front.webp" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Add 1 photo" }));
+    expect(onChange).toHaveBeenLastCalledWith([
+      {
+        name: "Colour",
+        values: ["Black"],
+        swatches: { Black: "#000000" },
+        images: { Black: ["https://example.test/black-front.webp"] },
+      },
+    ]);
   });
 });

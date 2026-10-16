@@ -7,6 +7,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import Image from "next/image";
+import { canOptimizeImage } from "@/lib/media/image-hosts";
 import {
   Eye,
   ImageIcon,
@@ -423,6 +424,7 @@ export function ProductsManagementView({
                       <div className="dash-thumb">
                         <Image
                           src={p.image_url}
+                          unoptimized={!canOptimizeImage(p.image_url)}
                           alt={p.name}
                           fill
                           sizes="48px"

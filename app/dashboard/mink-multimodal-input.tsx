@@ -5,8 +5,8 @@ import { FileText, Loader2, Mic, Plus, Upload, X } from "lucide-react";
 import {
   deleteMediaAsset,
   uploadMediaAsset,
-  type MediaAsset,
 } from "@/app/actions/media-actions";
+import type { MediaAsset } from "@/lib/media/library-types";
 import {
   addReviewedMinkDocument,
   decodeMinkDocument,
@@ -321,6 +321,9 @@ export function MinkMultimodalInput({
     const promise = (async () => {
       const form = new FormData();
       form.set("file", attachment.file);
+      // Kept so Mink can use it, but not listed in the Media Library: it was
+      // handed to Mink, not chosen for the library.
+      form.set("purpose", "mink_attachment");
       const result = await uploadMediaAsset(form);
       if (result.error || !result.asset)
         throw new Error(result.error || "Could not upload this image.");

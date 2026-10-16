@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ImageUpload } from "./image-upload";
 import { ImageRefineProvider } from "./image-refine-context";
 
@@ -33,6 +34,61 @@ describe("ImageUpload size guidance", () => {
     Object.defineProperty(img, "naturalHeight", { value: 1080 });
     fireEvent.load(img);
     expect(screen.getByText(/crop about 25% from the sides/)).toBeTruthy();
+  });
+});
+
+describe("Where the image comes from", () => {
+  // ★ With a library to pick from, the empty box asks first instead of
+  //   opening the file dialog.
+  it("asks whether to upload or choose from the Media Library", async () => {
+    const user = userEvent.setup();
+    const onChooseFromLibrary = vi.fn();
+    render(
+      <ImageUpload
+        spec="product"
+        onUploadSuccess={() => {}}
+        onChooseFromLibrary={onChooseFromLibrary}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /Add an image/ }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Upload from computer" }),
+    ).toBeTruthy();
+    await user.click(
+      screen.getByRole("menuitem", { name: "Choose from Media Library" }),
+    );
+    expect(onChooseFromLibrary).toHaveBeenCalledOnce();
+  });
+
+  it("opens the file dialog when the computer is chosen", async () => {
+    const user = userEvent.setup();
+    const click = vi
+      .spyOn(HTMLInputElement.prototype, "click")
+      .mockImplementation(() => {});
+    const onChooseFromLibrary = vi.fn();
+    const { container } = render(
+      <ImageUpload
+        spec="product"
+        onUploadSuccess={() => {}}
+        onChooseFromLibrary={onChooseFromLibrary}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /Add an image/ }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Upload from computer" }),
+    );
+    expect(click).toHaveBeenCalledOnce();
+    expect(click.mock.contexts[0]).toBe(
+      container.querySelector('input[type="file"]'),
+    );
+    expect(onChooseFromLibrary).not.toHaveBeenCalled();
+    click.mockRestore();
+  });
+
+  it("keeps the plain upload box where there is no library to offer", () => {
+    render(<ImageUpload spec="category" onUploadSuccess={() => {}} />);
+    expect(screen.getByText("Click to upload")).toBeTruthy();
+    expect(screen.queryByText("Add an image")).toBeNull();
   });
 });
 

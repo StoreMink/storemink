@@ -4857,6 +4857,9 @@ export const storeMenus = pgTable(
 // Per-store media library (images uploaded via /dashboard/media). See
 // supabase/media_assets.sql. The object URL is public (public GCS bucket); the
 // listing is admin-only (RLS: is_store_admin).
+// `source` says where a row came from (lib/media/sources.ts); the Library page
+// hides chat attachments and resized copies, but every row still proves the
+// store owns the image (migration 20261016_0213).
 export const mediaAssets = pgTable(
   "media_assets",
   {
@@ -4868,11 +4871,16 @@ export const mediaAssets = pgTable(
     contentType: text("content_type").default("").notNull(),
     sizeBytes: integer("size_bytes").default(0).notNull(),
     createdBy: text("created_by"),
+    source: text().default("upload").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
   },
   (table) => [
+    check(
+      "media_assets_source_check",
+      sql`source = ANY (ARRAY['upload'::text, 'mink_attachment'::text, 'mink_generated'::text, 'mink_refined'::text, 'mink_prepared'::text])`,
+    ),
     index("media_assets_store_created_idx").using(
       "btree",
       table.storeId.asc().nullsLast().op("uuid_ops"),

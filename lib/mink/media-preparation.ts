@@ -282,6 +282,9 @@ function recordPreparedImage(
         contentType: "image/webp",
         sizeBytes: input.sizeBytes,
         createdBy: actor.adminId,
+        // Listed under Product images once a product uses it; the Library
+        // already shows the original it was made from.
+        source: "mink_prepared",
       })
       .returning({ url: mediaAssets.url });
     return { url: inserted.url, prepared: true, createdPath: input.path };
