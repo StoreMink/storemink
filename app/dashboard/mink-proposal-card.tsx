@@ -76,6 +76,11 @@ import {
 } from "@/lib/mink/order-status-action-types";
 import type { MinkArtifact } from "@/lib/mink/types";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
+import { MinkLink } from "./mink-link";
+import {
+  minkProductPrefillPath,
+  storeMinkProductPrefill,
+} from "@/lib/mink/product-prefill";
 
 type Proposal = Extract<MinkArtifact, { type: "proposal" }>;
 type MinkActionApproval =
@@ -483,12 +488,12 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
               : "Not saved"}
           </span>
         </div>
-        <a
+        <MinkLink
           href={draft.destinationPath}
           className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-[#5b3fd0] hover:underline"
         >
           {draft.destinationLabel} <ExternalLink className="h-2.5 w-2.5" />
-        </a>
+        </MinkLink>
       </header>
 
       <div className="space-y-3 p-3">
@@ -613,9 +618,28 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
               <ShieldCheck className="h-3 w-3 text-emerald-600" />
             )}
             {draft.chargedCredits > 0
-              ? `${draft.chargedCredits} credits charged at proposal creation`
-              : "Included in unlimited plan"}
+              ? `${draft.chargedCredits} Mink credit${draft.chargedCredits === 1 ? "" : "s"} used`
+              : "Included in your plan"}
           </span>
+          {draft.kind === "product_create" ? (
+            <MinkLink
+              href={minkProductPrefillPath()}
+              onClick={() =>
+                storeMinkProductPrefill({
+                  name: content.name,
+                  description: content.description,
+                  seoTitle: content.seo_title,
+                  seoDescription: content.seo_description,
+                  basePrice: Number(content.base_price),
+                  sellingPrice: Number(content.selling_price),
+                })
+              }
+              className="inline-flex items-center gap-1 rounded-lg border border-[#ddd6f5] bg-white px-3 py-2 text-[11px] font-semibold text-[#5b3fd0] hover:bg-[#f8f5ff]"
+            >
+              Open in product form
+              <ExternalLink className="h-3 w-3" />
+            </MinkLink>
+          ) : null}
           <button
             type="button"
             onClick={save}
@@ -820,9 +844,9 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
                   ) : null}
                   {campaignOptions ? (
                     <span className="mt-1 block text-[9px] leading-4 text-[#82798d]">
-                      Phase 5E supports at most{" "}
+                      A campaign can reach at most{" "}
                       {campaignOptions.maxRecipients.toLocaleString("en-IN")}{" "}
-                      source customers per campaign.
+                      customers.
                     </span>
                   ) : null}
                 </div>
@@ -988,7 +1012,7 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
                       {actionSuccessMessage(actionResult.approval)}
                     </div>
                     {!actionRemovedResource(actionResult.approval) ? (
-                      <a
+                      <MinkLink
                         href={
                           actionResource(actionResult.approval).dashboardPath
                         }
@@ -996,7 +1020,7 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
                       >
                         Open {actionResource(actionResult.approval).label}
                         <ExternalLink className="h-2.5 w-2.5" />
-                      </a>
+                      </MinkLink>
                     ) : (
                       <div className="mt-1">The unused record was removed.</div>
                     )}
@@ -1023,26 +1047,9 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
           </div>
         ) : null}
 
-        <p className="rounded-lg bg-[#fff9e8] px-2.5 py-2 text-[10px] leading-4 text-[#735b17]">
-          Saving this private draft never changes a dashboard record, publishes
-          content or contacts a customer. When Mink AI is enabled, a
-          product-text action changes only the exact fields shown after you
-          approve its preview. Product creation stays draft-only, coupon actions
-          stay disabled and hidden, and customer-group membership is never
-          changed. Single-SKU inventory proposals affect one exact tracked item
-          and location. Bulk proposals are capped at 20 lines, reviewed line by
-          line and applied atomically only after approval. Order-status
-          proposals are one exact delivery order and one forward step; they
-          never cancel, refund, alter payment or contact a customer. Blog
-          proposals can publish immediately or create one scheduled job only
-          after an exact, expiring preview is approved. Scheduled jobs pause
-          when Mink drafting or the publication kill switch is disabled, and
-          conflict instead of overwriting a changed blog. Coupon-email campaigns
-          use their own switch, snapshot one exact eligible audience, show a
-          non-PII branded sample and require a final confirmation before any
-          recipient is queued. Campaign delivery has no automatic rollback. Bulk
-          prices require exact SKUs, show every before-and-after value and apply
-          all lines atomically; they also have no automatic rollback.
+        <p className="text-[10px] leading-4 text-[#8c8798]">
+          Nothing in your store changes until you approve a preview.
+          {proposalRollbackNote(draft.kind)}
         </p>
       </div>
     </section>
@@ -1345,12 +1352,51 @@ function actionResource(approval: MinkActionApproval) {
   };
 }
 
+/**
+ * The one sentence under every proposal card about undoing it. It replaced a
+ * twenty-line paragraph that restated each action's rules in engineering
+ * words; the card already names the action, its scope and its permission.
+ */
+export function proposalRollbackNote(kind: MinkDraftKind): string {
+  if (
+    kind === "inventory_adjustment" ||
+    kind === "bulk_inventory_adjustment" ||
+    kind === "bulk_price_update" ||
+    kind === "order_status_transition"
+  ) {
+    return " This change cannot be rolled back from here; correct it with a new proposal or in the dashboard.";
+  }
+  if (kind === "coupon_email") {
+    return " A queued campaign cannot be recalled.";
+  }
+  if (kind === "blog") {
+    return " A published post can be unpublished from Blogs.";
+  }
+  if (
+    kind === "product_description" ||
+    kind === "product_seo" ||
+    kind === "product_images" ||
+    kind === "product_create" ||
+    kind === "coupon_create" ||
+    kind === "coupon_update" ||
+    kind === "customer_group_create" ||
+    kind === "customer_group_update" ||
+    kind === "category_create" ||
+    kind === "category_update"
+  ) {
+    return " You can roll an approved change back from this card while nothing else has changed it.";
+  }
+  return "";
+}
+
 function actionHeading(kind: MinkDraftKind) {
   if (kind === "product_create") return "Create an unpublished draft product";
   if (kind === "coupon_create") return "Create a disabled, hidden coupon";
   if (kind === "coupon_update") return "Update disabled coupon terms";
   if (kind === "customer_group_create") return "Create customer-group metadata";
   if (kind === "customer_group_update") return "Update customer-group metadata";
+  if (kind === "category_create") return "Create a category";
+  if (kind === "category_update") return "Update category details";
   if (kind === "inventory_adjustment") return "Adjust one SKU at one location";
   if (kind === "bulk_inventory_adjustment") {
     return "Adjust up to 20 SKU/location lines atomically";
@@ -1368,33 +1414,36 @@ function actionHeading(kind: MinkDraftKind) {
 
 function actionScope(kind: MinkDraftKind) {
   if (kind === "product_create") {
-    return "Requires Products Manage and its operator kill switch. The product stays draft, untracked and without variants, stock, images or category.";
+    return "Needs the Products permission. The product is created as a draft with no variants, stock, images or category until you edit it.";
   }
   if (kind === "coupon_create" || kind === "coupon_update") {
-    return "Requires Marketing Manage and its operator kill switch. Activation, storefront visibility, usage and customer-group audience are outside this action.";
+    return "Needs the Marketing permission. The coupon stays switched off and hidden; you turn it on, show it and choose its audience from Offers.";
   }
   if (kind === "customer_group_create" || kind === "customer_group_update") {
-    return "Requires Users Manage and its operator kill switch. Only name, description and colour can change; membership is outside this action.";
+    return "Needs the Customers permission. Only the group's name, description and colour change; membership never does.";
+  }
+  if (kind === "category_create" || kind === "category_update") {
+    return "Needs the Categories permission. Only the category's name, URL slug, description, image and visibility change; the products in it never do.";
   }
   if (kind === "inventory_adjustment") {
-    return "Requires Inventory Manage and its independent operator kill switch. SKU, active location, signed quantity, resulting stock, reason and note are rechecked at approval; bulk changes are outside this action.";
+    return "Needs the Inventory permission. The SKU, location, quantity, resulting stock, reason and note are checked again when you approve.";
   }
   if (kind === "bulk_inventory_adjustment") {
-    return "Requires Inventory Manage and a separate bulk-action kill switch. Every exact line is revalidated; one invalid or stale line prevents the entire batch from changing stock.";
+    return "Needs the Inventory permission. Every line is checked again when you approve; one stale line stops the whole batch, so stock never half-changes.";
   }
   if (kind === "bulk_price_update") {
-    return "Requires Products Manage and a separate bulk-pricing kill switch. Every exact SKU and complete price tuple is revalidated; one invalid or stale line prevents the entire set from changing. Existing orders retain saved prices.";
+    return "Needs the Products permission. Every SKU and price is checked again when you approve; one stale line stops the whole set. Existing orders keep the prices they were placed at.";
   }
   if (kind === "order_status_transition") {
-    return "Requires Orders Manage and its independent operator kill switch. Only pending → processing → shipped → delivered is supported, one exact step at a time; payment, cancellation, pickup, POS and customer contact stay outside this action.";
+    return "Needs the Orders permission. Moves one delivery order forward by one step (pending, processing, shipped, delivered). Payment, cancellation, pickup and customer contact are not touched.";
   }
   if (kind === "blog") {
-    return "Requires Blogs Manage and an independent publication kill switch. Only this exact saved title, excerpt, body and SEO text can become one new blog; raw HTML, automatic links and model-side execution are blocked.";
+    return "Needs the Blogs permission. Exactly this saved title, excerpt, body and SEO text become one new post.";
   }
   if (kind === "coupon_email") {
-    return "Requires Marketing Manage, Pro campaign access and an independent campaign switch. The server snapshots the exact unsuppressed audience, sender, coupon and saved copy; Gemini cannot reach the send endpoint.";
+    return "Needs the Marketing permission and a Pro plan. The audience, sender, coupon and copy are frozen when you confirm, and only then is anything queued.";
   }
-  return "Requires Products Manage permission and a separate operator kill switch. Price, stock, status and publishing are outside this action.";
+  return "Needs the Products permission. Price, stock, status and publishing are not touched.";
 }
 
 function actionSuccessMessage(approval: MinkActionApproval) {

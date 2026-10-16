@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from "react";
+import { MinkLink } from "./mink-link";
 
 /**
  * Render Mink's safe, presentation-focused Markdown subset without accepting
@@ -237,7 +238,7 @@ export function renderMinkInlineMarkdown(
       const href = safeMinkAnswerHref(link[2]);
       nodes.push(
         href ? (
-          <a
+          <MinkLink
             key={`${keyPrefix}-link-${tokenIndex}`}
             href={href}
             {...(href.startsWith("/")
@@ -249,7 +250,7 @@ export function renderMinkInlineMarkdown(
               link[1],
               `${keyPrefix}-label-${tokenIndex}`,
             )}
-          </a>
+          </MinkLink>
         ) : (
           <Fragment key={`${keyPrefix}-unsafe-link-${tokenIndex}`}>
             {link[1]}

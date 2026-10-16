@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { and, count, desc, eq, ne, sql } from "drizzle-orm";
 import { can } from "@/app/dashboard/lib/permissions";
 import {
+  categories,
   couponUserGroups,
   coupons,
   minkActionApprovals,
@@ -521,6 +522,54 @@ async function writeResource(
       detail: "Approved customer-group metadata created without members.",
     };
   }
+  if (approval.toolName === "create_category") {
+    await assertOwnedProductImage(
+      db,
+      actor.storeId,
+      approval.toolName,
+      after.image_url,
+    );
+    // ★ The slug is unique per store (categories_store_slug_key), so the
+    // same advisory lock the product path takes keeps two approvals of one
+    // slug from racing past the uniqueness read below.
+    await db.execute(sql`
+      select pg_advisory_xact_lock(
+        hashtextextended(${`mink-category-slug:${actor.storeId}:${after.slug}`}, 0)
+      )
+    `);
+    await assertNoUniqueConflict(
+      db,
+      actor.storeId,
+      approval.toolName,
+      after,
+      null,
+    );
+    const [row] = await db
+      .insert(categories)
+      .values({
+        name: required(after.name),
+        slug: required(after.slug),
+        description: nullable(after.description),
+        imageUrl: nullable(after.image_url),
+        status: required(after.status),
+        storeId: actor.storeId,
+      })
+      .returning({
+        id: categories.id,
+        name: categories.name,
+        version: categories.updatedAt,
+      });
+    if (!row) throw new Error("Category insert returned no row");
+    return {
+      id: row.id,
+      version: row.version,
+      label: row.name,
+      detail:
+        after.status === "active"
+          ? "Approved category created and visible on the storefront."
+          : "Approved category created, hidden from the storefront.",
+    };
+  }
   if (!current || !approval.resourceVersion) throw invalidApproval();
   const now = new Date().toISOString();
   if (approval.toolName === "update_coupon") {
@@ -549,6 +598,44 @@ async function writeResource(
       label: `Coupon ${row.code}`,
       detail:
         "Approved disabled-coupon terms updated; activation and audience were unchanged.",
+    };
+  }
+  if (approval.toolName === "update_category") {
+    await assertOwnedProductImage(
+      db,
+      actor.storeId,
+      approval.toolName,
+      after.image_url,
+    );
+    const [row] = await db
+      .update(categories)
+      .set({
+        name: required(after.name),
+        slug: required(after.slug),
+        description: nullable(after.description),
+        imageUrl: nullable(after.image_url),
+        status: required(after.status),
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(categories.id, current.id),
+          eq(categories.storeId, actor.storeId),
+          eq(categories.updatedAt, approval.resourceVersion),
+        ),
+      )
+      .returning({
+        id: categories.id,
+        name: categories.name,
+        version: categories.updatedAt,
+      });
+    if (!row) throw resourceConflict("category", "during execution");
+    return {
+      id: row.id,
+      version: row.version,
+      label: row.name,
+      detail:
+        "Approved category details updated; the products in it were unchanged.",
     };
   }
   const [row] = await db
@@ -869,6 +956,23 @@ async function deleteCreatedResource(
       )
       .returning({ id: userGroups.id });
     if (!rows[0]) throw resourceConflict("customer_group", "during rollback");
+  } else if (approval.toolName === "create_category") {
+    const rows = await db
+      .delete(categories)
+      .where(
+        and(
+          eq(categories.id, current.id),
+          eq(categories.storeId, approval.storeId),
+          eq(categories.updatedAt, approval.resourceVersion),
+          // ★ Re-checked inside the delete: a product filed under the category
+          // between the read and the write would be left pointing at nothing
+          // (`products.category_id` is ON DELETE SET NULL), which silently
+          // drops it out of its collection page.
+          sql`not exists (select 1 from ${products} where ${products.categoryId} = ${categories.id})`,
+        ),
+      )
+      .returning({ id: categories.id });
+    if (!rows[0]) throw resourceConflict("category", "during rollback");
   } else {
     throw invalidApproval();
   }
@@ -1184,6 +1288,33 @@ async function readResource(
     if (!rows[0]) throw resourceNotFound(type);
     return { type, label: rows[0].name, ...rows[0] };
   }
+  if (type === "category") {
+    const rows = await db
+      .select({
+        id: categories.id,
+        storeId: categories.storeId,
+        name: categories.name,
+        slug: categories.slug,
+        description: categories.description,
+        imageUrl: categories.imageUrl,
+        status: categories.status,
+        version: categories.updatedAt,
+      })
+      .from(categories)
+      .where(and(eq(categories.id, id), eq(categories.storeId, storeId)))
+      .limit(1);
+    if (!rows[0]) throw resourceNotFound(type);
+    const [linked] = await db
+      .select({ n: count() })
+      .from(products)
+      .where(and(eq(products.categoryId, id), eq(products.storeId, storeId)));
+    return {
+      type,
+      label: rows[0].name,
+      productCount: linked?.n ?? 0,
+      ...rows[0],
+    };
+  }
 
   const rows = await db
     .select({
@@ -1273,6 +1404,15 @@ function resourceValues(
       color: resource.color,
     };
   }
+  if (resource.type === "category") {
+    return {
+      name: resource.name,
+      slug: resource.slug,
+      description: resource.description,
+      image_url: resource.imageUrl,
+      status: resource.status,
+    };
+  }
   throw invalidApproval();
 }
 
@@ -1354,6 +1494,21 @@ function normalizeProposedValues(
     tool === "activate_offer"
   ) {
     return proposedOfferValues(tool, content, before);
+  }
+  if (tool === "create_category" || tool === "update_category") {
+    const slug = slugify(content.slug).slice(0, 200);
+    if (!slug) throw invalidDraft("The category URL slug is invalid.");
+    const status = content.status.trim().toLowerCase();
+    if (status !== "active" && status !== "hidden") {
+      throw invalidDraft("Visibility must be active or hidden.");
+    }
+    return {
+      name: requiredText(content.name, "Category name", 120),
+      slug,
+      description: nullableText(content.description, 1_000),
+      image_url: nullableText(content.image_url, 2_048),
+      status,
+    };
   }
   const color = content.color.trim().toLowerCase();
   if (!GROUP_COLORS.has(color)) {
@@ -1480,6 +1635,22 @@ async function assertNoUniqueConflict(
     // customer group and never check anything about the offer at all.
     return;
   }
+  if (tool === "create_category" || tool === "update_category") {
+    const rows = await db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(
+        and(
+          eq(categories.storeId, storeId),
+          eq(categories.slug, required(after.slug)),
+          ...(excludeId ? [ne(categories.id, excludeId)] : []),
+        ),
+      )
+      .limit(1);
+    if (rows[0])
+      throw uniqueConflict("A category with this URL slug already exists.");
+    return;
+  }
   const rows = await db
     .select({ id: userGroups.id })
     .from(userGroups)
@@ -1501,11 +1672,18 @@ async function assertOwnedProductImage(
   tool: MinkDomainActionTool,
   imageUrl: string | null | undefined,
 ) {
-  if (tool !== "create_product" || !imageUrl) return;
+  if (
+    (tool !== "create_product" &&
+      tool !== "create_category" &&
+      tool !== "update_category") ||
+    !imageUrl
+  ) {
+    return;
+  }
   const owned = await selectOwnedStorefrontImageUrls(db, storeId, [imageUrl]);
   if (!owned.has(imageUrl)) {
     throw invalidDraft(
-      "The proposed product image is no longer available in this store's Media Library. Attach it again and create a new proposal.",
+      "The proposed image is no longer available in this store's Media Library. Attach it again and create a new proposal.",
     );
   }
 }
@@ -1590,6 +1768,12 @@ async function assertSafeCreateRollback(
       throw rollbackUnsafe(
         "The customer group now has members or coupon links.",
       );
+    }
+    return;
+  }
+  if (tool === "create_category" && resource.type === "category") {
+    if (resource.productCount > 0) {
+      throw rollbackUnsafe("The category now has products in it.");
     }
     return;
   }
@@ -1733,6 +1917,7 @@ function resourcePath(type: MinkDomainResourceType, id: string | null) {
   if (type === "offer") {
     return id ? `/dashboard/offers/${id}/edit` : "/dashboard/offers";
   }
+  if (type === "category") return "/dashboard/categories";
   return id
     ? `/dashboard/users/user_groups/${id}/edit`
     : "/dashboard/users/user_groups";
@@ -1893,6 +2078,8 @@ const DOMAIN_ACTION_SECTION: Record<MinkDomainActionTool, string> = {
   activate_offer: "promotions",
   create_customer_group: "users",
   update_customer_group: "users",
+  create_category: "categories",
+  update_category: "categories",
 };
 
 function assertDomainActionAuthority(
@@ -2214,11 +2401,27 @@ type OfferResource = {
   version: string;
 };
 
+type CategoryResource = {
+  type: "category";
+  id: string;
+  storeId: string;
+  label: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  imageUrl: string | null;
+  status: string;
+  /** Products filed under it, read so a rollback can refuse a category in use. */
+  productCount: number;
+  version: string;
+};
+
 type ResourceRow =
   | ProductResource
   | CouponResource
   | GroupResource
-  | OfferResource;
+  | OfferResource
+  | CategoryResource;
 type MutationResult = {
   id: string;
   version: string | null;

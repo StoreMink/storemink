@@ -56,6 +56,10 @@ const DRAFT_PERMISSION: Record<
   coupon_update: { section: "marketing", action: "manage" },
   customer_group_create: { section: "users", action: "manage" },
   customer_group_update: { section: "users", action: "manage" },
+  category_create: { section: "categories", action: "manage" },
+  category_update: { section: "categories", action: "manage" },
+  // ★ Social copy is marketing: the same section that owns coupon emails.
+  social_post: { section: "marketing", action: "manage" },
   inventory_adjustment: { section: "inventory", action: "manage" },
   bulk_inventory_adjustment: { section: "inventory", action: "manage" },
   order_status_transition: { section: "orders", action: "manage" },
@@ -296,7 +300,9 @@ function domainActionToolForKind(kind: MinkDraftKind) {
     kind === "coupon_create" ||
     kind === "coupon_update" ||
     kind === "customer_group_create" ||
-    kind === "customer_group_update"
+    kind === "customer_group_update" ||
+    kind === "category_create" ||
+    kind === "category_update"
   );
 }
 

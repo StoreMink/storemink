@@ -43,6 +43,9 @@ import { minkStorefrontDesignTools } from "./storefront-design-tools";
 import { minkBuilderTools } from "./builder-tools";
 import { minkMediaTools } from "./media-tools";
 import { minkStorefrontLayoutTools } from "./storefront-layout-tools";
+import { openDashboardPage } from "./navigation-tools";
+import { queryAnalytics } from "./analytics-tools";
+import { getMarketingChannels, getShippingSettings } from "./commerce-tools";
 
 const EMPTY_OBJECT_SCHEMA = {
   type: "object",
@@ -1944,7 +1947,10 @@ export const minkReadToolRegistry = new MinkToolRegistry([
   repeatSafe(searchProducts),
   repeatSafe(getCurrentProduct),
   repeatSafe(getSalesSummary),
+  repeatSafe(queryAnalytics),
   repeatSafe(listCurrentOffers),
+  repeatSafe(getShippingSettings),
+  repeatSafe(getMarketingChannels),
   repeatSafe(listLowStock),
   // ⚠ Unmarked: queues a durable workflow run.
   startBusinessBrief,
@@ -1959,6 +1965,9 @@ export const minkReadToolRegistry = new MinkToolRegistry([
   repeatSafe(listOrdersTool),
   repeatSafe(currentOrderTool),
   repeatSafe(searchHelpCentreTool),
+  // ⚠ Unmarked: a navigation is something the panel ACTS on, so a repeated
+  // identical call must reach the client each time rather than the memo.
+  openDashboardPage,
   // ⚠ Unmarked: these create proposals, charge credits, or generate an image
   // that costs real money per call.
   ...minkDraftTools,

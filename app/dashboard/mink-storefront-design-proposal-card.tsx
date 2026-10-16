@@ -18,6 +18,7 @@ import type {
   MinkArtifact,
   MinkStorefrontDesignSummary,
 } from "@/lib/mink/types";
+import { MinkLink } from "./mink-link";
 
 type Proposal = Extract<MinkArtifact, { type: "storefront_design_proposal" }>;
 
@@ -128,14 +129,14 @@ export function MinkStorefrontDesignProposalCard({
               </p>
             </div>
           </div>
-          <a
+          <MinkLink
             href={proposal.destinationPath}
             target="_blank"
             rel="noreferrer"
             className="inline-flex shrink-0 items-center gap-1 text-[9px] font-semibold text-[#5d3fe3] hover:underline"
           >
             Open Builder <ExternalLink className="h-3 w-3" />
-          </a>
+          </MinkLink>
         </div>
       </header>
 
@@ -191,12 +192,12 @@ export function MinkStorefrontDesignProposalCard({
                   The live storefront was not published or changed. Audit
                   reference: {result.auditId}.
                 </p>
-                <a
+                <MinkLink
                   href={result.approval.resource.dashboardPath}
                   className="mt-2 inline-flex items-center gap-1 font-semibold text-emerald-800 underline"
                 >
                   Open Builder <ExternalLink className="h-3 w-3" />
-                </a>
+                </MinkLink>
               </div>
             </div>
           </div>

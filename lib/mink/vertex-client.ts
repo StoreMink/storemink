@@ -14,6 +14,8 @@ import type {
   MinkActorContext,
   MinkModelSession,
   MinkModelTurn,
+  MinkStreamOptions,
+  MinkToolCall,
   MinkToolDeclaration,
   MinkUsage,
 } from "./types";
@@ -76,14 +78,15 @@ export function createVertexMinkSession(
   });
 
   return {
-    async sendUserMessage(message) {
+    async sendUserMessage(message, stream) {
       return send(
         options.memoryReference
           ? [{ text: options.memoryReference }, { text: message }]
           : message,
+        stream,
       );
     },
-    async sendToolResponses(responses) {
+    async sendToolResponses(responses, stream) {
       const parts: Part[] = responses.map((result) => ({
         functionResponse: {
           ...(result.id ? { id: result.id } : {}),
@@ -91,18 +94,49 @@ export function createVertexMinkSession(
           response: result.response,
         },
       }));
-      return send(parts);
+      return send(parts, stream);
     },
   };
 
-  async function send(message: string | Part[]): Promise<MinkModelTurn> {
+  /**
+   * One model turn, STREAMED.
+   *
+   * ★★ EVERY TURN STREAMS, not only the one that turns out to be the answer:
+   * nothing knows a turn is final until it arrives without a function call,
+   * and the merchant used to watch "Thinking…" for the whole of a long
+   * answer because the text was only released once the SDK had buffered all
+   * of it. The orchestrator discards fragments of a turn that ends in a tool
+   * call, so what the merchant sees is exactly the text the run returns.
+   *
+   * ★ A RETRY IS SAFE WITH NO HISTORY REPAIR: the SDK's `sendMessageStream`
+   * records the user turn and the model output only after the LAST chunk
+   * (`processStreamResponse`), so a stream that fails half way leaves the
+   * chat history exactly as it was and the retried call re-sends the same
+   * message. Fragments already delivered are withdrawn through `onReset`
+   * before the second attempt streams again.
+   */
+  async function send(
+    message: string | Part[],
+    stream?: MinkStreamOptions,
+  ): Promise<MinkModelTurn> {
+    let delivered = 0;
     try {
       const result = await withMinkRetry({
-        operation: () => chat.sendMessage({ message }),
+        operation: async () => {
+          if (delivered > 0) {
+            delivered = 0;
+            stream?.onReset?.();
+          }
+          const chunks = await chat.sendMessageStream({ message });
+          return consumeMinkStream(chunks, (text) => {
+            delivered += text.length;
+            stream?.onDelta?.(text);
+          });
+        },
         maxRetries: config.maxModelRetries,
         signal: options.abortSignal,
       });
-      return { ...toTurn(result.value), retryCount: result.retryCount };
+      return { ...result.value, retryCount: result.retryCount };
     } catch (error) {
       if (!(error instanceof MinkRetryError)) throw error;
       const status = providerStatus(error.originalError);
@@ -165,31 +199,54 @@ function toVertexHistory(history: MinkStoredMessage[]): Content[] {
   }));
 }
 
-function toTurn(response: GenerateContentResponse): MinkModelTurn {
-  const functionCalls = (response.functionCalls ?? []).flatMap((call) =>
-    call.name
-      ? [
-          {
-            id: call.id,
-            name: call.name,
-            args: call.args ?? {},
-          },
-        ]
-      : [],
-  );
-  return {
-    // Reading response.text on a function-call turn makes the SDK warn about
-    // non-text parts. Pull only visible, non-thought text from the candidate.
-    text:
-      response.candidates?.[0]?.content?.parts
-        ?.filter((part) => !part.thought)
-        .map((part) => part.text ?? "")
-        .join("")
-        .trim() ?? "",
-    functionCalls,
-    usage: toUsage(response),
-    retryCount: 0,
+/**
+ * Fold a chunk stream into one finished turn, releasing visible text as it
+ * arrives.
+ *
+ * ★ ONLY NON-THOUGHT TEXT PARTS are forwarded and collected, which is the
+ * rule `toTurn` applied to a buffered response: reading `response.text` on a
+ * function-call turn makes the SDK warn about non-text parts, and a thought
+ * part is reasoning the merchant must never see. Function calls are gathered
+ * from every chunk because the provider may split a call across chunks from
+ * its text. Usage is cumulative on the provider's side, so the LAST chunk
+ * that carries it wins.
+ *
+ * Exported for the unit test; it takes any async iterable of responses.
+ */
+export async function consumeMinkStream(
+  chunks: AsyncIterable<GenerateContentResponse>,
+  onDelta?: (text: string) => void,
+): Promise<MinkModelTurn> {
+  let text = "";
+  const functionCalls: MinkToolCall[] = [];
+  let usage: MinkUsage = {
+    promptTokens: 0,
+    outputTokens: 0,
+    thoughtTokens: 0,
+    totalTokens: 0,
+    cachedTokens: 0,
+    basePromptTokens: 0,
   };
+  for await (const chunk of chunks) {
+    const parts = chunk.candidates?.[0]?.content?.parts ?? [];
+    for (const part of parts) {
+      if (part.thought) continue;
+      if (typeof part.text === "string" && part.text.length > 0) {
+        text += part.text;
+        onDelta?.(part.text);
+      }
+      const call = part.functionCall;
+      if (call?.name) {
+        functionCalls.push({
+          id: call.id,
+          name: call.name,
+          args: call.args ?? {},
+        });
+      }
+    }
+    if (chunk.usageMetadata) usage = toUsage(chunk);
+  }
+  return { text: text.trim(), functionCalls, usage, retryCount: 0 };
 }
 
 function toUsage(response: GenerateContentResponse): MinkUsage {

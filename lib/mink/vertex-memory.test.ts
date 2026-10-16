@@ -38,7 +38,18 @@ const config = {
 describe("Vertex approved memory context boundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    h.create.mockReturnValue({ sendMessage: h.send });
+    // The client streams every turn; one buffered reply becomes a one-chunk
+    // stream so these tests keep asserting on the same send and response.
+    h.create.mockReturnValue({
+      sendMessageStream: async (params: unknown) => {
+        const response = await (h.send as (p: unknown) => Promise<unknown>)(
+          params,
+        );
+        return (async function* () {
+          yield response;
+        })();
+      },
+    });
     h.send.mockResolvedValue({
       candidates: [{ content: { parts: [{ text: "Hello" }] } }],
     });

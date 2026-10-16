@@ -11,11 +11,19 @@ import {
 } from "lucide-react";
 import { getViewerAccess, getViewerContext } from "./lib/access";
 import { AskAnything } from "./ask-anything";
+import { MinkSuggestions } from "./components/mink-suggestions";
 import { LaunchChecklistCard } from "./launch-checklist";
 import { PlanTag } from "./plan-tag";
 import { getCurrentStore } from "@/lib/store/resolve";
 import { effectivePlan } from "@/lib/plans";
 import { isStoreLaunched } from "@/lib/store/launch-state";
+import { normalizeAnalyticsTimeZone } from "@/lib/analytics/range";
+import { getViewerLocations } from "@/lib/locations/scope";
+import { isMinkStoreInvited } from "@/lib/mink/access";
+import { getMinkConfig } from "@/lib/mink/config";
+import type { MinkHomeSuggestion } from "@/lib/mink/home-suggestion-rules";
+import { loadMinkHomeSuggestions } from "@/lib/mink/home-suggestions";
+import { resolveStoreSettings } from "@/lib/settings/registry";
 
 type SetupCard = {
   icon: LucideIcon;
@@ -53,6 +61,40 @@ export default async function DashboardHomePage() {
         : "Good evening";
 
   const can = (section: string) => access?.can(section, "view") ?? false;
+
+  // "Mink suggests": ranked next steps computed from store data with no model
+  // call (lib/mink/home-suggestions.ts). Only once the store is open: while it
+  // is closed the checklist IS the next step. Fail-soft, so the worst case is
+  // an empty list, which renders no card.
+  let suggestions: MinkHomeSuggestion[] = [];
+  let canAskMink = false;
+  if (launched && ctx?.profile && !ctx.dbError) {
+    const minkConfig = getMinkConfig();
+    canAskMink =
+      minkConfig.enabled &&
+      (!minkConfig.betaRequireInvite || (await isMinkStoreInvited(store.id)));
+    const settings = resolveStoreSettings(store.settings, plan);
+    const business = store.settings.business;
+    const timeZone = normalizeAnalyticsTimeZone(
+      business && typeof business === "object" && !Array.isArray(business)
+        ? (business as Record<string, unknown>).timeZone
+        : undefined,
+    );
+    const locationIds = await getViewerLocations();
+    suggestions = await loadMinkHomeSuggestions({
+      storeId: store.id,
+      identity: { uid: ctx.userId, email: ctx.userEmail },
+      permissions: ctx.permissions,
+      isSuperadmin: ctx.isSuperadmin,
+      locationIds,
+      timeZone,
+      // The same hard-coded code the Mink actor context carries today.
+      currency: "INR",
+      plan,
+      defaultLowStockThreshold:
+        (settings["inventory.lowStockThreshold"] as number | undefined) ?? 5,
+    });
+  }
 
   const cards: SetupCard[] = [
     can("products") && {
@@ -111,6 +153,10 @@ export default async function DashboardHomePage() {
 
       {launched && <AskAnything />}
 
+      {launched && (
+        <MinkSuggestions suggestions={suggestions} canAskMink={canAskMink} />
+      )}
+
       {launched && cards.length > 0 && (
         <section className="flex flex-col gap-3">
           <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-[var(--dash-text-3)]">
@@ -144,7 +190,7 @@ export default async function DashboardHomePage() {
         </section>
       )}
 
-      {launched && (
+      {launched && suggestions.length === 0 && (
         <div className="mt-1 flex items-center gap-3 text-[var(--dash-text-3)]">
           <div className="h-px flex-1 bg-[var(--dash-border)]" />
           <span className="inline-flex items-center gap-1.5 text-[13px]">

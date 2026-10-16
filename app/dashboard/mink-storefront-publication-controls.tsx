@@ -23,6 +23,7 @@ import {
   type MinkStorefrontPublicationResult,
   type MinkStorefrontPublicationValues,
 } from "@/lib/mink/storefront-publication-types";
+import { MinkLink } from "./mink-link";
 
 export function MinkStorefrontPublicationControls({
   draftId,
@@ -199,10 +200,9 @@ export function MinkStorefrontPublicationControls({
       <div className="flex items-start gap-2 text-[10px] leading-4 text-[#4d426d]">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#5d3fe3]" />
         <div>
-          <p className="font-semibold">Phase 7D · checked publication</p>
+          <p className="font-semibold">Checked publication</p>
           <p className="mt-0.5">
-            Publication uses a new approval and never reuses the Builder
-            draft-save approval.
+            Publishing is its own approval, separate from saving the draft.
           </p>
         </div>
       </div>
@@ -391,14 +391,14 @@ function Outcome({
         <div>
           <p className="font-semibold">{title}</p>
           <p className="mt-1">Audit reference: {result.auditId}.</p>
-          <a
+          <MinkLink
             href={result.approval.resource.publicPath}
             target="_blank"
             rel="noreferrer"
             className="mt-1 inline-flex items-center gap-1 font-semibold underline"
           >
             Open storefront <ExternalLink className="h-3 w-3" />
-          </a>
+          </MinkLink>
         </div>
       </div>
     </div>

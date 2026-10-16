@@ -20,6 +20,7 @@ export const MINK_DOMAIN_RESOURCE_TYPES = [
   "coupon",
   "customer_group",
   "offer",
+  "category",
 ] as const;
 
 export type MinkDomainResourceType =
@@ -70,6 +71,8 @@ export function domainActionToolForDraftKind(
   if (kind === "offer_create") return "create_offer";
   if (kind === "offer_update") return "update_offer";
   if (kind === "offer_activate") return "activate_offer";
+  if (kind === "category_create") return "create_category";
+  if (kind === "category_update") return "update_category";
   return null;
 }
 
@@ -91,6 +94,9 @@ export function resourceTypeForDomainTool(
     tool === "activate_offer"
   ) {
     return "offer";
+  }
+  if (tool === "create_category" || tool === "update_category") {
+    return "category";
   }
   return "customer_group";
 }
@@ -164,6 +170,9 @@ export function domainActionFields(
       "status",
     ];
   }
+  if (tool === "create_category" || tool === "update_category") {
+    return ["name", "slug", "description", "image_url", "status"];
+  }
   return ["name", "description", "color"];
 }
 
@@ -175,8 +184,9 @@ export const MINK_DOMAIN_FIELD_LABELS: Record<string, string> = {
   seo_description: "SEO description",
   base_price: "Base price (INR)",
   selling_price: "Selling price (INR)",
-  image_url: "Product image",
+  image_url: "Image",
   status: "Status",
+  visibility: "Visibility",
   track_inventory: "Inventory tracking",
   code: "Coupon code",
   discount_type: "Discount type",

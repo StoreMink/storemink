@@ -1,5 +1,6 @@
 import type { MinkArtifact } from "@/lib/mink/types";
 import { MINK_WORKFLOW_TEMPLATES } from "@/lib/mink/workflow-types";
+import { readMinkProductPrefill } from "@/lib/mink/product-prefill";
 
 const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "metrics",
@@ -15,6 +16,8 @@ const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "media_image_proposal",
   "workflow",
   "product_import",
+  "navigation",
+  "chart",
 ]);
 
 export function readMinkArtifacts(value: unknown): MinkArtifact[] {
@@ -154,6 +157,12 @@ export function readMinkArtifacts(value: unknown): MinkArtifact[] {
           Number(workflow.currentStep) <= Number(workflow.totalSteps)
         );
       }
+      if (type === "navigation") {
+        return isNavigation(artifact as Record<string, unknown>);
+      }
+      if (type === "chart") {
+        return isChart(artifact as Record<string, unknown>);
+      }
       if (type === "storefront_code_proposal") {
         return isStorefrontCodeProposal(artifact as Record<string, unknown>);
       }
@@ -180,6 +189,64 @@ export function readMinkArtifacts(value: unknown): MinkArtifact[] {
       );
     })
     .slice(0, 6);
+}
+
+/**
+ * ★ THE PATH IS THE ONE FIELD HERE THE PANEL ACTS ON (it navigates to it),
+ * so it is pinned to the dashboard exactly as an answer link is: a restored
+ * history row must not be able to send the merchant to another host. A
+ * prefill is re-bounded by the same reader the product form uses.
+ */
+function isNavigation(value: Record<string, unknown>): boolean {
+  if (
+    !isBoundedText(value.title, 120) ||
+    !isBoundedText(value.label, 80) ||
+    !isBoundedText(value.path, 400) ||
+    !/^\/dashboard(?:[/?#]|$)/.test(value.path) ||
+    value.path.startsWith("//")
+  ) {
+    return false;
+  }
+  if (value.prefill === undefined) return true;
+  if (!isRecord(value.prefill) || value.prefill.kind !== "product")
+    return false;
+  const fields = readMinkProductPrefill(value.prefill.fields);
+  if (!fields) return false;
+  value.prefill = { kind: "product", fields };
+  return true;
+}
+
+function isChart(value: Record<string, unknown>): boolean {
+  const series = value.series;
+  return (
+    isBoundedText(value.title, 120) &&
+    (value.kind === "line" || value.kind === "bar") &&
+    ["number", "currency", "percent"].includes(String(value.format)) &&
+    (value.currency === undefined || isBoundedText(value.currency, 3)) &&
+    Array.isArray(series) &&
+    series.length >= 1 &&
+    series.length <= 3 &&
+    series.every(
+      (entry) =>
+        isRecord(entry) &&
+        isBoundedText(entry.label, 60) &&
+        Array.isArray(entry.points) &&
+        entry.points.length >= 1 &&
+        entry.points.length <= 120 &&
+        entry.points.every(
+          (point) =>
+            isRecord(point) &&
+            isBoundedText(point.label, 60) &&
+            typeof point.value === "number" &&
+            Number.isFinite(point.value),
+        ),
+    ) &&
+    Array.isArray(value.filters) &&
+    value.filters.length <= 12 &&
+    (value.dashboardPath === undefined ||
+      (typeof value.dashboardPath === "string" &&
+        /^\/dashboard(?:[/?#]|$)/.test(value.dashboardPath)))
+  );
 }
 
 function isStorefrontCodeProposal(value: Record<string, unknown>): boolean {

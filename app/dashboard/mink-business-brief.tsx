@@ -1,4 +1,5 @@
 import type { BusinessBriefResult } from "@/lib/mink/business-brief-types";
+import { MinkLink } from "./mink-link";
 
 const STATUS_LABELS = {
   attention: "Needs attention",
@@ -51,7 +52,7 @@ export function MinkBusinessBrief({ result }: { result: BusinessBriefResult }) {
           </div>
           <p>{signal.evidence}</p>
           <p className="text-xs text-muted-foreground">{signal.nextStep}</p>
-          <a
+          <MinkLink
             className="text-xs text-violet-700 underline underline-offset-2"
             href={
               signal.key === "sales"
@@ -64,7 +65,7 @@ export function MinkBusinessBrief({ result }: { result: BusinessBriefResult }) {
             }
           >
             Open {signal.title.toLowerCase()}
-          </a>
+          </MinkLink>
         </article>
       ))}
       <div className="overflow-x-auto rounded-xl border">
@@ -84,12 +85,12 @@ export function MinkBusinessBrief({ result }: { result: BusinessBriefResult }) {
             {result.locations.map((location) => (
               <tr className="border-b last:border-0" key={location.id}>
                 <th className="p-2 font-medium">
-                  <a
+                  <MinkLink
                     className="underline underline-offset-2"
                     href={`/dashboard/inventory?location=${encodeURIComponent(location.id)}`}
                   >
                     {location.name}
-                  </a>
+                  </MinkLink>
                 </th>
                 <td className="p-2">{location.trackedItems}</td>
                 <td className="p-2">{location.lowStock}</td>

@@ -12,15 +12,20 @@ import {
 import {
   useMinkAi,
   type MinkConversationSummary,
+  type MinkMemoryPrompt,
   type MinkMessage,
+  type MinkRunStep,
   type MinkUiError,
 } from "./mink-ai";
 import type { MinkFeedbackIssue, MinkFeedbackRating } from "@/lib/mink/types";
+import type { MinkSkill } from "@/lib/mink/skills";
 
 interface ChatContextType {
   isChatOpen: boolean;
   /** `media` manage, resolved in the dashboard layout — see MinkMultimodalInput. */
   canSaveMedia: boolean;
+  /** The "/" skills this viewer may run, permission-filtered on the server. */
+  skills: MinkSkill[];
   // Full-view "takeover" mode (Shopify Sidekick style) vs the narrow side panel.
   isExpanded: boolean;
   toggleChat: () => void;
@@ -39,8 +44,16 @@ interface ChatContextType {
   isHistoryLoading: boolean;
   deletingConversationId: string | null;
   statusText: string | null;
+  /** The answer so far while Mink is still writing it. */
+  streamingText: string;
+  /** The tools the current run has called, in order. */
+  steps: MinkRunStep[];
   error: { code: string; message: string } | null;
   feedbackSubmittingRunId: string | null;
+  /** "Remember this?" offered after the newest answer, until the next message. */
+  memoryPrompt: MinkMemoryPrompt | null;
+  saveMemorySuggestion: () => Promise<MinkUiError | null>;
+  dismissMemorySuggestion: () => void;
   minkCredits: MinkCreditSummary | null;
   send: (raw?: string) => void;
   cancel: () => void;
@@ -97,10 +110,12 @@ export function ChatProvider({
   children,
   minkEnabled,
   canSaveMedia = false,
+  skills = [],
 }: {
   children: ReactNode;
   minkEnabled: boolean;
   canSaveMedia?: boolean;
+  skills?: MinkSkill[];
 }) {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -151,6 +166,7 @@ export function ChatProvider({
       isChatOpen,
       isExpanded,
       canSaveMedia,
+      skills,
       minkCredits,
       toggleChat,
       closeChat,
@@ -162,6 +178,7 @@ export function ChatProvider({
       isChatOpen,
       isExpanded,
       canSaveMedia,
+      skills,
       minkCredits,
       toggleChat,
       closeChat,
@@ -185,6 +202,7 @@ export function useChat() {
       isChatOpen: false,
       isExpanded: false,
       canSaveMedia: false,
+      skills: [],
       toggleChat: () => {},
       closeChat: () => {},
       toggleExpand: () => {},
@@ -199,8 +217,13 @@ export function useChat() {
       isHistoryLoading: false,
       deletingConversationId: null,
       statusText: null,
+      streamingText: "",
+      steps: [],
       error: null,
       feedbackSubmittingRunId: null,
+      memoryPrompt: null,
+      saveMemorySuggestion: async () => null,
+      dismissMemorySuggestion: () => {},
       minkCredits: null,
       send: () => {},
       cancel: () => {},

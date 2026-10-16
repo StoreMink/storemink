@@ -19,6 +19,13 @@ describe("Mink Phase 4B-4D action contract", () => {
     expect(domainActionToolForDraftKind("customer_group_update")).toBe(
       "update_customer_group",
     );
+    expect(domainActionToolForDraftKind("category_create")).toBe(
+      "create_category",
+    );
+    expect(domainActionToolForDraftKind("category_update")).toBe(
+      "update_category",
+    );
+    expect(domainActionToolForDraftKind("social_post")).toBeNull();
     expect(domainActionToolForDraftKind("blog")).toBeNull();
     expect(domainActionToolForDraftKind("coupon_email")).toBeNull();
   });
@@ -45,6 +52,19 @@ describe("Mink Phase 4B-4D action contract", () => {
       audience: "all customers (no group restriction)",
     });
     expect(domainActionFields("create_coupon")).not.toContain("used_count");
+  });
+
+  it("names the category resource explicitly, never by fallthrough", () => {
+    expect(resourceTypeForDomainTool("create_category")).toBe("category");
+    expect(resourceTypeForDomainTool("update_category")).toBe("category");
+    expect(domainActionFields("update_category")).toEqual([
+      "name",
+      "slug",
+      "description",
+      "image_url",
+      "status",
+    ]);
+    expect(domainActionFields("create_category")).not.toContain("sort_order");
   });
 
   it("keeps customer groups metadata-only", () => {

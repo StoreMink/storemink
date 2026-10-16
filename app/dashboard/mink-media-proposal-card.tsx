@@ -10,6 +10,7 @@ import {
 import { useState } from "react";
 import { saveMinkGeneratedImage } from "@/app/actions/mink-media-actions";
 import type { MinkArtifact } from "@/lib/mink/types";
+import { MinkLink } from "./mink-link";
 
 type Proposal = Extract<MinkArtifact, { type: "media_image_proposal" }>;
 
@@ -73,14 +74,14 @@ export function MinkMediaProposalCard({ proposal }: { proposal: Proposal }) {
               </p>
             </div>
           </div>
-          <a
+          <MinkLink
             href={proposal.destinationPath}
             target="_blank"
             rel="noreferrer"
             className="inline-flex shrink-0 items-center gap-1 text-[9px] font-semibold text-[#5d3fe3] hover:underline"
           >
             Media Library <ExternalLink className="h-3 w-3" />
-          </a>
+          </MinkLink>
         </div>
       </header>
 

@@ -1,5 +1,6 @@
 import type { ProactiveResponseResult } from "@/lib/mink/proactive-response-types";
 import { RESPONSE_TITLES } from "@/lib/mink/proactive-response-types";
+import { MinkLink } from "./mink-link";
 export function MinkProactiveResponse({
   result,
 }: {
@@ -20,9 +21,9 @@ export function MinkProactiveResponse({
         <div key={i} className="rounded-lg border p-3">
           <p className="font-medium">{r.label}</p>
           <p>{r.detail}</p>
-          <a className="underline" href={safePath(r.path)}>
+          <MinkLink className="underline" href={safePath(r.path)}>
             Review in dashboard
-          </a>
+          </MinkLink>
         </div>
       ))}
       {result.truncated && (

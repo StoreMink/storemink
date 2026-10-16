@@ -92,6 +92,110 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### Mink Sidekick parity: streaming, navigation, skills, charts, memories, categories (2026-10-17)
+
+Nine gaps against Shopify Sidekick closed in one change. No new table; one
+migration, `20261017_0215_mink_categories_social_posts`.
+★★ THE ANSWER STREAMS, AND WORKING-OUT IS WITHDRAWN. `MinkModelSession.send`
+(`vertex-client.ts`) always uses `sendMessageStream`; `consumeMinkStream`
+collects text deltas, function calls and the last usage. The orchestrator
+turns deltas into `text_delta` events and, when a turn that streamed text
+then calls a tool, a `text_reset` (the SSE route sends `delta` /
+`delta_reset`). The panel shows the text as it arrives under a progress list
+of tool steps (`lib/mink/tool-labels.ts`: merchant words per tool, "Reading
+sales…"; `tool-labels.test.ts` fails when a registered tool has no entry),
+and the finished `message` replaces the streamed text. Steps stay on the
+answer for the session as a "Checked sales, orders" line
+(`minkCheckedLine`). Phase labels, raw tool names and the per-card
+disclaimer paragraph are gone; `proposalRollbackNote` is one sentence.
+★ The SDK records chat history only after the last chunk, so a mid-stream
+failure leaves the history untouched and the retry is safe.
+★ LINKS STAY INSIDE THE APP: `app/dashboard/mink-link.tsx` renders a Next
+`Link` for `/dashboard` hrefs (every card file uses it), so the open panel
+survives a click. `open_dashboard_page` (`tools/navigation-tools.ts`,
+dashboard:view, a closed destination map re-checked against the viewer's
+sections, product by id or SKU, order by reference) emits a `navigation`
+artifact the panel opens itself for a LIVE message (never restored
+history), closing the chat under 640px; `new_product` carries a prefill
+through `lib/mink/product-prefill.ts` (localStorage, read once by the
+product editor on `?prefill=mink`), and the product-create card's "Open in
+product form" uses the same hand-off.
+★ SKILLS AND SUGGESTIONS, deterministic: `lib/mink/skills.ts` (the "/"
+menu, permission-filtered server-side in the layout; starter chips by
+current page), `lib/mink/follow-ups.ts` (≤3 next questions by artifact
+type under the newest answer).
+★ CHARTS: `query_analytics` (`tools/analytics-tools.ts`, analytics:view)
+runs the Reports builder's own whitelist (`runExploration`) for one measure
+grouped one way over one period, optionally with a comparison, and emits a
+`chart` artifact; `app/dashboard/mink-chart.tsx` draws it as an SVG line
+or bar with one axis, a legend for two or more series, hover titles, a
+table view and an "Open in Reports" link; palette
+`MINK_CHART_SERIES_COLOURS` passed the dataviz validator.
+★ "REMEMBER THIS?" (`lib/mink/memory-suggestion.ts`, pure): after an answer
+the route offers back the one sentence of the merchant's message that reads
+as lasting (fixed phrases: "from now on", "we only ship", "our tone");
+questions, skills, links and code never qualify. Sent as a
+`memory_suggestion` SSE event only while fewer than `MEMORY_LIMIT` memories
+exist and the sentence is not already kept; a failed read costs the offer,
+never the answer. One tap saves through the ordinary `/api/mink/memories`
+save command (90 days, explicit `confirmed`), so the Memories page's rules
+hold; `minkRandomUuid` falls back to `getRandomValues` on a plain-http host.
+★★ CATEGORIES ARE A GUARDED DOMAIN ACTION, the customer-group pattern:
+`get_category_for_draft` (name or slug, opaque snapshot),
+`propose_category_create` / `propose_category_update` (categories:manage;
+name, hyphenated slug, description, an owned image URL, visibility active
+or hidden), draft kinds `category_create` / `category_update`, tools
+`create_category` / `update_category` in `MINK_DOMAIN_ACTION_TOOLS`, resource
+type `category`, section `categories`. Every dispatch in `domain-actions.ts`
+names them explicitly (the §38 fallthrough lesson): write under the same
+slug advisory lock the product path takes, slug uniqueness against
+`categories_store_slug_key`, image ownership re-checked at the write, status
+pinned to active|hidden, rollback only while no product is filed under it
+(re-checked inside the DELETE, since `products.category_id` is ON DELETE SET
+NULL). The action route busts the same paths and tag `revalidateCatalog`
+does. 0215 widens the six vocabularies (found by querying for
+`create_customer_group`), adds NULL-safe target checks for the category and
+`social_post` kinds, provisions both tools for every store and edits the
+Mink guide's capability sentences in place; probed on local Postgres (valid
+drafts accepted, hollow and mis-targeted ones refused).
+★ `propose_social_posts` (marketing:manage, 2 credits) is a plain editable
+draft kind `social_post` (Instagram caption required; Facebook, WhatsApp
+status and hashtags optional); nothing is posted anywhere.
+★ `get_shipping_settings` (settings:view) is a deterministic delivery audit
+(live rates with no carrier, no fulfilling location, zero flat rate,
+shippable products without a weight, a slow promise) and
+`get_marketing_channels` (marketing:view; channel state only with
+channels:view, never a credential) a marketing overview; both in
+`tools/commerce-tools.ts`. Prompt versions `read-beta-v27` /
+`draft-action-beta-v48`, registries `read-beta-v23` / `draft-beta-v38`.
+⚠ Not run in a browser; verified by tsc, the suites named in the handoff and
+the local migration apply. The `social_post` card has no "open" destination
+of its own and links to Offers.
+
+### Mink Home suggestions (2026-10-17)
+
+"Mink suggests" is a Shopify Sidekick Pulse-style `.dash-card` on dashboard
+Home, under the "Ask anything" box and only once the store is open: at most
+five ranked next steps, each with a title, one-line detail, an "Open
+inventory"-style link and an "Ask Mink" button that opens the chat with a
+pre-written question (`startExpandedChat`, the Insights panel's rule, shown
+only when Mink is enabled). ★ DETERMINISTIC, NO MODEL CALL, NO CREDIT, NO
+MIGRATION. `lib/mink/home-suggestion-rules.ts` (pure, no imports) holds the
+fixed severity order and wording: sales down >=15% on the last 7 complete local
+days vs the 7 before (baseline >=5 orders); pending/processing orders older
+than 48 h; out of stock; low stock; WhatsApp chats needing a reply; new
+enquiries; published products missing a photo or description; "(Sample)"
+products; offers ending within 3 days or finished but still on; Mink credits
+under 10%. `lib/mink/home-suggestions.ts` (server-only) reads the signals
+under `Promise.allSettled`, each gated on the section it reveals (`analytics`,
+`orders`, `inventory`, `inbox`, `enquiries`, `products`, `promotions`, `ai`),
+location-scoped and fail-soft (a failed reader is a `logWarn`, nothing more),
+reusing `getSalesTotals`, `readMinkCatalogHealth`, `loadInboxChannelState`,
+`getNewEnquiriesCount`, `readMinkCurrentOffers`, `getAiUsage` plus two bounded
+counts (stale orders; catalogue gaps and samples). Card:
+`app/dashboard/components/mink-suggestions.tsx`; tests beside both modules.
+No Help Centre update: nothing a merchant does changes, it is a suggestion card.
+
 ### Media Library: product images, Choose from library, hidden chat attachments (2026-10-16)
 
 Three merchant asks in one change. Schema in migration
@@ -5848,7 +5952,12 @@ wholesip/
 │                              # 0213 adds media_assets.source (Library hides Mink chat
 │                              # attachments and resized copies) with a backfill;
 │                              # 0214 edits the Media, product images and Mink guides.
-│                              # Next free: 0215.
+│                              # 0215 admits Mink category proposals (create_category /
+│                              # update_category in every tool and resource allowlist,
+│                              # provisioned for every store), the category_create /
+│                              # category_update / social_post draft kinds with NULL-safe
+│                              # target checks, and edits the Mink guide in place.
+│                              # Next free: 0216.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

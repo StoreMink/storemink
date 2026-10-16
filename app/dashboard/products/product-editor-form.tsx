@@ -38,6 +38,11 @@ import { MediaLibraryPicker } from "../components/media-library-picker";
 import { NumberField } from "@/components/ui/number-field";
 import { slugify } from "@/lib/slug";
 import {
+  MINK_PRODUCT_PREFILL_PARAM,
+  MINK_PRODUCT_PREFILL_VALUE,
+  takeMinkProductPrefill,
+} from "@/lib/mink/product-prefill";
+import {
   generateVariantRows,
   normalizeOptions,
   type ProductOption,
@@ -112,6 +117,39 @@ const EMPTY: ProductFormData = {
   width_cm: null,
   height_cm: null,
 };
+
+/**
+ * Fields Mink filled in for a new product, read once and cleared.
+ *
+ * ★ Only on `/dashboard/products/new?prefill=mink`, so a product form opened
+ * any other way never inherits something a conversation left behind, and
+ * only on the client (the lazy initialiser runs on the server too, where
+ * there is no window). The slug is derived from the name as if typed.
+ */
+function minkPrefilledFields(): Partial<ProductFormData> {
+  if (typeof window === "undefined") return {};
+  const params = new URLSearchParams(window.location.search);
+  if (params.get(MINK_PRODUCT_PREFILL_PARAM) !== MINK_PRODUCT_PREFILL_VALUE) {
+    return {};
+  }
+  const prefill = takeMinkProductPrefill();
+  if (!prefill) return {};
+  const fields: Partial<ProductFormData> = {};
+  if (prefill.name) {
+    fields.name = prefill.name;
+    fields.slug = slugify(prefill.name);
+  }
+  if (prefill.description) fields.description = prefill.description;
+  if (prefill.seoTitle) fields.seo_title = prefill.seoTitle;
+  if (prefill.seoDescription) fields.seo_description = prefill.seoDescription;
+  if (prefill.sellingPrice !== undefined) {
+    fields.selling_price = prefill.sellingPrice;
+    fields.base_price = prefill.basePrice ?? prefill.sellingPrice;
+  } else if (prefill.basePrice !== undefined) {
+    fields.base_price = prefill.basePrice;
+  }
+  return fields;
+}
 
 function toForm(product: Product): ProductFormData {
   return {
@@ -424,7 +462,11 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
     const [form, setForm] = useState<ProductFormData>(() =>
       product
         ? toForm(product)
-        : { ...EMPTY, track_inventory: defaultTrackInventory },
+        : {
+            ...EMPTY,
+            track_inventory: defaultTrackInventory,
+            ...minkPrefilledFields(),
+          },
     );
     const [isPending, startTransition] = useTransition();
     const [isGenerating, setIsGenerating] = useState(false);

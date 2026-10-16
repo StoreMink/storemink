@@ -28,6 +28,7 @@ import type {
   SlowInventoryPromotionResult,
   WeeklyTradingReportResult,
 } from "@/lib/mink/workflow-types";
+import { MinkLink } from "./mink-link";
 
 type WorkflowArtifact = Extract<MinkArtifact, { type: "workflow" }>;
 
@@ -321,7 +322,7 @@ function WeeklyReport({ result }: { result: WeeklyTradingReportResult }) {
           </h4>
           <div className="mt-1 divide-y divide-[#efedf2] rounded-xl border border-[#efedf2]">
             {result.topProducts.map((product) => (
-              <a
+              <MinkLink
                 key={product.id}
                 href={safeDashboardPath(product.dashboardPath)}
                 className="flex items-center justify-between gap-3 px-2.5 py-2 text-[10px] hover:bg-[#faf8ff]"
@@ -333,17 +334,17 @@ function WeeklyReport({ result }: { result: WeeklyTradingReportResult }) {
                   {product.units.toLocaleString("en-IN")} units{" "}
                   <ArrowUpRight className="h-3 w-3" />
                 </span>
-              </a>
+              </MinkLink>
             ))}
           </div>
         </div>
       ) : null}
-      <a
+      <MinkLink
         href={safeDashboardPath(result.analyticsPath)}
         className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#6841d9] hover:underline"
       >
         Open Analytics <ArrowUpRight className="h-3 w-3" />
-      </a>
+      </MinkLink>
       <p className="text-[9px] text-[#8a858e]">
         Data as of {formatDate(result.dataAsOf)}. Top-product sales are
         merchandise line totals; headline net sales include completed refunds.
@@ -421,12 +422,12 @@ function RevenueInvestigation({
           ))}
         </ul>
       </div>
-      <a
+      <MinkLink
         href={safeDashboardPath(result.analyticsPath)}
         className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#6841d9] hover:underline"
       >
         Verify in Analytics <ArrowUpRight className="h-3 w-3" />
-      </a>
+      </MinkLink>
       <p className="text-[9px] text-[#8a858e]">
         Data as of {formatDate(result.dataAsOf)}. Compared with{" "}
         {result.comparisonLabel}.
@@ -466,13 +467,13 @@ function MovementList({
             </>
           );
           return row.dashboardPath ? (
-            <a
+            <MinkLink
               key={row.key}
               href={safeDashboardPath(row.dashboardPath)}
               className="flex items-center justify-between gap-3 px-2.5 py-2 text-[10px] hover:bg-[#faf8ff]"
             >
               {content}
-            </a>
+            </MinkLink>
           ) : (
             <div
               key={row.key}
@@ -545,7 +546,7 @@ function ProductLaunchPackage({
           </h4>
           <div className="mt-1 divide-y divide-[#efedf2] overflow-hidden rounded-xl border border-[#efedf2]">
             {result.skus.slice(0, 20).map((sku) => (
-              <a
+              <MinkLink
                 key={sku.variantId ?? sku.productId}
                 href={safeDashboardPath(sku.dashboardPath)}
                 className="flex items-center justify-between gap-3 px-2.5 py-2 text-[10px] hover:bg-[#faf8ff]"
@@ -568,7 +569,7 @@ function ProductLaunchPackage({
                     : "Not tracked"}
                   <ArrowUpRight className="h-3 w-3" />
                 </span>
-              </a>
+              </MinkLink>
             ))}
           </div>
         </div>
@@ -580,13 +581,13 @@ function ProductLaunchPackage({
           </h4>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {result.locationStock.slice(0, 50).map((location) => (
-              <a
+              <MinkLink
                 key={location.id}
                 href={safeDashboardPath(location.dashboardPath)}
                 className="rounded-lg border border-[#e8e3f5] bg-[#faf8ff] px-2 py-1 text-[9px] text-[#51466b] hover:border-[#cfc2f5]"
               >
                 {location.name}: {location.stock.toLocaleString("en-IN")}
-              </a>
+              </MinkLink>
             ))}
           </div>
         </div>
@@ -607,18 +608,18 @@ function ProductLaunchPackage({
         </div>
       </div>
       <div className="flex flex-wrap gap-3">
-        <a
+        <MinkLink
           href={safeDashboardPath(result.productDashboardPath)}
           className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#6841d9] hover:underline"
         >
           Open product <ArrowUpRight className="h-3 w-3" />
-        </a>
-        <a
+        </MinkLink>
+        <MinkLink
           href={safeDashboardPath(result.inventoryDashboardPath)}
           className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#6841d9] hover:underline"
         >
           Open inventory <ArrowUpRight className="h-3 w-3" />
-        </a>
+        </MinkLink>
       </div>
       <p className="text-[9px] text-[#8a858e]">
         Private preparation only · {result.locationLabel} · data as of{" "}
@@ -668,7 +669,7 @@ function SlowInventoryPromotion({
                 className="px-2.5 py-2"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <a
+                  <MinkLink
                     href={safeDashboardPath(candidate.productDashboardPath)}
                     className="min-w-0 text-[10px] font-semibold text-[#3f3370] hover:underline"
                   >
@@ -681,14 +682,14 @@ function SlowInventoryPromotion({
                     <span className="block truncate text-[9px] font-normal text-[#817c86]">
                       {candidate.sku}
                     </span>
-                  </a>
-                  <a
+                  </MinkLink>
+                  <MinkLink
                     href={safeDashboardPath(candidate.inventoryDashboardPath)}
                     className="shrink-0 text-right text-[9px] text-[#6841d9] hover:underline"
                   >
                     {candidate.locationName}{" "}
                     <ArrowUpRight className="inline h-3 w-3" />
-                  </a>
+                  </MinkLink>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[9px] text-[#625c68]">
                   <span>{candidate.stock.toLocaleString("en-IN")} on hand</span>
@@ -783,18 +784,18 @@ function SlowInventoryPromotion({
 
       <ResultList title="How to interpret this" items={result.caveats} />
       <div className="flex flex-wrap gap-3">
-        <a
+        <MinkLink
           href={safeDashboardPath(result.inventoryDashboardPath)}
           className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#6841d9] hover:underline"
         >
           Verify inventory <ArrowUpRight className="h-3 w-3" />
-        </a>
-        <a
+        </MinkLink>
+        <MinkLink
           href={safeDashboardPath(result.offersDashboardPath)}
           className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#6841d9] hover:underline"
         >
           Open Offers manually <ArrowUpRight className="h-3 w-3" />
-        </a>
+        </MinkLink>
       </div>
       <p className="text-[9px] text-[#8a858e]">
         Private recommendation only · data as of {formatDate(result.dataAsOf)}.
@@ -846,7 +847,7 @@ function DelayedPickupReview({
           </h4>
           <div className="mt-1 divide-y divide-[#efedf2] overflow-hidden rounded-xl border border-[#efedf2]">
             {result.pickups.slice(0, 25).map((pickup) => (
-              <a
+              <MinkLink
                 key={`${pickup.orderRef}:${pickup.locationName}`}
                 href={safeDashboardPath(pickup.orderDashboardPath)}
                 className="block px-2.5 py-2 hover:bg-[#faf8ff]"
@@ -873,7 +874,7 @@ function DelayedPickupReview({
                     {pickupReminderLabel(pickup.reminderState)}
                   </span>
                 </div>
-              </a>
+              </MinkLink>
             ))}
           </div>
           {result.truncated ? (
@@ -940,12 +941,12 @@ function DelayedPickupReview({
         </ul>
       </div>
 
-      <a
+      <MinkLink
         href={safeDashboardPath(result.ordersDashboardPath)}
         className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#6841d9] hover:underline"
       >
         Verify live orders <ArrowUpRight className="h-3 w-3" />
-      </a>
+      </MinkLink>
       <p className="text-[9px] text-[#8a858e]">
         Private preparation only · data as of {formatDate(result.dataAsOf)}. No
         message, reminder, order, deadline or stock record was changed.

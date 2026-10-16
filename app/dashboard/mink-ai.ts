@@ -7,10 +7,29 @@ import type {
   MinkFeedbackRating,
 } from "@/lib/mink/types";
 import { readMinkArtifacts } from "./mink-artifact-parser";
+import {
+  minkToolLabel,
+  minkToolStatus,
+  type MinkToolState,
+} from "@/lib/mink/tool-labels";
+import {
+  minkRandomUuid,
+  readMinkMemorySuggestion,
+  type MinkMemorySuggestion,
+} from "@/lib/mink/memory-suggestion";
 
 export const ASSISTANT_NAME = "Mink AI";
 export const CANNED_REPLY = `Hi, I'm ${ASSISTANT_NAME} - your store assistant. I'm coming soon, and I'll be able to answer questions about your products, orders and customers right here.`;
 const REPLY_DELAY_MS = 500;
+
+/** One tool the run called, as the progress list shows it. */
+export type MinkRunStep = {
+  sequence: number;
+  name: string;
+  label: string;
+  status: string;
+  state: MinkToolState;
+};
 
 export type MinkMessage = {
   id: number | string;
@@ -18,6 +37,8 @@ export type MinkMessage = {
   text: string;
   runId?: string;
   artifacts?: MinkArtifact[];
+  /** What the run read or prepared, kept on the answer for this session only. */
+  toolSteps?: MinkRunStep[];
   feedback?: {
     rating: MinkFeedbackRating;
     issueCategory: MinkFeedbackIssue | null;
@@ -36,10 +57,24 @@ export type MinkUiError = {
   message: string;
 };
 
+/** "Remember this?" under the newest answer, and what happened to it. */
+export type MinkMemoryPrompt = {
+  suggestion: MinkMemorySuggestion;
+  status: "offered" | "saving" | "saved" | "failed";
+  error?: string;
+};
+
 type SsePayload = Record<string, unknown>;
 
 export function useMinkAi({ enabled }: { enabled: boolean }) {
   const [messages, setMessages] = useState<MinkMessage[]>([]);
+  const [memoryPrompt, setMemoryPromptState] =
+    useState<MinkMemoryPrompt | null>(null);
+  const memoryPromptRef = useRef<MinkMemoryPrompt | null>(null);
+  const setMemoryPrompt = useCallback((next: MinkMemoryPrompt | null) => {
+    memoryPromptRef.current = next;
+    setMemoryPromptState(next);
+  }, []);
   const [conversations, setConversations] = useState<MinkConversationSummary[]>(
     [],
   );
@@ -56,6 +91,10 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     string | null
   >(null);
   const [statusText, setStatusText] = useState<string | null>(null);
+  // The answer as it streams in, before the finished message replaces it.
+  const [streamingText, setStreamingText] = useState("");
+  const [steps, setSteps] = useState<MinkRunStep[]>([]);
+  const stepsRef = useRef<MinkRunStep[]>([]);
   const [error, setError] = useState<MinkUiError | null>(null);
   const [feedbackSubmittingRunId, setFeedbackSubmittingRunId] = useState<
     string | null
@@ -96,6 +135,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
         setActiveConversationId(detail.id);
         setActiveConversationTitle(detail.title);
         setMessages(detail.messages);
+        setMemoryPrompt(null);
         setInput("");
         setStatusText(null);
         lastFailedMessage.current = null;
@@ -108,7 +148,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
         }
       }
     },
-    [enabled],
+    [enabled, setMemoryPrompt],
   );
 
   const loadConversations = useCallback(
@@ -212,6 +252,10 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
       setError(null);
       lastFailedMessage.current = null;
       setStatusText(enabled ? "Thinking…" : "Getting ready…");
+      setStreamingText("");
+      stepsRef.current = [];
+      setSteps([]);
+      setMemoryPrompt(null);
       setReplying(true);
 
       if (!enabled) {
@@ -265,14 +309,38 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
             setStatusText("Thinking…");
           } else if (event === "tool") {
             const name =
-              typeof data.name === "string"
-                ? readableToolName(data.name)
-                : "store data";
-            setStatusText(
+              typeof data.name === "string" ? data.name : "store_data";
+            const state: MinkToolState =
               data.state === "failed"
-                ? `Couldn’t read ${name}`
-                : `Reading ${name}…`,
-            );
+                ? "failed"
+                : data.state === "completed"
+                  ? "completed"
+                  : "running";
+            const sequence =
+              typeof data.sequence === "number"
+                ? data.sequence
+                : stepsRef.current.length + 1;
+            const step: MinkRunStep = {
+              sequence,
+              name,
+              label: minkToolLabel(name),
+              status: minkToolStatus(name, state),
+              state,
+            };
+            stepsRef.current = upsertRunStep(stepsRef.current, step);
+            setSteps(stepsRef.current);
+            // ★ A tool call is working-out: any text that streamed before it
+            // is withdrawn (the server says so too), and the status line names
+            // what is being read rather than the generic "Thinking…".
+            if (state === "running") setStreamingText("");
+            setStatusText(state === "completed" ? "Thinking…" : step.status);
+          } else if (event === "delta" && typeof data.text === "string") {
+            const fragment = data.text;
+            setStreamingText((previous) => previous + fragment);
+            setStatusText("Writing…");
+          } else if (event === "delta_reset") {
+            setStreamingText("");
+            setStatusText("Thinking…");
           } else if (event === "message" && typeof data.text === "string") {
             const responseText = data.text;
             const runId =
@@ -286,9 +354,16 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
                 text: responseText,
                 ...(runId ? { runId } : {}),
                 artifacts: readMinkArtifacts(data.artifacts),
+                ...(stepsRef.current.length
+                  ? { toolSteps: stepsRef.current }
+                  : {}),
                 feedback: null,
               },
             ]);
+            setStreamingText("");
+          } else if (event === "memory_suggestion") {
+            const suggestion = readMinkMemorySuggestion(data);
+            if (suggestion) setMemoryPrompt({ suggestion, status: "offered" });
           } else if (event === "error") {
             streamedError = {
               code: typeof data.code === "string" ? data.code : "mink_failed",
@@ -315,11 +390,13 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
         if (abortController.current === controller) {
           abortController.current = null;
           setStatusText(null);
+          setStreamingText("");
+          setSteps([]);
           setReplying(false);
         }
       }
     },
-    [enabled, loadConversations, setReplying],
+    [enabled, loadConversations, setReplying, setMemoryPrompt],
   );
 
   const send = useCallback(
@@ -352,10 +429,61 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     setMessages([]);
     setInput("");
     setStatusText(null);
+    setStreamingText("");
+    stepsRef.current = [];
+    setSteps([]);
+    setMemoryPrompt(null);
     setError(null);
     setIsHistoryLoading(false);
     setReplying(false);
-  }, [setReplying]);
+  }, [setReplying, setMemoryPrompt]);
+
+  /**
+   * One tap saves the offered sentence through the same memories API the
+   * Memories page uses: the same explicit confirmation, the same ten-memory
+   * limit and a 90-day retention. Nothing is written until this is called.
+   */
+  const saveMemorySuggestion =
+    useCallback(async (): Promise<MinkUiError | null> => {
+      const prompt = memoryPromptRef.current;
+      if (!prompt || prompt.status === "saving" || prompt.status === "saved") {
+        return null;
+      }
+      setMemoryPrompt({ suggestion: prompt.suggestion, status: "saving" });
+      try {
+        const response = await fetch("/api/mink/memories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "save",
+            id: minkRandomUuid(),
+            version: 0,
+            requestKey: minkRandomUuid(),
+            title: prompt.suggestion.title,
+            content: prompt.suggestion.content,
+            kind: prompt.suggestion.kind,
+            days: 90,
+            confirmed: true,
+          }),
+        });
+        if (!response.ok) throw await responseError(response);
+        setMemoryPrompt({ suggestion: prompt.suggestion, status: "saved" });
+        return null;
+      } catch (caught) {
+        const error = toUiError(caught);
+        setMemoryPrompt({
+          suggestion: prompt.suggestion,
+          status: "failed",
+          error: error.message,
+        });
+        return error;
+      }
+    }, [setMemoryPrompt]);
+
+  const dismissMemorySuggestion = useCallback(
+    () => setMemoryPrompt(null),
+    [setMemoryPrompt],
+  );
 
   const submitFeedback = useCallback(
     async (input: {
@@ -413,8 +541,13 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     isHistoryLoading,
     deletingConversationId,
     statusText,
+    streamingText,
+    steps,
     error,
     feedbackSubmittingRunId,
+    memoryPrompt,
+    saveMemorySuggestion,
+    dismissMemorySuggestion,
     send,
     cancel,
     retry,
@@ -609,11 +742,15 @@ function conversationTitle(message: string): string {
   return `${characters.slice(0, 77).join("").trimEnd()}…`;
 }
 
-function readableToolName(name: string): string {
-  const labels: Record<string, string> = {
-    get_store_profile: "store details",
-    get_catalog_summary: "catalog",
-    search_products: "products",
-  };
-  return labels[name] ?? name.replaceAll("_", " ");
+/** Replace the step with the same sequence, else append; sorted by sequence. */
+export function upsertRunStep(
+  steps: MinkRunStep[],
+  step: MinkRunStep,
+): MinkRunStep[] {
+  const next = steps.some((existing) => existing.sequence === step.sequence)
+    ? steps.map((existing) =>
+        existing.sequence === step.sequence ? step : existing,
+      )
+    : [...steps, step];
+  return next.sort((a, b) => a.sequence - b.sequence).slice(0, 40);
 }

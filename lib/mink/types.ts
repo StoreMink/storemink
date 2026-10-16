@@ -357,6 +357,45 @@ export type MinkArtifact =
       status: MinkWorkflowStatus;
       currentStep: number;
       totalSteps: number;
+    }
+  | {
+      /**
+       * A dashboard page Mink was asked to open, optionally with a product
+       * form filled in. The card offers the page as a button and the panel
+       * opens it client-side when the artifact arrives live, so the chat
+       * stays open beside the page. `path` is re-checked by the parser to be
+       * a `/dashboard` path; nothing here is a URL the model composed freely.
+       */
+      type: "navigation";
+      title: string;
+      path: string;
+      label: string;
+      prefill?: {
+        kind: "product";
+        fields: {
+          name?: string;
+          description?: string;
+          seoTitle?: string;
+          seoDescription?: string;
+          basePrice?: number;
+          sellingPrice?: number;
+        };
+      };
+    }
+  | {
+      /** A small time series or breakdown drawn inline as an SVG chart. */
+      type: "chart";
+      title: string;
+      kind: "line" | "bar";
+      format: "number" | "currency" | "percent";
+      currency?: string;
+      series: Array<{
+        label: string;
+        points: Array<{ label: string; value: number }>;
+      }>;
+      filters: MinkFilter[];
+      dataAsOf?: string;
+      dashboardPath?: string;
     };
 
 export type MinkFeedbackRating = "helpful" | "unhelpful";
@@ -463,12 +502,35 @@ export interface MinkModelTurn {
   retryCount: number;
 }
 
+/**
+ * How a model turn is delivered while it is still being generated.
+ *
+ * ★ `onDelta` carries only VISIBLE text (thought parts are never forwarded)
+ * in the order the provider produced it. `onReset` fires when fragments
+ * already delivered must be thrown away: a retried provider call re-sends
+ * the whole turn, and a turn that ends in a function call is working-out,
+ * not the answer. A session that cannot stream may ignore both and return
+ * the finished turn; the orchestrator never depends on a delta arriving.
+ */
+export interface MinkStreamOptions {
+  onDelta?: (text: string) => void;
+  onReset?: () => void;
+}
+
 export interface MinkModelSession {
-  sendUserMessage(message: string): Promise<MinkModelTurn>;
-  sendToolResponses(responses: MinkToolResponse[]): Promise<MinkModelTurn>;
+  sendUserMessage(
+    message: string,
+    options?: MinkStreamOptions,
+  ): Promise<MinkModelTurn>;
+  sendToolResponses(
+    responses: MinkToolResponse[],
+    options?: MinkStreamOptions,
+  ): Promise<MinkModelTurn>;
 }
 
 export type MinkRunEvent =
+  | { type: "text_delta"; text: string }
+  | { type: "text_reset" }
   | { type: "tool_call"; sequence: number; call: MinkToolCall }
   | {
       type: "tool_result";
