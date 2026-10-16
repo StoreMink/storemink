@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   fillCannedReply,
   inboxSearchQuery,
+  isMarketingTemplate,
   splitSnippet,
+  templateBlockedReason,
   validateCannedReply,
   validateInboxLabel,
 } from "./inbox-workspace";
@@ -72,6 +74,48 @@ describe("fillCannedReply", () => {
     expect(fillCannedReply("Order {{order}}", { name: "A" })).toBe(
       "Order {{order}}",
     );
+  });
+
+  it("★ puts a name with `$` patterns in as written, never as a replacement pattern", () => {
+    const body = "Hi {{name}}, your order ships today.";
+    // `$'` would repeat the rest of the message, `` $` `` the start, `$&` the
+    // token itself and `$$` collapse to one `$`.
+    for (const name of ["$'", "$`", "$&", "$$", "Ra$'j Kumar"]) {
+      const first = name.split(" ")[0];
+      expect(fillCannedReply(body, { name }), name).toBe(
+        `Hi ${first}, your order ships today.`,
+      );
+    }
+  });
+});
+
+describe("templateBlockedReason", () => {
+  it("knows Meta's marketing category whatever its casing", () => {
+    expect(isMarketingTemplate("MARKETING")).toBe(true);
+    expect(isMarketingTemplate(" marketing ")).toBe(true);
+    expect(isMarketingTemplate("UTILITY")).toBe(false);
+    expect(isMarketingTemplate(null)).toBe(false);
+  });
+
+  it("★ holds a marketing template back unless the customer's yes to offers is in force", () => {
+    expect(templateBlockedReason("MARKETING", { inForce: true })).toBeNull();
+    expect(
+      templateBlockedReason("MARKETING", { inForce: false, optedOut: true }),
+    ).toMatch(/opted out of offers/);
+    expect(
+      templateBlockedReason("MARKETING", { inForce: false, optedOut: false }),
+    ).toMatch(/hasn't agreed to receive offers/);
+    // The screen knows only yes or no, so it names both causes.
+    expect(templateBlockedReason("MARKETING", { inForce: false })).toMatch(
+      /hasn't agreed to receive offers on WhatsApp, or has opted out/,
+    );
+  });
+
+  it("never holds back a utility template, whatever the offers consent", () => {
+    expect(
+      templateBlockedReason("UTILITY", { inForce: false, optedOut: true }),
+    ).toBeNull();
+    expect(templateBlockedReason(undefined, { inForce: false })).toBeNull();
   });
 });
 

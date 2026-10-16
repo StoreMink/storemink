@@ -220,6 +220,23 @@ describe("answerAutomatically: the away message", () => {
     expect(mock.calls.execute).toHaveLength(1);
   });
 
+  it("★ a template staff sent from the inbox counts as a person replying", async () => {
+    // sendInboxTemplate files `source: 'template'` WITH the sender's id; the
+    // source alone would let "we're closed" follow a person's message.
+    const mock = setup(configRow({ awayEnabled: true }), [
+      [{ away_sent_at: null, human_recent: true }],
+    ]);
+    await answerAutomatically(
+      input({ welcomeEligible: false, now: CLOSED_NOW }),
+    );
+    const read = sqlText(mock.calls.execute[0]);
+    expect(read).toContain(
+      "and (m.source in ('dashboard', 'phone_app') or m.sent_by_admin_id is not null)",
+    );
+    expect(read).toContain("m.direction = 'out'");
+    expect(replyInChat).not.toHaveBeenCalled();
+  });
+
   it("★ welcome and away go as ONE message, welcome first", async () => {
     setup(configRow({ welcomeEnabled: true, awayEnabled: true }), [
       [{ id: "c1" }],
@@ -406,6 +423,81 @@ describe("answerAutomatically: the menu", () => {
     vi.mocked(replyInChat).mockResolvedValueOnce(false);
     const r = await answerAutomatically(input({ menuRequest: true }));
     expect(r).toEqual({ handOver: true, sent: [] });
+  });
+
+  // ★ A typed "menu" is filed as answered by the system (no unread, no Needs
+  // reply, no bell), so every way out that sends no menu must hand it over.
+  it("★ no number to answer from: the menu request waits for a person", async () => {
+    setup(configRow({ menuEnabled: true, menuButtons: MENU }));
+    vi.mocked(loadWhatsAppSender).mockResolvedValueOnce(null);
+    const r = await answerAutomatically(input({ menuRequest: true }));
+    expect(r).toEqual({ handOver: true, sent: [] });
+    expect(replyInChat).not.toHaveBeenCalled();
+  });
+
+  it("★ unreadable settings: the menu request waits for a person", async () => {
+    dbHolder.current = makeDbMock({ selectQueue: [new Error("down")] });
+    const r = await answerAutomatically(input({ menuRequest: true }));
+    expect(r).toEqual({ handOver: true, sent: [] });
+  });
+
+  it("★ the menu switched off since the message was filed: a person answers", async () => {
+    setup(configRow());
+    const r = await answerAutomatically(input({ menuRequest: true }));
+    expect(r).toEqual({ handOver: true, sent: [] });
+    expect(loadWhatsAppSender).not.toHaveBeenCalled();
+    expect(replyInChat).not.toHaveBeenCalled();
+  });
+
+  it("★ menu off and nothing else due either: a person answers", async () => {
+    // The welcome is on but not due, the store is open: nothing to say at all.
+    setup(configRow({ welcomeEnabled: true, awayEnabled: true }));
+    const r = await answerAutomatically(
+      input({ welcomeEligible: false, menuRequest: true }),
+    );
+    expect(r).toEqual({ handOver: true, sent: [] });
+    expect(replyInChat).not.toHaveBeenCalled();
+  });
+
+  it("★ menu off but a welcome due: the welcome goes, and a person still answers", async () => {
+    setup(configRow({ welcomeEnabled: true }), [[{ id: "c1" }]]);
+    const r = await answerAutomatically(input({ menuRequest: true }));
+    expect(r).toEqual({ handOver: true, sent: ["welcome"] });
+    expect(vi.mocked(replyInChat).mock.calls[0][0].buttons).toBeUndefined();
+  });
+
+  it("★ buttons that could not follow a long welcome hand a menu REQUEST over, not a menu that rode along", async () => {
+    const long = () =>
+      setup(
+        configRow({
+          welcomeEnabled: true,
+          welcomeText: "W".repeat(900),
+          awayEnabled: true,
+          awayText: "A".repeat(900),
+          menuEnabled: true,
+          menuButtons: MENU,
+        }),
+        [
+          [{ id: "c1" }],
+          [{ away_sent_at: null, human_recent: false }],
+          [{ id: "c1" }],
+        ],
+      );
+    long();
+    vi.mocked(replyInChat)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const asked = await answerAutomatically(
+      input({ now: CLOSED_NOW, menuRequest: true }),
+    );
+    expect(asked).toEqual({ handOver: true, sent: ["welcome", "away"] });
+
+    long();
+    vi.mocked(replyInChat)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const rode = await answerAutomatically(input({ now: CLOSED_NOW }));
+    expect(rode).toEqual({ handOver: false, sent: ["welcome", "away"] });
   });
 
   it("★ words too long for one button message go first, and the buttons follow with a prompt", async () => {

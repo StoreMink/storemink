@@ -16,6 +16,29 @@ describe("CodConfirmationTag", () => {
     expect(codConfirmationLabel("expired")).toBe("Not confirmed on WhatsApp");
   });
 
+  // ★ Meta reported the message failed: the customer never saw the buttons,
+  // so "Awaiting confirmation" would have the merchant wait for nothing.
+  it("★ a message that never arrived says so, in the failure tone", () => {
+    expect(codConfirmationLabel("undelivered")).toBe(
+      "WhatsApp message not delivered",
+    );
+    render(<CodConfirmationTag value="undelivered" />);
+    const tag = screen.getByText("WhatsApp message not delivered");
+    expect(tag.className).toContain("text-rose-700");
+  });
+
+  it("no answer's label uses a long dash", () => {
+    for (const value of [
+      "requested",
+      "confirmed",
+      "cancelled",
+      "expired",
+      "undelivered",
+    ]) {
+      expect(codConfirmationLabel(value), value).not.toMatch(/[—–]/);
+    }
+  });
+
   it("★ renders nothing when the customer was never asked", () => {
     const { container } = render(<CodConfirmationTag value={null} />);
     expect(container.textContent).toBe("");

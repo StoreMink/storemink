@@ -171,11 +171,33 @@ describe("loadWhatsAppTemplates", () => {
       "order.placed",
     );
     expect([...map.keys()]).toEqual(["customer"]);
+    // The row IS the current catalogue entry, so the catalogue's mapping
+    // wins over the copy stored with the row (templateRowVariables).
     expect(map.get("customer")).toMatchObject({
       id: "t1",
       body: "Hi from {{1}}.",
-      variables: ["store_name"],
+      variables: ["store_name", "subject_label", "total", "payment_method"],
     });
+  });
+
+  it("an older version of a catalogue template keeps the variables stored with it", async () => {
+    const rows = [
+      {
+        id: "old",
+        audience: "customer",
+        name: "sm_order_placed_customer_v0",
+        language: "en",
+        status: "APPROVED",
+        variables: ["store_name"],
+        components: [{ type: "BODY", text: "Hi from {{1}}." }],
+      },
+    ];
+    const map = await loadWhatsAppTemplates(
+      db(rows),
+      "store-1",
+      "order.placed",
+    );
+    expect(map.get("customer")?.variables).toEqual(["store_name"]);
   });
 
   it("★ two approved versions of one template: the current catalogue name wins", async () => {

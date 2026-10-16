@@ -161,6 +161,52 @@ describe("POST /api/dashboard/inbox/media", () => {
     expect(sendInboxMedia).not.toHaveBeenCalled();
   });
 
+  it("★ a caption at the limit with line breaks arrives whole: CRLF is counted as one break, never cut", async () => {
+    // What a browser sends: multipart turns each line break into CRLF, so a
+    // caption of exactly 1,024 characters (as typed) arrives longer.
+    const lines = Array.from({ length: 12 }, (_, i) =>
+      String(i).padEnd(84, "x"),
+    );
+    const typed = lines.join("\n");
+    expect(typed.length).toBe(12 * 84 + 11);
+    const asTyped = typed + "y".repeat(1024 - typed.length);
+    expect(asTyped.length).toBe(1024);
+    const res = await POST(
+      request({
+        conversationId: CONV,
+        file: pdf(),
+        caption: asTyped.replace(/\n/g, "\r\n"),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(sendInboxMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ caption: asTyped }),
+    );
+  });
+
+  it("a lone CR is a line break too", async () => {
+    await POST(
+      request({ conversationId: CONV, file: pdf(), caption: "a\rb\r\nc" }),
+    );
+    expect(sendInboxMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ caption: "a\nb\nc" }),
+    );
+  });
+
+  it("★ a caption over the limit is refused with the reason, before the gate or the file is touched", async () => {
+    const res = await POST(
+      request({ conversationId: CONV, file: pdf(), caption: "x".repeat(1025) }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "A caption can be at most 1024 characters.",
+    });
+    expect(inboxSendGate).not.toHaveBeenCalled();
+    expect(prepareOutboundMedia).not.toHaveBeenCalled();
+    expect(sendInboxMedia).not.toHaveBeenCalled();
+  });
+
   it("no file, or a malformed conversation id, never reaches the gate", async () => {
     expect((await POST(request({ conversationId: CONV }))).status).toBe(400);
     expect(

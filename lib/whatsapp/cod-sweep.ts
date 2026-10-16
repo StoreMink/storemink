@@ -20,10 +20,26 @@ import { codButtonPayloads } from "./cod-payload";
 //   48 h after the message: cancel the order (whatsapp.codAutoCancel, OFF by
 //        default), through the one cancellation, nothing refunded (nothing was
 //        paid), and mark it 'expired' so the order list says "Not confirmed on
-//        WhatsApp" rather than that the customer cancelled.
+//        WhatsApp" rather than that the customer cancelled. The cancellation's
+//        own claim writes 'expired', in the statement that cancels it.
 //
 // ★ ONLY ORDERS STILL PENDING. An order the shop has moved on is one the shop
 // has decided to ship; reminding or cancelling it would overrule them.
+//
+// ★ ONLY ORDERS STILL AWAITING AN ANSWER: `requested`, never `undelivered`.
+// Meta reporting the message failed means the customer never saw the
+// buttons, so "not confirmed" says nothing about what they want.
+//
+// ★★ ONLY WHILE THE NUMBER IS CONNECTED AND SWITCHED ON. Both actions assume
+// the customer's tap can reach us and be answered. After Disconnect (row
+// deleted, our app unsubscribed from the WABA) a tap never arrives; with
+// `needs_reauth` the token is dead and Meta may have stopped posting to us;
+// while paused the merchant has switched WhatsApp off, a tap cannot be
+// answered and the worker refuses the reminder (spending its one claim).
+// Cancelling an order as "not confirmed" then cancels customers who had no
+// fair chance to confirm, and Disconnect also hides the switch that would
+// stop it. Skipped instead: an order kept can still be cancelled by hand,
+// and resuming inside the window lets the sweep carry on.
 //
 // ★ EACH ACTION HAS A 24-HOUR WINDOW, not "everything older than". The sweep
 // runs hourly, so 24 hours is plenty to be seen, and a store switching the
@@ -54,7 +70,8 @@ type Candidate = {
 };
 
 /** Orders awaiting an answer whose message went `afterHours` to
- *  `afterHours + window` ago, in stores where `setting` is on. */
+ *  `afterHours + window` ago, in stores where `setting` is on and the
+ *  WhatsApp number is connected and switched on. */
 async function candidates(
   afterHours: number,
   setting: "whatsapp.codReminder" | "whatsapp.codAutoCancel",
@@ -68,13 +85,18 @@ async function candidates(
     setting === "whatsapp.codReminder"
       ? sql`(s.settings -> 'features' -> 'whatsapp.codReminder') is distinct from 'false'::jsonb`
       : sql`(s.settings -> 'features' -> 'whatsapp.codAutoCancel') = 'true'::jsonb`;
+  // The account join is in the SQL, before the LIMIT: filtered afterwards, a
+  // disconnected store's orders would fill every batch for a day.
   const rows = await withService((db) =>
     db.execute<Candidate>(sql`
       select o.id, o.store_id, o.customer_id
         from public.orders o
         join public.stores s on s.id = o.store_id
+        join public.store_whatsapp_accounts a on a.store_id = o.store_id
        where o.cod_confirmation = 'requested'
          and o.status = 'pending'
+         and a.status = 'connected'
+         and a.enabled
          and o.cod_confirmation_at <= now() - make_interval(hours => ${afterHours})
          and o.cod_confirmation_at > now() - make_interval(hours => ${afterHours + COD_FOLLOWUP_WINDOW_HOURS})
          and (s.settings -> 'features' -> 'whatsapp.codConfirmation') = 'true'::jsonb
@@ -153,7 +175,10 @@ async function remind(order: Candidate): Promise<boolean> {
   });
 }
 
-/** Cancel an order nobody confirmed, and label why. True when cancelled. */
+/** Cancel an order nobody confirmed. True when cancelled.
+ *  ★ No label write here: `onlyWhileCodAwaited` makes the cancellation's own
+ *  claim set 'expired', so a Confirm tap handled while the rest of the
+ *  cancellation runs already reads 'expired' and goes to a person. */
 async function autoCancel(order: Candidate): Promise<boolean> {
   const res = await approveCancellation({
     storeId: order.store_id,
@@ -172,18 +197,7 @@ async function autoCancel(order: Candidate): Promise<boolean> {
     // before the response, not left to after().
     notifyInline: true,
   });
-  if (!res.success) return false;
-  await withService((db) =>
-    db
-      .update(orders)
-      .set({ codConfirmation: "expired", codConfirmationAt: sql`now()` })
-      .where(and(eq(orders.id, order.id), eq(orders.storeId, order.store_id))),
-  ).catch((err) =>
-    logError("whatsapp cod: expired label failed", err, {
-      storeId: order.store_id,
-    }),
-  );
-  return true;
+  return res.success === true;
 }
 
 /** One pass: reminders, then cancellations. Never throws. */

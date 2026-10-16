@@ -7,9 +7,11 @@ import { describe, expect, it } from "vitest";
 import {
   MINK_REPLY_MAX_CHARS,
   allowedUrlsIn,
+  deliveryCheckVariant,
   factsSummary,
   htmlToText,
   matchProducts,
+  optionLabel,
   parseMinkWhatsAppAnswer,
   pinCodeIn,
   renderHours,
@@ -153,6 +155,53 @@ describe("renderProductFact", () => {
   });
 });
 
+describe("deliveryCheckVariant", () => {
+  const option = (
+    id: string,
+    stock: number,
+    over: Partial<MinkProductLike["variants"][number]> = {},
+  ): MinkProductLike["variants"][number] => ({
+    id,
+    base_price: 150,
+    selling_price: 120,
+    special_price: null,
+    track_inventory: true,
+    stock,
+    low_stock_threshold: null,
+    allow_backorder: false,
+    option_values: [id],
+    ...over,
+  });
+
+  it("★ a product with options is checked through the first one not sold out", () => {
+    expect(
+      deliveryCheckVariant({
+        variants: [option("250 ml", 0), option("500 ml", 3), option("1 L", 9)],
+      })?.id,
+    ).toBe("500 ml");
+    // Untracked or backorderable counts as available, as on the card.
+    expect(
+      deliveryCheckVariant({
+        variants: [option("a", 0), option("b", 0, { track_inventory: false })],
+      })?.id,
+    ).toBe("b");
+  });
+
+  it("every option sold out: the first answers, honestly out of stock; no options: the product", () => {
+    expect(
+      deliveryCheckVariant({ variants: [option("a", 0), option("b", 0)] })?.id,
+    ).toBe("a");
+    expect(deliveryCheckVariant({ variants: [] })).toBeNull();
+  });
+
+  it("names an option by its values", () => {
+    expect(
+      optionLabel(option("x", 1, { option_values: ["M", "", "Black"] })),
+    ).toBe("M / Black");
+    expect(optionLabel(option("x", 1, { option_values: [] }))).toBe("option");
+  });
+});
+
 describe("the sheet", () => {
   it("renders every section, says when a section is empty, and lists only its own links", () => {
     const sheet = renderMinkFacts(facts({ hours: "Mon 10:00 to 19:00." }));
@@ -166,6 +215,30 @@ describe("the sheet", () => {
       "https://echoss.storemink.com",
       "https://echoss.storemink.com/shop/almond-shake",
     ]);
+  });
+
+  it("★ a read that failed says it failed: never 'no orders' or 'no offers'", () => {
+    const failed = renderMinkFacts(
+      facts({
+        orders: [],
+        ordersUnavailable: true,
+        offers: [],
+        offersUnavailable: true,
+      }),
+    );
+    expect(failed).toContain(
+      "THIS CUSTOMER'S ORDERS: could not be looked up just now, so nothing is known about them.",
+    );
+    expect(failed).not.toContain("none found");
+    expect(failed).toContain(
+      "OFFERS RUNNING NOW: could not be checked just now, so nothing is known about them.",
+    );
+    expect(failed).not.toContain("OFFERS RUNNING NOW: none.");
+    // A lookup that answered "none" still says none.
+    const none = renderMinkFacts(facts({ orders: [] }));
+    expect(none).toContain(
+      "THIS CUSTOMER'S ORDERS: none found for the number they are writing from.",
+    );
   });
 
   it("renders the hours per day, the zone and whether the shop is open", () => {
@@ -301,6 +374,34 @@ describe("parseMinkWhatsAppAnswer", () => {
         allowed,
       )?.outcome,
     ).toBe("hand_over");
+  });
+
+  it("★ a long dash never reaches the customer or the staff card (CODEBASE §40)", () => {
+    const parsed = parseMinkWhatsAppAnswer(
+      {
+        outcome: "answer",
+        reply: "Yes — it's ₹120.\n— Delivery in 2–4 days.",
+        reason: "price — in facts",
+      },
+      allowed,
+    );
+    expect(parsed).toEqual({
+      outcome: "answer",
+      reply: "Yes, it's ₹120.\nDelivery in 2 to 4 days.",
+      reason: "price, in facts",
+    });
+    expect(JSON.stringify(parsed)).not.toMatch(/[–—]/);
+    // The rewrite happens before the rules: a hand-over keeps clean words too.
+    expect(
+      parseMinkWhatsAppAnswer(
+        {
+          outcome: "hand_over",
+          reply: "Sorry — a person will reply.",
+          reason: "",
+        },
+        allowed,
+      )?.reply,
+    ).toBe("Sorry, a person will reply.");
   });
 
   it("a hand-over may carry an empty reply, and keeps a short one for staff", () => {

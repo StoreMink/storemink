@@ -54,7 +54,7 @@ import {
 import { whatsAppChatLink } from "@/lib/whatsapp/chat-link";
 import { getCurrentStore } from "@/lib/store/resolve";
 import { whatsappTemplates } from "@/drizzle/schema";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 export interface WhatsAppChannelState {
   connected: boolean;
@@ -73,11 +73,18 @@ export interface WhatsAppChannelState {
   coexistence: boolean;
   lastError: string | null;
   planAllows: boolean;
-  /** The notification templates StoreMink registered on this number: how many
-   *  Meta has approved, how many it is still reviewing, and the catalogue
-   *  size. The fan-out queues only approved ones, so "0 of 19 approved" is why
-   *  a freshly connected store sends nothing yet. */
-  templates: { approved: number; pending: number; total: number };
+  /** The notification templates StoreMink registers on this number: how many
+   *  Meta has approved, how many it is reviewing, how many it holds nothing
+   *  for (never submitted, refused or unanswered at submission, or reset by a
+   *  WABA change: what "Set up templates" sends), and the catalogue size. The
+   *  fan-out queues only approved ones, so "0 of 19 approved" is why a freshly
+   *  connected store sends nothing yet. */
+  templates: {
+    approved: number;
+    pending: number;
+    unsubmitted: number;
+    total: number;
+  };
   /** The click-to-chat link for this number (QR + storefront button). Null
    *  until connected. */
   chatLink: string | null;
@@ -113,6 +120,9 @@ const EMPTY: Omit<
   templates: {
     approved: 0,
     pending: 0,
+    // Unknown counts keep "Set up templates" on offer: it is idempotent, and
+    // it is the merchant's way out when the read failed.
+    unsubmitted: WHATSAPP_TEMPLATE_CATALOG.length,
     total: WHATSAPP_TEMPLATE_CATALOG.length,
   },
   chatLink: null,
@@ -125,8 +135,10 @@ async function templateCounts(
     const rows = await withService((db) =>
       db
         .select({
+          name: whatsappTemplates.name,
+          language: whatsappTemplates.language,
           status: whatsappTemplates.status,
-          n: sql<number>`count(*)::int`,
+          providerTemplateId: whatsappTemplates.providerTemplateId,
         })
         .from(whatsappTemplates)
         .where(
@@ -140,17 +152,29 @@ async function templateCounts(
               WHATSAPP_TEMPLATE_CATALOG.map((t) => t.name),
             ),
           ),
-        )
-        .groupBy(whatsappTemplates.status),
+        ),
     );
+    const byKey = new Map(rows.map((r) => [`${r.name}:${r.language}`, r]));
     let approved = 0;
     let pending = 0;
-    for (const r of rows) {
-      if (r.status === "APPROVED") approved += r.n;
-      else if (r.status === "PENDING" || r.status === "IN_APPEAL")
-        pending += r.n;
+    let unsubmitted = 0;
+    for (const def of WHATSAPP_TEMPLATE_CATALOG) {
+      const row = byKey.get(`${def.name}:${def.language}`);
+      if (row?.status === "APPROVED") approved++;
+      // ★ NO META ID MEANS META IS REVIEWING NOTHING. A create Meta refused
+      // or never answered keeps its row PENDING with no id (and a sync_error);
+      // counted as "in review", it made approved + pending reach the total
+      // and hid "Set up templates", the one button that resubmits it.
+      else if (!row || !row.providerTemplateId) unsubmitted++;
+      else if (row.status === "PENDING" || row.status === "IN_APPEAL")
+        pending++;
     }
-    return { approved, pending, total: WHATSAPP_TEMPLATE_CATALOG.length };
+    return {
+      approved,
+      pending,
+      unsubmitted,
+      total: WHATSAPP_TEMPLATE_CATALOG.length,
+    };
   } catch {
     return EMPTY.templates;
   }
@@ -247,11 +271,13 @@ export async function getWhatsAppChannelState(): Promise<WhatsAppChannelState> {
 /**
  * Finish Embedded Signup. The browser supplies what Meta's popup gave it;
  * nothing in it is trusted until lib/whatsapp/connect.ts has proved it.
+ * `phoneNumberId` is null when the Coexistence popup named only the WABA;
+ * the server then reads the number from Meta.
  */
 export async function connectWhatsApp(input: {
   code: string;
   wabaId: string;
-  phoneNumberId: string;
+  phoneNumberId: string | null;
   coexistence: boolean;
 }): Promise<WhatsAppActionResult & { displayPhone?: string }> {
   const userId = await getManagerUserId("channels");
@@ -276,6 +302,8 @@ export async function connectWhatsApp(input: {
     storeId,
     code,
     wabaId: String(input.wabaId ?? ""),
+    // Empty when the popup named no number; connect.ts accepts that only
+    // for Coexistence, and reads the number from Meta.
     phoneNumberId: String(input.phoneNumberId ?? ""),
     coexistence: Boolean(input.coexistence),
   });

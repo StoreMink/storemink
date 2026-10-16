@@ -11,7 +11,7 @@ import {
   deleteLabel,
   saveCannedReply,
   saveLabel,
-  setConversationLabels,
+  setConversationLabel,
 } from "./inbox-team";
 
 const STORE = "11111111-1111-4111-8111-111111111111";
@@ -71,46 +71,90 @@ describe("assignConversation", () => {
   });
 });
 
-describe("setConversationLabels", () => {
-  it("★ keeps only the store's own labels, deletes the rest and inserts the set idempotently", async () => {
+describe("setConversationLabel", () => {
+  it("★ adds ONE of the store's own labels idempotently and reports what the conversation now carries", async () => {
     mock = makeDbMock({
-      executeQueue: [[{ id: CONV }], [{ id: L1 }], [], []],
+      executeQueue: [
+        [{ id: CONV }],
+        [{ others: 1 }],
+        [],
+        [{ label_id: L2 }, { label_id: L1 }],
+      ],
     });
-    const r = await setConversationLabels(mock.db, {
+    const r = await setConversationLabel(mock.db, {
       storeId: STORE,
       conversationId: CONV,
-      labelIds: [L1, L2, L1],
+      labelId: L1,
+      on: true,
     });
-    expect(r).toEqual({ ok: true, value: { labelIds: [L1] } });
+    expect(r).toEqual({ ok: true, value: { labelIds: [L2, L1] } });
     const t = texts();
     expect(t[0]).toContain("for update");
-    expect(t[1]).toMatch(/select id from public\.whatsapp_labels/);
-    expect(t[2]).toMatch(/delete from public\.whatsapp_conversation_labels/);
-    expect(t[2]).toContain("and label_id <> all(");
-    expect(t[3]).toMatch(/insert into public\.whatsapp_conversation_labels/);
-    expect(t[3]).toContain("on conflict do nothing");
+    expect(sqlParamValues(mock.calls.execute[0])).toEqual([CONV, STORE]);
+    expect(t[1]).toMatch(/from public\.whatsapp_labels l/);
+    expect(sqlParamValues(mock.calls.execute[1])).toEqual(
+      expect.arrayContaining([L1, STORE]),
+    );
+    expect(t[2]).toMatch(/insert into public\.whatsapp_conversation_labels/);
+    expect(t[2]).toContain("on conflict do nothing");
+    expect(sqlParamValues(mock.calls.execute[2])).toEqual([STORE, CONV, L1]);
+    // ★ Never a delete when adding: a label the click did not name is left
+    // exactly where it is, whatever the screen believed.
+    expect(t.some((s) => /delete from/.test(s))).toBe(false);
   });
 
-  it("an empty set clears every label with one delete and no insert", async () => {
-    mock = makeDbMock({ executeQueue: [[{ id: CONV }], []] });
-    const r = await setConversationLabels(mock.db, {
-      storeId: STORE,
-      conversationId: CONV,
-      labelIds: [],
+  it("★ removing deletes only the named label's link, on this store's conversation", async () => {
+    mock = makeDbMock({
+      executeQueue: [[{ id: CONV }], [], [{ label_id: L2 }]],
     });
-    expect(r).toEqual({ ok: true, value: { labelIds: [] } });
-    expect(mock.calls.execute).toHaveLength(2);
-    expect(texts()[1]).not.toContain("<> all(");
-  });
-
-  it("a conversation on another store is not found", async () => {
-    mock = makeDbMock({ executeQueue: [[]] });
-    const r = await setConversationLabels(mock.db, {
+    const r = await setConversationLabel(mock.db, {
       storeId: STORE,
       conversationId: CONV,
-      labelIds: [L1],
+      labelId: L1,
+      on: false,
+    });
+    expect(r).toEqual({ ok: true, value: { labelIds: [L2] } });
+    const t = texts();
+    expect(t[1]).toMatch(/delete from public\.whatsapp_conversation_labels/);
+    expect(t[1]).toContain("and label_id =");
+    expect(t[1]).not.toContain("<> all(");
+    expect(sqlParamValues(mock.calls.execute[1])).toEqual([CONV, STORE, L1]);
+  });
+
+  it("a label that is not the store's own is refused, never attached", async () => {
+    mock = makeDbMock({ executeQueue: [[{ id: CONV }], []] });
+    const r = await setConversationLabel(mock.db, {
+      storeId: STORE,
+      conversationId: CONV,
+      labelId: L2,
+      on: true,
     });
     expect(r).toMatchObject({ ok: false, code: "not_found" });
+    expect(mock.calls.execute).toHaveLength(2);
+  });
+
+  it("a conversation already carrying the most labels takes no other", async () => {
+    mock = makeDbMock({ executeQueue: [[{ id: CONV }], [{ others: 20 }]] });
+    const r = await setConversationLabel(mock.db, {
+      storeId: STORE,
+      conversationId: CONV,
+      labelId: L1,
+      on: true,
+    });
+    expect(r).toMatchObject({ ok: false, code: "limit" });
+    expect(mock.calls.execute).toHaveLength(2);
+  });
+
+  it("a conversation on another store is not found, with nothing written", async () => {
+    mock = makeDbMock({ executeQueue: [[]] });
+    const r = await setConversationLabel(mock.db, {
+      storeId: STORE,
+      conversationId: CONV,
+      labelId: L1,
+      on: false,
+    });
+    expect(r).toMatchObject({ ok: false, code: "not_found" });
+    expect(mock.calls.execute).toHaveLength(1);
   });
 });
 

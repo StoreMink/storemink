@@ -13,6 +13,14 @@
 // ★ ONLY MESSAGES FROM facebook.com ARE READ. The event listener is the one
 // place a third-party page could inject an id, so the origin is checked
 // before the payload is parsed.
+//
+// ★ COEXISTENCE FINISHES WITH ITS OWN EVENT. Meta's onboarding for a number
+// on the WhatsApp Business app (featureType whatsapp_business_app_onboarding)
+// posts FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING carrying the WABA id alone.
+// Reading only FINISH, which needs both ids, let that flow time out with
+// "didn't return the WhatsApp account" after the merchant had finished. The
+// number then comes from the server, which lists the WABA's numbers under the
+// proven token (lib/whatsapp/connect.ts), so phoneNumberId may be null.
 // ---------------------------------------------------------------------------
 
 export interface EmbeddedSignupInput {
@@ -24,7 +32,13 @@ export interface EmbeddedSignupInput {
 }
 
 export type EmbeddedSignupOutcome =
-  | { ok: true; code: string; wabaId: string; phoneNumberId: string }
+  | {
+      ok: true;
+      code: string;
+      wabaId: string;
+      /** Null when the Coexistence finish named only the WABA. */
+      phoneNumberId: string | null;
+    }
   | { ok: false; cancelled: true }
   | { ok: false; cancelled: false; error: string };
 
@@ -102,6 +116,11 @@ export function parseSignupMessage(
   data: unknown,
 ):
   | { event: "FINISH"; wabaId: string; phoneNumberId: string }
+  | {
+      event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
+      wabaId: string;
+      phoneNumberId: string | null;
+    }
   | { event: "FINISH_ONLY_WABA"; wabaId: string }
   | { event: "CANCEL" }
   | { event: "ERROR"; message: string }
@@ -136,6 +155,14 @@ export function parseSignupMessage(
 
   if (event === "FINISH" && wabaId && phoneNumberId) {
     return { event: "FINISH", wabaId, phoneNumberId };
+  }
+  // The number id is read when Meta sends one, never required.
+  if (event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" && wabaId) {
+    return {
+      event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
+      wabaId,
+      phoneNumberId: phoneNumberId || null,
+    };
   }
   if (event === "FINISH_ONLY_WABA" && wabaId) {
     return { event: "FINISH_ONLY_WABA", wabaId };
@@ -174,7 +201,7 @@ export async function runEmbeddedSignup(
 
   return new Promise<EmbeddedSignupOutcome>((resolve) => {
     let code: string | null = null;
-    let ids: { wabaId: string; phoneNumberId: string } | null = null;
+    let ids: { wabaId: string; phoneNumberId: string | null } | null = null;
     let settled = false;
 
     const finish = (outcome: EmbeddedSignupOutcome) => {
@@ -190,7 +217,10 @@ export async function runEmbeddedSignup(
     const onMessage = (event: MessageEvent) => {
       const msg = parseSignupMessage(event.origin, event.data);
       if (!msg) return;
-      if (msg.event === "FINISH") {
+      if (
+        msg.event === "FINISH" ||
+        msg.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING"
+      ) {
         ids = { wabaId: msg.wabaId, phoneNumberId: msg.phoneNumberId };
         tryComplete();
       } else if (msg.event === "FINISH_ONLY_WABA") {

@@ -13,6 +13,8 @@ import { codOrderFromPayloads } from "./cod-payload";
 import { markCodConfirmationRequested } from "./cod-confirmation";
 import { fileTemplateInThread } from "./inbox";
 import { renderWhatsAppBody } from "./template-catalog";
+import { markNeedsReauth } from "./templates";
+import { releaseHeldSms } from "./sms-fallback";
 import { textablePhone } from "@/lib/phone";
 
 // ---------------------------------------------------------------------------
@@ -29,7 +31,19 @@ import { textablePhone } from "@/lib/phone";
 // ★ ONLY A THROTTLE IS RETRIED. Meta's rate-limit codes mean "not now", and
 // provably nothing went; every other rejection is terminal, because a number
 // that is not on WhatsApp is still not on WhatsApp in five minutes.
+//
+// ★ OUR OWN READ FAILING IS NOT A VERDICT. A database blip while loading the
+// sender, the template or the consent says nothing about the message, so the
+// row is requeued with the same backoff instead of being settled as "not
+// connected" or "not opted in" (which, under whatsapp_first, used to cost the
+// customer their SMS as well).
+//
+// ★ EVERY DEFINITE FAILURE RELEASES THE HELD SMS (0211, sms-fallback.ts); an
+// unknown outcome keeps it held, because the WhatsApp may have arrived.
 // ---------------------------------------------------------------------------
+
+/** Meta's "the access token is no longer valid" (expired, revoked, removed). */
+export const TOKEN_INVALID_CODE = 190;
 
 /** 5 / 15 / 45 minutes, matching the email and SMS workers' backoff. */
 const BACKOFF_MINUTES = [5, 15, 45];
@@ -53,6 +67,10 @@ export interface WhatsAppWorkerResult {
   /** Sends whose outcome Meta never confirmed. Never retried. */
   unknown: number;
   skipped: number;
+  /** Held SMS released because the WhatsApp could not be sent. */
+  smsReleased: number;
+  /** Rows put back because one of our own reads failed. */
+  requeued: number;
 }
 
 export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
@@ -62,6 +80,8 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
     failed: 0,
     unknown: 0,
     skipped: 0,
+    smsReleased: 0,
+    requeued: 0,
   };
 
   // ★ FOR UPDATE SKIP LOCKED: two overlapping runs take different rows rather
@@ -101,71 +121,94 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
     Awaited<ReturnType<typeof loadWhatsAppTemplateById>>
   >();
 
+  // A definite failure: settle the row and let its held SMS go instead.
+  const fail = async (row: QueueRow, error: string) => {
+    await settle(row.id, "failed", error);
+    if (await release(row.id)) result.smsReleased++;
+  };
+
   for (const row of claimed) {
     const storeId = row.store_id;
-    if (!senders.has(storeId)) {
-      senders.set(
+    let sender: Awaited<ReturnType<typeof loadWhatsAppSender>>;
+    let template: Awaited<ReturnType<typeof loadWhatsAppTemplateById>>;
+    let consented = true;
+    try {
+      if (!senders.has(storeId)) {
+        senders.set(
+          storeId,
+          await withService((db) =>
+            loadWhatsAppSender(db, storeId, { strict: true }),
+          ),
+        );
+      }
+      sender = senders.get(storeId) ?? null;
+
+      // ★ CONSENT IS RE-CHECKED AT SEND, NOT ONLY AT ENQUEUE. A customer can
+      // opt out between an order being placed and the queue draining, and the
+      // message that arrives after they opted out is the one that gets
+      // reported as spam. Staff need no opt-in (plan §8).
+      const to = textablePhone(row.phone);
+      if (sender && to && row.audience === "customer") {
+        const consent = await withService((db) =>
+          whatsAppConsentFor(db, storeId, [to], { strict: true }),
+        );
+        consented = consent.get(to)?.updates === true;
+      }
+
+      // ★ RE-READ BY ID, so a template Meta paused or rejected since enqueue
+      // is not sent, and what goes out is exactly the template that was
+      // queued: an event can carry two wordings (COD confirmation beside
+      // order-placed), so re-reading by event and audience could swap one
+      // for the other.
+      const tKey = `${storeId}:${row.template_id}`;
+      if (sender && !templatesById.has(tKey)) {
+        templatesById.set(
+          tKey,
+          await withService((db) =>
+            loadWhatsAppTemplateById(db, storeId, row.template_id, {
+              strict: true,
+            }),
+          ),
+        );
+      }
+      template = templatesById.get(tKey) ?? null;
+    } catch (err) {
+      logError("whatsapp worker: a read failed; row requeued", err, {
         storeId,
-        await withService((db) => loadWhatsAppSender(db, storeId)),
-      );
+        id: row.id,
+      });
+      if (row.attempts < MAX_ATTEMPTS) {
+        await requeue(row.id, row.attempts, "A database read failed.");
+        result.requeued++;
+      } else {
+        await fail(row, "A database read kept failing.");
+        result.failed++;
+      }
+      continue;
     }
-    const sender = senders.get(storeId);
+
     if (!sender) {
       // Disconnected, paused or lapsed since this was queued. Not retryable:
       // the merchant made that choice, and it will not resolve itself.
-      await settle(
-        row.id,
-        "failed",
-        "WhatsApp is not connected for this store.",
-      );
+      await fail(row, "WhatsApp is not connected for this store.");
       result.failed++;
       continue;
     }
 
     const to = textablePhone(row.phone);
     if (!to) {
-      await settle(row.id, "failed", "No textable phone number.");
+      await fail(row, "No textable phone number.");
       result.skipped++;
       continue;
     }
-
-    // ★ CONSENT IS RE-CHECKED AT SEND, NOT ONLY AT ENQUEUE. A customer can opt
-    // out between an order being placed and the queue draining, and the
-    // message that arrives after they opted out is the one that gets reported
-    // as spam. Staff need no opt-in (plan §8).
-    if (row.audience === "customer") {
-      const consent = await withService((db) =>
-        whatsAppConsentFor(db, storeId, [to]),
-      );
-      if (!consent.get(to)?.updates) {
-        await settle(
-          row.id,
-          "failed",
-          "The customer has not opted in to WhatsApp updates.",
-        );
-        result.skipped++;
-        continue;
-      }
+    if (!consented) {
+      await fail(row, "The customer has not opted in to WhatsApp updates.");
+      result.skipped++;
+      continue;
     }
-
-    // ★ RE-READ BY ID, so a template Meta paused or rejected since enqueue is
-    // not sent, and what goes out is exactly the template that was queued: an
-    // event can carry two wordings (COD confirmation beside order-placed), so
-    // re-reading by event and audience could swap one for the other.
-    const tKey = `${storeId}:${row.template_id}`;
-    if (!templatesById.has(tKey)) {
-      templatesById.set(
-        tKey,
-        await withService((db) =>
-          loadWhatsAppTemplateById(db, storeId, row.template_id),
-        ),
-      );
-    }
-    const template = templatesById.get(tKey);
     if (!template) {
-      await settle(
-        row.id,
-        "failed",
+      await fail(
+        row,
         "The WhatsApp template for this notification is no longer approved.",
       );
       result.failed++;
@@ -192,7 +235,9 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
     });
 
     if (out.sent) {
-      await settle(row.id, "sent");
+      // Meta's id on the row, so a later `failed` or `delivered` status can
+      // release or drop the SMS held behind it (inbound.ts).
+      await settle(row.id, "sent", undefined, out.messageId);
       result.sent++;
       // The order now shows "awaiting confirmation" — only once the message
       // with the buttons has really gone, never merely because it was queued.
@@ -230,9 +275,21 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
     }
 
     if (out.outcome === "skipped") {
-      await settle(row.id, "failed", out.error);
+      await fail(row, out.error);
       result.skipped++;
       continue;
+    }
+
+    // ★★ A DEAD TOKEN IS NOT ONE MESSAGE'S PROBLEM. Without a
+    // PARTNER_REMOVED webhook nothing else notices, so the account stayed
+    // "connected", every notification kept choosing WhatsApp and failing, and
+    // the card said all was well. Flip it, and stop using it for this batch.
+    if (out.code === TOKEN_INVALID_CODE) {
+      await markNeedsReauth(
+        storeId,
+        "Meta no longer accepts this connection. Reconnect WhatsApp in Channels.",
+      );
+      senders.set(storeId, null);
     }
 
     // A rejection provably did not send. Only a throttle is worth asking again.
@@ -243,7 +300,7 @@ export async function runWhatsAppWorker(): Promise<WhatsAppWorkerResult> {
     ) {
       await requeue(row.id, row.attempts, out.error);
     } else {
-      await settle(row.id, "failed", out.error);
+      await fail(row, out.error);
     }
     result.failed++;
   }
@@ -256,6 +313,7 @@ async function settle(
   id: string,
   status: "sent" | "failed",
   error?: string,
+  providerMessageId?: string | null,
 ): Promise<void> {
   try {
     await withService((db) =>
@@ -263,7 +321,8 @@ async function settle(
         update public.notification_whatsapp_queue
            set status = ${status},
                error = ${error ?? null},
-               sent_at = ${status === "sent" ? sql`now()` : sql`null`}
+               sent_at = ${status === "sent" ? sql`now()` : sql`null`},
+               provider_message_id = ${providerMessageId ?? null}
          where id = ${id}::uuid
       `),
     );
@@ -271,6 +330,16 @@ async function settle(
     // The message went; only the bookkeeping failed. Logged rather than
     // retried, because a retry here would re-SEND it.
     logError("whatsapp worker: settle failed", err, { id, status });
+  }
+}
+
+/** Release the row's held SMS, if any. Never throws into the batch. */
+async function release(id: string): Promise<boolean> {
+  try {
+    return await withService((db) => releaseHeldSms(db, id));
+  } catch (err) {
+    logError("whatsapp worker: releasing the held SMS failed", err, { id });
+    return false;
   }
 }
 

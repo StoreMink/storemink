@@ -2,7 +2,7 @@ import "server-only";
 
 import crypto from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { withService } from "@/lib/db/client";
+import { withService, type Db } from "@/lib/db/client";
 import {
   stores,
   whatsappAutoReplies,
@@ -16,12 +16,13 @@ import { storeOrigin } from "@/lib/site";
 import { isStorefrontGated, isThemePending } from "@/lib/store/launch-state";
 import { effectivePlan } from "@/lib/plans";
 import { getMinkConfig } from "@/lib/mink/config";
-import { readMinkCurrentOffers } from "@/lib/mink/offers-read";
+import { readMinkShopperOffers } from "@/lib/mink/offers-read";
 import { getPublishedProducts } from "@/lib/storefront/queries";
 import { getLivePolicies } from "@/lib/legal/store-consent";
 import { estimateProductDelivery } from "@/lib/shipping/product-delivery";
+import { isSoldOut } from "@/lib/inventory/status";
 import { formatPrice } from "@/lib/pricing";
-import { loadWhatsAppSender } from "./channel";
+import { loadWhatsAppSender, type WhatsAppSender } from "./channel";
 import { replyInChat } from "./auto-reply";
 import {
   MINK_ANSWER_CREDITS,
@@ -35,8 +36,10 @@ import {
 } from "./business-hours";
 import {
   allowedUrlsIn,
+  deliveryCheckVariant,
   factsSummary,
   matchProducts,
+  optionLabel,
   parseMinkWhatsAppAnswer,
   pinCodeIn,
   renderHours,
@@ -50,8 +53,12 @@ import {
 import { minkGate } from "./mink-gate";
 import {
   chargeMinkAnswer,
+  claimMinkDraft,
+  markMinkAnswerSent,
   minkChargeContext,
   minkCreditHeadroom,
+  personRepliedSince,
+  releaseMinkDraftClaim,
 } from "./mink-drafts";
 import { callMinkWhatsAppModelWithRetry } from "./mink-model";
 import {
@@ -84,6 +91,21 @@ import {
 // before the send; 'insufficient' at that moment leaves a draft for a person.
 // A draft (the `drafts` mode, or a `helps` hand-over) costs nothing until a
 // person sends it.
+//
+// ★★ `helps` LOADS THE SENDER BEFORE ANYTHING IS SPENT, as the store's own
+// automatic replies do (answer-automatically.ts). A paused number, one that
+// needs reconnecting or a plan without WhatsApp cannot send, so the message
+// goes to a person with no model call and no credit taken; before, it paid
+// for an answer nobody could deliver.
+//
+// ★★ THE AUTOMATIC SEND TAKES THE SAME LEASE A PERSON'S SEND DOES
+// (`claimMinkDraft`), so a Send pressed on the card while Mink is still
+// sending cannot send it a second time.
+//
+// ★ A PERSON WHO ANSWERED FIRST WINS. The model takes seconds; if somebody on
+// the team replied meanwhile (the dashboard, the WhatsApp Business app, a
+// template), Mink records its answer as discarded and neither sends it nor
+// leaves a draft whose Send would answer the customer twice.
 //
 // ★ NEVER THROWS, NEVER BLOCKS THE FILING. The message is already on disk
 // when this runs; whatever fails here is logged and ends as "a person reads
@@ -239,7 +261,8 @@ async function loadRecent(
 }
 
 /** Every fact the model may answer from, read in parallel, each failing to
- *  "nothing known" rather than to a failed answer. */
+ *  "nothing known" rather than to a failed answer. A read that failed is
+ *  marked as failed on the sheet, never passed off as "none". */
 async function buildFacts(
   input: MinkAnswerInput,
   ctx: StoreContext,
@@ -248,6 +271,10 @@ async function buildFacts(
   const products = await getPublishedProducts(input.storeId).catch(() => []);
   const matched = matchProducts(input.text, products);
   const pin = pinCodeIn(input.text);
+  const product = pin ? matched[0] : undefined;
+  // ★ A product with options is checked through one of them (mink-facts.ts):
+  // its own row's online stock is not the options' stock.
+  const option = product ? deliveryCheckVariant(product) : null;
 
   const [lookup, offers, policies, recent, delivery] = await Promise.all([
     lookupOrdersForPhone({
@@ -255,16 +282,24 @@ async function buildFacts(
       phone: input.phone,
       userId: input.userId,
     }),
-    readMinkCurrentOffers(
+    // ★ Only what a visitor to the storefront would be offered (offers-read.ts
+    // `readMinkShopperOffers`): never an unpublished code, a group's offer or
+    // one that is not running online.
+    readMinkShopperOffers(
       { storeId: input.storeId, effectivePlan: ctx.plan },
       { limit: 5, now },
-    ).catch(() => null),
+    ).catch((err) => {
+      logError("whatsapp mink: offers unreadable", err, {
+        storeId: input.storeId,
+      });
+      return null;
+    }),
     getLivePolicies(input.storeId),
     loadRecent(input.storeId, input.conversationId, input.messageId),
-    pin && matched[0]
+    product && pin
       ? estimateProductDelivery(input.storeId, {
-          productId: matched[0].id,
-          variantId: null,
+          productId: product.id,
+          variantId: option?.id ?? null,
           quantity: 1,
           postalCode: pin,
         }).catch(() => null)
@@ -282,30 +317,29 @@ async function buildFacts(
 
   const offerLines: string[] = [];
   for (const o of offers?.offers ?? []) {
-    if (o.availability !== "running") continue;
-    const how =
-      o.delivery === "code" && o.code
-        ? `with code ${o.code}`
-        : o.delivery === "automatic"
-          ? "applied automatically at checkout"
-          : "by link";
-    const scope =
-      o.appliesTo.products.length + o.appliesTo.categories.length > 0
-        ? ` on ${[...o.appliesTo.products, ...o.appliesTo.categories].slice(0, 4).join(", ")}`
-        : "";
+    const how = o.code
+      ? `with code ${o.code}`
+      : "applied automatically at checkout";
+    const on = o.on ? ` on ${o.on}` : "";
+    const rules = o.conditions.length > 0 ? `, ${o.conditions.join(", ")}` : "";
     const until = o.validUntil ? ` until ${o.validUntil.slice(0, 10)}` : "";
     offerLines.push(
-      `${o.name}: ${o.reward}${scope}, ${o.trigger}, ${how}${until}`,
+      `${o.name}: ${o.reward}${on}, ${o.when}${rules}, ${how}${until}`,
     );
   }
 
   let deliveryLine: string | null = null;
-  if (pin && matched[0]) {
-    const name = matched[0].name;
+  if (pin && product) {
+    // The option is named when the answer is about one of several.
+    const name =
+      option && product.variants.length > 1 && !isSoldOut(option)
+        ? `${product.name} (${optionLabel(option)})`
+        : product.name;
     if (!delivery) {
       deliveryLine = `Delivery to ${pin} could not be checked just now.`;
     } else if (!delivery.available) {
-      deliveryLine = `${name} to ${pin}: ${delivery.error ?? "not available"}.`;
+      const why = (delivery.error ?? "not available").replace(/\.+$/, "");
+      deliveryLine = `${name} to ${pin}: ${why}.`;
     } else if (delivery.kind === "digital") {
       deliveryLine = `${name} needs no delivery.`;
     } else if (delivery.option) {
@@ -327,9 +361,14 @@ async function buildFacts(
     store: { name: ctx.name, url: ctx.url, email: ctx.email },
     hours: ctx.hours,
     orders,
+    // ★ A failed lookup is not "no orders": the sheet says it could not look,
+    // and the model hands an order question over (order-status-reply.ts does
+    // the same on the same failure).
+    ...(lookup.ok ? {} : { ordersUnavailable: true }),
     products: matched.map((p) => renderProductFact(p, ctx.url)),
     delivery: deliveryLine,
     offers: offerLines,
+    ...(offers ? {} : { offersUnavailable: true }),
     policies: policies.map((p) => ({
       title: p.title,
       text: htmlToText(p.html, MINK_POLICY_MAX_CHARS),
@@ -344,7 +383,7 @@ async function recordAnswer(input: {
   conversationId: string;
   messageId: string;
   mode: Exclude<MinkMode, "off">;
-  outcome: "draft" | "handed_over" | "failed";
+  outcome: "draft" | "handed_over" | "failed" | "discarded";
   reason: string;
   answer: string;
   facts: string[];
@@ -371,40 +410,22 @@ async function recordAnswer(input: {
   );
 }
 
-async function markSent(
-  storeId: string,
-  answerId: string,
-  sentMessageId: string | null,
+/**
+ * Say on a pending draft why Mink did not send it (the card shows the
+ * reason). Only a row still pending: one a person discarded meanwhile stays
+ * discarded rather than coming back as a draft.
+ */
+async function noteDraft(
+  db: Db,
+  input: { storeId: string; answerId: string; reason: string },
 ): Promise<void> {
-  await withService((db) =>
-    db
-      .update(whatsappMinkAnswers)
-      .set({
-        outcome: "sent",
-        sentMessageId,
-        resolvedAt: new Date().toISOString(),
-      })
-      .where(
-        and(
-          eq(whatsappMinkAnswers.id, answerId),
-          eq(whatsappMinkAnswers.storeId, storeId),
-        ),
-      ),
-  );
-}
-
-async function markDraft(
-  storeId: string,
-  answerId: string,
-  reason: string,
-): Promise<void> {
-  await withService((db) =>
-    db.execute(sql`
-      update public.whatsapp_mink_answers
-         set outcome = 'draft', reason = ${reason.slice(0, 200)}, resolved_at = null
-       where id = ${answerId}::uuid and store_id = ${storeId}::uuid
-    `),
-  );
+  await db.execute(sql`
+    update public.whatsapp_mink_answers
+       set reason = ${input.reason.slice(0, 200)}
+     where id = ${input.answerId}::uuid
+       and store_id = ${input.storeId}::uuid
+       and outcome = 'draft'
+  `);
 }
 
 /** Answer one customer message, or hand it to a person. Never throws. */
@@ -439,6 +460,20 @@ export async function answerWithMink(
     if (ctx.mode !== mode) {
       // Switched off between filing and now: a person reads it.
       return skip("mode_changed");
+    }
+
+    // ★ helps: no number to answer from (paused, needs reconnecting, a plan
+    // without WhatsApp) means no model call and no credit, and the message
+    // goes to a person. Loaded once, here, and used for the send.
+    let sender: WhatsAppSender | null = null;
+    if (mode === "helps") {
+      sender = await withService((db) => loadWhatsAppSender(db, storeId)).catch(
+        () => null,
+      );
+      if (!sender) {
+        logInfo("whatsapp mink: not answered, no sender", { storeId });
+        return skip("no_sender");
+      }
     }
 
     const [conv, store, global] = await Promise.all([
@@ -497,6 +532,32 @@ export async function answerWithMink(
       outputTokens: result.outputTokens,
     };
 
+    // ★ A person answered while the model was thinking (seconds, up to two
+    // 25 s attempts): their reply stands. Mink's words are kept on the ledger
+    // with what they cost in tokens, and nothing is sent, charged or left as
+    // a draft whose Send would answer the customer twice.
+    const personReplied = await withService((db) =>
+      personRepliedSince(db, {
+        storeId,
+        conversationId,
+        messageId: input.messageId,
+      }),
+    );
+    if (personReplied) {
+      await recordAnswer({
+        ...base,
+        outcome: "discarded",
+        reason: "a person replied first",
+        answer: answer?.reply ?? "",
+      });
+      return {
+        outcome: "skipped",
+        needsHuman: false,
+        answerId,
+        reason: "person_replied",
+      };
+    }
+
     if (!answer) {
       await recordAnswer({
         ...base,
@@ -531,18 +592,52 @@ export async function answerWithMink(
       };
     }
 
-    // helps: charge, then send. The row exists first so the charge has its key.
+    // helps: the row first (the lease and the charge are keyed on it), then
+    // the lease, the charge and the send.
     await recordAnswer({
       ...base,
       outcome: "draft",
       reason: answer.reason,
       answer: answer.reply,
     });
-    const source = await withService((db) =>
-      chargeMinkAnswer(db, { answerId, storeId, ctx: charge }),
-    );
+    // ★★ THE SAME LEASE A PERSON'S SEND TAKES (mink-drafts.ts), in the same
+    // transaction as the charge: a Send pressed on the card from here on finds
+    // the draft taken, and a draft somebody took first is not sent by Mink.
+    const source = await withService(async (db): Promise<string | null> => {
+      const claim = await claimMinkDraft(db, {
+        storeId,
+        conversationId,
+        draftId: answerId,
+      });
+      if (!claim) return null;
+      const charged = await chargeMinkAnswer(db, {
+        answerId,
+        storeId,
+        ctx: charge,
+      });
+      if (charged === "insufficient") {
+        // Nothing was charged and nothing will be sent: the draft goes back,
+        // so a person can send it once the store has credits again.
+        await releaseMinkDraftClaim(db, { storeId, answerId });
+        await noteDraft(db, {
+          storeId,
+          answerId,
+          reason: "no credits left to send",
+        });
+      }
+      return charged;
+    });
+    if (source === null) {
+      // Somebody is sending it, or a person answered in the moment between:
+      // either way a person has it, and Mink sends nothing.
+      return {
+        outcome: "skipped",
+        needsHuman: false,
+        answerId,
+        reason: "draft_taken",
+      };
+    }
     if (source === "insufficient") {
-      await markDraft(storeId, answerId, "no credits left to send");
       return {
         outcome: "draft",
         needsHuman: true,
@@ -551,24 +646,24 @@ export async function answerWithMink(
       };
     }
 
-    const sender = await withService((db) =>
-      loadWhatsAppSender(db, storeId),
-    ).catch(() => null);
-    const delivered = sender
-      ? await replyInChat({
-          storeId,
-          conversationId,
-          to: input.phone,
-          body: answer.reply,
-          reason: "mink:answer",
-          sender,
-          extraPayload: { mink: true, answerId },
-        })
-      : false;
+    const delivered = await replyInChat({
+      storeId,
+      conversationId,
+      to: input.phone,
+      body: answer.reply,
+      reason: "mink:answer",
+      sender,
+      extraPayload: { mink: true, answerId },
+    });
     if (!delivered) {
       // Charged, so the draft says so: a person can send it without paying
       // again (mink-drafts.ts answers an already-charged id with its source).
-      await markDraft(storeId, answerId, "could not be sent");
+      // ★ The lease is left to run out rather than released: replyInChat
+      // cannot tell a refusal from a send Meta never answered, and a message
+      // that may have reached the customer must not be free to send at once.
+      await withService((db) =>
+        noteDraft(db, { storeId, answerId, reason: "could not be sent" }),
+      );
       return {
         outcome: "draft",
         needsHuman: true,
@@ -592,7 +687,15 @@ export async function answerWithMink(
     )
       .then((rows) => rows[0]?.id ?? null)
       .catch(() => null);
-    await markSent(storeId, answerId, sentId);
+    await withService((db) =>
+      markMinkAnswerSent(db, {
+        storeId,
+        answerId,
+        answer: answer.reply,
+        sentMessageId: sentId,
+        sentByAdminId: null,
+      }),
+    );
     return {
       outcome: "sent",
       needsHuman: false,

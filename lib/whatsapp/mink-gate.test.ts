@@ -53,6 +53,92 @@ describe("minkGate", () => {
     }
   });
 
+  it("★★ goods that did not come are a complaint, with any apostrophe or none", () => {
+    for (const q of [
+      // A straight apostrophe, and the question forms.
+      "My order wasn't delivered",
+      "It hasn't arrived yet",
+      "I didn't get my parcel",
+      "The parcel hasn't been delivered",
+      "It won't arrive in time for the party",
+      "I can't receive my order",
+      "The mixer isn't working",
+      "Why hasn't my order arrived?",
+      "Why didn't I receive my order?",
+      // Every other apostrophe a keyboard types.
+      "My order wasn’t delivered",
+      "It hasn‘t arrived",
+      "I didnʼt receive it",
+      "It wasn`t delivered",
+      "It hasn´t come yet",
+      "The parcel didn′t arrive",
+      "It hasn＇t arrived",
+      // None, a space for one, and one typed a letter early.
+      "wasnt delivered",
+      "still havent received my order",
+      "it doesnt work",
+      "it wasn t delivered",
+      "it did'nt arrive",
+      "my order is’nt delivered",
+      // Spelled out, and the shorthand people type.
+      "I did not get my order",
+      "I cannot get my order",
+      "Nothing has arrived yet",
+      "dint receive the parcel",
+    ]) {
+      expect(minkGate(q), q).toMatchObject({ ok: false, reason: "complaint" });
+    }
+  });
+
+  it("★★ and in Hinglish and Hindi, with the negation before or after the verb", () => {
+    for (const q of [
+      "order mila nahi",
+      "nahi mila abhi tak",
+      "mera parcel abhi tak nahi aaya",
+      "aaya hi nahi",
+      "parcel pohcha nahi",
+      "nhi pahuncha",
+      "delivery nahi hui",
+      "मेरा ऑर्डर आया नहीं",
+      "पार्सल मिला नहीं।",
+      "अभी तक नहीं आया॥",
+      "ऑर्डर पहुँचा ही नहीं",
+      "मेरा पार्सल नहीं पहुंचा",
+      "डिलीवरी नहीं हुई",
+    ]) {
+      expect(minkGate(q), q).toMatchObject({ ok: false, reason: "complaint" });
+    }
+  });
+
+  it("★ a negation is not a complaint on its own", () => {
+    for (const q of [
+      // The policy question stays a question, with either apostrophe.
+      "Can I return the cookies if I don't like them?",
+      "Can I return the cookies if I don’t like them?",
+      // "no" is how an order number is written, and an answer.
+      "Status of order no. 1234 please",
+      "Where is order no 1234",
+      "No it arrived yesterday, so when is the sale?",
+      "I don’t know which size to pick",
+      "Is it not too sweet for kids?",
+      // "I didn't understand" uses the verb for arriving.
+      "samajh nahi aaya, phir se batao",
+      "मुझे समझ नहीं आया, फिर से बताइए",
+      "मुझे नहीं पता कौन सा लूं",
+      // ★ A danda ends a sentence: "Got the parcel. No, nothing else."
+      "पार्सल मिला। नहीं, और कुछ नहीं चाहिए",
+      "Kab tak mil jayega?",
+    ]) {
+      expect(minkGate(q), q).toEqual({ ok: true });
+    }
+  });
+
+  it("a danda is a full stop, so a Hindi pleasantry stays one", () => {
+    for (const q of ["ठीक है।", "धन्यवाद॥", "ठीक है। धन्यवाद।"]) {
+      expect(minkGate(q), q).toMatchObject({ ok: false, reason: "greeting" });
+    }
+  });
+
   it("★ a change to an order, and money gone wrong, go to a person", () => {
     expect(minkGate("Cancel my order please")).toMatchObject({
       ok: false,
@@ -102,6 +188,50 @@ describe("minkGate", () => {
     }
     // A greeting followed by a question is a question.
     expect(minkGate("Hi, do you deliver to Pune?")).toEqual({ ok: true });
+  });
+
+  it("★ a message with no words (an emoji, a lone '?') is not a question", () => {
+    for (const q of ["👍", "🙏🙏", "?", "...", "😊 👍"]) {
+      expect(minkGate(q)).toMatchObject({ ok: false, reason: "greeting" });
+    }
+  });
+
+  it("★ pleasantries of several words are judged word by word", () => {
+    for (const q of [
+      "ok thanks",
+      "Ok, thanks!",
+      "thank you so much",
+      "Thank you very much 🙏",
+      "hi there",
+      "Hello sir",
+      "thanks a lot",
+      "great, thanks",
+      "no thanks",
+      "ok noted",
+      "see you later",
+      "thanks for your help",
+      "theek hai",
+      "ok ji",
+      "ठीक है",
+      "बहुत धन्यवाद",
+    ]) {
+      expect(minkGate(q)).toMatchObject({ ok: false, reason: "greeting" });
+    }
+  });
+
+  it("★★ one real word makes it a question, however polite the rest", () => {
+    for (const q of [
+      "thanks, where is my order",
+      "ok what is the price of the almond shake",
+      "thank you, can I get it by Friday?",
+      "hello is the oat cookie in stock",
+      "hi there, any offers today?",
+      "yes please",
+      "help me choose a gift",
+      "560001",
+    ]) {
+      expect(minkGate(q)).toEqual({ ok: true });
+    }
   });
 
   it("empty and over-long messages are kept for a person", () => {

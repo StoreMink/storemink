@@ -25,8 +25,9 @@
 // people ask it a dozen ways ("order kab aayega", "status of my parcel",
 // "मेरा ऑर्डर कहाँ है"). A short message that names an order AND asks where or
 // when it is counts; "where can I order" (no "my", nothing about arrival) and
-// anything with a complaint word in it ("not delivered", "wrong", "refund") do
-// not. A miss costs nothing: the message waits for a person as it always did.
+// anything with a complaint word in it ("not delivered", "wasn't delivered",
+// "wrong", "refund") do not. A miss costs nothing: the message waits for a
+// person as it always did.
 // ---------------------------------------------------------------------------
 
 export type WhatsAppInboundIntent =
@@ -117,13 +118,36 @@ const COURTESY = new Set([
   "कृपया",
 ]);
 
-/** Letters in Latin and Devanagari, digits and spaces survive; everything
- *  else (punctuation, emoji, zero-width marks) is dropped. */
+/** "n't" with any apostrophe a keyboard types: straight, curly (both), the
+ *  modifier letter, a backtick, an acute accent, a prime, the full-width one. */
+const NT_CONTRACTION = /n['\u2018\u2019\u02bc`\u00b4\u2032\uff07]t\b/g;
+
+/** The apostrophe typed a letter early: "did'nt", "is'nt", "does'nt". */
+const MISPLACED_NT = /([a-z])['\u2018\u2019\u02bc`\u00b4\u2032\uff07]nt\b/g;
+
+/** The Devanagari block's punctuation: danda, double danda, abbreviation sign. */
+const DEVANAGARI_PUNCTUATION = /[\u0964\u0965\u0970]/g;
+
+/**
+ * Letters in Latin and Devanagari, digits and spaces survive; everything
+ * else (punctuation, emoji, zero-width marks) is dropped. Two exceptions:
+ *
+ * ★ "N'T" STAYS ONE WORD. Dropping the apostrophe split "wasn't" into "wasn"
+ * and "t", which no list knew, so "my order wasn't delivered" was answered
+ * as a status question. The apostrophe is closed up instead, so "wasn't",
+ * "wasn’t" and "wasnt" are all `wasnt`.
+ *
+ * ★ A DANDA IS A FULL STOP. The block is kept for its letters, but it also
+ * holds । and ॥: left in, "बंद करो।" ended in the word "करो।" and missed STOP.
+ */
 function normalise(body: string): string[] {
   return (body ?? "")
     .normalize("NFC")
     .toLowerCase()
-    .replace(/[^a-z0-9ऀ-ॿ\s-]/g, " ")
+    .replace(NT_CONTRACTION, "nt")
+    .replace(MISPLACED_NT, "$1nt")
+    .replace(DEVANAGARI_PUNCTUATION, " ")
+    .replace(/[^a-z0-9\u0900-\u097f\s-]/g, " ")
     .replace(/-/g, " ")
     .split(/\s+/)
     .filter(Boolean);
@@ -239,6 +263,15 @@ const POSSESSIVE = new Set([
 /**
  * A complaint or an action, which a person must handle: answering "not
  * delivered" or "cancel my order" with a status update would dismiss it.
+ *
+ * ★ EVERY NEGATION, IN EVERY SPELLING. "wasn't delivered" answered with
+ * "Delivered on 12 Oct" is the same dismissal as "not delivered", and the
+ * normaliser makes every "n't" one word ("wasnt"), so those are listed. The
+ * bare stems catch a space typed for the apostrophe ("wasn t"). A false hit
+ * costs a message read by a person; a miss answers a complaint with a date.
+ * ⚠ Two words are left off on purpose: "can" ("when can I expect my order"
+ * is the question itself; "can't" is here as "cant") and "no" ("order no.
+ * 1234" is how an order number is written).
  */
 const NEEDS_A_PERSON = new Set([
   "cancel",
@@ -253,9 +286,54 @@ const NEEDS_A_PERSON = new Set([
   "change",
   "address",
   "not",
-  "didnt",
-  "didn",
   "never",
+  "nothing",
+  "nobody",
+  "none",
+  // "n't", closed up by the normaliser
+  "aint",
+  "arent",
+  "cannot",
+  "cant",
+  "couldnt",
+  "didnt",
+  "doesnt",
+  "dont",
+  "hadnt",
+  "hasnt",
+  "havent",
+  "isnt",
+  "mightnt",
+  "mustnt",
+  "neednt",
+  "shant",
+  "shouldnt",
+  "wasnt",
+  "werent",
+  "wont",
+  "wouldnt",
+  // chat shorthand
+  "dint",
+  "dnt",
+  "havnt",
+  "hvnt",
+  // the stems, for "wasn t"
+  "aren",
+  "couldn",
+  "didn",
+  "doesn",
+  "don",
+  "hadn",
+  "hasn",
+  "haven",
+  "isn",
+  "mustn",
+  "needn",
+  "shouldn",
+  "wasn",
+  "weren",
+  "won",
+  "wouldn",
   "missing",
   "late",
   "delay",
@@ -266,8 +344,10 @@ const NEEDS_A_PERSON = new Set([
   "nahi",
   "nahin",
   "nhi",
+  "nai",
   "galat",
   "नहीं",
+  "नहीँ",
   "नही",
   "गलत",
 ]);

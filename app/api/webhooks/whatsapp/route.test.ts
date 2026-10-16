@@ -16,7 +16,12 @@ vi.mock("@/lib/whatsapp/inbound", () => ({
     claimed: 0,
     processed: 0,
     failed: 0,
+    retrying: 0,
+    smsReleased: 0,
   })),
+}));
+vi.mock("@/lib/email/trigger-worker", () => ({
+  triggerEmailWorker: vi.fn(async () => undefined),
 }));
 // `after()` needs a request scope; here it runs the callback at once so the
 // test can see processing was scheduled.
@@ -31,6 +36,7 @@ import {
   processPendingInboundEvents,
   recordWebhookDelivery,
 } from "@/lib/whatsapp/inbound";
+import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 
 const SECRET = "meta-app-secret";
 const URL_ = "https://storemink.com/api/webhooks/whatsapp";
@@ -149,6 +155,29 @@ describe("/api/webhooks/whatsapp", () => {
       // ★ The log carries neither the sender nor what they wrote.
       expect(ctx).not.toContain("919876543210");
       expect(ctx).not.toContain('"hi"');
+    });
+
+    it("★ kicks the worker when a failed WhatsApp released its held SMS", async () => {
+      vi.mocked(processPendingInboundEvents).mockResolvedValueOnce({
+        claimed: 1,
+        processed: 1,
+        failed: 0,
+        retrying: 0,
+        smsReleased: 1,
+      });
+      await POST(post(inbound));
+      expect(triggerEmailWorker).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not kick it when nothing was released", async () => {
+      await POST(post(inbound));
+      expect(triggerEmailWorker).not.toHaveBeenCalled();
+    });
+
+    it("★ reads its secrets through the config reader, which trims them", async () => {
+      process.env.WHATSAPP_APP_SECRET = `${SECRET}\n`;
+      const res = await POST(post(inbound));
+      expect(res.status).toBe(200);
     });
 
     it("does not schedule processing when nothing new was inserted (a redelivery)", async () => {

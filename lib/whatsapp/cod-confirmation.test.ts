@@ -41,6 +41,7 @@ const ORDER_ROW = {
   // What placeOrder really stores for COD; `cod` is only the checkout choice.
   paymentMethod: "cash_on_delivery",
   codConfirmation: "requested",
+  cancellationStatus: null,
   customerId: "cust-1",
   shippingAddress: { phone: "9876543210" },
   customerPhone: null,
@@ -126,6 +127,7 @@ describe("codReplyText", () => {
       "already_cancelled",
       "expired",
       "too_late",
+      "declined",
       "failed",
     ] as const) {
       const t = codReplyText(outcome, "ORD1", "Acme");
@@ -134,6 +136,15 @@ describe("codReplyText", () => {
     }
     expect(codReplyText("too_late", "ORD1", "Acme")).toContain("Acme");
     expect(codReplyText("failed", "ORD1", null)).toContain("the shop");
+  });
+
+  it("★ a declined request is named as the reason, and a person will reply", () => {
+    expect(codReplyText("declined", "ORD1", "Acme")).toBe(
+      "Order ORD1 can't be cancelled here, because Acme declined an earlier request to cancel it. Someone from Acme will reply to you in this chat.",
+    );
+    expect(codReplyText("declined", "ORD1", null)).toContain(
+      "because the shop declined",
+    );
   });
 
   it("★ says nothing about an order to a phone that does not own it", () => {
@@ -260,6 +271,68 @@ describe("handleCodReply", () => {
     setup([[ORDER_ROW], [ORDER_ROW]]);
     const r = await tap("cancel");
     expect(r).toEqual({ outcome: "failed", needsHuman: true });
+  });
+
+  // ★★ A decline is final (cancellation.ts): the Cancel button is the
+  // customer asking again, and it used to cancel and restock the order anyway.
+  it("★★ a Cancel after the shop declined a cancellation keeps the order and goes to a person", async () => {
+    setup([[{ ...ORDER_ROW, cancellationStatus: "declined" }]]);
+    const mock = dbHolder.current;
+    const r = await tap("cancel");
+    expect(r).toEqual({ outcome: "declined", needsHuman: true });
+    expect(approveCancellation).not.toHaveBeenCalled();
+    expect(mock.calls.update).toHaveLength(0);
+    expect(sendWhatsAppText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining(
+          "Acme Juice declined an earlier request to cancel it",
+        ),
+      }),
+    );
+    expect(recordOutboundMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ source: "automation", status: "sent" }),
+    );
+  });
+
+  it("★ a decline that lands between the read and the claim is told as a decline", async () => {
+    // approveCancellation refuses inside its claim (`fromRequest`); the
+    // re-read says why.
+    vi.mocked(approveCancellation).mockResolvedValue({ error: "moved on" });
+    setup([[ORDER_ROW], [{ ...ORDER_ROW, cancellationStatus: "declined" }]]);
+    const r = await tap("cancel");
+    expect(r).toEqual({ outcome: "declined", needsHuman: true });
+  });
+
+  it("a Confirm on an order whose cancellation was declined confirms it", async () => {
+    // The shop is going ahead and so is the customer.
+    setup([[{ ...ORDER_ROW, cancellationStatus: "declined" }]]);
+    expect((await tap("confirm")).outcome).toBe("confirmed");
+  });
+
+  // ★ Meta can report a message failed and still deliver it, so a tap that
+  // arrives for an 'undelivered' order is the customer's real answer.
+  it("★ an undelivered message's Confirm is acted on like any other", async () => {
+    setup([[{ ...ORDER_ROW, codConfirmation: "undelivered" }]]);
+    const mock = dbHolder.current;
+    const r = await tap("confirm");
+    expect(r).toEqual({ outcome: "confirmed", needsHuman: false });
+    expect(mock.calls.set).toContainEqual(
+      expect.objectContaining({ codConfirmation: "confirmed" }),
+    );
+  });
+
+  it("★ an undelivered message's Cancel is acted on like any other", async () => {
+    setup([[{ ...ORDER_ROW, codConfirmation: "undelivered" }]]);
+    const mock = dbHolder.current;
+    const r = await tap("cancel");
+    expect(r).toEqual({ outcome: "cancelled", needsHuman: false });
+    expect(approveCancellation).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: ORDER, fromRequest: true }),
+    );
+    expect(mock.calls.set).toContainEqual(
+      expect.objectContaining({ codConfirmation: "cancelled" }),
+    );
   });
 
   it("an already-cancelled order is said so, both ways", async () => {

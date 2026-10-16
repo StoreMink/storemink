@@ -62,10 +62,23 @@ export async function POST(req: NextRequest) {
   if (!(file instanceof File)) {
     return respond({ ok: false, error: "Choose a file first." }, 400);
   }
-  const caption = String(form.get("caption") ?? "").slice(
-    0,
-    INBOX_CAPTION_MAX + 1,
-  );
+  // ★ Line breaks are normalised BEFORE the length is judged, and nothing is
+  // cut. Multipart encoding turns every LF the browser had into CRLF, so a
+  // caption at WhatsApp's limit arrives longer than it was typed; slicing that
+  // silently dropped its end. A caption over the limit is refused, by the
+  // same rule sendInboxMedia applies, before the file is decoded or uploaded.
+  const caption = String(form.get("caption") ?? "")
+    .replace(/\r\n?/g, "\n")
+    .trim();
+  if (caption.length > INBOX_CAPTION_MAX) {
+    return respond(
+      {
+        ok: false,
+        error: `A caption can be at most ${INBOX_CAPTION_MAX} characters.`,
+      },
+      400,
+    );
+  }
   const replyTo = String(form.get("replyTo") ?? "");
 
   const s = await inboxSendGate(conversationId);

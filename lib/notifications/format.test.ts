@@ -38,6 +38,15 @@ describe("formatVariable", () => {
     expect(formatVariable("items", 2)).toBe("2");
   });
 
+  // The COD confirmation's "Amount to pay on delivery" reads amount_due, so a
+  // bare `300` there would be the "Total 281.4" receipt again.
+  it("formats the amount due as money, exactly like the total", () => {
+    expect(formatVariable("amount_due", 300)).toBe("₹300.00");
+    expect(formatVariable("amount_due", 124000)).toBe(
+      formatVariable("total", 124000),
+    );
+  });
+
   it("turns payment enums into something a shopper would say", () => {
     expect(formatVariable("payment_method", "cod")).toBe("Cash on delivery");
     expect(formatVariable("payment_method", "razorpay")).toBe("Online payment");

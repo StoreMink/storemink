@@ -27,6 +27,7 @@
 // composer builds lines up with the first N buttons with no index arithmetic.
 // ---------------------------------------------------------------------------
 
+import { classifyWhatsAppInbound } from "./inbox-intent";
 import {
   TEMPLATE_BODY_MAX_CHARS,
   catalogEntryForName,
@@ -278,6 +279,21 @@ export function validateCustomTemplate(input: unknown): CustomTemplateCheck {
         return {
           ok: false,
           error: "Put quick-reply buttons before link and call buttons.",
+        };
+      }
+      // ★ A TAP SAYS WHAT ITS LABEL SAYS (inbox.ts): a quick reply worded
+      // like STOP or START records the customer's choice about offers and is
+      // answered automatically, never shown to a person. That is right for an
+      // offers opt-out on a marketing template, and wrong anywhere else: a
+      // "Stop" meaning "stop my subscription" would never reach the shop.
+      const consent = classifyWhatsAppInbound(label);
+      if (
+        (consent === "stop" || consent === "start") &&
+        category !== "MARKETING"
+      ) {
+        return {
+          ok: false,
+          error: `"${label}" reads as ${consent === "stop" ? "STOP" : "START"}, which turns offers ${consent === "stop" ? "off" : "on"} for the customer and is answered for you. Use it only on a marketing template, or word the button differently.`,
         };
       }
       buttons.push({ type: "quick_reply", text: label });

@@ -34,6 +34,7 @@ import {
   useRef,
   useState,
   useTransition,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 import Link from "next/link";
@@ -78,7 +79,7 @@ import {
   sendInboxReply,
   sendInboxTemplate,
   sendMinkDraft,
-  setInboxConversationLabels,
+  setInboxConversationLabel,
   setInboxConversationStatus,
 } from "@/app/actions/inbox-actions";
 import {
@@ -93,7 +94,6 @@ import {
   type InboxMessageRow,
   type InboxMinkDraft,
   type InboxSendResult,
-  type InboxTemplateOption,
   type InboxThread,
   type InboxWorkspace,
 } from "@/lib/whatsapp/inbox-types";
@@ -102,6 +102,8 @@ import {
   INBOX_NOTE_MAX,
   fillCannedReply,
   splitSnippet,
+  templateBlockedReason,
+  type InboxReplyTemplate,
 } from "@/lib/whatsapp/inbox-workspace";
 import { ListPagination } from "../components/list-pagination";
 import { InboxManageButtons } from "./inbox-manage";
@@ -126,7 +128,7 @@ export function InboxClient({
   initialConversationId,
 }: {
   initial: InboxListResult & { error?: string };
-  templates: InboxTemplateOption[];
+  templates: InboxReplyTemplate[];
   /** The team, the labels and the saved replies of this store. */
   workspace: InboxWorkspace;
   canManage: boolean;
@@ -143,6 +145,11 @@ export function InboxClient({
   const [assignee, setAssignee] = useState("");
   const [label, setLabel] = useState("");
   const [workspace, setWorkspace] = useState(initialWorkspace);
+  // ★ The label filter counts only while its label exists. Deleting the label
+  // the list was filtered by left every fetch filtering on nothing ("No
+  // conversations match."), and with the last label gone the select that
+  // could clear it was hidden as well.
+  const labelFilter = workspace.labels.some((l) => l.id === label) ? label : "";
   // A search hit INSIDE a conversation: the message to scroll to once the
   // thread opens, keyed on the conversation it belongs to.
   const [jump, setJump] = useState<{ id: string; messageId: string } | null>(
@@ -169,24 +176,41 @@ export function InboxClient({
   const threadError = loadError?.id === selectedId ? loadError.message : null;
 
   // ── List ────────────────────────────────────────────────────────────────
-  const fetchList = useCallback(
-    async (signal?: AbortSignal) => {
-      const params = new URLSearchParams({
+  // ★ THE QUERY IS ALSO THE IDENTITY OF A RESULT. A read started before a
+  // tab, page or search change (the refresh after a Send, the poll) can land
+  // after it, and its rows answer the old query: shown under the new tab,
+  // they stayed until the next poll. A result is shown only while its query
+  // is still the one on screen.
+  const listQuery = useMemo(
+    () =>
+      new URLSearchParams({
         need: "list",
         filter,
         q,
         page: String(page),
         assignee,
-        label,
-      });
-      const res = await fetch(`/api/dashboard/inbox/live?${params}`, {
-        signal,
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      return (await res.json()) as InboxListResult;
+        label: labelFilter,
+      }).toString(),
+    [filter, q, page, assignee, labelFilter],
+  );
+  const listQueryRef = useRef(listQuery);
+  useLayoutEffect(() => {
+    listQueryRef.current = listQuery;
+  }, [listQuery]);
+
+  const fetchList = useCallback(async (query: string, signal?: AbortSignal) => {
+    const res = await fetch(`/api/dashboard/inbox/live?${query}`, {
+      signal,
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    return { query, result: (await res.json()) as InboxListResult };
+  }, []);
+  const acceptList = useCallback(
+    (r: { query: string; result: InboxListResult }) => {
+      if (r.query === listQueryRef.current) setList(r.result);
     },
-    [filter, q, page, assignee, label],
+    [],
   );
 
   // A filter, search or page change refreshes at once.
@@ -199,8 +223,8 @@ export function InboxClient({
     let cancelled = false;
     startList(async () => {
       try {
-        const next = await fetchList();
-        if (!cancelled) setList(next);
+        const next = await fetchList(listQuery);
+        if (!cancelled) acceptList(next);
       } catch {
         /* the poll will try again */
       }
@@ -208,20 +232,33 @@ export function InboxClient({
     return () => {
       cancelled = true;
     };
-  }, [fetchList]);
+  }, [listQuery, fetchList, acceptList]);
 
   usePoll(
     async ({ signal, isCurrent }) => {
-      const next = await fetchList(signal);
-      if (!isCurrent()) return;
-      const changed = JSON.stringify(next) !== JSON.stringify(list);
-      if (changed) setList(next);
+      const next = await fetchList(listQueryRef.current, signal);
+      if (!isCurrent() || next.query !== listQueryRef.current) return;
+      const changed = JSON.stringify(next.result) !== JSON.stringify(list);
+      if (changed) setList(next.result);
       return changed;
     },
     { ms: LIST_POLL_MS, backOff: true },
   );
 
   // ── Thread ──────────────────────────────────────────────────────────────
+  // ★ THE CONVERSATION ON SCREEN NOW, for reads that land later. A read for A
+  // (the poll, the refresh after a Send) landing after B was opened replaced
+  // B's thread: B showed "Opening…" until the next poll, and clicking B again
+  // did nothing. Written where the selection changes; every thread read is
+  // dropped unless its conversation is still this one.
+  const selectedRef = useRef(selectedId);
+
+  /** Show a thread that loaded, and drop any failure to load it before. */
+  const showThread = useCallback((next: InboxThread) => {
+    setLoaded(next);
+    setLoadError((e) => (e?.id === next.conversation.id ? null : e));
+  }, []);
+
   const loadThread = useCallback(async (id: string, signal?: AbortSignal) => {
     const res = await fetch(
       `/api/dashboard/inbox/live?need=thread&id=${encodeURIComponent(id)}`,
@@ -234,51 +271,67 @@ export function InboxClient({
   useEffect(() => {
     if (!selectedId) return;
     let cancelled = false;
-    void getInboxThread(selectedId).then((r) => {
-      if (cancelled) return;
-      if (!r.thread) {
-        setLoadError({ id: selectedId, message: r.error ?? "Not found." });
-        return;
-      }
-      setLoaded(r.thread);
-      if (r.thread.conversation.unreadCount > 0) {
-        void markInboxRead(selectedId);
-        setList((l) => ({
-          ...l,
-          rows: l.rows.map((row) =>
-            row.id === selectedId ? { ...row, unreadCount: 0 } : row,
-          ),
-        }));
-      }
-    });
+    void getInboxThread(selectedId).then(
+      (r) => {
+        if (cancelled) return;
+        if (!r.thread) {
+          setLoadError({ id: selectedId, message: r.error ?? "Not found." });
+          return;
+        }
+        showThread(r.thread);
+        if (r.thread.conversation.unreadCount > 0) {
+          void markInboxRead(selectedId);
+          setList((l) => ({
+            ...l,
+            rows: l.rows.map((row) =>
+              row.id === selectedId ? { ...row, unreadCount: 0 } : row,
+            ),
+          }));
+        }
+      },
+      () => {
+        // The poll tries again, and a thread that then loads clears this.
+        if (!cancelled) {
+          setLoadError({
+            id: selectedId,
+            message: "Couldn't load the conversation.",
+          });
+        }
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [selectedId]);
+  }, [selectedId, showThread]);
 
   usePoll(
     async ({ signal, isCurrent }) => {
-      if (!selectedId) return false;
-      const r = await loadThread(selectedId, signal);
-      if (!isCurrent() || !r.thread) return false;
-      const changed = JSON.stringify(r.thread) !== JSON.stringify(thread);
-      if (changed) setLoaded(r.thread);
+      const id = selectedRef.current;
+      if (!id) return false;
+      const r = await loadThread(id, signal);
+      if (!isCurrent() || selectedRef.current !== id || !r.thread) return false;
+      const changed =
+        threadError !== null ||
+        JSON.stringify(r.thread) !== JSON.stringify(thread);
+      if (changed) showThread(r.thread);
       return changed;
     },
     { ms: THREAD_POLL_MS, enabled: Boolean(selectedId), backOff: true },
   );
 
   const refreshThread = useCallback(async () => {
-    if (!selectedId) return;
-    const r = await getInboxThread(selectedId);
-    if (r.thread) setLoaded(r.thread);
-    // The list's preview and status move too.
-    fetchList()
-      .then(setList)
+    const id = selectedRef.current;
+    if (!id) return;
+    const r = await getInboxThread(id).catch(() => null);
+    if (r?.thread && selectedRef.current === id) showThread(r.thread);
+    // The list's preview and status move too, for the query on screen now.
+    fetchList(listQueryRef.current)
+      .then(acceptList)
       .catch(() => undefined);
-  }, [selectedId, fetchList]);
+  }, [fetchList, acceptList, showThread]);
 
   const select = (id: string | null, messageId?: string | null) => {
+    selectedRef.current = id;
     setSelectedId(id);
     setJump(id && messageId ? { id, messageId } : null);
     const url = id
@@ -297,6 +350,11 @@ export function InboxClient({
 
   const threadPane = selectedId ? (
     <ThreadPane
+      // ★ One pane per conversation: what is picked in one (the quote a
+      // reply will carry, the open panels, a busy button) must not carry
+      // over to the next. A quote picked in A sat over B's composer, and the
+      // server then dropped A's message id and sent B's reply unquoted.
+      key={selectedId}
       conversationId={selectedId}
       thread={thread}
       error={threadError}
@@ -421,7 +479,7 @@ export function InboxClient({
                 {workspace.labels.length > 0 && (
                   <select
                     className="inbox-select is-sm"
-                    value={label}
+                    value={labelFilter}
                     onChange={(e) => {
                       setLabel(e.target.value);
                       setPage(1);
@@ -444,7 +502,7 @@ export function InboxClient({
             <p className="inbox-note is-error">{list.error}</p>
           ) : list.rows.length === 0 ? (
             <p className="inbox-note">
-              {q || filter !== "all" || assignee || label
+              {q || filter !== "all" || assignee || labelFilter
                 ? "No conversations match."
                 : "No messages yet. Customers who reply to an order update, scan your QR code or tap the chat button will appear here."}
             </p>
@@ -628,7 +686,7 @@ function ThreadPane({
   conversationId: string;
   thread: InboxThread | null;
   error: string | null;
-  templates: InboxTemplateOption[];
+  templates: InboxReplyTemplate[];
   workspace: InboxWorkspace;
   canManage: boolean;
   channelLive: boolean;
@@ -645,6 +703,7 @@ function ThreadPane({
   const [busy, setBusy] = useState(false);
   const [showJump, setShowJump] = useState(false);
   // The message a reply will quote, chosen with the bubble's Reply button.
+  // Per conversation, like everything here: the pane is keyed on it.
   const [replyTo, setReplyTo] = useState<InboxMessageRow | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   // What the scroll position was last settled for, and whether the reader is
@@ -769,22 +828,30 @@ function ThreadPane({
     await onChanged();
   }
 
+  // ★ ONE LABEL ON OR OFF, NEVER THE WHOLE SET. The full set built from this
+  // screen's copy of the thread deleted whatever that copy lacked: a quick
+  // second click before the refresh landed, or a teammate's label not yet
+  // polled, was silently removed. The chips also stay busy until the thread
+  // is read again, so the next click starts from what the server holds.
   async function toggleLabel(labelId: string) {
-    const next = c.labelIds.includes(labelId)
-      ? c.labelIds.filter((id) => id !== labelId)
-      : [...c.labelIds, labelId];
     setBusy(true);
-    const r = await setInboxConversationLabels({
-      conversationId,
-      labelIds: next,
-    });
-    setBusy(false);
-    if (!r.ok) {
-      toast.error(r.error ?? "Couldn't update the labels.");
-      return;
+    try {
+      const r = await setInboxConversationLabel({
+        conversationId,
+        labelId,
+        on: !c.labelIds.includes(labelId),
+      });
+      if (!r.ok) {
+        toast.error(r.error ?? "Couldn't update the labels.");
+      } else if (r.labelIds) {
+        onRow({ labelIds: r.labelIds });
+      }
+      await onChanged();
+    } catch {
+      toast.error("Couldn't update the labels.");
+    } finally {
+      setBusy(false);
     }
-    onRow({ labelIds: r.labelIds ?? next });
-    await onChanged();
   }
 
   async function removeNote(noteId: string) {
@@ -974,6 +1041,7 @@ function ThreadPane({
         windowOpen={thread.window.open}
         closesAt={thread.window.closesAt}
         templates={templates}
+        offersInForce={thread.customer.consent.marketing}
         cannedReplies={workspace.cannedReplies}
         contactName={c.contact.name}
         replyTo={replyTo}
@@ -1271,7 +1339,9 @@ function NoteBubble({
  *  bar: its text, or its kind when it had none. */
 function messageGist(m: InboxMessageRow): string {
   if (m.body) return m.body.split(/\r?\n/)[0] ?? "";
-  if (m.kind === "image" || m.kind === "sticker") return "📷 Photo";
+  if (m.kind === "image") return "📷 Photo";
+  // The list's preview (inbox-parse.ts previewOf) and the bubble say Sticker.
+  if (m.kind === "sticker") return "Sticker";
   if (m.kind === "video") return "🎥 Video";
   if (m.kind === "audio") return "🎤 Voice message";
   if (m.kind === "document") return `📄 ${m.mediaName ?? "Document"}`;
@@ -1467,8 +1537,9 @@ function Media({ m, onLoad }: { m: InboxMessageRow; onLoad: () => void }) {
     return (
       <a href={m.mediaUrl} target="_blank" rel="noreferrer">
         {/* eslint-disable-next-line @next/next/no-img-element -- a customer's
-            photo from our bucket; next/image would need a remote pattern per
-            size and gains nothing in a chat thread. */}
+            photo through our own gated route (same origin, relative URL);
+            next/image would resize what the route already serves and gains
+            nothing in a chat thread. */}
         <img
           src={m.mediaUrl}
           alt={m.body ?? "Photo"}
@@ -1525,6 +1596,7 @@ function Composer({
   windowOpen,
   closesAt,
   templates,
+  offersInForce,
   cannedReplies,
   contactName,
   replyTo,
@@ -1536,7 +1608,10 @@ function Composer({
   conversationId: string;
   windowOpen: boolean;
   closesAt: string | null;
-  templates: InboxTemplateOption[];
+  templates: InboxReplyTemplate[];
+  /** The customer's yes to offers is in force (`consented()`, on the
+   *  server): a MARKETING template can go to them. */
+  offersInForce: boolean;
   cannedReplies: InboxCannedReply[];
   contactName: string | null;
   /** The message the next reply quotes, or null. */
@@ -1608,6 +1683,14 @@ function Composer({
     () => templates.find((t) => t.id === templateId) ?? null,
     [templates, templateId],
   );
+  // ★ A MARKETING template this customer cannot get is shown, greyed out
+  // with the reason, rather than offered as a Send that always fails. The
+  // reason comes from the same rule the send action applies at the boundary.
+  const blockedFor = (t: InboxReplyTemplate) =>
+    templateBlockedReason(t.category, { inForce: offersInForce });
+  const offersReason =
+    templates.map(blockedFor).find((r): r is string => r !== null) ?? null;
+  const templateBlocked = template ? blockedFor(template) : null;
   const chooseTemplate = (id: string) => {
     setTemplateId(id);
     const next = templates.find((t) => t.id === id);
@@ -1777,12 +1860,20 @@ function Composer({
                 className="inbox-select"
               >
                 <option value="">Choose a template…</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
+                {templates.map((t) => {
+                  const blocked = blockedFor(t) !== null;
+                  return (
+                    <option key={t.id} value={t.id} disabled={blocked}>
+                      {blocked
+                        ? `${t.name} (marketing: not available)`
+                        : t.name}
+                    </option>
+                  );
+                })}
               </select>
+              {offersReason && (
+                <p className="inbox-customer-hint">{offersReason}</p>
+              )}
               {template && (
                 <>
                   {template.headerText ? (
@@ -1826,7 +1917,10 @@ function Composer({
                   type="button"
                   className="inbox-send"
                   disabled={
-                    sending || !template || values.some((v) => !v.trim())
+                    sending ||
+                    !template ||
+                    templateBlocked !== null ||
+                    values.some((v) => !v.trim())
                   }
                   onClick={send}
                 >
@@ -1942,6 +2036,9 @@ function Composer({
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
+                // Mid-word in an input method: every key, Enter and Escape
+                // included, belongs to the IME, never to the picker or Send.
+                if (isComposing(e)) return;
                 if (e.key === "Escape" && pickerVisible) {
                   setPickerOpen(false);
                   if (slashQuery !== null) setText("");
@@ -2025,6 +2122,7 @@ function NoteComposer({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
+            if (isComposing(e)) return;
             if (e.key === "Enter" && !e.shiftKey && !isTouchPrimary()) {
               e.preventDefault();
               void save();
@@ -2048,6 +2146,16 @@ function NoteComposer({
       </div>
     </div>
   );
+}
+
+/**
+ * ★ AN INPUT METHOD IS MID-WORD. Typing Hindi in transliteration, Japanese or
+ * Chinese, Enter CONFIRMS the candidate; read as Send it sent half-typed text
+ * to the customer. `isComposing` is the standard signal; Safari reports the
+ * confirming keydown with keyCode 229 instead, after composition has ended.
+ */
+function isComposing(e: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
+  return e.nativeEvent.isComposing || e.keyCode === 229;
 }
 
 function fileSize(bytes: number): string {

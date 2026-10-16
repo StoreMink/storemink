@@ -6902,6 +6902,264 @@
       }
     },
     {
+      "id": "20261012_0187_storefront_traffic_dimensions",
+      "description": "Storefront traffic by device, source and approximate location: nullable attribution columns on storefront_events, the storefront_daily_dimensions rollup table, and the storefront analytics guide's what-is-recorded and where-visitors-come-from sections",
+      "file": "sql/20261012_0187_storefront_traffic_dimensions.sql",
+      "transaction": true,
+      "requires": ["20261011_0185_refund_credit_integrity"],
+      "verify": {
+        "tables": ["storefront_daily_dimensions"],
+        "columns": [
+          "storefront_events.device_type",
+          "storefront_events.source",
+          "storefront_events.referrer_host",
+          "storefront_events.utm_source",
+          "storefront_events.utm_medium",
+          "storefront_events.utm_campaign",
+          "storefront_events.country",
+          "storefront_events.region",
+          "storefront_events.city"
+        ],
+        "constraints": [
+          "storefront_daily_dimensions_pkey",
+          "storefront_daily_dimensions_dimension_check",
+          "storefront_events_device_check",
+          "storefront_events_source_check"
+        ],
+        "rlsTables": ["storefront_daily_dimensions"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "storefront analytics guide describes device, source and location collection",
+            "sql": "select count(*)::text from public.help_articles where slug='understand-storefront-conversion-analytics' and status='published' and body like '%For each visit it also records the type of device (desktop, mobile or tablet)%' and body like '%StoreMink does not store the visitor''s IP address%' and body like '%<h2>Where visitors come from</h2>%' and body like '%<h2>Conversion funnel</h2>%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261012_0188_analytics_targets",
+      "description": "Analytics targets: a store-wide goal for one metric over a store-local date period, shown as a progress card on the Analytics dashboard (Basic and above)",
+      "file": "sql/20261012_0188_analytics_targets.sql",
+      "transaction": true,
+      "requires": ["20261012_0187_storefront_traffic_dimensions"],
+      "verify": {
+        "tables": ["analytics_targets"],
+        "constraints": [
+          "analytics_targets_pkey",
+          "analytics_targets_metric_check",
+          "analytics_targets_period_check",
+          "analytics_targets_value_check"
+        ],
+        "rlsTables": ["analytics_targets"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261012_0189_analytics_saved_reports",
+      "description": "Saved custom analytics reports: a name and a re-validated config (never SQL) per store, Basic and above",
+      "file": "sql/20261012_0189_analytics_saved_reports.sql",
+      "transaction": true,
+      "requires": ["20261012_0188_analytics_targets"],
+      "verify": {
+        "tables": ["analytics_saved_reports"],
+        "constraints": [
+          "analytics_saved_reports_pkey",
+          "analytics_saved_reports_name_check",
+          "analytics_saved_reports_config_check",
+          "analytics_saved_reports_store_name_key"
+        ],
+        "rlsTables": ["analytics_saved_reports"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261012_0190_analytics_live_targets_reports_help",
+      "description": "Help: Live View, targets and custom reports guides, and the dashboard guide's Insights and targets section",
+      "file": "sql/20261012_0190_analytics_live_targets_reports_help.sql",
+      "transaction": true,
+      "requires": ["20261012_0189_analytics_saved_reports"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Live View, targets and custom report guides are published in Analytics",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id = a.category_id where c.slug = 'analytics' and a.status = 'published' and a.slug in ('use-analytics-live-view', 'set-analytics-targets', 'build-custom-analytics-reports')",
+            "equals": "3"
+          },
+          {
+            "name": "Dashboard guide has the Insights and targets section and links the new guides",
+            "sql": "select count(*)::text from public.help_articles where slug = 'understand-analytics-dashboard' and status = 'published' and body like '%<h2>Insights and targets</h2>%' and body like '%<h2>Customize your page</h2>%' and body like '%/help/analytics/use-analytics-live-view%' and body like '%/help/analytics/build-custom-analytics-reports%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261012_0191_analytics_overview_refresh_help",
+      "description": "Help: the analytics troubleshooting checklist says the Overview updates about once a minute and Live View shows orders as they arrive",
+      "file": "sql/20261012_0191_analytics_overview_refresh_help.sql",
+      "transaction": true,
+      "requires": ["20261012_0190_analytics_live_targets_reports_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Troubleshooting checklist tells merchants the Overview updates about once a minute",
+            "sql": "select count(*)::text from public.help_articles where slug = 'analytics-troubleshooting' and status = 'published' and body like '%updates its figures about once a minute%' and body like '%<strong>Live View</strong> shows orders as they arrive%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0205_paid_plan_renewal_entitlement",
+      "description": "Paid plans stop lapsing after one cycle: the overdue downgrade checks the next cycle's invoice and closes it, and stores whose paid renewal lapsed to Free get their plan back",
+      "file": "sql/20261014_0205_paid_plan_renewal_entitlement.sql",
+      "transaction": true,
+      "requires": ["20261012_0191_analytics_overview_refresh_help"],
+      "verify": {
+        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
+        "queries": [
+          {
+            "name": "the downgrade claim checks the next cycle's invoice and closes it",
+            "sql": "select count(*)::text from pg_proc where proname = 'billing_claim_downgrade' and pg_get_functiondef(oid) like '%cycle_seq = s.current_cycle_seq + 1%' and pg_get_functiondef(oid) like '%uncollectible%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
+        "queries": [
+          {
+            "name": "the downgrade claim checks the next cycle's invoice and closes it",
+            "sql": "select count(*)::text from pg_proc where proname = 'billing_claim_downgrade' and pg_get_functiondef(oid) like '%cycle_seq = s.current_cycle_seq + 1%' and pg_get_functiondef(oid) like '%uncollectible%'",
+            "equals": "1"
+          },
+          {
+            "name": "every store on a live paid subscription has its plan and no expiry",
+            "sql": "select count(*)::text from public.billing_subscriptions b join public.stores st on st.id = b.store_id where b.plan <> 'free' and st.plan_source = 'paid' and (b.state = 'active' or (b.state in ('past_due','grace') and b.grace_ends_at > now())) and (st.plan is distinct from b.plan or st.plan_expires_at is not null)",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261014_0206_stock_rpc_store_ownership",
+      "description": "adjust_stock_at and transfer_stock refuse a product, variant or location that is not the calling store's",
+      "file": "sql/20261014_0206_stock_rpc_store_ownership.sql",
+      "transaction": true,
+      "requires": ["20261014_0205_paid_plan_renewal_entitlement"],
+      "verify": {
+        "functions": [
+          "adjust_stock_at(uuid,uuid,uuid,uuid,integer,text,text,text)",
+          "transfer_stock(uuid,uuid,uuid,uuid,uuid,integer,text,text)"
+        ],
+        "queries": [
+          {
+            "name": "adjust_stock_at checks the product and variant belong to the store",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.adjust_stock_at(uuid,uuid,uuid,uuid,integer,text,text,text)'::regprocedure and pg_get_functiondef(oid) like '%FROM public.products%' and pg_get_functiondef(oid) like '%product_id = p_product AND store_id = p_store%'",
+            "equals": "1"
+          },
+          {
+            "name": "transfer_stock checks the product and variant belong to the store",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.transfer_stock(uuid,uuid,uuid,uuid,uuid,integer,text,text)'::regprocedure and pg_get_functiondef(oid) like '%FROM public.products%' and pg_get_functiondef(oid) like '%product_id = p_product AND store_id = p_store%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261014_0207_fixed_staff_roles",
+      "description": "Platform-managed staff roles: the operator-owned platform_roles table seeded with Owner, Admin, Staff, Manager and Cashier, admins.role as a foreign key to it, per-store custom roles retired, the store-admin RLS helpers admitting every dashboard role and no suspended admin, and the Help guides edited for the one Staff page",
+      "file": "sql/20261014_0207_fixed_staff_roles.sql",
+      "transaction": true,
+      "requires": ["20261014_0206_stock_rpc_store_ownership"],
+      "verify": {
+        "columns": [
+          "platform_roles.slug",
+          "platform_roles.kind",
+          "platform_roles.permissions",
+          "platform_roles.is_system",
+          "platform_roles.position"
+        ],
+        "queries": [
+          {
+            "name": "admins.role references platform_roles and a role in use cannot be deleted",
+            "sql": "select count(*)::text from pg_constraint where conname = 'admins_role_fkey' and conrelid = 'public.admins'::regclass and confrelid = 'public.platform_roles'::regclass and confdeltype = 'r' and confupdtype = 'c'",
+            "equals": "1"
+          },
+          {
+            "name": "the old two-value role check is gone",
+            "sql": "select count(*)::text from pg_constraint where conname = 'profiles_role_check' and conrelid = 'public.admins'::regclass",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the five standard roles are seeded as system roles",
+            "sql": "select count(*)::text from public.platform_roles where is_system and slug in ('superadmin', 'admin', 'member', 'manager', 'cashier') and kind = case when slug in ('manager', 'cashier') then 'pos' else 'dashboard' end",
+            "equals": "5"
+          },
+          {
+            "name": "every admin holds a dashboard role",
+            "sql": "select count(*)::text from public.admins a where not exists (select 1 from public.platform_roles r where r.slug = a.role and r.kind = 'dashboard')",
+            "equals": "0"
+          },
+          {
+            "name": "is_store_admin admits every dashboard role and no suspended admin",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.is_store_admin(uuid)'::regprocedure and pg_get_functiondef(oid) like '%platform_roles%' and pg_get_functiondef(oid) like '%is_suspended%'",
+            "equals": "1"
+          },
+          {
+            "name": "is_store_superadmin admits no suspended admin",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.is_store_superadmin(uuid)'::regprocedure and pg_get_functiondef(oid) like '%is_suspended%'",
+            "equals": "1"
+          },
+          {
+            "name": "the roles guide describes the five fixed roles",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-roles-permissions-and-location-access' and status = 'published' and body like '%<h2>The standard roles</h2>%' and body like '%remove them from Staff first, then invite them again with the new role%' and body like '%an assignment to every location for a register user%' and body like '%Admin manages everything except staff and billing%'",
+            "equals": "1"
+          },
+          {
+            "name": "the roles guide no longer tells a merchant to create a role",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-roles-permissions-and-location-access' and (body like '%<h2>Create a role</h2>%' or body like '%custom role%' or body like '%Choose the saved role%')",
+            "equals": "0"
+          },
+          {
+            "name": "the staff guide invites every role from one list",
+            "sql": "select count(*)::text from public.help_articles where slug = 'invite-and-manage-dashboard-staff' and status = 'published' and body like '%invited from the same list%' and body like '%The register roles can be chosen once Point of Sale is switched on%' and body like '%the email carries a registration link%' and body like '%Managers and cashiers sign in at the register only%' and body like '%can also be resent from the same menu%' and body like '%Register roles need Point of Sale switched on%' and body like '%>Roles, permissions, and location access</a>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the staff guide no longer offers Admin or Superadmin as the only choice",
+            "sql": "select count(*)::text from public.help_articles where slug = 'invite-and-manage-dashboard-staff' and (body like '%built-in member role%' or body like '%Choose <strong>Admin</strong> or <strong>Superadmin</strong>%')",
+            "equals": "0"
+          },
+          {
+            "name": "the POS staff guide sends merchants to Settings, then Staff",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-pos-staff-and-pins' and status = 'published' and body like '%These two roles work the register%' and body like '%Deactivating a staff member from <strong>Settings</strong>%' and body not like '%Point of Sale → Staff%'",
+            "equals": "1"
+          },
+          {
+            "name": "the plan guide no longer lists custom roles",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%Customer groups, custom-code page sections%' and body like '%creating another group is paused.</li>%' and body not like '%custom role%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
       "id": "20261008_0174_whatsapp_accounts",
       "description": "WhatsApp Commerce slice 1: per-store WhatsApp account, Meta templates and raw inbound webhook events (service-only)",
       "file": "sql/20261008_0174_whatsapp_accounts.sql",
@@ -7101,122 +7359,6 @@
             "name": "No Help category holds an em dash",
             "sql": "select count(*)::text from public.help_categories where strpos(coalesce(title, '') || coalesce(description, ''), chr(8212)) > 0",
             "equals": "0"
-          }
-        ]
-      }
-    },
-    {
-      "id": "20261012_0187_storefront_traffic_dimensions",
-      "description": "Storefront traffic by device, source and approximate location: nullable attribution columns on storefront_events, the storefront_daily_dimensions rollup table, and the storefront analytics guide's what-is-recorded and where-visitors-come-from sections",
-      "file": "sql/20261012_0187_storefront_traffic_dimensions.sql",
-      "transaction": true,
-      "requires": ["20261011_0185_refund_credit_integrity"],
-      "verify": {
-        "tables": ["storefront_daily_dimensions"],
-        "columns": [
-          "storefront_events.device_type",
-          "storefront_events.source",
-          "storefront_events.referrer_host",
-          "storefront_events.utm_source",
-          "storefront_events.utm_medium",
-          "storefront_events.utm_campaign",
-          "storefront_events.country",
-          "storefront_events.region",
-          "storefront_events.city"
-        ],
-        "constraints": [
-          "storefront_daily_dimensions_pkey",
-          "storefront_daily_dimensions_dimension_check",
-          "storefront_events_device_check",
-          "storefront_events_source_check"
-        ],
-        "rlsTables": ["storefront_daily_dimensions"]
-      },
-      "applyVerify": {
-        "queries": [
-          {
-            "name": "storefront analytics guide describes device, source and location collection",
-            "sql": "select count(*)::text from public.help_articles where slug='understand-storefront-conversion-analytics' and status='published' and body like '%For each visit it also records the type of device (desktop, mobile or tablet)%' and body like '%StoreMink does not store the visitor''s IP address%' and body like '%<h2>Where visitors come from</h2>%' and body like '%<h2>Conversion funnel</h2>%'",
-            "equals": "1"
-          }
-        ]
-      }
-    },
-    {
-      "id": "20261012_0188_analytics_targets",
-      "description": "Analytics targets: a store-wide goal for one metric over a store-local date period, shown as a progress card on the Analytics dashboard (Basic and above)",
-      "file": "sql/20261012_0188_analytics_targets.sql",
-      "transaction": true,
-      "requires": ["20261012_0187_storefront_traffic_dimensions"],
-      "verify": {
-        "tables": ["analytics_targets"],
-        "constraints": [
-          "analytics_targets_pkey",
-          "analytics_targets_metric_check",
-          "analytics_targets_period_check",
-          "analytics_targets_value_check"
-        ],
-        "rlsTables": ["analytics_targets"]
-      },
-      "applyVerify": {
-        "queries": []
-      }
-    },
-    {
-      "id": "20261012_0189_analytics_saved_reports",
-      "description": "Saved custom analytics reports: a name and a re-validated config (never SQL) per store, Basic and above",
-      "file": "sql/20261012_0189_analytics_saved_reports.sql",
-      "transaction": true,
-      "requires": ["20261012_0188_analytics_targets"],
-      "verify": {
-        "tables": ["analytics_saved_reports"],
-        "constraints": [
-          "analytics_saved_reports_pkey",
-          "analytics_saved_reports_name_check",
-          "analytics_saved_reports_config_check",
-          "analytics_saved_reports_store_name_key"
-        ],
-        "rlsTables": ["analytics_saved_reports"]
-      },
-      "applyVerify": {
-        "queries": []
-      }
-    },
-    {
-      "id": "20261012_0190_analytics_live_targets_reports_help",
-      "description": "Help: Live View, targets and custom reports guides, and the dashboard guide's Insights and targets section",
-      "file": "sql/20261012_0190_analytics_live_targets_reports_help.sql",
-      "transaction": true,
-      "requires": ["20261012_0189_analytics_saved_reports"],
-      "verify": {},
-      "applyVerify": {
-        "queries": [
-          {
-            "name": "Live View, targets and custom report guides are published in Analytics",
-            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id = a.category_id where c.slug = 'analytics' and a.status = 'published' and a.slug in ('use-analytics-live-view', 'set-analytics-targets', 'build-custom-analytics-reports')",
-            "equals": "3"
-          },
-          {
-            "name": "Dashboard guide has the Insights and targets section and links the new guides",
-            "sql": "select count(*)::text from public.help_articles where slug = 'understand-analytics-dashboard' and status = 'published' and body like '%<h2>Insights and targets</h2>%' and body like '%<h2>Customize your page</h2>%' and body like '%/help/analytics/use-analytics-live-view%' and body like '%/help/analytics/build-custom-analytics-reports%'",
-            "equals": "1"
-          }
-        ]
-      }
-    },
-    {
-      "id": "20261012_0191_analytics_overview_refresh_help",
-      "description": "Help: the analytics troubleshooting checklist says the Overview updates about once a minute and Live View shows orders as they arrive",
-      "file": "sql/20261012_0191_analytics_overview_refresh_help.sql",
-      "transaction": true,
-      "requires": ["20261012_0190_analytics_live_targets_reports_help"],
-      "verify": {},
-      "applyVerify": {
-        "queries": [
-          {
-            "name": "Troubleshooting checklist tells merchants the Overview updates about once a minute",
-            "sql": "select count(*)::text from public.help_articles where slug = 'analytics-troubleshooting' and status = 'published' and body like '%updates its figures about once a minute%' and body like '%<strong>Live View</strong> shows orders as they arrive%'",
-            "equals": "1"
           }
         ]
       }
@@ -7504,148 +7646,6 @@
       }
     },
     {
-      "id": "20261014_0205_paid_plan_renewal_entitlement",
-      "description": "Paid plans stop lapsing after one cycle: the overdue downgrade checks the next cycle's invoice and closes it, and stores whose paid renewal lapsed to Free get their plan back",
-      "file": "sql/20261014_0205_paid_plan_renewal_entitlement.sql",
-      "transaction": true,
-      "requires": ["20261012_0191_analytics_overview_refresh_help"],
-      "verify": {
-        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
-        "queries": [
-          {
-            "name": "the downgrade claim checks the next cycle's invoice and closes it",
-            "sql": "select count(*)::text from pg_proc where proname = 'billing_claim_downgrade' and pg_get_functiondef(oid) like '%cycle_seq = s.current_cycle_seq + 1%' and pg_get_functiondef(oid) like '%uncollectible%'",
-            "equals": "1"
-          }
-        ]
-      },
-      "applyVerify": {
-        "functions": ["billing_claim_downgrade(uuid,timestamp with time zone)"],
-        "queries": [
-          {
-            "name": "the downgrade claim checks the next cycle's invoice and closes it",
-            "sql": "select count(*)::text from pg_proc where proname = 'billing_claim_downgrade' and pg_get_functiondef(oid) like '%cycle_seq = s.current_cycle_seq + 1%' and pg_get_functiondef(oid) like '%uncollectible%'",
-            "equals": "1"
-          },
-          {
-            "name": "every store on a live paid subscription has its plan and no expiry",
-            "sql": "select count(*)::text from public.billing_subscriptions b join public.stores st on st.id = b.store_id where b.plan <> 'free' and st.plan_source = 'paid' and (b.state = 'active' or (b.state in ('past_due','grace') and b.grace_ends_at > now())) and (st.plan is distinct from b.plan or st.plan_expires_at is not null)",
-            "equals": "0"
-          }
-        ]
-      }
-    },
-    {
-      "id": "20261014_0206_stock_rpc_store_ownership",
-      "description": "adjust_stock_at and transfer_stock refuse a product, variant or location that is not the calling store's",
-      "file": "sql/20261014_0206_stock_rpc_store_ownership.sql",
-      "transaction": true,
-      "requires": ["20261014_0205_paid_plan_renewal_entitlement"],
-      "verify": {
-        "functions": [
-          "adjust_stock_at(uuid,uuid,uuid,uuid,integer,text,text,text)",
-          "transfer_stock(uuid,uuid,uuid,uuid,uuid,integer,text,text)"
-        ],
-        "queries": [
-          {
-            "name": "adjust_stock_at checks the product and variant belong to the store",
-            "sql": "select count(*)::text from pg_proc where oid = 'public.adjust_stock_at(uuid,uuid,uuid,uuid,integer,text,text,text)'::regprocedure and pg_get_functiondef(oid) like '%FROM public.products%' and pg_get_functiondef(oid) like '%product_id = p_product AND store_id = p_store%'",
-            "equals": "1"
-          },
-          {
-            "name": "transfer_stock checks the product and variant belong to the store",
-            "sql": "select count(*)::text from pg_proc where oid = 'public.transfer_stock(uuid,uuid,uuid,uuid,uuid,integer,text,text)'::regprocedure and pg_get_functiondef(oid) like '%FROM public.products%' and pg_get_functiondef(oid) like '%product_id = p_product AND store_id = p_store%'",
-            "equals": "1"
-          }
-        ]
-      },
-      "applyVerify": {
-        "queries": []
-      }
-    },
-    {
-      "id": "20261014_0207_fixed_staff_roles",
-      "description": "Platform-managed staff roles: the operator-owned platform_roles table seeded with Owner, Admin, Staff, Manager and Cashier, admins.role as a foreign key to it, per-store custom roles retired, the store-admin RLS helpers admitting every dashboard role and no suspended admin, and the Help guides edited for the one Staff page",
-      "file": "sql/20261014_0207_fixed_staff_roles.sql",
-      "transaction": true,
-      "requires": ["20261014_0206_stock_rpc_store_ownership"],
-      "verify": {
-        "columns": [
-          "platform_roles.slug",
-          "platform_roles.kind",
-          "platform_roles.permissions",
-          "platform_roles.is_system",
-          "platform_roles.position"
-        ],
-        "queries": [
-          {
-            "name": "admins.role references platform_roles and a role in use cannot be deleted",
-            "sql": "select count(*)::text from pg_constraint where conname = 'admins_role_fkey' and conrelid = 'public.admins'::regclass and confrelid = 'public.platform_roles'::regclass and confdeltype = 'r' and confupdtype = 'c'",
-            "equals": "1"
-          },
-          {
-            "name": "the old two-value role check is gone",
-            "sql": "select count(*)::text from pg_constraint where conname = 'profiles_role_check' and conrelid = 'public.admins'::regclass",
-            "equals": "0"
-          }
-        ]
-      },
-      "applyVerify": {
-        "queries": [
-          {
-            "name": "the five standard roles are seeded as system roles",
-            "sql": "select count(*)::text from public.platform_roles where is_system and slug in ('superadmin', 'admin', 'member', 'manager', 'cashier') and kind = case when slug in ('manager', 'cashier') then 'pos' else 'dashboard' end",
-            "equals": "5"
-          },
-          {
-            "name": "every admin holds a dashboard role",
-            "sql": "select count(*)::text from public.admins a where not exists (select 1 from public.platform_roles r where r.slug = a.role and r.kind = 'dashboard')",
-            "equals": "0"
-          },
-          {
-            "name": "is_store_admin admits every dashboard role and no suspended admin",
-            "sql": "select count(*)::text from pg_proc where oid = 'public.is_store_admin(uuid)'::regprocedure and pg_get_functiondef(oid) like '%platform_roles%' and pg_get_functiondef(oid) like '%is_suspended%'",
-            "equals": "1"
-          },
-          {
-            "name": "is_store_superadmin admits no suspended admin",
-            "sql": "select count(*)::text from pg_proc where oid = 'public.is_store_superadmin(uuid)'::regprocedure and pg_get_functiondef(oid) like '%is_suspended%'",
-            "equals": "1"
-          },
-          {
-            "name": "the roles guide describes the five fixed roles",
-            "sql": "select count(*)::text from public.help_articles where slug = 'create-roles-permissions-and-location-access' and status = 'published' and body like '%<h2>The standard roles</h2>%' and body like '%remove them from Staff first, then invite them again with the new role%' and body like '%an assignment to every location for a register user%' and body like '%Admin manages everything except staff and billing%'",
-            "equals": "1"
-          },
-          {
-            "name": "the roles guide no longer tells a merchant to create a role",
-            "sql": "select count(*)::text from public.help_articles where slug = 'create-roles-permissions-and-location-access' and (body like '%<h2>Create a role</h2>%' or body like '%custom role%' or body like '%Choose the saved role%')",
-            "equals": "0"
-          },
-          {
-            "name": "the staff guide invites every role from one list",
-            "sql": "select count(*)::text from public.help_articles where slug = 'invite-and-manage-dashboard-staff' and status = 'published' and body like '%invited from the same list%' and body like '%The register roles can be chosen once Point of Sale is switched on%' and body like '%the email carries a registration link%' and body like '%Managers and cashiers sign in at the register only%' and body like '%can also be resent from the same menu%' and body like '%Register roles need Point of Sale switched on%' and body like '%>Roles, permissions, and location access</a>%'",
-            "equals": "1"
-          },
-          {
-            "name": "the staff guide no longer offers Admin or Superadmin as the only choice",
-            "sql": "select count(*)::text from public.help_articles where slug = 'invite-and-manage-dashboard-staff' and (body like '%built-in member role%' or body like '%Choose <strong>Admin</strong> or <strong>Superadmin</strong>%')",
-            "equals": "0"
-          },
-          {
-            "name": "the POS staff guide sends merchants to Settings, then Staff",
-            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-pos-staff-and-pins' and status = 'published' and body like '%These two roles work the register%' and body like '%Deactivating a staff member from <strong>Settings</strong>%' and body not like '%Point of Sale → Staff%'",
-            "equals": "1"
-          },
-          {
-            "name": "the plan guide no longer lists custom roles",
-            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%Customer groups, custom-code page sections%' and body like '%creating another group is paused.</li>%' and body not like '%custom role%'",
-            "equals": "1"
-          }
-        ]
-      }
-    },
-    {
       "id": "20261015_0208_inbox_role_grants",
       "description": "Staff roles: give Owner and Admin the Inbox section added after the roles were seeded, and correct the inbox guide sentence about who can see it",
       "file": "sql/20261015_0208_inbox_role_grants.sql",
@@ -7771,8 +7771,157 @@
           },
           {
             "name": "the STOP section still follows the team section exactly once",
-            "sql": "select (length(body) - length(replace(body, '<h2>When a customer writes STOP</h2>', ''))) / length('<h2>When a customer writes STOP</h2>') from public.help_articles where slug = 'reply-to-whatsapp-messages'",
+            "sql": "select ((length(body) - length(replace(body, '<h2>When a customer writes STOP</h2>', ''))) / length('<h2>When a customer writes STOP</h2>'))::text from public.help_articles where slug = 'reply-to-whatsapp-messages'",
             "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261016_0211_whatsapp_review_fixes",
+      "description": "WhatsApp review fixes: the held SMS fallback and Meta's message id on the WhatsApp queue, retry bookkeeping on inbound events, a sending lease on Mink answers, the 'undelivered' COD answer and the per-order WhatsApp updates choice on orders, the number PIN table, and the retention skip mark on conversations",
+      "file": "sql/20261016_0211_whatsapp_review_fixes.sql",
+      "transaction": true,
+      "requires": ["20261015_0210_whatsapp_full_inbox_help"],
+      "verify": {
+        "tables": ["whatsapp_number_pins"],
+        "columns": [
+          "notification_whatsapp_queue.provider_message_id",
+          "notification_whatsapp_queue.fallback_sms",
+          "notification_whatsapp_queue.fallback_state",
+          "notification_whatsapp_queue.fallback_settled_at",
+          "whatsapp_inbound_events.attempts",
+          "whatsapp_inbound_events.next_attempt_at",
+          "whatsapp_mink_answers.sending_started_at",
+          "orders.whatsapp_updates",
+          "whatsapp_number_pins.pin_enc",
+          "whatsapp_conversations.retention_failed_at"
+        ],
+        "constraints": [
+          "notification_whatsapp_queue_fallback_check",
+          "whatsapp_inbound_events_attempts_check",
+          "orders_cod_confirmation_check",
+          "whatsapp_number_pins_pkey",
+          "whatsapp_number_pins_phone_check",
+          "whatsapp_number_pins_pin_check"
+        ],
+        "rlsTables": ["whatsapp_number_pins"],
+        "queries": [
+          {
+            "name": "the COD answer admits undelivered",
+            "sql": "select count(*)::text from pg_constraint where conname = 'orders_cod_confirmation_check' and pg_get_constraintdef(oid) like '%undelivered%'",
+            "equals": "1"
+          },
+          {
+            "name": "a delivery status finds its queue row by Meta's id",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and indexname = 'notification_whatsapp_queue_provider_idx'",
+            "equals": "1"
+          },
+          {
+            "name": "app_user holds no privilege on the number PINs",
+            "sql": "select count(*)::text from information_schema.role_table_grants where grantee = 'app_user' and table_schema = 'public' and table_name = 'whatsapp_number_pins'",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every number we registered has its PIN kept",
+            "sql": "select count(*)::text from public.store_whatsapp_accounts a where a.coexistence = false and a.registered_at is not null and length(a.two_fa_pin_enc) > 0 and not exists (select 1 from public.whatsapp_number_pins p where p.phone_number_id = a.phone_number_id)",
+            "equals": "0"
+          },
+          {
+            "name": "no queue row holds an SMS yet",
+            "sql": "select count(*)::text from public.notification_whatsapp_queue where fallback_state is not null",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261016_0212_whatsapp_review_fixes_help",
+      "description": "The four WhatsApp guides edited in place for the review fixes: updates go to the checkout phone, Set up templates follows what is still to submit, the undelivered COD label and when follow-ups run, a Cancel tap after a declined request, the SMS sent when a WhatsApp fails, Not submitted templates and a change of account, STOP-worded buttons, marketing templates need a yes to offers, and the offers Mink may mention",
+      "file": "sql/20261016_0212_whatsapp_review_fixes_help.sql",
+      "transaction": true,
+      "requires": ["20261016_0211_whatsapp_review_fixes"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the card's button follows the templates still to submit",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%choose <strong>Set up templates</strong> to send them.%'",
+            "equals": "1"
+          },
+          {
+            "name": "an order's updates go to the number entered at checkout",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%Updates for an order go to the mobile number entered for it at checkout%'",
+            "equals": "1"
+          },
+          {
+            "name": "a Cancel tap after a declined request waits for a person",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%or after you declined their request to cancel it%'",
+            "equals": "1"
+          },
+          {
+            "name": "the undelivered COD label is explained",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%<strong>WhatsApp message not delivered</strong> and is never reminded or cancelled automatically%'",
+            "equals": "1"
+          },
+          {
+            "name": "the COD reminder runs only while the number is connected",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%still pending and your number is connected and switched on%'",
+            "equals": "1"
+          },
+          {
+            "name": "the COD auto-cancel runs only while the number is connected",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%: while your number is connected and switched on, a pending order%'",
+            "equals": "1"
+          },
+          {
+            "name": "an SMS goes when Meta reports the WhatsApp failed",
+            "sql": "select count(*)::text from public.help_articles where slug = 'send-order-updates-on-whatsapp' and body like '%Meta reports that the WhatsApp message failed%'",
+            "equals": "1"
+          },
+          {
+            "name": "the template list names the Not submitted state",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-whatsapp-templates' and body like '%or <strong>Not submitted</strong> when Meta has not received it on this account.%'",
+            "equals": "1"
+          },
+          {
+            "name": "a STOP or START worded button is for marketing templates only",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-whatsapp-templates' and body like '%can be added only to a marketing template%'",
+            "equals": "1"
+          },
+          {
+            "name": "the template guide says marketing templates need a yes to offers",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-whatsapp-templates' and body like '%for anyone else it is greyed out with the reason%'",
+            "equals": "1"
+          },
+          {
+            "name": "the template guide covers a change of WhatsApp Business account",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-whatsapp-templates' and body like '%your own templates show as <strong>Not submitted</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide counts a tapped STOP button",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%or taps a button worded that way such as \"Stop promotions\"%'",
+            "equals": "1"
+          },
+          {
+            "name": "the inbox guide says marketing templates need a yes to offers",
+            "sql": "select count(*)::text from public.help_articles where slug = 'reply-to-whatsapp-messages' and body like '%you fill in the details they need. A marketing template can be sent only to a customer who agreed to offers%'",
+            "equals": "1"
+          },
+          {
+            "name": "Mink mentions only offers a shopper can see",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-whatsapp-automatic-replies' and body like '%a code only when <strong>Show this coupon on my storefront</strong> is ticked%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old offers wording is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-whatsapp-automatic-replies' and body like '%the offers running now,%'",
+            "equals": "0"
           }
         ]
       }

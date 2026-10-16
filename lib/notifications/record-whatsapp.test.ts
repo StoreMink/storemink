@@ -401,3 +401,254 @@ describe("COD confirmation", () => {
     expect(queued(mock, notificationWhatsappQueue)).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The PR #283 review fixes (migration 0211).
+// ---------------------------------------------------------------------------
+
+/** A savepoint the fan-out's isolated reads run in, answering with `rows`. */
+function withTransaction(
+  mock: any,
+  answers: { order?: any[]; stopped?: string[] } = {},
+) {
+  const tx: any = {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(async () => answers.order ?? []),
+        })),
+      })),
+    })),
+    execute: vi.fn(async () => ({
+      rows: (answers.stopped ?? []).map((phone) => ({ phone })),
+    })),
+  };
+  mock.db.transaction = vi.fn(async (fn: any) => fn(tx));
+  return tx;
+}
+
+describe("the SMS held behind the WhatsApp (0211)", () => {
+  it("★★ WhatsApp first: the SMS rides on the WhatsApp row, held, not dropped", async () => {
+    const mock = setupDb();
+    await placeOrder();
+    const [row] = queued(mock, notificationWhatsappQueue);
+    expect(row.fallbackState).toBe("held");
+    expect(row.fallbackSms).toEqual({
+      recipientId: CUSTOMER,
+      recipientType: "customer",
+      phone: PHONE,
+      eventKey: "order.placed",
+      values: ["ORD1", "Acme"],
+    });
+    expect(queued(mock, notificationSmsQueue)).toHaveLength(0);
+  });
+
+  it("nothing is held when the store has no SMS to send", async () => {
+    vi.mocked(loadSmsSender).mockResolvedValue(null);
+    const mock = setupDb();
+    await placeOrder();
+    const [row] = queued(mock, notificationWhatsappQueue);
+    expect(row.fallbackState).toBeUndefined();
+    expect(row.fallbackSms).toBeUndefined();
+  });
+
+  it("both: two messages, nothing held", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(WA_SENDER("both"));
+    const mock = setupDb();
+    await placeOrder();
+    expect(queued(mock, notificationWhatsappQueue)[0].fallbackState).toBe(
+      undefined,
+    );
+    expect(queued(mock, notificationSmsQueue)).toHaveLength(1);
+  });
+});
+
+describe("a WhatsApp-only audience", () => {
+  it("★★ queues the WhatsApp although web and email are off", async () => {
+    dbHolder.current = makeDbMock({
+      returning: [{ id: EVENT_ID }],
+      selectQueue: [
+        [],
+        [
+          {
+            eventKey: "order.placed",
+            channels: {
+              customer: { web: false, email: false, whatsapp: true },
+            },
+            routing: "permission",
+            targetRoles: [],
+            targetAdmins: [],
+            templates: {},
+            digest: "instant",
+            isEnabled: true,
+            storeName: "Acme",
+          },
+        ],
+        [],
+        [],
+        [],
+        [],
+        [],
+      ],
+    });
+    await placeOrder();
+    expect(queued(dbHolder.current, notificationWhatsappQueue)).toHaveLength(1);
+  });
+});
+
+describe("STOP and SMS precedence", () => {
+  it("★ under SMS first, a number that said STOP is not 'reached by SMS'", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(WA_SENDER("sms_first"));
+    const mock = setupDb();
+    const tx = withTransaction(mock, { stopped: ["9876543210"] });
+    await placeOrder();
+    expect(queued(mock, notificationSmsQueue)).toHaveLength(0);
+    expect(queued(mock, notificationWhatsappQueue)).toHaveLength(1);
+    expect(tx.execute).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("an order's WhatsApp goes to its own phone", () => {
+  const ORDER_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const DELIVERY = "+919123456789";
+  async function orderEvent() {
+    return recordEvent({
+      type: "order.placed",
+      storeId: STORE,
+      customerId: CUSTOMER,
+      subject: { type: "order", id: ORDER_ID, label: "ORD1" },
+      payload: { total: 1240, paymentMethod: "razorpay" },
+    });
+  }
+
+  it("★★ the phone typed at checkout, with ITS consent", async () => {
+    vi.mocked(whatsAppConsentFor).mockResolvedValue(
+      new Map([[DELIVERY, { updates: true, marketing: false }]]),
+    );
+    const mock = setupDb();
+    withTransaction(mock, {
+      order: [{ phone: "9123456789", updates: true }],
+    });
+    await orderEvent();
+    const [row] = queued(mock, notificationWhatsappQueue);
+    expect(row.phone).toBe(DELIVERY);
+    expect(whatsAppConsentFor).toHaveBeenCalledWith(expect.anything(), STORE, [
+      DELIVERY,
+    ]);
+  });
+
+  it("★★ the box unticked for this order wins over the number's consent", async () => {
+    const mock = setupDb();
+    withTransaction(mock, { order: [{ phone: PHONE, updates: false }] });
+    await orderEvent();
+    expect(queued(mock, notificationWhatsappQueue)).toHaveLength(0);
+    // …and the customer still gets the SMS instead.
+    expect(queued(mock, notificationSmsQueue)).toHaveLength(1);
+  });
+
+  it("no delivery phone (a till sale): the account phone", async () => {
+    const mock = setupDb();
+    withTransaction(mock, { order: [{ phone: null, updates: null }] });
+    await orderEvent();
+    expect(queued(mock, notificationWhatsappQueue)[0].phone).toBe(PHONE);
+  });
+});
+
+describe("the COD confirmation is its own message", () => {
+  const ORDER_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const COD_TEMPLATE = {
+    id: "wt-cod",
+    audience: "customer",
+    name: "sm_order_placed_customer_cod_confirm_v1",
+    language: "en",
+    variables: ["subject_label", "store_name", "total"],
+    body: "x",
+  };
+  async function codOrder() {
+    return recordEvent({
+      type: "order.placed",
+      storeId: STORE,
+      customerId: CUSTOMER,
+      subject: { type: "order", id: ORDER_ID, label: "ORD1" },
+      payload: { total: 1240, paymentMethod: "cod" },
+    });
+  }
+  function codConfig(whatsapp: boolean) {
+    dbHolder.current = makeDbMock({
+      returning: [{ id: EVENT_ID }],
+      selectQueue: [
+        [],
+        [
+          {
+            eventKey: "order.placed",
+            channels: { customer: { whatsapp, sms: true } },
+            routing: "permission",
+            targetRoles: [],
+            targetAdmins: [],
+            templates: {},
+            digest: "instant",
+            isEnabled: true,
+            storeName: "Acme",
+          },
+        ],
+        [],
+        [],
+        [],
+        [],
+        [],
+      ],
+    });
+    return dbHolder.current;
+  }
+
+  beforeEach(() => {
+    vi.mocked(loadWhatsAppTemplates).mockImplementation(
+      async (_db: any, _store: string, _key: string, variant?: string) =>
+        new Map([["customer", variant ? COD_TEMPLATE : WA_TEMPLATE]]) as any,
+    );
+  });
+
+  it("★★ under SMS first the SMS goes AND the buttons go", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(
+      WA_SENDER("sms_first", true),
+    );
+    const mock = codConfig(true);
+    await codOrder();
+    expect(queued(mock, notificationSmsQueue)).toHaveLength(1);
+    const wa = queued(mock, notificationWhatsappQueue);
+    expect(wa.map((r: any) => r.templateId)).toEqual(["wt-cod"]);
+  });
+
+  it("★★ with WhatsApp unticked for Order placed, the buttons still go", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(
+      WA_SENDER("whatsapp_first", true),
+    );
+    const mock = codConfig(false);
+    await codOrder();
+    const wa = queued(mock, notificationWhatsappQueue);
+    expect(wa.map((r: any) => r.templateId)).toEqual(["wt-cod"]);
+  });
+
+  it("…but never the plain order message in its place", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(
+      WA_SENDER("whatsapp_first", true),
+    );
+    vi.mocked(loadWhatsAppTemplates).mockImplementation(
+      async (_db: any, _store: string, _key: string, variant?: string) =>
+        (variant ? new Map() : new Map([["customer", WA_TEMPLATE]])) as any,
+    );
+    const mock = codConfig(false);
+    await codOrder();
+    expect(queued(mock, notificationWhatsappQueue)).toHaveLength(0);
+    expect(queued(mock, notificationSmsQueue)).toHaveLength(1);
+  });
+
+  it("nothing extra when the store does not ask for confirmation", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(
+      WA_SENDER("whatsapp_first", false),
+    );
+    const mock = codConfig(false);
+    await codOrder();
+    expect(queued(mock, notificationWhatsappQueue)).toHaveLength(0);
+  });
+});

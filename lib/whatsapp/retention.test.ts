@@ -8,13 +8,16 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import { makeDbMock } from "@/app/actions/_test-helpers";
 
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
-const gcs = vi.hoisted(() => ({ configured: true }));
+const gcs = vi.hoisted(() => ({ configured: true, privateConfigured: true }));
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn(async (fn: any) => fn(dbHolder.current.db)),
 }));
 vi.mock("@/lib/storage/gcs", () => ({
   get gcsConfigured() {
     return gcs.configured;
+  },
+  get gcsPrivateConfigured() {
+    return gcs.privateConfigured;
   },
   gcsDeletePrefix: vi.fn(async () => ({ deleted: 2, failed: 0 })),
 }));
@@ -49,6 +52,7 @@ function setup(candidates: any[], deleted = candidates.length) {
 
 beforeEach(() => {
   gcs.configured = true;
+  gcs.privateConfigured = true;
 });
 
 describe("pruneClosedConversations", () => {
@@ -58,7 +62,15 @@ describe("pruneClosedConversations", () => {
     const select = text(mock.calls.execute[0]);
     expect(select).toMatch(/c\.status = 'closed'/);
     expect(select).toMatch(/coalesce\(c\.last_message_at, c\.updated_at\) </);
-    expect(query(mock.calls.execute[0]).params).toEqual([FLOOR, 50]);
+    expect(query(mock.calls.execute[0]).params).toEqual([FLOOR, 7, 50]);
+  });
+
+  it("★★ leaves out a conversation whose media failed within the last week", async () => {
+    const mock = setup([]);
+    await pruneClosedConversations(FLOOR, 50);
+    expect(text(mock.calls.execute[0])).toMatch(
+      /c\.retention_failed_at is null or c\.retention_failed_at < now\(\) - make_interval\(days => \$2\)/,
+    );
   });
 
   it("deletes the media folder, then the conversation (messages cascade)", async () => {
@@ -67,9 +79,15 @@ describe("pruneClosedConversations", () => {
       { id: "c2", store_id: STORE, has_media: false },
     ]);
     expect(await pruneClosedConversations(FLOOR, 50)).toBe(2);
-    expect(gcsDeletePrefix).toHaveBeenCalledTimes(1);
+    // ★ Both buckets: chat media is private now, older chats' is public.
+    expect(gcsDeletePrefix).toHaveBeenCalledTimes(2);
     expect(gcsDeletePrefix).toHaveBeenCalledWith(
       `stores/${STORE}/whatsapp/c1/`,
+      "private",
+    );
+    expect(gcsDeletePrefix).toHaveBeenCalledWith(
+      `stores/${STORE}/whatsapp/c1/`,
+      "public",
     );
     const del = query(mock.calls.execute[1]);
     expect(del.sql).toMatch(/delete from public\.whatsapp_conversations/);
@@ -97,7 +115,21 @@ describe("pruneClosedConversations", () => {
       1,
     );
     expect(await pruneClosedConversations(FLOOR, 50)).toBe(1);
-    expect(query(mock.calls.execute[1]).params[0]).toEqual(["c2"]);
+    // The stuck one is marked, so tomorrow's batch moves past it.
+    const mark = query(mock.calls.execute[1]);
+    expect(mark.sql).toMatch(/set retention_failed_at = now\(\)/);
+    expect(mark.params[0]).toEqual(["c1"]);
+    expect(query(mock.calls.execute[2]).params[0]).toEqual(["c2"]);
+  });
+
+  it("★ keeps a conversation whose OLD public-bucket media failed", async () => {
+    vi.mocked(gcsDeletePrefix)
+      .mockResolvedValueOnce({ deleted: 1, failed: 0 })
+      .mockResolvedValueOnce({ deleted: 0, failed: 0, error: "down" });
+    const mock = setup([{ id: "c1", store_id: STORE, has_media: true }]);
+    expect(await pruneClosedConversations(FLOOR, 50)).toBe(0);
+    expect(query(mock.calls.execute[1]).params[0]).toEqual(["c1"]);
+    expect(mock.calls.execute).toHaveLength(2);
   });
 
   it("deletes nothing at all when every candidate's media failed", async () => {
@@ -108,11 +140,13 @@ describe("pruneClosedConversations", () => {
     });
     const mock = setup([{ id: "c1", store_id: STORE, has_media: true }]);
     expect(await pruneClosedConversations(FLOOR, 50)).toBe(0);
-    expect(mock.calls.execute).toHaveLength(1);
+    // The select and the stuck mark; no delete.
+    expect(mock.calls.execute).toHaveLength(2);
   });
 
   it("without a bucket (local development) there is no media to delete", async () => {
     gcs.configured = false;
+    gcs.privateConfigured = false;
     setup([{ id: "c1", store_id: STORE, has_media: true }]);
     expect(await pruneClosedConversations(FLOOR, 50)).toBe(1);
     expect(gcsDeletePrefix).not.toHaveBeenCalled();

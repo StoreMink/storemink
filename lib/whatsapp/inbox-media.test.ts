@@ -8,8 +8,8 @@ vi.mock("@/lib/observability/logger", () => ({
   logInfo: vi.fn(),
 }));
 vi.mock("@/lib/storage/gcs", () => ({
-  gcsConfigured: true,
-  gcsUploadObject: vi.fn(async (path: string) => `https://x/${path}`),
+  gcsPrivateConfigured: true,
+  gcsPrivateUploadObject: vi.fn(async () => undefined),
 }));
 vi.mock("./graph", () => ({ uploadMedia: vi.fn() }));
 vi.mock("./send", () => ({ sendWhatsAppMedia: vi.fn() }));
@@ -21,7 +21,7 @@ vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((fn: any) => Promise.resolve(fn({}))),
 }));
 
-import { gcsUploadObject } from "@/lib/storage/gcs";
+import { gcsPrivateUploadObject } from "@/lib/storage/gcs";
 import { uploadMedia } from "./graph";
 import { recordOutboundMessage } from "./inbox";
 import { discardMinkDrafts } from "./mink-drafts";
@@ -68,6 +68,33 @@ describe("prepareOutboundMedia", () => {
     expect(meta.height).toBe(1024);
     // No metadata survives: a staff phone's photo carries GPS.
     expect(meta.exif).toBeUndefined();
+  });
+
+  it("★ a transparent photo is put on white, not black", async () => {
+    const clear = new Uint8Array(
+      await sharp({
+        create: {
+          width: 20,
+          height: 20,
+          channels: 4,
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+        },
+      })
+        .png()
+        .toBuffer(),
+    );
+    const r = await prepareOutboundMedia({
+      bytes: clear,
+      mime: "image/png",
+      name: "cutout.png",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const { data } = await sharp(Buffer.from(r.media.bytes))
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    // JPEG is lossy, so "white" is close to 255 on every channel.
+    expect(Math.min(data[0]!, data[1]!, data[2]!)).toBeGreaterThan(240);
   });
 
   it("a small photo is not enlarged", async () => {
@@ -191,14 +218,14 @@ describe("sendInboxMedia", () => {
       mime: "image/jpeg",
       filename: "p.jpg",
     });
-    const [path, bytes, mime, cache] =
-      vi.mocked(gcsUploadObject).mock.calls[0]!;
+    // ★ The PRIVATE bucket: the public one can be listed by anyone.
+    const [path, bytes, mime] = vi.mocked(gcsPrivateUploadObject).mock
+      .calls[0]!;
     expect(path).toMatch(
       new RegExp(`^stores/${STORE}/whatsapp/${CONV}/out-[0-9a-f-]{36}\\.jpg$`),
     );
     expect(bytes).toBe(MEDIA.bytes);
     expect(mime).toBe("image/jpeg");
-    expect(cache).toBe("private, max-age=0");
     expect(sendWhatsAppMedia).toHaveBeenCalledWith({
       storeId: STORE,
       to: "+919876543210",
@@ -227,7 +254,7 @@ describe("sendInboxMedia", () => {
     // The order is the safety argument.
     const order = [
       uploadMedia,
-      gcsUploadObject,
+      gcsPrivateUploadObject,
       sendWhatsAppMedia,
       recordOutboundMessage,
     ].map((f) => vi.mocked(f as any).mock.invocationCallOrder[0]);
@@ -242,7 +269,7 @@ describe("sendInboxMedia", () => {
     });
     const r = await sendInboxMedia(INPUT);
     expect(r).toMatchObject({ ok: false, code: "refused" });
-    expect(gcsUploadObject).not.toHaveBeenCalled();
+    expect(gcsPrivateUploadObject).not.toHaveBeenCalled();
     expect(sendWhatsAppMedia).not.toHaveBeenCalled();
     expect(recordOutboundMessage).not.toHaveBeenCalled();
   });

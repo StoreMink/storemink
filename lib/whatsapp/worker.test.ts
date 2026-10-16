@@ -23,6 +23,12 @@ vi.mock("./cod-confirmation", () => ({
 vi.mock("./inbox", () => ({
   fileTemplateInThread: vi.fn(async () => "m-thread"),
 }));
+vi.mock("./templates", () => ({
+  markNeedsReauth: vi.fn(async () => undefined),
+}));
+vi.mock("./sms-fallback", () => ({
+  releaseHeldSms: vi.fn(async () => true),
+}));
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
@@ -36,6 +42,8 @@ import {
 import { sendWhatsAppTemplate } from "./send";
 import { markCodConfirmationRequested } from "./cod-confirmation";
 import { fileTemplateInThread } from "./inbox";
+import { markNeedsReauth } from "./templates";
+import { releaseHeldSms } from "./sms-fallback";
 import { RETRYABLE_META_CODES, runWhatsAppWorker } from "./worker";
 
 const ROW = {
@@ -211,6 +219,7 @@ describe("runWhatsAppWorker", () => {
       expect.anything(),
       "store-1",
       "t1",
+      { strict: true },
     );
   });
 
@@ -307,5 +316,131 @@ describe("runWhatsAppWorker", () => {
     });
     await runWhatsAppWorker();
     expect(settlements()[0]).not.toMatch(/next_attempt_at/);
+  });
+});
+
+describe("the held SMS and Meta's id", () => {
+  it("★ a sent row keeps Meta's message id, so a later status can find it", async () => {
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: true,
+      messageId: "wamid.1",
+      logId: "l1",
+    });
+    await runWhatsAppWorker();
+    expect(settlements()[0]).toMatch(/provider_message_id = /);
+    expect(sqlParamValues(dbHolder.current.calls.execute[1])).toContain(
+      "wamid.1",
+    );
+    // Delivered or not is the status webhook's to say: nothing released yet.
+    expect(releaseHeldSms).not.toHaveBeenCalled();
+  });
+
+  it("★★ a definite refusal releases the SMS held behind the message", async () => {
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: false,
+      outcome: "rejected",
+      error: "Not a WhatsApp user",
+      code: 131026,
+    });
+    const r = await runWhatsAppWorker();
+    expect(releaseHeldSms).toHaveBeenCalledWith(expect.anything(), "q1");
+    expect(r.smsReleased).toBe(1);
+  });
+
+  it("…and so does a store that can no longer send, or a withdrawn consent", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValue(null);
+    await runWhatsAppWorker();
+    expect(releaseHeldSms).toHaveBeenCalledTimes(1);
+
+    setup();
+    vi.mocked(releaseHeldSms).mockClear();
+    vi.mocked(whatsAppConsentFor).mockResolvedValue(new Map());
+    await runWhatsAppWorker();
+    expect(releaseHeldSms).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ an unknown outcome keeps the SMS held: the WhatsApp may have arrived", async () => {
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: false,
+      outcome: "unknown",
+      error: "Meta 503.",
+    });
+    await runWhatsAppWorker();
+    expect(releaseHeldSms).not.toHaveBeenCalled();
+  });
+
+  it("a throttle that will be retried keeps the SMS held", async () => {
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: false,
+      outcome: "rejected",
+      error: "Rate limit",
+      code: 130429,
+    });
+    await runWhatsAppWorker();
+    expect(releaseHeldSms).not.toHaveBeenCalled();
+  });
+});
+
+describe("a dead token", () => {
+  it("★★ Meta's 190 marks the account needs_reauth and stops using it for the batch", async () => {
+    setup([ROW, { ...ROW, id: "q2" }]);
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: false,
+      outcome: "rejected",
+      error: "Invalid OAuth access token",
+      code: 190,
+    });
+    const r = await runWhatsAppWorker();
+    expect(markNeedsReauth).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(markNeedsReauth).mock.calls[0]![0]).toBe("store-1");
+    // The second row is not sent with a token Meta just refused.
+    expect(sendWhatsAppTemplate).toHaveBeenCalledTimes(1);
+    expect(r.failed).toBe(2);
+    expect(releaseHeldSms).toHaveBeenCalledTimes(2);
+  });
+
+  it("another refusal leaves the account alone", async () => {
+    vi.mocked(sendWhatsAppTemplate).mockResolvedValue({
+      sent: false,
+      outcome: "rejected",
+      error: "Not a WhatsApp user",
+      code: 131026,
+    });
+    await runWhatsAppWorker();
+    expect(markNeedsReauth).not.toHaveBeenCalled();
+  });
+});
+
+describe("our own read failing", () => {
+  it("★★ is not a verdict: the row is requeued, nothing is settled or released", async () => {
+    vi.mocked(loadWhatsAppSender).mockRejectedValue(new Error("57P01"));
+    const r = await runWhatsAppWorker();
+    expect(r).toMatchObject({ requeued: 1, failed: 0 });
+    expect(settlements()[0]).toMatch(/next_attempt_at/);
+    expect(sendWhatsAppTemplate).not.toHaveBeenCalled();
+    expect(releaseHeldSms).not.toHaveBeenCalled();
+    expect(loadWhatsAppSender).toHaveBeenCalledWith(
+      expect.anything(),
+      "store-1",
+      { strict: true },
+    );
+  });
+
+  it("the consent and template reads are strict too", async () => {
+    vi.mocked(whatsAppConsentFor).mockRejectedValue(new Error("reset"));
+    expect((await runWhatsAppWorker()).requeued).toBe(1);
+
+    setup();
+    vi.mocked(loadWhatsAppTemplateById).mockRejectedValue(new Error("reset"));
+    expect((await runWhatsAppWorker()).requeued).toBe(1);
+  });
+
+  it("gives up after the last attempt, and only then lets the SMS go", async () => {
+    setup([{ ...ROW, attempts: 3 }]);
+    vi.mocked(loadWhatsAppSender).mockRejectedValue(new Error("57P01"));
+    const r = await runWhatsAppWorker();
+    expect(r).toMatchObject({ requeued: 0, failed: 1 });
+    expect(settlements()[0]).not.toMatch(/next_attempt_at/);
+    expect(releaseHeldSms).toHaveBeenCalledTimes(1);
   });
 });

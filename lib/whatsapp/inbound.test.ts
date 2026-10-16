@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, expect, it, vi } from "vitest";
-import { sqlText } from "@/app/actions/_test-helpers";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sqlParamValues, sqlText } from "@/app/actions/_test-helpers";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -8,6 +8,16 @@ vi.mock("@/lib/observability/logger", () => ({
   logInfo: vi.fn(),
 }));
 vi.mock("@/lib/db/client", () => ({ withService: vi.fn() }));
+vi.mock("./templates", () => ({
+  syncWhatsAppTemplates: vi.fn(async () => ({ ok: true, updated: 1 })),
+}));
+vi.mock("./connect", () => ({
+  refreshWhatsAppAccount: vi.fn(async () => ({ ok: true })),
+}));
+vi.mock("./sms-fallback", () => ({
+  releaseHeldSms: vi.fn(async () => true),
+  dropHeldSms: vi.fn(async () => true),
+}));
 
 import {
   applyAccountEvent,
@@ -15,8 +25,15 @@ import {
   explodeWebhook,
   HANDLED_FIELDS,
   HANDLED_MESSAGE_KINDS,
+  MAX_INBOUND_ATTEMPTS,
+  processPendingInboundEvents,
+  routeInboundEvent,
   STATUS_RANK,
 } from "./inbound";
+import { withService } from "@/lib/db/client";
+import { syncWhatsAppTemplates } from "./templates";
+import { refreshWhatsAppAccount } from "./connect";
+import { dropHeldSms, releaseHeldSms } from "./sms-fallback";
 
 const delivery = {
   object: "whatsapp_business_account",
@@ -114,13 +131,63 @@ describe("explodeWebhook", () => {
   });
 });
 
-function fakeDb() {
+describe("routeInboundEvent", () => {
+  const byPhone = new Map([
+    ["PN_1", "store-1"],
+    ["PN_2", "store-2"],
+  ]);
+  const byWaba = new Map([["WABA_1", new Set(["store-2", "store-1"])]]);
+
+  it("★★ a row naming a number goes to that number's store or to nobody", () => {
+    expect(
+      routeInboundEvent(
+        { phoneNumberId: "PN_1", wabaId: "WABA_1" },
+        byPhone,
+        byWaba,
+      ),
+    ).toEqual(["store-1"]);
+    // A number no store holds on a WABA a store does hold: NOT that store.
+    expect(
+      routeInboundEvent(
+        { phoneNumberId: "PN_9", wabaId: "WABA_1" },
+        byPhone,
+        byWaba,
+      ),
+    ).toEqual([]);
+  });
+
+  it("★ a change naming no number goes to every store holding the WABA", () => {
+    expect(
+      routeInboundEvent(
+        { phoneNumberId: null, wabaId: "WABA_1" },
+        byPhone,
+        byWaba,
+      ),
+    ).toEqual(["store-1", "store-2"]);
+    expect(
+      routeInboundEvent(
+        { phoneNumberId: null, wabaId: "WABA_X" },
+        byPhone,
+        byWaba,
+      ),
+    ).toEqual([]);
+    expect(
+      routeInboundEvent({ phoneNumberId: null, wabaId: null }, byPhone, byWaba),
+    ).toEqual([]);
+  });
+});
+
+function fakeDb(queueRows: any[] = []) {
   const updates: { table: string; set: any; where: any; returning?: any[] }[] =
     [];
   const db: any = {
     // Slice 3's thread update (applyStatusToMessage) is raw SQL; it is not
     // what these tests assert, so it answers with no rows.
     execute: vi.fn(async () => ({ rows: [] })),
+    // The queue rows a status settles (0211).
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({ where: vi.fn(async () => queueRows) })),
+    })),
     update: vi.fn((table: any) => ({
       set: vi.fn((set: any) => ({
         where: vi.fn((where: any) => {
@@ -157,86 +224,35 @@ function tableName(t: any): string {
 }
 
 describe("applyAccountEvent", () => {
-  it("message_template_status_update by id first, then by (name, language)", async () => {
+  it("★ a template or number change is never applied from its payload", async () => {
     const { db, updates } = fakeDb();
-    await applyAccountEvent(db, {
-      storeId: "s",
-      field: "message_template_status_update",
-      value: {
-        event: "REJECTED",
-        reason: "INVALID_FORMAT",
-        message_template_id: 777,
-        message_template_name: "sm_order_placed_v1",
-        message_template_language: "en",
-      },
-    });
-    // The id-match returned no rows, so the name match ran as well.
-    expect(updates.length).toBe(2);
-    expect(updates[0]!.set).toMatchObject({
-      status: "REJECTED",
-      rejectionReason: "INVALID_FORMAT",
-      providerTemplateId: "777",
-    });
-    expect(updates[1]!.set.status).toBe("REJECTED");
+    for (const field of [
+      "message_template_status_update",
+      "message_template_quality_update",
+      "template_category_update",
+      "phone_number_quality_update",
+      "phone_number_name_update",
+    ]) {
+      await applyAccountEvent(db, {
+        storeId: "s",
+        field,
+        value: { event: "REJECTED", message_template_id: 777 },
+      });
+    }
+    expect(updates).toEqual([]);
   });
 
-  it("★ a template status the row cannot hold (FLAGGED, ARCHIVED) changes nothing", async () => {
+  it("a restriction is recorded in the card's words", async () => {
     const { db, updates } = fakeDb();
     await applyAccountEvent(db, {
       storeId: "s",
-      field: "message_template_status_update",
+      field: "account_update",
       value: {
-        event: "FLAGGED",
-        message_template_id: 777,
-        message_template_name: "sm_order_placed_customer_v1",
-        message_template_language: "en",
+        event: "ACCOUNT_RESTRICTION",
+        restriction_info: { waba_ban_state: "SCHEDULE_FOR_DISABLE" },
       },
     });
-    expect(updates.length).toBe(0);
-    // A lower-case word Meta spells differently is still its status.
-    await applyAccountEvent(db, {
-      storeId: "s",
-      field: "message_template_status_update",
-      value: { event: "approved", message_template_id: 777 },
-    });
-    expect(updates[0]!.set.status).toBe("APPROVED");
-  });
-
-  it("phone_number_quality_update writes the tier and a flag as a rating", async () => {
-    const { db, updates } = fakeDb();
-    await applyAccountEvent(db, {
-      storeId: "s",
-      field: "phone_number_quality_update",
-      value: { event: "FLAGGED", current_limit: "TIER_250" },
-    });
-    expect(updates[0]!.set).toMatchObject({
-      messagingTier: "TIER_250",
-      qualityRating: "RED",
-    });
-  });
-
-  it("phone_number_name_update: approval sets the name, rejection explains in lastError", async () => {
-    const { db, updates } = fakeDb();
-    await applyAccountEvent(db, {
-      storeId: "s",
-      field: "phone_number_name_update",
-      value: { decision: "APPROVED", requested_verified_name: "Echos" },
-    });
-    expect(updates[0]!.set).toMatchObject({
-      nameStatus: "APPROVED",
-      verifiedName: "Echos",
-    });
-    await applyAccountEvent(db, {
-      storeId: "s",
-      field: "phone_number_name_update",
-      value: {
-        decision: "REJECTED",
-        requested_verified_name: "Best Deals!!!",
-        rejection_reason: "NAME_POLICY",
-      },
-    });
-    expect(updates[1]!.set.nameStatus).toBe("DECLINED");
-    expect(updates[1]!.set.lastError).toContain("Best Deals!!!");
+    expect(updates[0]!.set.lastError).toContain("account restriction");
   });
 
   it("account_update PARTNER_REMOVED marks the account needs_reauth", async () => {
@@ -325,6 +341,67 @@ describe("applyMessageStatus", () => {
     expect(updates).toHaveLength(0);
   });
 
+  it("★★ a failed status releases the SMS held behind the notification", async () => {
+    const { db } = fakeDb([{ id: "q1", buttonPayloads: null }]);
+    const r = await applyMessageStatus(db, {
+      storeId: "s",
+      value: {
+        kind: "status",
+        status: { id: "wamid.Y", status: "failed", timestamp: "1759900000" },
+      },
+    });
+    expect(releaseHeldSms).toHaveBeenCalledWith(db, "q1");
+    expect(dropHeldSms).not.toHaveBeenCalled();
+    expect(r.smsReleased).toBe(1);
+  });
+
+  it("★ delivered or read drops it: the WhatsApp reached them", async () => {
+    const { db } = fakeDb([{ id: "q1", buttonPayloads: null }]);
+    await applyMessageStatus(db, {
+      storeId: "s",
+      value: { kind: "status", status: { id: "wamid.Y", status: "read" } },
+    });
+    expect(dropHeldSms).toHaveBeenCalledWith(db, "q1");
+    expect(releaseHeldSms).not.toHaveBeenCalled();
+  });
+
+  it("a plain `sent` settles nothing", async () => {
+    const { db } = fakeDb([{ id: "q1", buttonPayloads: null }]);
+    await applyMessageStatus(db, {
+      storeId: "s",
+      value: { kind: "status", status: { id: "wamid.Y", status: "sent" } },
+    });
+    expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it("★★ a failed COD confirmation marks the order undelivered, never 'not confirmed'", async () => {
+    const ORDER = "11111111-2222-4333-8444-555555555555";
+    const { db } = fakeDb([
+      {
+        id: "q1",
+        buttonPayloads: [`cod:confirm:${ORDER}`, `cod:cancel:${ORDER}`],
+      },
+    ]);
+    await applyMessageStatus(db, {
+      storeId: "s",
+      value: {
+        kind: "status",
+        status: { id: "wamid.Y", status: "failed", timestamp: "1759900000" },
+      },
+    });
+    const cod = db.execute.mock.calls
+      .map(([q]: any) => q)
+      .find((q: any) => /cod_confirmation = 'undelivered'/.test(sqlText(q)));
+    expect(cod).toBeTruthy();
+    const text = sqlText(cod).replace(/\s+/g, " ");
+    // Only from 'requested', and not when an earlier copy was delivered.
+    expect(text).toMatch(/o\.cod_confirmation = 'requested'/);
+    expect(text).toMatch(/l\.status in \('delivered', 'read'\)/);
+    expect(sqlParamValues(cod)).toEqual(
+      expect.arrayContaining([ORDER, "s", `cod:confirm:${ORDER}`]),
+    );
+  });
+
   it("ranks the timeline so a late delivered cannot demote a read", () => {
     expect(STATUS_RANK.delivered).toBeLessThan(STATUS_RANK.read!);
     expect(STATUS_RANK.failed).toBeGreaterThan(STATUS_RANK.read!);
@@ -384,5 +461,121 @@ describe("slice 3: echoes and the message selector", () => {
     expect(HANDLED_MESSAGE_KINDS).toEqual(["status", "message"]);
     // Contact/history sync under Coexistence waits for its own handler.
     expect(HANDLED_FIELDS).not.toContain("smb_app_state_sync");
+  });
+});
+
+describe("processPendingInboundEvents", () => {
+  function claimDb(rows: any[]) {
+    const executed: any[] = [];
+    const updates: any[] = [];
+    const db: any = {
+      execute: vi.fn(async (q: any) => {
+        executed.push(q);
+        // The first statement is the claim; the rest answer with nothing.
+        return { rows: executed.length === 1 ? rows : [] };
+      }),
+      update: vi.fn(() => ({
+        set: vi.fn((set: any) => ({
+          where: vi.fn(async () => {
+            updates.push(set);
+          }),
+        })),
+      })),
+    };
+    vi.mocked(withService).mockImplementation((async (fn: any) =>
+      fn(db)) as any);
+    return { db, executed, updates };
+  }
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: "e1",
+    store_id: "s",
+    waba_id: "WABA_1",
+    phone_number_id: null,
+    field: "message_template_status_update",
+    payload: { event: "APPROVED", message_template_id: 777 },
+    attempts: 1,
+    received_at: "2026-10-16 10:00:00+00",
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.mocked(syncWhatsAppTemplates).mockResolvedValue({
+      ok: true,
+      updated: 1,
+    });
+    vi.mocked(refreshWhatsAppAccount).mockResolvedValue({ ok: true });
+  });
+
+  it("★★ claims with a lease and an attempt, in one statement", async () => {
+    const { executed } = claimDb([]);
+    await processPendingInboundEvents();
+    const claim = sqlText(executed[0]).replace(/\s+/g, " ");
+    expect(claim).toMatch(/set attempts = e\.attempts \+ 1/);
+    expect(claim).toMatch(
+      /next_attempt_at is null or next_attempt_at <= now\(\)/,
+    );
+    expect(claim).toMatch(/for update skip locked/);
+  });
+
+  it("★★ re-reads a template change from Meta, once per store per batch", async () => {
+    const { updates } = claimDb([row(), row({ id: "e2" })]);
+    const r = await processPendingInboundEvents();
+    expect(syncWhatsAppTemplates).toHaveBeenCalledTimes(1);
+    expect(syncWhatsAppTemplates).toHaveBeenCalledWith("s");
+    expect(r).toMatchObject({ claimed: 2, processed: 2 });
+    // Both marked processed, neither from its payload.
+    expect(updates.filter((u) => u.processedAt)).toHaveLength(2);
+  });
+
+  it("★★ a redelivered PARTNER_REMOVED does not flip an account Meta still accepts", async () => {
+    const { updates } = claimDb([
+      row({ field: "account_update", payload: { event: "PARTNER_REMOVED" } }),
+    ]);
+    await processPendingInboundEvents();
+    expect(refreshWhatsAppAccount).toHaveBeenCalledWith("s");
+    expect(updates.some((u) => u.status === "needs_reauth")).toBe(false);
+  });
+
+  it("…but stands when Meta will not confirm the account", async () => {
+    vi.mocked(refreshWhatsAppAccount).mockResolvedValue({
+      ok: false,
+      error: "Meta no longer accepts this connection. Reconnect WhatsApp.",
+    });
+    const { updates } = claimDb([
+      row({ field: "account_update", payload: { event: "PARTNER_REMOVED" } }),
+    ]);
+    await processPendingInboundEvents();
+    expect(updates.some((u) => u.status === "needs_reauth")).toBe(true);
+  });
+
+  it("★★ a failure is retried with a backoff, not marked processed", async () => {
+    vi.mocked(syncWhatsAppTemplates).mockResolvedValue({
+      ok: false,
+      updated: 0,
+      error: "Meta didn't answer. Try again in a minute.",
+    });
+    const { executed } = claimDb([row()]);
+    const r = await processPendingInboundEvents();
+    expect(r).toMatchObject({ retrying: 1, failed: 0, processed: 0 });
+    const failed = executed
+      .map((q) => sqlText(q).replace(/\s+/g, " "))
+      .find((t) => /set error =/.test(t));
+    expect(failed).toMatch(/processed_at = null/);
+    expect(failed).toMatch(/next_attempt_at = now\(\) \+ make_interval/);
+  });
+
+  it("…and given up on, with its error kept, after the last attempt", async () => {
+    vi.mocked(syncWhatsAppTemplates).mockResolvedValue({
+      ok: false,
+      updated: 0,
+      error: "Meta refused: nope",
+    });
+    const { executed } = claimDb([row({ attempts: MAX_INBOUND_ATTEMPTS })]);
+    const r = await processPendingInboundEvents();
+    expect(r).toMatchObject({ retrying: 0, failed: 1 });
+    const failed = executed
+      .map((q) => sqlText(q).replace(/\s+/g, " "))
+      .find((t) => /set error =/.test(t));
+    expect(failed).toMatch(/processed_at = now\(\)/);
   });
 });

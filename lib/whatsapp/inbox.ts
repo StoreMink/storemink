@@ -9,7 +9,10 @@ import {
 } from "@/drizzle/schema";
 import { decryptSecret } from "@/lib/payments/crypto";
 import { logError, logWarn } from "@/lib/observability/logger";
-import { gcsConfigured, gcsUploadObject } from "@/lib/storage/gcs";
+import {
+  gcsPrivateConfigured,
+  gcsPrivateUploadObject,
+} from "@/lib/storage/gcs";
 import { formatStoredPhone, storedPhoneVariants } from "@/lib/phone";
 import { downloadMedia, getMediaInfo } from "./graph";
 import { classifyWhatsAppInbound } from "./inbox-intent";
@@ -50,7 +53,8 @@ import { WELCOME_QUIET_DAYS } from "./auto-reply-settings";
 // that reply as a first message.
 //
 // ── ★ STOP IS A MARKETING OPT-OUT, NOT A SILENCE ───────────────────────────
-// "stop" in the inbox vocabulary (inbox-intent.ts) sets marketing_opt_out_at.
+// "stop" in the inbox vocabulary (inbox-intent.ts) sets marketing_opt_out_at,
+// typed or tapped (a quick reply's label on a merchant's own template).
 // Order updates continue — they are about that customer's own orders, and a
 // customer who wrote "stop" to a shipping notice has not asked to be kept in
 // the dark about their parcel. The account page is where updates are turned
@@ -237,6 +241,12 @@ async function ensureConversation(
   return row;
 }
 
+/** A tap on one of OUR buttons (a COD confirmation's, the store's menu's).
+ *  By prefix, so a malformed one stays an ordinary message, as before. */
+function isOwnTap(tapId: unknown): boolean {
+  return typeof tapId === "string" && /^(?:cod|menu):/.test(tapId);
+}
+
 /**
  * File one inbound message. Throws on an item that cannot be a message, so
  * the caller marks the event processed WITH the error; never throws for a
@@ -301,17 +311,19 @@ export async function recordInboundMessage(
   }
 
   const preview = previewOf(parsed.body, parsed.kind);
+  // What a tap carries: a quick reply's payload, an interactive reply's id.
+  const isTap = parsed.kind === "button" || parsed.kind === "interactive";
+  const tapId: unknown = !isTap
+    ? null
+    : parsed.kind === "button"
+      ? parsed.payload?.buttonPayload
+      : parsed.payload?.replyId;
   // ★ A COD BUTTON TAP IS ANSWERED BY THE SYSTEM, not left for staff: it is
   // filed in the thread like any message and opens the 24-hour window (the
   // reply is free text), but it neither asks for a reply nor rings the bell.
   // cod-confirmation.ts acts on it after this commits, and hands it to a
   // person only when it cannot.
-  const codReply =
-    parsed.kind === "button"
-      ? parseCodPayload(
-          (parsed.payload as Record<string, unknown> | null)?.buttonPayload,
-        )
-      : null;
+  const codReply = parsed.kind === "button" ? parseCodPayload(tapId) : null;
   // STOP / START (plan §10), classified BEFORE the conversation is touched:
   // an opt-out the system records and answers (opt-out-reply.ts) does not ask
   // staff for a reply either. START counts only for somebody who HAD opted in.
@@ -319,10 +331,21 @@ export async function recordInboundMessage(
     parsed.kind === "text" && parsed.body
       ? classifyWhatsAppInbound(parsed.body)
       : null;
+  // ★ A TAP SAYS WHAT ITS LABEL SAYS. "Stop promotions" tapped on a
+  // merchant's own template arrives as a `button`, and is the same request
+  // as the words typed, so the visible label goes through the same rule
+  // (never the payload, which is whatever the template's author put there).
+  // Only STOP and START: a tap is not an order question or a menu request.
+  // A tap on one of our own buttons keeps its own path, whatever its label.
+  const tapIntent =
+    isTap && parsed.body && !isOwnTap(tapId)
+      ? classifyWhatsAppInbound(parsed.body)
+      : null;
+  const consent = intent ?? tapIntent;
   const optOut: "stop" | "start" | null =
-    intent === "stop"
+    consent === "stop"
       ? "stop"
-      : intent === "start" && contact.marketingOptInAt
+      : consent === "start" && contact.marketingOptInAt
         ? "start"
         : null;
   // "Where is my order?" from a store that answers it: the system replies,
@@ -334,9 +357,7 @@ export async function recordInboundMessage(
   // hands over only when the button asks for a person (menu-reply.ts).
   const menuReply =
     parsed.kind === "interactive"
-      ? parseMenuPayload(
-          (parsed.payload as Record<string, unknown> | null)?.replyId,
-        )
+      ? parseMenuPayload(tapId)
       : intent === "menu" && ev.hasMenu === true
         ? "menu"
         : null;
@@ -391,7 +412,7 @@ export async function recordInboundMessage(
   `);
 
   // Recorded on the contact; the message keeps the intent in its payload so
-  // the thread can say "opted out of offers".
+  // the thread can say "opted out of offers" (beside what a tap carried).
   if (optOut === "stop") {
     await db
       .update(whatsappContacts)
@@ -402,7 +423,7 @@ export async function recordInboundMessage(
       .where(eq(whatsappContacts.id, contact.id));
     await db
       .update(whatsappMessages)
-      .set({ payload: { intent: "stop" } })
+      .set({ payload: { ...(parsed.payload ?? {}), intent: "stop" } })
       .where(eq(whatsappMessages.id, messageId));
   } else if (optOut === "start") {
     // Only somebody who HAD opted in can re-opt in by reply: "start" from a
@@ -419,7 +440,7 @@ export async function recordInboundMessage(
       .where(eq(whatsappContacts.id, contact.id));
     await db
       .update(whatsappMessages)
-      .set({ payload: { intent: "start" } })
+      .set({ payload: { ...(parsed.payload ?? {}), intent: "start" } })
       .where(eq(whatsappMessages.id, messageId));
   }
 
@@ -568,7 +589,7 @@ export async function recordOutboundMessage(
      *  unread count are left alone, exactly as for `automation`; only a
      *  brand-new conversation (nothing filed yet) is opened, because the
      *  column default is `needs_reply` and nobody is waiting on a reply to
-     *  an order update. */
+     *  an order update, and it takes this message as its preview. */
     quiet?: boolean;
   },
 ): Promise<string> {
@@ -599,12 +620,17 @@ export async function recordOutboundMessage(
   const id = rows[0]?.id ?? "";
   const quiet = input.source === "automation" || input.quiet === true;
   if (input.status === "sent" && quiet) {
+    // ★ Every SET expression reads the row as it WAS, so a brand-new
+    // conversation still reads `needs_reply` (the column default) here even
+    // as its status becomes open: keeping the preview by status alone kept
+    // its NULL, and a chat an order update started showed "-" until the
+    // next message. Nothing filed yet means no customer words to keep.
     await db.execute(sql`
       update public.whatsapp_conversations set
         status = case when last_message_at is null then 'open' else status end,
         last_message_at = ${now}::timestamptz,
         last_outbound_at = ${now}::timestamptz,
-        last_preview = case when status = 'needs_reply' then last_preview
+        last_preview = case when status = 'needs_reply' and last_message_at is not null then last_preview
                             else ${previewOf(input.body || null, input.kind)} end,
         updated_at = now()
       where id = ${input.conversationId}::uuid
@@ -794,11 +820,17 @@ async function loadInboxToken(storeId: string): Promise<string | null> {
 }
 
 /**
- * Copy one inbound media object into our bucket and point the message at it.
- * Runs AFTER the recording transaction commits: a download is a 20-second
- * network call, and holding a pooled connection across it would make a busy
- * inbox starve every other query. Failure leaves the message with its
- * caption and an error; the row is never lost.
+ * Copy one inbound media object into our PRIVATE bucket and point the message
+ * at it. Runs AFTER the recording transaction commits: a download is a
+ * 20-second network call, and holding a pooled connection across it would
+ * make a busy inbox starve every other query. Failure leaves the message with
+ * its caption and an error; the row is never lost.
+ *
+ * ★★ NEVER THE PUBLIC MEDIA BUCKET. That bucket grants allUsers
+ * objectViewer, which includes listing, so anyone could enumerate and
+ * download every store's chat photos, voice notes and PDFs. The inbox reads
+ * a file only through /api/dashboard/inbox/media/[messageId], behind the
+ * inbox gate. No private bucket configured means the file is not kept.
  */
 export async function storeInboundMedia(input: {
   storeId: string;
@@ -815,7 +847,7 @@ export async function storeInboundMedia(input: {
     ).catch(() => undefined);
   };
   try {
-    if (!gcsConfigured) {
+    if (!gcsPrivateConfigured) {
       await fail("Media storage is not configured.");
       return;
     }
@@ -853,11 +885,10 @@ export async function storeInboundMedia(input: {
       input.messageId,
       mime,
     );
-    await gcsUploadObject(
+    await gcsPrivateUploadObject(
       path,
       bytes.data.bytes,
       mime ?? "application/octet-stream",
-      "private, max-age=0",
     );
     await withService((db) =>
       db

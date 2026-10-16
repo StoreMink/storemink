@@ -1,7 +1,7 @@
 import "server-only";
 
-import { and, desc, eq } from "drizzle-orm";
-import { withService } from "@/lib/db/client";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { withService, type Db } from "@/lib/db/client";
 import { storeWhatsappAccounts, whatsappTemplates } from "@/drizzle/schema";
 import { decryptSecret } from "@/lib/payments/crypto";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
@@ -17,6 +17,7 @@ import {
   catalogEntryForName,
   knownTemplateStatus,
   templateComponentsFor,
+  templateRowVariables,
 } from "./template-catalog";
 import {
   customTemplateComponents,
@@ -49,6 +50,13 @@ import {
 // `sync_error` holds why Meta would not TAKE a template (a bad parameter, a
 // dead token); `rejection_reason` holds why Meta turned one DOWN after review.
 // The console shows both, with different advice.
+//
+// ── ★ A TEMPLATE BELONGS TO ONE WABA ───────────────────────────────────────
+// Meta's id and its answer describe the template on the WABA it was submitted
+// to. A store that reconnects on another WABA keeps its rows (the queue points
+// at them), so resetTemplatesForWaba wipes what the old WABA said before
+// anything reads the rows against the new one: connect, bootstrap and sync
+// all run it.
 // ---------------------------------------------------------------------------
 
 export interface BootstrapResult {
@@ -81,6 +89,94 @@ async function loadAccount(storeId: string): Promise<AccountRow | null> {
   return { wabaId: row.wabaId, token: decryptSecret(row.tokenEnc) };
 }
 
+/** What a reset StoreMink template says until Meta answers on the new WABA
+ *  (bootstrap resubmits the current ones and clears it). */
+export const TEMPLATE_WABA_CHANGED_NOTE =
+  "Your WhatsApp Business account changed, so this template has to be approved again on the new one.";
+/** What a reset merchant template says: it is theirs to send again. */
+export const CUSTOM_TEMPLATE_WABA_CHANGED_NOTE =
+  "This template was on your previous WhatsApp Business account. Delete it here and add it again to submit it on this one.";
+
+/**
+ * Wipe what ANOTHER WABA said about this store's templates, and file the rows
+ * under `wabaId`. Returns how many rows were reset.
+ *
+ * ★ WHY. A reconnect on a different WABA used to rewrite only `waba_id`, so
+ * every row kept the old WABA's Meta id and APPROVED: bootstrap then skipped
+ * them as already submitted, sync touched only what the new WABA listed, and
+ * the fan-out (which reads `status`, never `waba_id`) kept queuing templates
+ * the new WABA does not have. Meta refuses those sends (132001), the SMS
+ * fallback never fires because WhatsApp looked deliverable, and the card
+ * read "20 of 20 approved".
+ *
+ * ★ A RESET ROW IS PENDING WITH NO META ID AND A NOTE, which is exactly the
+ * state of a submission Meta never took: not APPROVED, so nothing sends it;
+ * no id, so bootstrap resubmits it and the card counts it as still to submit;
+ * a sync_error, so the template manager says why. Sync adopts any row the new
+ * WABA already holds by name and clears the note.
+ *
+ * ★ A MERCHANT'S OWN TEMPLATE IS NOT RESUBMITTED FOR THEM. The new WABA can
+ * belong to another business whose name the old wording does not carry, and
+ * every submission is reviewed by hand against that WABA's standing, so the
+ * note asks them to add it again (deleting a row with no Meta id never
+ * touches Meta). The category is kept: bootstrap submits the catalogue's own
+ * and records Meta's answer.
+ *
+ * Takes the caller's transaction so connect can reset in the same commit
+ * that moves the account to the new WABA.
+ */
+export async function resetTemplatesForWaba(
+  db: Db,
+  storeId: string,
+  wabaId: string,
+  now: string = new Date().toISOString(),
+): Promise<number> {
+  const rows = await db
+    .update(whatsappTemplates)
+    .set({
+      wabaId,
+      providerTemplateId: null,
+      status: "PENDING",
+      rejectionReason: null,
+      quality: null,
+      syncError: sql`case when ${whatsappTemplates.eventKey} is null then ${CUSTOM_TEMPLATE_WABA_CHANGED_NOTE} else ${TEMPLATE_WABA_CHANGED_NOTE} end`,
+      lastSyncedAt: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(whatsappTemplates.storeId, storeId),
+        ne(whatsappTemplates.wabaId, wabaId),
+      ),
+    )
+    .returning({ id: whatsappTemplates.id });
+  return rows.length;
+}
+
+/** resetTemplatesForWaba in its own transaction, for bootstrap and sync.
+ *  False when it could not run: reading rows against the new WABA before
+ *  the old WABA's answers are gone is the defect it exists to prevent. */
+async function resetForAccount(
+  storeId: string,
+  wabaId: string,
+): Promise<boolean> {
+  try {
+    const moved = await withService((db) =>
+      resetTemplatesForWaba(db, storeId, wabaId),
+    );
+    if (moved > 0) {
+      logInfo("whatsapp templates: reset for a new WABA", {
+        storeId,
+        templates: moved,
+      });
+    }
+    return true;
+  } catch (err) {
+    logError("whatsapp templates: WABA reset failed", err, { storeId });
+    return false;
+  }
+}
+
 /**
  * Submit every catalogue template this store does not yet hold, then sync
  * statuses. Best-effort per template: one refusal does not stop the rest,
@@ -101,6 +197,17 @@ export async function bootstrapWhatsAppTemplates(
       existing: 0,
       failed: 0,
       error: "WhatsApp isn't connected.",
+    };
+  }
+  // Before any row is read as "already at Meta": a row Meta answered for on
+  // another WABA would otherwise be skipped below and never submitted here.
+  if (!(await resetForAccount(storeId, account.wabaId))) {
+    return {
+      ok: false,
+      submitted: 0,
+      existing: 0,
+      failed: 0,
+      error: "Couldn't prepare your templates. Please try again.",
     };
   }
 
@@ -138,8 +245,9 @@ export async function bootstrapWhatsAppTemplates(
               whatsappTemplates.name,
               whatsappTemplates.language,
             ],
-            // A reconnect may land on a different WABA; everything else about
-            // the catalogue row is ours and unchanged.
+            // The reset above has already moved every row to this WABA and
+            // cleared what another one said; everything else about the
+            // catalogue row is ours and unchanged.
             set: { wabaId: account.wabaId, updatedAt: now },
           })
           .returning({
@@ -263,6 +371,15 @@ export async function syncWhatsAppTemplates(
   const account = await loadAccount(storeId).catch(() => null);
   if (!account)
     return { ok: false, updated: 0, error: "WhatsApp isn't connected." };
+  // A row this WABA does not list would otherwise keep another WABA's
+  // APPROVED, and the fan-out would keep sending a template Meta lacks here.
+  if (!(await resetForAccount(storeId, account.wabaId))) {
+    return {
+      ok: false,
+      updated: 0,
+      error: "Couldn't read your templates. Please try again.",
+    };
+  }
 
   const listed = await listMessageTemplates(account.token, account.wabaId);
   if (!listed.ok) {
@@ -329,7 +446,16 @@ export function normalizeStatus(status: string | undefined): string {
   return knownTemplateStatus(status) ?? "PENDING";
 }
 
-async function markNeedsReauth(storeId: string, error: string): Promise<void> {
+/**
+ * Flip the store's account to `needs_reauth` with the reason the card shows.
+ * For Meta's code 190 (the token is dead): every later call fails the same
+ * way, so the merchant is told to reconnect instead of watching sends fail.
+ * Exported for the WhatsApp worker, which meets 190 on a send. Never throws.
+ */
+export async function markNeedsReauth(
+  storeId: string,
+  error: string,
+): Promise<void> {
   await withService((db) =>
     db
       .update(storeWhatsappAccounts)
@@ -396,7 +522,7 @@ export async function listTemplateRowsForEvent(
       quality: r.quality,
       lastSyncedAt: r.lastSyncedAt,
       body: bodyFromComponents(r.components),
-      variables: Array.isArray(r.variables) ? (r.variables as string[]) : [],
+      variables: templateRowVariables(r.name, r.variables),
     }));
 }
 
@@ -428,6 +554,11 @@ export interface ManagedTemplate {
   /** Whether the inbox composer can send it (approved, for customers, and
    *  needing no value at send time beyond the body's). */
   sendableFromInbox: boolean;
+  /** Whether Meta holds it: a row with Meta's id. A row without one was
+   *  never accepted for review here (refused at submission, or reset when
+   *  the account moved to another WhatsApp Business account), so it is not
+   *  "in review" and deleting it touches only our copy. */
+  submitted: boolean;
 }
 
 /** Every template this store holds, newest first. Service scope; the
@@ -454,6 +585,7 @@ export async function listStoreTemplates(
         components: whatsappTemplates.components,
         variables: whatsappTemplates.variables,
         enabled: whatsappTemplates.enabled,
+        providerTemplateId: whatsappTemplates.providerTemplateId,
       })
       .from(whatsappTemplates)
       .where(eq(whatsappTemplates.storeId, storeId))
@@ -479,7 +611,7 @@ export async function listStoreTemplates(
       headerText: templateHeaderText(r.components),
       body: bodyFromComponents(r.components),
       footerText: templateFooterText(r.components),
-      variables: Array.isArray(r.variables) ? (r.variables as string[]) : [],
+      variables: templateRowVariables(r.name, r.variables),
       buttons: templateButtonsOf(r.components),
       sendableFromInbox:
         r.status === "APPROVED" &&
@@ -488,6 +620,7 @@ export async function listStoreTemplates(
         (catalogue
           ? !templateHasButtons(r.components)
           : !templateNeedsSendParameters(r.components)),
+      submitted: Boolean(r.providerTemplateId),
     };
   });
 }
@@ -631,6 +764,13 @@ export type DeleteTemplateResult = { ok: true } | { ok: false; error: string };
  * refused: the notification spine sends it, and removing it would silence an
  * order update with nothing on the console to say why. Meta's "does not
  * exist" reads as already gone; any other refusal keeps the row.
+ *
+ * ★ META IS ASKED ONLY BY META'S ID, on the WABA that id belongs to. A row
+ * with no id is a submission Meta refused or never answered (or one reset by
+ * a WABA change), and Meta's delete by NAME removes every language of that
+ * name, an approved sibling included, whose own row would then stay APPROVED
+ * here. Such a row is deleted here only; a template that did land at Meta
+ * after all is adopted again by "already exists" if the merchant re-adds it.
  */
 export async function deleteStoreTemplate(
   storeId: string,
@@ -643,6 +783,7 @@ export async function deleteStoreTemplate(
         name: whatsappTemplates.name,
         eventKey: whatsappTemplates.eventKey,
         providerTemplateId: whatsappTemplates.providerTemplateId,
+        wabaId: whatsappTemplates.wabaId,
       })
       .from(whatsappTemplates)
       .where(
@@ -664,7 +805,7 @@ export async function deleteStoreTemplate(
   }
 
   const account = await loadAccount(storeId).catch(() => null);
-  if (account) {
+  if (account && row.providerTemplateId && row.wabaId === account.wabaId) {
     const deleted = await deleteMessageTemplate(account.token, account.wabaId, {
       name: row.name,
       hsmId: row.providerTemplateId,

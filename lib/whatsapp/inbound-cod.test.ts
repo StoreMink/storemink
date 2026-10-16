@@ -67,16 +67,20 @@ const FILED = {
 };
 
 function setup() {
+  // The claim is one UPDATE … RETURNING (it takes the lease), so the event
+  // arrives through db.execute in the database's own column names.
   dbHolder.current = makeDbMock({
-    selectQueue: [
+    executeQueue: [
       [
         {
           id: "ev1",
-          storeId: STORE,
-          wabaId: "W",
-          phoneNumberId: "P",
+          store_id: STORE,
+          waba_id: "W",
+          phone_number_id: "P",
           field: "messages",
           payload: { kind: "message" },
+          attempts: 1,
+          received_at: "2026-10-16T10:00:00.000Z",
         },
       ],
     ],
@@ -102,7 +106,8 @@ describe("a COD tap after filing", () => {
       contactLabel: "Rohan",
       reply: { action: "cancel", orderId: ORDER },
     });
-    expect(mock.calls.execute).toHaveLength(0);
+    // Only the claim ran raw SQL: nothing handed the conversation over.
+    expect(mock.calls.execute).toHaveLength(1);
     expect(handOverConversation).not.toHaveBeenCalled();
     expect(recordEvent).not.toHaveBeenCalled();
     // ★ A COD tap has its own answer: no welcome or away message on top.

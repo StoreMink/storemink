@@ -51,7 +51,12 @@ export interface ApproveCancellationInput {
   restock: boolean;
   notify: boolean;
   staffNote?: string | null;
-  /** True when this came from a customer request rather than the merchant. */
+  /**
+   * True when this came from a customer request rather than the merchant.
+   * ★ Such a cancellation never overrides a request the merchant DECLINED: a
+   * decline is final (lib/orders/cancellation.ts), and the check is inside the
+   * claim so a decline landing after the caller's own read still wins.
+   */
   fromRequest?: boolean;
   /** True when nobody pressed anything: a store's automation decided (the
    *  COD auto-cancel). Recorded as the system, not as an admin with no id. */
@@ -61,6 +66,16 @@ export interface ApproveCancellationInput {
    * The COD auto-cancel sets it, so a customer who taps Confirm a moment
    * before the sweep reaches the order keeps it: the check is inside the
    * claim, not a read beforehand that a tap could slip past.
+   *
+   * ★ Only a PENDING order, never `processing`: an order staff (or a
+   * Shiprocket booking) moved on between the sweep's read and this claim is
+   * one the shop has decided to ship (lib/whatsapp/cod-sweep.ts).
+   *
+   * ★ And the claim itself labels it `cod_confirmation = 'expired'`, in the
+   * same statement that cancels it. Written afterwards, a Confirm tap handled
+   * during the rest of the cancellation (or after a failed label write) read
+   * a cancelled order still marked `requested` and was told "already
+   * cancelled", with no hand-over to a person.
    */
   onlyWhileCodAwaited?: boolean;
   /**
@@ -117,14 +132,23 @@ export async function approveCancellation(
           cancelReason: input.reasonCode,
           cancelRefundDestination: input.refundDestination,
           ...(input.staffNote ? { cancelStaffNote: input.staffNote } : {}),
+          ...(input.onlyWhileCodAwaited
+            ? { codConfirmation: "expired", codConfirmationAt: sql`now()` }
+            : {}),
         })
         .where(
           and(
             eq(orders.id, orderId),
             eq(orders.storeId, storeId),
-            inArray(orders.status, [...CANCELLABLE_FROM]),
+            input.onlyWhileCodAwaited
+              ? eq(orders.status, "pending")
+              : inArray(orders.status, [...CANCELLABLE_FROM]),
             input.onlyWhileCodAwaited
               ? eq(orders.codConfirmation, "requested")
+              : undefined,
+            // NULL (never asked) passes: `<> 'declined'` would not.
+            input.fromRequest
+              ? sql`${orders.cancellationStatus} is distinct from 'declined'`
               : undefined,
           ),
         )

@@ -7,11 +7,14 @@ vi.mock("@/lib/observability/logger", () => ({
 }));
 
 import {
+  TEMPLATE_LIST_MAX_PAGES,
   debugToken,
   deleteMessageTemplate,
   exchangeEmbeddedSignupCode,
   graphRequest,
   isTokenError,
+  listMessageTemplates,
+  listWabaPhoneNumbers,
   registerPhoneNumber,
   sendInteractiveMessage,
   sendMediaMessage,
@@ -270,6 +273,197 @@ describe("deleteMessageTemplate", () => {
     expect(String(url)).toBe(
       "https://graph.facebook.com/v26.0/W/message_templates?name=delivery_delay",
     );
+  });
+});
+
+describe("listMessageTemplates — every page, never off Meta's host", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  const OLD = { ...process.env };
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.WHATSAPP_GRAPH_VERSION = "v26.0";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...OLD };
+  });
+
+  const row = (id: string) => ({
+    id,
+    name: `t_${id}`,
+    language: "en",
+    status: "APPROVED",
+  });
+  const page = (ids: string[], next?: string, after?: string) =>
+    reply(200, {
+      data: ids.map(row),
+      paging: {
+        cursors: { before: "B", ...(after ? { after } : {}) },
+        ...(next ? { next } : {}),
+      },
+    });
+  const NEXT = (after: string) =>
+    `https://graph.facebook.com/v26.0/W/message_templates?fields=id&limit=100&after=${after}`;
+
+  it("★ follows Meta's pages to the end, asking for each one itself", async () => {
+    fetchMock
+      .mockResolvedValueOnce(page(["1", "2"], NEXT("CUR1"), "CUR1"))
+      .mockResolvedValueOnce(page(["3"], NEXT("CUR2"), "CUR2"))
+      .mockResolvedValueOnce(page(["4"]));
+    const r = await listMessageTemplates("TOK", "W");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.data.map((t) => t.id)).toEqual(["1", "2", "3", "4"]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const urls = fetchMock.mock.calls.map(([u]) => new URL(String(u)));
+    expect(urls.map((u) => u.searchParams.get("after"))).toEqual([
+      null,
+      "CUR1",
+      "CUR2",
+    ]);
+    for (const [u, init] of fetchMock.mock.calls) {
+      const url = new URL(String(u));
+      // Our own path, fields and page size every time; the token only ever
+      // as the bearer header, to the Graph host.
+      expect(url.host).toBe("graph.facebook.com");
+      expect(url.pathname).toBe("/v26.0/W/message_templates");
+      expect(url.searchParams.get("limit")).toBe("100");
+      expect(url.searchParams.get("fields")).toContain("quality_score");
+      expect(url.searchParams.get("access_token")).toBeNull();
+      expect((init?.headers as Record<string, string>).authorization).toBe(
+        "Bearer TOK",
+      );
+    }
+  });
+
+  it("★ stops at the page cap when Meta keeps saying there is more", async () => {
+    let n = 0;
+    fetchMock.mockImplementation(async () => {
+      n++;
+      return page([String(n)], NEXT(`C${n}`), `C${n}`);
+    });
+    const r = await listMessageTemplates("TOK", "W");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(fetchMock).toHaveBeenCalledTimes(TEMPLATE_LIST_MAX_PAGES);
+    expect(r.data.data).toHaveLength(TEMPLATE_LIST_MAX_PAGES);
+  });
+
+  it.each([
+    ["another host", "https://evil.example/v26.0/W/message_templates?after=X"],
+    [
+      "a look-alike host",
+      "https://graph.facebook.com.evil.example/v26.0/W/message_templates?after=X",
+    ],
+    [
+      "plain http",
+      "http://graph.facebook.com/v26.0/W/message_templates?after=X",
+    ],
+    ["no cursor", "https://graph.facebook.com/v26.0/W/message_templates"],
+    ["junk", "not a url"],
+  ])("★★ a next link to %s is never followed", async (_n, next) => {
+    fetchMock.mockResolvedValueOnce(page(["1"], next));
+    const r = await listMessageTemplates("TOK", "W");
+    expect(r).toEqual({ ok: true, data: { data: [row("1")] } });
+    // The token never left for anywhere but the first, Graph-host, request.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a cursor that does not move ends the listing instead of looping", async () => {
+    fetchMock.mockImplementation(async () => page(["1"], NEXT("SAME"), "SAME"));
+    const r = await listMessageTemplates("TOK", "W");
+    expect(r.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a later page failing keeps the pages already read; a first page failing is the answer", async () => {
+    fetchMock
+      .mockResolvedValueOnce(page(["1"], NEXT("CUR1"), "CUR1"))
+      .mockResolvedValueOnce(reply(502, undefined));
+    expect(await listMessageTemplates("TOK", "W")).toEqual({
+      ok: true,
+      data: { data: [row("1")] },
+    });
+
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(
+      reply(400, {
+        error: { message: "Invalid OAuth access token", code: 190 },
+      }),
+    );
+    const r = await listMessageTemplates("TOK", "W");
+    expect(r).toMatchObject({ ok: false, outcome: "rejected", code: 190 });
+  });
+
+  it("keeps the single-name filter on every page", async () => {
+    fetchMock
+      .mockResolvedValueOnce(page(["1"], NEXT("CUR1"), "CUR1"))
+      .mockResolvedValueOnce(page(["2"]));
+    await listMessageTemplates("TOK", "W", ["delivery_delay"]);
+    for (const [u] of fetchMock.mock.calls) {
+      expect(new URL(String(u)).searchParams.get("name")).toBe(
+        "delivery_delay",
+      );
+    }
+  });
+});
+
+describe("listWabaPhoneNumbers", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  const OLD = { ...process.env };
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.WHATSAPP_GRAPH_VERSION = "v26.0";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...OLD };
+  });
+
+  it("lists the WABA's numbers under the bearer token and says whether Meta has more", async () => {
+    fetchMock.mockResolvedValueOnce(
+      reply(200, {
+        data: [{ id: "1280649011808874", display_phone_number: "+91 98765" }],
+        paging: { cursors: { before: "A", after: "B" } },
+      }),
+    );
+    const r = await listWabaPhoneNumbers("TOK", "W");
+    expect(r).toEqual({
+      ok: true,
+      data: {
+        data: [{ id: "1280649011808874", display_phone_number: "+91 98765" }],
+        more: false,
+      },
+    });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    const u = new URL(String(url));
+    expect(u.pathname).toBe("/v26.0/W/phone_numbers");
+    expect(u.searchParams.get("fields")).toContain("display_phone_number");
+    expect((init?.headers as Record<string, string>).authorization).toBe(
+      "Bearer TOK",
+    );
+
+    fetchMock.mockResolvedValueOnce(
+      reply(200, {
+        data: [{ id: "1" }],
+        paging: {
+          next: "https://graph.facebook.com/v26.0/W/phone_numbers?after=B",
+        },
+      }),
+    );
+    const more = await listWabaPhoneNumbers("TOK", "W");
+    expect(more.ok && more.data.more).toBe(true);
+  });
+
+  it("passes Meta's refusal through", async () => {
+    fetchMock.mockResolvedValueOnce(
+      reply(400, { error: { message: "Unsupported get request", code: 100 } }),
+    );
+    expect(await listWabaPhoneNumbers("TOK", "W")).toMatchObject({
+      ok: false,
+      outcome: "rejected",
+      code: 100,
+    });
   });
 });
 

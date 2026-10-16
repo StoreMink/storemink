@@ -32,6 +32,8 @@ vi.mock("@/lib/storage/cleanup", () => ({
 }));
 vi.mock("@/lib/storage/gcs", () => ({
   gcsDeletePrefix: vi.fn(async () => ({ deleted: 0, failed: 0 })),
+  // Chat media lives in the private bucket, purged under the same prefix.
+  gcsPrivateConfigured: true,
 }));
 vi.mock("@/lib/domains/cleanup", () => ({
   cleanupDetachedDomain: vi.fn(async () => ({ failures: [] })),
@@ -324,6 +326,7 @@ describe("deleteStore", () => {
     expect(res).toEqual({ success: true });
     expect(deleteStorageUrls).toHaveBeenCalledWith([]);
     expect(gcsDeletePrefix).toHaveBeenCalledWith("stores/s1/");
+    expect(gcsDeletePrefix).toHaveBeenCalledWith("stores/s1/", "private");
     expect(deleteAuthUser).toHaveBeenCalledTimes(3);
     expect(vi.mocked(deleteAuthUser).mock.calls.map(([uid]) => uid)).toEqual([
       "owner-uid",

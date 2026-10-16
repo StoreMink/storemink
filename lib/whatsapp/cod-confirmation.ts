@@ -33,6 +33,10 @@ import type { CodPayload } from "./cod-payload";
 // ★ A REFUSAL, A TAP TOO LATE, OR A FAILURE GOES TO A PERSON (`needsHuman`);
 // the caller (inbound.ts afterFiled) then marks the conversation needs-reply
 // and rings the bell that recordInboundMessage held back.
+//
+// ★ AN `undelivered` ORDER IS ANSWERED LIKE A `requested` ONE. Meta can report
+// a message failed and still deliver it later, so a tap that does arrive is
+// the customer's real answer; nothing below singles that state out.
 // ---------------------------------------------------------------------------
 
 export type CodOutcome =
@@ -42,6 +46,7 @@ export type CodOutcome =
   | "already_cancelled"
   | "expired"
   | "too_late"
+  | "declined"
   | "failed"
   | "not_allowed";
 
@@ -70,6 +75,9 @@ const NEEDS_HUMAN: Record<CodOutcome, boolean> = {
   // wants the goods, and only a person can put the order back.
   expired: true,
   too_late: true,
+  // A Cancel after the shop declined a cancellation request: still wants out,
+  // and only the shop can change its own decision.
+  declined: true,
   failed: true,
   not_allowed: true,
 };
@@ -96,6 +104,8 @@ interface CodOrder {
   status: string;
   paymentMethod: string;
   codConfirmation: string | null;
+  /** requested / approved / declined: a cancellation request's decision. */
+  cancellationStatus: string | null;
   customerId: string | null;
   shippingAddress: unknown;
   customerPhone: string | null;
@@ -148,6 +158,8 @@ export function codReplyText(
       return `${order} was cancelled because it was not confirmed in time. Someone from ${shop} will reply to you in this chat.`;
     case "too_late":
       return `${order} has already been sent out, so it can't be cancelled here. Someone from ${shop} will reply to you in this chat.`;
+    case "declined":
+      return `${order} can't be cancelled here, because ${shop} declined an earlier request to cancel it. Someone from ${shop} will reply to you in this chat.`;
     case "failed":
       return `We couldn't update ${ref ? `order ${ref}` : "your order"} just now. Someone from ${shop} will reply to you in this chat.`;
     case "not_allowed":
@@ -208,6 +220,7 @@ async function readOrder(
         status: orders.status,
         paymentMethod: orders.paymentMethod,
         codConfirmation: orders.codConfirmation,
+        cancellationStatus: orders.cancellationStatus,
         customerId: orders.customerId,
         shippingAddress: orders.shippingAddress,
         customerPhone: users.phone,
@@ -269,6 +282,11 @@ async function cancel(
   const { storeId } = input;
   if (order.status === "cancelled") return "already_cancelled";
   if (!CANCELLABLE_STATUSES.has(order.status)) return "too_late";
+  // ★ A DECLINE IS FINAL (lib/orders/cancellation.ts). The Cancel button is a
+  // customer's request like the order page's, so it does not override the
+  // shop's "no"; approveCancellation re-checks it inside its claim
+  // (`fromRequest`), and this read only chooses the words.
+  if (order.cancellationStatus === "declined") return "declined";
 
   let cancelled = false;
   try {
@@ -311,10 +329,12 @@ async function cancel(
   }
 
   // ★ A REFUSED CANCELLATION RE-READS THE ORDER, so the customer is told the
-  // truth: it shipped in between, someone else cancelled it, or it failed.
+  // truth: it shipped in between, someone else cancelled it, the shop
+  // declined a request for it in between, or it failed.
   const now = await readOrder(storeId, order.id).catch(() => null);
   if (now?.status === "cancelled") return "already_cancelled";
   if (now && !CANCELLABLE_STATUSES.has(now.status)) return "too_late";
+  if (now?.cancellationStatus === "declined") return "declined";
   return "failed";
 }
 

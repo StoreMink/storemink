@@ -85,13 +85,28 @@ export async function assignConversation(
 }
 
 /**
- * Replace a conversation's labels with exactly this set. One statement pair
- * in the caller's transaction; a label id not on this store is dropped
- * silently (it names nothing here), never attached.
+ * Put ONE label on a conversation, or take it off, in the caller's
+ * transaction, and return the labels it carries afterwards.
+ *
+ * ★ A CHANGE, NEVER A WHOLE SET. The screen used to send the full set it
+ * believed the conversation had, and the write deleted everything else: a
+ * second click before the refresh landed, or a teammate's label not yet
+ * polled, was silently removed. One label in, one label out, so a stale
+ * screen can only ever touch the label that was clicked.
+ *
+ * The conversation is locked under the store, a label being added must be
+ * the store's own (a foreign id is refused, never attached), and a
+ * conversation carries at most INBOX_LABEL_MAX labels. Removing is scoped by
+ * the store and the conversation, so it can only take off this store's link.
  */
-export async function setConversationLabels(
+export async function setConversationLabel(
   db: Db,
-  input: { storeId: string; conversationId: string; labelIds: string[] },
+  input: {
+    storeId: string;
+    conversationId: string;
+    labelId: string;
+    on: boolean;
+  },
 ): Promise<TeamResult<{ labelIds: string[] }>> {
   const owned = asRows<{ id: string }>(
     await db.execute(sql`
@@ -103,32 +118,55 @@ export async function setConversationLabels(
   if (owned.length === 0) {
     return { ok: false, code: "not_found", error: "Not found." };
   }
-  const wanted = [...new Set(input.labelIds)].slice(0, INBOX_LABEL_MAX);
-  const valid =
-    wanted.length === 0
-      ? []
-      : asRows<{ id: string }>(
-          await db.execute(sql`
-            select id from public.whatsapp_labels
-             where store_id = ${input.storeId}::uuid
-               and id = any(${sql.param(wanted)}::uuid[])
-          `),
-        ).map((r) => r.id);
-  await db.execute(sql`
-    delete from public.whatsapp_conversation_labels
-     where conversation_id = ${input.conversationId}::uuid
-       and store_id = ${input.storeId}::uuid
-       ${valid.length > 0 ? sql`and label_id <> all(${sql.param(valid)}::uuid[])` : sql``}
-  `);
-  if (valid.length > 0) {
+  if (input.on) {
+    // The label is the store's own, and how many OTHER labels the
+    // conversation already carries, in one read: no row means not ours.
+    const label = asRows<{ others: number }>(
+      await db.execute(sql`
+        select (select count(*)::int from public.whatsapp_conversation_labels cl
+                 where cl.conversation_id = ${input.conversationId}::uuid
+                   and cl.store_id = ${input.storeId}::uuid
+                   and cl.label_id <> l.id) as others
+          from public.whatsapp_labels l
+         where l.id = ${input.labelId}::uuid and l.store_id = ${input.storeId}::uuid
+      `),
+    );
+    if (label.length === 0) {
+      return {
+        ok: false,
+        code: "not_found",
+        error: "That label no longer exists.",
+      };
+    }
+    if (Number(label[0]?.others ?? 0) >= INBOX_LABEL_MAX) {
+      return {
+        ok: false,
+        code: "limit",
+        error: `A conversation can carry up to ${INBOX_LABEL_MAX} labels.`,
+      };
+    }
     await db.execute(sql`
       insert into public.whatsapp_conversation_labels (store_id, conversation_id, label_id)
-      select ${input.storeId}::uuid, ${input.conversationId}::uuid, l
-        from unnest(${sql.param(valid)}::uuid[]) as l
+      values (${input.storeId}::uuid, ${input.conversationId}::uuid, ${input.labelId}::uuid)
       on conflict do nothing
     `);
+  } else {
+    await db.execute(sql`
+      delete from public.whatsapp_conversation_labels
+       where conversation_id = ${input.conversationId}::uuid
+         and store_id = ${input.storeId}::uuid
+         and label_id = ${input.labelId}::uuid
+    `);
   }
-  return { ok: true, value: { labelIds: valid } };
+  const after = asRows<{ label_id: string }>(
+    await db.execute(sql`
+      select label_id::text as label_id from public.whatsapp_conversation_labels
+       where conversation_id = ${input.conversationId}::uuid
+         and store_id = ${input.storeId}::uuid
+       order by created_at
+    `),
+  );
+  return { ok: true, value: { labelIds: after.map((r) => r.label_id) } };
 }
 
 /** Create or rename a label. The count is enforced here, the shape by the

@@ -141,6 +141,11 @@ export default function CheckoutPage() {
   const [whatsappConsent, setWhatsappConsent] = useState(
     WHATSAPP_CONSENT_DEFAULT,
   );
+  // ★ The boxes start from what the shopper's number already said (once the
+  // config arrives), not from the defaults: otherwise every repeat order
+  // re-ticked updates they had switched off and withdrew offers they had
+  // asked for. A box they touched before the config arrived is theirs.
+  const whatsappTouched = useRef(false);
   const [shippingOptions, setShippingOptions] = useState<
     CheckoutShippingOption[]
   >([]);
@@ -202,7 +207,11 @@ export default function CheckoutPage() {
     let active = true;
     getCheckoutConfig()
       .then((cfg) => {
-        if (active) setPayConfig(cfg);
+        if (!active) return;
+        setPayConfig(cfg);
+        if (cfg.whatsappConsent && !whatsappTouched.current) {
+          setWhatsappConsent(cfg.whatsappConsent);
+        }
       })
       .catch(() => {
         // COD-only fallback; placeOrder would reject online anyway.
@@ -1693,12 +1702,13 @@ export default function CheckoutPage() {
                     <input
                       type="checkbox"
                       checked={whatsappConsent.updates}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        whatsappTouched.current = true;
                         setWhatsappConsent((c) => ({
                           ...c,
                           updates: e.target.checked,
-                        }))
-                      }
+                        }));
+                      }}
                     />
                     <span>{WHATSAPP_UPDATES_CONSENT}</span>
                   </label>
@@ -1706,12 +1716,13 @@ export default function CheckoutPage() {
                     <input
                       type="checkbox"
                       checked={whatsappConsent.marketing}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        whatsappTouched.current = true;
                         setWhatsappConsent((c) => ({
                           ...c,
                           marketing: e.target.checked,
-                        }))
-                      }
+                        }));
+                      }}
                     />
                     <span>{WHATSAPP_MARKETING_CONSENT}</span>
                   </label>

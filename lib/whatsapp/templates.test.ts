@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeDbMock } from "@/app/actions/_test-helpers";
+import {
+  makeDbMock,
+  sqlParamValues,
+  sqlText,
+} from "@/app/actions/_test-helpers";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -34,10 +38,14 @@ import {
 } from "./graph";
 import { WHATSAPP_TEMPLATE_CATALOG } from "./template-catalog";
 import {
+  CUSTOM_TEMPLATE_WABA_CHANGED_NOTE,
+  TEMPLATE_WABA_CHANGED_NOTE,
   bootstrapWhatsAppTemplates,
   deleteStoreTemplate,
   listStoreTemplates,
+  markNeedsReauth,
   normalizeStatus,
+  resetTemplatesForWaba,
   submitCustomTemplate,
   syncWhatsAppTemplates,
 } from "./templates";
@@ -45,16 +53,28 @@ import { storeWhatsappAccounts, whatsappTemplates } from "@/drizzle/schema";
 
 const ACCOUNT = [{ wabaId: "W", tokenEnc: "tok", status: "connected" }];
 
+/** The WABA reset's `.returning()`: the rows it moved (none by default). */
+const NO_RESET: any[] = [];
+
 function setup(opts: { providerIds?: (string | null)[] } = {}) {
-  // One upsert per catalogue entry, each returning its row.
-  const returningQueue = WHATSAPP_TEMPLATE_CATALOG.map((_, i) => [
-    { id: `row-${i}`, providerTemplateId: opts.providerIds?.[i] ?? null },
-  ]);
+  // Bootstrap's WABA reset, then one upsert per catalogue entry returning
+  // its row, then the sync's own reset.
+  const returningQueue = [
+    NO_RESET,
+    ...WHATSAPP_TEMPLATE_CATALOG.map((_, i) => [
+      { id: `row-${i}`, providerTemplateId: opts.providerIds?.[i] ?? null },
+    ]),
+    NO_RESET,
+  ];
   dbHolder.current = makeDbMock({
     selectByTable: { store_whatsapp_accounts: [ACCOUNT, ACCOUNT] },
     returningQueue,
   });
 }
+
+/** The reset's UPDATE, told apart by what it writes. */
+const isReset = (s: any) =>
+  s && s.wabaId === "W" && s.providerTemplateId === null && "syncError" in s;
 
 beforeEach(() => {
   setup();
@@ -175,6 +195,72 @@ describe("bootstrapWhatsAppTemplates", () => {
     expect(r.ok).toBe(false);
     expect(createMessageTemplate).not.toHaveBeenCalled();
   });
+
+  it("★ resets what another WABA said BEFORE any row is read as already at Meta", async () => {
+    await bootstrapWhatsAppTemplates("store-1");
+    const { db, calls } = dbHolder.current;
+    expect(calls.update[0]).toBe(whatsappTemplates);
+    expect(isReset(calls.set[0])).toBe(true);
+    expect(db.update.mock.invocationCallOrder[0]).toBeLessThan(
+      db.insert.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("refuses, asking Meta nothing, when the reset cannot run", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: { store_whatsapp_accounts: [ACCOUNT] },
+      failUpdateFor: [whatsappTemplates],
+    });
+    const r = await bootstrapWhatsAppTemplates("store-1");
+    expect(r).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/Couldn't prepare your templates/),
+    });
+    expect(createMessageTemplate).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+  });
+});
+
+describe("resetTemplatesForWaba", () => {
+  it("★★ wipes what another WABA said, for this store's rows on another WABA only", async () => {
+    const mock = makeDbMock({ returningQueue: [[{ id: "a" }, { id: "b" }]] });
+    const n = await resetTemplatesForWaba(
+      mock.db,
+      "store-1",
+      "W-NEW",
+      "2026-10-16T00:00:00.000Z",
+    );
+    expect(n).toBe(2);
+    expect(mock.calls.update).toEqual([whatsappTemplates]);
+    // ★ Not APPROVED, no Meta id: nothing sends it, bootstrap resubmits it
+    // and the card counts it as still to submit.
+    expect(mock.calls.set[0]).toMatchObject({
+      wabaId: "W-NEW",
+      providerTemplateId: null,
+      status: "PENDING",
+      rejectionReason: null,
+      quality: null,
+      lastSyncedAt: null,
+      updatedAt: "2026-10-16T00:00:00.000Z",
+    });
+    // A merchant's template (no event) is told to add it again; StoreMink's
+    // is told it has to be approved again.
+    const note = mock.calls.set[0].syncError;
+    expect(sqlText(note)).toMatch(/^case when .* is null then .* else .* end$/);
+    expect(sqlParamValues(note)).toEqual([
+      CUSTOM_TEMPLATE_WABA_CHANGED_NOTE,
+      TEMPLATE_WABA_CHANGED_NOTE,
+    ]);
+    // Scoped to the store, and to rows NOT already on this WABA.
+    const where = mock.calls.where[0];
+    expect(sqlText(where)).toContain(" <> ");
+    expect(sqlParamValues(where)).toEqual(["store-1", "W-NEW"]);
+  });
+
+  it("the notes carry no long dash", () => {
+    expect(TEMPLATE_WABA_CHANGED_NOTE).not.toMatch(/[–—]/);
+    expect(CUSTOM_TEMPLATE_WABA_CHANGED_NOTE).not.toMatch(/[–—]/);
+  });
 });
 
 describe("syncWhatsAppTemplates", () => {
@@ -196,11 +282,14 @@ describe("syncWhatsAppTemplates", () => {
     });
     dbHolder.current = makeDbMock({
       selectByTable: { store_whatsapp_accounts: [ACCOUNT] },
-      returning: [{ id: "row-1" }],
+      returningQueue: [NO_RESET, [{ id: "row-1" }]],
     });
     const r = await syncWhatsAppTemplates("store-1");
     expect(r).toEqual({ ok: true, updated: 1 });
-    expect(dbHolder.current.calls.set[0]).toMatchObject({
+    const written = dbHolder.current.calls.set.find(
+      (s: any) => s.providerTemplateId === "meta-9",
+    );
+    expect(written).toMatchObject({
       providerTemplateId: "meta-9",
       status: "REJECTED",
       rejectionReason: "INVALID_FORMAT",
@@ -217,7 +306,50 @@ describe("syncWhatsAppTemplates", () => {
     const r = await syncWhatsAppTemplates("store-1");
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/didn't answer/);
-    expect(dbHolder.current.calls.update).toHaveLength(0);
+    // Only the WABA reset ran; nothing Meta said was written.
+    expect(
+      dbHolder.current.calls.set.filter((s: any) => !isReset(s)),
+    ).toHaveLength(0);
+  });
+
+  it("★ resets what another WABA said before reading this one's list", async () => {
+    await syncWhatsAppTemplates("store-1");
+    const { db, calls } = dbHolder.current;
+    expect(isReset(calls.set[0])).toBe(true);
+    expect(db.update.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(listMessageTemplates).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("refuses without listing when the reset cannot run", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: { store_whatsapp_accounts: [ACCOUNT] },
+      failUpdateFor: [whatsappTemplates],
+    });
+    const r = await syncWhatsAppTemplates("store-1");
+    expect(r).toEqual({
+      ok: false,
+      updated: 0,
+      error: "Couldn't read your templates. Please try again.",
+    });
+    expect(listMessageTemplates).not.toHaveBeenCalled();
+  });
+});
+
+describe("markNeedsReauth", () => {
+  it("★ is exported for the worker: flips the account to needs_reauth with the reason", async () => {
+    dbHolder.current = makeDbMock();
+    await markNeedsReauth("store-1", "Meta no longer accepts this connection.");
+    expect(dbHolder.current.calls.update).toEqual([storeWhatsappAccounts]);
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      status: "needs_reauth",
+      lastError: "Meta no longer accepts this connection.",
+    });
+  });
+
+  it("never throws", async () => {
+    dbHolder.current = makeDbMock({ failUpdateFor: [storeWhatsappAccounts] });
+    await expect(markNeedsReauth("store-1", "x")).resolves.toBeUndefined();
   });
 });
 
@@ -340,6 +472,7 @@ describe("deleteStoreTemplate", () => {
               name: "delivery_delay",
               eventKey: null,
               providerTemplateId: "meta-c",
+              wabaId: "W",
             },
           ],
         ],
@@ -376,12 +509,57 @@ describe("deleteStoreTemplate", () => {
     expect(dbHolder.current.calls.delete.length).toBe(0);
   });
 
+  it("★★ a row with no Meta id is deleted here only: Meta's delete by NAME would take every language", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        whatsapp_templates: [
+          [
+            {
+              id: "row-c",
+              name: "delivery_delay",
+              eventKey: null,
+              providerTemplateId: null,
+              wabaId: "W",
+            },
+          ],
+        ],
+        store_whatsapp_accounts: [ACCOUNT],
+      },
+    });
+    expect(await deleteStoreTemplate("store-1", "row-c")).toEqual({ ok: true });
+    expect(deleteMessageTemplate).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.delete).toEqual([whatsappTemplates]);
+  });
+
+  it("★ a Meta id from another WABA is never sent to this one", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        whatsapp_templates: [
+          [
+            {
+              id: "row-c",
+              name: "delivery_delay",
+              eventKey: null,
+              providerTemplateId: "meta-old",
+              wabaId: "W-OLD",
+            },
+          ],
+        ],
+        store_whatsapp_accounts: [ACCOUNT],
+      },
+    });
+    expect(await deleteStoreTemplate("store-1", "row-c")).toEqual({ ok: true });
+    expect(deleteMessageTemplate).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.delete).toEqual([whatsappTemplates]);
+  });
+
   it("Meta no longer holding it reads as gone; any other refusal keeps the row", async () => {
     const row = {
       id: "row-c",
       name: "delivery_delay",
       eventKey: null,
-      providerTemplateId: null,
+      providerTemplateId: "meta-c",
+      wabaId: "W",
     };
     dbHolder.current = makeDbMock({
       selectByTable: {

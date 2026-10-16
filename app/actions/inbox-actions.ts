@@ -20,10 +20,11 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
+import { isUniqueViolation } from "@/lib/db/errors";
 import { whatsappConversations, whatsappTemplates } from "@/drizzle/schema";
 import { logError } from "@/lib/observability/logger";
 import { emitEvent } from "@/lib/notifications/record";
-import { bodyFromComponents } from "@/lib/whatsapp/channel";
+import { bodyFromComponents, consented } from "@/lib/whatsapp/channel";
 import {
   needsReplyCount,
   recordOutboundMessage,
@@ -41,8 +42,10 @@ import {
   listInboxLabels,
   listReplyTemplates,
   loadConversation,
+  loadInboxChannelState,
   loadQuotableProviderId,
   loadThread,
+  type InboxChannelState,
 } from "@/lib/whatsapp/inbox-read";
 import {
   addNote,
@@ -52,7 +55,7 @@ import {
   deleteNote,
   saveCannedReply as saveCannedReplyRow,
   saveLabel as saveLabelRow,
-  setConversationLabels,
+  setConversationLabel,
 } from "@/lib/whatsapp/inbox-team";
 import {
   INBOX_REPLY_MAX_CHARS,
@@ -61,10 +64,13 @@ import {
   type InboxListQuery,
   type InboxListResult,
   type InboxSendResult,
-  type InboxTemplateOption,
   type InboxThread,
   type InboxWorkspace,
 } from "@/lib/whatsapp/inbox-types";
+import {
+  templateBlockedReason,
+  type InboxReplyTemplate,
+} from "@/lib/whatsapp/inbox-workspace";
 import { sendWhatsAppTemplate, sendWhatsAppText } from "@/lib/whatsapp/send";
 import { renderWhatsAppBody } from "@/lib/whatsapp/template-catalog";
 import {
@@ -77,6 +83,7 @@ import {
   discardMinkDrafts,
   markMinkAnswerSent,
   minkChargeContext,
+  releaseMinkDraftClaim,
 } from "@/lib/whatsapp/mink-drafts";
 import { MINK_ANSWER_CREDITS } from "@/lib/whatsapp/auto-reply-settings";
 
@@ -147,7 +154,7 @@ export async function getInboxNeedsReplyCount(): Promise<{
 }
 
 export async function getInboxTemplates(): Promise<{
-  templates: InboxTemplateOption[];
+  templates: InboxReplyTemplate[];
   error?: string;
 }> {
   const g = await gate("view");
@@ -156,6 +163,30 @@ export async function getInboxTemplates(): Promise<{
     return { templates: await listReplyTemplates(g.storeId) };
   } catch {
     return { templates: [], error: "Couldn't load templates." };
+  }
+}
+
+/**
+ * Whether the inbox has a number behind it, for the page. ★ Behind the INBOX
+ * gate: the Channels card's state answers only people who manage Channels,
+ * and a role with the Inbox alone must still see the inbox it was given. An
+ * unreadable state is reported as one, never as "connect a number".
+ */
+export async function getInboxChannelState(): Promise<{
+  channel: InboxChannelState | null;
+  error?: string;
+}> {
+  const g = await gate("view");
+  if (!g.ok) return { channel: null, error: g.error };
+  try {
+    return { channel: await loadInboxChannelState(g.storeId) };
+  } catch (err) {
+    logError("inbox: channel state failed", err, { storeId: g.storeId });
+    return {
+      channel: null,
+      error:
+        "Couldn't check your WhatsApp number. Reload the page to try again.",
+    };
   }
 }
 
@@ -410,6 +441,16 @@ export async function sendInboxTemplate(input: {
       error: "That template has buttons and can't be sent from the inbox.",
     };
   }
+  // ★ STOP IS CHECKED AT SEND (plan §10). A MARKETING template goes only to a
+  // customer whose yes to offers is in force: one who replied STOP was told
+  // they would get no more offers, and one who never agreed said nothing.
+  // The picker shows such a template as not available; this is the boundary.
+  const offersOptOutAt = s.core.contact.marketingOptOutAt;
+  const blocked = templateBlockedReason(template.category, {
+    inForce: consented(s.core.contact.marketingOptInAt, offersOptOutAt),
+    optedOut: offersOptOutAt !== null,
+  });
+  if (blocked) return { ok: false, error: blocked };
   // A merchant's quick replies carry their own label as the payload, so a
   // tap comes back as an ordinary message saying what was chosen.
   const buttonPayloads =
@@ -544,27 +585,32 @@ export async function assignInboxConversation(input: {
   }
 }
 
-/** Replace a conversation's labels with exactly this set. */
-export async function setInboxConversationLabels(input: {
+/**
+ * Put one label on a conversation, or take it off, and answer with the labels
+ * it now carries. ★ A change, never a whole set: a screen behind a second
+ * click or a teammate's label can only touch the label that was clicked.
+ */
+export async function setInboxConversationLabel(input: {
   conversationId: string;
-  labelIds: string[];
+  labelId: string;
+  on: boolean;
 }): Promise<InboxTeamResult & { labelIds?: string[] }> {
   const g = await gate("manage");
   if (!g.ok) return { ok: false, error: g.error };
   if (!isUuid(input.conversationId)) return { ok: false, error: "Not found." };
-  const labelIds = [
-    ...new Set(
-      (Array.isArray(input.labelIds) ? input.labelIds : []).filter(
-        (id): id is string => typeof id === "string" && isUuid(id),
-      ),
-    ),
-  ].slice(0, 50);
+  if (typeof input.labelId !== "string" || !isUuid(input.labelId)) {
+    return { ok: false, error: "That label no longer exists." };
+  }
+  if (typeof input.on !== "boolean") {
+    return { ok: false, error: "Couldn't update the labels." };
+  }
   try {
     const r = await withService((db) =>
-      setConversationLabels(db, {
+      setConversationLabel(db, {
         storeId: g.storeId,
         conversationId: input.conversationId,
-        labelIds,
+        labelId: input.labelId,
+        on: input.on,
       }),
     );
     if (!r.ok) return { ok: false, error: r.error };
@@ -597,7 +643,9 @@ export async function saveInboxLabel(input: {
     return { ok: true, id: r.value.id };
   } catch (err) {
     // The unique index: two labels that differ only in case are one label.
-    if (String((err as { code?: string })?.code) === "23505") {
+    // ★ Drizzle wraps the pg error (DrizzleQueryError, the code on `.cause`),
+    // so the code is read through the shared helper, never off `err` alone.
+    if (isUniqueViolation(err)) {
       return { ok: false, error: "A label with that name already exists." };
     }
     logError("inbox: save label failed", err, { storeId: g.storeId });
@@ -684,7 +732,8 @@ export async function saveInboxCannedReply(input: {
     if (!r.ok) return { ok: false, error: r.error };
     return { ok: true, id: r.value.id };
   } catch (err) {
-    if (String((err as { code?: string })?.code) === "23505") {
+    // Two saves racing for one shortcut: the unique index decides.
+    if (isUniqueViolation(err)) {
       return { ok: false, error: "That shortcut is already in use." };
     }
     logError("inbox: save reply failed", err, { storeId: g.storeId });
@@ -755,9 +804,10 @@ export async function sendMinkDraft(input: {
     };
   }
 
-  // ★ The charge and the claim share one transaction: the row is locked as a
-  // pending draft, charged (idempotent on its id), and only then sent. Two
-  // people pressing Send get one send and one charge.
+  // ★ The claim and the charge share one transaction: the claim takes the
+  // draft's send lease (lib/whatsapp/mink-drafts.ts), so a second Send while
+  // this one is in flight finds it taken, and the charge is idempotent on its
+  // id. Two people pressing Send get one send and one charge.
   let charged: string;
   try {
     const ctx = await minkChargeContext(s.storeId);
@@ -768,11 +818,21 @@ export async function sendMinkDraft(input: {
         draftId: input.draftId,
       });
       if (!claim) return "gone";
-      return chargeMinkAnswer(db, {
+      const source = await chargeMinkAnswer(db, {
         answerId: input.draftId,
         storeId: s.storeId,
         ctx,
       });
+      // Nothing charged and nothing will be sent: give the lease back in the
+      // same transaction, or the draft stays taken (and off the screen) until
+      // the lease runs out, even after credits are bought.
+      if (source === "insufficient") {
+        await releaseMinkDraftClaim(db, {
+          storeId: s.storeId,
+          answerId: input.draftId,
+        });
+      }
+      return source;
     });
   } catch (err) {
     logError("inbox: mink draft charge failed", err, { storeId: s.storeId });
@@ -782,7 +842,8 @@ export async function sendMinkDraft(input: {
     return {
       ok: false,
       code: "gone",
-      error: "This draft was already sent or discarded.",
+      error:
+        "This draft is being sent, was already sent or discarded, or someone replied since.",
     };
   }
   if (charged === "insufficient") {
@@ -824,14 +885,48 @@ export async function sendMinkDraft(input: {
       });
     }
     return id;
-  }).catch((err) => {
+  }).catch(async (err) => {
     logError("inbox: record mink draft failed", err, { storeId: s.storeId });
+    // ★ It WENT, so the draft must not be sendable again once its lease runs
+    // out: mark it sent on its own when filing the message failed with it.
+    if (out.sent) {
+      await withService((db) =>
+        markMinkAnswerSent(db, {
+          storeId: s.storeId,
+          answerId: input.draftId,
+          answer: text,
+          sentMessageId: null,
+          sentByAdminId: s.userId,
+        }),
+      ).catch((markErr) =>
+        logError("inbox: mark mink draft sent failed", markErr, {
+          storeId: s.storeId,
+        }),
+      );
+    }
     return "";
   });
 
   if (!out.sent) {
     // Charged and not sent: the draft stays, marked charged, so the next
     // Send is free (the charge is idempotent on the draft's id).
+    // ★ A REFUSAL GIVES THE LEASE BACK; AN UNKNOWN DOES NOT. Meta refusing
+    // (or nothing to send) means nothing reached the customer, so the draft
+    // can be sent again at once. An unknown outcome may have gone out: its
+    // lease is left to run out rather than inviting a second copy. Best
+    // effort: a failed release costs a wait, never a double send.
+    if (out.outcome !== "unknown") {
+      await withService((db) =>
+        releaseMinkDraftClaim(db, {
+          storeId: s.storeId,
+          answerId: input.draftId,
+        }),
+      ).catch((err) =>
+        logError("inbox: release mink draft failed", err, {
+          storeId: s.storeId,
+        }),
+      );
+    }
     return {
       ok: false,
       code: "refused",

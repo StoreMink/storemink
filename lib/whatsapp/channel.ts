@@ -17,6 +17,7 @@ import {
   catalogEntryForName,
   catalogTemplateFor,
   pickTemplateRow,
+  templateRowVariables,
   type WhatsAppTemplateVariant,
 } from "./template-catalog";
 
@@ -55,6 +56,17 @@ export interface WhatsAppSender {
 }
 
 /**
+ * How a loader treats its own failure. By default a failed read is logged and
+ * reads as "cannot send" (queue nothing, fail closed), which is right for the
+ * fan-out and the inbox. The queue worker passes `strict`: there a failed READ
+ * is not a verdict on the message, so it must surface and the row be retried,
+ * not settled as "not connected" or "not opted in".
+ */
+export interface LoadOptions {
+  strict?: boolean;
+}
+
+/**
  * The store's sender, or null when it cannot send.
  *
  * Null covers never connected, paused, needs-reauth, a plan that lapsed below
@@ -64,6 +76,7 @@ export interface WhatsAppSender {
 export async function loadWhatsAppSender(
   db: Db,
   storeId: string,
+  options: LoadOptions = {},
 ): Promise<WhatsAppSender | null> {
   try {
     const rows = await db
@@ -118,6 +131,7 @@ export async function loadWhatsAppSender(
     // an error line, because every WhatsApp message for this store stops
     // until it is fixed and nothing else would say so.
     logError("whatsapp: sender load failed", err, { storeId });
+    if (options.strict) throw err;
     return null;
   }
 }
@@ -225,7 +239,9 @@ export async function loadWhatsAppTemplates(
         audience: r.audience,
         name: r.name,
         language: r.language,
-        variables: Array.isArray(r.variables) ? (r.variables as string[]) : [],
+        // The catalogue's current mapping for the current version (a value
+        // can move to a better-fitting variable without new wording).
+        variables: templateRowVariables(r.name, r.variables),
         body: bodyFromComponents(r.components),
       });
     }
@@ -246,6 +262,7 @@ export async function loadWhatsAppTemplateById(
   db: Db,
   storeId: string,
   templateId: string,
+  options: LoadOptions = {},
 ): Promise<WhatsAppTemplateRow | null> {
   try {
     const rows = await db
@@ -274,11 +291,12 @@ export async function loadWhatsAppTemplateById(
       audience: r.audience ?? "",
       name: r.name,
       language: r.language,
-      variables: Array.isArray(r.variables) ? (r.variables as string[]) : [],
+      variables: templateRowVariables(r.name, r.variables),
       body: bodyFromComponents(r.components),
     };
   } catch (err) {
     logError("whatsapp: template load failed", err, { storeId, templateId });
+    if (options.strict) throw err;
     return null;
   }
 }
@@ -299,6 +317,7 @@ export async function whatsAppConsentFor(
   db: Db,
   storeId: string,
   phones: string[],
+  options: LoadOptions = {},
 ): Promise<Map<string, WhatsAppConsent>> {
   const out = new Map<string, WhatsAppConsent>();
   const wanted = [
@@ -331,6 +350,7 @@ export async function whatsAppConsentFor(
     // ★ FAILS CLOSED: a lookup failure means nobody is messaged, never
     // everybody. The in-app row and the email have already been decided.
     logError("whatsapp: consent lookup failed", err, { storeId });
+    if (options.strict) throw err;
   }
   return out;
 }

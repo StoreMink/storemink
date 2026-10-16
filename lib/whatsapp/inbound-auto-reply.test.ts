@@ -91,24 +91,34 @@ const FILED = {
   body: "Is it in stock?",
 };
 
-function setup(body: string, filed: Record<string, unknown> = {}) {
-  dbHolder.current = makeDbMock({
-    selectQueue: [
+/** A claimed event as the lease UPDATE … RETURNING hands it back: the
+ *  database's own column names, through db.execute. */
+function claimed(id: string, payload: unknown) {
+  return {
+    executeQueue: [
       [
         {
-          id: "ev1",
-          storeId: STORE,
-          wabaId: "W",
-          phoneNumberId: "P",
+          id,
+          store_id: STORE,
+          waba_id: "W",
+          phone_number_id: "P",
           field: "messages",
-          payload: {
-            kind: "message",
-            message: { type: "text", text: { body } },
-          },
+          payload,
+          attempts: 1,
+          received_at: "2026-10-16T10:00:00.000Z",
         },
       ],
     ],
-  });
+  };
+}
+
+function setup(body: string, filed: Record<string, unknown> = {}) {
+  dbHolder.current = makeDbMock(
+    claimed("ev1", {
+      kind: "message",
+      message: { type: "text", text: { body } },
+    }),
+  );
   vi.mocked(recordInboundMessage).mockResolvedValue({
     ...FILED,
     ...filed,
@@ -148,23 +158,12 @@ describe("automatic replies after filing", () => {
     });
 
     // A photo carries no words: nothing to answer, nothing read.
-    dbHolder.current = makeDbMock({
-      selectQueue: [
-        [
-          {
-            id: "ev2",
-            storeId: STORE,
-            wabaId: "W",
-            phoneNumberId: "P",
-            field: "messages",
-            payload: {
-              kind: "message",
-              message: { type: "image", image: { id: "img" } },
-            },
-          },
-        ],
-      ],
-    });
+    dbHolder.current = makeDbMock(
+      claimed("ev2", {
+        kind: "message",
+        message: { type: "image", image: { id: "img" } },
+      }),
+    );
     vi.mocked(loadAutoReplyFlags).mockClear();
     await processPendingInboundEvents();
     expect(loadAutoReplyFlags).not.toHaveBeenCalled();

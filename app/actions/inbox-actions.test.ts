@@ -19,6 +19,10 @@ vi.mock("@/lib/whatsapp/channel", () => ({
   bodyFromComponents: vi.fn(() => "Hi {{1}}, your order {{2}} is ready."),
   templateHasButtons: (c: unknown) =>
     Array.isArray(c) && c.some((x: any) => x?.type === "BUTTONS"),
+  // The real rule: opted in, and not opted out since.
+  consented: (inAt: string | null, outAt: string | null) =>
+    Boolean(inAt) &&
+    (!outAt || new Date(outAt).getTime() < new Date(inAt!).getTime()),
 }));
 vi.mock("@/lib/whatsapp/inbox", () => ({
   needsReplyCount: vi.fn(async () => 2),
@@ -40,6 +44,11 @@ vi.mock("@/lib/whatsapp/inbox-read", () => ({
   loadConversation: vi.fn(),
   loadThread: vi.fn(),
   loadQuotableProviderId: vi.fn(async () => null),
+  loadInboxChannelState: vi.fn(async () => ({
+    connected: true,
+    live: true,
+    planAllows: true,
+  })),
   listInboxLabels: vi.fn(async () => [
     { id: "l1", name: "VIP", color: "purple" },
   ]),
@@ -54,10 +63,10 @@ vi.mock("@/lib/whatsapp/inbox-team", () => ({
     ok: true,
     value: { changed: true, previous: null },
   })),
-  setConversationLabels: vi.fn(
-    async (_db: unknown, i: { labelIds: string[] }) => ({
+  setConversationLabel: vi.fn(
+    async (_db: unknown, i: { labelId: string; on: boolean }) => ({
       ok: true,
-      value: { labelIds: i.labelIds },
+      value: { labelIds: i.on ? [i.labelId] : [] },
     }),
   ),
   saveLabel: vi.fn(async () => ({ ok: true, value: { id: "l-new" } })),
@@ -77,6 +86,7 @@ vi.mock("@/lib/whatsapp/mink-drafts", () => ({
   claimMinkDraft: vi.fn(async () => ({ id: DRAFT_ID, charged: false })),
   chargeMinkAnswer: vi.fn(async () => "plan"),
   markMinkAnswerSent: vi.fn(async () => undefined),
+  releaseMinkDraftClaim: vi.fn(async () => undefined),
   discardMinkDrafts: vi.fn(async () => 1),
 }));
 const DRAFT_ID = vi.hoisted(() => "44444444-4444-4444-8444-444444444444");
@@ -85,6 +95,7 @@ import {
   addInboxNote,
   assignInboxConversation,
   discardMinkDraft,
+  getInboxChannelState,
   getInboxConversations,
   getInboxWorkspace,
   markInboxRead,
@@ -93,22 +104,25 @@ import {
   sendInboxReply,
   sendInboxTemplate,
   sendMinkDraft,
-  setInboxConversationLabels,
+  setInboxConversationLabel,
   setInboxConversationStatus,
 } from "./inbox-actions";
+import { withService } from "@/lib/db/client";
 import { emitEvent } from "@/lib/notifications/record";
+import { logError } from "@/lib/observability/logger";
 import {
   addNote,
   assignConversation,
   saveCannedReply,
   saveLabel,
-  setConversationLabels,
+  setConversationLabel,
 } from "@/lib/whatsapp/inbox-team";
 import {
   chargeMinkAnswer,
   claimMinkDraft,
   discardMinkDrafts,
   markMinkAnswerSent,
+  releaseMinkDraftClaim,
 } from "@/lib/whatsapp/mink-drafts";
 import { getViewerAccess } from "@/app/dashboard/lib/access";
 import { loadWhatsAppSender } from "@/lib/whatsapp/channel";
@@ -116,6 +130,7 @@ import { recordOutboundMessage } from "@/lib/whatsapp/inbox";
 import {
   listConversations,
   loadConversation,
+  loadInboxChannelState,
   loadQuotableProviderId,
 } from "@/lib/whatsapp/inbox-read";
 import { sendWhatsAppTemplate, sendWhatsAppText } from "@/lib/whatsapp/send";
@@ -123,7 +138,13 @@ import { sendWhatsAppTemplate, sendWhatsAppText } from "@/lib/whatsapp/send";
 const CONV = "22222222-2222-4222-8222-222222222222";
 const TPL = "33333333-3333-4333-8333-333333333333";
 
-const core = (lastInboundAt: string | null) => ({
+const core = (
+  lastInboundAt: string | null,
+  consent: {
+    marketingOptInAt?: string | null;
+    marketingOptOutAt?: string | null;
+  } = {},
+) => ({
   id: CONV,
   status: "needs_reply",
   unreadCount: 1,
@@ -142,6 +163,7 @@ const core = (lastInboundAt: string | null) => ({
     updatesOptOutAt: null,
     marketingOptInAt: null,
     marketingOptOutAt: null,
+    ...consent,
   },
 });
 
@@ -453,10 +475,97 @@ describe("sendInboxTemplate", () => {
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/approved/);
   });
+
+  describe("★ a MARKETING template and the customer's yes to offers", () => {
+    const promo = () =>
+      makeDbMock({
+        selectQueue: [
+          [
+            {
+              id: TPL,
+              name: "diwali_offer",
+              language: "en",
+              variables: ["customer_name"],
+              components: [{ type: "BODY", text: "Hi {{1}}, 20% off." }],
+              audience: "customer",
+              category: "MARKETING",
+              eventKey: null,
+            },
+          ],
+        ],
+      });
+    const send = () =>
+      sendInboxTemplate({
+        conversationId: CONV,
+        templateId: TPL,
+        values: ["Rohan"],
+      });
+    const now = Date.now();
+    const at = (hoursAgo: number) =>
+      new Date(now - hoursAgo * 3600_000).toISOString();
+
+    it("refuses a customer who replied STOP, and sends nothing", async () => {
+      dbHolder.current = promo();
+      vi.mocked(loadConversation).mockResolvedValue(
+        core(at(1), {
+          marketingOptInAt: at(48),
+          marketingOptOutAt: at(2),
+        }) as any,
+      );
+      const r = await send();
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/opted out of offers/);
+      expect(sendWhatsAppTemplate).not.toHaveBeenCalled();
+      expect(recordOutboundMessage).not.toHaveBeenCalled();
+    });
+
+    it("refuses a customer who never agreed to offers", async () => {
+      dbHolder.current = promo();
+      const r = await send();
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/hasn't agreed to receive offers/);
+      expect(sendWhatsAppTemplate).not.toHaveBeenCalled();
+    });
+
+    it("sends to a customer whose yes is in force, an opt-out before it included", async () => {
+      dbHolder.current = promo();
+      vi.mocked(loadConversation).mockResolvedValue(
+        core(at(1), {
+          marketingOptInAt: at(3),
+          marketingOptOutAt: at(30),
+        }) as any,
+      );
+      expect(await send()).toEqual({ ok: true, messageId: "m-out" });
+      expect(sendWhatsAppTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ category: "MARKETING" }),
+      );
+    });
+
+    it("a UTILITY template needs no offers consent", async () => {
+      // The default row is UTILITY and the contact has agreed to nothing.
+      vi.mocked(loadConversation).mockResolvedValue(
+        core(at(1), { marketingOptOutAt: at(2) }) as any,
+      );
+      const r = await sendInboxTemplate({
+        conversationId: CONV,
+        templateId: TPL,
+        values: ["Rohan", "ORD1"],
+      });
+      expect(r.ok).toBe(true);
+    });
+  });
 });
 
 describe("sendMinkDraft", () => {
+  // ★ The default mock hands every withService call the SAME db, so "the same
+  // transaction" could not fail. Here each call gets its own handle.
+  function separateTransactions() {
+    vi.mocked(withService).mockImplementation(((fn: any) =>
+      Promise.resolve(fn(Object.create(dbHolder.current.db)))) as any);
+  }
+
   it("★ claims the draft, charges one credit, sends as the person, and marks it sent", async () => {
+    separateTransactions();
     const r = await sendMinkDraft({
       conversationId: CONV,
       draftId: DRAFT_ID,
@@ -492,9 +601,15 @@ describe("sendMinkDraft", () => {
         sentByAdminId: "admin-1",
       }),
     );
+    // The claim and the charge are one transaction; filing is a later one.
+    const claimTx = vi.mocked(claimMinkDraft).mock.calls[0][0];
+    expect(vi.mocked(chargeMinkAnswer).mock.calls[0][0]).toBe(claimTx);
+    expect(vi.mocked(markMinkAnswerSent).mock.calls[0][0]).not.toBe(claimTx);
+    expect(releaseMinkDraftClaim).not.toHaveBeenCalled();
   });
 
   it("★ no credits: refused with the reason, nothing sent, the draft stays", async () => {
+    separateTransactions();
     vi.mocked(chargeMinkAnswer).mockResolvedValueOnce("insufficient");
     const r = await sendMinkDraft({
       conversationId: CONV,
@@ -505,9 +620,47 @@ describe("sendMinkDraft", () => {
     expect(r.error).toMatch(/1 Mink credit/);
     expect(sendWhatsAppText).not.toHaveBeenCalled();
     expect(markMinkAnswerSent).not.toHaveBeenCalled();
+    // ★ The send lease the claim took is given back in the SAME transaction,
+    // or the draft stays taken, and off the screen, until it runs out.
+    expect(releaseMinkDraftClaim).toHaveBeenCalledTimes(1);
+    expect(releaseMinkDraftClaim).toHaveBeenCalledWith(expect.anything(), {
+      storeId: "s1",
+      answerId: DRAFT_ID,
+    });
+    // Identity, not equality: two transaction handles are deep-equal.
+    expect(vi.mocked(releaseMinkDraftClaim).mock.calls[0][0]).toBe(
+      vi.mocked(claimMinkDraft).mock.calls[0][0],
+    );
+  });
+
+  it("★ a draft that went out but could not be filed is still marked sent, so it cannot go twice", async () => {
+    vi.mocked(recordOutboundMessage).mockRejectedValueOnce(new Error("db"));
+    const r = await sendMinkDraft({
+      conversationId: CONV,
+      draftId: DRAFT_ID,
+      text: "Yes",
+    });
+    expect(r.ok).toBe(true);
+    expect(markMinkAnswerSent).toHaveBeenCalledTimes(1);
+    expect(markMinkAnswerSent).toHaveBeenCalledWith(expect.anything(), {
+      storeId: "s1",
+      answerId: DRAFT_ID,
+      answer: "Yes",
+      sentMessageId: null,
+      sentByAdminId: "admin-1",
+    });
+    expect(releaseMinkDraftClaim).not.toHaveBeenCalled();
+  });
+
+  it("a draft that went out keeps its lease until it is marked sent", async () => {
+    await sendMinkDraft({ conversationId: CONV, draftId: DRAFT_ID, text: "x" });
+    expect(markMinkAnswerSent).toHaveBeenCalled();
+    expect(releaseMinkDraftClaim).not.toHaveBeenCalled();
   });
 
   it("a draft already sent or discarded is gone; a closed window and a viewer are refused", async () => {
+    // ★ A refused claim now also means a send in flight (its lease is live)
+    // or a person who answered since, and the copy says all three.
     vi.mocked(claimMinkDraft).mockResolvedValueOnce(null);
     expect(
       await sendMinkDraft({
@@ -515,8 +668,14 @@ describe("sendMinkDraft", () => {
         draftId: DRAFT_ID,
         text: "x",
       }),
-    ).toMatchObject({ ok: false, code: "gone" });
+    ).toEqual({
+      ok: false,
+      code: "gone",
+      error:
+        "This draft is being sent, was already sent or discarded, or someone replied since.",
+    });
     expect(chargeMinkAnswer).not.toHaveBeenCalled();
+    expect(releaseMinkDraftClaim).not.toHaveBeenCalled();
 
     vi.mocked(loadConversation).mockResolvedValue(
       core(new Date(Date.now() - 25 * 3600_000).toISOString()) as any,
@@ -542,7 +701,8 @@ describe("sendMinkDraft", () => {
     expect(sendWhatsAppText).not.toHaveBeenCalled();
   });
 
-  it("a refusal from Meta after the charge keeps the draft and says so", async () => {
+  it("★ a refusal from Meta keeps the draft, gives its send lease back and says so", async () => {
+    separateTransactions();
     vi.mocked(sendWhatsAppText).mockResolvedValue({
       sent: false,
       outcome: "rejected",
@@ -556,6 +716,65 @@ describe("sendMinkDraft", () => {
     });
     expect(r).toMatchObject({ ok: false, code: "refused" });
     expect(markMinkAnswerSent).not.toHaveBeenCalled();
+    expect(releaseMinkDraftClaim).toHaveBeenCalledWith(expect.anything(), {
+      storeId: "s1",
+      answerId: DRAFT_ID,
+    });
+    // The claim's transaction committed long ago: the release has its own.
+    expect(vi.mocked(releaseMinkDraftClaim).mock.calls[0][0]).not.toBe(
+      vi.mocked(claimMinkDraft).mock.calls[0][0],
+    );
+  });
+
+  it("nothing to send (skipped) gives the lease back too", async () => {
+    vi.mocked(sendWhatsAppText).mockResolvedValue({
+      sent: false,
+      outcome: "skipped",
+      error: "No phone number.",
+    });
+    await sendMinkDraft({ conversationId: CONV, draftId: DRAFT_ID, text: "x" });
+    expect(releaseMinkDraftClaim).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ an UNKNOWN outcome keeps the lease: the message may have gone, so no second Send yet", async () => {
+    vi.mocked(sendWhatsAppText).mockResolvedValue({
+      sent: false,
+      outcome: "unknown",
+      error: "timeout",
+    });
+    const r = await sendMinkDraft({
+      conversationId: CONV,
+      draftId: DRAFT_ID,
+      text: "x",
+    });
+    expect(r).toMatchObject({ ok: false, code: "refused" });
+    expect(r.error).toMatch(/didn't confirm/);
+    expect(releaseMinkDraftClaim).not.toHaveBeenCalled();
+  });
+
+  it("a release that fails is logged and changes nothing the person is told", async () => {
+    vi.mocked(sendWhatsAppText).mockResolvedValue({
+      sent: false,
+      outcome: "rejected",
+      error: "131047",
+      code: 131047,
+    });
+    vi.mocked(releaseMinkDraftClaim).mockRejectedValueOnce(new Error("db"));
+    const r = await sendMinkDraft({
+      conversationId: CONV,
+      draftId: DRAFT_ID,
+      text: "x",
+    });
+    expect(r).toMatchObject({
+      ok: false,
+      code: "refused",
+      error: "Meta refused the message: 131047",
+    });
+    expect(logError).toHaveBeenCalledWith(
+      "inbox: release mink draft failed",
+      expect.any(Error),
+      { storeId: "s1" },
+    );
   });
 });
 
@@ -705,17 +924,73 @@ describe("working as a team (slice 6)", () => {
     expect(emitEvent).not.toHaveBeenCalled();
   });
 
-  it("labels: only well-formed ids reach the write, as one exact set", async () => {
-    const r = await setInboxConversationLabels({
+  it("★ labels change ONE at a time: the write gets the label and the direction, never a set", async () => {
+    const r = await setInboxConversationLabel({
       conversationId: CONV,
-      labelIds: [LABEL, "junk", LABEL],
+      labelId: LABEL,
+      on: true,
     });
     expect(r).toEqual({ ok: true, labelIds: [LABEL] });
-    expect(setConversationLabels).toHaveBeenCalledWith(expect.anything(), {
+    expect(setConversationLabel).toHaveBeenCalledWith(expect.anything(), {
       storeId: "s1",
       conversationId: CONV,
-      labelIds: [LABEL],
+      labelId: LABEL,
+      on: true,
     });
+    expect(
+      await setInboxConversationLabel({
+        conversationId: CONV,
+        labelId: LABEL,
+        on: false,
+      }),
+    ).toEqual({ ok: true, labelIds: [] });
+  });
+
+  it("labels: a malformed id or direction never reaches the write, and a viewer cannot label", async () => {
+    expect(
+      (
+        await setInboxConversationLabel({
+          conversationId: CONV,
+          labelId: "junk",
+          on: true,
+        })
+      ).ok,
+    ).toBe(false);
+    expect(
+      (
+        await setInboxConversationLabel({
+          conversationId: CONV,
+          labelId: LABEL,
+          on: "yes" as any,
+        })
+      ).ok,
+    ).toBe(false);
+    access(true, false);
+    expect(
+      (
+        await setInboxConversationLabel({
+          conversationId: CONV,
+          labelId: LABEL,
+          on: true,
+        })
+      ).error,
+    ).toMatch(/permission/);
+    expect(setConversationLabel).not.toHaveBeenCalled();
+  });
+
+  it("labels: a refusal from the write (a label deleted meanwhile) is reported", async () => {
+    vi.mocked(setConversationLabel).mockResolvedValueOnce({
+      ok: false,
+      code: "not_found",
+      error: "That label no longer exists.",
+    });
+    expect(
+      await setInboxConversationLabel({
+        conversationId: CONV,
+        labelId: LABEL,
+        on: true,
+      }),
+    ).toEqual({ ok: false, error: "That label no longer exists." });
   });
 
   it("a note is written under the person who wrote it", async () => {
@@ -763,5 +1038,64 @@ describe("working as a team (slice 6)", () => {
       ok: false,
       error: "A label with that name already exists.",
     });
+  });
+
+  // drizzle-orm wraps every pg error in a DrizzleQueryError whose own message
+  // is "Failed query: …"; the SQLSTATE is on `.cause`.
+  const wrapped = (code: string) =>
+    Object.assign(new Error("Failed query: insert …"), {
+      cause: Object.assign(new Error("duplicate key"), { code }),
+    });
+
+  it("★ a duplicate label name is recognised through drizzle's wrapper, not logged as a failure", async () => {
+    vi.mocked(saveLabel).mockRejectedValueOnce(wrapped("23505"));
+    expect(await saveInboxLabel({ name: "vip", color: "red" })).toEqual({
+      ok: false,
+      error: "A label with that name already exists.",
+    });
+    expect(logError).not.toHaveBeenCalled();
+    // Any other database failure is still a logged failure.
+    vi.mocked(saveLabel).mockRejectedValueOnce(wrapped("40001"));
+    expect(await saveInboxLabel({ name: "vip", color: "red" })).toEqual({
+      ok: false,
+      error: "Couldn't save the label.",
+    });
+    expect(logError).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ a taken shortcut is recognised through drizzle's wrapper too", async () => {
+    vi.mocked(saveCannedReply).mockRejectedValueOnce(wrapped("23505"));
+    expect(
+      await saveInboxCannedReply({
+        shortcut: "hours",
+        title: "Hours",
+        body: "10 to 7",
+      }),
+    ).toEqual({ ok: false, error: "That shortcut is already in use." });
+    expect(logError).not.toHaveBeenCalled();
+  });
+});
+
+describe("getInboxChannelState", () => {
+  it("★ answers anyone with Inbox view, from the store's own row, with no Channels permission asked", async () => {
+    access(true, false);
+    vi.mocked(loadInboxChannelState).mockResolvedValueOnce({
+      connected: true,
+      live: false,
+      planAllows: true,
+    });
+    expect(await getInboxChannelState()).toEqual({
+      channel: { connected: true, live: false, planAllows: true },
+    });
+    expect(loadInboxChannelState).toHaveBeenCalledWith("s1");
+  });
+
+  it("an unreadable state is an error, never 'not connected'; no Inbox view, no answer", async () => {
+    vi.mocked(loadInboxChannelState).mockRejectedValueOnce(new Error("db"));
+    const r = await getInboxChannelState();
+    expect(r.channel).toBeNull();
+    expect(r.error).toMatch(/Couldn't check your WhatsApp number/);
+    access(false, false);
+    expect((await getInboxChannelState()).error).toMatch(/permission/);
   });
 });

@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { EVENTS } from "@/lib/notifications/events";
 import { variableNamesFor } from "@/lib/notifications/variables";
 import {
   COD_CONFIRM_VARIANT,
+  KNOWN_TEMPLATE_STATUSES,
   WHATSAPP_TEMPLATE_CATALOG,
   bodyPlaceholders,
   catalogEntryForName,
@@ -14,6 +16,7 @@ import {
   templateComponentsFor,
   templateFamily,
   templateNameVersion,
+  templateRowVariables,
   whatsAppParameterText,
 } from "./template-catalog";
 
@@ -239,6 +242,78 @@ describe("the COD confirmation variant", () => {
     );
     expect(withButtons).toEqual([cod]);
   });
+
+  // ★★ Store credit never lowers orders.total and the courier collects the
+  // total less the credit, so a ₹500 order with ₹200 of credit was told to
+  // pay ₹500 on delivery. The VALUE changed; the words Meta approved did not,
+  // which is why the name is still v1.
+  it("★★ quotes the amount due on delivery, in the words Meta approved", () => {
+    expect(cod.body).toBe(
+      "Please confirm your cash on delivery order {{1}} from {{2}}. Amount to pay on delivery: {{3}}. Tap Confirm order and we will prepare it, or Cancel order if you no longer want it.",
+    );
+    expect(cod.variables).toEqual([
+      "subject_label",
+      "store_name",
+      "amount_due",
+    ]);
+    expect(cod.name).toBe("sm_order_placed_customer_cod_confirm_v1");
+  });
+
+  it("★ every body that promises an amount to pay on delivery fills it with amount_due", () => {
+    let promises = 0;
+    for (const t of WHATSAPP_TEMPLATE_CATALOG) {
+      for (const m of t.body.matchAll(/pay on delivery\W*\{\{(\d+)\}\}/gi)) {
+        promises++;
+        expect(t.variables[Number(m[1]) - 1], t.name).toBe("amount_due");
+      }
+    }
+    // The scan must still find the one it exists for.
+    expect(promises).toBeGreaterThan(0);
+  });
+});
+
+describe("templateRowVariables", () => {
+  const cod = catalogTemplateFor(
+    "order.placed",
+    "customer",
+    COD_CONFIRM_VARIANT,
+  )!;
+  const STORED_BEFORE = ["subject_label", "store_name", "total"];
+
+  it("★★ the current catalogue row takes the catalogue's mapping over the copy it was stored with", () => {
+    // A store connected before the mapping changed holds the old copy, and
+    // the bootstrap upsert never rewrites it.
+    expect(templateRowVariables(cod.name, STORED_BEFORE)).toEqual([
+      "subject_label",
+      "store_name",
+      "amount_due",
+    ]);
+  });
+
+  it("returns a copy, never the catalogue's own list", () => {
+    const got = templateRowVariables(cod.name, STORED_BEFORE);
+    got.push("x");
+    expect(cod.variables).toHaveLength(3);
+  });
+
+  it("an older version keeps the mapping it was submitted with", () => {
+    // Its words may hold other placeholders than the current entry's.
+    expect(
+      templateRowVariables("sm_order_ready_for_pickup_customer_v1", [
+        "subject_label",
+        "pickup_location",
+      ]),
+    ).toEqual(["subject_label", "pickup_location"]);
+  });
+
+  it("a merchant's own template keeps its stored mapping, and junk reads as none", () => {
+    expect(templateRowVariables("diwali_promo", ["Name", 2])).toEqual([
+      "Name",
+      "2",
+    ]);
+    expect(templateRowVariables("diwali_promo", null)).toEqual([]);
+    expect(templateRowVariables("diwali_promo", "total")).toEqual([]);
+  });
 });
 
 describe("templateBodyProblem: the one body rule", () => {
@@ -272,5 +347,40 @@ describe("knownTemplateStatus", () => {
     expect(knownTemplateStatus("PAUSED")).toBe("PAUSED");
     expect(knownTemplateStatus("FLAGGED")).toBeNull();
     expect(knownTemplateStatus(undefined)).toBeNull();
+  });
+
+  // ★★ Meta posts REINSTATED when a paused or disabled template "can be sent
+  // in template messages again". Ignored, the row stayed PAUSED / DISABLED and
+  // the loaders, which send only APPROVED, kept it unsendable.
+  it("★★ a reinstated template is approved again", () => {
+    expect(knownTemplateStatus("REINSTATED")).toBe("APPROVED");
+    expect(knownTemplateStatus("reinstated")).toBe("APPROVED");
+  });
+
+  it("★ only ever answers with a status the 0174 CHECK admits", () => {
+    const sql = readFileSync(
+      "drizzle/migrations/sql/20261008_0174_whatsapp_accounts.sql",
+      "utf8",
+    );
+    const list =
+      /whatsapp_templates_status_check\s+CHECK \(status IN \(([^)]*)\)\)/.exec(
+        sql,
+      )?.[1];
+    expect(list).toBeTruthy();
+    const admitted = [...(list ?? "").matchAll(/'([A-Z_]+)'/g)].map(
+      (m) => m[1],
+    );
+    expect([...KNOWN_TEMPLATE_STATUSES].sort()).toEqual([...admitted].sort());
+    for (const word of [
+      ...admitted,
+      "REINSTATED",
+      "FLAGGED",
+      "ARCHIVED",
+      "LOCKED",
+      "UNKNOWN_WORD",
+    ]) {
+      const status = knownTemplateStatus(word);
+      if (status !== null) expect(admitted, word).toContain(status);
+    }
   });
 });

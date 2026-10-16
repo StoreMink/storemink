@@ -27,6 +27,8 @@
  */
 const MONEY = new Set([
   "total",
+  // What the customer still pays: the total less store credit (variables.ts).
+  "amount_due",
   "subtotal",
   "amount",
   "discount",

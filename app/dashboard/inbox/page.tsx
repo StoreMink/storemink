@@ -3,15 +3,21 @@ import { MessageCircle } from "lucide-react";
 import { requireSectionAccess } from "../lib/access";
 import { pickParam } from "../lib/list-params";
 import {
+  getInboxChannelState,
   getInboxConversations,
   getInboxTemplates,
   getInboxWorkspace,
 } from "@/app/actions/inbox-actions";
-import { getWhatsAppChannelState } from "@/app/actions/whatsapp-provider-actions";
 import { InboxClient } from "./inbox-client";
 
 // The WhatsApp inbox (docs/whatsapp-commerce-plan.md §11). Conversations on
 // the left, the open thread on the right, the customer's orders beside it.
+//
+// ★ WHETHER A NUMBER IS CONNECTED IS READ BEHIND THE INBOX GATE. It came from
+// the Channels card's state, which answers only people who manage Channels:
+// a role with the Inbox and without Channels was shown "Connect a WhatsApp
+// number" on a store that had one, and could never use the inbox the sidebar
+// showed it.
 export const metadata = { title: "Inbox" };
 
 export default async function InboxPage({
@@ -23,14 +29,26 @@ export default async function InboxPage({
   const sp = await searchParams;
   const open = pickParam(sp.c);
 
-  const [channel, list, templates, workspace] = await Promise.all([
-    getWhatsAppChannelState(),
+  const [state, list, templates, workspace] = await Promise.all([
+    getInboxChannelState(),
     getInboxConversations({ filter: "all", q: "", page: 1 }),
     getInboxTemplates(),
     getInboxWorkspace(),
   ]);
 
-  if (!channel.connected) {
+  const channel = state.channel;
+  if (!channel || !channel.connected) {
+    // A link only for someone who can open the page it leads to; the
+    // sentence above it already says where the change is made.
+    const link = !channel
+      ? null
+      : channel.planAllows
+        ? access.can("channels", "view")
+          ? { href: "/dashboard/channels", label: "Open Channels" }
+          : null
+        : access.can("ai", "view")
+          ? { href: "/dashboard/plans", label: "See plans" }
+          : null;
     return (
       <div className="dash-page-enter flex flex-col gap-4">
         <header className="dash-page-header row">
@@ -42,21 +60,25 @@ export default async function InboxPage({
         <section className="dash-card px-5 py-10 text-center">
           <MessageCircle className="mx-auto mb-3 h-6 w-6 opacity-40" />
           <p className="text-[14px] font-medium text-[var(--dash-text)]">
-            Connect a WhatsApp number to use the inbox
+            {channel
+              ? "Connect a WhatsApp number to use the inbox"
+              : "Couldn't check your WhatsApp number"}
           </p>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-[var(--dash-text-3)]">
-            {channel.planAllows
-              ? "Once your number is connected, every message a customer sends to it appears here, and replies to your order updates land in the same place."
-              : "WhatsApp is included from the Basic plan. Upgrade under Plans & Billing, then connect your number in Channels."}
+            {!channel
+              ? (state.error ?? "Reload the page to try again.")
+              : channel.planAllows
+                ? "Once your number is connected, every message a customer sends to it appears here, and replies to your order updates land in the same place."
+                : "WhatsApp is included from the Basic plan. Upgrade under Plans & Billing, then connect your number in Channels."}
           </p>
-          <Link
-            href={
-              channel.planAllows ? "/dashboard/channels" : "/dashboard/plans"
-            }
-            className="mt-4 inline-flex rounded-md bg-[var(--dash-text)] px-4 py-2 text-[13px] font-semibold text-[var(--dash-surface)]"
-          >
-            {channel.planAllows ? "Open Channels" : "See plans"}
-          </Link>
+          {link && (
+            <Link
+              href={link.href}
+              className="mt-4 inline-flex rounded-md bg-[var(--dash-text)] px-4 py-2 text-[13px] font-semibold text-[var(--dash-surface)]"
+            >
+              {link.label}
+            </Link>
+          )}
         </section>
       </div>
     );
@@ -68,7 +90,7 @@ export default async function InboxPage({
       templates={templates.templates}
       workspace={workspace.workspace}
       canManage={access.can("inbox", "manage")}
-      channelLive={channel.enabled && channel.status === "connected"}
+      channelLive={channel.live}
       initialConversationId={open || null}
     />
   );

@@ -102,7 +102,9 @@ export interface InboxMessageRow {
   source: string;
   kind: string;
   body: string | null;
-  /** A public URL into our bucket when a file was kept; never Meta's URL. */
+  /** Where the thread loads a kept file: the gated, same-origin
+   *  `/api/dashboard/inbox/media/[messageId]` route, never a bucket URL and
+   *  never Meta's. */
   mediaUrl: string | null;
   mediaMime: string | null;
   mediaName: string | null;

@@ -2090,7 +2090,8 @@ export const orders = pgTable(
     }),
     // WhatsApp cash-on-delivery confirmation (0192): 'requested' once the
     // message with the buttons was sent, then 'confirmed' or 'cancelled' by
-    // the customer, or 'expired' when the automatic cancellation fired (0195).
+    // the customer, 'expired' when the automatic cancellation fired (0195),
+    // or 'undelivered' when Meta reported the message failed (0211).
     // NULL = the customer was never asked.
     codConfirmation: text("cod_confirmation"),
     codConfirmationAt: timestamp("cod_confirmation_at", {
@@ -2102,6 +2103,9 @@ export const orders = pgTable(
       withTimezone: true,
       mode: "string",
     }),
+    // The checkout's "order updates on WhatsApp" box for THIS order (0211).
+    // NULL = not asked (a till sale, a store with no number, an older order).
+    whatsappUpdates: boolean("whatsapp_updates"),
     stockStatus: text("stock_status").default("none").notNull(),
     // NOT NULL because the DATABASE always has them: a BEFORE INSERT trigger
     // (identifiers_04_triggers.sql) allocates both. No caller supplies them —
@@ -8972,6 +8976,22 @@ export const storeWhatsappAccounts = pgTable("store_whatsapp_accounts", {
     .notNull(),
 });
 
+// The two-step verification PIN a number was registered with (0211), kept
+// apart from the account row so Disconnect does not lose it: Meta refuses to
+// re-register a number with any other PIN. Service-only.
+export const whatsappNumberPins = pgTable("whatsapp_number_pins", {
+  phoneNumberId: text("phone_number_id").primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  // AES-256-GCM under PAYMENT_CRED_KEY, like two_fa_pin_enc.
+  pinEnc: text("pin_enc").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
 export const whatsappTemplates = pgTable("whatsapp_templates", {
   id: uuid().defaultRandom().primaryKey().notNull(),
   storeId: uuid("store_id").notNull(),
@@ -9064,6 +9084,18 @@ export const notificationWhatsappQueue = pgTable(
     // Quick-reply button payloads, in button order (0192); null for a
     // template without buttons.
     buttonPayloads: jsonb("button_payloads"),
+    // Meta's id for the message this row sent (0211), so a delivery status
+    // can find the row it is about.
+    providerMessageId: text("provider_message_id"),
+    // The SMS held behind this message (0211): released into the SMS queue
+    // when WhatsApp fails, dropped when it is delivered. held | released |
+    // dropped; all three null when nothing is held.
+    fallbackSms: jsonb("fallback_sms"),
+    fallbackState: text("fallback_state"),
+    fallbackSettledAt: timestamp("fallback_settled_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
     status: text().default("pending").notNull(),
     attempts: integer().default(0).notNull(),
     nextAttemptAt: timestamp("next_attempt_at", {
@@ -9127,6 +9159,14 @@ export const whatsappInboundEvents = pgTable("whatsapp_inbound_events", {
     mode: "string",
   }),
   error: text(),
+  // Retry bookkeeping (0211): how many runs have claimed the row, and when it
+  // is next due (a lease while a run holds it, a backoff after a failure).
+  // NULL = due now.
+  attempts: integer().default(0).notNull(),
+  nextAttemptAt: timestamp("next_attempt_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
 });
 
 // Slice 3 (migration 0177): the inbox. One conversation per contact; every
@@ -9161,6 +9201,12 @@ export const whatsappConversations = pgTable("whatsapp_conversations", {
     mode: "string",
   }),
   awaySentAt: timestamp("away_sent_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  // When the retention sweep last failed to delete this conversation's media
+  // (0211); the sweep skips it for a while.
+  retentionFailedAt: timestamp("retention_failed_at", {
     withTimezone: true,
     mode: "string",
   }),
@@ -9225,6 +9271,12 @@ export const whatsappMinkAnswers = pgTable("whatsapp_mink_answers", {
   sentMessageId: uuid("sent_message_id"),
   sentByAdminId: text("sent_by_admin_id"),
   resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "string" }),
+  // The send lease (0211): set inside the claim, so a second Send finds the
+  // draft taken; cleared again when the send fails.
+  sendingStartedAt: timestamp("sending_started_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
     .defaultNow()
     .notNull(),

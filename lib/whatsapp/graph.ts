@@ -1,6 +1,6 @@
 import "server-only";
 
-import { logError } from "@/lib/observability/logger";
+import { logError, logWarn } from "@/lib/observability/logger";
 import { graphBase, whatsappConfig } from "./config";
 
 // ---------------------------------------------------------------------------
@@ -141,6 +141,96 @@ function redactPath(path: string): string {
   return path.split("?")[0];
 }
 
+/** Meta's cursor paging block on a list response. */
+interface GraphPaging {
+  cursors?: { before?: string; after?: string };
+  next?: string;
+  previous?: string;
+}
+
+type NextPage =
+  | { kind: "last" }
+  | { kind: "next"; after: string }
+  | { kind: "stop"; reason: string };
+
+/**
+ * Where the page after this one starts, if there is one.
+ *
+ * ★ THE NEXT PAGE IS REQUESTED BY US, ON OUR OWN PATH. `paging.next` is a full
+ * URL from the response; fetching it verbatim would present the merchant's
+ * token to whatever host it names. So it is read for its `after` cursor only,
+ * and only when it is https on the host graphBase() names, and the next
+ * request goes out through graphRequest exactly like the first. A link
+ * anywhere else ends the listing rather than being followed.
+ */
+function nextPage(paging: GraphPaging | undefined): NextPage {
+  if (!paging?.next) return { kind: "last" };
+  let next: URL;
+  try {
+    next = new URL(paging.next);
+  } catch {
+    return { kind: "stop", reason: "unreadable next link" };
+  }
+  const graph = new URL(graphBase());
+  if (next.protocol !== "https:" || next.host !== graph.host) {
+    return { kind: "stop", reason: "next link is not on the Graph host" };
+  }
+  const after = next.searchParams.get("after") || paging.cursors?.after || "";
+  return after
+    ? { kind: "next", after }
+    : { kind: "stop", reason: "next link carries no cursor" };
+}
+
+/**
+ * A list call, followed across Meta's pages up to `maxPages`.
+ *
+ * A failure on the FIRST page is the answer; a failure on a later page ends
+ * the listing with what was already read (logged), because every caller uses
+ * a listing to refresh rows it already holds, and part of the list refreshes
+ * part of them where an error would refresh none.
+ */
+async function graphRequestPages<T>(
+  req: GraphRequest,
+  maxPages: number,
+): Promise<GraphResult<{ data: T[] }>> {
+  const rows: T[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < maxPages; page++) {
+    const r: GraphResult<{ data?: T[]; paging?: GraphPaging }> =
+      await graphRequest<{ data?: T[]; paging?: GraphPaging }>({
+        ...req,
+        query: { ...req.query, ...(after ? { after } : {}) },
+      });
+    if (!r.ok) {
+      if (page === 0) return r;
+      logWarn("whatsapp graph: listing ended on a failed page", {
+        path: redactPath(req.path),
+        pagesRead: page,
+        outcome: r.outcome,
+        code: r.code,
+      });
+      return { ok: true, data: { data: rows } };
+    }
+    rows.push(...(r.data.data ?? []));
+    const next = nextPage(r.data.paging);
+    if (next.kind === "last") return { ok: true, data: { data: rows } };
+    if (next.kind === "stop" || next.after === after) {
+      logWarn("whatsapp graph: listing ended early", {
+        path: redactPath(req.path),
+        pagesRead: page + 1,
+        reason: next.kind === "stop" ? next.reason : "cursor did not move",
+      });
+      return { ok: true, data: { data: rows } };
+    }
+    after = next.after;
+  }
+  logWarn("whatsapp graph: listing stopped at the page cap", {
+    path: redactPath(req.path),
+    pagesRead: maxPages,
+  });
+  return { ok: true, data: { data: rows } };
+}
+
 // ── Embedded Signup ─────────────────────────────────────────────────────────
 
 /**
@@ -236,6 +326,9 @@ export interface PhoneNumberInfo {
   is_official_business_account?: boolean;
 }
 
+const PHONE_NUMBER_FIELDS =
+  "id,display_phone_number,verified_name,name_status,quality_rating,code_verification_status,messaging_limit_tier,platform_type,status,is_official_business_account";
+
 export async function getPhoneNumber(
   token: string,
   phoneNumberId: string,
@@ -243,11 +336,36 @@ export async function getPhoneNumber(
   return graphRequest<PhoneNumberInfo>({
     path: `/${encodeURIComponent(phoneNumberId)}`,
     token,
-    query: {
-      fields:
-        "id,display_phone_number,verified_name,name_status,quality_rating,code_verification_status,messaging_limit_tier,platform_type,status,is_official_business_account",
-    },
+    query: { fields: PHONE_NUMBER_FIELDS },
   });
+}
+
+/**
+ * The phone numbers on a WABA, first page.
+ *
+ * For the Coexistence finish, which names the WABA and not the number
+ * (lib/whatsapp/connect.ts): call it only with a token already proved to
+ * reach the WABA, and what comes back is Meta's word rather than the
+ * browser's. `more` says Meta has a further page, which a caller looking for
+ * THE number reads as "not one".
+ */
+export async function listWabaPhoneNumbers(
+  token: string,
+  wabaId: string,
+): Promise<GraphResult<{ data: PhoneNumberInfo[]; more: boolean }>> {
+  const r = await graphRequest<{
+    data?: PhoneNumberInfo[];
+    paging?: GraphPaging;
+  }>({
+    path: `/${encodeURIComponent(wabaId)}/phone_numbers`,
+    token,
+    query: { fields: PHONE_NUMBER_FIELDS, limit: "25" },
+  });
+  if (!r.ok) return r;
+  return {
+    ok: true,
+    data: { data: r.data.data ?? [], more: Boolean(r.data.paging?.next) },
+  };
 }
 
 /**
@@ -367,8 +485,20 @@ export interface TemplateListRow {
   quality_score?: { score?: string };
 }
 
-/** The WABA's templates, first page (Meta pages at 100; a store's bootstrap
- *  set is under 20, so one page is the whole answer for ours). */
+/** At most this many pages of 100 templates are read per listing: 2,000
+ *  templates, well past Meta's per-WABA allowance for most businesses, and a
+ *  bound on how long a Refresh can take. */
+export const TEMPLATE_LIST_MAX_PAGES = 20;
+
+/**
+ * The WABA's templates, every page (up to TEMPLATE_LIST_MAX_PAGES).
+ *
+ * ★ EVERY PAGE, NOT THE FIRST. A WABA holds the merchant's own templates as
+ * well as StoreMink's, often authored in WhatsApp Manager long before
+ * connecting, and Meta pages at 100. Reading one page left any template past
+ * it unadopted: an "already exists" answer resolved by listing found nothing,
+ * and the row stayed PENDING with no Meta id.
+ */
 export async function listMessageTemplates(
   token: string,
   wabaId: string,
@@ -379,18 +509,23 @@ export async function listMessageTemplates(
     limit: "100",
   };
   if (names && names.length === 1) query.name = names[0];
-  return graphRequest<{ data: TemplateListRow[] }>({
-    path: `/${encodeURIComponent(wabaId)}/message_templates`,
-    token,
-    query,
-  });
+  return graphRequestPages<TemplateListRow>(
+    {
+      path: `/${encodeURIComponent(wabaId)}/message_templates`,
+      token,
+      query,
+    },
+    TEMPLATE_LIST_MAX_PAGES,
+  );
 }
 
 /**
  * Delete a template at Meta. With `hsmId` (Meta's template id) only that
  * language is deleted; by name alone Meta deletes EVERY language of the name,
- * so the id is passed whenever the row holds one. Meta answers a template it
- * does not hold with an error, which the caller reads as already gone.
+ * an approved sibling included, so deleting one row passes its id, and a row
+ * with no id is never deleted at Meta by name (templates.ts). Meta answers a
+ * template it does not hold with an error, which the caller reads as already
+ * gone.
  */
 export async function deleteMessageTemplate(
   token: string,

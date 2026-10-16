@@ -2,7 +2,11 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import { gcsConfigured, gcsDeletePrefix } from "@/lib/storage/gcs";
+import {
+  gcsConfigured,
+  gcsDeletePrefix,
+  gcsPrivateConfigured,
+} from "@/lib/storage/gcs";
 import { logWarn } from "@/lib/observability/logger";
 
 // ---------------------------------------------------------------------------
@@ -20,13 +24,19 @@ import { logWarn } from "@/lib/observability/logger";
 // opt-out with the exact words they agreed to; that record is evidence, not
 // conversation, and deleting it would forget a STOP.
 //
-// ★ MEDIA FIRST, ROWS SECOND. The bucket is public by URL, so a photo that
-// outlived its chat would be a customer's picture nobody can find to delete.
-// A conversation whose media could not be removed keeps its rows and is tried
-// again on the next run; the rest of the batch goes ahead.
+// ★ MEDIA FIRST, ROWS SECOND. A photo that outlived its chat would be a
+// customer's picture nobody can find to delete. Media lives in the private
+// bucket; older chats may still have theirs in the public one (stored before
+// the private bucket existed), so both folders are emptied. A conversation
+// whose media could not be removed keeps its rows, is marked
+// (retention_failed_at), and is left out of the oldest-first batch for
+// RETRY_FAILED_AFTER_DAYS, so one stuck chat cannot hold the batch for ever.
 // ---------------------------------------------------------------------------
 
 export const CLOSED_CONVERSATION_RETENTION_DAYS = 730;
+
+/** How long a conversation whose media could not be deleted is skipped. */
+export const RETRY_FAILED_AFTER_DAYS = 7;
 
 /** The bucket folder holding one conversation's media. */
 export function conversationMediaPrefix(
@@ -58,6 +68,8 @@ export async function pruneClosedConversations(
         from public.whatsapp_conversations c
        where c.status = 'closed'
          and coalesce(c.last_message_at, c.updated_at) < ${floorIso}::timestamptz
+         and (c.retention_failed_at is null
+              or c.retention_failed_at < now() - make_interval(days => ${RETRY_FAILED_AFTER_DAYS}))
        order by coalesce(c.last_message_at, c.updated_at)
        limit ${limit}
     `);
@@ -66,20 +78,32 @@ export async function pruneClosedConversations(
   if (doomed.length === 0) return 0;
 
   const deletable: string[] = [];
+  const stuck: string[] = [];
   for (const conversation of doomed) {
-    if (conversation.has_media && gcsConfigured) {
-      const res = await gcsDeletePrefix(
-        conversationMediaPrefix(conversation.store_id, conversation.id),
+    if (conversation.has_media) {
+      const removed = await deleteConversationMedia(
+        conversation.store_id,
+        conversation.id,
       );
-      if (res.error || res.failed > 0) {
+      if (!removed) {
         logWarn("whatsapp retention: media kept, conversation kept", {
           storeId: conversation.store_id,
-          failed: res.failed,
         });
+        stuck.push(conversation.id);
         continue;
       }
     }
     deletable.push(conversation.id);
+  }
+  if (stuck.length > 0) {
+    // Best-effort: an unmarked row is only tried again tomorrow.
+    await withService((db) =>
+      db.execute(sql`
+        update public.whatsapp_conversations
+           set retention_failed_at = now()
+         where id = any(${sql.param(stuck)}::uuid[])
+      `),
+    ).catch(() => undefined);
   }
   if (deletable.length === 0) return 0;
 
@@ -97,4 +121,26 @@ export async function pruneClosedConversations(
     `);
     return res.rowCount ?? 0;
   });
+}
+
+/**
+ * Empty one conversation's media folder in every bucket it may be in. True
+ * only when nothing could have been left behind.
+ */
+async function deleteConversationMedia(
+  storeId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const prefix = conversationMediaPrefix(storeId, conversationId);
+  let ok = true;
+  if (gcsPrivateConfigured) {
+    const res = await gcsDeletePrefix(prefix, "private");
+    if (res.error || res.failed > 0) ok = false;
+  }
+  // Media stored before the private bucket existed is in the public one.
+  if (gcsConfigured) {
+    const res = await gcsDeletePrefix(prefix, "public");
+    if (res.error || res.failed > 0) ok = false;
+  }
+  return ok;
 }

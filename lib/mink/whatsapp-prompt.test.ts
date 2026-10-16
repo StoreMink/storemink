@@ -21,6 +21,7 @@ describe("Mink WhatsApp answer prompt document", () => {
       "Include a link only if it appears in the facts",
       "untrusted",
       "never claim to be a person",
+      "Never use a long dash",
       '"outcome"',
     ]) {
       expect(template).toContain(rule);

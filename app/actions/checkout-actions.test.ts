@@ -294,6 +294,11 @@ describe("placeOrder", () => {
   });
 
   it("records the WhatsApp boxes against the delivery phone, after the order", async () => {
+    // The shopper's own signed-in number: theirs to link and to change.
+    vi.mocked(getServerUser).mockResolvedValue({
+      id: "user-1",
+      phone: "+919876543210",
+    } as any);
     await placeOrder(
       validForm,
       [oneItem()],
@@ -305,11 +310,45 @@ describe("placeOrder", () => {
       null,
       { updates: true, marketing: false },
     );
+    expect(recordWhatsAppConsent).toHaveBeenCalledTimes(1);
     expect(recordWhatsAppConsent).toHaveBeenCalledWith({
       storeId: STORE,
       phone: "9876543210",
       userId: "user-1",
+      verified: true,
       consent: { updates: true, marketing: false },
+    });
+  });
+
+  it("★★ a delivery phone that is not the shopper's: updates only, unlinked; offers go to their own number", async () => {
+    vi.mocked(getServerUser).mockResolvedValue({
+      id: "user-1",
+      phone: "+919000000001",
+    } as any);
+    await placeOrder(
+      validForm,
+      [oneItem()],
+      undefined,
+      "cod",
+      null,
+      null,
+      null,
+      null,
+      { updates: true, marketing: true },
+    );
+    expect(recordWhatsAppConsent).toHaveBeenCalledWith({
+      storeId: STORE,
+      phone: "9876543210",
+      userId: null,
+      verified: false,
+      consent: { updates: true },
+    });
+    expect(recordWhatsAppConsent).toHaveBeenCalledWith({
+      storeId: STORE,
+      phone: "+919000000001",
+      userId: "user-1",
+      verified: true,
+      consent: { marketing: true },
     });
   });
 

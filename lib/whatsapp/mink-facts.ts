@@ -16,10 +16,20 @@
 // a reply carrying a link that was not in the facts is a hand-over, because
 // an invented URL on WhatsApp is a phishing message with the shop's name on
 // it.
+//
+// ★ A READ THAT FAILED IS SAID TO HAVE FAILED. "No orders" and "we could not
+// look" are different facts: the first lets the model tell a customer they
+// have no order, the second makes it hand over, as order-status-reply.ts
+// does on the same failure.
+//
+// ★ NO LONG DASH REACHES A CUSTOMER (CODEBASE §40). The model is called
+// directly, not through callGemini, so its reply is rewritten here with
+// `withoutLongDashes` before any rule below judges it.
 // ---------------------------------------------------------------------------
 
 import { effectivePricing, formatPrice } from "@/lib/pricing";
 import { isSoldOut } from "@/lib/inventory/status";
+import { withoutLongDashes } from "@/lib/text/long-dashes";
 import {
   WEEK_DAYS,
   WEEK_DAY_LABELS,
@@ -190,6 +200,32 @@ function stockWord(sku: {
   return isSoldOut(sku) ? "sold out" : "in stock";
 }
 
+type MinkVariantLike = MinkProductLike["variants"][number];
+
+/** "500 ml / Blue": an option as the sheet names it. Pure. */
+export function optionLabel(v: MinkVariantLike): string {
+  return v.option_values.filter(Boolean).join(" / ") || "option";
+}
+
+/**
+ * The option a "can you deliver it to my PIN?" question is checked with, or
+ * null for a product without options. Pure.
+ *
+ * ★ A PRODUCT WITH OPTIONS IS CHECKED THROUGH ONE OF THEM. Its own row's
+ * online stock sums only the levels with no option (normally zero), and its
+ * stock switch is hidden in the editor once options exist, so checking the
+ * product row could call a product with options in stock "out of stock for
+ * online delivery", or a sold-out one "available". The first option that is
+ * not sold out answers for the product; when every one is, the first does,
+ * and the answer is the honest "out of stock".
+ */
+export function deliveryCheckVariant<V extends MinkVariantLike>(p: {
+  variants: V[];
+}): V | null {
+  if (p.variants.length === 0) return null;
+  return p.variants.find((v) => !isSoldOut(v)) ?? p.variants[0];
+}
+
 /** One product as a line of facts. Pure. */
 export function renderProductFact(
   p: MinkProductLike,
@@ -205,7 +241,7 @@ export function renderProductFact(
   parts.push(`${p.name}: ${fromWord}${price}`);
   if (p.variants.length > 0) {
     const options = p.variants.slice(0, 12).map((v) => {
-      const label = v.option_values.filter(Boolean).join(" / ") || "option";
+      const label = optionLabel(v);
       const selling =
         v.special_price != null && v.special_price > 0
           ? v.special_price
@@ -288,12 +324,17 @@ export interface MinkFacts {
   hours: string | null;
   /** The customer's own orders, one line each (order-status-reply's words). */
   orders: string[];
+  /** The order lookup failed: nothing is known about their orders, which is
+   *  not the same as their having none. Absent = the lookup answered. */
+  ordersUnavailable?: boolean;
   /** Matched products, one line each. */
   products: string[];
   /** Delivery to the PIN the customer named, when they named one. */
   delivery: string | null;
-  /** Running offers, one line each. */
+  /** Running offers a shopper could see, one line each. */
   offers: string[];
+  /** The offers read failed: nothing is known, not "none running". */
+  offersUnavailable?: boolean;
   policies: { title: string; text: string }[];
   recent: MinkRecentMessage[];
 }
@@ -321,7 +362,9 @@ export function renderMinkFacts(facts: MinkFacts): string {
   lines.push(
     facts.orders.length > 0
       ? `THIS CUSTOMER'S ORDERS (placed with the number they are writing from):\n${facts.orders.map((o) => `- ${o}`).join("\n")}`
-      : "THIS CUSTOMER'S ORDERS: none found for the number they are writing from.",
+      : facts.ordersUnavailable
+        ? "THIS CUSTOMER'S ORDERS: could not be looked up just now, so nothing is known about them."
+        : "THIS CUSTOMER'S ORDERS: none found for the number they are writing from.",
   );
   lines.push("");
   lines.push(
@@ -337,7 +380,9 @@ export function renderMinkFacts(facts: MinkFacts): string {
   lines.push(
     facts.offers.length > 0
       ? `OFFERS RUNNING NOW:\n${facts.offers.map((o) => `- ${o}`).join("\n")}`
-      : "OFFERS RUNNING NOW: none.",
+      : facts.offersUnavailable
+        ? "OFFERS RUNNING NOW: could not be checked just now, so nothing is known about them."
+        : "OFFERS RUNNING NOW: none.",
   );
   if (facts.policies.length > 0) {
     lines.push("");
@@ -412,6 +457,10 @@ const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
  * shape; turns an answer into a hand-over when the reply breaks a rule it
  * cannot be allowed to break (a link not in the facts, a template token, a
  * reply too long to be a chat message). Pure.
+ *
+ * ★ The reply and the reason are rewritten without long dashes FIRST, so the
+ * length and link rules judge exactly the words a customer (or the staff card)
+ * will read.
  */
 export function parseMinkWhatsAppAnswer(
   raw: unknown,
@@ -429,11 +478,11 @@ export function parseMinkWhatsAppAnswer(
   if (typeof r.reply !== "string") return null;
   const reason =
     typeof r.reason === "string"
-      ? r.reason.replace(/\s+/g, " ").trim().slice(0, 120)
+      ? withoutLongDashes(r.reason).replace(/\s+/g, " ").trim().slice(0, 120)
       : "";
-  let reply = r.reply
-    .replace(/\r\n?/g, "\n")
-    .replace(/\*\*|__|^#+\s*/gm, "")
+  let reply = withoutLongDashes(
+    r.reply.replace(/\r\n?/g, "\n").replace(/\*\*|__|^#+\s*/gm, ""),
+  )
     .replace(/[ \t]+\n/g, "\n")
     .trim();
   if (CONTROL_CHARS.test(reply)) return null;

@@ -148,9 +148,46 @@ describe("sweepCodConfirmations: the reminder", () => {
   });
 });
 
+describe("sweepCodConfirmations: who it may act for", () => {
+  // ★★ After Disconnect a tap never arrives (row deleted, app unsubscribed);
+  // with needs_reauth the token is dead; while paused nothing can answer and
+  // the worker refuses the reminder. Cancelling "not confirmed" orders then
+  // cancels customers who had no fair chance to confirm.
+  it("★★ both reads require the store's number connected and switched on", async () => {
+    const mock = setup({});
+    await sweepCodConfirmations();
+    // The reminder read, then the cancellation read.
+    expect(mock.calls.execute).toHaveLength(2);
+    for (const query of mock.calls.execute) {
+      const text = sqlText(query);
+      expect(text).toMatch(
+        /join public\.store_whatsapp_accounts a on a\.store_id = o\.store_id/,
+      );
+      expect(text).toMatch(/a\.status = 'connected'/);
+      expect(text).toMatch(/and a\.enabled and/);
+    }
+  });
+
+  // An 'undelivered' message was never seen, so "not confirmed" says nothing.
+  it("★★ never reminds or cancels an order whose message was not delivered", async () => {
+    const mock = setup({ remind: [CANDIDATE] });
+    await sweepCodConfirmations();
+    for (const query of [mock.calls.execute[0], mock.calls.execute[2]]) {
+      const text = sqlText(query);
+      expect(text).toMatch(/o\.cod_confirmation = 'requested'/);
+      expect(text).not.toMatch(/undelivered/);
+      expect(text).not.toMatch(/cod_confirmation in/i);
+    }
+    // The reminder's claim re-checks the same single state.
+    const claim = dialect.sqlToQuery(mock.calls.where[0]).params;
+    expect(claim).toContain("requested");
+    expect(claim).not.toContain("undelivered");
+  });
+});
+
 describe("sweepCodConfirmations: the automatic cancellation", () => {
   it("★ cancels through the one cancellation, as the system, moving no money", async () => {
-    const mock = setup({ cancel: [CANDIDATE] });
+    setup({ cancel: [CANDIDATE] });
     const r = await sweepCodConfirmations();
     expect(r).toEqual({ reminded: 0, cancelled: 1, failed: 0 });
     expect(approveCancellation).toHaveBeenCalledWith(
@@ -167,9 +204,17 @@ describe("sweepCodConfirmations: the automatic cancellation", () => {
         notifyInline: true,
       }),
     );
-    expect(mock.calls.set).toContainEqual(
-      expect.objectContaining({ codConfirmation: "expired" }),
-    );
+  });
+
+  // ★★ The 'expired' label is the cancellation claim's own (approve-
+  // cancellation.test.ts). Written here afterwards, a Confirm tap handled
+  // while the cancellation ran read a cancelled order still 'requested' and
+  // was told "already cancelled", with nobody asked to look.
+  it("★★ writes no label of its own after the cancellation", async () => {
+    const mock = setup({ cancel: [CANDIDATE] });
+    await sweepCodConfirmations();
+    expect(mock.calls.update).toHaveLength(0);
+    expect(mock.calls.set).toHaveLength(0);
   });
 
   it("★★ an order confirmed a moment before is left alone and not labelled", async () => {
@@ -177,9 +222,7 @@ describe("sweepCodConfirmations: the automatic cancellation", () => {
     const mock = setup({ cancel: [CANDIDATE] });
     const r = await sweepCodConfirmations();
     expect(r.cancelled).toBe(0);
-    expect(mock.calls.set).not.toContainEqual(
-      expect.objectContaining({ codConfirmation: "expired" }),
-    );
+    expect(mock.calls.update).toHaveLength(0);
   });
 
   it("★ only where the store switched it on, and 48 to 72 hours after the message", async () => {

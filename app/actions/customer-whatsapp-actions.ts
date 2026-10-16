@@ -91,15 +91,26 @@ export async function setMyWhatsAppPreferences(
   if (!phone) {
     return { ok: false, error: "Your account has no mobile number." };
   }
-  await recordWhatsAppConsent({
+  // The session's own phone, so the choices are the owner's to make.
+  const saved = await recordWhatsAppConsent({
     storeId: store.id,
     phone,
     userId: user.id,
+    verified: true,
     consent: {
       updates: Boolean(input?.updates),
       marketing: Boolean(input?.marketing),
     },
     surface: "account",
   });
+  // ★ The real outcome: a store paused since the page loaded, or a failed
+  // write, used to answer "Saved." for a change nobody recorded.
+  if (!saved.ok) {
+    return {
+      ok: false,
+      error:
+        "Couldn't save your WhatsApp choices. The store may have paused WhatsApp; try again later.",
+    };
+  }
   return { ok: true };
 }

@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { escapeHtml } from "@/lib/email/coupon-campaign";
-import { variableNamesFor } from "./variables";
+import { variableNamesFor, withVariableFallbacks } from "./variables";
 import { formatVariable } from "./format";
 
 /** {{ token }} — whitespace tolerated, token limited to a safe charset. */
@@ -154,7 +154,10 @@ export function templateValues(
     values[name] = formatVariable(name, value, currency);
   }
 
-  return values;
+  // A value an emitter did not supply may stand in for another it did:
+  // {{amount_due}} is the total when no store credit was involved (a till
+  // sale, an order placed before the field existed), never a blank.
+  return withVariableFallbacks(eventKey, values);
 }
 
 function camelToSnake(key: string): string {

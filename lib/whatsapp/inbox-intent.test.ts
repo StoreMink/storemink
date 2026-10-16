@@ -34,6 +34,17 @@ describe("classifyWhatsAppInbound", () => {
     expect(classifyWhatsAppInbound("शुरू करो")).toBe("start");
   });
 
+  it("★ a danda ends a Hindi sentence like a full stop", () => {
+    // The Devanagari block holds । and ॥ beside its letters; kept, they
+    // glued onto the last word and "बंद करो।" was not an opt-out.
+    expect(classifyWhatsAppInbound("बंद करो।")).toBe("stop");
+    expect(classifyWhatsAppInbound("बंद करो॥")).toBe("stop");
+    expect(classifyWhatsAppInbound("बंद।")).toBe("stop");
+    expect(classifyWhatsAppInbound("कृपया मत भेजो।")).toBe("stop");
+    expect(classifyWhatsAppInbound("शुरू करो।")).toBe("start");
+    expect(classifyWhatsAppInbound("मेनू।")).toBe("menu");
+  });
+
   it("reads START and its friends", () => {
     expect(classifyWhatsAppInbound("START")).toBe("start");
     expect(classifyWhatsAppInbound("subscribe")).toBe("start");
@@ -85,6 +96,60 @@ describe("classifyWhatsAppInbound: where is my order", () => {
       "can you change the address on my order",
     ]) {
       expect(classifyWhatsAppInbound(body), body).toBe("other");
+    }
+  });
+
+  it("★ a negation goes to a person however its apostrophe is typed", () => {
+    // Each would be a status question without its negation; answering one
+    // with "Delivered on 12 Oct" would dismiss the complaint.
+    for (const body of [
+      "my order wasn't delivered",
+      "my order wasn’t delivered",
+      "my order wasnʼt delivered",
+      "My order wasnt delivered",
+      "my order wasn t delivered",
+      "my order hasn't shipped yet",
+      "why hasnt my order shipped",
+      "my order isn't delivered yet",
+      "my order won't arrive?",
+      "my order won’t arrive",
+      "why doesn't my order show tracking",
+      "my orders aren't delivered",
+      "I can't track my order",
+      "cannot track my order",
+      "I don't know where my order is",
+      "nobody delivered my order",
+      "still nothing, where is my order",
+      // The apostrophe a letter early, and chat shorthand.
+      "my order did'nt arrive",
+      "my order is’nt delivered",
+      "order dint arrive",
+      "order dnt come yet where is it",
+      "i havnt got my order",
+      "hvnt received my order",
+    ]) {
+      expect(classifyWhatsAppInbound(body), body).toBe("other");
+    }
+  });
+
+  it("★ the Hindi negations hold under a danda and in chat spelling", () => {
+    for (const body of [
+      "मेरा ऑर्डर कहाँ है? अभी तक आया नहीं।",
+      "ऑर्डर कब आएगा? अभी तक आया नहीँ",
+      "mera order kahan hai, abhi tak nai aaya",
+    ]) {
+      expect(classifyWhatsAppInbound(body), body).toBe("other");
+    }
+  });
+
+  it("'can' and an order 'no.' are not negations: still a status question", () => {
+    for (const body of [
+      "when can I expect my order",
+      "can you track my order",
+      "Order no. 1234 status",
+      "order no 1234 kab aayega",
+    ]) {
+      expect(classifyWhatsAppInbound(body), body).toBe("order_status");
     }
   });
 

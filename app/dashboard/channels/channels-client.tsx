@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import {
+  useMemo,
+  useState,
+  useTransition,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -206,6 +212,29 @@ const CATEGORY_BADGE: Record<Category, string> = {
   marketplace: "bg-orange-50 text-orange-700",
 };
 
+/**
+ * A channel's state, seeded from the server and re-seeded whenever the server
+ * sends it again.
+ *
+ * ★ router.refresh() RE-RENDERS THE PAGE BUT KEEPS CLIENT STATE, and a
+ * useState initialiser runs once, so a copy taken on the first render never
+ * saw the refreshed props: after connecting, Refresh from Meta or Set up
+ * templates the card and modal kept the facts the actions had patched in by
+ * hand (no verified name or QR box, old template counts, still "Live" after
+ * Refresh had found a revoked token) until a full reload. The local setter
+ * still applies an action's result at once; the next server answer replaces
+ * it. Re-seeded during render, React's pattern for state that follows a prop.
+ */
+function useServerState<T>(server: T): [T, Dispatch<SetStateAction<T>>] {
+  const [state, setState] = useState(server);
+  const [seeded, setSeeded] = useState(server);
+  if (seeded !== server) {
+    setSeeded(server);
+    setState(server);
+  }
+  return [state, setState];
+}
+
 // Small iOS-style toggle used on active channel cards.
 function Toggle({
   on,
@@ -257,12 +286,15 @@ export function ChannelsClient({
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [state, setState] = useState(initialState);
-  const [shiprocketState, setShiprocketState] = useState(
+  // Every channel follows the server after a refresh (useServerState); each
+  // action's own result still lands at once through the setter.
+  const [state, setState] = useServerState(initialState);
+  const [shiprocketState, setShiprocketState] = useServerState(
     initialShiprocketState,
   );
-  const [smsState, setSmsState] = useState(initialSmsState);
-  const [whatsAppState, setWhatsAppState] = useState(initialWhatsAppState);
+  const [smsState, setSmsState] = useServerState(initialSmsState);
+  const [whatsAppState, setWhatsAppState] =
+    useServerState(initialWhatsAppState);
   const [tab, setTab] = useState<"all" | Category>("all");
   const [query, setQuery] = useState("");
   // Which channel's connect/manage modal is open.

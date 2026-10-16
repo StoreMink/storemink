@@ -395,6 +395,9 @@ function ConnectedView({
               {state.templates.pending > 0
                 ? ` · ${state.templates.pending} still in review`
                 : ""}
+              {state.templates.unsubmitted > 0
+                ? ` · ${state.templates.unsubmitted} still to submit`
+                : ""}
               . Meta usually answers within a day; each message sends only once
               its template is approved. Which message goes to whom is under
               Settings → Notifications.{" "}
@@ -407,18 +410,20 @@ function ConnectedView({
               to see every one, with Meta&apos;s answer, and to add your own.
             </p>
           </div>
-          {canManage &&
-            state.templates.approved + state.templates.pending <
-              state.templates.total && (
-              <button
-                type="button"
-                onClick={onSetupTemplates}
-                disabled={busy || reauth}
-                className="shrink-0 rounded-md border border-[rgba(17,24,39,0.16)] px-3 py-1.5 text-xs font-medium text-[#111827] hover:bg-[#f9fafb] disabled:opacity-50"
-              >
-                Set up templates
-              </button>
-            )}
+          {/* ★ Offered whenever Meta holds nothing for a template: never
+              submitted, refused or unanswered at submission, or reset by a
+              WABA change. Such a row is PENDING too, so "approved + in
+              review < total" hid the one button that resubmits it. */}
+          {canManage && state.templates.unsubmitted > 0 && (
+            <button
+              type="button"
+              onClick={onSetupTemplates}
+              disabled={busy || reauth}
+              className="shrink-0 rounded-md border border-[rgba(17,24,39,0.16)] px-3 py-1.5 text-xs font-medium text-[#111827] hover:bg-[#f9fafb] disabled:opacity-50"
+            >
+              Set up templates
+            </button>
+          )}
         </div>
       </div>
 

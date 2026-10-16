@@ -186,6 +186,22 @@ describe("connectWhatsApp", () => {
     expect(connectWhatsAppAccount).not.toHaveBeenCalled();
   });
 
+  it("★ hands a Coexistence finish with no number to the connect flow as an empty id", async () => {
+    const r = await connectWhatsApp({
+      ...POPUP,
+      phoneNumberId: null,
+      coexistence: true,
+    });
+    expect(r.success).toBe(true);
+    expect(connectWhatsAppAccount).toHaveBeenCalledWith({
+      storeId: "store-1",
+      code: "CODE",
+      wabaId: POPUP.wabaId,
+      phoneNumberId: "",
+      coexistence: true,
+    });
+  });
+
   it("surfaces the connect flow's own error", async () => {
     vi.mocked(connectWhatsAppAccount).mockResolvedValue({
       ok: false,
@@ -285,12 +301,30 @@ describe("template versions", () => {
       selectByTable: {
         store_whatsapp_accounts: [ACCOUNT],
         stores: [BASIC_STORE],
-        whatsapp_templates: [[{ status: "PENDING", n: 19 }]],
+        whatsapp_templates: [
+          [
+            ...WHATSAPP_TEMPLATE_CATALOG.map((t) => ({
+              name: t.name,
+              language: t.language,
+              status: "PENDING",
+              providerTemplateId: `meta-${t.name}`,
+            })),
+            // An old version's row is history, never counted.
+            {
+              name: V1,
+              language: "en",
+              status: "REJECTED",
+              providerTemplateId: "meta-old",
+            },
+          ],
+        ],
       },
     });
     const s = await getWhatsAppChannelState();
-    expect(s.templates).toMatchObject({
-      pending: 19,
+    expect(s.templates).toEqual({
+      approved: 0,
+      pending: WHATSAPP_TEMPLATE_CATALOG.length,
+      unsubmitted: 0,
       total: WHATSAPP_TEMPLATE_CATALOG.length,
     });
     const params = dbHolder.current.calls.where.flatMap((w: any) =>
@@ -298,6 +332,64 @@ describe("template versions", () => {
     );
     expect(params).toContain(V2);
     expect(params).not.toContain(V1);
+  });
+
+  it("★★ a template Meta holds nothing for is still to submit, never 'in review'", async () => {
+    const [refused, unanswered, missing, inReview, approved, ...rest] =
+      WHATSAPP_TEMPLATE_CATALOG;
+    const tpl = (
+      t: (typeof WHATSAPP_TEMPLATE_CATALOG)[number],
+      status: string,
+      providerTemplateId: string | null,
+    ) => ({ name: t.name, language: t.language, status, providerTemplateId });
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        store_whatsapp_accounts: [ACCOUNT],
+        stores: [BASIC_STORE],
+        whatsapp_templates: [
+          [
+            // Refused at submission and never answered: PENDING, no Meta id.
+            tpl(refused!, "PENDING", null),
+            tpl(unanswered!, "PENDING", null),
+            // (`missing` has no row at all.)
+            tpl(inReview!, "PENDING", "meta-1"),
+            tpl(approved!, "APPROVED", "meta-2"),
+            ...rest.map((t) => tpl(t, "APPROVED", `meta-${t.name}`)),
+          ],
+        ],
+      },
+    });
+    void missing;
+    const s = await getWhatsAppChannelState();
+    expect(s.templates).toEqual({
+      approved: WHATSAPP_TEMPLATE_CATALOG.length - 4,
+      pending: 1,
+      unsubmitted: 3,
+      total: WHATSAPP_TEMPLATE_CATALOG.length,
+    });
+  });
+
+  it("a REJECTED template Meta reviewed is neither in review nor to submit", async () => {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        store_whatsapp_accounts: [ACCOUNT],
+        stores: [BASIC_STORE],
+        whatsapp_templates: [
+          WHATSAPP_TEMPLATE_CATALOG.map((t) => ({
+            name: t.name,
+            language: t.language,
+            status: "REJECTED",
+            providerTemplateId: `meta-${t.name}`,
+          })),
+        ],
+      },
+    });
+    const s = await getWhatsAppChannelState();
+    expect(s.templates).toMatchObject({
+      approved: 0,
+      pending: 0,
+      unsubmitted: 0,
+    });
   });
 });
 

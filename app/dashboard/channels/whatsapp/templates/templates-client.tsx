@@ -56,10 +56,19 @@ const STATUS_LABEL: Record<string, { label: string; tone: string }> = {
   LIMIT_EXCEEDED: { label: "Limit reached", tone: "text-red-700 bg-red-50" },
 };
 
-function statusOf(status: string) {
+/** A row Meta never accepted (refused at submission, or reset when the
+ *  account moved to another WhatsApp Business account) is not "in review":
+ *  nothing is waiting on Meta, and its note says what to do. */
+const NOT_SUBMITTED = {
+  label: "Not submitted",
+  tone: "text-amber-700 bg-amber-50",
+};
+
+function statusOf(t: Pick<ManagedTemplate, "status" | "submitted">) {
+  if (!t.submitted && t.status !== "APPROVED") return NOT_SUBMITTED;
   return (
-    STATUS_LABEL[status] ?? {
-      label: status.toLowerCase().replace(/_/g, " "),
+    STATUS_LABEL[t.status] ?? {
+      label: t.status.toLowerCase().replace(/_/g, " "),
       tone: "text-[var(--dash-text-3)] bg-[rgba(17,24,39,0.06)]",
     }
   );
@@ -528,7 +537,9 @@ export function TemplatesClient({
   const remove = async (t: ManagedTemplate) => {
     if (
       !window.confirm(
-        `Delete "${t.name}" (${languageLabel(t.language)})? Meta forgets it too, and the inbox can no longer send it.`,
+        t.submitted
+          ? `Delete "${t.name}" (${languageLabel(t.language)})? Meta forgets it too, and the inbox can no longer send it.`
+          : `Delete "${t.name}" (${languageLabel(t.language)})? Meta never received it, so it is removed only here.`,
       )
     ) {
       return;
@@ -597,7 +608,7 @@ export function TemplatesClient({
 
       <ul className="flex flex-col gap-3" aria-label="Templates">
         {view.templates.map((t) => {
-          const status = statusOf(t.status);
+          const status = statusOf(t);
           return (
             <li key={t.id} className="dash-card">
               <div className="dash-card-body flex flex-col gap-2">

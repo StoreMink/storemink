@@ -90,6 +90,64 @@ describe("approveCancellation", () => {
     expect(claimSql()).not.toContain("cod_confirmation");
   });
 
+  const claimParams = () =>
+    new PgDialect().sqlToQuery(dbHolder.current.calls.where[0]).params;
+
+  // ★★ The sweep reads only pending orders, but staff (or a Shiprocket
+  // booking) can move one to processing before this claim runs. That order
+  // is one the shop has decided to ship; cancelling and restocking it would
+  // overrule them.
+  it("★★ the COD auto-cancel claims only a PENDING order, never a processing one", async () => {
+    await approveCancellation(input({ onlyWhileCodAwaited: true }));
+    expect(claimSql()).toMatch(/"orders"\."status" = \$\d/);
+    expect(claimSql()).not.toMatch(/"orders"\."status" in/);
+    expect(claimParams()).toContain("pending");
+    expect(claimParams()).not.toContain("processing");
+  });
+
+  it("an ordinary cancellation still claims a processing order", async () => {
+    await approveCancellation(input());
+    expect(claimSql()).toMatch(/"orders"\."status" in \(/);
+    expect(claimParams()).toEqual(
+      expect.arrayContaining(["pending", "processing"]),
+    );
+  });
+
+  // ★★ Written after the cancellation, the label left a window (and, on a
+  // failed write, for ever) in which a Confirm tap read a cancelled order
+  // still 'requested' and got "already cancelled" with nobody asked to look.
+  it("★★ the COD auto-cancel labels the order 'expired' in the statement that cancels it", async () => {
+    await approveCancellation(input({ onlyWhileCodAwaited: true }));
+    expect(dbHolder.current.calls.update).toHaveLength(1);
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      status: "cancelled",
+      codConfirmation: "expired",
+    });
+    expect(dbHolder.current.calls.set[0]).toHaveProperty("codConfirmationAt");
+  });
+
+  it("an ordinary cancellation leaves the COD answer alone", async () => {
+    await approveCancellation(input());
+    expect(dbHolder.current.calls.set[0]).not.toHaveProperty("codConfirmation");
+    expect(dbHolder.current.calls.set[0]).not.toHaveProperty(
+      "codConfirmationAt",
+    );
+  });
+
+  // ★★ A decline is final (cancellation.ts). The check is in the claim, so a
+  // decline that lands after the caller's own read still wins.
+  it("★★ a cancellation the customer started never overrides a declined request", async () => {
+    await approveCancellation(input({ fromRequest: true }));
+    expect(claimSql()).toMatch(
+      /"cancellation_status" is distinct from 'declined'/,
+    );
+  });
+
+  it("the merchant's own Cancel can still cancel after declining a request", async () => {
+    await approveCancellation(input());
+    expect(claimSql()).not.toContain("cancellation_status");
+  });
+
   it("an automatic cancellation is recorded as the system", async () => {
     await approveCancellation(
       input({ bySystem: true, actorId: null, actorLabel: "Not confirmed" }),

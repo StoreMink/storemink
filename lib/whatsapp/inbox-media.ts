@@ -1,7 +1,10 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { gcsConfigured, gcsUploadObject } from "@/lib/storage/gcs";
+import {
+  gcsPrivateConfigured,
+  gcsPrivateUploadObject,
+} from "@/lib/storage/gcs";
 import { logError } from "@/lib/observability/logger";
 import { withService } from "@/lib/db/client";
 import { uploadMedia } from "./graph";
@@ -122,6 +125,9 @@ export async function prepareOutboundMedia(
         fit: "inside",
         withoutEnlargement: true,
       })
+      // ★ JPEG has no alpha: without this a transparent PNG or WebP (a
+      // product cutout, a logo with dark text) is composited onto BLACK.
+      .flatten({ background: "#ffffff" })
       .jpeg({ quality: 85, mozjpeg: true })
       .toBuffer();
   } catch {
@@ -175,7 +181,7 @@ export async function sendInboxMedia(
       error: `A caption can be at most ${INBOX_CAPTION_MAX} characters.`,
     };
   }
-  if (!gcsConfigured) {
+  if (!gcsPrivateConfigured) {
     return { ok: false, error: "File storage is not set up on this server." };
   }
 
@@ -201,12 +207,8 @@ export async function sendInboxMedia(
     input.media.ext,
   );
   try {
-    await gcsUploadObject(
-      path,
-      input.media.bytes,
-      input.media.mime,
-      "private, max-age=0",
-    );
+    // ★ The private bucket, like an inbound file (inbox.ts storeInboundMedia).
+    await gcsPrivateUploadObject(path, input.media.bytes, input.media.mime);
   } catch (err) {
     logError("inbox: media copy failed", err, { storeId: input.storeId });
     return { ok: false, error: "Couldn't store the file. Try again." };

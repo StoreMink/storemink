@@ -11,6 +11,8 @@ import {
   processPendingInboundEvents,
   recordWebhookDelivery,
 } from "@/lib/whatsapp/inbound";
+import { whatsappConfig } from "@/lib/whatsapp/config";
+import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 
 /**
@@ -46,7 +48,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN ?? "";
+  // Through the one config reader, which trims: a secret version saved with
+  // a trailing newline would otherwise let Connect work (it reads the same
+  // reader) while every webhook failed its check.
+  const verifyToken = whatsappConfig().verifyToken;
   if (!verifyToken) {
     logWarn("whatsapp webhook: WHATSAPP_VERIFY_TOKEN not set");
     return NextResponse.json({ error: "not configured" }, { status: 503 });
@@ -68,7 +73,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const appSecret = process.env.WHATSAPP_APP_SECRET ?? "";
+  const appSecret = whatsappConfig().appSecret;
   if (!appSecret) {
     logWarn("whatsapp webhook: WHATSAPP_APP_SECRET not set; delivery refused");
     return NextResponse.json({ error: "not configured" }, { status: 503 });
@@ -118,10 +123,14 @@ export async function POST(request: Request) {
 
   if (recorded.inserted > 0) {
     // Processing after the response, so Meta's deadline is never spent on
-    // our database; the heartbeat drains anything this misses.
+    // our database; the send-emails heartbeat drains anything this misses
+    // (drainInboundEvents), including rows waiting out a retry backoff.
     after(async () => {
       try {
-        await processPendingInboundEvents();
+        const processed = await processPendingInboundEvents();
+        // A failed WhatsApp released the SMS held behind it: send it now,
+        // not at the next heartbeat (dev has no scheduler at all).
+        if (processed.smsReleased > 0) await triggerEmailWorker();
       } catch (err) {
         logError("whatsapp webhook: deferred processing failed", err);
       }

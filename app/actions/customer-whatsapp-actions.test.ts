@@ -13,7 +13,9 @@ vi.mock("@/lib/whatsapp/channel", () => ({
   consented: (a: string | null, b: string | null) =>
     Boolean(a) && (!b || new Date(b).getTime() < new Date(a!).getTime()),
 }));
-vi.mock("@/lib/whatsapp/consent", () => ({ recordWhatsAppConsent: vi.fn() }));
+vi.mock("@/lib/whatsapp/consent", () => ({
+  recordWhatsAppConsent: vi.fn(async () => ({ ok: true })),
+}));
 
 import {
   getMyWhatsAppPreferences,
@@ -85,9 +87,20 @@ describe("setMyWhatsAppPreferences", () => {
       storeId: "s1",
       phone: "+919876543210",
       userId: "u1",
+      verified: true,
       consent: { updates: false, marketing: true },
       surface: "account",
     });
+  });
+
+  it("★ says so when the choice was not recorded, never 'Saved.'", async () => {
+    vi.mocked(recordWhatsAppConsent).mockResolvedValueOnce({ ok: false });
+    const r = await setMyWhatsAppPreferences({
+      updates: true,
+      marketing: false,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/Couldn't save/);
   });
   it("refuses when signed out", async () => {
     vi.mocked(getServerUser).mockResolvedValueOnce(null);

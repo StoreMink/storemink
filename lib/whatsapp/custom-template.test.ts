@@ -237,6 +237,47 @@ describe("validateCustomTemplate", () => {
     });
   });
 
+  it("★ a quick reply worded like STOP or START is only for a marketing template", () => {
+    // A tap is read by its label (inbox.ts): "Stop" records an offers opt-out
+    // and is answered automatically, so on a utility template it would hide a
+    // customer's "stop my subscription" from the shop.
+    for (const text of [
+      "Stop",
+      "STOP promotions",
+      "Unsubscribe",
+      "Subscribe",
+    ]) {
+      expect(
+        validateCustomTemplate(
+          draft({
+            category: "UTILITY",
+            buttons: [{ type: "quick_reply", text }],
+          }),
+        ),
+      ).toMatchObject({ ok: false, error: expect.stringContaining(text) });
+      expect(
+        validateCustomTemplate(
+          draft({
+            category: "MARKETING",
+            buttons: [{ type: "quick_reply", text }],
+          }),
+        ).ok,
+      ).toBe(true);
+    }
+    // Ordinary wording is untouched, and a link button is never a tap.
+    expect(
+      validateCustomTemplate(
+        draft({
+          category: "UTILITY",
+          buttons: [
+            { type: "quick_reply", text: "Stop my order" },
+            { type: "url", text: "Stop", url: "https://acme.test/help" },
+          ],
+        }),
+      ).ok,
+    ).toBe(true);
+  });
+
   it("language and kind come from the lists", () => {
     expect(validateCustomTemplate(draft({ language: "xx" }))).toMatchObject({
       ok: false,

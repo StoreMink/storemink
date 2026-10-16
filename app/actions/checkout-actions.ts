@@ -81,13 +81,16 @@ import {
   recordStorePolicyConsent,
   getCheckoutPolicies,
 } from "@/lib/legal/store-consent";
-import { recordWhatsAppConsent } from "@/lib/whatsapp/consent";
+import {
+  recordWhatsAppConsent,
+  storedWhatsAppConsent,
+} from "@/lib/whatsapp/consent";
 import { storeCanSendWhatsApp } from "@/lib/whatsapp/channel";
 import type { WhatsAppConsentInput } from "@/lib/whatsapp/consent-copy";
 import { summariseItems } from "@/lib/notifications/format";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
 import type { OrderPlacedEvent } from "@/lib/orders/mark-paid";
-import { formatIndianMobile } from "@/lib/phone";
+import { formatIndianMobile, textablePhone } from "@/lib/phone";
 import {
   rowToBillingSettings,
   rowToTaxClass,
@@ -677,6 +680,9 @@ export interface CheckoutConfig {
    *  opt-in boxes ONLY then (docs/whatsapp-commerce-plan.md §19.2): no consent
    *  is collected for a channel that cannot deliver. */
   whatsapp: boolean;
+  /** What the signed-in shopper's own number has already said, so the boxes
+   *  start from it rather than the defaults; null = never answered. */
+  whatsappConsent: WhatsAppConsentInput | null;
   /** True while the store has not opened and this visitor holds no password
    *  grant; placeOrder refuses in that state. Courtesy only, like `demo`. */
   closed: boolean;
@@ -696,6 +702,8 @@ export async function getCheckoutConfig(): Promise<CheckoutConfig> {
     user ? getCreditBalance(store.id, user.id) : Promise.resolve(0),
     storeCanSendWhatsApp(store.id),
   ]);
+  const whatsappConsent =
+    whatsapp && user ? await storedWhatsAppConsent(store.id, user.phone) : null;
   return {
     onlinePayments: !!creds,
     keyId: creds?.keyId ?? null,
@@ -703,6 +711,7 @@ export async function getCheckoutConfig(): Promise<CheckoutConfig> {
     storeCredit,
     demo: isDemoStore(store),
     whatsapp,
+    whatsappConsent,
     closed:
       isStorefrontGated(store) && (await storefrontAccess(store)) === "locked",
   };
@@ -1919,6 +1928,13 @@ export async function placeOrder(
           ? sql`now() + make_interval(days => ${readyDays + holdDays})`
           : null,
         notes,
+        // The WhatsApp updates box for THIS order (0211): false stops this
+        // order's WhatsApp updates whatever the number's consent says (a
+        // gift's recipient is not told about the surprise). Null when the
+        // boxes were not shown.
+        whatsappUpdates: whatsappConsent
+          ? Boolean(whatsappConsent.updates)
+          : null,
         // This order goes through the reserve flow below; mark it so that
         // cancellation restocks it exactly once (and never restocks legacy
         // orders, which stay 'none'). If the reserve loop fails, the order row
@@ -2275,18 +2291,38 @@ export async function placeOrder(
     policies: await getCheckoutPolicies(storeId),
   });
 
-  // The WhatsApp boxes, against the number this order will be updated on.
-  // Same placement and the same best-effort rule as the policy consent above.
+  // The WhatsApp boxes. Same placement and the same best-effort rule as the
+  // policy consent above.
+  //
+  // ★ UPDATES go with the number this order's updates go to (the phone typed
+  // here, the owner's decision of 2026-10-16); OFFERS go with the shopper's
+  // own number. Only when the typed phone IS the shopper's signed-in phone is
+  // it theirs to link and to change both ways (lib/whatsapp/consent.ts).
   if (whatsappConsent) {
+    const accountPhone = textablePhone(user.phone);
+    const own =
+      accountPhone !== null && textablePhone(form.phone) === accountPhone;
     await recordWhatsAppConsent({
       storeId,
       phone: form.phone,
-      userId: user.id,
-      consent: {
-        updates: Boolean(whatsappConsent.updates),
-        marketing: Boolean(whatsappConsent.marketing),
-      },
+      userId: own ? user.id : null,
+      verified: own,
+      consent: own
+        ? {
+            updates: Boolean(whatsappConsent.updates),
+            marketing: Boolean(whatsappConsent.marketing),
+          }
+        : { updates: Boolean(whatsappConsent.updates) },
     });
+    if (!own && accountPhone) {
+      await recordWhatsAppConsent({
+        storeId,
+        phone: accountPhone,
+        userId: user.id,
+        verified: true,
+        consent: { marketing: Boolean(whatsappConsent.marketing) },
+      });
+    }
   }
 
   // True when money still has to come through the gateway before this order is
@@ -2339,6 +2375,10 @@ export async function placeOrder(
     customerId: user.id,
     payload: {
       total,
+      // What the courier collects on a cash-on-delivery order: store credit
+      // already paid part of it (orders.total stays the full goods value,
+      // §29), so "Amount to pay on delivery" must not quote the total.
+      amountDue: Math.max(0, Math.round((total - creditApplied) * 100) / 100),
       currency: "INR",
       items: summariseItems(orderItemsToInsert),
       // ★ HOW IT WAS PAID, not what was picked at checkout. Credit covering the

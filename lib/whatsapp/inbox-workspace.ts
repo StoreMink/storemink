@@ -5,6 +5,8 @@
 // same function again before it writes.
 // ---------------------------------------------------------------------------
 
+import type { InboxTemplateOption } from "./inbox-types";
+
 export const INBOX_LABEL_COLORS = [
   "grey",
   "red",
@@ -114,7 +116,51 @@ export function fillCannedReply(
   customer: { name: string | null },
 ): string {
   const first = (customer.name ?? "").trim().split(/\s+/)[0] ?? "";
-  return body.replace(/ ?\{\{\s*name\s*\}\}/g, first ? ` ${first}` : "");
+  const filled = first ? ` ${first}` : "";
+  // ★ A replacer FUNCTION, never a replacement string: the name is the
+  // customer's own WhatsApp profile name, and in a string `$&`, `$'`, `` $` ``
+  // and `$$` are patterns, so "$'" would repeat the rest of the message.
+  return body.replace(/ ?\{\{\s*name\s*\}\}/g, () => filled);
+}
+
+/** A reply template as the inbox gets it: the picker's option plus Meta's
+ *  category, which decides who it may go to (templateBlockedReason). */
+export interface InboxReplyTemplate extends InboxTemplateOption {
+  /** As Meta filed it: MARKETING, UTILITY or AUTHENTICATION. */
+  category: string;
+}
+
+/** Meta files a promotional template as MARKETING. */
+export function isMarketingTemplate(
+  category: string | null | undefined,
+): boolean {
+  return (category ?? "").trim().toUpperCase() === "MARKETING";
+}
+
+/**
+ * Why a template cannot go to this customer, or null when it can.
+ *
+ * ★ A MARKETING TEMPLATE NEEDS THE CUSTOMER'S YES TO OFFERS, IN FORCE. STOP
+ * withdraws it (the customer is told they will get no more offers), and a
+ * customer who never agreed has nothing to withdraw. Utility templates (an
+ * order update, a delivery delay) are not offers and are not held back here.
+ * The server decides `inForce` with `consented()` (channel.ts); the picker
+ * reads the same answer off the thread (`customer.consent.marketing`), so the
+ * two agree on WHICH templates are held back. `optedOut` only sharpens the
+ * sentence: the server knows which of the two it is, the screen says both.
+ */
+export function templateBlockedReason(
+  category: string | null | undefined,
+  offers: { inForce: boolean; optedOut?: boolean },
+): string | null {
+  if (!isMarketingTemplate(category) || offers.inForce) return null;
+  if (offers.optedOut === true) {
+    return "This customer has opted out of offers on WhatsApp, so a marketing template can't be sent to them.";
+  }
+  if (offers.optedOut === false) {
+    return "This customer hasn't agreed to receive offers on WhatsApp, so a marketing template can't be sent to them.";
+  }
+  return "This customer hasn't agreed to receive offers on WhatsApp, or has opted out, so a marketing template can't be sent to them.";
 }
 
 /**

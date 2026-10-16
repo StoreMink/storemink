@@ -46,6 +46,7 @@ const row = (over: Partial<ManagedTemplate> = {}): ManagedTemplate => ({
   variables: ["customer_name"],
   buttons: [],
   sendableFromInbox: true,
+  submitted: true,
   ...over,
 });
 
@@ -95,6 +96,41 @@ describe("TemplatesClient", () => {
         name: "Delete sm_order_placed_customer_v1",
       }),
     ).toBeNull();
+  });
+
+  it("★ a template Meta never received reads Not submitted, and deleting it says it goes only here", async () => {
+    render(
+      <TemplatesClient
+        view={view({
+          templates: [
+            row({
+              status: "PENDING",
+              submitted: false,
+              sendableFromInbox: false,
+              syncError:
+                "Not yet submitted on this WhatsApp Business account. Delete it here and add it again to submit it on this one.",
+            }),
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("Not submitted")).toBeInTheDocument();
+    expect(screen.queryByText("In review")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete delivery_delay" }),
+    );
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /Meta never received it, so it is removed only here/,
+      ),
+    );
+    // A row Meta holds keeps its own wording and Meta's status.
+    render(
+      <TemplatesClient
+        view={view({ templates: [row({ status: "PENDING" })] })}
+      />,
+    );
+    expect(screen.getByText("In review")).toBeInTheDocument();
   });
 
   it("★ the editor refuses before sending, and sends the checked template", async () => {

@@ -46,9 +46,12 @@ import { lookupOrdersForPhone, orderStatusAnswer } from "./order-status-reply";
 //
 // ★ A WELCOME OR AN AWAY MESSAGE DOES NOT ANSWER THE CUSTOMER. The conversation
 // stays in Needs reply with the bell rung, because a person still has to read
-// it. Only "where is my order?", answered with a real order, is resolved by the
-// system; it goes to a person when nothing was found, when the lookup failed,
-// when a delivery is in trouble, or when the answer could not be sent.
+// it. Only "where is my order?", answered with a real order, and a menu asked
+// for by name, sent with its buttons, are resolved by the system. Both were
+// filed as answered (no unread, no Needs reply, no bell), so each goes to a
+// person on EVERY way out that leaves it unanswered: nothing found, a failed
+// lookup, a delivery in trouble, no number to send from, unreadable settings,
+// a menu switched off since the message was filed, or a send Meta refused.
 //
 // ★ NOTHING IS CLAIMED WHEN NOTHING CAN BE SENT. A paused number or a lapsed
 // plan returns before any claim, so a customer who wrote while the number was
@@ -74,8 +77,9 @@ export interface AnswerInput {
 }
 
 export interface AnswerResult {
-  /** The conversation must wait for a person (the order question was not
-   *  answered); the caller marks it needs-reply and rings the bell. */
+  /** The conversation must wait for a person (the order question or the
+   *  menu request was not answered); the caller marks it needs-reply and
+   *  rings the bell. */
   handOver: boolean;
   /** What was sent, for the logs and the tests. */
   sent: Array<"welcome" | "order_status" | "away" | "menu">;
@@ -195,6 +199,11 @@ async function claimWelcome(
  * has opened since the last one. The read and the compare-and-set are two
  * statements; the second only matches the value the first saw, so a message
  * that arrived in between cannot claim it twice.
+ *
+ * ★ A PERSON'S REPLY IS ANY MESSAGE WITH A SENDER, not only a `dashboard` or
+ * `phone_app` one: a template staff send from the inbox is filed `template`
+ * with their id, and "we're closed" minutes after it reads as nobody being
+ * there. (mink-drafts.ts asks "did a person reply?" the same way.)
  */
 async function claimAway(
   storeId: string,
@@ -211,7 +220,7 @@ async function claimAway(
                   where m.store_id = c.store_id
                     and m.conversation_id = c.id
                     and m.direction = 'out'
-                    and m.source in ('dashboard', 'phone_app')
+                    and (m.source in ('dashboard', 'phone_app') or m.sent_by_admin_id is not null)
                     and m.sent_at > now() - make_interval(hours => ${AWAY_AFTER_HUMAN_REPLY_HOURS})
                ) as human_recent
           from public.whatsapp_conversations c
@@ -261,7 +270,11 @@ export async function answerAutomatically(
   const { storeId, conversationId, orderQuestion } = input;
   const menuRequest = input.menuRequest === true;
   const now = input.now ?? new Date();
-  const nothing: AnswerResult = { handOver: orderQuestion, sent: [] };
+  // Filed as answered by the system (inbox.ts): sending nothing hands it over.
+  const nothing: AnswerResult = {
+    handOver: orderQuestion || menuRequest,
+    sent: [],
+  };
 
   if (
     !orderQuestion &&
@@ -288,7 +301,9 @@ export async function answerAutomatically(
     !settings.awayEnabled &&
     !(menuRequest && menu.length > 0)
   ) {
-    return { handOver: false, sent: [] };
+    // A menu request reaching here found the menu switched off since the
+    // message was filed: nothing to send, so a person answers it.
+    return { handOver: menuRequest, sent: [] };
   }
 
   // ★ Before any claim: with no number to answer from, nothing is spent.
@@ -364,7 +379,10 @@ export async function answerAutomatically(
     }
   }
 
-  if (parts.length === 0) return { handOver, sent: [] };
+  // Nothing to say. A menu request can only get here with no buttons left.
+  if (parts.length === 0) {
+    return { handOver: handOver || menuRequest, sent: [] };
+  }
 
   const body = parts.join("\n\n");
   const reason = `auto:${sent.join("+")}`;
@@ -406,5 +424,9 @@ export async function answerAutomatically(
   }
   // The customer asked and heard nothing: a person has to answer.
   if ((orderQuestion || menuRequest) && !delivered) handOver = true;
+  // ★ Asked for the menu and got words without it (the menu switched off
+  // since filing, or its buttons could not follow a long welcome): the
+  // request is still unanswered, so a person takes it.
+  if (menuRequest && !sent.includes("menu")) handOver = true;
   return { handOver, sent: delivered ? sent : [] };
 }

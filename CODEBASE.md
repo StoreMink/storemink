@@ -92,6 +92,205 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### WhatsApp Commerce: PR #283 review fixes (2026-10-16)
+
+The fixes for the review of the WhatsApp branch (PR #283). Schema in migration
+`20261016_0211_whatsapp_review_fixes`; merchant-facing Help edits in `0212`.
+Each slice section below still describes its feature; this section is what
+changed, and the slice text points here where it no longer holds.
+★★ CHAT MEDIA IS PRIVATE (owner's decision). The media bucket grants
+allUsers objectViewer, which includes LISTING, so every store's chat photos,
+voice notes and PDFs were enumerable and downloadable by anyone. Inbound
+copies (`storeInboundMedia`) and staff uploads (`inbox-media.ts`) now go to
+the private bucket (`GCS_PRIVATE_BUCKET`, `gcsPrivateUploadObject`), same
+path; with no private bucket configured nothing is stored (the message keeps
+its caption and an error), never a public copy. Every view goes through
+`GET /api/dashboard/inbox/media/[messageId]`: a signed-in viewer (401 for a
+poll that lost its session) with Inbox view on the host store (403), a
+message of that store (404 for anything else, saying nothing about other
+stores), the private bucket first and the public one only for a legacy file
+not yet moved. Only types WhatsApp carries are served inline
+(`INLINE_TYPES`); anything else is an `attachment` as
+`application/octet-stream`; every response is `nosniff`, `Cross-Origin-
+Resource-Policy: same-origin`, `private, max-age=3600`, and a CSP sandbox
+except for PDFs (a viewer will not open inside one). One byte range is
+honoured (`lib/http/byte-range.ts`; 206/416) because Safari will not play a
+voice note without it. `inboxMediaUrl(id)` is what the thread renders;
+`loadInboxMessageMedia` is the store-scoped read. `deleteStore` purges the
+store's private prefix too; retention deletes a conversation's folder in
+BOTH buckets, and a folder it could not empty marks
+`whatsapp_conversations.retention_failed_at` and leaves that chat out of the
+batch for `RETRY_FAILED_AFTER_DAYS` (7), so one stuck chat cannot hold every
+run. Existing files move with `npm run whatsapp:media-to-private` (dry run;
+`--commit` copies, checks the size, deletes the public copy; re-runnable).
+Cloud Build passes `_GCS_PRIVATE_BUCKET` (default empty, so an unset trigger
+stores no media rather than storing it publicly). A transparent photo a staff
+member sends is flattened onto white before the JPEG re-encode.
+★★ THE SMS IS HELD BEHIND THE WHATSAPP, NOT THROWN AWAY. Under
+`whatsapp_first`, a customer reachable on both channels used to get the
+WhatsApp and no SMS even when Meta then refused or failed it. The fan-out now
+stores the SMS on the WhatsApp queue row (`fallback_sms`, `fallback_state =
+'held'`, `heldSmsFrom`), and `lib/whatsapp/sms-fallback.ts` settles it
+exactly once by a conditional claim: `releaseHeldSms` (one statement moves
+held to released and inserts the SMS queue row from the same RETURNING) when
+the worker gets a refusal or Meta posts `failed`, `dropHeldSms` on
+`delivered` or `read`. ★ An UNKNOWN send outcome keeps it held (the WhatsApp
+may have arrived; §26's retry rule). The worker records Meta's message id on
+the queue row (`provider_message_id`, partial index), which is how a status
+finds its row; a release from either path kicks the email worker
+(`smsReleased`). A CHECK keeps the three columns consistent and NULL-safe.
+★★ INBOUND EVENTS RETRY, UNDER A LEASE. A delivery that failed to process
+used to be marked failed for good. The claim is now ONE `update … returning`
+over `for update skip locked` that sets `attempts + 1` and
+`next_attempt_at = now() + 2 min` (the lease), so a crashed run's events come
+back; failures back off 1, 5, 15 and 60 minutes and give up after
+`MAX_INBOUND_ATTEMPTS` (5). `processPendingInboundEvents` still runs in the
+webhook's `after()`, and `/api/cron/send-emails` now drains first
+(`drainInboundEvents(15_000)`) and chains while a batch reaches 50.
+★ ROUTING BY THE NUMBER THE EVENT NAMES (`routeInboundEvent`): an event
+naming a number goes to that number's store only; a WABA-level event (a
+template or account change) goes to every store on that WABA, since two
+stores can share one. ★ META'S RE-READ IS THE TRUTH: a template event runs
+`syncWhatsAppTemplates` and a number or account event `refreshWhatsAppAccount`,
+each once per store per batch, instead of writing the payload; a failed
+refresh of an `account_update` (PARTNER*REMOVED, ACCOUNT_DELETED,
+VERIFIED_ACCOUNT) applies the payload, and any other failed re-read throws so
+the event retries. Webhook secrets are read trimmed (`whatsappConfig()`).
+★ STATUSES (`applyMessageStatus` → `settleQueuedMessage`): `failed` releases a
+held SMS and marks a COD order `undelivered`, only over `requested` and only
+when no copy of that order's message was delivered or read; `delivered` and
+`read` drop a held SMS.
+★★ THE CUSTOMER'S PHONE IS THE ONE TYPED AT CHECKOUT (owner's decision). A
+customer update for an order goes to that order's delivery phone
+(`shipping_address->>'phone'`), the account phone only as the fallback (a till
+sale has none), and `orders.whatsapp_updates` records the box for THAT order:
+`false` means no customer WhatsApp for it, whatever the number agreed before
+(a gift's recipient is not told). `recordWhatsAppConsent` takes `verified`:
+a VERIFIED phone (the session's own, on the account page or at a checkout
+whose phone is the account's) links the user and changes both choices either
+way; an UNVERIFIED one (a delivery phone that is not the account's) is never
+linked to the shopper, records the updates yes only when that number never
+answered, never withdraws, and never takes marketing (offers are recorded
+for the account phone instead). Returns `{ok}`, so the account page reports a
+save that did not land. Checkout prefills both boxes from what the session's
+phone already chose, until the shopper touches them.
+★ THE FAN-OUT (`record.ts`): SMS and WhatsApp candidates are collected before
+the web/email skip; a phone that said STOP to this store's SMS
+(`sms_suppressions`) counts as unreachable by SMS, so precedence falls to
+WhatsApp; the COD confirmation goes to a website COD customer whenever
+`whatsapp.codConfirmation` is on, whatever the Order placed WhatsApp tick or
+the precedence (`codOnly`: it never falls back to the plain template). Reads
+that may fail run in SAVEPOINTs (`isolated`), so one failed lookup cannot
+abort the fan-out's transaction.
+★ THE WORKER: the sender, template and consent are read STRICT, so a read
+failure requeues (and fails only after the attempts run out) instead of
+dropping a message as "not approved"; Meta's token error (190) marks the
+account `needs_reauth` (`markNeedsReauth`) and fails that store's other
+rows in the batch as not connected, so their held SMS go out instead.
+★ COD (`cod-confirmation.ts`, `cod-sweep.ts`, `approve-cancellation.ts`): a
+fifth answer, `undelivered` ("WhatsApp message not delivered", rose), is
+never reminded or auto-cancelled; the reminder and auto-cancel run only while
+the number is connected and switched on (joined in the sweep's SQL, before
+the LIMIT); a Cancel tap after the shop DECLINED a cancellation request does
+not cancel (`fromRequest` puts `cancellation_status is distinct from
+'declined'` inside the claim) and hands over with outcome `declined`. The
+COD message's amount is `amount_due` (the total less store credit, what the
+courier collects); `withVariableFallbacks` falls back to `total` for an event
+emitted without it, and `templateRowVariables` lets the CURRENT catalogue
+row read the catalogue's mapping, so the change reaches stores that
+connected earlier without a new template version. Meta's REINSTATED reads as
+APPROVED.
+★ NOTIFICATION CONSOLE: switching WhatsApp or SMS ON is refused when the
+store cannot send; a switch already saved on is kept, so a lapsed
+connection no longer blocks every other edit of that notification (the
+fan-out still checks at send).
+★ CONNECT AND TEMPLATES: templates belong to one WABA, and a store whose
+account moves to another resets every row filed under another WABA in the
+same commit (`resetTemplatesForWaba`: Meta id cleared, PENDING, a
+`sync_error` note; also first in bootstrap and sync); StoreMink's templates
+are resubmitted, a merchant's own are not (their note asks for a delete and
+re-add). The Coexistence finish event that names only the WABA is accepted:
+the server lists the WABA's numbers under the proven token and connects the
+only one (none or several refuse, nothing saved). Each number's two-step PIN
+is kept in `whatsapp_number_pins` (service-only, one row per number,
+backfilled by 0211), reused on reconnect and stored before register, so
+disconnect-then-connect no longer trips Meta's PIN check; a number another
+store holds is refused before anything changes at Meta. Disconnect
+unsubscribes our app from a WABA only when no other store's account uses it.
+A template is deleted at Meta only by its id on the current WABA. The card
+counts `unsubmitted` (no Meta id) and offers Set up templates while any are
+left; the manager labels such rows "Not submitted" (`ManagedTemplate.
+submitted`) and says a delete removes them only here. Template listing follows
+Meta's cursor (on our own path, never a `next` URL), up to 20 pages. The
+unique-violation message reads the constraint through `pgConstraint`
+(lib/db/errors.ts). All four channel cards re-seed from the server after
+`router.refresh()` (`useServerState`).
+★ CUSTOM TEMPLATES: a quick reply worded like STOP or START may only be on a
+MARKETING template, because a tap is read by its label (below).
+★ AUTOMATIC REPLIES AND INTENT: a negation in any spelling (wasn't, wasn’t,
+wasnt, cannot, nahi, नहीं, …) keeps "where is my order" for a person; the
+danda (। ॥) is punctuation; a typed "menu" that gets no menu (paused number,
+unreadable settings, menu switched off, buttons that could not follow a long
+welcome) hands over; the away message counts a staff template as a recent
+reply; a tapped button whose LABEL reads as STOP or START (e.g. "Stop
+promotions") records the offers choice like the typed word, COD and menu taps
+excepted by prefix; a conversation started by a quiet message (an order
+update) shows it as its preview.
+★ CUSTOMER-FACING MINK: offers come from `readMinkShopperOffers`
+(`lib/mink/offers-read.ts`), which returns only what a shopper could see on
+the storefront: live and within budget, online, an automatic offer only while
+`offers.autoApply` is on, a code only when "Show this coupon on my
+storefront" is ticked, never a group- or location-limited offer, each line
+with its conditions, per-customer cap and end date (`readMinkCurrentOffers`,
+the dashboard's read, is unchanged). In `helps` the sender is loaded FIRST,
+so a number that cannot send costs no headroom read, model call or credit.
+★★ THE SEND IS A LEASE, NOT A ROW LOCK: `claimMinkDraft` is one conditional
+UPDATE setting `whatsapp_mink_answers.sending_started_at` on a still-draft
+row with no live lease (`MINK_SEND_LEASE_MINUTES` 2), and it refuses a draft
+a person has already answered (`personRepliedSince`: an outbound dashboard
+or phone_app message, or any send with `sent_by_admin_id`, not failed, after
+the customer's message). `releaseMinkDraftClaim` gives the lease back,
+`markMinkAnswerSent` moves only still-draft rows, `discardMinkDrafts` skips a
+live lease and `loadMinkDraft` hides a leased or answered draft. Both the
+automatic send and a staff Send go through it, so one answer cannot go out
+twice: released on no credits (inside the claim's transaction) and on a
+definite refusal, KEPT on an unknown outcome, and a draft whose send went out
+but whose filing failed is still marked sent. A person who replies while the
+model runs makes Mink record its answer as `discarded`, with nothing sent or
+charged. The delivery quote uses a product's first in-stock option
+(`deliveryCheckVariant`) and names it; a failed order or offer read says so
+in the facts sheet rather than reading as none; replies and reasons pass
+through `withoutLongDashes`, and the prompt carries the same rule (rule 8).
+The gate (`mink-gate.ts`) keeps emoji-only and short all-pleasantry messages
+("ok thanks", "ठीक है") from the model, and its `normalise` closes "n't"
+under any apostrophe (and "did'nt"), treats a danda as a full stop, and hands
+over negated delivery complaints in English, Hinglish and Hindi in either
+word order (`NEGATED_ARRIVAL`; bare "no", "can" and "samajh nahi aaya"
+excluded). `inbox-intent.ts` takes the same misplaced apostrophe and the chat
+shorthand (dint, dnt, havnt, hvnt) as negations.
+★ THE INBOX (`inbox-actions.ts`, `inbox-read.ts`, `inbox-team.ts`,
+`inbox-workspace.ts`, `inbox-client.tsx`): a MARKETING template is refused
+unless the contact's offers yes is in force (`templateBlockedReason` with
+`consented()`; the picker lists it greyed out with the reason, and
+`listReplyTemplates` returns each template's category). Labels change ONE at
+a time (`setConversationLabel` / `setInboxConversationLabel`: the
+conversation row locked under the store, another store's label refused, the
+20-label cap counted under the lock), so a stale screen cannot remove labels
+it did not touch; the whole-set write is gone. The page reads its own
+connection state behind the Inbox gate (`getInboxChannelState` →
+`loadInboxChannelState`), so a role with Inbox but not Channels can open it,
+and links to Channels or Plans show only to someone who can open them.
+Duplicate label and shortcut errors are read through Drizzle's wrapper
+(`isUniqueViolation`); the inbox and WhatsApp-log searches escape `%`, `*`and`\` (`likePattern`); `fillCannedReply` inserts a name containing `$` as typed;
+the media upload route normalises line endings before the 1,024-character
+caption check and refuses an over-long one with a 400 before any upload. On
+screen: a refresh or poll is dropped once its conversation is no longer open,
+list results are kept only for the query that asked, a deleted filter label
+clears the filter, a load error clears on the next read, the thread pane is
+keyed by conversation (a quote cannot follow you to another chat), Enter
+during input-method composition does not send, and a quoted sticker reads
+"Sticker".
+
 ### WhatsApp Commerce — Phase 2 slice 6: The full inbox (2026-10-15)
 
 Plan §4's "Inbox: Full" and §11's last bullet, and the last slice of Phase 2:
@@ -119,10 +318,10 @@ filters by `me` / `unassigned` / an id and the row shows initials. An
 assigned conversation stays readable and answerable by everyone with Inbox.
 ★ LABELS: at most 20 per store, a 30-character name unique per store
 ignoring case (a unique index on `lower(name)`), one of eight colours checked
-by the database; `setConversationLabels` replaces a conversation's set with
-exactly what was sent, keeping only ids that are the store's own, with the
-count taken under a per-store advisory lock so two people adding the
-twentieth cannot make twenty-one. Deleting a label cascades its links.
+by the database; `setConversationLabel` (since the review fixes; the
+whole-set `setConversationLabels` is gone) adds or removes ONE label, only
+the store's own, under a lock on the conversation, with the count taken
+under that lock so two people adding the twentieth cannot make twenty-one. Deleting a label cascades its links.
 ★ NOTES ARE NEVER MESSAGES. `whatsapp_messages`' source CHECK keeps them
 out of the wire record; `whatsapp_conversation_notes` holds them, and
 `loadThread` MERGES them into the message list in time order as rows with
@@ -212,7 +411,8 @@ products matched by the words they share with the question with the card's
 price/options/stock/return rule/link, delivery to a six-digit PIN the
 message names through `lib/shipping/product-delivery.ts` (the core of the
 PDP's PIN check, extracted so the action and Mink quote identically),
-running offers from `readMinkCurrentOffers` (its actor narrowed to
+running offers from `readMinkCurrentOffers` (since the review fixes
+`readMinkShopperOffers`, only what a shopper can see; its actor narrowed to
 `Pick<"storeId"|"effectivePlan">`), the published policies as text, the
 hours, the last six messages), and makes ONE Vertex call
 (`mink-model.ts`: no tools, no session, `responseJsonSchema`, LOW thinking,
@@ -252,7 +452,8 @@ model (a store with nothing left costs nothing); `consume_mink_whatsapp_answer`
 (the refine function's shape, keyed on the answer row, idempotent, same pool
 and order: plan cycle then top-ups) is called just before the send, and
 `insufficient` leaves a draft. `mink-drafts.ts` holds the ledger reads, the
-claim (`FOR UPDATE` on `outcome = 'draft'`) and the charge, so the inbox
+claim (a two-minute send lease since the review fixes, no longer
+`FOR UPDATE` on `outcome = 'draft'`) and the charge, so the inbox
 actions use them without the model. Probed on local Postgres: insufficient,
 plan, idempotent, unlimited, mixed with a top-up, an unknown id raises, every
 CHECK, app_user unprivileged. Rate limits: 20/conversation/hour,
@@ -545,8 +746,9 @@ payload, so it would come back as two words nobody can act on.
 Orders: `cod_confirmation` in the list and drawer columns, rendered by
 `app/dashboard/orders/cod-confirmation.tsx` as "Awaiting confirmation on
 WhatsApp" / "Confirmed on WhatsApp" / "Cancelled on WhatsApp" / "Not confirmed
-on WhatsApp" (`expired`, below), and NOTHING when NULL (never asked must not
-read as a customer who ignored us). The
+on WhatsApp" (`expired`, below) / "WhatsApp message not delivered"
+(`undelivered`, the review fixes above), and NOTHING when NULL (never asked
+must not read as a customer who ignored us). The
 notification console's WhatsApp tab shows the variant as a second card,
 "Cash-on-delivery orders", with its buttons. Help: `20261013_0193` adds one
 section to `send-order-updates-on-whatsapp`. Stories WA-4.x in
@@ -599,8 +801,9 @@ section `inbox`, in-app only) fires for the FIRST message since staff last
 answered, not per message. ★ Media is fetched AFTER the recording
 transaction commits (`storeInboundMedia`: `GET /{media_id}`→ bearer
 download, capped at 25 MB, hosts pinned to Meta's so a forged payload cannot
-make us present the token elsewhere) into`stores/{id}/whatsapp/…` in our
-bucket — Meta's URLs expire and need the token; a failed fetch leaves the
+make us present the token elsewhere) into`stores/{id}/whatsapp/…`in our
+bucket (the PRIVATE one since the review fixes, read through`/api/dashboard/inbox/media/[messageId]`) — Meta's URLs expire and need the
+token; a failed fetch leaves the
 message with its caption and an error, never lost. ★ COEXISTENCE ECHOES
 (`smb_message_echoes`) are exploded one row per message and filed as
 outbound `source = phone_app`: the merchant answered from the WhatsApp
@@ -670,7 +873,8 @@ is the one Phase 0 proved end to end.
 cascade) and its media folder (`stores/{store}/whatsapp/{conversation}/`,
 `conversationMediaPrefix`, which `inboundMediaPath` also builds from). Media
 goes FIRST and a conversation whose folder could not be emptied keeps its
-rows for the next run, because the bucket is public by URL. Open and
+rows (since the review fixes: in the PRIVATE bucket, the legacy public one
+too, and skipped for 7 days by `retention_failed_at`). Open and
 needs-reply conversations are kept whatever their age, and the contact with
 its consent record is never deleted. Help: `20261013_0196`.
 
@@ -748,14 +952,18 @@ updates ticked by default, offers never (§19.2) — and `placeOrder` records
 them AFTER the order lands via `recordWhatsAppConsent`, which snapshots the
 exact label beside the timestamp (the §25 shape) and re-checks
 `storeCanSendWhatsApp` so a forged field writes nothing for a channel that
-cannot deliver. An untick withdraws only an opt-in currently in force. Staff
+cannot deliver. An untick withdraws only an opt-in currently in force (since
+the review fixes: only for a verified phone; a delivery phone is recorded
+unverified, and an order's update goes to its delivery phone). Staff
 need no opt-in (plan §8). `textablePhone` normalises both sides, so a
 legacy ten-digit `users.phone` still matches the E.164 contact.
 ★★ ONE MESSAGE PER PERSON PER EVENT. `whatsapp.updatePrecedence` (registry,
 group WhatsApp, section `channels`; `whatsapp_first` default, `sms_first`,
 `both`) decides at fan-out: `record.ts` queues the first channel for everyone
 it can reach and the second only for whoever the first could not — no
-consent, no approved template, no connection. Phones are looked up ONCE for
+consent, no approved template, no connection. (Since the review fixes, under
+`whatsapp_first` the SMS is HELD on the WhatsApp row and sent if Meta refuses
+or fails the WhatsApp; see that section.) Phones are looked up ONCE for
 both channels. `record-whatsapp.test.ts` pins all three orders and every
 fallback. ★ `loadWhatsAppSender` reads the precedence and the plan in the same
 query as the token, so a lapsed plan pauses the channel without deleting it.
@@ -816,7 +1024,9 @@ error. Plan gates: `PLAN_LIMITS.whatsapp` (Basic+, like `onlinePayments`) and
 pricing page deliberately gains no row until the feature is merchant-usable.
 The webhook now persists: one `whatsapp_inbound_events` row per message,
 status or change, idempotent on Meta's ids, routed by phone number id or WABA
-id, acked at once and processed in `after()`; template status/quality/
+id, acked at once and processed in `after()` (retried under a lease, and
+re-read from Meta rather than taken from the payload, since the review fixes);
+template status/quality/
 category, number quality/name and account events update the account and
 template rows (`PARTNER_REMOVED` → `needs_reauth`), and `messages` rows are
 deliberately left for slices 2–3. Migration `20261008_0174` (three
@@ -4071,6 +4281,10 @@ wholesip/
 │       │                  # route because a server action's body caps at 6 MB;
 │       │                  # the SAME gate as a text reply (inbox-gate.ts), then
 │       │                  # prepare → Meta upload → our copy → send → file
+│       │   └── [messageId]/ # ★ GET: the ONLY way to read chat media (the
+│       │                  # private bucket): Inbox view on the host store, the
+│       │                  # message's own store, inline only for WhatsApp's
+│       │                  # types, nosniff + sandbox CSP, one byte range
 │       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 2 credits
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
@@ -4184,7 +4398,11 @@ wholesip/
 │   │                          # heartbeat; consent re-checked at send; unknown terminal;
 │   │                          # only throttle codes retried), consent-copy.ts (the exact
 │   │                          # checkout wording, client-safe) + consent.ts (the record,
-│   │                          # written after the order, only for a store that can send).
+│   │                          # written after the order, only for a store that can send;
+│   │                          # verified vs unverified phone since the review fixes),
+│   │                          # sms-fallback.ts (the SMS held behind a WhatsApp under
+│   │                          # whatsapp_first: released on failure, dropped on
+│   │                          # delivery, once, by a conditional claim).
 │   │                          # Slice 3 (the inbox): inbox-types.ts (wire shapes, pure),
 │   │                          # inbox-parse.ts (every Meta message type → one bounded
 │   │                          # row; echo parse; previews), inbox-intent.ts (STOP/START
@@ -4268,6 +4486,9 @@ wholesip/
 │   │                          # refused). The first one read a stored
 │   │                          # +6591234567 as the ten digits 6591234567, so
 │   │                          # the POS OTP texted +916591234567 — see §23
+│   ├── http/byte-range.ts     # PURE: one HTTP Range header against a size (single
+│   │                          # range, suffix; several ranges → the whole file;
+│   │                          # "unsatisfiable" → 416). Used by the inbox media route
 │   ├── csv/                   # ★ §31: PURE RFC 4180 codec. parse.ts (BOM, CRLF/LF/CR,
 │   │                          # quoted fields w/ embedded delimiters+newlines, quote-
 │   │                          # aware delimiter sniffing for Excel's semicolons, ragged
@@ -4453,7 +4674,11 @@ wholesip/
 │   │                          # lib/supabase/ removed, Supabase fully out of code):
 │   │                          # gcs.ts — gcsConfigured/gcsUploadObject/gcsSignUploadUrl/
 │   │                          # gcsDownloadObject/gcsDeletePaths/gcsDeletePrefix/
-│   │                          # gcsPublicUrl/gcsPathFromUrl
+│   │                          # gcsPublicUrl/gcsPathFromUrl, plus the PRIVATE bucket
+│   │                          # (GCS_PRIVATE_BUCKET: gcsPrivateConfigured/
+│   │                          # gcsPrivateUploadObject/gcsObjectInfo/gcsObjectStream;
+│   │                          # delete helpers take a bucket kind) for WhatsApp chat
+│   │                          # media, which is never public
 │   │                          # (ADC or
 │   │                          # GCP_SA_KEY; public bucket; lazy SDK import). uploads.ts —
 │   │                          # client helpers (uploadImage POSTs /api/upload; uploadVideo
@@ -5472,11 +5697,12 @@ wholesip/
 │                              # refresh note. They reached the two databases in
 │                              # opposite orders again: production applied them
 │                              # straight after 0185 (main never had the WhatsApp
-│                              # block), staging after 0186. On dev they are listed
-│                              # LAST so staging can apply them; before dev merges
-│                              # into main, and once a dev build has applied them,
-│                              # move 0187-0191 back between 0185 and 0174, which is
-│                              # production's order (pending there: 0174-0178, 0186).
+│                              # block), staging after 0186. Since 2026-10-16 they
+│                              # are listed straight after 0185 again, production's
+│                              # order (pending there: 0174-0178, 0186); staging
+│                              # accepts it because everything before 0209 is
+│                              # applied there. Simulated against both ledgers with
+│                              # migrationPlan: 0 out of order, 0 drift.
 │                              # 0192 adds orders.cod_confirmation(+_at) and
 │                              # notification_whatsapp_queue.button_payloads (WhatsApp
 │                              # COD confirmation); 0193 edits the order-updates Help
@@ -5502,12 +5728,9 @@ wholesip/
 │                              # 0206 makes adjust_stock_at and transfer_stock
 │                              # refuse another store's product, variant or
 │                              # location; 0207 is the platform staff roles (§41).
-│                              # They came from main, and the same rule applies:
-│                              # production applied them straight after 0191, so on
-│                              # dev they are listed LAST, after 0204, for staging.
-│                              # Before dev merges into main, and once a dev build
-│                              # has applied them, move them back to straight after
-│                              # 0191 (with 0187-0191 after 0185, above), ahead of
+│                              # They came from main, where production applied them
+│                              # straight after 0191; since 2026-10-16 they sit there
+│                              # again (with 0187-0191 after 0185, above), ahead of
 │                              # 0174-0178, 0186 and 0192-0204, which are what
 │                              # production has pending. 0208 gives Owner and
 │                              # Admin the Inbox section, which dev added after the
@@ -5519,7 +5742,14 @@ wholesip/
 │                              # notes, saved replies), the assignee index and the
 │                              # GIN search index over message bodies; 0210 edits
 │                              # the inbox guide in place for it. Both follow 0208.
-│                              # Next free: 0211.
+│                              # 0211 is the schema for the PR #283 review
+│                              # fixes: the held SMS fallback and Meta's id on
+│                              # the WhatsApp queue, inbound retry bookkeeping,
+│                              # the Mink send lease, the 'undelivered' COD
+│                              # answer, orders.whatsapp_updates, the number PIN
+│                              # table and the retention skip mark. 0212 edits
+│                              # the four WhatsApp guides in place for them.
+│                              # Next free: 0213.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -5672,6 +5902,11 @@ wholesip/
 │                              # Own package.json (playwright-core) and Dockerfile; not in
 │                              # the web image. Runbook: docs/theme-studio-capture-job.md
 ├── scripts/
+│   ├── whatsapp-media-to-private.mjs # `npm run whatsapp:media-to-private`: move
+│   │                          # WhatsApp chat media (stores/*/whatsapp/**) from the
+│   │                          # public bucket to GCS_PRIVATE_BUCKET, same path. Dry run
+│   │                          # unless --commit; checks each copy's size before
+│   │                          # deleting the public one; safe to re-run
 │   ├── sync-auth-hosts.ts     # `npm run auth:sync-hosts`: add every active store's exact
 │   │                          # sign-in hosts to the Firebase project's authorizedDomains
 │   │                          # (§30). Dry run unless --commit --confirm-project <project>;
@@ -18669,6 +18904,13 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   legacy media renders until the backfill. Bucket needs CORS (PUT from the app
   origin) for direct video uploads. No bulk migration of existing objects yet (a
   pre-decommission backfill copies old objects + rewrites DB URLs).
+  **`GCS_PRIVATE_BUCKET`** names a SECOND, private bucket (public access
+  prevention on, uniform access, the runtime service account with object
+  admin on it) for WhatsApp chat media, which is never written to the public
+  one and is read only through `/api/dashboard/inbox/media/[messageId]`.
+  Cloud Build passes `_GCS_PRIVATE_BUCKET` (empty by default, so a trigger
+  without it stores no chat media rather than storing it publicly);
+  `docs/gcp-ci-cd.md` names the bucket per environment.
 - **Gemini / Vertex AI**: AI copy generation (`lib/ai/gemini.ts`, dual backend).
   **Backend precedence: the free Gemini Developer API key wins whenever one is
   set** — so **local + staging set `GEMINI_API_KEY`** (a Google AI Studio key,

@@ -2,13 +2,19 @@
 
 // ---------------------------------------------------------------------------
 // Customer-facing Mink, end to end with the model mocked: the gate runs
-// again, the headroom is checked before the model, the facts are read for
-// the phone that wrote, an answer is charged and sent, a hand-over leaves a
+// again, a `helps` store with no number to send from spends nothing, the
+// headroom is checked before the model, the facts are read for the phone
+// that wrote (and only the offers a shopper could see), a person who replied
+// first wins, an answer is claimed, charged and sent, a hand-over leaves a
 // draft, drafts mode never sends, and nothing here ever throws.
 // ---------------------------------------------------------------------------
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeDbMock } from "@/app/actions/_test-helpers";
+import {
+  makeDbMock,
+  sqlParamValues,
+  sqlText,
+} from "@/app/actions/_test-helpers";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -35,28 +41,21 @@ vi.mock("@/lib/mink/config", () => ({
   })),
 }));
 vi.mock("@/lib/mink/offers-read", () => ({
-  readMinkCurrentOffers: vi.fn(async () => ({
+  // ★ The SHOPPER read (offers-read.ts), never the merchant's own list: what
+  // it filters is pinned in offers-read.test.ts.
+  readMinkShopperOffers: vi.fn(async () => ({
     offers: [
       {
         name: "Diwali 10",
-        availability: "running",
-        delivery: "code",
         code: "DIWALI10",
         reward: "10% off",
-        trigger: "on any order",
-        appliesTo: { products: [], variants: [], categories: [] },
+        on: null,
+        when: "on any order",
+        conditions: [],
         validUntil: "2026-10-31T00:00:00Z",
       },
-      {
-        name: "Old",
-        availability: "ended",
-        delivery: "automatic",
-        reward: "5% off",
-        trigger: "on any order",
-        appliesTo: { products: [], variants: [], categories: [] },
-        validUntil: null,
-      },
     ],
+    truncated: false,
   })),
 }));
 vi.mock("@/lib/storefront/queries", () => ({
@@ -109,6 +108,13 @@ vi.mock("./mink-drafts", () => ({
   minkChargeContext: vi.fn(async () => ({ period: "2026-10", planCap: 20 })),
   minkCreditHeadroom: vi.fn(async () => 5),
   chargeMinkAnswer: vi.fn(async () => "plan"),
+  claimMinkDraft: vi.fn(async (_db: unknown, input: { draftId: string }) => ({
+    id: input.draftId,
+    charged: false,
+  })),
+  releaseMinkDraftClaim: vi.fn(async () => undefined),
+  markMinkAnswerSent: vi.fn(async () => undefined),
+  personRepliedSince: vi.fn(async () => false),
 }));
 vi.mock("./mink-model", () => ({
   MINK_WHATSAPP_MODEL_TIMEOUT_MS: 25_000,
@@ -140,9 +146,23 @@ vi.mock("./order-status-reply", async (importOriginal) => ({
 import { answerWithMink } from "./mink-answer";
 import { callMinkWhatsAppModelWithRetry } from "./mink-model";
 import { replyInChat } from "./auto-reply";
-import { chargeMinkAnswer, minkCreditHeadroom } from "./mink-drafts";
+import { loadWhatsAppSender } from "./channel";
+import {
+  chargeMinkAnswer,
+  claimMinkDraft,
+  markMinkAnswerSent,
+  minkCreditHeadroom,
+  personRepliedSince,
+  releaseMinkDraftClaim,
+} from "./mink-drafts";
+import { lookupOrdersForPhone } from "./order-status-reply";
 import { rateLimit } from "@/lib/rate-limit";
 import { getMinkConfig } from "@/lib/mink/config";
+import { readMinkShopperOffers } from "@/lib/mink/offers-read";
+import {
+  getPublishedProducts,
+  type ProductCardRow,
+} from "@/lib/storefront/queries";
 import { estimateProductDelivery } from "@/lib/shipping/product-delivery";
 import { logWarn } from "@/lib/observability/logger";
 
@@ -268,21 +288,100 @@ describe("answerWithMink: helps", () => {
         "Refund Policy",
       ]),
     );
+    // ★★ Claimed (the same lease a person's Send takes), then charged, then
+    // sent, with the sender loaded before anything was spent.
+    expect(claimMinkDraft).toHaveBeenCalledWith(expect.anything(), {
+      storeId: STORE,
+      conversationId: CONV,
+      draftId: r.answerId,
+    });
     expect(chargeMinkAnswer).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ answerId: r.answerId, storeId: STORE }),
+    );
+    expect(vi.mocked(claimMinkDraft).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(chargeMinkAnswer).mock.invocationCallOrder[0],
+    );
+    expect(
+      vi.mocked(loadWhatsAppSender).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(callMinkWhatsAppModelWithRetry).mock.invocationCallOrder[0],
     );
     expect(replyInChat).toHaveBeenCalledWith(
       expect.objectContaining({
         body: "Yes, ₹120 and in stock.",
         reason: "mink:answer",
+        sender: { token: "tok", phoneNumberId: "P" },
         extraPayload: { mink: true, answerId: r.answerId },
       }),
     );
-    expect(calls.set[0]).toMatchObject({
-      outcome: "sent",
+    expect(markMinkAnswerSent).toHaveBeenCalledWith(expect.anything(), {
+      storeId: STORE,
+      answerId: r.answerId,
+      answer: "Yes, ₹120 and in stock.",
       sentMessageId: "out-1",
+      sentByAdminId: null,
     });
+    expect(releaseMinkDraftClaim).not.toHaveBeenCalled();
+  });
+
+  it("★★ a store whose number cannot send pays for nothing: no model call, no charge, a person reads it", async () => {
+    vi.mocked(loadWhatsAppSender).mockResolvedValueOnce(null);
+    const r = await answerWithMink(input());
+    expect(r).toMatchObject({
+      outcome: "skipped",
+      needsHuman: true,
+      reason: "no_sender",
+    });
+    expect(callMinkWhatsAppModelWithRetry).not.toHaveBeenCalled();
+    expect(minkCreditHeadroom).not.toHaveBeenCalled();
+    expect(chargeMinkAnswer).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.values).toHaveLength(0);
+  });
+
+  it("★★ a person who replied while the model was thinking wins: nothing sent, charged or drafted", async () => {
+    vi.mocked(personRepliedSince).mockResolvedValueOnce(true);
+    const r = await answerWithMink(input());
+    expect(r).toMatchObject({
+      outcome: "skipped",
+      needsHuman: false,
+      reason: "person_replied",
+    });
+    expect(personRepliedSince).toHaveBeenCalledWith(expect.anything(), {
+      storeId: STORE,
+      conversationId: CONV,
+      messageId: "m1",
+    });
+    // Kept on the ledger with what it cost, as discarded, never as a draft.
+    expect(dbHolder.current.calls.values[0]).toMatchObject({
+      outcome: "discarded",
+      reason: "a person replied first",
+      answer: "Yes, ₹120 and in stock.",
+      inputTokens: 900,
+    });
+    expect(claimMinkDraft).not.toHaveBeenCalled();
+    expect(chargeMinkAnswer).not.toHaveBeenCalled();
+    expect(replyInChat).not.toHaveBeenCalled();
+  });
+
+  it("★ the person check comes after the model, so a reply during the call is seen", async () => {
+    await answerWithMink(input());
+    expect(
+      vi.mocked(callMinkWhatsAppModelWithRetry).mock.invocationCallOrder[0],
+    ).toBeLessThan(vi.mocked(personRepliedSince).mock.invocationCallOrder[0]);
+  });
+
+  it("★★ a draft somebody else took (a Send on the card, a person's reply) is not sent by Mink", async () => {
+    vi.mocked(claimMinkDraft).mockResolvedValueOnce(null);
+    const r = await answerWithMink(input());
+    expect(r).toMatchObject({
+      outcome: "skipped",
+      needsHuman: false,
+      reason: "draft_taken",
+    });
+    expect(chargeMinkAnswer).not.toHaveBeenCalled();
+    expect(replyInChat).not.toHaveBeenCalled();
+    expect(markMinkAnswerSent).not.toHaveBeenCalled();
   });
 
   it("★ the model's hand-over leaves its words as a draft and asks for a person", async () => {
@@ -342,7 +441,7 @@ describe("answerWithMink: helps", () => {
     expect(callMinkWhatsAppModelWithRetry).not.toHaveBeenCalled();
   });
 
-  it("★ 'insufficient' at the charge keeps the answer as a draft and hands over", async () => {
+  it("★ 'insufficient' at the charge keeps the answer as a draft, gives the lease back and hands over", async () => {
     vi.mocked(chargeMinkAnswer).mockResolvedValueOnce("insufficient");
     const r = await answerWithMink(input());
     expect(r).toMatchObject({
@@ -351,9 +450,19 @@ describe("answerWithMink: helps", () => {
       reason: "no_credits",
     });
     expect(replyInChat).not.toHaveBeenCalled();
+    // Nothing was charged or sent, so a person may send it after a top-up.
+    expect(releaseMinkDraftClaim).toHaveBeenCalledWith(expect.anything(), {
+      storeId: STORE,
+      answerId: r.answerId,
+    });
+    const note = dbHolder.current.calls.execute.find((q: unknown) =>
+      sqlText(q).includes("set reason"),
+    );
+    expect(sqlText(note)).toContain("and outcome = 'draft'");
+    expect(sqlParamValues(note)).toContain("no credits left to send");
   });
 
-  it("a send Meta refused keeps the (charged) draft for a person to send free", async () => {
+  it("a send Meta refused keeps the (charged) draft for a person to send free, the lease left to run out", async () => {
     vi.mocked(replyInChat).mockResolvedValueOnce(false);
     const r = await answerWithMink(input());
     expect(r).toMatchObject({
@@ -361,6 +470,14 @@ describe("answerWithMink: helps", () => {
       needsHuman: true,
       reason: "send_failed",
     });
+    // replyInChat cannot tell a refusal from no answer: a message that may
+    // have reached the customer is not free to send again at once.
+    expect(releaseMinkDraftClaim).not.toHaveBeenCalled();
+    expect(markMinkAnswerSent).not.toHaveBeenCalled();
+    const note = dbHolder.current.calls.execute.find((q: unknown) =>
+      sqlText(q).includes("set reason"),
+    );
+    expect(sqlParamValues(note)).toContain("could not be sent");
   });
 
   it("rate limits, a switched-off mode, and an unavailable Mink all skip to a person", async () => {
@@ -448,6 +565,137 @@ describe("answerWithMink: helps", () => {
   });
 });
 
+describe("answerWithMink: the facts sheet", () => {
+  const sheet = async (over: Record<string, unknown> = {}) => {
+    await answerWithMink(input(over));
+    return vi.mocked(callMinkWhatsAppModelWithRetry).mock.calls[0][1].facts;
+  };
+
+  it("★★ offers come from the shopper read, with their conditions and what they are on", async () => {
+    vi.mocked(readMinkShopperOffers).mockResolvedValueOnce({
+      offers: [
+        {
+          name: "Shake week",
+          code: null,
+          reward: "20% off chosen items",
+          on: "Almond Shake",
+          when: "on any order",
+          conditions: ["first order only", "only when paying online"],
+          validUntil: null,
+        },
+      ],
+      truncated: false,
+    });
+    const facts = await sheet();
+    expect(readMinkShopperOffers).toHaveBeenCalledWith(
+      { storeId: STORE, effectivePlan: "basic" },
+      { limit: 5, now: input().now },
+    );
+    expect(facts.offers).toEqual([
+      "Shake week: 20% off chosen items on Almond Shake, on any order, first order only, only when paying online, applied automatically at checkout",
+    ]);
+    expect(facts.offersUnavailable).toBeUndefined();
+  });
+
+  it("★ a failed offers read says so, never 'none running'", async () => {
+    vi.mocked(readMinkShopperOffers).mockRejectedValueOnce(new Error("down"));
+    const facts = await sheet();
+    expect(facts.offers).toEqual([]);
+    expect(facts.offersUnavailable).toBe(true);
+  });
+
+  it("★ a failed order lookup says so, never 'no orders'", async () => {
+    vi.mocked(lookupOrdersForPhone).mockResolvedValueOnce({ ok: false });
+    const facts = await sheet();
+    expect(facts.orders).toEqual([]);
+    expect(facts.ordersUnavailable).toBe(true);
+    // An answered lookup carries no flag at all.
+    setup();
+    vi.mocked(callMinkWhatsAppModelWithRetry).mockClear();
+    model({ outcome: "answer", reply: "ok", reason: "" });
+    expect((await sheet()).ordersUnavailable).toBeUndefined();
+  });
+
+  it("★★ a product with options is checked for delivery through one in stock, and names it", async () => {
+    const variant = (id: string, label: string, stock: number) => ({
+      id,
+      base_price: 150,
+      selling_price: 120,
+      special_price: null,
+      sort_order: 0,
+      track_inventory: true,
+      stock,
+      low_stock_threshold: null,
+      allow_backorder: false,
+      option_values: [label],
+      images: [],
+    });
+    const shake: ProductCardRow = {
+      id: "p1",
+      name: "Almond Shake",
+      slug: "almond-shake",
+      description: "Creamy.",
+      category_id: null,
+      category: "Shakes",
+      base_price: 150,
+      selling_price: 120,
+      image_url: null,
+      images: null,
+      status: "published",
+      featured: false,
+      sort_order: 0,
+      card_color: null,
+      // The product row's own stock: none, as for any product with options.
+      track_inventory: true,
+      stock: 0,
+      low_stock_threshold: null,
+      allow_backorder: false,
+      returnable: true,
+      content_updated_at: "2026-10-01T00:00:00Z",
+      created_at: "2026-10-01T00:00:00Z",
+      options: [],
+      variants: [variant("v1", "250 ml", 0), variant("v2", "500 ml", 6)],
+    };
+    vi.mocked(getPublishedProducts).mockResolvedValueOnce([shake]);
+    const facts = await sheet();
+    expect(estimateProductDelivery).toHaveBeenCalledWith(STORE, {
+      productId: "p1",
+      variantId: "v2",
+      quantity: 1,
+      postalCode: "560001",
+    });
+    expect(facts.delivery).toBe(
+      "Almond Shake (500 ml) to 560001: available, free delivery, 2 to 4 days by Delhivery.",
+    );
+  });
+
+  it("an unavailable delivery reads as one sentence, not two full stops", async () => {
+    vi.mocked(estimateProductDelivery).mockResolvedValueOnce({
+      available: false,
+      postalCode: "560001",
+      kind: "physical",
+      error: "This item is currently out of stock for online delivery.",
+    });
+    const facts = await sheet();
+    expect(facts.delivery).toBe(
+      "Almond Shake to 560001: This item is currently out of stock for online delivery.",
+    );
+  });
+
+  it("★ a long dash the model wrote never reaches the customer", async () => {
+    model({
+      outcome: "answer",
+      reply: "Yes — ₹120, delivered in 2—4 days.",
+      reason: "facts — price",
+    });
+    await answerWithMink(input());
+    expect(replyInChat).toHaveBeenCalledWith(
+      expect.objectContaining({ body: "Yes, ₹120, delivered in 2 to 4 days." }),
+    );
+    expect(dbHolder.current.calls.values[0].reason).toBe("facts, price");
+  });
+});
+
 describe("answerWithMink: drafts", () => {
   it("★ never sends and never charges: every answer is a draft for a person", async () => {
     setup({ minkMode: "drafts" });
@@ -459,7 +707,25 @@ describe("answerWithMink: drafts", () => {
       answer: "Yes, ₹120 and in stock.",
     });
     expect(chargeMinkAnswer).not.toHaveBeenCalled();
+    expect(claimMinkDraft).not.toHaveBeenCalled();
     expect(replyInChat).not.toHaveBeenCalled();
+    // A draft needs no number to send from yet: none is loaded.
+    expect(loadWhatsAppSender).not.toHaveBeenCalled();
+  });
+
+  it("★ leaves no draft for a message a person already answered", async () => {
+    setup({ minkMode: "drafts" });
+    vi.mocked(personRepliedSince).mockResolvedValueOnce(true);
+    const r = await answerWithMink(input({ mode: "drafts" }));
+    expect(r).toMatchObject({
+      outcome: "skipped",
+      needsHuman: false,
+      reason: "person_replied",
+    });
+    expect(dbHolder.current.calls.values[0]).toMatchObject({
+      mode: "drafts",
+      outcome: "discarded",
+    });
   });
 
   it("still needs headroom: a draft nobody could afford to send is not written", async () => {

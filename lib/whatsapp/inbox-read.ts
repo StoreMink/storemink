@@ -7,13 +7,16 @@ import {
   customerCreditBalances,
   orders,
   platformRoles,
+  storeWhatsappAccounts,
+  stores,
   whatsappContacts,
   whatsappConversations,
   whatsappMessages,
   whatsappTemplates,
 } from "@/drizzle/schema";
-import { gcsPublicUrl } from "@/lib/storage/gcs";
 import { formatStoredPhone, storedPhoneVariants } from "@/lib/phone";
+import { effectivePlan, limitsFor } from "@/lib/plans";
+import { likePattern } from "@/lib/pos/search";
 import { bodyFromComponents, consented } from "./channel";
 import {
   composerCanSend,
@@ -23,7 +26,7 @@ import {
 } from "./custom-template";
 import { serviceWindow } from "./inbox";
 import { loadMinkDraft } from "./mink-drafts";
-import { inboxSearchQuery } from "./inbox-workspace";
+import { inboxSearchQuery, type InboxReplyTemplate } from "./inbox-workspace";
 import {
   INBOX_NOTE_SOURCE,
   type InboxAssignee,
@@ -36,7 +39,6 @@ import {
   type InboxListQuery,
   type InboxListResult,
   type InboxMessageRow,
-  type InboxTemplateOption,
   type InboxThread,
 } from "./inbox-types";
 
@@ -100,6 +102,10 @@ export async function listConversations(
   const tsq = q ? inboxSearchQuery(q) : null;
   const assignee = (input.assignee ?? "").slice(0, 128);
   const label = input.label && UUID_RE.test(input.label) ? input.label : "";
+  // ★ What was typed is escaped for LIKE (likePattern): a bare "%" or "_"
+  // would match every named conversation, and a backslash would escape
+  // whatever follows it.
+  const namePattern = likePattern(q);
 
   const where = sql`
     c.store_id = ${storeId}::uuid
@@ -121,8 +127,8 @@ export async function listConversations(
     }
     ${
       q
-        ? sql`and (k.profile_name ilike ${"%" + q + "%"}
-                   ${qDigits.length >= 3 ? sql`or k.phone like ${"%" + qDigits + "%"}` : sql``}
+        ? sql`and (k.profile_name ilike ${namePattern}
+                   ${qDigits.length >= 3 ? sql`or k.phone like ${likePattern(qDigits)}` : sql``}
                    ${tsq ? sql`or mm.id is not null` : sql``})`
         : sql``
     }
@@ -454,7 +460,9 @@ async function loadMessages(
     source: r.source,
     kind: r.kind,
     body: r.body,
-    mediaUrl: r.mediaPath ? gcsPublicUrl(r.mediaPath) : null,
+    // ★ Never a bucket URL: chat media is private, read through the
+    // authenticated route (app/api/dashboard/inbox/media/[messageId]).
+    mediaUrl: r.mediaPath ? inboxMediaUrl(r.id) : null,
     mediaMime: r.mediaMime,
     mediaName: r.mediaName,
     payload:
@@ -468,6 +476,47 @@ async function loadMessages(
     providerMessageId: r.providerMessageId,
     quotedProviderId: r.quotedProviderId,
   }));
+}
+
+/** Where the dashboard reads one message's file: same origin, gated. */
+export function inboxMediaUrl(messageId: string): string {
+  return `/api/dashboard/inbox/media/${messageId}`;
+}
+
+export interface InboxMessageMedia {
+  path: string;
+  mime: string | null;
+  name: string | null;
+}
+
+/**
+ * One message's stored file, scoped to the store the viewer is on. Null when
+ * the message is not this store's or carries no file: the media route then
+ * answers 404 whichever it was, so an id from another store reveals nothing.
+ */
+export async function loadInboxMessageMedia(
+  storeId: string,
+  messageId: string,
+): Promise<InboxMessageMedia | null> {
+  const rows = await withService((db) =>
+    db
+      .select({
+        path: whatsappMessages.mediaPath,
+        mime: whatsappMessages.mediaMime,
+        name: whatsappMessages.mediaName,
+      })
+      .from(whatsappMessages)
+      .where(
+        and(
+          eq(whatsappMessages.id, messageId),
+          eq(whatsappMessages.storeId, storeId),
+        ),
+      )
+      .limit(1),
+  );
+  const row = rows[0];
+  if (!row?.path) return null;
+  return { path: row.path, mime: row.mime, name: row.name };
 }
 
 /** A conversation's private notes, as thread rows. */
@@ -694,17 +743,20 @@ async function loadCustomerPanel(
 
 /**
  * The approved CUSTOMER templates staff may send once the window has closed.
- * Team templates are not offered: they are addressed to staff.
+ * Team templates are not offered: they are addressed to staff. Each carries
+ * Meta's category, because a MARKETING one may go only to a customer whose
+ * yes to offers is in force (templateBlockedReason, checked again at send).
  */
 export async function listReplyTemplates(
   storeId: string,
-): Promise<InboxTemplateOption[]> {
+): Promise<InboxReplyTemplate[]> {
   const rows = await withService((db) =>
     db
       .select({
         id: whatsappTemplates.id,
         name: whatsappTemplates.name,
         language: whatsappTemplates.language,
+        category: whatsappTemplates.category,
         variables: whatsappTemplates.variables,
         components: whatsappTemplates.components,
         audience: whatsappTemplates.audience,
@@ -726,6 +778,7 @@ export async function listReplyTemplates(
       id: r.id,
       name: r.name,
       language: r.language,
+      category: r.category,
       body: bodyFromComponents(r.components),
       variables: Array.isArray(r.variables) ? (r.variables as string[]) : [],
       headerText: templateHeaderText(r.components),
@@ -735,4 +788,62 @@ export async function listReplyTemplates(
         text: b.text,
       })),
     }));
+}
+
+// ── The number behind the inbox ──────────────────────────────────────────
+
+export interface InboxChannelState {
+  /** A number is connected to this store, whatever state it is in. */
+  connected: boolean;
+  /** Switched on and connected at Meta: the composer can send. */
+  live: boolean;
+  /** The store's plan includes WhatsApp (Basic and above). */
+  planAllows: boolean;
+}
+
+/**
+ * Whether the inbox has a number behind it, for the inbox page.
+ *
+ * ★ READ BEHIND THE INBOX GATE, NOT THE CHANNELS ONE. The Channels card's
+ * state answers only people who manage Channels, so a role with the Inbox and
+ * without Channels was told to connect a number the store already had, and
+ * could never open the inbox the sidebar showed them. Never the token or the
+ * PIN; one read, the store row with its account, if any.
+ */
+export async function loadInboxChannelState(
+  storeId: string,
+): Promise<InboxChannelState> {
+  const rows = await withService((db) =>
+    db
+      .select({
+        plan: stores.plan,
+        planExpiresAt: stores.planExpiresAt,
+        compPlan: stores.compPlan,
+        compExpiresAt: stores.compExpiresAt,
+        accountStoreId: storeWhatsappAccounts.storeId,
+        enabled: storeWhatsappAccounts.enabled,
+        status: storeWhatsappAccounts.status,
+      })
+      .from(stores)
+      .leftJoin(
+        storeWhatsappAccounts,
+        eq(storeWhatsappAccounts.storeId, stores.id),
+      )
+      .where(eq(stores.id, storeId))
+      .limit(1),
+  );
+  const r = rows[0];
+  if (!r) return { connected: false, live: false, planAllows: false };
+  return {
+    connected: r.accountStoreId !== null,
+    live: r.enabled === true && r.status === "connected",
+    planAllows: limitsFor(
+      effectivePlan({
+        plan: r.plan,
+        plan_expires_at: r.planExpiresAt,
+        comp_plan: r.compPlan,
+        comp_expires_at: r.compExpiresAt,
+      }),
+    ).whatsapp,
+  };
 }

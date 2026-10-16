@@ -593,6 +593,28 @@ export async function saveNotificationConfig(
     Record<string, ChannelTemplate>
   > = {};
 
+  // What this notification has SAVED, read only when a refusal is in play.
+  // The console sends the whole channel map on every save, so a switch that
+  // was on while the number worked arrives again as `true` after the
+  // connection lapses; refusing that would lock every other field of this
+  // notification until the merchant switched the channel off. Only switching
+  // a channel ON is refused. Keeping it on stores intent and sends nothing:
+  // the fan-out checks the connection again at send. A failed read counts as
+  // "was off", which refuses, as before.
+  let saved: ResolvedNotification | null | undefined;
+  const wasOn = async (audienceKey: AudienceKey, channelKey: string) => {
+    if (saved === undefined) {
+      saved =
+        (await withService((db) =>
+          resolveNotification(db, storeId, def.key),
+        ).catch(() => null)) ?? null;
+    }
+    const channels = saved?.audiences[audienceKey]?.channels as
+      | Record<string, boolean>
+      | undefined;
+    return channels?.[channelKey] === true;
+  };
+
   for (const audienceKey of AUDIENCE_KEYS) {
     const audienceInput = input.audiences?.[audienceKey];
     if (!audienceInput) continue;
@@ -611,7 +633,12 @@ export async function saveNotificationConfig(
         // `canRequirePrepaid` makes for the prepaid pickup policy (§23): a
         // setting that does nothing is worse than one you cannot set, because
         // the merchant believes they turned it on.
-        if (channelKey === "sms" && on && !(await storeCanSendSms(storeId))) {
+        if (
+          channelKey === "sms" &&
+          on &&
+          !(await storeCanSendSms(storeId)) &&
+          !(await wasOn(audienceKey, channelKey))
+        ) {
           return {
             error:
               "Connect Twilio in Channels first - SMS also needs your DLT sender header and Entity ID.",
@@ -625,7 +652,8 @@ export async function saveNotificationConfig(
         if (
           channelKey === "whatsapp" &&
           on &&
-          !(await storeCanSendWhatsApp(storeId))
+          !(await storeCanSendWhatsApp(storeId)) &&
+          !(await wasOn(audienceKey, channelKey))
         ) {
           return {
             error:

@@ -13,6 +13,7 @@ import { sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { getViewerAccess, getActingStoreId } from "@/app/dashboard/lib/access";
 import { logError } from "@/lib/observability/logger";
+import { likePattern } from "@/lib/pos/search";
 
 export interface WhatsAppLogRow {
   id: string;
@@ -91,7 +92,9 @@ export async function getWhatsAppLogs(input: {
   if (days > 0)
     base.push(sql`created_at > now() - (${days} || ' days')::interval`);
   if (q) {
-    const pattern = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+    // ★ The backslash is escaped as well as % and _ (likePattern), or a "\"
+    // in the box would neutralise the escape of whatever follows it.
+    const pattern = likePattern(q);
     base.push(sql`(to_phone ilike ${pattern} or event_key ilike ${pattern})`);
   }
   const baseWhere = sql.join(base, sql` and `);

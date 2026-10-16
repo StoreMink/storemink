@@ -1,15 +1,41 @@
 // @vitest-environment jsdom
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
-// The polls are the route's concern; here they would only race the assertions.
-vi.mock("@/lib/pos/use-poll", () => ({ usePoll: () => undefined }));
+// The polls never tick on their own here (they would only race the
+// assertions); the latest callback of each is kept so a test can run one.
+const polls = vi.hoisted(() => ({
+  list: null as null | ((run: any) => unknown),
+  thread: null as null | ((run: any) => unknown),
+}));
+vi.mock("@/lib/pos/use-poll", () => ({
+  usePoll: (fn: (run: any) => unknown, opts: { enabled?: boolean }) => {
+    // The thread's poll is the one that can be switched off.
+    if (opts && "enabled" in opts) polls.thread = fn;
+    else polls.list = fn;
+  },
+}));
+/** Run the thread poll once, as its timer would. */
+const tickThread = () =>
+  act(async () => {
+    await polls.thread!({
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+    });
+  });
 vi.mock("@/app/actions/inbox-actions", () => ({
   getInboxThread: vi.fn(),
   markInboxRead: vi.fn(async () => ({ ok: true })),
@@ -22,16 +48,26 @@ vi.mock("@/app/actions/inbox-actions", () => ({
     ok: true,
     assignedAdminId: input.adminId,
   })),
-  setInboxConversationLabels: vi.fn(async (input: { labelIds: string[] }) => ({
-    ok: true,
-    labelIds: input.labelIds,
-  })),
+  setInboxConversationLabel: vi.fn(
+    async (input: { labelId: string; on: boolean }) => ({
+      ok: true,
+      labelIds: input.on ? [input.labelId] : [],
+    }),
+  ),
   addInboxNote: vi.fn(async () => ({ ok: true, id: "n9" })),
   deleteInboxNote: vi.fn(async () => ({ ok: true })),
   getInboxWorkspace: vi.fn(),
 }));
-// The managers are their own component; here they would only add dialogs.
-vi.mock("./inbox-manage", () => ({ InboxManageButtons: () => null }));
+// The managers are their own component; here they stand in only for what
+// they report back: a workspace after a label was deleted.
+const manage = vi.hoisted(() => ({ next: null as any }));
+vi.mock("./inbox-manage", () => ({
+  InboxManageButtons: ({ onChanged }: { onChanged: (w: any) => void }) => (
+    <button type="button" onClick={() => onChanged(manage.next)}>
+      Labels changed elsewhere
+    </button>
+  ),
+}));
 
 import { InboxClient } from "./inbox-client";
 import {
@@ -41,7 +77,7 @@ import {
   getInboxThread,
   sendInboxReply,
   sendMinkDraft,
-  setInboxConversationLabels,
+  setInboxConversationLabel,
 } from "@/app/actions/inbox-actions";
 import type {
   InboxListResult,
@@ -200,6 +236,7 @@ describe("InboxClient", () => {
             id: "t1",
             name: "sm_order_ready_customer_v1",
             language: "en",
+            category: "UTILITY",
             body: "Hi {{1}}",
             variables: ["customer_name"],
           },
@@ -632,9 +669,10 @@ describe("InboxClient: working as a team (slice 6)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Labels" }));
     fireEvent.click(screen.getByRole("button", { name: "Wholesale" }));
     await waitFor(() =>
-      expect(setInboxConversationLabels).toHaveBeenCalledWith({
+      expect(setInboxConversationLabel).toHaveBeenCalledWith({
         conversationId: CONV,
-        labelIds: ["l2"],
+        labelId: "l2",
+        on: true,
       }),
     );
   });
@@ -821,5 +859,528 @@ describe("InboxClient: working as a team (slice 6)", () => {
       screen.queryByRole("button", { name: "Labels" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /Note/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("InboxClient: what lands late, and what carries over", () => {
+  const CONV2 = "33333333-3333-4333-8333-333333333333";
+  const meera = () =>
+    row({
+      id: CONV2,
+      lastPreview: "Do you deliver to Pune?",
+      contact: {
+        id: "k2",
+        phone: "+919812345678",
+        phoneLabel: "+91 98123 45678",
+        name: "Meera",
+        userId: null,
+      },
+    });
+  const threadB = (): InboxThread =>
+    thread({
+      conversation: meera() as any,
+      messages: [
+        {
+          ...thread().messages[0],
+          id: "b1",
+          body: "Do you deliver to Pune?",
+          providerMessageId: "wamid.b1",
+        },
+      ],
+    });
+  const twoRows = () => list([row(), meera()]);
+  /** A promise this test settles, for a read that must land LATE. */
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it("★ a refresh for A that lands after B was opened does not replace B's thread", async () => {
+    const late = deferred<{ thread: InboxThread }>();
+    let readsOfA = 0;
+    vi.mocked(getInboxThread).mockImplementation(async (id: string) => {
+      if (id === CONV2) return { thread: threadB() };
+      readsOfA += 1;
+      return readsOfA === 2 ? late.promise : { thread: thread() };
+    });
+    render(
+      <InboxClient
+        initial={twoRows()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    const box = await screen.findByLabelText("Reply");
+    fireEvent.change(box, { target: { value: "Yes" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    // The send's refresh of A is now in flight; B is opened meanwhile.
+    await waitFor(() => expect(readsOfA).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: /Meera/ }));
+    const log = await screen.findByRole("log", { name: "Messages with Meera" });
+    expect(
+      within(log).getByText("Do you deliver to Pune?"),
+    ).toBeInTheDocument();
+    await act(async () => {
+      late.resolve({ thread: thread() });
+      await late.promise;
+    });
+    expect(screen.queryByText("Opening…")).toBeNull();
+    expect(
+      screen.getByRole("log", { name: "Messages with Meera" }),
+    ).toBeInTheDocument();
+  });
+
+  it("★ a poll for A that lands after B was opened is dropped, even when A changed", async () => {
+    vi.mocked(getInboxThread).mockImplementation(async (id: string) =>
+      id === CONV2 ? { thread: threadB() } : { thread: thread() },
+    );
+    const late = deferred<{ ok: boolean; json: () => Promise<unknown> }>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).includes("need=thread")
+          ? late.promise
+          : { ok: true, json: async () => list() },
+      ),
+    );
+    render(
+      <InboxClient
+        initial={twoRows()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    await screen.findByRole("log", { name: "Messages with Rohan" });
+    // The poll for A starts, and B is opened before its answer lands.
+    const pollForA = polls.thread!({
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Meera/ }));
+    await screen.findByRole("log", { name: "Messages with Meera" });
+    const changedA = thread({
+      messages: [
+        ...thread().messages,
+        { ...thread().messages[0], id: "a2", body: "Hello?" },
+      ],
+    });
+    await act(async () => {
+      late.resolve({ ok: true, json: async () => ({ thread: changedA }) });
+      await pollForA;
+    });
+    expect(screen.queryByText("Opening…")).toBeNull();
+    expect(
+      screen.getByRole("log", { name: "Messages with Meera" }),
+    ).toBeInTheDocument();
+  });
+
+  it("★ a failure to open is dropped when a poll then loads the thread", async () => {
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: null,
+      error: "Couldn't load the conversation.",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          String(url).includes("need=thread") ? { thread: thread() } : list(),
+      })),
+    );
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    expect(
+      await screen.findByText("Couldn't load the conversation."),
+    ).toBeInTheDocument();
+    await tickThread();
+    expect(
+      screen.getByRole("log", { name: "Messages with Rohan" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load the conversation.")).toBeNull();
+  });
+
+  it("★ a conversation that failed to open shows its thread once it does load", async () => {
+    let readsOfA = 0;
+    vi.mocked(getInboxThread).mockImplementation(async (id: string) => {
+      if (id === CONV2) return { thread: threadB() };
+      readsOfA += 1;
+      return readsOfA === 1
+        ? { thread: null, error: "Couldn't load the conversation." }
+        : { thread: thread() };
+    });
+    render(
+      <InboxClient
+        initial={twoRows()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    expect(
+      await screen.findByText("Couldn't load the conversation."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Meera/ }));
+    await screen.findByRole("log", { name: "Messages with Meera" });
+    fireEvent.click(screen.getByRole("button", { name: /Rohan/ }));
+    expect(
+      await screen.findByRole("log", { name: "Messages with Rohan" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load the conversation.")).toBeNull();
+  });
+
+  it("★ a quote picked in one conversation never shows in another's composer", async () => {
+    vi.mocked(getInboxThread).mockImplementation(async (id: string) =>
+      id === CONV2 ? { thread: threadB() } : { thread: thread() },
+    );
+    render(
+      <InboxClient
+        initial={twoRows()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    await screen.findByLabelText("Reply");
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Reply to this message" })[0]!,
+    );
+    expect(screen.getByText(/Replying to Rohan/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Meera/ }));
+    await screen.findByRole("log", { name: "Messages with Meera" });
+    expect(screen.queryByText(/Replying to/)).toBeNull();
+    const box = screen.getByLabelText("Reply");
+    fireEvent.change(box, { target: { value: "Yes, we do" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() =>
+      expect(sendInboxReply).toHaveBeenCalledWith({
+        conversationId: CONV2,
+        text: "Yes, we do",
+        replyToMessageId: null,
+      }),
+    );
+  });
+
+  it("★ a refresh started under one tab does not fill the list after another tab is chosen", async () => {
+    const late = deferred<{ ok: boolean; json: () => Promise<unknown> }>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).includes("filter=closed")
+          ? {
+              ok: true,
+              json: async () => ({
+                rows: [],
+                total: 0,
+                counts: { needs_reply: 1, open: 0, closed: 0, all: 1 },
+              }),
+            }
+          : late.promise,
+      ),
+    );
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    const box = await screen.findByLabelText("Reply");
+    fireEvent.change(box, { target: { value: "Yes" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    // The send's list refresh (filter=all) is in flight; Closed is chosen.
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some((c) => String(c[0]).includes("filter=all")),
+      ).toBe(true),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /Closed/ }));
+    const conversations = screen.getByRole("region", { name: "Conversations" });
+    expect(
+      await within(conversations).findByText("No conversations match."),
+    ).toBeInTheDocument();
+    await act(async () => {
+      late.resolve({ ok: true, json: async () => list() });
+      await late.promise;
+    });
+    expect(
+      within(conversations).getByText("No conversations match."),
+    ).toBeInTheDocument();
+    expect(
+      within(conversations).queryByRole("button", { name: /Rohan/ }),
+    ).toBeNull();
+  });
+
+  it("★ deleting the label the list is filtered by clears the filter", async () => {
+    manage.next = { ...WS, labels: [WS.labels[0]] };
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={null}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Label"), {
+      target: { value: "l2" },
+    });
+    await waitFor(() =>
+      expect(String(vi.mocked(fetch).mock.calls.at(-1)?.[0])).toContain(
+        "label=l2",
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Labels changed elsewhere" }),
+    );
+    await waitFor(() =>
+      expect(String(vi.mocked(fetch).mock.calls.at(-1)?.[0])).toMatch(
+        /label=$/,
+      ),
+    );
+    expect(screen.getByLabelText("Label")).toHaveValue("");
+  });
+
+  it("★ the label chips stay busy until the thread has been read again", async () => {
+    const late = deferred<{ thread: InboxThread }>();
+    let reads = 0;
+    vi.mocked(getInboxThread).mockImplementation(async () => {
+      reads += 1;
+      return reads === 2 ? late.promise : { thread: thread() };
+    });
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    await screen.findByLabelText("Reply");
+    fireEvent.click(screen.getByRole("button", { name: "Labels" }));
+    fireEvent.click(screen.getByRole("button", { name: "VIP" }));
+    await waitFor(() => expect(setInboxConversationLabel).toHaveBeenCalled());
+    await waitFor(() => expect(reads).toBe(2));
+    // A second click now would start from a thread that is out of date.
+    expect(screen.getByRole("button", { name: "VIP" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Wholesale" })).toBeDisabled();
+    await act(async () => {
+      late.resolve({
+        thread: thread({ conversation: row({ labelIds: ["l1"] }) as any }),
+      });
+      await late.promise;
+    });
+    expect(screen.getByRole("button", { name: "VIP" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "VIP" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("★ Enter that confirms an input-method word sends nothing, in the reply, the picker or a note", async () => {
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    const box = await screen.findByLabelText("Reply");
+    fireEvent.change(box, { target: { value: "namaste" } });
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
+    // The saved-reply picker is open on "/": Enter mid-word picks nothing.
+    fireEvent.change(box, { target: { value: "/ho" } });
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    expect((box as HTMLTextAreaElement).value).toBe("/ho");
+    expect(sendInboxReply).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Note/ }));
+    const note = screen.getByLabelText("Note");
+    fireEvent.change(note, { target: { value: "Call back" } });
+    fireEvent.keyDown(note, { key: "Enter", isComposing: true });
+    expect(addInboxNote).not.toHaveBeenCalled();
+    // Once the word is confirmed, Enter sends as before.
+    fireEvent.keyDown(note, { key: "Enter" });
+    await waitFor(() => expect(addInboxNote).toHaveBeenCalled());
+  });
+
+  it("a quoted sticker reads Sticker, as the list and the bubble say, never Photo", async () => {
+    const sticker: InboxMessageRow = {
+      ...thread().messages[0],
+      id: "s1",
+      kind: "sticker",
+      body: null,
+      providerMessageId: "wamid.st1",
+    };
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({
+        messages: [
+          sticker,
+          {
+            ...sticker,
+            id: "o2",
+            direction: "out",
+            source: "dashboard",
+            kind: "text",
+            body: "Cute!",
+            status: "sent",
+            providerMessageId: "wamid.o2",
+            quotedProviderId: "wamid.st1",
+          },
+        ],
+      }),
+    });
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    expect(
+      await screen.findByText("Sticker", { selector: ".inbox-quote-text" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("📷 Photo")).toBeNull();
+  });
+
+  it("a photo is drawn from the gated same-origin route as given", async () => {
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: thread({
+        messages: [
+          {
+            ...thread().messages[0],
+            id: "p1",
+            kind: "image",
+            body: null,
+            mediaUrl: "/api/dashboard/inbox/media/p1",
+            mediaMime: "image/jpeg",
+          },
+        ],
+      }),
+    });
+    render(
+      <InboxClient
+        initial={list()}
+        templates={[]}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    expect(await screen.findByAltText("Photo")).toHaveAttribute(
+      "src",
+      "/api/dashboard/inbox/media/p1",
+    );
+  });
+});
+
+describe("InboxClient: a marketing template and the customer's yes to offers", () => {
+  const TEMPLATES = [
+    {
+      id: "t1",
+      name: "order_delay",
+      language: "en",
+      category: "UTILITY",
+      body: "Hi {{1}}, your order is late.",
+      variables: ["customer_name"],
+    },
+    {
+      id: "t2",
+      name: "diwali_offer",
+      language: "en",
+      category: "MARKETING",
+      body: "Hi {{1}}, 20% off this week.",
+      variables: ["customer_name"],
+    },
+  ];
+  const closedWith = (marketing: boolean) =>
+    thread({
+      window: { open: false, closesAt: null },
+      customer: {
+        consent: { updates: true, marketing },
+        orders: [],
+        credit: null,
+      },
+    });
+
+  it("★ greys out a marketing template, with the reason, for a customer without a yes to offers", async () => {
+    vi.mocked(getInboxThread).mockResolvedValue({
+      thread: closedWith(false),
+    });
+    render(
+      <InboxClient
+        initial={list([row({ windowOpen: false })])}
+        templates={TEMPLATES}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    await screen.findByLabelText("Template");
+    expect(
+      screen.getByRole("option", {
+        name: "diwali_offer (marketing: not available)",
+      }),
+    ).toBeDisabled();
+    expect(screen.getByRole("option", { name: "order_delay" })).toBeEnabled();
+    expect(
+      screen.getByText(
+        /hasn't agreed to receive offers on WhatsApp, or has opted out/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("offers it, like any other, to a customer whose yes is in force", async () => {
+    vi.mocked(getInboxThread).mockResolvedValue({ thread: closedWith(true) });
+    render(
+      <InboxClient
+        initial={list([row({ windowOpen: false })])}
+        templates={TEMPLATES}
+        workspace={WS}
+        canManage
+        channelLive
+        initialConversationId={CONV}
+      />,
+    );
+    await screen.findByLabelText("Template");
+    expect(screen.getByRole("option", { name: "diwali_offer" })).toBeEnabled();
+    expect(screen.queryByText(/receive offers/)).toBeNull();
   });
 });

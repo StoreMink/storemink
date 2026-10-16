@@ -108,11 +108,17 @@ export const WHATSAPP_TEMPLATE_CATALOG: readonly WhatsAppTemplateDef[] = [
   // The buttons come back as `cod:confirm:<order>` / `cod:cancel:<order>`
   // (cod-payload.ts). Probed on the dev test account before shipping: Meta
   // accepted this exact body with both buttons as UTILITY.
+  // ★ {{3}} IS `amount_due`, NOT `total`. Store credit never lowers
+  // orders.total (CODEBASE §29) and the courier collects the total less the
+  // credit, so "Amount to pay on delivery" quoting the total overstated it.
+  // Only the value changed, not the words, so the name stays v1 (Meta reviews
+  // the words); `templateRowVariables` carries the new mapping to rows that
+  // were stored with the old one.
   def(
     "order.placed",
     "customer",
     "Please confirm your cash on delivery order {{1}} from {{2}}. Amount to pay on delivery: {{3}}. Tap Confirm order and we will prepare it, or Cancel order if you no longer want it.",
-    ["subject_label", "store_name", "total"],
+    ["subject_label", "store_name", "amount_due"],
     ["ORD10010004", "Acme Juice", "₹1,240.00"],
     {
       variant: COD_CONFIRM_VARIANT,
@@ -320,6 +326,24 @@ export function catalogEntryForName(
   return BY_FAMILY.get(templateFamily(name));
 }
 
+/**
+ * Which named value fills each placeholder of a STORED template row.
+ *
+ * ★ THE CATALOGUE'S MAPPING WINS FOR ITS OWN CURRENT ROW. Meta fixes a
+ * template's words once submitted; which value fills `{{3}}` is ours and is
+ * never reviewed, so it can change without a new version. The mapping stored
+ * with the row is a copy taken when it was first written, and the bootstrap
+ * upsert keeps an existing row as it was, so a changed mapping would never
+ * reach a store that connected earlier. Only the row whose name IS the
+ * current catalogue entry reads the catalogue: an older version's words may
+ * hold other placeholders, and a merchant's own template has no entry.
+ */
+export function templateRowVariables(name: string, stored: unknown): string[] {
+  const entry = catalogEntryForName(name);
+  if (entry && entry.name === name) return [...entry.variables];
+  return Array.isArray(stored) ? stored.map(String) : [];
+}
+
 /** The `_v<n>` a template name ends in; 0 when it carries none (a template
  *  a merchant authored in WhatsApp Manager). */
 export function templateNameVersion(name: string): number {
@@ -412,14 +436,30 @@ export const KNOWN_TEMPLATE_STATUSES = [
   "LIMIT_EXCEEDED",
 ] as const;
 
-const KNOWN_STATUS_SET: ReadonlySet<string> = new Set(KNOWN_TEMPLATE_STATUSES);
+export type KnownTemplateStatus = (typeof KNOWN_TEMPLATE_STATUSES)[number];
 
-/** A status word as Meta sent it, upper-cased, when it is one the row can
- *  hold; null for anything else (FLAGGED, ARCHIVED, a typo), so a caller can
- *  leave the stored status alone rather than fail on the CHECK. */
-export function knownTemplateStatus(status: unknown): string | null {
-  const s = String(status ?? "").toUpperCase();
-  return KNOWN_STATUS_SET.has(s) ? s : null;
+/**
+ * Meta's event words that are not a status of their own but say which status
+ * the template is back in. ★ REINSTATED is "no longer flagged or disabled and
+ * can be sent in template messages again" (message_template_status_update).
+ * Ignoring it left the row DISABLED or PAUSED, and the channel loaders send
+ * only APPROVED, so the template stayed unsendable until somebody pressed
+ * Refresh.
+ */
+const TEMPLATE_STATUS_ALIASES: Readonly<
+  Partial<Record<string, KnownTemplateStatus>>
+> = { REINSTATED: "APPROVED" };
+
+/** A status word as Meta sent it, upper-cased and with an alias resolved,
+ *  when it is one the row can hold; null for anything else (FLAGGED,
+ *  ARCHIVED, a typo), so a caller can leave the stored status alone rather
+ *  than fail on the CHECK. */
+export function knownTemplateStatus(
+  status: unknown,
+): KnownTemplateStatus | null {
+  const word = String(status ?? "").toUpperCase();
+  const s = TEMPLATE_STATUS_ALIASES[word] ?? word;
+  return KNOWN_TEMPLATE_STATUSES.find((known) => known === s) ?? null;
 }
 
 /** Meta's limit on a template body. */
