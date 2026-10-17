@@ -194,6 +194,71 @@ categories guide. ⚠ Not run in a browser; verified by the suites, tsc and the
 live service check. ⚠ A cut-out keeps whatever the model calls the main
 subject: a hand or a person holding the product comes with it.
 
+### Change background: soft shadow and scenes (2026-10-17)
+
+Step 2 of the pipeline. Owner's decisions: one scene per request, presets
+only, 5 credits per new scene with the Flash model (the real cost of one
+Gemini 3.1 Flash Image call, about ₹9, at what a credit sells for).
+★★ THE SHADOW IS CAST FROM THE PRODUCT'S OWN BASE, never painted on it.
+`groundShadow` (`background-layout.ts`, pure) finds, per column, the lowest
+product pixel in the bottom 45% of the cut-out and draws a band below it
+that starts dark and fades; `shadowLayersFor` gives a short dark contact
+layer and a deeper faint one (darker in a scene), and `background-render.ts`
+blurs each and lays it under the product. ⚠ An ellipse under the lowest
+point was tried first and left an angled sole floating; the outline itself
+was tried second and hid behind the product. ⚠ `extend()` with a colour makes
+a one-channel image three-channel, so the shadow takes `extractChannel(0)`
+before it becomes an alpha; without it the shadow was silently empty.
+On by default for white and colour ("Soft shadow under the product", free to
+switch), never on transparent (`canHaveShadow`); the shadowed result is filed
+under its own key (`white-shadow`). Overlays are cropped to the frame
+(`cropToFrame`), because sharp refuses one that runs past the canvas.
+★★ A SCENE IS AN EMPTY SET; THE MODEL NEVER SEES THE PRODUCT.
+`lib/media/scene-presets.ts` (client-safe) holds eight presets (studio,
+marble, wood, linen, concrete, garden, beach, bathroom) and `scenePrompt`: a
+text-only request for the set with nothing on it, the surface filling the
+lower half and running past the bottom of the picture, the middle empty at
+the floor line the product stands on (`SCENE_FLOOR`, 0.84), a blurred
+background (sharp background detail gives away scale), no products, people
+or text. `lib/mink/image-scenes.ts` draws it with Mink's image model
+(`MINK_IMAGE_MODEL`, `ALLOW_NONE`, 2K, the slot's aspect), fits it to the
+slot, stores it at `stores/{id}/scenes/{uuid}.webp` and charges through
+`consume_mink_scene_credits` (migration `20261017_0220`,
+`mink_image_scenes`, service-only, idempotent per scene id).
+`renderOnScene` stands the cut-out on the floor line at `SCENE_FILL` (0.6),
+with the darker shadow; the product's pixels are copied, never colour-matched,
+because shoppers buy on colour.
+★★ ONE SCENE PER PRESET AND SIZE, REUSED. The store's newest scene for a
+preset and frame is used for every product placed in it, free, so a
+catalogue reads as one shoot; "Draw a new one" (`newScene`) draws and charges
+again. `GET /api/mink/image-background?spec=` lists the saved ones (newest per
+preset, Media view) so the editor can label them "Saved · free".
+★ EVERYTHING A REQUEST COULD SPEND IS CHECKED FIRST: `replaceProductBackground`
+finds the stored cut-out and scene, asks the scene gates
+(`assertSceneGenerationAllowed`: Mink enabled, Media manage, the store's
+image-generation switch) and checks credits for the cut-out PLUS the scene
+before the matting service is called, so a store that can pay for one but
+not both is refused before anything is charged. A new scene also takes Mink
+image generation's spend ceiling (`reserveMinkImageGeneration`). Reusing a
+saved scene needs none of the generation gates.
+★ A REFUSAL WITH NO IMAGE IS ASKED ONCE MORE. The safety filter refused an
+innocent marble set twice in a row on one wording (2026-10-17, finish
+`IMAGE_SAFETY`, no image tokens billed); the wording was changed and every
+preset then drew. A refusal bills only the ~300 prompt tokens, so one retry
+costs nothing worth refusing the merchant over; a provider ERROR is never
+retried (it may have been billed), and a project quota 429 is reported as
+busy. Availability is the third flag on `ImageRefineProvider` (`scenes`, set
+from `minkEnabled`; only shown when background removal is available too).
+Checked live on staging, 2026-10-17: all eight presets drew in 14 to 19 s at
+1,680 image tokens (about $0.10) each, and the sandals photo placed in each
+read as standing on the surface. Help: `20261017_0221` edits the
+product-images guide's Change background step in place. Tests:
+`background-layout`, `background-render` (real sharp), `scene-presets`,
+`image-scenes` (mocked model), `background-edit`, the route and
+`image-upload`. ⚠ Not run in a browser. ⚠ The model does not know the
+product's size, so a tiny item on a large-looking counter can read as
+oversized; presets keep the background blurred to hide scale.
+
 ### Mink Sidekick parity: streaming, navigation, skills, charts, memories, categories (2026-10-17)
 
 Nine gaps against Shopify Sidekick closed in one change. No new table; one
@@ -4775,8 +4840,9 @@ wholesip/
 │       │                  # types, nosniff + sandbox CSP, one byte range
 │       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 2 credits
 │       ├── mink/image-background/ # ★ Change background: the real product cut out by the
-│       │                  # image-matting service onto white, a colour or
-│       │                  # transparency; 1 credit per photo, other backgrounds free
+│       │                  # image-matting service onto white, a colour,
+│       │                  # transparency or a scene; 1 credit per photo, 5 per new
+│       │                  # scene, everything else free; GET lists saved scenes
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
 │           │                  # store-host files live under stores/{storeId}/uploads/
@@ -5404,6 +5470,8 @@ wholesip/
 │   ├── media/background-render.ts # sharp only: cutOut + renderOnBackground
 │   ├── media/background-edit.ts   # server-only: replaceProductBackground (§ Change background)
 │   ├── media/matting-client.ts    # server-only: the image-matting service's client
+│   ├── media/scene-presets.ts     # client-safe: the eight scenes + the empty-set prompt
+│   │                          # (lib/mink/image-scenes.ts draws, stores and charges them)
 │   ├── media/sources.ts       # where a media_assets row came from + which the Library hides
 │   │                          # (the "computer or Media Library" add-image menu is
 │   │                          # components/ui/image-source-menu.tsx)
@@ -6271,7 +6339,10 @@ wholesip/
 │                              # mink_image_cutouts, consume_mink_cutout_credits and the
 │                              # mink_edited media source (Change background); 0219
 │                              # edits the product-images and categories guides for it.
-│                              # Next free: 0220.
+│                              # 0220 adds mink_image_scenes and
+│                              # consume_mink_scene_credits (scenes, 5 credits); 0221
+│                              # edits the product-images guide for the shadow and scenes.
+│                              # Next free: 0222.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

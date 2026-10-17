@@ -257,8 +257,8 @@ gcloud iam service-accounts delete storemink-matting@storemink-prod.iam.gservice
 
 ## Not built yet
 
-- The merchant features after this one: New background (scene generation
-  plus compositing), Extend, the chat edit tool, and catalogue photos routed
-  through the cut-out.
+- Scenes and the soft shadow shipped the same day (see `CODEBASE.md`,
+  "Change background: soft shadow and scenes"). Still to come: Extend, the
+  chat edit tool, and catalogue photos routed through the cut-out.
 - Subject correction (click to include or exclude) and harmonisation
   (contact shadow, colour-temperature match, relight).

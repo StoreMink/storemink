@@ -239,3 +239,10 @@ export const IMAGE_REFINE_CREDITS = 2;
  * cut-out and is free.
  */
 export const IMAGE_CUTOUT_CREDITS = 1;
+
+/**
+ * What one new scene costs, in Mink credits (owner's price, 2026-10-17): the
+ * real cost of one Gemini 3.1 Flash Image call (about ₹9) at what a credit
+ * sells for. A store's scene is reused for every product placed in it, free.
+ */
+export const IMAGE_SCENE_CREDITS = 5;

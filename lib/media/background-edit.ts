@@ -17,10 +17,22 @@ import { rateLimit } from "@/lib/rate-limit";
 import { logError } from "@/lib/observability/logger";
 import { getMinkConfig } from "@/lib/mink/config";
 import { MinkRequestError } from "@/lib/mink/errors";
-import { canAfford, imageCreditHeadroom } from "@/lib/mink/image-credits";
+import {
+  canAfford,
+  imageCreditHeadroom,
+  type ImageCreditHeadroom,
+} from "@/lib/mink/image-credits";
+import {
+  assertSceneGenerationAllowed,
+  findStoreScene,
+  getOrCreateScene,
+  type SceneForUse,
+} from "@/lib/mink/image-scenes";
+import type { MinkConfig } from "@/lib/mink/config";
 import type { MinkActorContext } from "@/lib/mink/types";
 import {
   IMAGE_CUTOUT_CREDITS,
+  IMAGE_SCENE_CREDITS,
   IMAGE_SPECS,
   type ImageSpec,
   type ImageSpecKey,
@@ -29,9 +41,11 @@ import {
   type BackgroundChoice,
   type CutoutCheck,
   backgroundKey,
+  canHaveShadow,
   isCutoutCheck,
 } from "./background-layout";
-import { cutOut, renderOnBackground } from "./background-render";
+import { scenePreset } from "./scene-presets";
+import { cutOut, renderOnBackground, renderOnScene } from "./background-render";
 import {
   MattingError,
   mattingConfigured,
@@ -57,6 +71,12 @@ import {
 //    anything is stored.
 // ★ The original is never touched: every result is a new object, and the
 //    merchant compares and chooses before a product uses it.
+// ★ A SCENE IS CHARGED SEPARATELY AND ONCE (lib/mink/image-scenes.ts): the
+//    store's newest scene for a preset and frame is reused for every product,
+//    free; a new one costs IMAGE_SCENE_CREDITS. Everything a request could
+//    spend (a cut-out, a scene) is checked against the store's credits BEFORE
+//    either is made, so a store that can pay for one but not both is refused
+//    up front rather than charged for half.
 // ---------------------------------------------------------------------------
 
 /** Source download ceiling; uploads are capped at 5 MiB. */
@@ -74,6 +94,8 @@ export interface BackgroundEditResult {
   /** True when the photo's earlier cut-out was reused (and nothing charged). */
   reused: boolean;
   checks: CutoutCheck[];
+  /** For a scene: which one was used, and whether it was drawn just now. */
+  scene?: { id: string; url: string; created: boolean };
 }
 
 interface Cutout {
@@ -94,10 +116,14 @@ function refuse(
   return new MinkRequestError(code, message, status);
 }
 
-function insufficient(): MinkRequestError {
+function insufficient(credits = IMAGE_CUTOUT_CREDITS): MinkRequestError {
+  const what =
+    credits === IMAGE_CUTOUT_CREDITS
+      ? `Removing a background uses ${IMAGE_CUTOUT_CREDITS} Mink credit`
+      : `This uses ${credits} Mink credits`;
   return refuse(
     "cutout_insufficient_credits",
-    `Removing a background uses ${IMAGE_CUTOUT_CREDITS} Mink credit, and this store doesn't have enough left. Buy Mink credits or upgrade under Plans & Billing.`,
+    `${what}, and this store doesn't have enough left. Buy Mink credits or upgrade under Plans & Billing.`,
     402,
   );
 }
@@ -110,9 +136,18 @@ export async function replaceProductBackground(input: {
   sourceUrl: string;
   specKey: ImageSpecKey;
   background: BackgroundChoice;
+  /** A soft shadow under the product on white or a colour. */
+  shadow?: boolean;
+  /** For a scene: draw a new one even when the store has one. */
+  newScene?: boolean;
 }): Promise<BackgroundEditResult> {
   const { actor, specKey, background } = input;
   const spec: ImageSpec = IMAGE_SPECS[specKey];
+  const preset =
+    background.kind === "scene" ? scenePreset(background.preset) : null;
+  if (background.kind === "scene" && !preset) {
+    throw refuse("scene_unknown", "Choose one of the scenes listed.", 400);
+  }
   if (!spec.background) {
     throw refuse(
       "cutout_not_offered",
@@ -155,13 +190,63 @@ export async function replaceProductBackground(input: {
     );
   }
 
+  const digest = createHash("sha256").update(photo).digest("hex");
+  const existingCutout = await findCutout(actor.storeId, digest);
+  const existingScene = preset
+    ? await findStoreScene(actor.storeId, preset.id, spec)
+    : null;
+  const drawsScene = Boolean(preset && (input.newScene || !existingScene));
+
+  // Everything that would refuse a new scene is asked before anything is
+  // spent, so the cut-out is never charged for a request that then fails.
+  let sceneConfig: MinkConfig | null = null;
+  if (drawsScene) sceneConfig = await assertSceneGenerationAllowed(actor);
+
+  const needed =
+    (existingCutout ? 0 : IMAGE_CUTOUT_CREDITS) +
+    (drawsScene ? IMAGE_SCENE_CREDITS : 0);
+  let headroom: ImageCreditHeadroom | null = null;
+  if (needed > 0) {
+    headroom = await imageCreditHeadroom(actor, getMinkConfig().chargeCredits);
+    if (!canAfford(headroom, needed)) throw insufficient(needed);
+  }
+
   const cutout = await getOrCreateCutout({
     actor,
     photo,
+    digest,
+    existing: existingCutout,
+    headroom,
     sourceUrl: input.sourceUrl,
     frame: spec,
   });
-  return composeOnBackground({ actor, cutout, specKey, spec, background });
+
+  let scene: SceneForUse | null = null;
+  if (preset) {
+    scene = await getOrCreateScene({
+      actor,
+      preset,
+      spec,
+      existing: existingScene,
+      fresh: input.newScene === true,
+      config: sceneConfig,
+      headroom: headroom ?? (await creditHeadroom(actor)),
+    });
+  }
+
+  return composeOnBackground({
+    actor,
+    cutout,
+    specKey,
+    spec,
+    background,
+    shadow: input.shadow === true,
+    scene,
+  });
+}
+
+function creditHeadroom(actor: MinkActorContext): Promise<ImageCreditHeadroom> {
+  return imageCreditHeadroom(actor, getMinkConfig().chargeCredits);
 }
 
 interface StoredCutout {
@@ -220,13 +305,13 @@ async function loadStoredCutout(found: StoredCutout): Promise<Cutout> {
 async function getOrCreateCutout(input: {
   actor: MinkActorContext;
   photo: Buffer;
+  digest: string;
+  existing: StoredCutout | null;
+  headroom: ImageCreditHeadroom | null;
   sourceUrl: string;
   frame: ImageSpec;
 }): Promise<Cutout> {
-  const { actor, photo } = input;
-  const digest = createHash("sha256").update(photo).digest("hex");
-
-  const existing = await findCutout(actor.storeId, digest);
+  const { actor, photo, digest, existing } = input;
   if (existing) {
     try {
       return await loadStoredCutout(existing);
@@ -239,11 +324,9 @@ async function getOrCreateCutout(input: {
     }
   }
 
-  const config = getMinkConfig();
-  const headroom = await imageCreditHeadroom(actor, config.chargeCredits);
-  if (!existing && !canAfford(headroom, IMAGE_CUTOUT_CREDITS)) {
-    throw insufficient();
-  }
+  // Already checked by the caller for a new cut-out; read here only when a
+  // stored cut-out's file was lost, which charges nothing again.
+  const headroom = input.headroom ?? (await creditHeadroom(actor));
 
   // One instance handles one photo at a time; these keep one store, or one
   // person, from queueing everyone else behind them.
@@ -405,23 +488,39 @@ async function getOrCreateCutout(input: {
   };
 }
 
+/** The stored file's key: the background, the scene it used, the shadow. */
+function resultKey(
+  background: BackgroundChoice,
+  shadow: boolean,
+  scene: SceneForUse | null,
+): string {
+  if (background.kind === "scene" && scene) return `scene-${scene.id}`;
+  const key = backgroundKey(background);
+  return shadow && canHaveShadow(background) ? `${key}-shadow` : key;
+}
+
 async function composeOnBackground(input: {
   actor: MinkActorContext;
   cutout: Cutout;
   specKey: ImageSpecKey;
   spec: ImageSpec;
   background: BackgroundChoice;
+  shadow: boolean;
+  scene: SceneForUse | null;
 }): Promise<BackgroundEditResult> {
-  const { actor, cutout, specKey, spec, background } = input;
-  const key = backgroundKey(background);
+  const { actor, cutout, specKey, spec, background, scene } = input;
+  const key = resultKey(background, input.shadow, scene);
   const path = `${storeStoragePrefix(actor.storeId)}${EDITED_FOLDER}/${cutout.id}-${specKey}-${key}.webp`;
   const result = (url: string): BackgroundEditResult => ({
     url,
     width: spec.width,
     height: spec.height,
-    chargedCredits: cutout.chargedCredits,
+    chargedCredits: cutout.chargedCredits + (scene?.chargedCredits ?? 0),
     reused: cutout.reused,
     checks: cutout.checks,
+    ...(scene
+      ? { scene: { id: scene.id, url: scene.url, created: scene.created } }
+      : {}),
   });
 
   // The same photo, slot and background asked for again: the first result.
@@ -438,7 +537,11 @@ async function composeOnBackground(input: {
 
   let output: Buffer;
   try {
-    output = await renderOnBackground(cutout.png, cutout, spec, background);
+    output = scene
+      ? await renderOnScene(cutout.png, cutout, scene.bytes, spec)
+      : await renderOnBackground(cutout.png, cutout, spec, background, {
+          shadow: input.shadow,
+        });
   } catch (error) {
     logError("background edit: compose failed", error, { cutoutId: cutout.id });
     throw refuse(
@@ -456,7 +559,9 @@ async function composeOnBackground(input: {
         storeId: actor.storeId,
         url,
         path,
-        filename: `background-${key}-${spec.width}x${spec.height}.webp`,
+        filename: `background-${
+          background.kind === "scene" ? background.preset : key
+        }-${spec.width}x${spec.height}.webp`,
         contentType: "image/webp",
         sizeBytes: output.length,
         createdBy: actor.adminId,

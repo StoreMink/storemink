@@ -8200,6 +8200,53 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261017_0220_image_scenes",
+      "description": "Scenes for Change background: mink_image_scenes (one row per scene drawn, reused for every product placed in it) and consume_mink_scene_credits, an atomic, idempotent 5-credit charge from the plan cycle first and then top-ups",
+      "file": "sql/20261017_0220_image_scenes.sql",
+      "transaction": true,
+      "requires": ["20261017_0219_change_background_help"],
+      "verify": {
+        "tables": ["mink_image_scenes"],
+        "constraints": [
+          "mink_image_scenes_pkey",
+          "mink_image_scenes_preset_check",
+          "mink_image_scenes_size_check",
+          "mink_image_scenes_credits_check",
+          "mink_image_scenes_source_check"
+        ],
+        "indexes": ["mink_image_scenes_lookup_idx"],
+        "functions": [
+          "consume_mink_scene_credits(uuid,uuid,text,text,integer,integer,text,text,text,text,integer,integer)"
+        ],
+        "rlsTables": ["mink_image_scenes"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261017_0221_change_background_scenes_help",
+      "description": "The product-images guide's Change background step edited in place for the soft shadow and scenes: Mink AI draws only the empty scene, 5 credits per new scene, saved and reused free",
+      "file": "sql/20261017_0221_change_background_scenes_help.sql",
+      "transaction": true,
+      "requires": ["20261017_0220_image_scenes"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the step names scenes among the backgrounds",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%a transparent background or a scene such as a marble counter%'",
+            "equals": "1"
+          },
+          {
+            "name": "the step explains the shadow and the scene price",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%A new scene uses 5 Mink credits and is saved%' and body like '%Soft shadow under the product%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

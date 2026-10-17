@@ -7,6 +7,13 @@
 //   side fills PRODUCT_FILL of the frame, the convention marketplaces use
 //   (Amazon asks for the product to fill 85% of a main image), so a grid of
 //   them reads as one shoot.
+// ★ A SCENE PUTS THE PRODUCT ON A SURFACE, so it is placed differently: smaller
+//   (SCENE_FILL), standing on a floor line (SCENE_FLOOR) rather than centred,
+//   with the set around it. The scene's prompt names the same floor line, so
+//   the generated surface and the placed product agree on where "down" is.
+// ★ THE SHADOW IS DRAWN FROM THE PRODUCT'S OWN FOOTPRINT (the bottom rows of
+//   its mask), never painted onto the product. A product on white with no
+//   shadow reads as floating; one ellipse the width of its base fixes that.
 
 /** How much of the frame the product fills along its limiting side. */
 export const PRODUCT_FILL = 0.84;
@@ -17,10 +24,23 @@ export const MASK_THRESHOLD = 128;
 /** Product scaled up by more than this looks soft. */
 export const MAX_UPSCALE = 1.6;
 
+/** How much of the frame a product fills along its limiting side in a scene. */
+export const SCENE_FILL = 0.6;
+
+/** Where a product's base stands in a scene, as a share of the height from the top. */
+export const SCENE_FLOOR = 0.84;
+
+/** The highest a product's top may reach in a scene (share of the height). */
+const SCENE_HEADROOM = 0.05;
+
+/** A scene preset id: lower-case letters, digits and underscores. */
+const PRESET_ID = /^[a-z][a-z0-9_]{0,39}$/;
+
 export type BackgroundChoice =
   | { kind: "white" }
   | { kind: "transparent" }
-  | { kind: "colour"; hex: string };
+  | { kind: "colour"; hex: string }
+  | { kind: "scene"; preset: string };
 
 /**
  * A background from untrusted input, or null. A colour must be exactly
@@ -38,6 +58,15 @@ export function parseBackground(value: unknown): BackgroundChoice | null {
       return { kind: "colour", hex: hex.toLowerCase() };
     }
   }
+  if (kind === "scene") {
+    // Only the SHAPE is checked here; whether the preset exists is the
+    // caller's question (lib/media/scene-presets.ts), so this module stays
+    // free of the preset list.
+    const preset = (value as { preset?: unknown }).preset;
+    if (typeof preset === "string" && PRESET_ID.test(preset)) {
+      return { kind: "scene", preset };
+    }
+  }
   return null;
 }
 
@@ -51,10 +80,18 @@ export function backgroundKey(background: BackgroundChoice): string {
       return "transparent";
     case "colour":
       return `c${background.hex.slice(1).toLowerCase()}`;
+    case "scene":
+      return `scene-${background.preset}`;
   }
 }
 
-/** The fill as RGBA for sharp. */
+/** Whether a background can carry a shadow: a transparent one cannot, since
+ *  the merchant may place it on any colour. */
+export function canHaveShadow(background: BackgroundChoice): boolean {
+  return background.kind !== "transparent";
+}
+
+/** The fill as RGBA for sharp. A scene is drawn, not filled: white stands in. */
 export function backgroundFill(background: BackgroundChoice): {
   r: number;
   g: number;
@@ -62,7 +99,8 @@ export function backgroundFill(background: BackgroundChoice): {
   alpha: number;
 } {
   if (background.kind === "transparent") return { r: 0, g: 0, b: 0, alpha: 0 };
-  if (background.kind === "white") return { r: 255, g: 255, b: 255, alpha: 1 };
+  if (background.kind === "white" || background.kind === "scene")
+    return { r: 255, g: 255, b: 255, alpha: 1 };
   const hex = background.hex.slice(1);
   return {
     r: Number.parseInt(hex.slice(0, 2), 16),
@@ -136,6 +174,106 @@ export function placeInFrame(
     top: Math.round((frame.height - height) / 2),
     scale,
   };
+}
+
+/**
+ * Where a cut-out goes in a scene: scaled so its limiting side fills
+ * SCENE_FILL, centred across, with its base on the SCENE_FLOOR line. A tall
+ * product that would rise past the headroom is scaled down to fit under it.
+ */
+export function placeOnFloor(
+  cut: { width: number; height: number },
+  frame: { width: number; height: number },
+): Box & { scale: number } {
+  const floor = Math.round(frame.height * SCENE_FLOOR);
+  const room = floor - Math.round(frame.height * SCENE_HEADROOM);
+  const scale = Math.min(
+    (frame.width * SCENE_FILL) / cut.width,
+    (frame.height * SCENE_FILL) / cut.height,
+    room / cut.height,
+  );
+  const width = Math.max(1, Math.round(cut.width * scale));
+  const height = Math.max(1, Math.round(cut.height * scale));
+  return {
+    width,
+    height,
+    left: Math.round((frame.width - width) / 2),
+    top: floor - height,
+    scale,
+  };
+}
+
+export interface ShadowLayer {
+  /** How far below the product's base the shadow reaches, in pixels. */
+  depth: number;
+  /** Blur radius (sigma), in pixels. */
+  blur: number;
+  opacity: number;
+}
+
+/**
+ * The two shadows under a placed product of `height` pixels: a short, dark
+ * contact shadow right under its base and a deeper, faint one around it.
+ */
+export function shadowLayersFor(
+  height: number,
+  strength: "light" | "scene" = "light",
+): ShadowLayer[] {
+  const scene = strength === "scene";
+  return [
+    {
+      depth: Math.max(Math.round(height * 0.025), 4),
+      blur: Math.max(height * 0.006, 1.5),
+      opacity: scene ? 0.6 : 0.45,
+    },
+    {
+      depth: Math.max(Math.round(height * 0.07), 10),
+      blur: Math.max(height * 0.025, 5),
+      opacity: scene ? 0.3 : 0.18,
+    },
+  ];
+}
+
+/** Only a base this low in the product casts a ground shadow: a strap or a
+ *  handle hanging in mid-air does not touch the ground. */
+const GROUND_FROM = 0.55;
+
+/**
+ * A ground shadow cast straight down from the product's base: for every column
+ * whose lowest product pixel is near the bottom, a band `depth` pixels deep
+ * that starts dark at that pixel and fades out. Following the base column by
+ * column is what keeps an angled sole grounded along its whole length; one
+ * ellipse under the lowest point left the rest of it floating.
+ *
+ * Returns `width × (height + depth)` values, aligned with the product's top
+ * left corner.
+ */
+export function groundShadow(
+  alpha: Uint8Array,
+  width: number,
+  height: number,
+  depth: number,
+  threshold = MASK_THRESHOLD,
+): Uint8Array {
+  const rows = height + depth;
+  const out = new Uint8Array(width * rows);
+  if (alpha.length < width * height || depth < 1) return out;
+  const lowestAllowed = Math.floor(height * GROUND_FROM);
+  for (let x = 0; x < width; x += 1) {
+    let base = -1;
+    for (let y = height - 1; y >= lowestAllowed; y -= 1) {
+      if (alpha[y * width + x] >= threshold) {
+        base = y;
+        break;
+      }
+    }
+    if (base < 0) continue;
+    for (let d = 0; d < depth; d += 1) {
+      const fade = 1 - d / depth;
+      out[(base + d) * width + x] = Math.round(255 * fade * fade);
+    }
+  }
+  return out;
 }
 
 /** Things a merchant should know about a cut-out before using it. */

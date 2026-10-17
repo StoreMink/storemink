@@ -2,13 +2,19 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_UPSCALE,
   PRODUCT_FILL,
+  SCENE_FILL,
+  SCENE_FLOOR,
   backgroundFill,
   backgroundKey,
+  canHaveShadow,
   cutoutChecks,
+  groundShadow,
   isCutoutCheck,
   maskBounds,
   parseBackground,
   placeInFrame,
+  placeOnFloor,
+  shadowLayersFor,
 } from "./background-layout";
 
 describe("parseBackground", () => {
@@ -149,5 +155,88 @@ describe("cutoutChecks", () => {
     expect(isCutoutCheck("small")).toBe(true);
     expect(isCutoutCheck("touches_edge")).toBe(true);
     expect(isCutoutCheck("drop table")).toBe(false);
+  });
+});
+
+describe("scenes", () => {
+  it("accepts a scene by preset id, checked for shape only", () => {
+    expect(parseBackground({ kind: "scene", preset: "marble" })).toEqual({
+      kind: "scene",
+      preset: "marble",
+    });
+    for (const preset of ["Marble", "../x", "", "a b", "x".repeat(41), 7]) {
+      expect(parseBackground({ kind: "scene", preset })).toBeNull();
+    }
+    expect(backgroundKey({ kind: "scene", preset: "marble" })).toBe(
+      "scene-marble",
+    );
+  });
+
+  it("puts a shadow under anything but a transparent background", () => {
+    expect(canHaveShadow({ kind: "white" })).toBe(true);
+    expect(canHaveShadow({ kind: "colour", hex: "#102030" })).toBe(true);
+    expect(canHaveShadow({ kind: "scene", preset: "wood" })).toBe(true);
+    expect(canHaveShadow({ kind: "transparent" })).toBe(false);
+  });
+
+  it("stands a product on the floor line, smaller than on a plain background", () => {
+    const frame = { width: 1200, height: 1600 };
+    const wide = placeOnFloor({ width: 1000, height: 400 }, frame);
+    expect(wide.width).toBe(Math.round(1200 * SCENE_FILL));
+    expect(wide.top + wide.height).toBe(Math.round(1600 * SCENE_FLOOR));
+    expect(wide.left).toBe(Math.round((1200 - wide.width) / 2));
+    expect(wide.width).toBeLessThan(
+      placeInFrame({ width: 1000, height: 400 }, frame).width,
+    );
+  });
+
+  it("scales a tall product down so its top stays inside the frame", () => {
+    const frame = { width: 1200, height: 1600 };
+    const tall = placeOnFloor({ width: 100, height: 2000 }, frame);
+    expect(tall.top).toBeGreaterThanOrEqual(Math.round(1600 * 0.05));
+    expect(tall.top + tall.height).toBe(Math.round(1600 * SCENE_FLOOR));
+  });
+});
+
+describe("groundShadow", () => {
+  it("casts down from each column's base, dark at the base and fading out", () => {
+    // 4 × 10 alpha: columns 1 and 2 are product to rows 9 and 7 (an angled base).
+    const w = 4;
+    const h = 10;
+    const alpha = new Uint8Array(w * h);
+    for (let y = 2; y <= 9; y += 1) alpha[y * w + 1] = 255;
+    for (let y = 2; y <= 7; y += 1) alpha[y * w + 2] = 255;
+    const shadow = groundShadow(alpha, w, h, 4);
+    expect(shadow.length).toBe(w * (h + 4));
+    // Column 1 starts at row 9, column 2 at row 7: the shadow follows the base.
+    expect(shadow[9 * w + 1]).toBe(255);
+    expect(shadow[7 * w + 2]).toBe(255);
+    expect(shadow[8 * w + 2]).toBeLessThan(255);
+    expect(shadow[11 * w + 2]).toBe(0);
+    // Columns with no product cast nothing.
+    expect(
+      shadow.filter((v, i) => i % w === 0 || i % w === 3).every((v) => v === 0),
+    ).toBe(true);
+  });
+
+  it("does not cast from a part hanging high above the ground", () => {
+    const w = 2;
+    const h = 10;
+    const alpha = new Uint8Array(w * h);
+    for (let y = 0; y <= 3; y += 1) alpha[y * w] = 255; // a strap in the top 40%
+    for (let y = 0; y <= 9; y += 1) alpha[y * w + 1] = 255;
+    const shadow = groundShadow(alpha, w, h, 3);
+    expect([0, 1, 2, 3, 4].some((y) => shadow[y * w] > 0)).toBe(false);
+    expect(shadow[9 * w + 1]).toBe(255);
+  });
+
+  it("is darker in a scene than on a plain background, and never zero-sized", () => {
+    const light = shadowLayersFor(500, "light");
+    const scene = shadowLayersFor(500, "scene");
+    expect(scene[0].opacity).toBeGreaterThan(light[0].opacity);
+    for (const layer of shadowLayersFor(10)) {
+      expect(layer.depth).toBeGreaterThanOrEqual(4);
+      expect(layer.blur).toBeGreaterThan(1);
+    }
   });
 });

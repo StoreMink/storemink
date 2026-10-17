@@ -18,6 +18,7 @@ import { ImageSourceMenu } from "./image-source-menu";
 import {
   useImageBackgroundAvailable,
   useImageRefineAvailable,
+  useImageScenesAvailable,
 } from "./image-refine-context";
 import { BackgroundEditor } from "./background-editor";
 import {
@@ -80,6 +81,7 @@ export function ImageUpload({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refineAvailable = useImageRefineAvailable();
   const backgroundAvailable = useImageBackgroundAvailable();
+  const scenesAvailable = useImageScenesAvailable();
   const slot = spec ? IMAGE_SPECS[spec] : null;
   const canRefine = Boolean(slot?.refine && refineAvailable);
   const canBackground = Boolean(slot?.background && backgroundAvailable);
@@ -268,6 +270,7 @@ export function ImageUpload({
         <BackgroundEditor
           sourceUrl={previewUrl}
           spec={spec}
+          scenesAvailable={scenesAvailable}
           onUse={(url) => {
             replaceWith(url);
             setEditingBackground(false);
@@ -416,7 +419,8 @@ export function ImageUpload({
             {canBackground && (
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Keeps your real product exactly as photographed and puts it on
-                white, a colour or a transparent background.
+                white, a colour or a transparent background
+                {scenesAvailable ? ", or in a scene" : ""}.
               </p>
             )}
           </div>

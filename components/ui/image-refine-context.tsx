@@ -13,22 +13,29 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
  * ★ Two flags, not one, because they have different gates: Refine is a Mink
  *   model call, background removal is the image-matting service.
  */
-const ImageToolsContext = createContext({ refine: false, background: false });
+const ImageToolsContext = createContext({
+  refine: false,
+  background: false,
+  scenes: false,
+});
 
 export function ImageRefineProvider({
   available,
   background = false,
+  scenes = false,
   children,
 }: {
   /** Refine with Mink AI. */
   available: boolean;
   /** Changing a product photo's background. */
   background?: boolean;
+  /** Drawing a new scene behind it (a Mink image call). */
+  scenes?: boolean;
   children: ReactNode;
 }) {
   const value = useMemo(
-    () => ({ refine: available, background }),
-    [available, background],
+    () => ({ refine: available, background, scenes: background && scenes }),
+    [available, background, scenes],
   );
   return (
     <ImageToolsContext.Provider value={value}>
@@ -43,4 +50,8 @@ export function useImageRefineAvailable(): boolean {
 
 export function useImageBackgroundAvailable(): boolean {
   return useContext(ImageToolsContext).background;
+}
+
+export function useImageScenesAvailable(): boolean {
+  return useContext(ImageToolsContext).scenes;
 }

@@ -270,6 +270,8 @@ describe("Change background", () => {
       url: original,
       spec: "product",
       background: { kind: "white" },
+      shadow: true,
+      newScene: false,
     });
     expect(screen.getByText(/touches the edge of your photo/)).toBeTruthy();
     expect(screen.getByText(/1 Mink credit was used/)).toBeTruthy();
@@ -362,5 +364,119 @@ describe("Change background", () => {
     fireEvent.click(screen.getByText("Keep original"));
     expect(onUploadSuccess).not.toHaveBeenCalled();
     expect(screen.getByAltText("Uploaded")).toBeTruthy();
+  });
+});
+
+describe("Scenes and the shadow", () => {
+  const placed =
+    "https://storage.googleapis.com/b/stores/s/edited/c-product-scene-1.webp";
+  const woodScene = "https://storage.googleapis.com/b/stores/s/scenes/w.webp";
+
+  /** GET lists saved scenes; each POST answers with the next body. */
+  function server(posts: Record<string, unknown>[]) {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (!init?.method || init.method === "GET") {
+        expect(String(input)).toBe("/api/mink/image-background?spec=product");
+        return new Response(
+          JSON.stringify({ scenes: [{ preset: "wood", url: woodScene }] }),
+        );
+      }
+      const body = posts.shift() ?? { error: "unexpected" };
+      return new Response(JSON.stringify(body), {
+        status: body.error ? 402 : 200,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  const posted = (fetchMock: ReturnType<typeof server>, n: number) =>
+    JSON.parse(
+      String(
+        fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")[n][1]
+          ?.body,
+      ),
+    );
+
+  function renderEditor(scenes = true) {
+    render(
+      <ImageRefineProvider available={false} background scenes={scenes}>
+        <ImageUpload
+          spec="product"
+          defaultImage={original}
+          onUploadSuccess={() => {}}
+        />
+      </ImageRefineProvider>,
+    );
+    fireEvent.click(screen.getByText(/Change background/));
+  }
+
+  it("offers scenes only where the layout allows them", () => {
+    server([]);
+    renderEditor(false);
+    expect(screen.queryByRole("button", { name: "Scene" })).toBeNull();
+  });
+
+  it("prices a new scene with the cut-out, then marks it saved and free", async () => {
+    const fetchMock = server([
+      {
+        url: placed,
+        chargedCredits: 6,
+        reused: false,
+        checks: [],
+        scene: { url: "https://storage.googleapis.com/b/s/studio.webp" },
+      },
+    ]);
+    renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Scene" }));
+    const create = await screen.findByRole("button", {
+      name: /Create scene\s*·\s*6 credits/,
+    });
+    fireEvent.click(create);
+    await screen.findByText("Use this photo");
+    expect(posted(fetchMock, 0)).toMatchObject({
+      background: { kind: "scene", preset: "studio" },
+      newScene: true,
+      shadow: false,
+    });
+    expect(screen.getByText(/6 Mink credits were used/)).toBeTruthy();
+    const studio = screen.getByRole("button", { name: /Studio/ });
+    expect(studio.textContent).toContain("Saved · free");
+  });
+
+  it("uses a saved scene free, and charges 5 only to draw a new one", async () => {
+    server([]);
+    renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Scene" }));
+    const wood = await screen.findByRole("button", { name: /Wooden table/ });
+    expect(wood.textContent).toContain("Saved · free");
+    fireEvent.click(wood);
+    expect(
+      screen.getByText(/Uses your saved wooden table scene, free/),
+    ).toBeTruthy();
+    // Only the first cut-out of this photo is charged.
+    expect(
+      screen.getByRole("button", { name: /Remove background\s*·\s*1 credit/ }),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Draw a new one\s*·\s*5 credits/ }),
+    );
+    expect(
+      screen.getByRole("button", { name: /Create scene\s*·\s*6 credits/ }),
+    ).toBeTruthy();
+  });
+
+  it("sends the shadow off when the merchant unticks it", async () => {
+    const fetchMock = server([
+      { url: placed, chargedCredits: 1, reused: false, checks: [] },
+    ]);
+    renderEditor();
+    fireEvent.click(screen.getByLabelText("Soft shadow under the product"));
+    fireEvent.click(screen.getByRole("button", { name: /Remove background/ }));
+    await screen.findByText("Use this photo");
+    expect(posted(fetchMock, 0)).toMatchObject({
+      background: { kind: "white" },
+      shadow: false,
+    });
   });
 });

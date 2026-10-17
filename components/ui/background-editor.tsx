@@ -1,32 +1,38 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Loader2 } from "lucide-react";
 import { Button } from "./button";
 import {
   IMAGE_CUTOUT_CREDITS,
+  IMAGE_SCENE_CREDITS,
   IMAGE_SPECS,
   type ImageSpecKey,
 } from "@/lib/media/image-specs";
 import {
   CUTOUT_CHECK_MESSAGES,
   backgroundKey,
+  canHaveShadow,
   isCutoutCheck,
   type BackgroundChoice,
   type CutoutCheck,
 } from "@/lib/media/background-layout";
+import { SCENE_PRESETS, scenePreset } from "@/lib/media/scene-presets";
 
-// The upload widget's background tool: pick white, a colour or transparency,
-// see the result beside the original, then use it or keep the original.
+// The upload widget's background tool: pick white, a colour, transparency or
+// a scene, see the result beside the original, then use it or keep the
+// original.
 //
 // ★ THE PRODUCT IS THE MERCHANT'S OWN PHOTO. The server cuts it out and places
-//   it; nothing is redrawn. The copy here says so, because "AI background"
-//   reads as "AI picture" to a merchant who has been burned by one.
-// ★ ONE CREDIT PER PHOTO. The first background costs IMAGE_CUTOUT_CREDITS;
-//   every other background for the same photo reuses the stored cut-out and is
-//   free, so trying colours costs nothing. The server decides; this only words
-//   the button.
+//   it; nothing is redrawn, even in a scene (only the empty set is drawn). The
+//   copy here says so, because "AI background" reads as "AI picture" to a
+//   merchant who has been burned by one.
+// ★ WHAT IT COSTS IS ON THE BUTTON. The first background for a photo costs
+//   IMAGE_CUTOUT_CREDITS; a scene the store has not drawn yet costs
+//   IMAGE_SCENE_CREDITS; everything else (another colour, the shadow on or
+//   off, a saved scene) is free. The server decides and charges; this only
+//   words the button, so a miscount here can only ever overstate the price.
 
 const PRESET_COLOURS: readonly { hex: string; name: string }[] = [
   { hex: "#f2ede4", name: "Cream" },
@@ -40,7 +46,6 @@ type Result = {
   url: string;
   key: string;
   transparent: boolean;
-  chargedCredits: number;
   reused: boolean;
   checks: CutoutCheck[];
 };
@@ -52,32 +57,87 @@ const CHECKERBOARD = {
   backgroundSize: "16px 16px",
 } as const;
 
+const ENDPOINT = "/api/mink/image-background";
+
+function credits(n: number): string {
+  return `${n} credit${n === 1 ? "" : "s"}`;
+}
+
 export function BackgroundEditor({
   sourceUrl,
   spec,
+  scenesAvailable = false,
   onUse,
   onClose,
 }: {
   sourceUrl: string;
   spec: ImageSpecKey;
+  /** Whether scenes are offered here (Mink image generation is on). */
+  scenesAvailable?: boolean;
   onUse: (url: string) => void;
   onClose: () => void;
 }) {
   const slot = IMAGE_SPECS[spec];
   const [choice, setChoice] = useState<BackgroundChoice>({ kind: "white" });
   const [colour, setColour] = useState(PRESET_COLOURS[0].hex);
+  const [shadow, setShadow] = useState(true);
+  const [freshScene, setFreshScene] = useState(false);
+  const [savedScenes, setSavedScenes] = useState<Record<string, string>>({});
   const [result, setResult] = useState<Result | null>(null);
   const [cutOut, setCutOut] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creditsUsed, setCreditsUsed] = useState(0);
 
-  const chosenKey = backgroundKey(choice);
+  // Which scenes this store already has for this slot: those are free.
+  useEffect(() => {
+    if (!scenesAvailable) return;
+    const controller = new AbortController();
+    fetch(`${ENDPOINT}?spec=${encodeURIComponent(spec)}`, {
+      signal: controller.signal,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then(
+        (body: { scenes?: { preset?: unknown; url?: unknown }[] } | null) => {
+          const saved: Record<string, string> = {};
+          for (const scene of body?.scenes ?? []) {
+            if (
+              typeof scene.preset === "string" &&
+              typeof scene.url === "string"
+            )
+              saved[scene.preset] = scene.url;
+          }
+          setSavedScenes(saved);
+        },
+      )
+      .catch(() => {
+        // Unknown means "not saved": the button then shows the full price,
+        // and the server charges nothing for a scene that turns out saved.
+      });
+    return () => controller.abort();
+  }, [scenesAvailable, spec]);
+
+  const sceneChoice =
+    choice.kind === "scene" ? scenePreset(choice.preset) : null;
+  const sceneSaved = sceneChoice ? Boolean(savedScenes[sceneChoice.id]) : false;
+  const drawsScene = Boolean(sceneChoice && (freshScene || !sceneSaved));
+  const withShadow = shadow && canHaveShadow(choice) && choice.kind !== "scene";
+  const chosenKey = `${backgroundKey(choice)}${withShadow ? "-shadow" : ""}${
+    drawsScene && sceneSaved ? "-new" : ""
+  }`;
   const current = result && result.key === chosenKey ? result : null;
+  const cost =
+    (cutOut ? 0 : IMAGE_CUTOUT_CREDITS) +
+    (drawsScene ? IMAGE_SCENE_CREDITS : 0);
 
   const pickColour = (hex: string) => {
     setColour(hex);
     setChoice({ kind: "colour", hex });
+  };
+
+  const pickScene = (id: string) => {
+    setFreshScene(false);
+    setChoice({ kind: "scene", preset: id });
   };
 
   const apply = async () => {
@@ -85,16 +145,23 @@ export function BackgroundEditor({
     setWorking(true);
     setError(null);
     try {
-      const res = await fetch("/api/mink/image-background", {
+      const res = await fetch(ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: sourceUrl, spec, background: choice }),
+        body: JSON.stringify({
+          url: sourceUrl,
+          spec,
+          background: choice,
+          shadow: withShadow,
+          newScene: drawsScene,
+        }),
       });
       const body = (await res.json().catch(() => ({}))) as {
         url?: string;
         chargedCredits?: number;
         reused?: boolean;
         checks?: unknown;
+        scene?: { url?: unknown };
         error?: string;
       };
       if (!res.ok || !body.url) {
@@ -103,14 +170,21 @@ export function BackgroundEditor({
         );
         return;
       }
-      const charged = body.chargedCredits ?? 0;
-      setCreditsUsed((n) => n + charged);
+      setCreditsUsed((n) => n + (body.chargedCredits ?? 0));
       setCutOut(true);
+      let key = chosenKey;
+      if (sceneChoice) {
+        // The scene used is now the store's saved one for this preset.
+        const sceneUrl =
+          typeof body.scene?.url === "string" ? body.scene.url : body.url;
+        setSavedScenes((saved) => ({ ...saved, [sceneChoice.id]: sceneUrl }));
+        setFreshScene(false);
+        key = backgroundKey(choice);
+      }
       setResult({
         url: body.url,
-        key: chosenKey,
+        key,
         transparent: choice.kind === "transparent",
-        chargedCredits: charged,
         reused: body.reused === true,
         checks: Array.isArray(body.checks)
           ? body.checks.filter(isCutoutCheck)
@@ -132,6 +206,12 @@ export function BackgroundEditor({
         ? "border-primary bg-primary/10 text-foreground"
         : "border-border text-muted-foreground hover:bg-muted/50"
     }`;
+
+  const workingLabel = !cutOut
+    ? "Removing the background… this takes about 20 seconds"
+    : drawsScene
+      ? "Drawing the scene… this takes about 20 seconds"
+      : "Applying…";
 
   return (
     <div className="w-full">
@@ -168,11 +248,7 @@ export function BackgroundEditor({
             {working && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/75 p-3 text-center text-sm text-foreground backdrop-blur-sm">
                 <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-                <span role="status">
-                  {cutOut
-                    ? "Applying…"
-                    : "Removing the background… this takes about 20 seconds"}
-                </span>
+                <span role="status">{workingLabel}</span>
               </div>
             )}
           </div>
@@ -211,6 +287,16 @@ export function BackgroundEditor({
         >
           Transparent
         </button>
+        {scenesAvailable && (
+          <button
+            type="button"
+            aria-pressed={choice.kind === "scene"}
+            onClick={() => pickScene(sceneChoice?.id ?? SCENE_PRESETS[0].id)}
+            className={choiceButton(choice.kind === "scene")}
+          >
+            Scene
+          </button>
+        )}
       </div>
 
       {choice.kind === "colour" && (
@@ -244,6 +330,79 @@ export function BackgroundEditor({
         </div>
       )}
 
+      {(choice.kind === "white" || choice.kind === "colour") && (
+        <label className="mt-2 flex items-center gap-2 text-xs text-foreground">
+          <input
+            type="checkbox"
+            checked={shadow}
+            onChange={(e) => setShadow(e.target.checked)}
+            className="h-4 w-4 rounded border-border"
+          />
+          Soft shadow under the product
+        </label>
+      )}
+
+      {sceneChoice && (
+        <div className="mt-2">
+          <div
+            role="group"
+            aria-label="Scene"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+          >
+            {SCENE_PRESETS.map((preset) => {
+              const active = sceneChoice.id === preset.id;
+              const saved = savedScenes[preset.id];
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => pickScene(preset.id)}
+                  className={`overflow-hidden rounded-md border text-left text-xs transition-colors ${
+                    active
+                      ? "border-primary ring-1 ring-primary"
+                      : "border-border hover:bg-muted/50"
+                  }`}
+                >
+                  {saved && (
+                    <img
+                      src={saved}
+                      alt=""
+                      className="h-14 w-full object-cover"
+                    />
+                  )}
+                  <span className="block px-2 py-1.5">
+                    <span className="block font-medium text-foreground">
+                      {preset.label}
+                    </span>
+                    <span className="block text-muted-foreground">
+                      {saved ? "Saved · free" : preset.description}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {sceneSaved && !freshScene
+              ? `Uses your saved ${sceneChoice.label.toLowerCase()} scene, free, so your products match. `
+              : `A new ${sceneChoice.label.toLowerCase()} scene uses ${IMAGE_SCENE_CREDITS} Mink credits. It is saved and used free for every product you place in it. `}
+            {sceneSaved && (
+              <button
+                type="button"
+                aria-pressed={freshScene}
+                onClick={() => setFreshScene((fresh) => !fresh)}
+                className="font-medium text-primary underline-offset-2 hover:underline"
+              >
+                {freshScene
+                  ? "Use the saved scene instead"
+                  : `Draw a new one · ${credits(IMAGE_SCENE_CREDITS)}`}
+              </button>
+            )}
+          </p>
+        </div>
+      )}
+
       {current && current.checks.length > 0 && (
         <ul className="mt-2 space-y-1">
           {current.checks.map((check) => (
@@ -262,8 +421,9 @@ export function BackgroundEditor({
       )}
 
       <p className="mt-2 text-xs text-muted-foreground">
-        Your product stays exactly as photographed: only the background changes,
-        and the product is centred at {slot.width} × {slot.height} px.
+        {sceneChoice
+          ? "Mink AI draws only the empty scene; your product is placed in it exactly as photographed."
+          : `Your product stays exactly as photographed: only the background changes, and the product is centred at ${slot.width} × ${slot.height} px.`}
         {cutOut
           ? " Trying other backgrounds is free."
           : ` The first background uses ${IMAGE_CUTOUT_CREDITS} Mink credit; trying others after that is free.`}
@@ -297,10 +457,15 @@ export function BackgroundEditor({
             className="gap-1.5"
           >
             {working && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {cutOut ? "Apply background" : "Remove background"}
-            {!cutOut && (
+            {drawsScene
+              ? "Create scene"
+              : cutOut
+                ? "Apply background"
+                : "Remove background"}
+            {cost > 0 && (
               <span className="opacity-80">
-                · {IMAGE_CUTOUT_CREDITS} credit
+                {/* A real space, so the name reads "Create scene · 6 credits". */}{" "}
+                · {credits(cost)}
               </span>
             )}
           </Button>

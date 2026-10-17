@@ -308,6 +308,7 @@ export default async function DashboardLayout({
             mattingConfigured() &&
             can(permissions, "media", "manage", isSuperadmin)
           }
+          scenes={minkEnabled}
         >
           <MobileNavProvider>
             <DashboardTopbar
