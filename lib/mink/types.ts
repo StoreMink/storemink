@@ -1,3 +1,6 @@
+import type { MinkFormPrefill } from "./form-prefill";
+import type { MinkHighlight } from "./guide-targets";
+import type { MinkReplyLanguage } from "./reply-language";
 import type {
   DesignFont,
   DesignPaletteToken,
@@ -370,20 +373,21 @@ export type MinkArtifact =
       title: string;
       path: string;
       label: string;
-      prefill?: {
-        kind: "product";
-        fields: {
-          name?: string;
-          description?: string;
-          seoTitle?: string;
-          seoDescription?: string;
-          basePrice?: number;
-          sellingPrice?: number;
-        };
-      };
+      prefill?: MinkFormPrefill;
+      /** A control on the opened page to point out (lib/mink/guide-targets.ts). */
+      highlight?: MinkHighlight;
     }
   | {
-      /** A small time series or breakdown drawn inline as an SVG chart. */
+      /**
+       * A small time series or breakdown drawn inline as an SVG chart.
+       *
+       * `summary` leads the card with the period's total and a trend against
+       * the comparison period; `goodWhen: "down"` is for measures where a
+       * rise is bad news (discounts, returns). `panels` carries a second
+       * measure over the SAME grouping and period, drawn beside the first as
+       * a small multiple: one tool output yields one artifact, so two
+       * measures travel in one card rather than as two artifacts.
+       */
       type: "chart";
       title: string;
       kind: "line" | "bar";
@@ -392,6 +396,30 @@ export type MinkArtifact =
       series: Array<{
         label: string;
         points: Array<{ label: string; value: number }>;
+      }>;
+      summary?: {
+        total: number;
+        previousTotal?: number;
+        trendPercent?: number | null;
+        comparisonLabel?: string;
+        goodWhen?: "up" | "down";
+      };
+      panels?: Array<{
+        title: string;
+        kind: "line" | "bar";
+        format: "number" | "currency" | "percent";
+        currency?: string;
+        series: Array<{
+          label: string;
+          points: Array<{ label: string; value: number }>;
+        }>;
+        summary?: {
+          total: number;
+          previousTotal?: number;
+          trendPercent?: number | null;
+          comparisonLabel?: string;
+          goodWhen?: "up" | "down";
+        };
       }>;
       filters: MinkFilter[];
       dataAsOf?: string;
@@ -425,6 +453,8 @@ export interface MinkActorContext {
   defaultLowStockThreshold: number;
   currentPath?: string | null;
   selectedResource?: MinkSelectedResource | null;
+  /** The merchant's chosen reply language, validated against a closed list. */
+  replyLanguage?: MinkReplyLanguage;
   /** Trusted run id is attached only after the run row is created. */
   runId?: string;
   /** Operator-controlled Phase 3 access; never inferred from the prompt. */

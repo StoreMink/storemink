@@ -8073,6 +8073,38 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261017_0216_mink_screen_spotlight_help",
+      "description": "The Mink guide edited in place for the second Sidekick parity pass: the Remember this? card, pointing at a control and prefilled forms from chat, and the reply-language setting in the chat-header menu",
+      "file": "sql/20261017_0216_mink_screen_spotlight_help.sql",
+      "transaction": true,
+      "requires": ["20261017_0215_mink_categories_social_posts"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide describes the Remember this? card",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%<strong>Remember this?</strong> card under its answer%'",
+            "equals": "1"
+          },
+          {
+            "name": "the guide no longer says remember this saves nothing",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%in chat does not save anything%'",
+            "equals": "0"
+          },
+          {
+            "name": "the question list names pointing at a control and prefilled forms",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%so the page opens with that control pointed out%'",
+            "equals": "1"
+          },
+          {
+            "name": "the memories section names the reply-language setting",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%the same menu sets the language Mink replies in.%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

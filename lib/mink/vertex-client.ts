@@ -33,6 +33,8 @@ export function createVertexMinkSession(
     abortSignal?: AbortSignal;
     thinkingLevel?: MinkThinkingLevel;
     memoryReference?: string;
+    /** The merchant's current screen, as a separate untrusted part (page-context.ts). */
+    screenReference?: string;
   },
 ): MinkModelSession {
   if (!config.projectId) {
@@ -79,10 +81,13 @@ export function createVertexMinkSession(
 
   return {
     async sendUserMessage(message, stream) {
+      // Reference parts come BEFORE the message and never inside the system
+      // instruction: memories first (durable), then the screen (this turn).
+      const references = [options.memoryReference, options.screenReference]
+        .filter((text): text is string => Boolean(text))
+        .map((text) => ({ text }));
       return send(
-        options.memoryReference
-          ? [{ text: options.memoryReference }, { text: message }]
-          : message,
+        references.length ? [...references, { text: message }] : message,
         stream,
       );
     },

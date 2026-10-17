@@ -19,7 +19,10 @@ import { createVertexMinkSession } from "@/lib/mink/vertex-client";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { rateLimit } from "@/lib/rate-limit";
 import { rejectForeignMinkOrigin } from "@/lib/mink/request-origin";
-import { normalizeMinkPageContext } from "@/lib/mink/page-context";
+import {
+  normalizeMinkPageContext,
+  renderMinkScreenReference,
+} from "@/lib/mink/page-context";
 import type { MinkRunProgress } from "@/lib/mink/types";
 import { selectMinkThinkingLevel } from "@/lib/mink/thinking";
 import { listMinkMemories, loadMinkMemoryReference } from "@/lib/mink/memories";
@@ -123,6 +126,10 @@ export async function POST(request: Request) {
         abortSignal: abortController.signal,
         thinkingLevel,
         memoryReference,
+        screenReference: renderMinkScreenReference(
+          pageContext.screen,
+          pageContext.currentPath,
+        ),
       });
     } catch (error) {
       await failMinkRun({

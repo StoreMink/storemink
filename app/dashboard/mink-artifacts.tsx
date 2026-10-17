@@ -11,9 +11,10 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
-  minkProductPrefillPath,
-  storeMinkProductPrefill,
-} from "@/lib/mink/product-prefill";
+  MINK_PREFILL_LABELS,
+  minkPrefillPath,
+  storeMinkPrefill,
+} from "@/lib/mink/form-prefill";
 import type { MinkArtifact } from "@/lib/mink/types";
 import { MinkProductImportCard } from "./mink-product-import-card";
 import { MinkProposalCard } from "./mink-proposal-card";
@@ -181,9 +182,9 @@ export function openMinkNavigation(
   artifact: Extract<MinkArtifact, { type: "navigation" }>,
   push: (path: string) => void,
 ) {
-  if (artifact.prefill?.kind === "product") {
-    storeMinkProductPrefill(artifact.prefill.fields);
-    push(minkProductPrefillPath());
+  if (artifact.prefill) {
+    storeMinkPrefill(artifact.prefill);
+    push(minkPrefillPath(artifact.prefill.kind));
     return;
   }
   push(safeHref(artifact.path) ? artifact.path : "/dashboard");
@@ -195,7 +196,6 @@ function NavigationArtifact({
   artifact: Extract<MinkArtifact, { type: "navigation" }>;
 }) {
   const router = useRouter();
-  const filled = artifact.prefill?.fields;
   return (
     <section className="overflow-hidden rounded-2xl border border-[#ded8f4] bg-[#fcfbff] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       <ArtifactHeader
@@ -204,9 +204,11 @@ function NavigationArtifact({
       />
       <div className="flex flex-wrap items-center justify-between gap-2 p-3">
         <p className="text-xs leading-5 text-[#29272d]">
-          {filled
-            ? `The new product form opens with ${describePrefill(filled)} filled in. Review it and save when you are happy.`
-            : "This chat stays open while you look."}
+          {artifact.prefill
+            ? `${capitalise(MINK_PREFILL_LABELS[artifact.prefill.kind])} opens with ${describePrefill(artifact.prefill.fields)} filled in. Review it and save when you are happy.`
+            : artifact.highlight
+              ? `${artifact.highlight.label} is pointed out on the page. ${artifact.highlight.hint ?? ""}`.trim()
+              : "This chat stays open while you look."}
         </p>
         <button
           type="button"
@@ -223,20 +225,47 @@ function NavigationArtifact({
   );
 }
 
-function describePrefill(fields: {
-  name?: string;
-  description?: string;
-  seoTitle?: string;
-  seoDescription?: string;
-  basePrice?: number;
-  sellingPrice?: number;
-}) {
+const PREFILL_FIELD_WORDS: Record<string, string> = {
+  name: "the name",
+  title: "the title",
+  description: "a description",
+  excerpt: "an excerpt",
+  body: "the text",
+  seoTitle: "SEO text",
+  seoDescription: "SEO text",
+  basePrice: "prices",
+  sellingPrice: "prices",
+  rewardType: "the reward",
+  rewardValue: "the reward",
+  minSubtotal: "a minimum order",
+  delivery: "how it applies",
+  code: "the code",
+  budget: "a budget",
+  validUntil: "an end date",
+  slug: "the URL",
+  status: "visibility",
+  category: "a category",
+  tags: "tags",
+  mode: "the rate mode",
+  flatRate: "the flat rate",
+  freeAbove: "the free-delivery threshold",
+  manualMinDays: "delivery days",
+  manualMaxDays: "delivery days",
+  handlingDays: "handling time",
+};
+
+function capitalise(text: string) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function describePrefill(fields: object) {
   const parts: string[] = [];
-  if (fields.name) parts.push("the name");
-  if (fields.description) parts.push("description");
-  if (fields.seoTitle || fields.seoDescription) parts.push("SEO text");
-  if (fields.basePrice !== undefined || fields.sellingPrice !== undefined) {
-    parts.push("prices");
+  for (const [key, value] of Object.entries(
+    fields as Record<string, unknown>,
+  )) {
+    if (value === undefined) continue;
+    const word = PREFILL_FIELD_WORDS[key];
+    if (word && !parts.includes(word)) parts.push(word);
   }
   if (parts.length === 0) return "some details";
   if (parts.length === 1) return parts[0];

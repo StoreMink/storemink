@@ -6,6 +6,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  useSyncExternalStore,
   useTransition,
 } from "react";
 import Image from "next/image";
@@ -126,14 +127,22 @@ const EMPTY: ProductFormData = {
  * only on the client (the lazy initialiser runs on the server too, where
  * there is no window). The slug is derived from the name as if typed.
  */
-function minkPrefilledFields(): Partial<ProductFormData> {
-  if (typeof window === "undefined") return {};
+const NO_PRODUCT_PREFILL = {
+  fields: {} as Partial<ProductFormData>,
+  applied: false,
+};
+
+function minkPrefilledFields(): {
+  fields: Partial<ProductFormData>;
+  applied: boolean;
+} {
+  if (typeof window === "undefined") return NO_PRODUCT_PREFILL;
   const params = new URLSearchParams(window.location.search);
   if (params.get(MINK_PRODUCT_PREFILL_PARAM) !== MINK_PRODUCT_PREFILL_VALUE) {
-    return {};
+    return NO_PRODUCT_PREFILL;
   }
   const prefill = takeMinkProductPrefill();
-  if (!prefill) return {};
+  if (!prefill) return NO_PRODUCT_PREFILL;
   const fields: Partial<ProductFormData> = {};
   if (prefill.name) {
     fields.name = prefill.name;
@@ -148,8 +157,10 @@ function minkPrefilledFields(): Partial<ProductFormData> {
   } else if (prefill.basePrice !== undefined) {
     fields.base_price = prefill.basePrice;
   }
-  return fields;
+  return { fields, applied: true };
 }
+
+const subscribeToNothing = () => () => {};
 
 function toForm(product: Product): ProductFormData {
   return {
@@ -459,13 +470,32 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
     }: Props,
     ref,
   ) {
+    // ★ TAKEN ONCE, in the lazy initialiser, so a reload starts blank. The
+    // notice is structural, so it waits for hydration: the server rendered
+    // none, and adding one during hydration would make React throw the page
+    // away and draw it again. The other four Mink-filled editors do the same.
+    const [minkPrefill] = useState(() =>
+      product ? NO_PRODUCT_PREFILL : minkPrefilledFields(),
+    );
+    const hydrated = useSyncExternalStore(
+      subscribeToNothing,
+      () => true,
+      () => false,
+    );
+    useEffect(() => {
+      if (!minkPrefill.applied) return;
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has(MINK_PRODUCT_PREFILL_PARAM)) return;
+      url.searchParams.delete(MINK_PRODUCT_PREFILL_PARAM);
+      window.history.replaceState(window.history.state, "", url.toString());
+    }, [minkPrefill.applied]);
     const [form, setForm] = useState<ProductFormData>(() =>
       product
         ? toForm(product)
         : {
             ...EMPTY,
             track_inventory: defaultTrackInventory,
-            ...minkPrefilledFields(),
+            ...minkPrefill.fields,
           },
     );
     const [isPending, startTransition] = useTransition();
@@ -751,6 +781,15 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
 
     return (
       <div className="dash-product-form">
+        {minkPrefill.applied && hydrated && (
+          <p
+            role="status"
+            className="mb-3 rounded-md border border-[var(--dash-border)] bg-[var(--dash-accent-soft)] px-3 py-2 text-[13px] text-[var(--dash-text)]"
+          >
+            Filled in by Mink AI. Review every field before saving.
+          </p>
+        )}
+
         {/* The form's own action bar — shown only when the parent DOESN'T render
           its own controls (i.e. in the modal). The full-page editor sets
           hideActions and puts Save/Cancel in its sticky header instead. */}

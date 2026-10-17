@@ -2,7 +2,13 @@
 
 import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import Image from "next/image";
@@ -52,6 +58,12 @@ import {
 } from "@/app/actions/blog-actions";
 import { useRowSelection } from "@/app/dashboard/lib/use-row-selection";
 import {
+  hasMinkPrefillParam,
+  takeMinkPrefill,
+  MINK_PREFILL_PARAM,
+  type MinkBlogPrefill,
+} from "@/lib/mink/form-prefill";
+import {
   BulkActionBar,
   RowCheckbox,
   SelectAllCheckbox,
@@ -85,6 +97,21 @@ type Props = {
   mediaUrlPrefix: string;
 };
 
+/**
+ * Fields Mink filled in for a new post, read once and cleared.
+ *
+ * ★ Only on `/dashboard/blogs?prefill=mink`, and only on the client (the lazy
+ * initialiser runs on the server too, where there is no window). The product
+ * editor follows the same shape.
+ */
+function minkPrefilledBlog(): MinkBlogPrefill | null {
+  if (typeof window === "undefined") return null;
+  if (!hasMinkPrefillParam(window.location.search)) return null;
+  return takeMinkPrefill("blog");
+}
+
+const subscribeToNothing = () => () => {};
+
 export function BlogsManagementView({
   blogs,
   canManage = true,
@@ -108,12 +135,30 @@ export function BlogsManagementView({
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingBlog, setEditingBlog] = useState<Blog | null>(null);
   const [openingEditor, setOpeningEditor] = useState(false);
+  // ★ A waiting prefill opens the editor in "new post" mode, but only once
+  // hydrated: the server rendered no dialog, and opening one during hydration
+  // would make React throw the page away and draw it again.
+  const [minkPrefill, setMinkPrefill] = useState(minkPrefilledBlog);
+  const hydrated = useSyncExternalStore(
+    subscribeToNothing,
+    () => true,
+    () => false,
+  );
+  const minkOpen = hydrated && minkPrefill !== null;
+  const editorShown = editorOpen || minkOpen;
+  useEffect(() => {
+    if (!minkPrefill) return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(MINK_PREFILL_PARAM)) return;
+    url.searchParams.delete(MINK_PREFILL_PARAM);
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, [minkPrefill]);
   // Latch: mount the lazy editor dialog on first open, then keep it mounted so
   // its close animation can play (and TipTap isn't re-fetched on reopen). The
   // "adjust state during render" pattern (same as the blog listing's page
   // reset) avoids a state-update-in-effect.
   const [editorEverOpened, setEditorEverOpened] = useState(false);
-  if (editorOpen && !editorEverOpened) {
+  if (editorShown && !editorEverOpened) {
     setEditorEverOpened(true);
   }
 
@@ -248,6 +293,7 @@ export function BlogsManagementView({
   const closeEditor = () => {
     setEditorOpen(false);
     setEditingBlog(null);
+    setMinkPrefill(null);
   };
 
   const handleEditorSaved = () => {
@@ -821,11 +867,12 @@ export function BlogsManagementView({
       </Dialog>
 
       {/* Blog Editor Dialog — mounted on first open (lazy TipTap bundle) */}
-      {(editorOpen || editorEverOpened) && (
+      {(editorShown || editorEverOpened) && (
         <BlogEditorDialog
           mediaUrlPrefix={mediaUrlPrefix}
-          open={editorOpen}
+          open={editorShown}
           blog={editingBlog}
+          prefill={minkPrefill}
           onClose={closeEditor}
           onSaved={handleEditorSaved}
           categoryOptions={categoryOptions}

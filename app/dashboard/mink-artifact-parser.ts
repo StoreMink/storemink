@@ -1,6 +1,7 @@
 import type { MinkArtifact } from "@/lib/mink/types";
 import { MINK_WORKFLOW_TEMPLATES } from "@/lib/mink/workflow-types";
-import { readMinkProductPrefill } from "@/lib/mink/product-prefill";
+import { readMinkFormPrefill } from "@/lib/mink/form-prefill";
+import { readMinkHighlight } from "@/lib/mink/guide-targets";
 
 const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "metrics",
@@ -207,19 +208,41 @@ function isNavigation(value: Record<string, unknown>): boolean {
   ) {
     return false;
   }
-  if (value.prefill === undefined) return true;
-  if (!isRecord(value.prefill) || value.prefill.kind !== "product")
-    return false;
-  const fields = readMinkProductPrefill(value.prefill.fields);
-  if (!fields) return false;
-  value.prefill = { kind: "product", fields };
+  if (value.prefill !== undefined) {
+    const prefill = readMinkFormPrefill(value.prefill);
+    if (!prefill) return false;
+    value.prefill = prefill;
+  }
+  if (value.highlight !== undefined) {
+    const highlight = readMinkHighlight(value.highlight);
+    if (!highlight) return false;
+    value.highlight = highlight;
+  }
   return true;
 }
 
 function isChart(value: Record<string, unknown>): boolean {
+  const ok =
+    isBoundedText(value.title, 120) &&
+    isChartPanelShape(value) &&
+    Array.isArray(value.filters) &&
+    value.filters.length <= 12 &&
+    (value.dashboardPath === undefined ||
+      (typeof value.dashboardPath === "string" &&
+        /^\/dashboard(?:[/?#]|$)/.test(value.dashboardPath)));
+  if (!ok) return false;
+  // ★ A MALFORMED SUMMARY OR PANEL LIST IS DROPPED, NEVER THE CHART. The
+  // series ARE the card; the lead figure and a second measure are extras, so
+  // a restored history row keeps its chart when one of them fails a bound.
+  keepChartSummary(value);
+  keepChartPanels(value);
+  return true;
+}
+
+/** The series rules a chart and each of its small-multiple panels share. */
+function isChartPanelShape(value: Record<string, unknown>): boolean {
   const series = value.series;
   return (
-    isBoundedText(value.title, 120) &&
     (value.kind === "line" || value.kind === "bar") &&
     ["number", "currency", "percent"].includes(String(value.format)) &&
     (value.currency === undefined || isBoundedText(value.currency, 3)) &&
@@ -240,12 +263,75 @@ function isChart(value: Record<string, unknown>): boolean {
             typeof point.value === "number" &&
             Number.isFinite(point.value),
         ),
-    ) &&
-    Array.isArray(value.filters) &&
-    value.filters.length <= 12 &&
-    (value.dashboardPath === undefined ||
-      (typeof value.dashboardPath === "string" &&
-        /^\/dashboard(?:[/?#]|$)/.test(value.dashboardPath)))
+    )
+  );
+}
+
+/**
+ * Keeps a well-formed summary (finite, bounded numbers, a closed `goodWhen`)
+ * rebuilt from its known keys only, and removes anything else.
+ */
+function keepChartSummary(value: Record<string, unknown>): void {
+  if (value.summary === undefined) return;
+  const summary = value.summary;
+  if (!isRecord(summary)) {
+    delete value.summary;
+    return;
+  }
+  const total = summary.total;
+  const previousTotal = summary.previousTotal;
+  const trendPercent = summary.trendPercent;
+  const comparisonLabel = summary.comparisonLabel;
+  const goodWhen = summary.goodWhen;
+  if (
+    !isBoundedNumber(total) ||
+    (previousTotal !== undefined && !isBoundedNumber(previousTotal)) ||
+    (trendPercent !== undefined &&
+      trendPercent !== null &&
+      !isBoundedNumber(trendPercent)) ||
+    (comparisonLabel !== undefined && !isBoundedText(comparisonLabel, 80)) ||
+    (goodWhen !== undefined && goodWhen !== "up" && goodWhen !== "down")
+  ) {
+    delete value.summary;
+    return;
+  }
+  value.summary = {
+    total,
+    ...(previousTotal !== undefined ? { previousTotal } : {}),
+    ...(trendPercent !== undefined ? { trendPercent } : {}),
+    ...(comparisonLabel !== undefined ? { comparisonLabel } : {}),
+    ...(goodWhen !== undefined ? { goodWhen } : {}),
+  };
+}
+
+/** At most three panels, each a chart in its own right; otherwise none. */
+function keepChartPanels(value: Record<string, unknown>): void {
+  if (value.panels === undefined) return;
+  const panels = value.panels;
+  if (
+    !Array.isArray(panels) ||
+    panels.length < 1 ||
+    panels.length > 3 ||
+    !panels.every(
+      (panel) =>
+        isRecord(panel) &&
+        isBoundedText(panel.title, 120) &&
+        isChartPanelShape(panel),
+    )
+  ) {
+    delete value.panels;
+    return;
+  }
+  for (const panel of panels as Record<string, unknown>[]) {
+    keepChartSummary(panel);
+  }
+}
+
+function isBoundedNumber(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    Math.abs(value) <= 1e15
   );
 }
 

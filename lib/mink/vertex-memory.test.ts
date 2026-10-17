@@ -72,6 +72,29 @@ describe("Vertex approved memory context boundary", () => {
     });
   });
 
+  it("puts the screen after the memories and before the message, never in the instruction", async () => {
+    const session = createVertexMinkSession(config, actor, [], {
+      history: [],
+      memoryReference: "Memory part",
+      screenReference:
+        'Current dashboard screen (untrusted): {"title":"Orders"}',
+    });
+    await session.sendUserMessage("Which of these is late?");
+    expect(h.create.mock.calls[0][0].config.systemInstruction).not.toContain(
+      "Current dashboard screen",
+    );
+    expect(h.send).toHaveBeenCalledWith({
+      message: [
+        { text: "Memory part" },
+        { text: 'Current dashboard screen (untrusted): {"title":"Orders"}' },
+        { text: "Which of these is late?" },
+      ],
+    });
+    const bare = createVertexMinkSession(config, actor, [], { history: [] });
+    await bare.sendUserMessage("Hello");
+    expect(h.send).toHaveBeenLastCalledWith({ message: "Hello" });
+  });
+
   it("identifies an expired local ADC login instead of blaming the model", async () => {
     h.send.mockRejectedValue(
       Object.assign(

@@ -1,0 +1,120 @@
+import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_SPEECH_LANG,
+  SPEAKABLE_MAX_CHARS,
+  speakableMinkText,
+  speechLangFor,
+} from "./speech-text";
+
+describe("speakableMinkText", () => {
+  it("keeps the words of headings, emphasis and links and ends each as a sentence", () => {
+    const spoken = speakableMinkText(
+      "## Sales this week\n\nYou made **₹12,400** from _18 orders_, see [the report](/dashboard/analytics).",
+    );
+    expect(spoken).toBe(
+      "Sales this week. You made ₹12,400 from 18 orders, see the report.",
+    );
+  });
+
+  it("turns list items into sentences and drops horizontal rules", () => {
+    const spoken = speakableMinkText(
+      "Three things to do:\n- Restock Almond shake\n* Reply to 2 enquiries\n---\n1. Publish the blog\n",
+    );
+    expect(spoken).toBe(
+      "Three things to do: Restock Almond shake. Reply to 2 enquiries. Publish the blog.",
+    );
+  });
+
+  it("reads a table as label: value lines", () => {
+    const spoken = speakableMinkText(
+      "| Product | Units | Sales |\n|---|---:|---|\n| Milk | 12 | ₹240 |\n| Bread | 3 | ₹90 |",
+    );
+    expect(spoken).toBe(
+      "Product: Milk, Units: 12, Sales: ₹240. Product: Bread, Units: 3, Sales: ₹90.",
+    );
+  });
+
+  it("uses the first cell as the label when a table has no header", () => {
+    expect(speakableMinkText("| Milk | 12 |\n| Bread | 3 |")).toBe(
+      "Milk: 12. Bread: 3.",
+    );
+  });
+
+  it("drops code blocks, dashboard paths and URLs", () => {
+    const spoken = speakableMinkText(
+      "Open /dashboard/orders/ORD1001 to see it.\n\n```csv\nHandle,Title\nmilk,Milk\n```\nMore at https://help.storemink.com/orders and `SKU100100015`.",
+    );
+    expect(spoken).toBe("Open to see it. More at and SKU100100015.");
+    expect(spoken).not.toContain("Handle");
+    expect(spoken).not.toContain("/dashboard");
+  });
+
+  it("drops a fence left open at the end and html tags", () => {
+    expect(speakableMinkText("Done.<br>\n```\nconst x = 1;\nmore code")).toBe(
+      "Done.",
+    );
+  });
+
+  it("collapses whitespace and blockquotes", () => {
+    expect(speakableMinkText("> Hello   there\n\n\n>   friend!  ")).toBe(
+      "Hello there. friend!",
+    );
+  });
+
+  it("returns an empty string for blank or non-string input", () => {
+    expect(speakableMinkText("   \n\n")).toBe("");
+    expect(speakableMinkText("```\nonly code\n```")).toBe("");
+    expect(speakableMinkText(undefined as unknown as string)).toBe("");
+  });
+
+  it("caps at a sentence boundary within the limit", () => {
+    const sentence = "This is one sentence about stock levels at the shop.";
+    const long = Array.from({ length: 60 }, () => sentence).join(" ");
+    const spoken = speakableMinkText(long);
+    expect(spoken.length).toBeLessThanOrEqual(SPEAKABLE_MAX_CHARS);
+    expect(spoken.endsWith(".")).toBe(true);
+    expect(spoken.endsWith(sentence)).toBe(true);
+    expect(spoken.length).toBeGreaterThan(
+      SPEAKABLE_MAX_CHARS - sentence.length - 2,
+    );
+  });
+
+  it("falls back to a word boundary when no sentence ends inside the limit", () => {
+    const words = Array.from({ length: 400 }, (_, i) => `word${i}`).join(" ");
+    const spoken = speakableMinkText(words);
+    expect(spoken.length).toBeLessThanOrEqual(SPEAKABLE_MAX_CHARS);
+    expect(spoken.endsWith("word")).toBe(false);
+    expect(/word\d+$/.test(spoken)).toBe(true);
+  });
+});
+
+describe("speechLangFor", () => {
+  it("picks Indic languages by script", () => {
+    expect(speechLangFor("आपके पास 12 ऑर्डर हैं।", "en-IN")).toBe("hi-IN");
+    expect(speechLangFor("உங்களிடம் 12 ஆர்டர்கள் உள்ளன", "en-IN")).toBe(
+      "ta-IN",
+    );
+    expect(speechLangFor("మీకు 12 ఆర్డర్లు ఉన్నాయి", "en-IN")).toBe("te-IN");
+    expect(speechLangFor("ನಿಮಗೆ 12 ಆರ್ಡರ್‌ಗಳಿವೆ", "en-IN")).toBe("kn-IN");
+    expect(speechLangFor("আপনার ১২টি অর্ডার আছে", "en-IN")).toBe("bn-IN");
+    expect(speechLangFor("તમારી પાસે 12 ઓર્ડર છે", "en-IN")).toBe("gu-IN");
+    expect(speechLangFor("നിങ്ങൾക്ക് 12 ഓർഡറുകൾ ഉണ്ട്", "en-IN")).toBe("ml-IN");
+    expect(speechLangFor("ਤੁਹਾਡੇ ਕੋਲ 12 ਆਰਡਰ ਹਨ", "en-IN")).toBe("pa-IN");
+  });
+
+  it("uses the fallback for Latin text and en-IN for a blank fallback", () => {
+    expect(speechLangFor("You have 12 orders.", "en-GB")).toBe("en-GB");
+    expect(speechLangFor("You have 12 orders.", "")).toBe(DEFAULT_SPEECH_LANG);
+    expect(speechLangFor("1234 !!", "fr-FR")).toBe("fr-FR");
+  });
+
+  it("follows the majority script in mixed text", () => {
+    expect(
+      speechLangFor(
+        "Your order (ऑर्डर) is ready for collection today.",
+        "en-IN",
+      ),
+    ).toBe("en-IN");
+    expect(speechLangFor("Order आपका ऑर्डर तैयार है।", "en-IN")).toBe("hi-IN");
+  });
+});

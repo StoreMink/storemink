@@ -397,3 +397,88 @@ describe("OfferForm — fields", () => {
     expect(screen.queryByText(/automatic offers switched off/i)).toBeNull();
   });
 });
+
+// ── Mink prefill ───────────────────────────────────────────────
+//
+// Mink opens `/dashboard/offers/new?prefill=mink` after storing the fields in
+// sessionStorage; the form takes them once, skips the type picker when a type
+// was named, and says so. Nothing is saved by Mink: the merchant still
+// presses Create.
+import { storeMinkPrefill, takeMinkPrefill } from "@/lib/mink/form-prefill";
+
+describe("OfferForm — a Mink prefill", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    window.history.replaceState(null, "", "/dashboard/offers/new");
+  });
+
+  it("fills the form from the stored fields, skips the picker and says so", async () => {
+    storeMinkPrefill({
+      kind: "offer",
+      fields: {
+        name: "Diwali 15",
+        description: "Fifteen percent off the festive range",
+        rewardType: "percent_off",
+        rewardValue: 15,
+        minSubtotal: 500,
+        delivery: "code",
+        code: "DIWALI15",
+        budget: 5000,
+        validUntil: "2026-11-01",
+      },
+    });
+    window.history.replaceState(null, "", "?prefill=mink");
+    view();
+
+    expect(
+      screen.getByText(
+        "Filled in by Mink AI. Review every field before saving.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/What kind of discount is this/i),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByDisplayValue("Diwali 15")).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("Fifteen percent off the festive range"),
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("15")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("500")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("DIWALI15")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("5000")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("2026-11-01")).toBeInTheDocument();
+    // The Create button is live: Mink saved nothing.
+    expect(
+      screen.getByRole("button", { name: /create offer/i }),
+    ).toBeInTheDocument();
+    // Taken once, and the flag is gone, so a reload starts blank.
+    expect(takeMinkPrefill("offer")).toBeNull();
+    expect(window.location.search).not.toContain("prefill");
+  });
+
+  it("keeps the picker when the prefill names no reward type", () => {
+    storeMinkPrefill({ kind: "offer", fields: { name: "Festive" } });
+    window.history.replaceState(null, "", "?prefill=mink");
+    view();
+    expect(
+      screen.getByText(/What kind of discount is this/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Filled in by Mink AI. Review every field before saving.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("ignores a stored prefill without the query flag", () => {
+    storeMinkPrefill({ kind: "offer", fields: { name: "Stale" } });
+    view();
+    expect(
+      screen.getByText(/What kind of discount is this/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Filled in by Mink AI/)).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Stale")).not.toBeInTheDocument();
+    // Left in place for the page it belongs to.
+    expect(takeMinkPrefill("offer")).toEqual({ name: "Stale" });
+  });
+});

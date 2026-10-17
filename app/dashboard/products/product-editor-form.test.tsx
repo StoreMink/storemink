@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ProductEditorForm } from "./product-editor-form";
 import { updateProduct } from "@/app/actions/product-actions";
+import { storeMinkProductPrefill } from "@/lib/mink/product-prefill";
 import type { Product } from "./page";
 
 vi.mock("@/components/ui/image-upload", () => ({
@@ -325,4 +326,47 @@ it("adds several library photos to the gallery at once", async () => {
     "https://example.test/library-a.webp",
     "https://example.test/library-b.webp",
   ]);
+});
+
+describe("Mink prefill", () => {
+  it("fills a new product from the hand-off, says so, and strips the flag", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/dashboard/products/new?prefill=mink",
+    );
+    expect(
+      storeMinkProductPrefill({ name: "Cold brew bags", sellingPrice: 320 }),
+    ).toBe(true);
+
+    render(
+      <ProductEditorForm
+        product={null}
+        categories={[
+          {
+            id: "category-1",
+            name: "Coffee",
+            slug: "coffee",
+            status: "active",
+          },
+        ]}
+        taxClasses={[]}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByDisplayValue("Cold brew bags")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("cold-brew-bags")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Filled in by Mink AI. Review every field before saving.",
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.location.search).not.toContain("prefill=mink"),
+    );
+    // Taken once: a second editor opened on the same URL starts blank.
+    expect(sessionStorage.getItem("storemink:mink-prefill:product")).toBeNull();
+  });
 });

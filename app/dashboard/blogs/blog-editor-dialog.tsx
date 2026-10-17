@@ -48,6 +48,8 @@ import {
 import type { BlogFormData } from "@/app/actions/blog-actions";
 import type { Blog } from "./page";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
+import type { MinkBlogPrefill } from "@/lib/mink/form-prefill";
+import { minkPrefillBodyToHtml } from "@/lib/mink/prefill-html";
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -58,6 +60,53 @@ function slugify(text: string): string {
     .replace(/[^\w\s-]/g, "")
     .replace(/[\s_]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * The editor fields a Mink blog prefill maps onto.
+ *
+ * ★ A CATEGORY OR TAG IS MATCHED TO THE STORE'S OWN LIST, case-insensitively,
+ * and dropped when the store has a list it is not on: the chips below render
+ * the store's options, and a name that exists on no option would be saved
+ * onto the post without existing in the taxonomy. A store with no list yet
+ * keeps whatever Mink wrote, which the chips show as a selected name.
+ */
+export function blogPrefillFields(
+  prefill: MinkBlogPrefill,
+  categoryOptions: string[],
+  tagOptions: string[],
+): {
+  title: string;
+  slug: string;
+  excerpt: string;
+  categories: string[];
+  tags: string[];
+  seoTitle: string;
+  seoDescription: string;
+  contentHtml: string;
+} {
+  const matchOption = (options: string[], value: string): string | null => {
+    if (options.length === 0) return value;
+    const wanted = value.trim().toLowerCase();
+    return options.find((o) => o.toLowerCase() === wanted) ?? null;
+  };
+  const title = prefill.title ?? "";
+  const category = prefill.category
+    ? matchOption(categoryOptions, prefill.category)
+    : null;
+  const tags = (prefill.tags ?? [])
+    .map((tag) => matchOption(tagOptions, tag))
+    .filter((tag): tag is string => tag !== null);
+  return {
+    title,
+    slug: slugify(title),
+    excerpt: prefill.excerpt ?? "",
+    categories: category ? [category] : [],
+    tags: Array.from(new Set(tags)),
+    seoTitle: prefill.seoTitle ?? "",
+    seoDescription: prefill.seoDescription ?? "",
+    contentHtml: prefill.body ? minkPrefillBodyToHtml(prefill.body) : "",
+  };
 }
 
 function calcReadingTime(html: string): number {
@@ -81,6 +130,8 @@ type Props = {
   tagOptions: string[];
   /** Server-computed public prefix of this store's own GCS objects. */
   mediaUrlPrefix: string;
+  /** Fields Mink filled in for a NEW post; ignored while editing one. */
+  prefill?: MinkBlogPrefill | null;
 };
 
 // ── Component ─────────────────────────────────────────────────
@@ -132,6 +183,7 @@ export function BlogEditorDialog({
   categoryOptions,
   tagOptions,
   mediaUrlPrefix,
+  prefill = null,
 }: Props) {
   const isEditing = !!blog;
   const [isPending, startTransition] = useTransition();
@@ -219,8 +271,25 @@ export function BlogEditorDialog({
       editor?.commands.setContent(blog.content ?? "");
     } else if (open && !blog) {
       resetForm();
+      if (prefill) {
+        // ★ FILLED, NOT SAVED: the header says "Unsaved changes" and closing
+        // asks first, because nothing Mink wrote has reached the store yet.
+        const fields = blogPrefillFields(prefill, categoryOptions, tagOptions);
+        setTitle(fields.title);
+        setSlug(fields.slug);
+        setExcerpt(fields.excerpt);
+        setCategories(fields.categories);
+        setTags(fields.tags);
+        setSeoTitle(fields.seoTitle);
+        setSeoDescription(fields.seoDescription);
+        if (fields.contentHtml) {
+          editor?.commands.setContent(fields.contentHtml);
+          setReadingTime(calcReadingTime(fields.contentHtml));
+        }
+        setHasUnsaved(true);
+      }
     }
-  }, [open, blog, editor, resetForm]);
+  }, [open, blog, editor, resetForm, prefill, categoryOptions, tagOptions]);
 
   // ── Unsaved changes warning ─────────────────────────────────
   useUnsavedChangesWarning(hasUnsaved);
@@ -437,6 +506,23 @@ export function BlogEditorDialog({
               </button>
             </div>
           </div>
+
+          {!isEditing && prefill && (
+            <p
+              role="status"
+              style={{
+                margin: 0,
+                padding: "8px 20px",
+                fontSize: 13,
+                flexShrink: 0,
+                background: "var(--dash-accent-soft)",
+                borderBottom: "1px solid rgba(0,0,0,0.08)",
+                color: "var(--dash-text)",
+              }}
+            >
+              Filled in by Mink AI. Review every field before saving.
+            </p>
+          )}
 
           <nav className="dash-blog-mobile-nav" aria-label="Blog editor panels">
             <button

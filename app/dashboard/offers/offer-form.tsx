@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -12,6 +18,12 @@ import {
   type OfferFormData,
   type OfferRow,
 } from "@/app/actions/offer-actions";
+import {
+  hasMinkPrefillParam,
+  takeMinkPrefill,
+  MINK_PREFILL_PARAM,
+  type MinkOfferPrefill,
+} from "@/lib/mink/form-prefill";
 import {
   OFFER_CONDITIONS,
   isWebsiteOnlyCondition,
@@ -687,6 +699,65 @@ const BXGY_PRESETS = [
 const dateValue = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
 
 /**
+ * The form fields a Mink offer prefill maps onto. Only what the contract
+ * carries is set; everything else keeps the form's own default.
+ *
+ * ★ A CODE TRAVELS ONLY WITH CODE DELIVERY. `validateForm` refuses an
+ * automatic offer that carries a code, so a prefill naming a code and no
+ * delivery is read as a code offer, and a code beside `automatic` is dropped
+ * rather than saved into a form that cannot submit.
+ */
+function offerPrefillFields(prefill: MinkOfferPrefill): Partial<OfferFormData> {
+  const fields: Partial<OfferFormData> = {};
+  if (prefill.name) fields.name = prefill.name;
+  if (prefill.description) fields.description = prefill.description;
+  if (prefill.rewardType) fields.rewardType = prefill.rewardType;
+  if (prefill.rewardValue !== undefined) {
+    const rewardType = prefill.rewardType ?? "percent_off";
+    if (rewardType === "percent_off") fields.percent = prefill.rewardValue;
+    else if (rewardType === "amount_off") fields.amount = prefill.rewardValue;
+  }
+  if (prefill.minSubtotal !== undefined && prefill.minSubtotal > 0) {
+    fields.triggerType = "min_subtotal";
+    fields.minSubtotal = prefill.minSubtotal;
+  }
+  const delivery = prefill.delivery ?? (prefill.code ? "code" : undefined);
+  if (delivery) fields.delivery = delivery;
+  if (prefill.code && delivery === "code") fields.code = prefill.code;
+  if (prefill.budget !== undefined && prefill.budget > 0) {
+    fields.budget = prefill.budget;
+  }
+  if (prefill.validUntil) fields.validUntil = prefill.validUntil;
+  return fields;
+}
+
+const NO_OFFER_PREFILL = {
+  fields: {} as Partial<OfferFormData>,
+  applied: false,
+};
+
+/**
+ * Fields Mink filled in for a new offer, read once and cleared.
+ *
+ * ★ Only on `/dashboard/offers/new?prefill=mink`, so an offer form opened any
+ * other way never inherits something a conversation left behind, and only on
+ * the client (the lazy initialiser runs on the server too, where there is no
+ * window). The product editor follows the same shape.
+ */
+function minkPrefilledOffer(): {
+  fields: Partial<OfferFormData>;
+  applied: boolean;
+} {
+  if (typeof window === "undefined") return NO_OFFER_PREFILL;
+  if (!hasMinkPrefillParam(window.location.search)) return NO_OFFER_PREFILL;
+  const prefill = takeMinkPrefill("offer");
+  if (!prefill) return NO_OFFER_PREFILL;
+  return { fields: offerPrefillFields(prefill), applied: true };
+}
+
+const subscribeToNothing = () => () => {};
+
+/**
  * One card of the offer form.
  *
  * ★★ A CARD, NOT A DISCLOSURE. The previous shape folded ten fieldsets into
@@ -771,7 +842,27 @@ export function OfferForm({
   // to do — the Value card's own control still allows it.
   const [pickingType, setPickingType] = useState(!offer);
 
-  const [form, setForm] = useState<OfferFormData>({
+  // ★ TAKEN ONCE, in the lazy initialiser, so a reload starts blank. The
+  // picker and the notice are structural, so they wait for hydration: the
+  // server rendered the picker, and swapping it for the filled form during
+  // hydration would make React throw the page away and draw it again.
+  const [minkPrefill] = useState(minkPrefilledOffer);
+  const hydrated = useSyncExternalStore(
+    subscribeToNothing,
+    () => true,
+    () => false,
+  );
+  const skipPicker = minkPrefill.applied && !!minkPrefill.fields.rewardType;
+  const picking = pickingType && !(hydrated && skipPicker);
+  useEffect(() => {
+    if (!minkPrefill.applied) return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(MINK_PREFILL_PARAM)) return;
+    url.searchParams.delete(MINK_PREFILL_PARAM);
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, [minkPrefill.applied]);
+
+  const [form, setForm] = useState<OfferFormData>(() => ({
     name: offer?.name ?? "",
     description: offer?.description ?? "",
     status: offer?.status ?? "disabled",
@@ -829,7 +920,8 @@ export function OfferForm({
     productIds: initialProductIds,
     variantIds: initialVariantIds,
     categoryIds: initialCategoryIds,
-  });
+    ...minkPrefill.fields,
+  }));
 
   const set = <K extends keyof OfferFormData>(k: K, v: OfferFormData[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -1031,7 +1123,7 @@ export function OfferForm({
         {/* ★ HIDDEN WHILE PICKING A TYPE. There is nothing to save yet, and a
             live Create button on the picker would create the default nobody
             chose. */}
-        {!pickingType && (
+        {!picking && (
           <div className="flex shrink-0 items-center gap-2">
             <Link href="/dashboard/offers" className="dash-btn">
               Cancel
@@ -1052,13 +1144,22 @@ export function OfferForm({
           card carries the same sentence, and repeating it under a sticky
           header spent the one row of vertical space a phone can least
           afford. */}
-      {pickingType && (
+      {minkPrefill.applied && hydrated && (
+        <p
+          role="status"
+          className="mb-4 rounded-md border border-[var(--dash-border)] bg-[var(--dash-accent-soft)] px-3 py-2 text-[13px] text-[var(--dash-text)]"
+        >
+          Filled in by Mink AI. Review every field before saving.
+        </p>
+      )}
+
+      {picking && (
         <p className="mb-4 text-sm text-[var(--dash-ink-2)]">
           What kind of discount is this?
         </p>
       )}
 
-      {pickingType ? (
+      {picking ? (
         <div className="space-y-5">
           {TYPE_GROUPS.map((group) => (
             <div key={group.label}>

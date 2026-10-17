@@ -172,6 +172,131 @@ channels:view, never a credential) a marketing overview; both in
 the local migration apply. The `social_post` card has no "open" destination
 of its own and links to Offers.
 
+### Mink Sidekick parity, second pass: screen awareness, spotlight, prefilled forms, reply language, voice, richer charts (2026-10-17)
+
+The UI gaps that remained after the first pass, closed in one change. No
+migration: nothing here writes a row.
+★★ SCREEN AWARENESS. `app/dashboard/mink-screen.ts` reads what the merchant
+can see (document title, page headings, the address-bar filters, up to 20
+visible table rows, the selected-row count, an open dialog, a notice, and the
+labelled values of the form on screen) and `minkBrowserContext()` sends it as
+`context.screen` with every message. `lib/mink/page-context.ts`
+re-bounds it on the server (`normalizeMinkScreenContext`: every string
+capped, secrets dropped by label, 20 rows, 40 fields) and
+`renderMinkScreenReference` turns it into ONE untrusted user part placed
+after the memory reference and before the message (`vertex-client.ts`),
+never inside the system instruction. The prompt tells the model it is what
+the merchant sees, not a verified fact: resolve "this" and "these" with it,
+verify with a tool before any figure or proposal. Password, hidden and file
+inputs, and any field whose label names a key, token, secret, OTP or PIN,
+never leave the page; the Mink panel itself is excluded from the read.
+Nothing is persisted (mink_runs keeps only `current_path`).
+★ SPOTLIGHT ("show me where"). `lib/mink/guide-targets.ts` is a closed
+registry of dashboard controls (New product, New offer, New category, New
+blog, Invite user, Go live, Edit dashboard, Upload, Connect Razorpay, Use
+this theme, Customize, Add location, the delivery-rate cards, Save and
+publish, Generate with AI), each naming the navigation destination it lives
+on, its label, a hint and a pattern for its visible text.
+`open_dashboard_page` gains `highlight` (the destination may be omitted and
+is derived from the target; a mismatch is refused; the module throws at load
+if a target names an unknown destination). The artifact carries
+`highlight`, the parser re-validates it against the registry, and
+`ChatProvider` holds it so `app/dashboard/mink-spotlight.tsx` can draw a ring
+and a note around the control after the route lands, finding it by a
+`data-mink-target` hook first and then by its accessible name, waiting up to
+six seconds for the page, re-measuring on scroll and resize, and leaving on
+a click, Escape, a route change or a timeout. It lives in the provider, not
+the panel, because on a phone opening a page closes the chat. A control
+that never appears says so in a status pill rather than silently doing
+nothing.
+★ PREFILLED FORMS BEYOND PRODUCTS. `lib/mink/form-prefill.ts` is the one
+contract: kinds product, offer, category, blog and shipping, each with
+bounded fields accepted in camelCase and snake_case, `storeMinkPrefill` /
+`takeMinkPrefill` (sessionStorage, read once, stale after 10 minutes) and
+`minkPrefillPath(kind)` (`?prefill=mink`). `product-prefill.ts` is now a
+thin wrapper over it. The navigation tool fills new_product, new_offer,
+new_category, new_blog and shipping_settings (manage permission required
+when a prefill is present, where viewing the page is not); the card names
+what was filled; each editor takes the fields on first render and strips
+the flag, and shows "Filled in by Mink AI. Review every field before
+saving." The merchant still saves through the ordinary action. The four
+editors (`offers/offer-form.tsx`, `categories/categories-management-view`
+
+- `category-editor-dialog`, `blogs/blogs-management-view` +
+  `blog-editor-dialog`, `settings/shipping/shipping-settings-view`) take the
+  fields in a lazy initialiser (so a reload starts blank) and gate anything
+  STRUCTURAL (the notice, the dialog they open, the offer type picker they
+  skip) on a `useSyncExternalStore` hydrated flag: these pages are
+  server-rendered, and a server/client tree mismatch during hydration makes
+  React throw the page away. Offers: a reward value lands on `percent` or
+  `amount` by reward type, a positive `minSubtotal` switches the trigger, a
+  code implies code delivery and a code beside `automatic` is dropped
+  (`validateForm` refuses it). Categories: the slug is derived from the name
+  when absent. Blogs: `lib/mink/prefill-html.ts` turns the plain-text or
+  simple-Markdown body into the few blocks TipTap takes (escaped first; the
+  save sanitises again), and a category or tag is matched case-insensitively
+  to the store's taxonomy and dropped when it is not there. Shipping: fields
+  merge over the saved settings and a `shiprocket` mode is skipped when the
+  channel is off. ★ `pick()` in form-prefill keeps an explicit camelCase
+  `null` (`freeAbove: null` means clear the threshold); `??` dropped it on
+  the round trip.
+  ★ REPLY LANGUAGE. `lib/mink/reply-language.ts` is a closed list (match my
+  message, English, Hindi, Hinglish, Tamil, Telugu, Kannada, Marathi, Bengali,
+  Gujarati, Malayalam, Punjabi) chosen from the panel's overflow menu, kept in
+  localStorage, sent as `context.replyLanguage`, validated again on the
+  server and rendered into the trusted context through the new
+  `{{reply_language}}` placeholder. The chrome stays English; the answers
+  follow the choice, with StoreMink's own labels, product names and codes
+  kept as they appear.
+  ★ VOICE CHAT (`app/dashboard/mink-voice-mode.ts`, `lib/mink/speech-text.ts`,
+  the composer). A "Talk with Mink" toggle (`aria-pressed`) beside the mic
+  runs a hands-free loop: the existing dictation (the recorder plus
+  `/api/mink/voice`) listens, the transcript is sent through the composer's
+  own submit path (so limits and attachments apply, and a refused send leaves
+  the words in the box), the newest assistant answer is read aloud with
+  `window.speechSynthesis`, and the end of speech re-arms the mic. The hook
+  is a state machine (idle, listening, sending, waiting, speaking) and only
+  ever speaks a reply to something sent while the mode was on: restored
+  history, an error and an answer that predates the toggle stay silent. A
+  speak token makes cancellation quiet (`speechSynthesis.cancel()` fires the
+  cancelled utterance's end handler, which would otherwise re-arm the mic at
+  the wrong moment). It stops on toggle, unmount, the chat closing, the tab
+  going hidden, a chat error, a refused send, a transcription or mic failure
+  and three empty transcripts in a row, with a short notice for the
+  merchant-facing ones; Escape and a "Stop voice chat" button end it too.
+  `speakableMinkText` turns Markdown into speech (tables as "label: value"
+  lines, code blocks and dashboard paths dropped, cut at a sentence boundary
+  under 1,500 characters) and `speechLangFor` picks the utterance language
+  from the script most of the letters are in (eight Indic scripts; Latin
+  takes the browser's language). Support is read through
+  `useSyncExternalStore` with an "unsupported" server snapshot so hydration
+  matches; it needs a secure context, so it is off on plain-http local hosts.
+  ★ RICHER CHARTS. `query_analytics` takes an optional `second_metric`
+  (same measure list, refused when equal to the first, from the other dataset
+  or not valid for the grouping) and runs it in the SAME `runExploration`
+  call; it comes back INSIDE the one chart artifact as `panels[0]`, because
+  the registry, orchestrator, SSE route and history all carry exactly one
+  artifact per tool response and an artifacts array was not a small safe
+  change. The artifact gains `summary` (total, previous total, trend percent,
+  comparison label, `goodWhen`, "down" for the measures `EXPLORE_METRICS`
+  marks `lowerIsBetter`, such as discounts and returns) and `panels` (at most
+  three, each a chart in its own right); the parser re-validates both and
+  drops a malformed one while keeping the chart. `app/dashboard/mink-chart.tsx`
+  leads with the hero total and a green/red trend badge, names the series
+  "This period" / "Previous period" / "Same period last year", draws the
+  comparison dashed and lighter, labels only the peak, groups bars with a gap
+  (never stacked), thins the x labels to at most eight, prints compact Indian
+  ticks (₹1.2L, ₹3.4Cr), renders panels as small multiples (stacking at 380px),
+  and gains a Copy table button (TSV through `navigator.clipboard`, a no-op
+  without it). Palette unchanged.
+  Prompt versions `read-beta-v28` / `draft-action-beta-v49`, registries
+  `read-beta-v25` / `draft-beta-v40` (the navigation and analytics tools' schemas changed).
+  ⚠ Still not Sidekick: a native mobile app (StoreMink has only the
+  responsive web panel) and localised chrome. Help: migration 0216 edits the
+  Mink guide in place (the Remember this? card, which 0215's pass shipped
+  without its sentence; pointing at a control and prefilled forms; the
+  reply-language setting).
+
 ### Mink Home suggestions (2026-10-17)
 
 "Mink suggests" is a Shopify Sidekick Pulse-style `.dash-card` on dashboard
@@ -5957,7 +6082,9 @@ wholesip/
 │                              # provisioned for every store), the category_create /
 │                              # category_update / social_post draft kinds with NULL-safe
 │                              # target checks, and edits the Mink guide in place.
-│                              # Next free: 0216.
+│                              # 0216 edits the Mink guide for the Remember this? card,
+│                              # pointing at a control, prefilled forms and the reply
+│                              # language. Next free: 0217.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

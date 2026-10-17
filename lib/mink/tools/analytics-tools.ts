@@ -9,6 +9,7 @@ import {
   isTimeDimension,
   metricsFor,
   normalizeExploreConfig,
+  type ExploreDataset,
   type ExploreDimension,
   type ExploreMetric,
 } from "@/lib/analytics/explore";
@@ -20,7 +21,8 @@ import { resolveMinkLocation } from "./location-scope";
 import type { MinkTool } from "./registry";
 
 /**
- * `query_analytics`: one measure, grouped one way, over one bounded period.
+ * `query_analytics`: one measure (or two), grouped one way, over one bounded
+ * period.
  *
  * ★★ A WHITELIST, NOT A QUERY LANGUAGE, and it is the merchant's own. The
  * Reports builder (`lib/analytics/explore.ts`) already defines every
@@ -33,7 +35,16 @@ import type { MinkTool } from "./registry";
  *
  * ★ THE RESULT IS A CHART AS WELL AS NUMBERS. A time grouping draws a line
  * (the comparison period dashed beside it); a breakdown draws its top rows
- * as bars. The card links to the same configuration in Reports.
+ * as bars. The card leads with the period's total and its trend against the
+ * comparison period, and links to the same configuration in Reports.
+ *
+ * ★ A SECOND MEASURE RIDES THE SAME QUERY. `second_metric` adds one more
+ * measure to the one `runExploration` call (the builder already takes up to
+ * four), and the card draws it as a small multiple beside the first. It
+ * travels INSIDE the one chart artifact as `panels`: a tool output yields one
+ * artifact, and widening that contract would touch the registry, the
+ * orchestrator's collection cap, the SSE route and the history parser for
+ * what is one card on screen.
  */
 const PERIODS = [
   "today",
@@ -50,6 +61,14 @@ const GROUPINGS = [
   ...new Set([...dimensionsFor("sales"), ...dimensionsFor("traffic")]),
 ] as ExploreDimension[];
 const METRICS = Object.keys(EXPLORE_METRICS) as ExploreMetric[];
+const TRAFFIC_METRICS = new Set<string>([
+  "sessions",
+  "visitors",
+  "page_views",
+  "converted_sessions",
+  "conversion_rate",
+  "traffic_sales",
+]);
 const MAX_CHART_POINTS = 120;
 const MAX_BREAKDOWN_ROWS = 20;
 
@@ -68,11 +87,15 @@ function readEnum<const T extends readonly string[]>(
   return value as T[number];
 }
 
+function datasetOf(metric: ExploreMetric): ExploreDataset {
+  return TRAFFIC_METRICS.has(metric) ? "traffic" : "sales";
+}
+
 export const queryAnalytics: MinkTool = {
   declaration: {
     name: "query_analytics",
     description:
-      "Run one bounded analytics query the way the merchant's Reports builder does: one measure (sales, orders, average order value, units, discounts, returns, shipping, taxes, or on Pro the storefront sessions, visitors, page views, converted sessions and conversion rate), grouped by a time grain (day, week, month) or a breakdown (product, category, channel, location, discount code, region, new versus returning customers; for traffic also device, source, referrer, landing page, campaign, country, city), over one period in the store timezone, with an optional comparison period. Returns the rows, totals and a chart card, and a link to the same report. Use get_sales_summary for a single headline figure; use this for a trend, a ranking or a breakdown. Never invent a figure the result does not contain.",
+      "Run one bounded analytics query the way the merchant's Reports builder does: one measure (sales, orders, average order value, units, discounts, returns, shipping, taxes, or on Pro the storefront sessions, visitors, page views, converted sessions and conversion rate), grouped by a time grain (day, week, month) or a breakdown (product, category, channel, location, discount code, region, new versus returning customers; for traffic also device, source, referrer, landing page, campaign, country, city), over one period in the store timezone, with an optional comparison period and an optional second measure drawn beside the first. Returns the rows, totals, the trend against the comparison period and a chart card, and a link to the same report. Use get_sales_summary for a single headline figure; use this for a trend, a ranking or a breakdown. Never invent a figure the result does not contain.",
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -80,6 +103,12 @@ export const queryAnalytics: MinkTool = {
           type: "string",
           enum: METRICS,
           description: "The one measure to report.",
+        },
+        second_metric: {
+          type: "string",
+          enum: METRICS,
+          description:
+            "An optional second measure drawn beside the first over the same grouping and period, such as orders next to total sales. It must differ from metric and be available for the same dataset and grouping.",
         },
         group_by: {
           type: "string",
@@ -125,6 +154,10 @@ export const queryAnalytics: MinkTool = {
   artifact: chartArtifact,
   async execute(actor, args) {
     const metric = readEnum(args.metric, METRICS, "metric", "total_sales");
+    const secondMetric =
+      args.second_metric === undefined || args.second_metric === null
+        ? undefined
+        : readEnum(args.second_metric, METRICS, "second_metric", metric);
     const requestedGrouping = readEnum(
       args.group_by,
       GROUPINGS,
@@ -152,18 +185,17 @@ export const queryAnalytics: MinkTool = {
               );
             })();
 
-    const dataset = (
-      [
-        "sessions",
-        "visitors",
-        "page_views",
-        "converted_sessions",
-        "conversion_rate",
-        "traffic_sales",
-      ] as string[]
-    ).includes(metric)
-      ? "traffic"
-      : "sales";
+    const dataset = datasetOf(metric);
+    if (secondMetric !== undefined) {
+      if (secondMetric === metric) {
+        throw new MinkToolInputError("second_metric must differ from metric.");
+      }
+      if (datasetOf(secondMetric) !== dataset) {
+        throw new MinkToolInputError(
+          `second_metric ${secondMetric} is a ${datasetOf(secondMetric)} measure and cannot be drawn beside ${metric}, a ${dataset} measure. Choose two measures of the same kind.`,
+        );
+      }
+    }
     const trafficAllowed =
       dataset === "traffic"
         ? await storeHasAnalyticsFeature(actor.storeId, "storefrontConversion")
@@ -182,9 +214,15 @@ export const queryAnalytics: MinkTool = {
         `group_by ${requestedGrouping} is not available for ${metric}. Choose one of: ${dimensionsFor(dataset).join(", ")}.`,
       );
     }
-    if (!metricsFor(dataset, requestedGrouping).includes(metric)) {
+    const allowedMetrics = metricsFor(dataset, requestedGrouping);
+    if (!allowedMetrics.includes(metric)) {
       throw new MinkToolInputError(
-        `${metric} cannot be grouped by ${requestedGrouping}. Measures available for that grouping: ${metricsFor(dataset, requestedGrouping).join(", ")}.`,
+        `${metric} cannot be grouped by ${requestedGrouping}. Measures available for that grouping: ${allowedMetrics.join(", ")}.`,
+      );
+    }
+    if (secondMetric !== undefined && !allowedMetrics.includes(secondMetric)) {
+      throw new MinkToolInputError(
+        `second_metric ${secondMetric} cannot be grouped by ${requestedGrouping}. Measures available for that grouping: ${allowedMetrics.join(", ")}.`,
       );
     }
 
@@ -204,7 +242,7 @@ export const queryAnalytics: MinkTool = {
     const config = normalizeExploreConfig(
       {
         dataset,
-        metrics: [metric],
+        metrics: [metric, ...(secondMetric ? [secondMetric] : [])],
         dimension: grouping,
         chart: isTimeDimension(grouping) ? "line" : "bar",
       },
@@ -221,28 +259,121 @@ export const queryAnalytics: MinkTool = {
       config,
     });
     const meta = EXPLORE_METRICS[metric];
-    const rows = (
-      isTimeDimension(grouping) ? result.rows : result.rows.slice(0, limit)
-    ).map((row) => ({
+    const secondMeta = secondMetric ? EXPLORE_METRICS[secondMetric] : null;
+    const firstIndex = Math.max(0, config.metrics.indexOf(metric));
+    const secondIndex = secondMetric
+      ? config.metrics.indexOf(secondMetric)
+      : -1;
+    const baseRows = isTimeDimension(grouping)
+      ? result.rows
+      : result.rows.slice(0, limit);
+    const measure = (index: number) => ({
+      rows: baseRows.map((row) => ({
+        value: round(row.values[index] ?? 0),
+        previous:
+          row.previous[index] === null || row.previous[index] === undefined
+            ? null
+            : round(row.previous[index] ?? 0),
+      })),
+      total: round(result.totals[index] ?? 0),
+      previousTotal:
+        result.previousTotals === null
+          ? null
+          : round(result.previousTotals[index] ?? 0),
+    });
+    const first = measure(firstIndex);
+    const second = secondIndex >= 0 ? measure(secondIndex) : null;
+    const rows = baseRows.map((row, index) => ({
       label: row.label,
       ...(row.title ? { title: row.title } : {}),
       ...(row.partial ? { partial: true } : {}),
-      value: round(row.values[0] ?? 0),
-      previous: row.previous[0] === null ? null : round(row.previous[0] ?? 0),
+      value: first.rows[index].value,
+      previous: first.rows[index].previous,
+      ...(second
+        ? {
+            secondValue: second.rows[index].value,
+            secondPrevious: second.rows[index].previous,
+          }
+        : {}),
     }));
-    const total = round(result.totals[0] ?? 0);
-    const previousTotal =
-      result.previousTotals === null
-        ? null
-        : round(result.previousTotals[0] ?? 0);
+    // ★ THE COMPARISON IS NAMED FOR WHAT IT IS, in two registers: the badge
+    // reads "+12% vs previous 30 days", the legend "Previous period" against
+    // "This period". A year comparison says so in both.
+    const comparisonPhrase = range.compare
+      ? range.comparison === "year"
+        ? "same period last year"
+        : `previous ${days <= 1 ? "day" : `${Math.round(days)} days`}`
+      : null;
+    const comparisonSeriesLabel =
+      range.comparison === "year" ? "Same period last year" : "Previous period";
+    const groupLabel = EXPLORE_DIMENSION_LABELS[grouping].toLowerCase();
+    const chartKind = isTimeDimension(grouping) ? "line" : "bar";
+    const chartFor = (
+      label: string,
+      format: (typeof meta)["format"],
+      lowerIsBetter: boolean,
+      figures: ReturnType<typeof measure>,
+    ) => ({
+      title: `${label} by ${groupLabel}`,
+      kind: chartKind,
+      format,
+      series: [
+        {
+          label:
+            isTimeDimension(grouping) && range.compare ? "This period" : label,
+          points: figures.rows.map((row, index) => ({
+            label: rows[index].label,
+            value: row.value,
+          })),
+        },
+        ...(isTimeDimension(grouping) && range.compare
+          ? [
+              {
+                label: comparisonSeriesLabel,
+                points: figures.rows.map((row, index) => ({
+                  label: rows[index].label,
+                  value: row.previous ?? 0,
+                })),
+              },
+            ]
+          : []),
+      ],
+      summary: {
+        total: figures.total,
+        ...(figures.previousTotal === null
+          ? {}
+          : { previousTotal: figures.previousTotal }),
+        trendPercent: trend(figures.total, figures.previousTotal),
+        ...(comparisonPhrase ? { comparisonLabel: comparisonPhrase } : {}),
+        goodWhen: lowerIsBetter ? "down" : "up",
+      },
+    });
     const search = new URLSearchParams({
       ...exploreSearch(config),
       range: period,
       compare: comparison,
       ...(location.selectedId ? { location: location.selectedId } : {}),
     });
+    const primary = chartFor(
+      meta.label,
+      meta.format,
+      meta.lowerIsBetter === true,
+      first,
+    );
     return {
       metric: { key: metric, label: meta.label, format: meta.format },
+      ...(secondMeta && second && secondMetric
+        ? {
+            secondMetric: {
+              key: secondMetric,
+              label: secondMeta.label,
+              format: secondMeta.format,
+              total: second.total,
+              previousTotal: second.previousTotal,
+              trendPercent: trend(second.total, second.previousTotal),
+            },
+          }
+        : {}),
       groupBy: {
         key: grouping,
         label: EXPLORE_DIMENSION_LABELS[grouping],
@@ -258,7 +389,11 @@ export const queryAnalytics: MinkTool = {
         timeZone: range.timeZone,
       },
       comparison: range.comparisonLabel
-        ? { type: range.comparison, label: range.comparisonLabel }
+        ? {
+            type: range.comparison,
+            label: range.comparisonLabel,
+            ...(comparisonPhrase ? { shortLabel: comparisonPhrase } : {}),
+          }
         : null,
       locationScope: {
         label:
@@ -267,12 +402,9 @@ export const queryAnalytics: MinkTool = {
             : location.label,
       },
       currency: actor.currency,
-      total,
-      previousTotal,
-      trendPercent:
-        previousTotal === null || previousTotal === 0
-          ? null
-          : round(((total - previousTotal) / Math.abs(previousTotal)) * 100),
+      total: first.total,
+      previousTotal: first.previousTotal,
+      trendPercent: trend(first.total, first.previousTotal),
       rows,
       truncated:
         result.truncated ||
@@ -280,24 +412,19 @@ export const queryAnalytics: MinkTool = {
       dashboardPath: `/dashboard/analytics/reports/explore?${search.toString()}`,
       dataAsOf: new Date().toISOString(),
       chart: {
-        kind: isTimeDimension(grouping) ? "line" : "bar",
-        series: [
-          {
-            label: meta.label,
-            points: rows.map((row) => ({ label: row.label, value: row.value })),
-          },
-          ...(isTimeDimension(grouping) && range.comparisonLabel
-            ? [
-                {
-                  label: range.comparisonLabel,
-                  points: rows.map((row) => ({
-                    label: row.label,
-                    value: row.previous ?? 0,
-                  })),
-                },
-              ]
-            : []),
-        ],
+        ...primary,
+        ...(secondMeta && second
+          ? {
+              panels: [
+                chartFor(
+                  secondMeta.label,
+                  secondMeta.format,
+                  secondMeta.lowerIsBetter === true,
+                  second,
+                ),
+              ],
+            }
+          : {}),
       },
     };
   },
@@ -307,46 +434,100 @@ function round(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+/** Percent change, two decimals; null without a baseline (the dashboard's rule). */
+function trend(total: number, previousTotal: number | null): number | null {
+  return previousTotal === null || previousTotal === 0
+    ? null
+    : round(((total - previousTotal) / Math.abs(previousTotal)) * 100);
+}
+
+type ChartFormat = "number" | "currency" | "percent";
+type ChartSeries = Array<{
+  label: string;
+  points: Array<{ label: string; value: number }>;
+}>;
+type ChartSummary = {
+  total: number;
+  previousTotal?: number;
+  trendPercent?: number | null;
+  comparisonLabel?: string;
+  goodWhen?: "up" | "down";
+};
+type ChartPanelOutput = {
+  title: string;
+  kind: "line" | "bar";
+  format: ChartFormat;
+  series: ChartSeries;
+  summary?: ChartSummary;
+};
+
+function boundedSeries(series: ChartSeries): ChartSeries {
+  return series.slice(0, 3).map((entry) => ({
+    label: entry.label.slice(0, 60),
+    points: entry.points.slice(0, MAX_CHART_POINTS).map((point) => ({
+      label: point.label.slice(0, 60),
+      value: Number.isFinite(point.value) ? point.value : 0,
+    })),
+  }));
+}
+
+function boundedSummary(summary: ChartSummary | undefined) {
+  if (!summary || !Number.isFinite(summary.total)) return {};
+  return {
+    summary: {
+      total: summary.total,
+      ...(summary.previousTotal !== undefined &&
+      Number.isFinite(summary.previousTotal)
+        ? { previousTotal: summary.previousTotal }
+        : {}),
+      ...(summary.trendPercent === null ||
+      (summary.trendPercent !== undefined &&
+        Number.isFinite(summary.trendPercent))
+        ? { trendPercent: summary.trendPercent }
+        : {}),
+      ...(summary.comparisonLabel
+        ? { comparisonLabel: summary.comparisonLabel.slice(0, 80) }
+        : {}),
+      ...(summary.goodWhen === "up" || summary.goodWhen === "down"
+        ? { goodWhen: summary.goodWhen }
+        : {}),
+    },
+  };
+}
+
 function chartArtifact(
   output: Record<string, unknown>,
 ): MinkArtifact | undefined {
-  const metric = output.metric as
-    | { label: string; format: "number" | "currency" | "percent" }
-    | undefined;
   const chart = output.chart as
-    | {
-        kind: "line" | "bar";
-        series: Array<{
-          label: string;
-          points: Array<{ label: string; value: number }>;
-        }>;
-      }
+    | (ChartPanelOutput & { panels?: ChartPanelOutput[] })
     | undefined;
   const range = output.range as { label: string } | undefined;
-  const groupBy = output.groupBy as { label: string } | undefined;
   const scope = output.locationScope as { label: string } | undefined;
-  if (
-    !metric ||
-    !chart ||
-    !range ||
-    !groupBy ||
-    !chart.series[0]?.points.length
-  ) {
+  if (!chart || !range || !chart.series?.[0]?.points.length) {
     return undefined;
   }
+  const currency =
+    typeof output.currency === "string" ? output.currency : "INR";
+  const panels = (chart.panels ?? [])
+    .filter((panel) => panel.series?.[0]?.points.length)
+    .slice(0, 3)
+    .map((panel) => ({
+      title: panel.title.slice(0, 120),
+      kind: panel.kind,
+      format: panel.format,
+      currency,
+      series: boundedSeries(panel.series),
+      ...boundedSummary(panel.summary),
+    }));
   return {
     type: "chart",
-    title: `${metric.label} by ${groupBy.label.toLowerCase()}`,
+    title: chart.title.slice(0, 120),
     kind: chart.kind,
-    format: metric.format,
-    currency: typeof output.currency === "string" ? output.currency : "INR",
-    series: chart.series.slice(0, 3).map((series) => ({
-      label: series.label.slice(0, 60),
-      points: series.points.slice(0, MAX_CHART_POINTS).map((point) => ({
-        label: point.label.slice(0, 60),
-        value: Number.isFinite(point.value) ? point.value : 0,
-      })),
-    })),
+    format: chart.format,
+    currency,
+    series: boundedSeries(chart.series),
+    ...boundedSummary(chart.summary),
+    ...(panels.length ? { panels } : {}),
     filters: [
       { label: "Period", value: range.label },
       ...(scope ? [{ label: "Location", value: scope.label }] : []),

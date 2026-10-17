@@ -19,6 +19,8 @@ import {
 } from "./mink-ai";
 import type { MinkFeedbackIssue, MinkFeedbackRating } from "@/lib/mink/types";
 import type { MinkSkill } from "@/lib/mink/skills";
+import type { MinkHighlight } from "@/lib/mink/guide-targets";
+import { MinkSpotlight } from "./mink-spotlight";
 
 interface ChatContextType {
   isChatOpen: boolean;
@@ -50,6 +52,9 @@ interface ChatContextType {
   steps: MinkRunStep[];
   error: { code: string; message: string } | null;
   feedbackSubmittingRunId: string | null;
+  /** A control Mink is pointing at on the current page, until dismissed. */
+  spotlight: MinkHighlight | null;
+  showSpotlight: (highlight: MinkHighlight | null) => void;
   /** "Remember this?" offered after the newest answer, until the next message. */
   memoryPrompt: MinkMemoryPrompt | null;
   saveMemorySuggestion: () => Promise<MinkUiError | null>;
@@ -119,6 +124,14 @@ export function ChatProvider({
 }) {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  // Lives here, not in the panel: a spotlight must outlive the panel closing
+  // on a phone, where opening a page also closes the chat.
+  const [spotlight, setSpotlight] = useState<MinkHighlight | null>(null);
+  const showSpotlight = useCallback(
+    (highlight: MinkHighlight | null) => setSpotlight(highlight),
+    [],
+  );
+  const clearSpotlight = useCallback(() => setSpotlight(null), []);
   const [minkCredits, setMinkCredits] = useState<MinkCreditSummary | null>(
     null,
   );
@@ -167,6 +180,8 @@ export function ChatProvider({
       isExpanded,
       canSaveMedia,
       skills,
+      spotlight,
+      showSpotlight,
       minkCredits,
       toggleChat,
       closeChat,
@@ -179,6 +194,8 @@ export function ChatProvider({
       isExpanded,
       canSaveMedia,
       skills,
+      spotlight,
+      showSpotlight,
       minkCredits,
       toggleChat,
       closeChat,
@@ -188,7 +205,14 @@ export function ChatProvider({
     ],
   );
 
-  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
+  return (
+    <ChatContext.Provider value={value}>
+      {children}
+      {spotlight ? (
+        <MinkSpotlight highlight={spotlight} onDone={clearSpotlight} />
+      ) : null}
+    </ChatContext.Provider>
+  );
 }
 
 export function useChat() {
@@ -203,6 +227,8 @@ export function useChat() {
       isExpanded: false,
       canSaveMedia: false,
       skills: [],
+      spotlight: null,
+      showSpotlight: () => {},
       toggleChat: () => {},
       closeChat: () => {},
       toggleExpand: () => {},

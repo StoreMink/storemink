@@ -1,0 +1,190 @@
+/**
+ * What a Mink answer sounds like when it is read aloud.
+ *
+ * Pure and client-safe: the dashboard composer's voice chat hands a finished
+ * answer to window.speechSynthesis, and a synthesiser reads markup literally
+ * ("asterisk asterisk", "pipe", "slash dashboard slash orders"). Nothing here
+ * imports React or the DOM, so the storefront, a worker or a test can call it.
+ *
+ * ★ A TABLE BECOMES "label: value" LINES, not a stream of cells: a row read as
+ * "Milk 12 240" tells nobody which number is the stock, while "Product: Milk,
+ * Units: 12, Sales: 240." does. The header row supplies the labels; a table
+ * with no header uses each row's first cell as the label.
+ * ★ CODE BLOCKS AND DASHBOARD PATHS ARE DROPPED, never spoken: a CSV header or
+ * a `/dashboard/orders/abc` link carries nothing a listener can act on, and a
+ * synthesiser spells a path one slash at a time.
+ * ★ THE CAP IS AT A SENTENCE BOUNDARY. A long answer is cut where a sentence
+ * ends, so the last thing heard is a whole thought rather than half a figure.
+ */
+
+export const SPEAKABLE_MAX_CHARS = 1_500;
+
+/** A line that already ends a sentence, or one that clearly continues (a comma). */
+const ENDED = /(?:[.!?।…]|[,;:])["')\]]*$/;
+const SENTENCE_BOUNDARY = /[.!?।…]["')\]]*(?=\s)/g;
+const TABLE_SEPARATOR = /^\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?$/;
+
+function ensureStop(line: string): string {
+  return ENDED.test(line) ? line : `${line}.`;
+}
+
+function isTableRow(line: string): boolean {
+  return line.startsWith("|") && line.length > 1 && line.includes("|", 1);
+}
+
+function tableCells(line: string): string[] {
+  const inner = line.replace(/^\|/, "").replace(/\|$/, "");
+  return inner.split(/(?<!\\)\|/).map((cell) => inlineClean(cell));
+}
+
+/** Markup inside one line, reduced to the words a listener needs. */
+function inlineClean(raw: string): string {
+  let text = raw;
+  // Images carry their alt text, links keep their text, everything else about
+  // a URL is dropped: a spoken address is noise.
+  text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
+  text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+  text = text.replace(/\[([^\]]+)\]\[[^\]]*\]/g, "$1");
+  text = text.replace(/<[^>\n]+>/g, " ");
+  text = text.replace(/https?:\/\/\S+/g, "");
+  text = text.replace(
+    /(?:^|(?<=[\s(]))\/dashboard(?:\/[\w.~-]+)*\/?(?=[\s).,;:!?]|$)/g,
+    "",
+  );
+  text = text.replace(/`([^`\n]*)`/g, "$1");
+  text = text.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "$2");
+  text = text.replace(/(^|[^\w*])\*(?!\s)([^*\n]*?[^\s*])\*(?![\w*])/g, "$1$2");
+  text = text.replace(/(^|[^\w_])_(?!\s)([^_\n]*?[^\s_])_(?![\w_])/g, "$1$2");
+  text = text.replace(/~~(?=\S)([\s\S]*?\S)~~/g, "$1");
+  text = text.replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, "$1");
+  text = text.replace(/\(\s*\)/g, "");
+  text = text.replace(/\s+/g, " ").trim();
+  return text;
+}
+
+function speakTable(rows: string[][]): string[] {
+  if (!rows.length) return [];
+  const hasHeader = rows.length > 1 && rows[1].every((cell) => cell === "");
+  const header = hasHeader ? rows[0] : null;
+  const data = hasHeader ? rows.slice(2) : rows;
+  const lines: string[] = [];
+  for (const cells of data) {
+    const filled = cells.map((cell) => cell.trim());
+    if (!filled.some(Boolean)) continue;
+    let line: string;
+    if (header) {
+      line = filled
+        .map((cell, index) => {
+          if (!cell) return "";
+          const label = header[index];
+          return label ? `${label}: ${cell}` : cell;
+        })
+        .filter(Boolean)
+        .join(", ");
+    } else {
+      const [label, ...rest] = filled;
+      const values = rest.filter(Boolean).join(", ");
+      line = values ? `${label}: ${values}` : label;
+    }
+    if (line) lines.push(ensureStop(line));
+  }
+  return lines;
+}
+
+function capAtSentence(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const head = text.slice(0, max);
+  let cut = -1;
+  for (const match of head.matchAll(SENTENCE_BOUNDARY)) {
+    cut = match.index + match[0].length;
+  }
+  if (cut <= 0) {
+    const space = head.lastIndexOf(" ");
+    cut = space > 0 ? space : max;
+  }
+  return head.slice(0, cut).trim();
+}
+
+/**
+ * Markdown from Mink, reduced to spoken sentences: headings, emphasis and
+ * links keep their words, list items and table rows become sentences, code
+ * blocks and dashboard paths disappear, whitespace collapses, and the result
+ * stops at a sentence boundary within SPEAKABLE_MAX_CHARS.
+ */
+export function speakableMinkText(markdown: string): string {
+  if (typeof markdown !== "string" || !markdown.trim()) return "";
+  let text = markdown.replace(/\r\n?/g, "\n");
+  // Fenced code, closed or still open at the end of the answer.
+  text = text.replace(/^[ \t]*(```|~~~)[^\n]*\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, "");
+  text = text.replace(/^[ \t]*(```|~~~)[\s\S]*$/m, "");
+
+  const sentences: string[] = [];
+  let table: string[][] = [];
+  const flushTable = () => {
+    if (table.length) sentences.push(...speakTable(table));
+    table = [];
+  };
+
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushTable();
+      continue;
+    }
+    if (isTableRow(line)) {
+      table.push(
+        TABLE_SEPARATOR.test(line)
+          ? tableCells(line).map(() => "")
+          : tableCells(line),
+      );
+      continue;
+    }
+    flushTable();
+    if (/^(?:[-*_]\s*){3,}$/.test(line)) continue;
+    let item = line.replace(/^(?:>\s?)+/, "");
+    item = item.replace(/^#{1,6}\s+/, "");
+    item = item.replace(/^(?:[-*+]|\d+[.)])\s+/, "");
+    item = item.replace(/^\[([ xX])\]\s+/, "");
+    item = inlineClean(item);
+    if (!item) continue;
+    sentences.push(ensureStop(item));
+  }
+  flushTable();
+
+  const joined = sentences.join(" ").replace(/\s+/g, " ").trim();
+  return capAtSentence(joined, SPEAKABLE_MAX_CHARS);
+}
+
+const SCRIPTS: { lang: string; letters: RegExp }[] = [
+  { lang: "hi-IN", letters: /[ऀ-ॣ०-ॿ]/g },
+  { lang: "bn-IN", letters: /[ঀ-৿]/g },
+  { lang: "pa-IN", letters: /[਀-੿]/g },
+  { lang: "gu-IN", letters: /[઀-૿]/g },
+  { lang: "ta-IN", letters: /[஀-௿]/g },
+  { lang: "te-IN", letters: /[ఀ-౿]/g },
+  { lang: "kn-IN", letters: /[ಀ-೿]/g },
+  { lang: "ml-IN", letters: /[ഀ-ൿ]/g },
+];
+const LATIN_LETTERS = /[A-Za-zÀ-ɏ]/g;
+
+export const DEFAULT_SPEECH_LANG = "en-IN";
+
+/**
+ * The BCP-47 tag a synthesiser should read `text` in, decided by the script
+ * most of its letters are written in. Latin text takes `fallback` (the
+ * browser's own language in the dashboard), and a blank fallback is en-IN.
+ * The danda (। ॥) is punctuation shared across scripts, so it never votes.
+ */
+export function speechLangFor(text: string, fallback: string): string {
+  const safeFallback = fallback?.trim() || DEFAULT_SPEECH_LANG;
+  if (typeof text !== "string" || !text) return safeFallback;
+  let best = {
+    lang: safeFallback,
+    count: (text.match(LATIN_LETTERS) ?? []).length,
+  };
+  for (const script of SCRIPTS) {
+    const count = (text.match(script.letters) ?? []).length;
+    if (count > best.count) best = { lang: script.lang, count };
+  }
+  return best.count > 0 ? best.lang : safeFallback;
+}

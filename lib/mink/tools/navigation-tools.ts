@@ -5,8 +5,20 @@ import { can } from "@/app/dashboard/lib/permissions";
 import { orders, products } from "@/drizzle/schema";
 import { withUser } from "@/lib/db/client";
 import { MinkToolInputError } from "../errors";
-import { readMinkProductPrefill } from "../product-prefill";
-import { minkProductPrefillPath } from "../product-prefill";
+import {
+  minkPrefillPath,
+  readMinkFormPrefill,
+  readMinkPrefill,
+  type MinkFormPrefill,
+  type MinkPrefillKind,
+} from "../form-prefill";
+import {
+  MINK_GUIDE_TARGETS,
+  MINK_GUIDE_TARGET_KEYS,
+  isMinkGuideTarget,
+  readMinkHighlight,
+  type MinkHighlight,
+} from "../guide-targets";
 import type { MinkActorContext, MinkArtifact } from "../types";
 import type { MinkTool } from "./registry";
 
@@ -87,6 +99,30 @@ const DESTINATIONS = {
     path: "/dashboard/blogs",
     label: "Blogs",
     section: "blogs",
+    action: "view",
+  },
+  new_blog: {
+    path: "/dashboard/blogs",
+    label: "New blog post",
+    section: "blogs",
+    action: "manage",
+  },
+  categories: {
+    path: "/dashboard/categories",
+    label: "Categories",
+    section: "categories",
+    action: "view",
+  },
+  new_category: {
+    path: "/dashboard/categories",
+    label: "New category",
+    section: "categories",
+    action: "manage",
+  },
+  branding: {
+    path: "/dashboard/branding",
+    label: "Branding",
+    section: "branding",
     action: "view",
   },
   customers: {
@@ -222,6 +258,29 @@ export const MINK_NAVIGATION_DESTINATIONS = Object.keys(
   DESTINATIONS,
 ) as MinkNavigationDestination[];
 
+/** Destinations whose form Mink may fill in, and the prefill kind each takes. */
+const PREFILL_KINDS: Partial<
+  Record<MinkNavigationDestination, MinkPrefillKind>
+> = {
+  new_product: "product",
+  new_offer: "offer",
+  new_category: "category",
+  new_blog: "blog",
+  shipping_settings: "shipping",
+};
+
+// ★ Every spotlight target names a destination this file knows, checked at
+// module load so a registry entry cannot point at a page the tool cannot
+// permission-check.
+for (const key of MINK_GUIDE_TARGET_KEYS) {
+  const destination = MINK_GUIDE_TARGETS[key].destination;
+  if (!(destination in DESTINATIONS)) {
+    throw new Error(
+      `Mink guide target ${key} names unknown destination ${destination}.`,
+    );
+  }
+}
+
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -239,7 +298,7 @@ export const openDashboardPage: MinkTool = {
   declaration: {
     name: "open_dashboard_page",
     description:
-      "Open a dashboard page for the merchant, keeping this chat open beside it. Use it when they ask to go to, open, show or take them to a page (for example 'open my orders', 'take me to shipping settings'), to open one exact product or order they named, or to start a new product with the form already filled in from this conversation (destination new_product with prefill). Each destination needs the merchant's own permission for that page; a page they cannot open is refused. Never use it instead of answering a question, and never claim the page was changed: it only opens the page.",
+      "Open a dashboard page for the merchant, keeping this chat open beside it. Use it when they ask to go to, open, show or take them to a page (for example 'open my orders', 'take me to shipping settings'), to open one exact product or order they named, to start a form already filled in from this conversation (new_product, new_offer, new_category, new_blog or shipping_settings with prefill), or, when they ask where a control is or how to find it ('where do I change the delivery rate'), with highlight set to the matching target so the page opens and that control is pointed out. Each destination needs the merchant's own permission for that page; a page they cannot open is refused. Never use it instead of answering a question, and never claim the page or a form was changed: it only opens the page, and the merchant reviews and saves any prefilled form themselves.",
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -247,7 +306,13 @@ export const openDashboardPage: MinkTool = {
           type: "string",
           enum: MINK_NAVIGATION_DESTINATIONS,
           description:
-            "The page to open. 'product' needs product_id or product_sku; 'order' needs order_reference; 'new_product' may carry prefill.",
+            "The page to open. 'product' needs product_id or product_sku; 'order' needs order_reference; new_product, new_offer, new_category, new_blog and shipping_settings may carry prefill. May be omitted when highlight is given.",
+        },
+        highlight: {
+          type: "string",
+          enum: MINK_GUIDE_TARGET_KEYS,
+          description:
+            "A control to point out on the page, for 'where is', 'show me how' or 'how do I' questions about that control. The page is opened and the control is ringed with a short note; explain any remaining steps in words.",
         },
         product_id: {
           type: "string",
@@ -270,7 +335,7 @@ export const openDashboardPage: MinkTool = {
         prefill: {
           type: "object",
           description:
-            "For destination 'new_product' only: fields to fill into the new-product form. The merchant reviews and saves the form themselves; nothing is created by this tool.",
+            "Fields to fill into the destination's form; the merchant reviews and saves it themselves, so nothing is created or changed by this tool. new_product: name, description, seo_title, seo_description, base_price, selling_price. new_offer: name, description, reward_type (percent_off | amount_off | free_shipping), reward_value, min_subtotal, delivery (automatic | code), code, budget, valid_until (YYYY-MM-DD). new_category: name, slug, description, status (active | hidden). new_blog: title, excerpt, body (plain text or Markdown), category, tags, seo_title, seo_description. shipping_settings: mode (free | flat | shiprocket), flat_rate, free_above (null clears it), manual_min_days, manual_max_days, handling_days. Only facts the merchant gave or a tool returned; never invent a price, date or claim.",
           properties: {
             name: { type: "string", maxLength: 200 },
             description: { type: "string", maxLength: 3000 },
@@ -278,21 +343,67 @@ export const openDashboardPage: MinkTool = {
             seo_description: { type: "string", maxLength: 180 },
             base_price: { type: "number", minimum: 0 },
             selling_price: { type: "number", minimum: 0 },
+            reward_type: {
+              type: "string",
+              enum: ["percent_off", "amount_off", "free_shipping"],
+            },
+            reward_value: { type: "number", minimum: 0 },
+            min_subtotal: { type: "number", minimum: 0 },
+            delivery: { type: "string", enum: ["automatic", "code"] },
+            code: { type: "string", maxLength: 100 },
+            budget: { type: "number", minimum: 0 },
+            valid_until: { type: "string", maxLength: 10 },
+            slug: { type: "string", maxLength: 200 },
+            status: { type: "string", enum: ["active", "hidden"] },
+            title: { type: "string", maxLength: 200 },
+            excerpt: { type: "string", maxLength: 500 },
+            body: { type: "string", maxLength: 20000 },
+            category: { type: "string", maxLength: 60 },
+            tags: {
+              type: "array",
+              maxItems: 10,
+              items: { type: "string", maxLength: 40 },
+            },
+            mode: { type: "string", enum: ["free", "flat", "shiprocket"] },
+            flat_rate: { type: "number", minimum: 0 },
+            free_above: { type: ["number", "null"], minimum: 0 },
+            manual_min_days: { type: "integer", minimum: 0, maximum: 60 },
+            manual_max_days: { type: "integer", minimum: 0, maximum: 60 },
+            handling_days: { type: "integer", minimum: 0, maximum: 30 },
           },
           additionalProperties: false,
         },
       },
-      required: ["destination"],
       additionalProperties: false,
     },
   },
   permission: { section: "dashboard", action: "view" },
   timeoutMs: 5_000,
   async execute(actor, args) {
-    const destination = args.destination;
+    let highlight: MinkHighlight | null = null;
+    if (args.highlight !== undefined) {
+      if (!isMinkGuideTarget(args.highlight)) {
+        throw new MinkToolInputError(
+          `highlight must be one of: ${MINK_GUIDE_TARGET_KEYS.join(", ")}.`,
+        );
+      }
+      highlight = readMinkHighlight({ target: args.highlight });
+    }
+    const destination =
+      args.destination === undefined && highlight
+        ? MINK_GUIDE_TARGETS[highlight.target].destination
+        : args.destination;
     if (typeof destination !== "string" || !(destination in DESTINATIONS)) {
       throw new MinkToolInputError(
         `destination must be one of: ${MINK_NAVIGATION_DESTINATIONS.join(", ")}.`,
+      );
+    }
+    if (
+      highlight &&
+      MINK_GUIDE_TARGETS[highlight.target].destination !== destination
+    ) {
+      throw new MinkToolInputError(
+        `highlight ${highlight.target} lives on destination ${MINK_GUIDE_TARGETS[highlight.target].destination}; omit destination or pass that one.`,
       );
     }
     const entry = DESTINATIONS[destination as MinkNavigationDestination];
@@ -333,38 +444,59 @@ export const openDashboardPage: MinkTool = {
         `Open order ${found.reference}`,
       );
     }
-    if (destination === "new_product") {
-      const prefill = readMinkProductPrefill(args.prefill);
-      if (prefill) {
+    const prefillKind = PREFILL_KINDS[destination as MinkNavigationDestination];
+    if (prefillKind && args.prefill !== undefined) {
+      // Filling a form is an edit the merchant then saves, so it needs the
+      // page's manage permission even where viewing the page does not.
+      if (
+        !can(actor.permissions, entry.section, "manage", actor.isSuperadmin)
+      ) {
         return {
-          ...navigation(
-            minkProductPrefillPath(),
-            entry.label,
-            "Open the new product form",
-          ),
-          prefill: { kind: "product" as const, fields: prefill },
+          error: {
+            code: "permission_denied",
+            message: `The signed-in admin can view ${entry.label} but cannot change it, so the form cannot be filled in. Say so.`,
+          },
         };
       }
+      const fields = readMinkPrefill(prefillKind, args.prefill);
+      if (!fields) {
+        throw new MinkToolInputError(
+          `prefill carries no field the ${entry.label} form has.`,
+        );
+      }
+      const prefill = { kind: prefillKind, fields } as MinkFormPrefill;
+      return {
+        ...navigation(
+          minkPrefillPath(prefillKind),
+          entry.label,
+          `Open ${entry.label} filled in`,
+        ),
+        prefill,
+        ...(highlight ? { highlight } : {}),
+      };
     }
-    return navigation(entry.path, entry.label, `Open ${entry.label}`);
+    return {
+      ...navigation(
+        entry.path,
+        entry.label,
+        highlight ? `Show ${highlight.label}` : `Open ${entry.label}`,
+      ),
+      ...(highlight ? { highlight } : {}),
+    };
   },
   artifact(output) {
     if (typeof output.path !== "string" || typeof output.label !== "string") {
       return undefined;
     }
+    const prefill = readMinkFormPrefill(output.prefill);
+    const highlight = readMinkHighlight(output.highlight);
     const artifact: MinkArtifact = {
       type: "navigation",
       title: typeof output.title === "string" ? output.title : output.label,
       path: output.path,
       label: output.label,
-      ...(output.prefill
-        ? {
-            prefill: output.prefill as Extract<
-              MinkArtifact,
-              { type: "navigation" }
-            >["prefill"],
-          }
-        : {}),
+      ...(prefill ? { prefill } : {}),
+      ...(highlight ? { highlight } : {}),
     };
     return artifact;
   },

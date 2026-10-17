@@ -296,3 +296,78 @@ describe("readMinkArtifacts", () => {
     ).toEqual([]);
   });
 });
+
+describe("navigation artifacts", () => {
+  it("restores a prefill of any form kind and a known spotlight target", () => {
+    const [offer, shipping, highlight] = readMinkArtifacts([
+      {
+        type: "navigation",
+        title: "Open New offer filled in",
+        label: "New offer",
+        path: "/dashboard/offers/new?prefill=mink",
+        prefill: {
+          kind: "offer",
+          fields: {
+            name: "Diwali",
+            reward_type: "percent_off",
+            reward_value: 10,
+          },
+        },
+      },
+      {
+        type: "navigation",
+        title: "Open Shipping & delivery filled in",
+        label: "Shipping & delivery",
+        path: "/dashboard/settings/shipping?prefill=mink",
+        prefill: { kind: "shipping", fields: { mode: "flat", flat_rate: 49 } },
+      },
+      {
+        type: "navigation",
+        title: "Show Delivery rate",
+        label: "Shipping & delivery",
+        path: "/dashboard/settings/shipping",
+        highlight: { target: "shipping_rate_mode", label: "x".repeat(200) },
+      },
+    ]);
+    expect(offer).toMatchObject({
+      type: "navigation",
+      prefill: {
+        kind: "offer",
+        fields: { name: "Diwali", rewardType: "percent_off", rewardValue: 10 },
+      },
+    });
+    expect(shipping).toMatchObject({
+      prefill: { kind: "shipping", fields: { mode: "flat", flatRate: 49 } },
+    });
+    expect(highlight).toMatchObject({
+      highlight: { target: "shipping_rate_mode", label: "Delivery rate" },
+    });
+  });
+
+  it("drops a navigation whose prefill kind or spotlight target is unknown", () => {
+    expect(
+      readMinkArtifacts([
+        {
+          type: "navigation",
+          title: "t",
+          label: "l",
+          path: "/dashboard/x",
+          prefill: { kind: "settings", fields: { secret: "x" } },
+        },
+        {
+          type: "navigation",
+          title: "t",
+          label: "l",
+          path: "/dashboard/x",
+          highlight: { target: "delete_everything" },
+        },
+        {
+          type: "navigation",
+          title: "t",
+          label: "l",
+          path: "https://evil.example/dashboard",
+        },
+      ]),
+    ).toEqual([]);
+  });
+});

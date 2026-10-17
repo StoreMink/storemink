@@ -191,6 +191,9 @@ describe("Mink system prompt document", () => {
     );
     expect(prompt).toContain("- selected dashboard record: product");
     expect(prompt).toContain(
+      "- reply language: match the language and script of the merchant's message",
+    );
+    expect(prompt).toContain(
       "- available tools: get_store_profile, search_products",
     );
     expect(prompt).toContain("Clear and practical {{available_tool_names}}");
