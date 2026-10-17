@@ -222,6 +222,19 @@ human: the product write is the ordinary `apply_product_images` approval.
 Prompt versions `read-beta-v29` / `draft-action-beta-v50` (the shared doc
 moved), registries `read-beta-v25` / `draft-beta-v41` (the generation
 tool's enum and the product-photo tool's description changed).
+★ ANSWERS ARE PLAIN AND SHORT BY RULE (same day, owner's ask). The prompt's
+one style bullet used to say only "be concise"; it now tells Mink to lead
+with the answer in one or two short sentences and stop, to use everyday
+words and never technical ones (stock, not inventory levels; the page
+address, not slug; no tool, artifact, tenant, digest or schema talk), to
+keep an ordinary answer under about 80 words and four sentences, to use a
+list only for several asked-for things, a table only for figures compared
+side by side, and no headings unless there are real sections, and to point
+at a card rather than repeat it. The 2,048-token output cap is unchanged:
+it is a ceiling against runaway output, and a hard cut mid-sentence reads
+worse than a long answer, so the prompt is the lever. Prompt versions
+`read-beta-v30` / `draft-action-beta-v51`; the system-prompt test pins the
+sentence.
 ⚠ Not run against live Vertex; the request shape is the verified 9E one
 with a new aspect value (3:4 is in the model's documented list). ⚠ The
 product editor has no "Generate" button of its own; the chat is the way in.
