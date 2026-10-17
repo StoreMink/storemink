@@ -377,6 +377,10 @@ describe("Scenes and the shadow", () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       if (!init?.method || init.method === "GET") {
         expect(String(input)).toBe("/api/mink/image-background?spec=product");
+        // Answer late, on purpose: the editor is usable before it knows which
+        // scenes are saved, and a test that assumes otherwise passes only
+        // when the machine is fast (it failed CI's shuffled run).
+        await new Promise((r) => setTimeout(r, 100));
         return new Response(
           JSON.stringify({ scenes: [{ preset: "wood", url: woodScene }] }),
         );
@@ -442,13 +446,22 @@ describe("Scenes and the shadow", () => {
     expect(screen.getByText(/6 Mink credits were used/)).toBeTruthy();
     const studio = screen.getByRole("button", { name: /Studio/ });
     expect(studio.textContent).toContain("Saved · free");
+    // The late saved-scenes answer (wood only) arrives after the draw; it must
+    // add to what the editor knows, not wipe the scene just drawn.
+    await screen.findByRole("button", { name: /Wooden table\s*Saved/ });
+    expect(
+      screen.getByRole("button", { name: /Studio/ }).textContent,
+    ).toContain("Saved · free");
   });
 
   it("uses a saved scene free, and charges 5 only to draw a new one", async () => {
     server([]);
     renderEditor();
     fireEvent.click(screen.getByRole("button", { name: "Scene" }));
-    const wood = await screen.findByRole("button", { name: /Wooden table/ });
+    // Wait for the saved-scenes answer before reading the tile.
+    const wood = await screen.findByRole("button", {
+      name: /Wooden table\s*Saved/,
+    });
     expect(wood.textContent).toContain("Saved · free");
     fireEvent.click(wood);
     expect(

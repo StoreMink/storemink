@@ -154,10 +154,27 @@ Cloud Run's regional quotas in `storemink-prod` are **40 GiB of memory and
 20 vCPU for asia-south1, shared by every service in the region**, including
 `storemink-web-prod`. During this benchmark, a 16 GB test instance plus a
 second deploy were refused with "Quota exceeded for total allowable memory
-per project per region". The matting service is therefore deployed with
-`--max-instances=1` (8 GiB, 4 vCPU).
+per project per region". The service runs with **`--max-instances=2`**
+(raised from 1 on 2026-10-17, revision `00009`): 2 × 4 vCPU / 8 GiB. With
+every service at its maximum the region then holds 18 of 20 vCPU and 25 of
+40 GiB (web-prod 4 × 1 vCPU, web-dev 2 × 1, the two Theme Studio workers
+2 vCPU each, this service 8), so a third instance does not fit.
 
-Before launch, pick one:
+Capacity, measured 2026-10-17 by sending photos at the same moment (one
+photo per instance at a time, about 12 to 15 s each when warm):
+
+| Max instances | Sent at once | Served          | Refused (429 busy) |
+| ------------- | ------------ | --------------- | ------------------ |
+| 1             | 3            | 3, last at 56 s | 0                  |
+| 1             | 7            | 5, last at 68 s | 2, at 46 s         |
+| 2 (warm)      | 7            | 6, last at 50 s | 1, at 49 s         |
+
+Cloud Run holds a waiting request for roughly 45 to 50 seconds and then
+answers 429, which the web app shows as "busy, try again in a minute"
+(nothing is charged). Two instances serve about 8 to 10 photos a minute.
+Idle cost is unchanged: min instances stay 0, so only photos are billed.
+
+Before raising it further, pick one:
 
 1. Request a higher asia-south1 memory and CPU quota (free; usually approved
    quickly), then raise max instances; or
@@ -183,7 +200,7 @@ gcloud run deploy storemink-image-matting \
   --project=storemink-prod --region=asia-south1 \
   --service-account=storemink-matting@storemink-prod.iam.gserviceaccount.com \
   --no-allow-unauthenticated --ingress=all \
-  --concurrency=1 --min-instances=0 --max-instances=1 \
+  --concurrency=1 --min-instances=0 --max-instances=2 \
   --cpu=4 --memory=8Gi --timeout=300 --cpu-boost --execution-environment=gen2 \
   --set-env-vars=MATTING_THREADS=4
 ```

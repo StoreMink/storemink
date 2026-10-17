@@ -117,8 +117,10 @@ more CPUs than the instance keeps. ⚠ BiRefNet cuts out the most prominent
 subject, so a person holding the product comes with it.
 ⚠ QUOTA: asia-south1 allows 40 GiB and 20 vCPU across ALL Cloud Run services
 in the project, `storemink-web-prod` included; a 16 GB test instance was
-refused. The service runs with `--max-instances=1` until a quota increase or
-a move to asia-south2.
+refused. The service runs with `--max-instances=2` (raised from 1 on
+2026-10-17; a third does not fit the quota): measured, about 8 to 10 photos
+a minute, and of 7 sent at once 6 were served within 50 s and 1 got 429
+"busy", the point at which Cloud Run stops holding a waiting request.
 ★ `/healthz` is unreachable from outside: Cloud Run's front end reserves some
 paths ending in `z` and answers 404. Probe with an authenticated POST.
 ⚠ Not built: generated backgrounds, Extend, the chat edit tool, subject

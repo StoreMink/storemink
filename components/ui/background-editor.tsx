@@ -107,7 +107,9 @@ export function BackgroundEditor({
             )
               saved[scene.preset] = scene.url;
           }
-          setSavedScenes(saved);
+          // Merged, not replaced: a scene drawn while this was loading is
+          // newer than the server's answer and must not be forgotten.
+          setSavedScenes((current) => ({ ...saved, ...current }));
         },
       )
       .catch(() => {
