@@ -20,6 +20,7 @@ import { isMinkStoreInvited } from "@/lib/mink/access";
 import { ChatProvider } from "./chat-context";
 import { minkSkillsFor } from "@/lib/mink/skills";
 import { ImageRefineProvider } from "@/components/ui/image-refine-context";
+import { mattingConfigured } from "@/lib/media/matting-client";
 import { DashboardChat } from "./dashboard-chat";
 import {
   SECTIONS,
@@ -302,6 +303,10 @@ export default async function DashboardLayout({
         <ImageRefineProvider
           available={
             minkEnabled && can(permissions, "media", "manage", isSuperadmin)
+          }
+          background={
+            mattingConfigured() &&
+            can(permissions, "media", "manage", isSuperadmin)
           }
         >
           <MobileNavProvider>

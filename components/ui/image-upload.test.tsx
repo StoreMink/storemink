@@ -197,3 +197,170 @@ describe("Refine with Mink AI", () => {
     expect(await screen.findByText("Not enough Mink credits.")).toBeTruthy();
   });
 });
+
+describe("Change background", () => {
+  const editedWhite =
+    "https://storage.googleapis.com/b/stores/s/edited/c-product-white.webp";
+  const editedClear =
+    "https://storage.googleapis.com/b/stores/s/edited/c-product-transparent.webp";
+
+  function respond(...bodies: Record<string, unknown>[]) {
+    const fetchMock = vi.fn<typeof fetch>();
+    for (const body of bodies) {
+      fetchMock.mockImplementationOnce(
+        async () =>
+          new Response(JSON.stringify(body), {
+            status: body.error ? 402 : 200,
+          }),
+      );
+    }
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("is offered only where the layout allows it, and only for product photos", () => {
+    const { unmount } = render(
+      <ImageRefineProvider available>
+        <ImageUpload
+          spec="product"
+          defaultImage={original}
+          onUploadSuccess={() => {}}
+        />
+      </ImageRefineProvider>,
+    );
+    expect(screen.queryByText(/Change background/)).toBeNull();
+    unmount();
+
+    render(
+      <ImageRefineProvider available={false} background>
+        <ImageUpload
+          spec="blog_cover"
+          defaultImage={original}
+          onUploadSuccess={() => {}}
+        />
+      </ImageRefineProvider>,
+    );
+    expect(screen.queryByText(/Change background/)).toBeNull();
+  });
+
+  it("compares before replacing, then replaces rather than appends", async () => {
+    const fetchMock = respond({
+      url: editedWhite,
+      chargedCredits: 1,
+      reused: false,
+      checks: ["touches_edge"],
+    });
+    const onUploadSuccess = vi.fn();
+    const onReplace = vi.fn();
+    render(
+      <ImageRefineProvider available={false} background>
+        <ImageUpload
+          spec="product"
+          defaultImage={original}
+          onUploadSuccess={onUploadSuccess}
+          onReplace={onReplace}
+        />
+      </ImageRefineProvider>,
+    );
+    fireEvent.click(screen.getByText(/Change background/));
+    fireEvent.click(screen.getByRole("button", { name: /Remove background/ }));
+    expect(await screen.findByAltText("With the new background")).toBeTruthy();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/mink/image-background");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      url: original,
+      spec: "product",
+      background: { kind: "white" },
+    });
+    expect(screen.getByText(/touches the edge of your photo/)).toBeTruthy();
+    expect(screen.getByText(/1 Mink credit was used/)).toBeTruthy();
+    // Nothing changes until the merchant chooses.
+    expect(onReplace).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Use this photo"));
+    expect(onReplace).toHaveBeenCalledWith(original, editedWhite);
+    expect(onUploadSuccess).not.toHaveBeenCalled();
+  });
+
+  it("tries another background for free and shows transparency on a chequerboard", async () => {
+    const fetchMock = respond(
+      { url: editedWhite, chargedCredits: 1, reused: false, checks: [] },
+      { url: editedClear, chargedCredits: 0, reused: true, checks: [] },
+    );
+    const onUploadSuccess = vi.fn();
+    render(
+      <ImageRefineProvider available={false} background>
+        <ImageUpload
+          spec="product"
+          defaultImage={original}
+          onUploadSuccess={onUploadSuccess}
+        />
+      </ImageRefineProvider>,
+    );
+    fireEvent.click(screen.getByText(/Change background/));
+    fireEvent.click(screen.getByRole("button", { name: /Remove background/ }));
+    await screen.findByText("Use this photo");
+
+    fireEvent.click(screen.getByRole("button", { name: "Transparent" }));
+    // A different background is chosen, so the shown result is no longer it.
+    expect(screen.queryByText("Use this photo")).toBeNull();
+    const apply = screen.getByRole("button", { name: "Apply background" });
+    expect(apply.textContent).not.toMatch(/credit/);
+    fireEvent.click(apply);
+    await screen.findByText("Use this photo");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({
+      background: { kind: "transparent" },
+    });
+    const img = screen.getByAltText(
+      "With the new background",
+    ) as HTMLImageElement;
+    expect(img.src).toBe(editedClear);
+    expect(img.parentElement?.hasAttribute("data-checkerboard")).toBe(true);
+    fireEvent.click(screen.getByText("Use this photo"));
+    expect(onUploadSuccess).toHaveBeenCalledWith(editedClear);
+  });
+
+  it("sends the chosen colour", async () => {
+    const fetchMock = respond({
+      url: editedWhite,
+      chargedCredits: 1,
+      reused: false,
+      checks: [],
+    });
+    render(
+      <ImageRefineProvider available={false} background>
+        <ImageUpload
+          spec="product"
+          defaultImage={original}
+          onUploadSuccess={() => {}}
+        />
+      </ImageRefineProvider>,
+    );
+    fireEvent.click(screen.getByText(/Change background/));
+    fireEvent.click(screen.getByRole("button", { name: "Colour" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sage" }));
+    fireEvent.click(screen.getByRole("button", { name: /Remove background/ }));
+    await screen.findByText("Use this photo");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      background: { kind: "colour", hex: "#e5eee4" },
+    });
+  });
+
+  it("shows the server's reason and keeps the original", async () => {
+    respond({ error: "Not enough Mink credits." });
+    const onUploadSuccess = vi.fn();
+    render(
+      <ImageRefineProvider available={false} background>
+        <ImageUpload
+          spec="product"
+          defaultImage={original}
+          onUploadSuccess={onUploadSuccess}
+        />
+      </ImageRefineProvider>,
+    );
+    fireEvent.click(screen.getByText(/Change background/));
+    fireEvent.click(screen.getByRole("button", { name: /Remove background/ }));
+    expect(await screen.findByText("Not enough Mink credits.")).toBeTruthy();
+    fireEvent.click(screen.getByText("Keep original"));
+    expect(onUploadSuccess).not.toHaveBeenCalled();
+    expect(screen.getByAltText("Uploaded")).toBeTruthy();
+  });
+});

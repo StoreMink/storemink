@@ -8142,6 +8142,64 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261017_0218_image_cutouts",
+      "description": "Background removal: one cut-out per photo (mink_image_cutouts), charged 1 Mink credit once and reused for every background tried, through an atomic, idempotent charge; media_assets.source admits mink_edited for photos with a replaced background",
+      "file": "sql/20261017_0218_image_cutouts.sql",
+      "transaction": true,
+      "requires": ["20261017_0217_mink_catalogue_photo_help"],
+      "verify": {
+        "tables": ["mink_image_cutouts"],
+        "constraints": [
+          "mink_image_cutouts_pkey",
+          "mink_image_cutouts_store_digest_key",
+          "mink_image_cutouts_credits_check",
+          "mink_image_cutouts_source_check",
+          "media_assets_source_check"
+        ],
+        "functions": [
+          "consume_mink_cutout_credits(uuid,uuid,text,text,text,text,text,integer,integer,text[],text,integer,integer)"
+        ],
+        "rlsTables": ["mink_image_cutouts"],
+        "queries": [
+          {
+            "name": "the source vocabulary admits edited photos",
+            "sql": "select count(*)::text from pg_constraint where conname = 'media_assets_source_check' and pg_get_constraintdef(oid) like '%mink_edited%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261017_0219_change_background_help",
+      "description": "The product-images and categories guides edited in place for Change background: the real product cut out and put on white, a colour or transparency, 1 Mink credit per photo and free to try other backgrounds",
+      "file": "sql/20261017_0219_change_background_help.sql",
+      "transaction": true,
+      "requires": ["20261017_0218_image_cutouts"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the product-images guide has the Change background step",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%<strong>Change background</strong> under an uploaded photo%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product-images guide states the one-credit price",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%Removing a photo''s background uses 1 Mink credit%'",
+            "equals": "1"
+          },
+          {
+            "name": "the categories guide offers Change background for its image",
+            "sql": "select count(*)::text from help_articles where slug='organize-products-with-categories-and-card-colours' and status='published' and body like '%the same way as for product photos%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

@@ -92,7 +92,7 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
-### Image-matting service (2026-10-17; deployed privately, not yet called)
+### Image-matting service (2026-10-17; deployed privately, called by Change background)
 
 The first piece of "keep the real product, replace the background": a
 separate Cloud Run service, `services/image-matting/`, that returns a mask
@@ -119,10 +119,80 @@ subject, so a person holding the product comes with it.
 in the project, `storemink-web-prod` included; a 16 GB test instance was
 refused. The service runs with `--max-instances=1` until a quota increase or
 a move to asia-south2.
-⚠ Not built: the web app's client and IAM grant, every merchant feature
-(Remove background, colour or generated backgrounds, Extend, the chat edit
-tool), subject correction and harmonisation. No merchant-visible change, so
-no Help Centre update.
+★ `/healthz` is unreachable from outside: Cloud Run's front end reserves some
+paths ending in `z` and answers 404. Probe with an authenticated POST.
+⚠ Not built: generated backgrounds, Extend, the chat edit tool, subject
+correction and harmonisation. The first merchant feature, Change background,
+is the next section.
+
+### Change background: the real product on white, a colour or transparency (2026-10-17)
+
+The product and category image boxes offer **Change background · 1 credit**
+under an uploaded photo (`ImageSpec.background`: `product`,
+`product_square`, `category`; never a banner or blog cover, which are scenes).
+`components/ui/background-editor.tsx` shows the original beside the result,
+White / Colour (five presets plus any colour) / Transparent (a chequerboard
+behind it), the free checks, and **Use this photo** / **Keep original**;
+`ImageUpload`'s `onReplace` swaps a gallery image in place, like Refine.
+Availability is the second flag on `ImageRefineProvider`
+(`useImageBackgroundAvailable`), set by the dashboard layout from
+`mattingConfigured() && media:manage`. ★ NOT gated on Mink being enabled: no
+model is asked anything; only the price is in Mink credits.
+★★ THE PRODUCT'S PIXELS ARE NEVER REDRAWN. `POST /api/mink/image-background`
+(a route, for Refine's reason) → `lib/media/background-edit.ts`
+`replaceProductBackground`: slot, Media manage, configured, then
+`ownedObjectPath` (another store's photo is refused unread), download (12 MB),
+sha256 of the bytes, and either the stored cut-out for that digest or the
+matting service's mask. `lib/media/background-render.ts` (sharp only, no
+database, so tests and a local check run it) does the pixels: `cutOut` joins
+the photo and mask through raw buffers (sharp crops BEFORE it joins a channel,
+and an encoded intermediate loses quality) and crops to the product;
+`renderOnBackground` scales it so its limiting side fills `PRODUCT_FILL`
+(0.84) of the slot, centres it, and composites onto the fill, flattening
+through a raw buffer (sharp would otherwise flatten before the composite).
+WebP q90, alpha kept for transparent. `lib/media/background-layout.ts` (pure,
+client-safe) holds the vocabulary: `parseBackground` (exactly `#rrggbb`,
+because the hex is drawn as a fill and named in a file path),
+`backgroundKey`, `maskBounds`, `placeInFrame`, and the two free checks
+(`touches_edge`, `small` past `MAX_UPSCALE` 1.6) with their merchant wording.
+★★ ONE CREDIT PER PHOTO, ONCE (owner's price). The cut-out is stored at
+`stores/{id}/cutouts/{uuid}.png` and recorded in `mink_image_cutouts`
+(migration `20261017_0218`, service-only, `UNIQUE (store_id,
+source_digest)`) by `consume_mink_cutout_credits`, which records and charges
+in one statement under an advisory lock on (store, digest): plan cycle first,
+then top-ups, `plan_unlimited` for an unmetered plan, `insufficient` without
+writing anything, and a second request for the same bytes gets the first
+row back (`reused`) and pays nothing. Every later background for that photo
+composes from the stored cut-out at no charge. `lib/mink/image-credits.ts`
+(`imageCreditHeadroom`, `canAfford`) is the pre-check Refine now shares.
+★ NOTHING IS CHARGED FOR A FAILURE: credits are checked before the service is
+called, rate limits (40 per store per hour, 6 per admin per minute) before
+the call, a mask with no product (`empty`) or nothing but product (`full`) is
+refused with 422 before anything is stored, the cut-out is stored before the
+charge, and a charge that finds no credits deletes it. A request that lost
+the race uses the winner's cut-out and deletes its own (or, when the winner's
+file is gone, repoints the row at its own). ★ The composed result has a
+deterministic path, `stores/{id}/edited/{cutoutId}-{slot}-{key}.webp`, so
+asking for the same photo, slot and background again returns the first
+result. Each result gets a `media_assets` row with source `mink_edited`
+("Background changed"), hidden from the Library like a prepared copy and
+shown under Product images once a product uses it; the row is what makes it
+an owned image for Mink and the product save.
+`lib/media/matting-client.ts` (server-only) calls the service: https (or
+http to localhost), a Google identity token from `getIdTokenClient` (the
+gcloud CLI outside production), one attempt, 90 s, and `MattingError` codes
+(`busy` 429, `unreadable`/`too_large` 400, otherwise 503). Env
+`IMAGE_MATTING_URL`, from `cloudbuild.yaml`'s `_IMAGE_MATTING_URL`; the
+runtime account holds `roles/run.invoker` on the service (granted
+2026-10-17). Checked end to end against the deployed service on a lifestyle
+photo (sandals on stone): 28.9 s cold, clean edges, white, cream and
+transparent results composed in under half a second each. Tests:
+`background-layout`, `background-edit` (real sharp over mocked storage and
+database), `matting-client`, the route, and `image-upload` (the editor). Help:
+`20261017_0219` adds a step to the product-images guide and a sentence to the
+categories guide. ⚠ Not run in a browser; verified by the suites, tsc and the
+live service check. ⚠ A cut-out keeps whatever the model calls the main
+subject: a hand or a person holding the product comes with it.
 
 ### Mink Sidekick parity: streaming, navigation, skills, charts, memories, categories (2026-10-17)
 
@@ -426,7 +496,8 @@ Three merchant asks in one change. Schema in migration
 `20261016_0213_media_library_sources`; Help edits in `0214`.
 ★★ `media_assets.source` SAYS WHERE A ROW CAME FROM (`lib/media/sources.ts`:
 `upload`, `mink_attachment`, `mink_generated`, `mink_refined`,
-`mink_prepared`; a CHECK holds the list). The Library lists everything except
+`mink_prepared`, and since 0218 `mink_edited` for a changed background; a
+CHECK holds the list). The Library lists everything except
 `LIBRARY_HIDDEN_SOURCES` (chat attachments and the 1:1/16:9 copies
 `media-preparation.ts` makes), filtered in ONE place, `listLibraryAssets`
 (`lib/media/library.ts`), so the page and the picker cannot disagree. ★ The
@@ -4703,6 +4774,9 @@ wholesip/
 │       │                  # message's own store, inline only for WhatsApp's
 │       │                  # types, nosniff + sandbox CSP, one byte range
 │       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 2 credits
+│       ├── mink/image-background/ # ★ Change background: the real product cut out by the
+│       │                  # image-matting service onto white, a colour or
+│       │                  # transparency; 1 credit per photo, other backgrounds free
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
 │           │                  # store-host files live under stores/{storeId}/uploads/
@@ -5324,7 +5398,12 @@ wholesip/
 │   ├── db/pg-types.ts         # Keeps timestamp/timestamptz text at PostgreSQL's full
 │   │                          # microsecond precision for exact optimistic checkpoints.
 │   ├── media/image-specs.ts   # ★ the exact size every dashboard image slot renders at;
-│   │                          # read by ImageUpload and by Refine with Mink AI
+│   │                          # read by ImageUpload and by Refine with Mink AI; which
+│   │                          # slots offer Change background (IMAGE_CUTOUT_CREDITS)
+│   ├── media/background-layout.ts # pure: backgrounds, mask bounds, placement, checks
+│   ├── media/background-render.ts # sharp only: cutOut + renderOnBackground
+│   ├── media/background-edit.ts   # server-only: replaceProductBackground (§ Change background)
+│   ├── media/matting-client.ts    # server-only: the image-matting service's client
 │   ├── media/sources.ts       # where a media_assets row came from + which the Library hides
 │   │                          # (the "computer or Media Library" add-image menu is
 │   │                          # components/ui/image-source-menu.tsx)
@@ -6188,7 +6267,11 @@ wholesip/
 │                              # 0216 edits the Mink guide for the Remember this? card,
 │                              # pointing at a control, prefilled forms and the reply
 │                              # language. 0217 edits the Mink and product-images
-│                              # guides for generated catalogue photos. Next free: 0218.
+│                              # guides for generated catalogue photos. 0218 adds
+│                              # mink_image_cutouts, consume_mink_cutout_credits and the
+│                              # mink_edited media source (Change background); 0219
+│                              # edits the product-images and categories guides for it.
+│                              # Next free: 0220.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -19363,6 +19446,15 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   Cloud Build passes `_GCS_PRIVATE_BUCKET` (empty by default, so a trigger
   without it stores no chat media rather than storing it publicly);
   `docs/gcp-ci-cd.md` names the bucket per environment.
+- **Image matting** (Change background): **`IMAGE_MATTING_URL`** is the
+  private `storemink-image-matting` Cloud Run service (https, or plain http to
+  localhost for `node services/image-matting/server.mjs`). Unset = the button
+  is not offered. On Cloud Run the runtime account mints a Google identity
+  token for it (it holds `roles/run.invoker` on the service); outside
+  production the client asks `gcloud auth print-identity-token`, so a
+  developer signed in to gcloud can set it in `.env.local` and use the
+  deployed service. Cloud Build passes `_IMAGE_MATTING_URL`; one service in
+  storemink-prod serves dev and prod.
 - **Gemini / Vertex AI**: AI copy generation (`lib/ai/gemini.ts`, dual backend).
   **Backend precedence: the free Gemini Developer API key wins whenever one is
   set** — so **local + staging set `GEMINI_API_KEY`** (a Google AI Studio key,

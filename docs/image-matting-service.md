@@ -7,8 +7,11 @@ pixels onto a white, coloured or generated background, instead of asking an
 image model to redraw the product (which is what Refine with Mink AI and the
 catalogue-photo purpose do today, and why their products can drift).
 
-Status (2026-10-17): built, deployed privately and benchmarked. **Not yet
-called by the web app.** Nothing a merchant sees has changed.
+Status (2026-10-17): built, deployed privately and benchmarked, and called by
+the web app's **Change background** button in the product and category image
+boxes (`lib/media/background-edit.ts`, `POST /api/mink/image-background`).
+Live once the web app deploys with `IMAGE_MATTING_URL`; see "The web app's
+side" below.
 
 ## Why a self-hosted model
 
@@ -61,6 +64,12 @@ POST /v1/matte?output=mask|cutout
                   bad_output, empty_body, unauthorized
 GET /healthz      {"model": "...", "ready": true}
 ```
+
+⚠ `/healthz` cannot be reached from outside: Cloud Run's front end reserves
+some paths ending in `z` and answers 404 for them before the request reaches
+the container (measured 2026-10-17, with and without a token). Probe the
+service with an authenticated `POST /v1/matte` instead; an empty body answers
+`400 empty_body` and a non-image `415 unsupported_type`.
 
 The mask is always returned at the photo's own size (after EXIF rotation, and
 scaled down to fit 4096 px if larger). The web app should ask for the mask,
@@ -219,12 +228,37 @@ gcloud artifacts docker images delete \
 gcloud iam service-accounts delete storemink-matting@storemink-prod.iam.gserviceaccount.com
 ```
 
+## The web app's side
+
+- **Client** (`lib/media/matting-client.ts`): reads `IMAGE_MATTING_URL`
+  (https, or plain http to localhost), sends the photo with a Google identity
+  token minted for that URL (`google-auth-library`'s `getIdTokenClient` on
+  Cloud Run), one attempt, 90 s. Outside production it falls back to
+  `gcloud auth print-identity-token`, so a developer can point a local dev
+  server at the deployed service by setting the URL in `.env.local`.
+- **Access**: `storemink-run@storemink-prod.iam.gserviceaccount.com` (the
+  account both `storemink-web-dev` and `storemink-web-prod` run as) holds
+  `roles/run.invoker` on this service, granted 2026-10-17. Undo with
+  `gcloud run services remove-iam-policy-binding storemink-image-matting
+--region=asia-south1 --project=storemink-prod
+--member=serviceAccount:storemink-run@storemink-prod.iam.gserviceaccount.com
+--role=roles/run.invoker`.
+- **Configuration**: `cloudbuild.yaml` passes `_IMAGE_MATTING_URL` (default:
+  this service's deterministic URL). A trigger that sets it empty hides the
+  button; there is no other switch.
+- **Price**: 1 Mink credit per photo (owner's decision), taken once; every
+  further background for the same photo bytes reuses the stored cut-out free
+  (`mink_image_cutouts`, migration `20261017_0218`).
+- **End to end, 2026-10-17**: the sandals photo from the benchmark set came
+  back from the deployed service in 28.9 s (cold start; 17.8 s inference),
+  `cutOut` produced a 749 × 378 product, and white, cream and transparent
+  1200 × 1600 results composed in 0.1 to 0.4 s each. Checked by eye: clean
+  edges, no floor or leaves left, the product centred.
+
 ## Not built yet
 
-- The web app's client: grant `storemink-run@` `roles/run.invoker` on the
-  service, call it with an identity token (google-auth-library is already a
-  dependency), and set the URL in the web service's environment.
-- The merchant features: Remove background, Background colour, New background
-  (scene generation plus compositing), Extend, and the chat edit tool.
+- The merchant features after this one: New background (scene generation
+  plus compositing), Extend, the chat edit tool, and catalogue photos routed
+  through the cut-out.
 - Subject correction (click to include or exclude) and harmonisation
   (contact shadow, colour-temperature match, relight).

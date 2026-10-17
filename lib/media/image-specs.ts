@@ -23,6 +23,13 @@ export interface ImageSpec {
   aspect: ImageAspect;
   /** Whether Refine with Mink AI is offered for this slot. */
   refine: boolean;
+  /**
+   * Whether background removal is offered: the product is cut out of the
+   * photo and placed on white, a colour or transparency. Only where the photo
+   * IS a product: a banner or blog cover is a scene, and cutting one subject
+   * out of it would throw the picture away.
+   */
+  background: boolean;
   /** One short sentence on how the storefront uses it. */
   hint: string;
 }
@@ -34,6 +41,7 @@ export const IMAGE_SPECS = {
     height: 1600,
     aspect: "3:4",
     refine: true,
+    background: true,
     hint: "Product cards show photos in a 3:4 portrait frame, edge to edge.",
   },
   product_square: {
@@ -42,6 +50,7 @@ export const IMAGE_SPECS = {
     height: 1200,
     aspect: "1:1",
     refine: true,
+    background: true,
     hint: "Product cards show photos in a square frame, edge to edge.",
   },
   category: {
@@ -50,6 +59,7 @@ export const IMAGE_SPECS = {
     height: 1200,
     aspect: "1:1",
     refine: true,
+    background: true,
     hint: "Category tiles and circles are square.",
   },
   blog_cover: {
@@ -58,6 +68,7 @@ export const IMAGE_SPECS = {
     height: 900,
     aspect: "16:9",
     refine: true,
+    background: false,
     hint: "Blog covers are shown wide, at 16:9.",
   },
   hero_wide: {
@@ -66,6 +77,7 @@ export const IMAGE_SPECS = {
     height: 1080,
     aspect: "21:9",
     refine: true,
+    background: false,
     hint: "Full-width banners are wide; keep the subject near the centre so phones keep it.",
   },
   hero_side: {
@@ -74,6 +86,7 @@ export const IMAGE_SPECS = {
     height: 1500,
     aspect: "4:5",
     refine: true,
+    background: false,
     hint: "Shown beside the heading in a tall frame.",
   },
   hero_phone: {
@@ -82,6 +95,7 @@ export const IMAGE_SPECS = {
     height: 1350,
     aspect: "4:5",
     refine: true,
+    background: false,
     hint: "Shown instead of the main image on phones.",
   },
   portrait: {
@@ -90,6 +104,7 @@ export const IMAGE_SPECS = {
     height: 1500,
     aspect: "4:5",
     refine: true,
+    background: false,
     hint: "Shown in a 4:5 portrait frame.",
   },
   square: {
@@ -98,6 +113,7 @@ export const IMAGE_SPECS = {
     height: 1200,
     aspect: "1:1",
     refine: true,
+    background: false,
     hint: "Shown in a square frame.",
   },
   landscape: {
@@ -106,6 +122,7 @@ export const IMAGE_SPECS = {
     height: 1200,
     aspect: "4:3",
     refine: true,
+    background: false,
     hint: "Shown in a 4:3 landscape frame.",
   },
   video_poster: {
@@ -114,6 +131,7 @@ export const IMAGE_SPECS = {
     height: 1080,
     aspect: "16:9",
     refine: true,
+    background: false,
     hint: "Shown before the video plays, at 16:9.",
   },
   menu: {
@@ -122,6 +140,7 @@ export const IMAGE_SPECS = {
     height: 1000,
     aspect: "4:5",
     refine: true,
+    background: false,
     hint: "Shown beside the menu links on larger screens.",
   },
   logo: {
@@ -130,6 +149,7 @@ export const IMAGE_SPECS = {
     height: 200,
     aspect: "21:9",
     refine: false,
+    background: false,
     hint: "A transparent PNG or SVG with little empty space around it looks sharpest.",
   },
 } as const satisfies Record<string, ImageSpec>;
@@ -212,3 +232,10 @@ function aspectWord(aspect: ImageAspect): string {
 
 /** What one refine costs, in Mink credits (owner's price, 2026-10-06). */
 export const IMAGE_REFINE_CREDITS = 2;
+
+/**
+ * What background removal costs, in Mink credits (owner's price, 2026-10-17):
+ * once per photo. Trying another background for the same photo reuses the
+ * cut-out and is free.
+ */
+export const IMAGE_CUTOUT_CREDITS = 1;

@@ -17,6 +17,17 @@ import { isStoreOwnedObjectPath } from "@/lib/storage/paths";
 //   image they do not control on their own storefront, and stops rendering
 //   whenever that merchant deletes it.
 
+/**
+ * The bucket object `url` names when it is provably this store's, else null.
+ * What a server-side photo tool (Refine, background removal) may download and
+ * work on: a path traversal or another store's object is refused outright.
+ */
+export function ownedObjectPath(url: string, storeId: string): string | null {
+  const path = gcsPathFromUrl(url);
+  if (!path || path.split("/").includes("..")) return null;
+  return isStoreOwnedObjectPath(path, storeId) ? path : null;
+}
+
 /** True when `url` is one of our bucket's objects but not under this store. */
 export function isForeignStoreImageUrl(storeId: string, url: string): boolean {
   const trimmed = (url ?? "").trim();

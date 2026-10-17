@@ -1,31 +1,46 @@
 "use client";
 
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 
 /**
- * Whether "Refine with Mink AI" can work for the signed-in admin.
+ * Which photo tools can work for the signed-in admin: Refine with Mink AI,
+ * and changing a product photo's background.
  *
- * ★ Defaults to FALSE, so the shared `ImageUpload` offers no button anywhere
- *   the dashboard layout has not explicitly said it may (the storefront, the
- *   platform console). The server re-checks every gate — this only keeps a
- *   button that would always fail off the screen.
+ * ★ Both default to FALSE, so the shared `ImageUpload` offers no button
+ *   anywhere the dashboard layout has not explicitly said it may (the
+ *   storefront, the platform console). The server re-checks every gate; this
+ *   only keeps a button that would always fail off the screen.
+ * ★ Two flags, not one, because they have different gates: Refine is a Mink
+ *   model call, background removal is the image-matting service.
  */
-const ImageRefineContext = createContext(false);
+const ImageToolsContext = createContext({ refine: false, background: false });
 
 export function ImageRefineProvider({
   available,
+  background = false,
   children,
 }: {
+  /** Refine with Mink AI. */
   available: boolean;
+  /** Changing a product photo's background. */
+  background?: boolean;
   children: ReactNode;
 }) {
+  const value = useMemo(
+    () => ({ refine: available, background }),
+    [available, background],
+  );
   return (
-    <ImageRefineContext.Provider value={available}>
+    <ImageToolsContext.Provider value={value}>
       {children}
-    </ImageRefineContext.Provider>
+    </ImageToolsContext.Provider>
   );
 }
 
 export function useImageRefineAvailable(): boolean {
-  return useContext(ImageRefineContext);
+  return useContext(ImageToolsContext).refine;
+}
+
+export function useImageBackgroundAvailable(): boolean {
+  return useContext(ImageToolsContext).background;
 }
