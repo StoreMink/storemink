@@ -17,6 +17,7 @@ import {
   MINK_GENERATED_PRODUCT_PHOTO_FOLDER,
   MINK_MEDIA_PURPOSE_SPECS,
   aspectRatioFor,
+  isMinkAiMadePhotoUrl,
   validateMinkMediaGenerationRequest,
   type MinkMediaPurpose,
 } from "./media-generation-contract";
@@ -26,7 +27,7 @@ import {
 } from "./media-generation";
 import { getMinkConfig } from "./config";
 import { getStoreChrome } from "@/lib/chrome/queries";
-import { productPhotoSpec } from "@/lib/media/image-specs";
+import { IMAGE_EDIT_CREDITS, productPhotoSpec } from "@/lib/media/image-specs";
 import type { MinkDraftContent } from "./draft-types";
 import type { MinkActorContext, MinkArtifact } from "./types";
 import { resolveMinkMediaReferenceImages } from "./media-reference-images";
@@ -106,18 +107,21 @@ export async function createMinkMediaImageProposal(
     request.referenceImageUrls,
   );
   if (request.purpose === "product") {
-    // ★★ A CATALOGUE PHOTO STARTS FROM A REAL PHOTO OF THE ITEM, or it is a
+    // ★★ A PRODUCT PHOTO STARTS FROM A REAL PHOTO OF THE ITEM, or it is a
     //    picture of goods that may not exist. The product's own image or one
-    //    the merchant attached (a Media row) qualifies; a category image or
-    //    nothing does not. Refused BEFORE the spend ceiling and the charge.
+    //    the merchant attached (a Media row) qualifies; a category image, a
+    //    picture Mink drew earlier, or nothing does not. An earlier AI photo
+    //    may come along to continue its scene, but never instead of the real
+    //    one. Refused BEFORE the spend ceiling and the charge.
     if (
       !references.some(
         (reference) =>
-          reference.source === "product" || reference.source === "media",
+          (reference.source === "product" || reference.source === "media") &&
+          !isMinkAiMadePhotoUrl(reference.url),
       )
     ) {
       throw new MinkToolInputError(
-        "A catalogue product photo must start from a real photo of the item. Pass the product's own image URL from search_products or get_current_product, or the exact Media URL of a photo the merchant attached, as a reference. Mink does not invent a product from a description.",
+        "A product photo must start from a real photo of the item. Pass the product's own image URL from search_products or get_current_product, or the exact Media URL of a photo the merchant attached, as a reference; to change a photo Mink made, pass that photo AND the real one. Mink does not invent a product from a description.",
       );
     }
     // The card shape is the store's, read here so the model cannot choose it.
@@ -198,6 +202,11 @@ export async function createMinkMediaImageProposal(
     stored = await createMinkDraftProposal({
       actor: input.actor,
       kind: "media_image",
+      // ★ A product photo is priced like the photo editor's scene photo
+      //   (IMAGE_EDIT_CREDITS, the owner's price for one Flash image call), so
+      //   the same picture costs the same from either place.
+      expectedCredits:
+        request.purpose === "product" ? IMAGE_EDIT_CREDITS : undefined,
       title: spec.label,
       destinationType: "media_asset",
       destinationLabel: `Media Library · ${spec.label}`,

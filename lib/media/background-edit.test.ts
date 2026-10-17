@@ -26,15 +26,6 @@ const state = vi.hoisted(() => ({
   },
   matte: vi.fn(),
   rateAllowed: true,
-  existingScene: null as null | {
-    id: string;
-    preset: string;
-    url: string;
-    path: string;
-    createdAt: string;
-  },
-  sceneAllowed: vi.fn(),
-  getScene: vi.fn(),
 }));
 
 vi.mock("@/lib/db/client", () => {
@@ -97,11 +88,6 @@ vi.mock("@/lib/observability/logger", () => ({
   logError: () => undefined,
   logWarn: () => undefined,
   logInfo: () => undefined,
-}));
-vi.mock("@/lib/mink/image-scenes", () => ({
-  findStoreScene: async () => state.existingScene,
-  assertSceneGenerationAllowed: state.sceneAllowed,
-  getOrCreateScene: state.getScene,
 }));
 vi.mock("./matting-client", () => {
   class MattingError extends Error {
@@ -178,15 +164,6 @@ async function maskFor(): Promise<{
   return { mask, width: 400, height: 300, verdict: "ok", coverage: 0.16 };
 }
 
-/** A plain beige "scene" at the product slot's size. */
-function sceneBytes(): Promise<Buffer> {
-  return sharp({
-    create: { width: 1200, height: 1600, channels: 3, background: "#d8ccb8" },
-  })
-    .webp()
-    .toBuffer();
-}
-
 async function pixel(bytes: Buffer, x: number, y: number) {
   const { data, info } = await sharp(bytes)
     .ensureAlpha()
@@ -224,19 +201,6 @@ beforeEach(async () => {
   state.rateAllowed = true;
   state.matte.mockReset();
   state.matte.mockImplementation(async () => maskFor());
-  state.existingScene = null;
-  state.sceneAllowed.mockReset();
-  state.sceneAllowed.mockImplementation(async () => ({ imageModel: "m" }));
-  state.getScene.mockReset();
-  state.getScene.mockImplementation(
-    async (input: { existing: unknown; fresh: boolean }) => ({
-      id: "e0000000-0000-4000-8000-000000000005",
-      url: `${BUCKET}stores/${STORE}/scenes/s.webp`,
-      bytes: await sceneBytes(),
-      chargedCredits: input.existing && !input.fresh ? 0 : 5,
-      created: !(input.existing && !input.fresh),
-    }),
-  );
 });
 
 describe("replaceProductBackground", () => {
@@ -570,7 +534,7 @@ describe("replaceProductBackground", () => {
   });
 });
 
-describe("shadow and scenes", () => {
+describe("shadow", () => {
   it("files a shadowed result separately from a plain one", async () => {
     state.chargeRow = { cutout_id: null, credit_source: "plan", reused: false };
     const shaded = await replaceProductBackground({
@@ -592,115 +556,26 @@ describe("shadow and scenes", () => {
     expect(clear.url).toMatch(/-product-transparent\.webp$/);
   });
 
-  it("charges the cut-out and a new scene together, and checks both up front", async () => {
-    state.headroom = { period: "2026-10", planCap: 20, remaining: 6 };
-    state.chargeRow = { cutout_id: null, credit_source: "plan", reused: false };
-    const result = await replaceProductBackground({
+  it("refuses a scene: the editor re-shoots scenes with Mink AI instead", async () => {
+    // The type no longer has a scene; an old client could still send one.
+    const background = {
+      kind: "scene",
+      preset: "marble",
+    } as unknown as Parameters<
+      typeof replaceProductBackground
+    >[0]["background"];
+    const failed = await replaceProductBackground({
       actor: actor(),
       sourceUrl: SOURCE,
       specKey: "product",
-      background: { kind: "scene", preset: "marble" },
-    });
-    expect(state.sceneAllowed).toHaveBeenCalledOnce();
-    expect(result.chargedCredits).toBe(6);
-    expect(result.scene).toMatchObject({ created: true });
-    expect(result.url).toMatch(/-product-scene-e0000000-.+\.webp$/);
-    expect(state.inserts[0]).toMatchObject({
-      filename: "background-marble-1200x1600.webp",
-      source: "mink_edited",
-    });
-    // The product stands in the scene: red at the floor line, beige above.
-    const edited = state.objects.get(result.url.slice(BUCKET.length))!;
-    const top = await pixel(edited, 600, 80);
-    expect(top.r).toBeGreaterThan(200);
-    expect(top.g).toBeGreaterThan(190);
-  });
-
-  it("refuses up front when the store can pay for the cut-out but not the scene", async () => {
-    state.headroom = { period: "2026-10", planCap: 20, remaining: 5 };
-    await expectRefusal(
-      replaceProductBackground({
-        actor: actor(),
-        sourceUrl: SOURCE,
-        specKey: "product",
-        background: { kind: "scene", preset: "linen" },
-      }),
-      402,
-      "cutout_insufficient_credits",
+      background,
+    }).then(
+      () => null,
+      (e: unknown) => e,
     );
+    expect(failed).toBeInstanceOf(MinkRequestError);
+    expect((failed as MinkRequestError).code).toBe("background_unknown");
     expect(state.matte).not.toHaveBeenCalled();
-    expect(state.getScene).not.toHaveBeenCalled();
-    expect(state.uploads).toHaveLength(0);
-  });
-
-  it("asks whether a new scene may be drawn before cutting anything out", async () => {
-    state.sceneAllowed.mockRejectedValueOnce(
-      new MinkRequestError("scene_not_available", "Not now.", 503),
-    );
-    await expectRefusal(
-      replaceProductBackground({
-        actor: actor(),
-        sourceUrl: SOURCE,
-        specKey: "product",
-        background: { kind: "scene", preset: "linen" },
-      }),
-      503,
-      "scene_not_available",
-    );
-    expect(state.matte).not.toHaveBeenCalled();
-  });
-
-  it("reuses the store's saved scene free, without the drawing gates", async () => {
-    state.chargeRow = { cutout_id: null, credit_source: "plan", reused: false };
-    state.existingScene = {
-      id: "e0000000-0000-4000-8000-000000000005",
-      preset: "wood",
-      url: `${BUCKET}stores/${STORE}/scenes/s.webp`,
-      path: `stores/${STORE}/scenes/s.webp`,
-      createdAt: "2026-10-17",
-    };
-    const result = await replaceProductBackground({
-      actor: actor(),
-      sourceUrl: SOURCE,
-      specKey: "product",
-      background: { kind: "scene", preset: "wood" },
-    });
-    expect(state.sceneAllowed).not.toHaveBeenCalled();
-    expect(result.chargedCredits).toBe(1);
-    expect(result.scene).toMatchObject({ created: false });
-  });
-
-  it("draws a new scene when asked even though one is saved", async () => {
-    state.headroom = { period: "2026-10", planCap: 20, remaining: 20 };
-    state.chargeRow = { cutout_id: null, credit_source: "plan", reused: false };
-    state.existingScene = {
-      id: "e0000000-0000-4000-8000-000000000009",
-      preset: "wood",
-      url: `${BUCKET}x`,
-      path: "x",
-      createdAt: "2026-10-17",
-    };
-    await replaceProductBackground({
-      actor: actor(),
-      sourceUrl: SOURCE,
-      specKey: "product",
-      background: { kind: "scene", preset: "wood" },
-      newScene: true,
-    });
-    expect(state.sceneAllowed).toHaveBeenCalledOnce();
-    expect(state.getScene.mock.calls[0][0]).toMatchObject({ fresh: true });
-  });
-
-  it("refuses a scene that is not on the list", async () => {
-    await expectRefusal(
-      replaceProductBackground({
-        actor: actor(),
-        sourceUrl: SOURCE,
-        specKey: "product",
-        background: { kind: "scene", preset: "disco" },
-      }),
-      400,
-      "scene_unknown",
-    );
+    expect(state.executed.some((q) => q.includes("consume_"))).toBe(false);
   });
 });

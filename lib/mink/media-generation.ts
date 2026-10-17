@@ -16,8 +16,14 @@ import { renderMinkImagePrompt } from "./image-prompt";
 import {
   MINK_MEDIA_IMAGES_PER_PROPOSAL,
   aspectRatioFor,
+  isMinkAiMadePhotoUrl,
   type MinkMediaGenerationRequest,
 } from "./media-generation-contract";
+import {
+  PRODUCT_FIDELITY_RULES,
+  PRODUCT_PHOTO_EXCLUSIONS,
+  PRODUCT_SCENE_RULES,
+} from "@/lib/media/photo-edit";
 import type { MinkMediaReferenceImage } from "./media-reference-images";
 import type { MinkActorContext } from "./types";
 
@@ -46,8 +52,18 @@ const SAFETY_CATEGORIES = [
   HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
 ] as const;
 
-/** Gemini's GenerateContent image API names the no-people value ALLOW_NONE. */
-const PERSON_GENERATION = "ALLOW_NONE" as const;
+/**
+ * Who may appear. ★ NO ONE in campaign art: an invented person on a banner
+ * implies a release nobody obtained. ★ ADULTS in a PRODUCT photo, because
+ * "show it on a model" is an ordinary product-photography request (the owner's
+ * Sidekick decision, 2026-10-18); the prompt adds a person only when asked,
+ * and prominent people stay blocked either way.
+ */
+function personGenerationFor(
+  purpose: MinkMediaGenerationRequest["purpose"],
+): "ALLOW_NONE" | "ALLOW_ADULT" {
+  return purpose === "product" ? "ALLOW_ADULT" : "ALLOW_NONE";
+}
 
 /** Bounded so a hung provider cannot hold a request open behind a credit charge. */
 const GENERATION_TIMEOUT_MS = 45_000;
@@ -182,9 +198,7 @@ export async function generateMinkMediaImage(
             request.productPhotoShape,
           ),
           imageSize: "2K",
-          // ★★ NO PEOPLE AT ALL, not even adults. A storefront image with an
-          // invented person implies a release nobody obtained.
-          personGeneration: PERSON_GENERATION,
+          personGeneration: personGenerationFor(request.purpose),
           prominentPeople: ProminentPeople.BLOCK_PROMINENT_PEOPLE,
           outputMimeType: "image/jpeg",
           outputCompressionQuality: 95,
@@ -249,10 +263,16 @@ function compositionGuidance(
     return "Compose for a square crop. Keep the full primary subject inside a generous central safe area, add deliberate depth and supporting details, and avoid edge clipping or a flat pasted-cutout look.";
   }
   if (purpose === "product") {
-    // ★ A CATALOGUE PHOTO IS NOT A CAMPAIGN SCENE. Every other purpose asks
-    //   for art direction; this one asks for the item itself, the way a
-    //   product card and product page show it.
-    return "Compose one clean catalogue product photograph for this store's product card and product page, not a campaign scene. The product in the reference image is the whole subject: show it complete and centred, filling most of the frame with even breathing room on every side, in the exact form, proportions, colours, materials, pattern and visible packaging of the reference. Use a plain seamless studio background (white or a soft neutral unless the merchant asked for a setting), soft even lighting, true colours, a natural contact shadow and sharp detail. No props that compete with the product, no scene, no words and no people. The result must look like the real item a customer will receive.";
+    // ★ A PRODUCT PHOTO IS NOT A CAMPAIGN SCENE: the item is the subject, in
+    //   the setting the merchant asked for (a garden, a hanger, a model) or on
+    //   a plain studio background when they named none. The rules are the
+    //   photo editor's (lib/media/photo-edit.ts), so chat and editor agree.
+    return [
+      "Compose one product photograph for this store's product card and product page, not a campaign scene. The product in the real reference photo is the subject: show it complete, with breathing room on every side. If the merchant named a setting, a way of presenting it (hanging, folded, held) or a model, photograph it exactly that way; if they named none, use a plain seamless studio background in white or a soft neutral, soft even light and a natural contact shadow. The result must look like the real item a customer will receive.",
+      PRODUCT_FIDELITY_RULES,
+      PRODUCT_SCENE_RULES,
+      PRODUCT_PHOTO_EXCLUSIONS,
+    ].join("\n");
   }
   if (purpose === "blog_cover") {
     return "Compose one polished 16:9 editorial cover that expresses the article's central idea at a glance. Build a coherent visual story rather than a generic stock image or pasted product cutout. Keep the main subject fully visible inside a generous central safe area, preserve calm space for responsive crops, and do not put the article title or other words in the pixels.";
@@ -265,12 +285,15 @@ function referenceGuidance(
   purpose: MinkMediaGenerationRequest["purpose"] = "hero",
 ): string {
   if (purpose === "product" && references.length > 0) {
-    // The proposal path has already refused a catalogue photo with no real
-    // photo of the item; here every reference is that item.
+    // The proposal path has already refused a product photo with no real
+    // photo of the item. A picture Mink drew earlier may come too, when the
+    // merchant is changing that picture ("now on a model in a forest"): it
+    // carries the scene to continue from, never the truth about the item.
     return references
-      .map(
-        (reference, index) =>
-          `Reference ${index + 1} is a real photograph of the product this catalogue photo is for (a current-store ${reference.source} image). Reproduce exactly that item: its form, proportions, colours, materials, pattern, stitching, labels and packaging as they are. Do not restyle it, correct it, add a variant or substitute a different product.`,
+      .map((reference, index) =>
+        isMinkAiMadePhotoUrl(reference.url)
+          ? `Reference ${index + 1} is an earlier AI photo of this same product, made for this merchant. Continue from it only as far as the request asks (for example keep its setting, or change it). Take every detail of the product itself from the real photograph, never from this picture.`
+          : `Reference ${index + 1} is a real photograph of the product (a current-store ${reference.source} image). It is the truth about the item: reproduce exactly that item, its form, proportions, colours, materials, pattern, stitching, labels and packaging as they are. Do not restyle it, correct it, add a variant or substitute a different product.`,
       )
       .join("\n");
   }

@@ -115,6 +115,12 @@ export async function createMinkDraftProposal(input: {
   destinationPath: string;
   before?: MinkDraftContent;
   content: unknown;
+  /**
+   * A price other than the kind's own, for a kind whose cost depends on what
+   * it makes (a product photo costs more than campaign art). Bounded by the
+   * charge function (1 to 20); never set from model input.
+   */
+  expectedCredits?: number;
 }): Promise<MinkArtifact> {
   const { actor, kind } = input;
   assertDraftAuthority(actor, kind, true);
@@ -140,7 +146,15 @@ export async function createMinkDraftProposal(input: {
   }
   const content = normalizeForTool(kind, input.content);
   const before = normalizeOptionalContent(kind, input.before);
-  const expectedCredits = MINK_DRAFT_CONFIG[kind].expectedCredits;
+  const expectedCredits =
+    input.expectedCredits ?? MINK_DRAFT_CONFIG[kind].expectedCredits;
+  if (
+    !Number.isInteger(expectedCredits) ||
+    expectedCredits < 0 ||
+    expectedCredits > 20
+  ) {
+    throw new Error("Mink draft credit weight is out of range");
+  }
   const draftId = crypto.randomUUID();
   // ★ aiAllowanceFor, NOT limitsFor(...).aiGenerationsPerMonth. This read the
   // legacy number directly, so the moment MINK_CHARGE_CREDITS is switched on a
@@ -199,7 +213,7 @@ export async function createMinkDraftProposal(input: {
           ),
         );
       throw new MinkToolInputError(
-        `This ${MINK_DRAFT_CONFIG[kind].label.toLocaleLowerCase("en-IN")} needs ${expectedCredits} Mink credits. The store's included allowance and top-up balance do not have enough remaining.`,
+        `This store doesn't have enough Mink credits left for this ${MINK_DRAFT_CONFIG[kind].label.toLocaleLowerCase("en-IN")}. Buy Mink credits or upgrade under Plans & Billing.`,
       );
     }
     if (!isCreditSource(source)) {

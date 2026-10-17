@@ -85,7 +85,6 @@ import {
   minkChargeContext,
   releaseMinkDraftClaim,
 } from "@/lib/whatsapp/mink-drafts";
-import { MINK_ANSWER_CREDITS } from "@/lib/whatsapp/auto-reply-settings";
 
 export async function getInboxConversations(input: {
   filter?: InboxFilter;
@@ -850,7 +849,8 @@ export async function sendMinkDraft(input: {
     return {
       ok: false,
       code: "no_credits",
-      error: `Sending a Mink AI reply uses ${MINK_ANSWER_CREDITS} Mink credit, and this store has none left. Buy Mink credits or upgrade under Plans & Billing, or write the reply yourself.`,
+      error:
+        "This store has no Mink credits left to send a Mink AI reply. Buy Mink credits or upgrade under Plans & Billing, or write the reply yourself.",
     };
   }
 

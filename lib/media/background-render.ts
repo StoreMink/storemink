@@ -11,7 +11,6 @@ import {
   cutoutChecks,
   maskBounds,
   placeInFrame,
-  placeOnFloor,
   groundShadow,
   shadowLayersFor,
 } from "./background-layout";
@@ -111,10 +110,9 @@ async function shadowLayer(
   frame: { width: number; height: number },
   place: Box,
   alpha: Uint8Array,
-  strength: "light" | "scene",
 ): Promise<Buffer> {
   const layers = await Promise.all(
-    shadowLayersFor(place.height, strength).map(async (layer) => {
+    shadowLayersFor(place.height).map(async (layer) => {
       const pad = Math.ceil(layer.blur * 3) + 2;
       const rows = place.height + layer.depth;
       const caster = groundShadow(
@@ -227,7 +225,7 @@ export async function renderOnBackground(
   const layers: { input: Buffer; left: number; top: number }[] = [];
   if (options.shadow && canHaveShadow(background)) {
     layers.push({
-      input: await shadowLayer(sharp, frame, place, alpha, "light"),
+      input: await shadowLayer(sharp, frame, place, alpha),
       left: 0,
       top: 0,
     });
@@ -251,38 +249,6 @@ export async function renderOnBackground(
     raw: { width: frame.width, height: frame.height, channels: 4 },
   })
     .flatten({ background: fill })
-    .webp({ quality: 90 })
-    .toBuffer();
-}
-
-/**
- * The cut-out standing in a generated scene: smaller than on a plain
- * background, its base on the SCENE_FLOOR line the scene was drawn for, with a
- * darker shadow so it sits on the surface. The scene is fitted to the frame;
- * the product's pixels are copied, never adjusted, because shoppers buy on
- * colour.
- */
-export async function renderOnScene(
-  cutoutPng: Buffer,
-  cutoutSize: { width: number; height: number },
-  scene: Buffer,
-  frame: { width: number; height: number },
-): Promise<Buffer> {
-  const sharp = await loadSharp();
-  const place = placeOnFloor(cutoutSize, frame);
-  const { png, alpha } = await placedProduct(sharp, cutoutPng, place);
-  const shadow = await shadowLayer(sharp, frame, place, alpha, "scene");
-  const base = await sharp(scene)
-    .rotate()
-    .resize(frame.width, frame.height, { fit: "cover", position: "centre" })
-    .removeAlpha()
-    .png()
-    .toBuffer();
-  return sharp(base)
-    .composite([
-      { input: shadow, left: 0, top: 0 },
-      { input: png, left: place.left, top: place.top },
-    ])
     .webp({ quality: 90 })
     .toBuffer();
 }

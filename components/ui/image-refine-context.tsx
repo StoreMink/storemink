@@ -10,8 +10,10 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
  *   anywhere the dashboard layout has not explicitly said it may (the
  *   storefront, the platform console). The server re-checks every gate; this
  *   only keeps a button that would always fail off the screen.
- * ★ Two flags, not one, because they have different gates: Refine is a Mink
- *   model call, background removal is the image-matting service.
+ * ★ Three flags, because they have different gates: Refine and scenes are
+ *   Mink model calls, background removal is the image-matting service. A
+ *   scene does not need background removal: Mink AI re-shoots the whole
+ *   photo, so it works while the matting service is off.
  */
 const ImageToolsContext = createContext({
   refine: false,
@@ -29,12 +31,12 @@ export function ImageRefineProvider({
   available: boolean;
   /** Changing a product photo's background. */
   background?: boolean;
-  /** Drawing a new scene behind it (a Mink image call). */
+  /** Re-shooting a product photo in a scene with Mink AI. */
   scenes?: boolean;
   children: ReactNode;
 }) {
   const value = useMemo(
-    () => ({ refine: available, background, scenes: background && scenes }),
+    () => ({ refine: available, background, scenes }),
     [available, background, scenes],
   );
   return (

@@ -12,6 +12,7 @@ import {
   Ruler,
   AlertTriangle,
   Eraser,
+  Wand2,
 } from "lucide-react";
 import { Button } from "./button";
 import { ImageSourceMenu } from "./image-source-menu";
@@ -22,8 +23,6 @@ import {
 } from "./image-refine-context";
 import { BackgroundEditor } from "./background-editor";
 import {
-  IMAGE_CUTOUT_CREDITS,
-  IMAGE_REFINE_CREDITS,
   IMAGE_SPECS,
   imageFitWarning,
   type ImageSpecKey,
@@ -56,7 +55,7 @@ interface ImageUploadProps {
   onChooseFromLibrary?: () => void;
 }
 
-type RefineResult = { url: string; chargedCredits: number };
+type RefineResult = { url: string };
 
 export function ImageUpload({
   onUploadSuccess,
@@ -77,7 +76,9 @@ export function ImageUpload({
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const [refining, setRefining] = useState(false);
   const [refined, setRefined] = useState<RefineResult | null>(null);
-  const [editingBackground, setEditingBackground] = useState(false);
+  const [editingBackground, setEditingBackground] = useState<
+    false | "background" | "scene"
+  >(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refineAvailable = useImageRefineAvailable();
   const backgroundAvailable = useImageBackgroundAvailable();
@@ -85,6 +86,7 @@ export function ImageUpload({
   const slot = spec ? IMAGE_SPECS[spec] : null;
   const canRefine = Boolean(slot?.refine && refineAvailable);
   const canBackground = Boolean(slot?.background && backgroundAvailable);
+  const canScene = Boolean(slot?.background && scenesAvailable);
 
   const validateAndStage = (file: File) => {
     if (!file.type.startsWith("image/")) {
@@ -161,14 +163,13 @@ export function ImageUpload({
       });
       const body = (await res.json().catch(() => ({}))) as {
         url?: string;
-        chargedCredits?: number;
         error?: string;
       };
       if (!res.ok || !body.url) {
         setError(body.error ?? "Refining failed. Nothing was charged.");
         return;
       }
-      setRefined({ url: body.url, chargedCredits: body.chargedCredits ?? 0 });
+      setRefined({ url: body.url });
     } catch {
       setError("Refining failed. Check your connection and try again.");
     } finally {
@@ -270,7 +271,9 @@ export function ImageUpload({
         <BackgroundEditor
           sourceUrl={previewUrl}
           spec={spec}
-          scenesAvailable={scenesAvailable}
+          initialMode={editingBackground}
+          backgroundAvailable={canBackground}
+          scenesAvailable={canScene}
           onUse={(url) => {
             replaceWith(url);
             setEditingBackground(false);
@@ -313,10 +316,7 @@ export function ImageUpload({
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           Check that the product looks exactly like the real item before you use
-          it.
-          {refined.chargedCredits > 0 &&
-            ` ${refined.chargedCredits} Mink credits were used.`}{" "}
-          The refined copy is also saved in your Media Library.
+          it. The refined copy is also saved in your Media Library.
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           <Button
@@ -370,7 +370,7 @@ export function ImageUpload({
         </div>
         {sizeLine}
         {fitWarning && <FitWarning text={fitWarning} />}
-        {(canRefine || canBackground) && (
+        {(canRefine || canBackground || canScene) && (
           <div className="mt-2">
             <div className="flex flex-wrap gap-2">
               {canRefine && (
@@ -384,9 +384,6 @@ export function ImageUpload({
                 >
                   <Sparkles className="h-3.5 w-3.5" />
                   Refine with Mink AI
-                  <span className="text-muted-foreground">
-                    · {IMAGE_REFINE_CREDITS} credits
-                  </span>
                 </Button>
               )}
               {canBackground && (
@@ -396,16 +393,29 @@ export function ImageUpload({
                   variant="outline"
                   onClick={() => {
                     setError(null);
-                    setEditingBackground(true);
+                    setEditingBackground("background");
                   }}
                   disabled={refining}
                   className="gap-1.5"
                 >
                   <Eraser className="h-3.5 w-3.5" />
                   Change background
-                  <span className="text-muted-foreground">
-                    · {IMAGE_CUTOUT_CREDITS} credit
-                  </span>
+                </Button>
+              )}
+              {canScene && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setError(null);
+                    setEditingBackground("scene");
+                  }}
+                  disabled={refining}
+                  className="gap-1.5"
+                >
+                  <Wand2 className="h-3.5 w-3.5" />
+                  Put in a scene
                 </Button>
               )}
             </div>
@@ -419,8 +429,13 @@ export function ImageUpload({
             {canBackground && (
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Keeps your real product exactly as photographed and puts it on
-                white, a colour or a transparent background
-                {scenesAvailable ? ", or in a scene" : ""}.
+                white, a colour or a transparent background.
+              </p>
+            )}
+            {canScene && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Mink AI photographs your product in a setting you choose or
+                describe, like a marble counter or hanging in a garden.
               </p>
             )}
           </div>

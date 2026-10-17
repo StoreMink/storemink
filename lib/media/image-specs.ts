@@ -24,10 +24,10 @@ export interface ImageSpec {
   /** Whether Refine with Mink AI is offered for this slot. */
   refine: boolean;
   /**
-   * Whether background removal is offered: the product is cut out of the
-   * photo and placed on white, a colour or transparency. Only where the photo
-   * IS a product: a banner or blog cover is a scene, and cutting one subject
-   * out of it would throw the picture away.
+   * Whether Change background is offered: the product cut out and placed on
+   * white, a colour or transparency, or re-shot by Mink AI in a scene. Only
+   * where the photo IS a product: a banner or blog cover is a scene already,
+   * and cutting one subject out of it would throw the picture away.
    */
   background: boolean;
   /** One short sentence on how the storefront uses it. */
@@ -241,8 +241,10 @@ export const IMAGE_REFINE_CREDITS = 2;
 export const IMAGE_CUTOUT_CREDITS = 1;
 
 /**
- * What one new scene costs, in Mink credits (owner's price, 2026-10-17): the
- * real cost of one Gemini 3.1 Flash Image call (about ₹9) at what a credit
- * sells for. A store's scene is reused for every product placed in it, free.
+ * What one AI product photo costs, in Mink credits (owner's price, 2026-10-17,
+ * kept for the Sidekick-style edit on 2026-10-18): the real cost of one
+ * Gemini 3.1 Flash Image call (about ₹9) at what a credit sells for. Charged
+ * per photo created, from the photo editor's Scene option and from Mink chat
+ * alike; "Try again" is another photo.
  */
-export const IMAGE_SCENE_CREDITS = 5;
+export const IMAGE_EDIT_CREDITS = 5;

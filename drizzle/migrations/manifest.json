@@ -8247,6 +8247,68 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261018_0222_photo_edits",
+      "description": "AI product photos for the photo editor's Scene option: mink_photo_edits (one row per photo Mink AI re-shoots from the merchant's real photo, with the request) and consume_mink_photo_edit_credits, an atomic, idempotent 5-credit charge from the plan cycle first and then top-ups",
+      "file": "sql/20261018_0222_photo_edits.sql",
+      "transaction": true,
+      "requires": ["20261017_0221_change_background_scenes_help"],
+      "verify": {
+        "tables": ["mink_photo_edits"],
+        "constraints": [
+          "mink_photo_edits_pkey",
+          "mink_photo_edits_instruction_check",
+          "mink_photo_edits_size_check",
+          "mink_photo_edits_credits_check",
+          "mink_photo_edits_source_check"
+        ],
+        "indexes": ["mink_photo_edits_store_idx"],
+        "functions": [
+          "consume_mink_photo_edit_credits(uuid,uuid,text,text,integer,integer,text,text,text,text,text,text,integer,integer)"
+        ],
+        "rlsTables": ["mink_photo_edits"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261018_0223_ai_product_photos_help",
+      "description": "The Mink and product-images guides edited in place for AI product photos: the photo editor's Put in a scene re-shoots the real photo in a chosen or described setting, and Mink chat puts a product in any scene or on a model with Use as product photo and Try again, 5 Mink credits per photo",
+      "file": "sql/20261018_0223_ai_product_photos_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0222_photo_edits"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the Mink guide offers scenes, follow-ups and the two card actions",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%select <strong>Use as product photo</strong>%' and body like '%Each product photo uses 5 Mink credits%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Mink guide's photo replacement sentence mentions scenes",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%new photo of a product that already has one, in a studio or in a scene you describe%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product-images guide prices a chat product photo at 5 credits",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%5 Mink credits for the picture and 1 for the photo change%'",
+            "equals": "1"
+          },
+          {
+            "name": "Change background no longer offers a scene",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%a colour or a transparent background. Your product%'",
+            "equals": "1"
+          },
+          {
+            "name": "the step explains Put in a scene and drops the saved scenes",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%select <strong>Put in a scene</strong>%' and body not like '%Draw a new one%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

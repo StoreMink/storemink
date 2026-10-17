@@ -125,7 +125,7 @@ export function MinkStorefrontDesignProposalCard({
                 {proposal.destinationLabel}
               </h3>
               <p className="mt-0.5 text-[9px] text-[#716d78]">
-                Private Builder draft · {proposal.expectedCredits} Mink credits
+                Private Builder draft
               </p>
             </div>
           </div>

@@ -1,19 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { parseBackground, SCENE_FLOOR } from "./background-layout";
-import { IMAGE_SPECS } from "./image-specs";
+import { normalizeEditInstruction } from "./photo-edit";
 import {
   SCENE_PRESETS,
   isScenePresetId,
+  sceneInstruction,
   scenePreset,
-  scenePrompt,
 } from "./scene-presets";
 
 describe("scene presets", () => {
-  it("has unique ids that the background parser accepts", () => {
+  it("has unique, simple ids", () => {
     const ids = SCENE_PRESETS.map((preset) => preset.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of ids) {
-      expect(parseBackground({ kind: "scene", preset: id })).not.toBeNull();
+      expect(id).toMatch(/^[a-z][a-z0-9_]*$/);
       expect(isScenePresetId(id)).toBe(true);
     }
     expect(isScenePresetId("disco")).toBe(false);
@@ -27,19 +26,22 @@ describe("scene presets", () => {
     }
   });
 
-  it("asks for an empty set at the slot's shape, with the floor line the product stands on", () => {
-    const prompt = scenePrompt(scenePreset("marble")!, IMAGE_SPECS.product);
-    expect(prompt).toContain("empty set");
-    expect(prompt).toContain("white marble countertop");
-    expect(prompt).toContain("3:4 frame (1200 × 1600)");
-    expect(prompt).toContain(`${Math.round(SCENE_FLOOR * 100)}% of the height`);
-    expect(prompt).toMatch(/People, hands/);
-    expect(prompt).toMatch(/Text, letters/);
+  it("turns each preset into a request the edit accepts as it is", () => {
+    for (const preset of SCENE_PRESETS) {
+      const request = sceneInstruction(preset);
+      expect(request).toMatch(/^Photograph the product /);
+      // Already clean: normalising changes nothing, so a preset and the same
+      // words typed by hand are one request.
+      expect(normalizeEditInstruction(request)).toBe(request);
+    }
+    expect(sceneInstruction(scenePreset("garden")!)).toContain("garden");
   });
 
-  it("never asks the model to draw a product", () => {
+  it("names a place, never a person: people are the merchant's own words", () => {
     for (const preset of SCENE_PRESETS) {
-      expect(preset.scene).not.toMatch(/\b(product|bottle|shoe|sandal|bag)\b/i);
+      expect(preset.setting).not.toMatch(
+        /\b(model|person|people|woman|man|hand|wearing)\b/i,
+      );
     }
   });
 });

@@ -276,7 +276,7 @@ export async function refineStoreImage(input: {
 function insufficient(): MinkRequestError {
   return new MinkRequestError(
     "refine_insufficient_credits",
-    `Refining a photo uses ${IMAGE_REFINE_CREDITS} Mink credits, and this store doesn't have enough left. Buy Mink credits or upgrade under Plans & Billing.`,
+    "This store doesn't have enough Mink credits left to refine a photo. Buy Mink credits or upgrade under Plans & Billing.",
     402,
   );
 }

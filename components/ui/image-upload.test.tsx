@@ -271,10 +271,10 @@ describe("Change background", () => {
       spec: "product",
       background: { kind: "white" },
       shadow: true,
-      newScene: false,
     });
     expect(screen.getByText(/touches the edge of your photo/)).toBeTruthy();
-    expect(screen.getByText(/1 Mink credit was used/)).toBeTruthy();
+    // No price anywhere on the dashboard (owner, 2026-10-18).
+    expect(document.body.textContent).not.toMatch(/\d+\s*(Mink )?credits?/);
     // Nothing changes until the merchant chooses.
     expect(onReplace).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("Use this photo"));
@@ -367,24 +367,47 @@ describe("Change background", () => {
   });
 });
 
-describe("Scenes and the shadow", () => {
-  const placed =
-    "https://storage.googleapis.com/b/stores/s/edited/c-product-scene-1.webp";
-  const woodScene = "https://storage.googleapis.com/b/stores/s/scenes/w.webp";
+describe("The shadow", () => {
+  it("sends the shadow off when the merchant unticks it", async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            url: "https://storage.googleapis.com/b/stores/s/edited/c.webp",
+            chargedCredits: 1,
+            reused: false,
+            checks: [],
+          }),
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <ImageRefineProvider available={false} background>
+        <ImageUpload
+          spec="product"
+          defaultImage={original}
+          onUploadSuccess={() => {}}
+        />
+      </ImageRefineProvider>,
+    );
+    fireEvent.click(screen.getByText(/Change background/));
+    fireEvent.click(screen.getByLabelText("Soft shadow under the product"));
+    fireEvent.click(screen.getByRole("button", { name: /Remove background/ }));
+    await screen.findByText("Use this photo");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      background: { kind: "white" },
+      shadow: false,
+    });
+  });
+});
 
-  /** GET lists saved scenes; each POST answers with the next body. */
+describe("Put in a scene (Mink AI)", () => {
+  const first = "https://storage.googleapis.com/b/stores/s/edited/ai-1.webp";
+  const second = "https://storage.googleapis.com/b/stores/s/edited/ai-2.webp";
+
+  /** Each POST answers with the next body. */
   function server(posts: Record<string, unknown>[]) {
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      if (!init?.method || init.method === "GET") {
-        expect(String(input)).toBe("/api/mink/image-background?spec=product");
-        // Answer late, on purpose: the editor is usable before it knows which
-        // scenes are saved, and a test that assumes otherwise passes only
-        // when the machine is fast (it failed CI's shuffled run).
-        await new Promise((r) => setTimeout(r, 100));
-        return new Response(
-          JSON.stringify({ scenes: [{ preset: "wood", url: woodScene }] }),
-        );
-      }
+    const fetchMock = vi.fn<typeof fetch>(async () => {
       const body = posts.shift() ?? { error: "unexpected" };
       return new Response(JSON.stringify(body), {
         status: body.error ? 402 : 200,
@@ -395,101 +418,137 @@ describe("Scenes and the shadow", () => {
   }
 
   const posted = (fetchMock: ReturnType<typeof server>, n: number) =>
-    JSON.parse(
-      String(
-        fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")[n][1]
-          ?.body,
-      ),
-    );
+    JSON.parse(String(fetchMock.mock.calls[n][1]?.body));
 
-  function renderEditor(scenes = true) {
+  function renderUpload(
+    flags: { background?: boolean; scenes?: boolean },
+    onReplace = vi.fn(),
+  ) {
     render(
-      <ImageRefineProvider available={false} background scenes={scenes}>
+      <ImageRefineProvider
+        available={false}
+        background={flags.background ?? false}
+        scenes={flags.scenes ?? true}
+      >
         <ImageUpload
           spec="product"
+          defaultImage={original}
+          onUploadSuccess={() => {}}
+          onReplace={onReplace}
+        />
+      </ImageRefineProvider>,
+    );
+    return onReplace;
+  }
+
+  it("is offered where the layout allows it, even without background removal", () => {
+    server([]);
+    renderUpload({ background: false, scenes: true });
+    expect(
+      screen.getByRole("button", { name: /^Put in a scene$/ }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Change background/)).toBeNull();
+    cleanup();
+
+    renderUpload({ background: true, scenes: false });
+    expect(screen.queryByText(/Put in a scene/)).toBeNull();
+    cleanup();
+
+    // Never for a slot that is a scene already.
+    render(
+      <ImageRefineProvider available={false} background scenes>
+        <ImageUpload
+          spec="blog_cover"
           defaultImage={original}
           onUploadSuccess={() => {}}
         />
       </ImageRefineProvider>,
     );
+    expect(screen.queryByText(/Put in a scene/)).toBeNull();
+  });
+
+  it("creates a photo from a preset, compares, then replaces", async () => {
+    const fetchMock = server([{ url: first, chargedCredits: 5 }]);
+    const onReplace = renderUpload({ scenes: true });
+    fireEvent.click(screen.getByRole("button", { name: /Put in a scene/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Garden/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Create photo$/ }));
+    expect(await screen.findByAltText("In the new scene")).toBeTruthy();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/mink/image-edit");
+    expect(posted(fetchMock, 0)).toEqual({
+      url: original,
+      spec: "product",
+      preset: "garden",
+    });
+    expect(document.body.textContent).not.toMatch(/\d+\s*(Mink )?credits?/);
+    // Said plainly: the product is redrawn, so compare before using it.
+    expect(screen.getByText(/redraws the\s+product too/)).toBeTruthy();
+    expect(onReplace).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Use this photo"));
+    expect(onReplace).toHaveBeenCalledWith(original, first);
+  });
+
+  it("sends the merchant's own words, tries again, and keeps every photo", async () => {
+    const fetchMock = server([
+      { url: first, chargedCredits: 5 },
+      { url: second, chargedCredits: 5 },
+    ]);
+    const onReplace = renderUpload({ scenes: true });
+    fireEvent.click(screen.getByRole("button", { name: /Put in a scene/ }));
+    fireEvent.change(screen.getByLabelText(/Or describe your own scene/), {
+      target: { value: "  hanging from a tree branch  in a garden " },
+    });
+    // Typing replaces the preset.
+    expect(
+      screen
+        .getByRole("button", { name: /Studio/ })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: /Create photo/ }));
+    await screen.findByAltText("In the new scene");
+    expect(posted(fetchMock, 0)).toEqual({
+      url: original,
+      spec: "product",
+      instruction: "hanging from a tree branch in a garden",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Try again$/ }));
+    await screen.findByRole("button", { name: /Photo 2:/ });
+    expect(posted(fetchMock, 1)).toEqual(posted(fetchMock, 0));
+    expect(document.body.textContent).not.toMatch(/\d+\s*(Mink )?credits?/);
+    expect(
+      (screen.getByAltText("In the new scene") as HTMLImageElement).src,
+    ).toBe(second);
+
+    // The first photo was paid for too: it can still be chosen.
+    fireEvent.click(screen.getByRole("button", { name: /Photo 1:/ }));
+    expect(
+      (screen.getByAltText("In the new scene") as HTMLImageElement).src,
+    ).toBe(first);
+    fireEvent.click(screen.getByText("Use this photo"));
+    expect(onReplace).toHaveBeenCalledWith(original, first);
+  });
+
+  it("shows the server's reason and offers nothing to use", async () => {
+    server([{ error: "No credits left." }]);
+    renderUpload({ scenes: true });
+    fireEvent.click(screen.getByRole("button", { name: /Put in a scene/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Create photo/ }));
+    expect(await screen.findByText("No credits left.")).toBeTruthy();
+    expect(screen.queryByText("Use this photo")).toBeNull();
+  });
+
+  it("switches between the background and scene tools", () => {
+    server([]);
+    renderUpload({ background: true, scenes: true });
     fireEvent.click(screen.getByText(/Change background/));
-  }
-
-  it("offers scenes only where the layout allows them", () => {
-    server([]);
-    renderEditor(false);
-    expect(screen.queryByRole("button", { name: "Scene" })).toBeNull();
-  });
-
-  it("prices a new scene with the cut-out, then marks it saved and free", async () => {
-    const fetchMock = server([
-      {
-        url: placed,
-        chargedCredits: 6,
-        reused: false,
-        checks: [],
-        scene: { url: "https://storage.googleapis.com/b/s/studio.webp" },
-      },
-    ]);
-    renderEditor();
-    fireEvent.click(screen.getByRole("button", { name: "Scene" }));
-    const create = await screen.findByRole("button", {
-      name: /Create scene\s*·\s*6 credits/,
-    });
-    fireEvent.click(create);
-    await screen.findByText("Use this photo");
-    expect(posted(fetchMock, 0)).toMatchObject({
-      background: { kind: "scene", preset: "studio" },
-      newScene: true,
-      shadow: false,
-    });
-    expect(screen.getByText(/6 Mink credits were used/)).toBeTruthy();
-    const studio = screen.getByRole("button", { name: /Studio/ });
-    expect(studio.textContent).toContain("Saved · free");
-    // The late saved-scenes answer (wood only) arrives after the draw; it must
-    // add to what the editor knows, not wipe the scene just drawn.
-    await screen.findByRole("button", { name: /Wooden table\s*Saved/ });
     expect(
-      screen.getByRole("button", { name: /Studio/ }).textContent,
-    ).toContain("Saved · free");
-  });
-
-  it("uses a saved scene free, and charges 5 only to draw a new one", async () => {
-    server([]);
-    renderEditor();
-    fireEvent.click(screen.getByRole("button", { name: "Scene" }));
-    // Wait for the saved-scenes answer before reading the tile.
-    const wood = await screen.findByRole("button", {
-      name: /Wooden table\s*Saved/,
-    });
-    expect(wood.textContent).toContain("Saved · free");
-    fireEvent.click(wood);
-    expect(
-      screen.getByText(/Uses your saved wooden table scene, free/),
+      screen.getByRole("button", { name: /Remove background/ }),
     ).toBeTruthy();
-    // Only the first cut-out of this photo is charged.
+    fireEvent.click(screen.getByRole("tab", { name: "Scene" }));
     expect(
-      screen.getByRole("button", { name: /Remove background\s*·\s*1 credit/ }),
-    ).toBeTruthy();
-    fireEvent.click(
-      screen.getByRole("button", { name: /Draw a new one\s*·\s*5 credits/ }),
-    );
-    expect(
-      screen.getByRole("button", { name: /Create scene\s*·\s*6 credits/ }),
-    ).toBeTruthy();
-  });
-
-  it("sends the shadow off when the merchant unticks it", async () => {
-    const fetchMock = server([
-      { url: placed, chargedCredits: 1, reused: false, checks: [] },
-    ]);
-    renderEditor();
-    fireEvent.click(screen.getByLabelText("Soft shadow under the product"));
-    fireEvent.click(screen.getByRole("button", { name: /Remove background/ }));
-    await screen.findByText("Use this photo");
-    expect(posted(fetchMock, 0)).toMatchObject({
-      background: { kind: "white" },
-      shadow: false,
-    });
+      screen.queryByRole("button", { name: /Remove background/ }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: /Create photo/ })).toBeTruthy();
   });
 });

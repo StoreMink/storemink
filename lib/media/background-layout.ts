@@ -7,10 +7,9 @@
 //   side fills PRODUCT_FILL of the frame, the convention marketplaces use
 //   (Amazon asks for the product to fill 85% of a main image), so a grid of
 //   them reads as one shoot.
-// ★ A SCENE PUTS THE PRODUCT ON A SURFACE, so it is placed differently: smaller
-//   (SCENE_FILL), standing on a floor line (SCENE_FLOOR) rather than centred,
-//   with the set around it. The scene's prompt names the same floor line, so
-//   the generated surface and the placed product agree on where "down" is.
+// ★ NO SCENES HERE. A product in a scene is re-shot by Mink AI from the real
+//   photo (lib/media/photo-edit.ts); placing the cut-out on a drawn set was
+//   tried and judged unconvincing (owner, 2026-10-18).
 // ★ THE SHADOW IS DRAWN FROM THE PRODUCT'S OWN FOOTPRINT (the bottom rows of
 //   its mask), never painted onto the product. A product on white with no
 //   shadow reads as floating; one ellipse the width of its base fixes that.
@@ -24,23 +23,10 @@ export const MASK_THRESHOLD = 128;
 /** Product scaled up by more than this looks soft. */
 export const MAX_UPSCALE = 1.6;
 
-/** How much of the frame a product fills along its limiting side in a scene. */
-export const SCENE_FILL = 0.6;
-
-/** Where a product's base stands in a scene, as a share of the height from the top. */
-export const SCENE_FLOOR = 0.84;
-
-/** The highest a product's top may reach in a scene (share of the height). */
-const SCENE_HEADROOM = 0.05;
-
-/** A scene preset id: lower-case letters, digits and underscores. */
-const PRESET_ID = /^[a-z][a-z0-9_]{0,39}$/;
-
 export type BackgroundChoice =
   | { kind: "white" }
   | { kind: "transparent" }
-  | { kind: "colour"; hex: string }
-  | { kind: "scene"; preset: string };
+  | { kind: "colour"; hex: string };
 
 /**
  * A background from untrusted input, or null. A colour must be exactly
@@ -58,15 +44,6 @@ export function parseBackground(value: unknown): BackgroundChoice | null {
       return { kind: "colour", hex: hex.toLowerCase() };
     }
   }
-  if (kind === "scene") {
-    // Only the SHAPE is checked here; whether the preset exists is the
-    // caller's question (lib/media/scene-presets.ts), so this module stays
-    // free of the preset list.
-    const preset = (value as { preset?: unknown }).preset;
-    if (typeof preset === "string" && PRESET_ID.test(preset)) {
-      return { kind: "scene", preset };
-    }
-  }
   return null;
 }
 
@@ -80,8 +57,6 @@ export function backgroundKey(background: BackgroundChoice): string {
       return "transparent";
     case "colour":
       return `c${background.hex.slice(1).toLowerCase()}`;
-    case "scene":
-      return `scene-${background.preset}`;
   }
 }
 
@@ -91,7 +66,7 @@ export function canHaveShadow(background: BackgroundChoice): boolean {
   return background.kind !== "transparent";
 }
 
-/** The fill as RGBA for sharp. A scene is drawn, not filled: white stands in. */
+/** The fill as RGBA for sharp. */
 export function backgroundFill(background: BackgroundChoice): {
   r: number;
   g: number;
@@ -99,8 +74,7 @@ export function backgroundFill(background: BackgroundChoice): {
   alpha: number;
 } {
   if (background.kind === "transparent") return { r: 0, g: 0, b: 0, alpha: 0 };
-  if (background.kind === "white" || background.kind === "scene")
-    return { r: 255, g: 255, b: 255, alpha: 1 };
+  if (background.kind === "white") return { r: 255, g: 255, b: 255, alpha: 1 };
   const hex = background.hex.slice(1);
   return {
     r: Number.parseInt(hex.slice(0, 2), 16),
@@ -176,33 +150,6 @@ export function placeInFrame(
   };
 }
 
-/**
- * Where a cut-out goes in a scene: scaled so its limiting side fills
- * SCENE_FILL, centred across, with its base on the SCENE_FLOOR line. A tall
- * product that would rise past the headroom is scaled down to fit under it.
- */
-export function placeOnFloor(
-  cut: { width: number; height: number },
-  frame: { width: number; height: number },
-): Box & { scale: number } {
-  const floor = Math.round(frame.height * SCENE_FLOOR);
-  const room = floor - Math.round(frame.height * SCENE_HEADROOM);
-  const scale = Math.min(
-    (frame.width * SCENE_FILL) / cut.width,
-    (frame.height * SCENE_FILL) / cut.height,
-    room / cut.height,
-  );
-  const width = Math.max(1, Math.round(cut.width * scale));
-  const height = Math.max(1, Math.round(cut.height * scale));
-  return {
-    width,
-    height,
-    left: Math.round((frame.width - width) / 2),
-    top: floor - height,
-    scale,
-  };
-}
-
 export interface ShadowLayer {
   /** How far below the product's base the shadow reaches, in pixels. */
   depth: number;
@@ -215,21 +162,17 @@ export interface ShadowLayer {
  * The two shadows under a placed product of `height` pixels: a short, dark
  * contact shadow right under its base and a deeper, faint one around it.
  */
-export function shadowLayersFor(
-  height: number,
-  strength: "light" | "scene" = "light",
-): ShadowLayer[] {
-  const scene = strength === "scene";
+export function shadowLayersFor(height: number): ShadowLayer[] {
   return [
     {
       depth: Math.max(Math.round(height * 0.025), 4),
       blur: Math.max(height * 0.006, 1.5),
-      opacity: scene ? 0.6 : 0.45,
+      opacity: 0.45,
     },
     {
       depth: Math.max(Math.round(height * 0.07), 10),
       blur: Math.max(height * 0.025, 5),
-      opacity: scene ? 0.3 : 0.18,
+      opacity: 0.18,
     },
   ];
 }

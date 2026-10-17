@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
-import { SCENE_FLOOR, placeInFrame, placeOnFloor } from "./background-layout";
-import { renderOnBackground, renderOnScene } from "./background-render";
+import { placeInFrame } from "./background-layout";
+import { renderOnBackground } from "./background-render";
 
 const FRAME = { width: 600, height: 800 };
 
@@ -76,34 +76,5 @@ describe("renderOnBackground", () => {
       place.top + place.height + 3,
     );
     expect(below.a).toBe(0);
-  });
-});
-
-describe("renderOnScene", () => {
-  it("stands the product on the floor line of the scene, with a shadow", async () => {
-    const png = await cutout();
-    const size = { width: 200, height: 150 };
-    const scene = await sharp({
-      create: {
-        width: FRAME.width,
-        height: FRAME.height,
-        channels: 3,
-        background: "#d8ccb8",
-      },
-    })
-      .png()
-      .toBuffer();
-    const out = await renderOnScene(png, size, scene, FRAME);
-    const meta = await sharp(out).metadata();
-    expect([meta.width, meta.height]).toEqual([600, 800]);
-
-    const place = placeOnFloor(size, FRAME);
-    expect(place.top + place.height).toBe(Math.round(800 * SCENE_FLOOR));
-    const x = place.left + Math.round(place.width / 2);
-    expectProductRed(await pixel(out, x, place.top + place.height - 5));
-    const shadow = await pixel(out, x, place.top + place.height + 3);
-    expect(shadow.r).toBeLessThan(0xd8 - 20);
-    const untouched = await pixel(out, 5, 5);
-    expect(Math.abs(untouched.r - 0xd8)).toBeLessThanOrEqual(2);
   });
 });

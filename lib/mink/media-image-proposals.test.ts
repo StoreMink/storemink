@@ -179,7 +179,7 @@ describe("createMinkMediaImageProposal", () => {
     expect(proposal.referenceImageCount).toBe(1);
   });
 
-  it("★★ REFUSES A CATALOGUE PHOTO WITH NO REAL PHOTO OF THE ITEM, BEFORE SPENDING", async () => {
+  it("★★ REFUSES A PRODUCT PHOTO WITH NO REAL PHOTO OF THE ITEM, BEFORE SPENDING", async () => {
     // A category image is about the category, not the item; nothing, or
     // only that, means Mink would be inventing goods from a description.
     vi.mocked(resolveMinkMediaReferenceImages).mockResolvedValueOnce([
@@ -239,7 +239,61 @@ describe("createMinkMediaImageProposal", () => {
       ),
     );
     expect(dbState.inserts[0]).toMatchObject({ source: "mink_generated" });
+    // Priced like the photo editor's scene photo: 5 credits, not campaign art's.
+    expect(vi.mocked(createMinkDraftProposal).mock.calls[0][0]).toMatchObject({
+      kind: "media_image",
+      expectedCredits: 5,
+    });
     chrome.cardPhoto = "portrait";
+  });
+
+  it("★★ AN EARLIER AI PHOTO CAN CONTINUE A SCENE BUT NEVER STANDS IN FOR THE REAL ONE", async () => {
+    const earlier = {
+      url: `https://storage.googleapis.com/bucket/stores/${STORE}/mink-generated/product-photos/a.jpg`,
+      fileUri: `gs://bucket/stores/${STORE}/mink-generated/product-photos/a.jpg`,
+      mimeType: "image/jpeg" as const,
+      source: "media" as const,
+    };
+    vi.mocked(resolveMinkMediaReferenceImages).mockResolvedValueOnce([earlier]);
+    await expect(
+      createMinkMediaImageProposal({
+        actor,
+        ...ask,
+        purpose: "product",
+        referenceImageUrls: [earlier.url],
+      }),
+    ).rejects.toThrow(/real photo of the item/);
+    expect(generateMinkMediaImage).not.toHaveBeenCalled();
+
+    // With the real photo beside it, the follow-up goes ahead.
+    const real = {
+      url: "https://storage.googleapis.com/bucket/product.webp",
+      fileUri: "gs://bucket/product.webp",
+      mimeType: "image/webp" as const,
+      source: "product" as const,
+    };
+    vi.mocked(resolveMinkMediaReferenceImages).mockResolvedValueOnce([
+      real,
+      earlier,
+    ]);
+    const proposal = await createMinkMediaImageProposal({
+      actor,
+      ...ask,
+      purpose: "product",
+      referenceImageUrls: [real.url, earlier.url],
+    });
+    expect(proposal.purpose).toBe("product");
+    expect(vi.mocked(generateMinkMediaImage).mock.calls[0][2]).toEqual([
+      real,
+      earlier,
+    ]);
+  });
+
+  it("keeps campaign art at the kind's own price", async () => {
+    await createMinkMediaImageProposal({ actor, ...ask });
+    expect(
+      vi.mocked(createMinkDraftProposal).mock.calls[0][0].expectedCredits,
+    ).toBeUndefined();
   });
 
   it("★ CLAIMS THE SPEND CEILING BEFORE THE PROVIDER CALL", async () => {

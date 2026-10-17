@@ -617,7 +617,8 @@ describe("sendMinkDraft", () => {
       text: "x",
     });
     expect(r).toMatchObject({ ok: false, code: "no_credits" });
-    expect(r.error).toMatch(/1 Mink credit/);
+    expect(r.error).toMatch(/no Mink credits left/);
+    expect(r.error).not.toMatch(/\d+\s*Mink credits?/);
     expect(sendWhatsAppText).not.toHaveBeenCalled();
     expect(markMinkAnswerSent).not.toHaveBeenCalled();
     // ★ The send lease the claim took is given back in the SAME transaction,

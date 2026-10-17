@@ -4,6 +4,7 @@ import {
   MINK_MEDIA_PURPOSES,
   MINK_MEDIA_PURPOSE_SPECS,
   aspectRatioFor,
+  isMinkAiMadePhotoUrl,
   isMinkGeneratedCampaignArtUrl,
   isMinkGeneratedProductPhotoUrl,
   validateMinkMediaGenerationRequest,
@@ -159,15 +160,28 @@ describe("catalogue product photos (purpose product)", () => {
 
   it("is a declared purpose whose shape follows the store's card", () => {
     expect(MINK_MEDIA_PURPOSES).toContain("product");
-    expect(MINK_MEDIA_PURPOSE_SPECS.product.label).toBe(
-      "Catalogue product photo",
-    );
+    expect(MINK_MEDIA_PURPOSE_SPECS.product.label).toBe("Product photo");
     // Portrait is the storefront default; a square-card store gets 1:1.
     expect(aspectRatioFor("product")).toBe("3:4");
     expect(aspectRatioFor("product", "portrait")).toBe("3:4");
     expect(aspectRatioFor("product", "square")).toBe("1:1");
     // The shape never reaches any other purpose.
     expect(aspectRatioFor("hero", "square")).toBe("21:9");
+  });
+
+  it("★ knows a picture Mink drew from a real photo, wherever Mink drew it", () => {
+    const base = "https://storage.googleapis.com/bucket/stores/s/";
+    expect(
+      isMinkAiMadePhotoUrl(`${base}mink-generated/product-photos/a.jpg`),
+    ).toBe(true);
+    expect(isMinkAiMadePhotoUrl(`${base}mink-generated/b.jpg`)).toBe(true);
+    // A scene photo from the photo editor.
+    expect(isMinkAiMadePhotoUrl(`${base}edited/ai-c.webp`)).toBe(true);
+    // The merchant's own photo, and a cut-out on white, are real.
+    expect(isMinkAiMadePhotoUrl(`${base}uploads/d.png`)).toBe(false);
+    expect(isMinkAiMadePhotoUrl(`${base}edited/x-product-white.webp`)).toBe(
+      false,
+    );
   });
 
   it("★ the shape is the server's, so the validator refuses it on the wire", () => {

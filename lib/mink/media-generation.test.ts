@@ -143,7 +143,7 @@ describe("asking Gemini for one storefront image", () => {
     );
   });
 
-  it("★★ ASKS FOR THE ITEM ITSELF, NOT A CAMPAIGN SCENE, FOR A CATALOGUE PHOTO", async () => {
+  it("★★ ASKS FOR THE ITEM ITSELF, NOT A CAMPAIGN SCENE, FOR A PRODUCT PHOTO", async () => {
     generateContent.mockResolvedValue(imageResponse());
     await generateMinkMediaImage(
       config as never,
@@ -161,12 +161,56 @@ describe("asking Gemini for one storefront image", () => {
     // The store's card is square, so the photo is square; the default is 3:4.
     expect(call.config.imageConfig.aspectRatio).toBe("1:1");
     const text = call.contents[0].parts[0].text as string;
-    expect(text).toContain("catalogue product photograph");
+    expect(text).toContain("one product photograph");
     expect(text).toContain("not a campaign scene");
     expect(text).toContain("real photograph of the product");
     expect(text).toContain("Do not restyle it");
-    // Still no people, whatever the purpose.
-    expect(call.config.imageConfig.personGeneration).toBe("ALLOW_NONE");
+    // The photo editor's rules, shared so chat and editor cannot drift.
+    expect(text).toContain("KEEP THE PRODUCT EXACTLY THE SAME");
+    expect(text).toContain("Include a person only if the request asks");
+    // Adults may appear in a product photo (a model wearing it); famous
+    // people never.
+    expect(call.config.imageConfig.personGeneration).toBe("ALLOW_ADULT");
+    expect(call.config.imageConfig.prominentPeople).toBeDefined();
+  });
+
+  it("★ NEVER PEOPLE IN CAMPAIGN ART", async () => {
+    generateContent.mockResolvedValue(imageResponse());
+    await generateMinkMediaImage(config as never, {
+      ...request,
+      purpose: "hero",
+    });
+    expect(
+      generateContent.mock.calls[0][0].config.imageConfig.personGeneration,
+    ).toBe("ALLOW_NONE");
+  });
+
+  it("★ TELLS AN EARLIER AI PHOTO FROM THE REAL ONE IN A FOLLOW-UP", async () => {
+    generateContent.mockResolvedValue(imageResponse());
+    const earlier = {
+      ...PRODUCT_REFERENCE,
+      url: "https://storage.googleapis.com/bucket/stores/s/mink-generated/product-photos/p.jpg",
+      fileUri: "gs://bucket/stores/s/mink-generated/product-photos/p.jpg",
+      source: "media" as const,
+    };
+    await generateMinkMediaImage(
+      config as never,
+      {
+        ...request,
+        purpose: "product",
+        prompt: "The coat in a close-up on a model standing in a forest.",
+        referenceImageUrls: [PRODUCT_REFERENCE.url, earlier.url],
+        productPhotoShape: "portrait",
+      },
+      [PRODUCT_REFERENCE, earlier],
+    );
+    const text = generateContent.mock.calls[0][0].contents[0].parts[0]
+      .text as string;
+    expect(text).toMatch(/Reference 1 is a real photograph of the product/);
+    expect(text).toMatch(
+      /Reference 2 is an earlier AI photo of this same product/,
+    );
+    expect(text).toMatch(/never from this picture/);
   });
 
   it("gives a portrait-card store a 3:4 catalogue photo", async () => {

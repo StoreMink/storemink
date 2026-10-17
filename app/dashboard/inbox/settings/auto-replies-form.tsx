@@ -20,7 +20,6 @@ import {
   MENU_BUTTON_TITLE_MAX_CHARS,
   MENU_MAX_BUTTONS,
   MENU_PROMPT_TEXT,
-  MINK_ANSWER_CREDITS,
   MINK_MODE_LABELS,
   WELCOME_QUIET_DAYS,
   validateAutoReplySettings,
@@ -356,7 +355,7 @@ function MinkCard({
   return (
     <Card
       title="Mink AI answers"
-      description={`Mink answers customers' questions from your store's own facts, or drafts a reply for you. Each reply that is sent uses ${MINK_ANSWER_CREDITS} Mink credit; a draft nobody sends is free.`}
+      description="Mink answers customers' questions from your store's own facts, or drafts a reply for you. Replies that are sent use Mink credits; a draft nobody sends does not."
       on={mode !== "off"}
       disabled={disabled}
       onToggle={(on) => onChange(on ? "helps" : "off")}

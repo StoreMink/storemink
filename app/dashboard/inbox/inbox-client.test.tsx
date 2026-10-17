@@ -428,7 +428,8 @@ describe("InboxClient: Mink's draft", () => {
     expect(
       screen.getByText(/Based on: Almond Shake · Refund Policy/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Sending uses 1 Mink credit/)).toBeInTheDocument();
+    expect(screen.getByText("Sending uses Mink credits.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/\d+\s*Mink credits?/);
     fireEvent.change(box, { target: { value: "Yes, ₹120, in stock today." } });
     fireEvent.click(screen.getByRole("button", { name: "Send Mink's draft" }));
     await waitFor(() =>
@@ -442,7 +443,7 @@ describe("InboxClient: Mink's draft", () => {
     expect(screen.getByLabelText("Reply")).toHaveValue("");
   });
 
-  it("a hand-over reads as one, a charged draft says sending is free, and Discard discards", async () => {
+  it("a hand-over reads as one, a charged draft is ready to send, and Discard discards", async () => {
     vi.mocked(getInboxThread).mockResolvedValue({
       thread: thread({ minkDraft: draft({ mode: "helps", charged: true }) }),
     });
@@ -459,7 +460,7 @@ describe("InboxClient: Mink's draft", () => {
     expect(
       await screen.findByText("Mink handed this one to you"),
     ).toBeInTheDocument();
-    expect(screen.getByText(/sending uses no credit/)).toBeInTheDocument();
+    expect(screen.getByText("Ready to send.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     await waitFor(() =>
       expect(discardMinkDraft).toHaveBeenCalledWith({

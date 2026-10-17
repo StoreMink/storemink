@@ -75,8 +75,7 @@ export function MinkMemoryManager() {
       <p className="text-sm">
         Deleting stops use in future turns; it cannot remove context already
         sent to an active run or erase mentions in saved conversations. Delete
-        those conversations separately. Context uses normal model input tokens;
-        there is no separate memory-save credit charge.
+        those conversations separately.
       </p>
       {error && (
         <p role="alert" className="text-red-700">

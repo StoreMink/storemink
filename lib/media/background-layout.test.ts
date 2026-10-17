@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_UPSCALE,
   PRODUCT_FILL,
-  SCENE_FILL,
-  SCENE_FLOOR,
   backgroundFill,
   backgroundKey,
   canHaveShadow,
@@ -13,7 +11,6 @@ import {
   maskBounds,
   parseBackground,
   placeInFrame,
-  placeOnFloor,
   shadowLayersFor,
 } from "./background-layout";
 
@@ -158,43 +155,15 @@ describe("cutoutChecks", () => {
   });
 });
 
-describe("scenes", () => {
-  it("accepts a scene by preset id, checked for shape only", () => {
-    expect(parseBackground({ kind: "scene", preset: "marble" })).toEqual({
-      kind: "scene",
-      preset: "marble",
-    });
-    for (const preset of ["Marble", "../x", "", "a b", "x".repeat(41), 7]) {
-      expect(parseBackground({ kind: "scene", preset })).toBeNull();
-    }
-    expect(backgroundKey({ kind: "scene", preset: "marble" })).toBe(
-      "scene-marble",
-    );
+describe("no scenes", () => {
+  it("refuses a scene: scenes are re-shot by Mink AI, not composed here", () => {
+    expect(parseBackground({ kind: "scene", preset: "marble" })).toBeNull();
   });
 
   it("puts a shadow under anything but a transparent background", () => {
     expect(canHaveShadow({ kind: "white" })).toBe(true);
     expect(canHaveShadow({ kind: "colour", hex: "#102030" })).toBe(true);
-    expect(canHaveShadow({ kind: "scene", preset: "wood" })).toBe(true);
     expect(canHaveShadow({ kind: "transparent" })).toBe(false);
-  });
-
-  it("stands a product on the floor line, smaller than on a plain background", () => {
-    const frame = { width: 1200, height: 1600 };
-    const wide = placeOnFloor({ width: 1000, height: 400 }, frame);
-    expect(wide.width).toBe(Math.round(1200 * SCENE_FILL));
-    expect(wide.top + wide.height).toBe(Math.round(1600 * SCENE_FLOOR));
-    expect(wide.left).toBe(Math.round((1200 - wide.width) / 2));
-    expect(wide.width).toBeLessThan(
-      placeInFrame({ width: 1000, height: 400 }, frame).width,
-    );
-  });
-
-  it("scales a tall product down so its top stays inside the frame", () => {
-    const frame = { width: 1200, height: 1600 };
-    const tall = placeOnFloor({ width: 100, height: 2000 }, frame);
-    expect(tall.top).toBeGreaterThanOrEqual(Math.round(1600 * 0.05));
-    expect(tall.top + tall.height).toBe(Math.round(1600 * SCENE_FLOOR));
   });
 });
 
@@ -230,10 +199,10 @@ describe("groundShadow", () => {
     expect(shadow[9 * w + 1]).toBe(255);
   });
 
-  it("is darker in a scene than on a plain background, and never zero-sized", () => {
-    const light = shadowLayersFor(500, "light");
-    const scene = shadowLayersFor(500, "scene");
-    expect(scene[0].opacity).toBeGreaterThan(light[0].opacity);
+  it("is a dark contact layer and a faint deeper one, never zero-sized", () => {
+    const [contact, soft] = shadowLayersFor(500);
+    expect(contact.opacity).toBeGreaterThan(soft.opacity);
+    expect(soft.depth).toBeGreaterThan(contact.depth);
     for (const layer of shadowLayersFor(10)) {
       expect(layer.depth).toBeGreaterThanOrEqual(4);
       expect(layer.blur).toBeGreaterThan(1);
