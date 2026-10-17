@@ -1,0 +1,6 @@
+# What `gcloud builds submit services/image-matting` uploads. Without this file
+# gcloud would send the local node_modules (300 MB of macOS binaries).
+.gcloudignore
+node_modules
+bench-out
+*.test.mjs

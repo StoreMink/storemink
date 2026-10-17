@@ -13,6 +13,8 @@ npm-debug.log*
 
 # The capture job has its own image (jobs/theme-studio-capture/Dockerfile).
 jobs
+# So does the image-matting service (services/image-matting/Dockerfile).
+services
 
 # Editor / OS / tooling
 .vscode

@@ -92,6 +92,38 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### Image-matting service (2026-10-17; deployed privately, not yet called)
+
+The first piece of "keep the real product, replace the background": a
+separate Cloud Run service, `services/image-matting/`, that returns a mask
+for the product in a photo, so StoreMink can composite the merchant's REAL
+pixels onto a new background instead of having an image model redraw them.
+Full runbook and measurements: `docs/image-matting-service.md`.
+★ WHY SELF-HOSTED: Vertex's background-swap and product-recontext models
+answer 404 (retired 2026-06-30) and `image-segmentation-001` is
+allowlist-gated; Gemini image models take no mask. BiRefNet is MIT; RMBG-2.0
+was ruled out (non-commercial weights).
+★ THE MODEL FILE IS PINNED BY SHA-256 (`fetch-model.mjs`), because the
+release publishes no checksums and an asset can be replaced in place.
+★ IT KNOWS NOTHING ABOUT STORES: no database, no bucket, a service account
+(`storemink-matting@`) with no roles, private (`--no-allow-unauthenticated`).
+Ownership, credits and storage stay in the web app.
+★ MEASURED, NOT ASSUMED: lite ran at 11–15 s a photo on 4 vCPU with a 7.0 GB
+peak (arena off; with ONNX Runtime's arena on it was killed at 8 GB), and
+matched the full model's quality, which needed 20 s and 13.9 GB. The service
+defaults (`basic` graph optimisation, arena off, no warm-up) come from those
+runs; `MATTING_THREADS` must equal `--cpu` because start-up CPU boost shows
+more CPUs than the instance keeps. ⚠ BiRefNet cuts out the most prominent
+subject, so a person holding the product comes with it.
+⚠ QUOTA: asia-south1 allows 40 GiB and 20 vCPU across ALL Cloud Run services
+in the project, `storemink-web-prod` included; a 16 GB test instance was
+refused. The service runs with `--max-instances=1` until a quota increase or
+a move to asia-south2.
+⚠ Not built: the web app's client and IAM grant, every merchant feature
+(Remove background, colour or generated backgrounds, Extend, the chat edit
+tool), subject correction and harmonisation. No merchant-visible change, so
+no Help Centre update.
+
 ### Mink Sidekick parity: streaming, navigation, skills, charts, memories, categories (2026-10-17)
 
 Nine gaps against Shopify Sidekick closed in one change. No new table; one
@@ -6308,6 +6340,13 @@ wholesip/
 │                              # a version's preview store (catalog card + screenshots).
 │                              # Own package.json (playwright-core) and Dockerfile; not in
 │                              # the web image. Runbook: docs/theme-studio-capture-job.md
+├── services/image-matting/    # ★ Cloud Run SERVICE: cuts a product out of a photo with
+│                              # BiRefNet lite (MIT, ONNX, CPU). POST /v1/matte → PNG mask.
+│                              # matting-core.mjs (pure, tested in the main suite),
+│                              # server.mjs (sharp + onnxruntime-node, loaded lazily),
+│                              # bench.mjs, fetch-model.mjs (SHA-256-pinned download),
+│                              # own package.json, Dockerfile and cloudbuild.yaml; not in
+│                              # the web image. Runbook: docs/image-matting-service.md
 ├── scripts/
 │   ├── whatsapp-media-to-private.mjs # `npm run whatsapp:media-to-private`: move
 │   │                          # WhatsApp chat media (stores/*/whatsapp/**) from the
@@ -9199,16 +9238,22 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `worker-runtime.ts` bounds private Sharp decoder/cache use. Private-only DB
     pools have acquisition/statement/idle-transaction deadlines.
     `scripts/theme-studio-workers.py` deploys independent private generation and
-    QA services (2 GiB, 2 CPU, concurrency 1, max 2 instances, pool 1), from the
-    serving web digest and acceptance build ID. Cloud Build releases them with
+    QA services (2 GiB, 2 CPU, concurrency 1, max 1 instance, pool 1), from the
+    serving web digest and acceptance build ID. ★ PRODUCTION ONLY, ONE INSTANCE
+    EACH (owner's decision, 2026-10-17): themes are never built on dev, so the
+    two dev workers were deleted and the script refuses `storemink-web-dev`;
+    the cap was 2. Every worker instance counts against the asia-south1 Cloud
+    Run quota (40 GiB, 20 vCPU for the whole project) that the website shares.
+    ⚠ The schedules still call storemink.com, so theme work runs inside the web
+    service until routing is switched. Cloud Build releases them with
     the web and capture job; first scheduler routing is explicit and validates
     build/role/private IAM plus combined database connection headroom. Each role
     has two independent minute schedules; the legacy web route retains two run
     lanes and its QA fallback until routing. Workers accept the application
     secret in `X-Theme-Studio-Secret` behind Cloud Run OIDC only in worker mode;
-    public web authentication is unchanged. Current web ceilings plus all planned
-    workers total 34 steady connections; routing conservatively reserves 68 for
-    old/new revision overlap plus five spare. SQL capacity must be verified
+    public web authentication is unchanged. Current web ceilings plus the
+    production workers total 28 steady connections; routing conservatively
+    reserves 56 for old/new revision overlap plus five spare. SQL capacity must be verified
     before routing. No SQL tier or merchant web capacity change is included.
     `visual-evidence.ts` preserves native phone screenshot width and prepares
     full-page overviews plus readable phone/desktop strips sequentially; visual

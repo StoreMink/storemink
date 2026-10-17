@@ -15,16 +15,26 @@ import subprocess
 import tempfile
 
 
+# Instances each worker may run at once. Theme Studio is a staff-only tool, and
+# every worker instance (2 vCPU, 2 GiB) comes out of the asia-south1 Cloud Run
+# quota (40 GiB and 20 vCPU for the whole project) that storemink-web-prod
+# also needs. Was 2 until 2026-10-17 (owner's decision).
+WORKER_MAX_INSTANCES = 1
+# Database connections each worker instance holds (its DB_POOL_MAX).
+WORKER_POOL = 1
+
+
 def topology(web):
-    if web not in ("storemink-web-prod", "storemink-web-dev"):
-        raise ValueError("Only the production and dev web services have Studio workers")
-    env = web.rsplit("-", 1)[1]
-    suffix = "" if env == "prod" else "-dev"
+    # ★ PRODUCTION ONLY (owner's decision, 2026-10-17). Themes are never built
+    # on dev: its schedules were deleted on 2026-10-11, and the two dev workers
+    # served nothing while still counting against the shared regional quota.
+    if web != "storemink-web-prod":
+        raise ValueError("Only the production web service has Studio workers; themes are built on production")
     return [
-        {"service": f"storemink-theme-studio-model-{env}", "role": "generation", "path": "runs", "deadline": 1200,
-         "jobs": [f"storemink-theme-studio-runs{suffix}", f"storemink-theme-studio-runs-peer{suffix}"]},
-        {"service": f"storemink-theme-studio-qa-{env}", "role": "qa", "path": "qa", "deadline": 300,
-         "jobs": [f"storemink-theme-studio-qa{suffix}", f"storemink-theme-studio-qa-peer{suffix}"]},
+        {"service": "storemink-theme-studio-model-prod", "role": "generation", "path": "runs", "deadline": 1200,
+         "jobs": ["storemink-theme-studio-runs", "storemink-theme-studio-runs-peer"]},
+        {"service": "storemink-theme-studio-qa-prod", "role": "qa", "path": "qa", "deadline": 300,
+         "jobs": ["storemink-theme-studio-qa", "storemink-theme-studio-qa-peer"]},
     ]
 
 
@@ -43,10 +53,10 @@ def worker_spec(web, worker, image_digest):
     env = [e for e in env if e["name"] != "THEME_STUDIO_BUILD_ID"]
     env += [{"name": k, "value": v} for k, v in {
         "THEME_STUDIO_WORKER_ONLY": "true", "THEME_STUDIO_WORKER_ROLE": worker["role"],
-        "THEME_STUDIO_BUILD_ID": bound_build, "DB_POOL_MAX": "1",
+        "THEME_STUDIO_BUILD_ID": bound_build, "DB_POOL_MAX": str(WORKER_POOL),
         "NODE_OPTIONS": "--max-old-space-size=768", "UV_THREADPOOL_SIZE": "2", "MALLOC_ARENA_MAX": "2",
     }.items()]
-    annotations = {"autoscaling.knative.dev/minScale": "0", "autoscaling.knative.dev/maxScale": "2"}
+    annotations = {"autoscaling.knative.dev/minScale": "0", "autoscaling.knative.dev/maxScale": str(WORKER_MAX_INSTANCES)}
     for k, v in template.get("metadata", {}).get("annotations", {}).items():
         if k in {"run.googleapis.com/cloudsql-instances", "run.googleapis.com/vpc-access-connector", "run.googleapis.com/vpc-access-egress", "run.googleapis.com/network-interfaces"}:
             annotations[k] = v
@@ -95,9 +105,11 @@ def require_serving_revision(service):
 
 def require_connection_budget(web_services, maximum):
     # Revision-level maxScale can admit old and new revision pools during a
-    # rollout. Budget both environments, double the steady pool ceiling for
-    # overlap, then leave five connections for administration and other jobs.
-    ceiling = 8  # two roles × two instances × one pool connection × two envs
+    # rollout. Budget both web environments (they share one Cloud SQL
+    # instance), double the steady pool ceiling for overlap, then leave five
+    # connections for administration and other jobs. Workers exist in
+    # production only.
+    ceiling = len(topology("storemink-web-prod")) * WORKER_MAX_INSTANCES * WORKER_POOL
     for web in web_services:
         template = web["spec"]["template"]
         env = {e["name"]: e.get("value") for e in template["spec"]["containers"][0].get("env", [])}
@@ -119,7 +131,7 @@ def main():
     args = parser.parse_args()
     workers = topology(args.web)
     if args.plan or not (args.deploy or args.route_schedulers):
-        print(json.dumps({"workers": workers, "memoryEach": "2Gi", "concurrencyEach": 1, "maxInstancesEach": 2, "dbConnectionsPerInstance": 1}, indent=2))
+        print(json.dumps({"workers": workers, "memoryEach": "2Gi", "concurrencyEach": 1, "maxInstancesEach": WORKER_MAX_INSTANCES, "dbConnectionsPerInstance": WORKER_POOL}, indent=2))
         return
 
     def gcloud(*command, allow_missing=False):

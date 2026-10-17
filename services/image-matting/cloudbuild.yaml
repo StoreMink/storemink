@@ -1,0 +1,33 @@
+# Builds and pushes the image-matting image (docs/image-matting-service.md).
+#
+#   gcloud builds submit services/image-matting \
+#     --config=services/image-matting/cloudbuild.yaml \
+#     --project=storemink-prod \
+#     --substitutions=_TAG=lite
+#
+# For the full model add:
+#   _TAG=full,_MODEL_NAME=birefnet-full,_MODEL_URL=<url>,_MODEL_SHA256=<sha>
+# (the values are in the Dockerfile's header).
+#
+# Deliberately NOT part of the web service's cloudbuild.yaml yet: the image
+# only changes when the model or this service changes, and the web deploy
+# should not rebuild a 1 GB image on every merge.
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag=${_REGISTRY}/image-matting:${_TAG}
+      - --build-arg=MODEL_NAME=${_MODEL_NAME}
+      - --build-arg=MODEL_URL=${_MODEL_URL}
+      - --build-arg=MODEL_SHA256=${_MODEL_SHA256}
+      - .
+images:
+  - ${_REGISTRY}/image-matting:${_TAG}
+substitutions:
+  _REGISTRY: asia-south1-docker.pkg.dev/storemink-prod/storemink
+  _TAG: lite
+  _MODEL_NAME: birefnet-lite
+  _MODEL_URL: https://github.com/ZhengPeng7/BiRefNet/releases/download/v1/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx
+  _MODEL_SHA256: 5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333
+timeout: 1800s

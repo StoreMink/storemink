@@ -48,6 +48,8 @@ db-data.sql
 
 # The capture job installs its own dependency (Track 3.6).
 /jobs/*/node_modules
+# So does the image-matting service (services/image-matting).
+/services/*/node_modules
 
 # Third-party reference screenshots for the Theme Studio benchmark (never commit).
 /.theme-studio-references/
