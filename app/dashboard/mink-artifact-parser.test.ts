@@ -274,10 +274,23 @@ describe("readMinkArtifacts", () => {
       creditSource: "plan",
     };
     expect(readMinkArtifacts([valid])).toEqual([valid]);
+    // A catalogue photo lives one folder down, still in our own bucket.
+    const productPhoto = {
+      ...valid,
+      url: "https://storage.googleapis.com/sm-media/stores/a0000000-0000-4000-8000-000000000001/mink-generated/product-photos/33333333-3333-4333-8333-333333333333.jpg",
+      purpose: "product",
+      aspectRatio: "3:4",
+    };
+    expect(readMinkArtifacts([productPhoto])).toEqual([productPhoto]);
 
     expect(
       readMinkArtifacts([
         { ...valid, url: "https://attacker.example/pixel.jpg" },
+        // Any other subfolder is still refused.
+        {
+          ...valid,
+          url: "https://storage.googleapis.com/sm-media/stores/a0000000-0000-4000-8000-000000000001/mink-generated/other/33333333-3333-4333-8333-333333333333.jpg",
+        },
         // A real host, a real-looking path, and NOT under mink-generated: the
         // near miss a prefix-only check would let through.
         {
@@ -292,6 +305,81 @@ describe("readMinkArtifacts", () => {
         { ...valid, referenceImageCount: 5 },
         { ...valid, alt: "" },
         { ...valid, creditSource: "attacker" },
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("navigation artifacts", () => {
+  it("restores a prefill of any form kind and a known spotlight target", () => {
+    const [offer, shipping, highlight] = readMinkArtifacts([
+      {
+        type: "navigation",
+        title: "Open New offer filled in",
+        label: "New offer",
+        path: "/dashboard/offers/new?prefill=mink",
+        prefill: {
+          kind: "offer",
+          fields: {
+            name: "Diwali",
+            reward_type: "percent_off",
+            reward_value: 10,
+          },
+        },
+      },
+      {
+        type: "navigation",
+        title: "Open Shipping & delivery filled in",
+        label: "Shipping & delivery",
+        path: "/dashboard/settings/shipping?prefill=mink",
+        prefill: { kind: "shipping", fields: { mode: "flat", flat_rate: 49 } },
+      },
+      {
+        type: "navigation",
+        title: "Show Delivery rate",
+        label: "Shipping & delivery",
+        path: "/dashboard/settings/shipping",
+        highlight: { target: "shipping_rate_mode", label: "x".repeat(200) },
+      },
+    ]);
+    expect(offer).toMatchObject({
+      type: "navigation",
+      prefill: {
+        kind: "offer",
+        fields: { name: "Diwali", rewardType: "percent_off", rewardValue: 10 },
+      },
+    });
+    expect(shipping).toMatchObject({
+      prefill: { kind: "shipping", fields: { mode: "flat", flatRate: 49 } },
+    });
+    expect(highlight).toMatchObject({
+      highlight: { target: "shipping_rate_mode", label: "Delivery rate" },
+    });
+  });
+
+  it("drops a navigation whose prefill kind or spotlight target is unknown", () => {
+    expect(
+      readMinkArtifacts([
+        {
+          type: "navigation",
+          title: "t",
+          label: "l",
+          path: "/dashboard/x",
+          prefill: { kind: "settings", fields: { secret: "x" } },
+        },
+        {
+          type: "navigation",
+          title: "t",
+          label: "l",
+          path: "/dashboard/x",
+          highlight: { target: "delete_everything" },
+        },
+        {
+          type: "navigation",
+          title: "t",
+          label: "l",
+          path: "https://evil.example/dashboard",
+        },
       ]),
     ).toEqual([]);
   });

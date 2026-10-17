@@ -3,6 +3,7 @@ import "server-only";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { MinkActorContext, MinkToolDeclaration } from "./types";
+import { minkReplyLanguageInstruction } from "./reply-language";
 
 const PROMPT_DOCUMENT_PATH = join(
   process.cwd(),
@@ -18,6 +19,7 @@ const PLACEHOLDERS = [
   "selected_resource_type",
   "available_tool_names",
   "brand_voice_or_default",
+  "reply_language",
 ] as const;
 
 type PromptPlaceholder = (typeof PLACEHOLDERS)[number];
@@ -28,6 +30,7 @@ type PromptActor = Pick<
   | "currentPath"
   | "selectedResource"
   | "brandVoice"
+  | "replyLanguage"
 >;
 
 let productionTemplate: string | null = null;
@@ -46,6 +49,7 @@ export function renderMinkSystemInstruction(
     brand_voice_or_default:
       actor.brandVoice ??
       "Use a warm, clear and honest voice. Never invent facts.",
+    reply_language: minkReplyLanguageInstruction(actor.replyLanguage),
   };
   return getMinkSystemPromptTemplate().replace(
     /\{\{([a-z_]+)\}\}/g,

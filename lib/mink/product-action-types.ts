@@ -12,6 +12,10 @@ export const MINK_DOMAIN_ACTION_TOOLS = [
   "update_coupon",
   "create_customer_group",
   "update_customer_group",
+  // ★ Categories are navigation, not money or stock: a category can be
+  // created active, and a human still approves every field on the card.
+  "create_category",
+  "update_category",
   // ★★ THREE TOOLS, NOT TWO, and the third is the whole point. An offer is
   // created DISABLED and activating it is its OWN approval with its own preview
   // (plan §14c). "Mink is capable of everything" and "one approval does
@@ -141,6 +145,8 @@ export const MINK_ACTION_TOOL_LABELS: Record<MinkActionTool, string> = {
   update_coupon: "Disabled coupon updates",
   create_customer_group: "Customer-group creation",
   update_customer_group: "Customer-group updates",
+  create_category: "Category creation",
+  update_category: "Category updates",
   adjust_inventory: "Single-SKU inventory adjustments",
   bulk_adjust_inventory: "Bulk inventory adjustments",
   transition_order_status: "Delivery order-status transitions",

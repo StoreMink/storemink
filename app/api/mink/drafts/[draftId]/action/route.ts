@@ -155,6 +155,14 @@ function invalidate(type: MinkDomainResourceType, id: string | null) {
     revalidatePath("/dashboard/marketing/coupons");
     if (id) revalidatePath(`/dashboard/marketing/coupons/${id}/edit`);
     revalidateTag(TAGS.coupons, "max");
+  } else if (type === "category") {
+    // The same paths and tag `revalidateCatalog` in category-actions.ts
+    // busts, so a category Mink created reaches the storefront as fast as one
+    // saved in the dialog.
+    revalidatePath("/dashboard/categories");
+    revalidatePath("/dashboard/products");
+    revalidatePath("/shop");
+    revalidateTag(TAGS.categories, "max");
   } else {
     revalidatePath("/dashboard/users/user_groups");
     if (id) revalidatePath(`/dashboard/users/user_groups/${id}/edit`);

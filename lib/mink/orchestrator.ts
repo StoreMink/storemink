@@ -54,7 +54,23 @@ export async function runMinkAgent(input: {
   // singleton shared by every request in the container, so a memo living
   // there would serve one store's reads to another. This map dies with the run.
   const memo = new Map<string, MinkToolResponse>();
-  let turn = await session.sendUserMessage(message);
+  // ★ TEXT IS RELEASED AS IT STREAMS, AND WITHDRAWN WHEN IT WAS WORKING-OUT.
+  // A turn that ends in a function call is the model reasoning towards a
+  // tool, never the answer the run returns, so its fragments are reset
+  // before the tool runs; only the turn that comes back without a call is
+  // the text the merchant keeps, and that is exactly what `text` below is.
+  let streamed = 0;
+  const streamOptions = {
+    onDelta: (text: string) => {
+      streamed += text.length;
+      void onEvent?.({ type: "text_delta", text });
+    },
+    onReset: () => {
+      streamed = 0;
+      void onEvent?.({ type: "text_reset" });
+    },
+  };
+  let turn = await session.sendUserMessage(message, streamOptions);
   // The first prompt is a run-level baseline, not a counter. Copy the first
   // turn whole so a provider that omits its usage leaves the baseline UNKNOWN;
   // a later, larger tool-response prompt must never be mistaken for turn one.
@@ -63,6 +79,10 @@ export async function runMinkAgent(input: {
   onProgress?.({ steps, toolCalls, retryCount, usage: { ...usage } });
 
   while (turn.functionCalls.length > 0) {
+    if (streamed > 0) {
+      streamed = 0;
+      await onEvent?.({ type: "text_reset" });
+    }
     // ★★ THE MODEL HAS ALREADY SPENT THIS TURN. The production offer-banner
     // trace reached turn 12 after successfully creating its image, then
     // returned another function call. Rejecting at the top of this loop threw
@@ -205,7 +225,7 @@ export async function runMinkAgent(input: {
     }
     steps += 1;
     onProgress?.({ steps, toolCalls, retryCount, usage: { ...usage } });
-    turn = await session.sendToolResponses(responses);
+    turn = await session.sendToolResponses(responses, streamOptions);
     usage = addUsage(usage, turn.usage);
     retryCount += turn.retryCount;
     onProgress?.({ steps, toolCalls, retryCount, usage: { ...usage } });
@@ -268,6 +288,7 @@ const PRODUCED_ARTIFACTS: ReadonlySet<MinkArtifact["type"]> = new Set([
   "media_image_proposal",
   "workflow",
   "clarification",
+  "navigation",
 ]);
 
 /**

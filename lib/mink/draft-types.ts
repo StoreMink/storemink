@@ -1,4 +1,5 @@
 import { parseMinkProductImages } from "./product-images";
+import { isMinkGeneratedCampaignArtUrl } from "./media-generation-contract";
 import { parseMinkBulkPriceDraftLines } from "./bulk-price-policy";
 export {
   MAX_MINK_BULK_PRICE_LINES,
@@ -18,6 +19,9 @@ export const MINK_DRAFT_KINDS = [
   "coupon_update",
   "customer_group_create",
   "customer_group_update",
+  "category_create",
+  "category_update",
+  "social_post",
   "inventory_adjustment",
   "bulk_inventory_adjustment",
   "order_status_transition",
@@ -564,6 +568,42 @@ export const MINK_DRAFT_CONFIG: Record<
   coupon_update: couponActionConfig("Disabled coupon update"),
   customer_group_create: customerGroupActionConfig("New customer group"),
   customer_group_update: customerGroupActionConfig("Customer-group update"),
+  category_create: categoryActionConfig("New category"),
+  category_update: categoryActionConfig("Category update"),
+  social_post: {
+    label: "Social posts",
+    expectedCredits: 2,
+    fields: [
+      {
+        key: "instagram",
+        label: "Instagram caption",
+        required: true,
+        multiline: true,
+        maxLength: 2_200,
+      },
+      {
+        key: "facebook",
+        label: "Facebook post",
+        required: false,
+        multiline: true,
+        maxLength: 3_000,
+      },
+      {
+        key: "whatsapp",
+        label: "WhatsApp status",
+        required: false,
+        multiline: true,
+        maxLength: 1_000,
+      },
+      {
+        key: "hashtags",
+        label: "Hashtags",
+        required: false,
+        multiline: false,
+        maxLength: 300,
+      },
+    ],
+  },
   inventory_adjustment: {
     label: "Inventory adjustment",
     expectedCredits: 1,
@@ -817,6 +857,50 @@ function customerGroupActionConfig(label: string) {
   };
 }
 
+function categoryActionConfig(label: string) {
+  return {
+    label,
+    expectedCredits: 1,
+    fields: [
+      {
+        key: "name",
+        label: "Category name",
+        required: true,
+        multiline: false,
+        maxLength: 120,
+      },
+      {
+        key: "slug",
+        label: "URL slug",
+        required: true,
+        multiline: false,
+        maxLength: 200,
+      },
+      {
+        key: "description",
+        label: "Description",
+        required: false,
+        multiline: true,
+        maxLength: 1_000,
+      },
+      {
+        key: "image_url",
+        label: "Image",
+        required: false,
+        multiline: false,
+        maxLength: 2_048,
+      },
+      {
+        key: "status",
+        label: "Visibility",
+        required: true,
+        multiline: false,
+        maxLength: 20,
+      },
+    ],
+  };
+}
+
 export function isMinkDraftKind(value: unknown): value is MinkDraftKind {
   return MINK_DRAFT_KINDS.includes(value as MinkDraftKind);
 }
@@ -890,9 +974,11 @@ export function normalizeMinkDraftContent(
       urls[0] !== result.image_url
     )
       throw new Error("The primary photo must be the first gallery photo.");
-    if (urls.some((url) => url.includes("/mink-generated/")))
+    // Campaign art never becomes a product photo; a catalogue photo Mink
+    // generated for the product (its own folder) may.
+    if (urls.some((url) => isMinkGeneratedCampaignArtUrl(url)))
       throw new Error(
-        "Use an authentic uploaded product photo, not generated artwork.",
+        "Use an uploaded product photo or a catalogue photo Mink generated for this product, not campaign artwork.",
       );
   }
   if (kind === "inventory_adjustment") {

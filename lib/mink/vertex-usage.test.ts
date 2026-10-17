@@ -53,7 +53,16 @@ function session() {
 describe("Vertex usage mapping", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    h.create.mockReturnValue({ sendMessage: h.send });
+    // The client streams every turn; one buffered reply becomes a one-chunk
+    // stream so these tests keep asserting on the same send and response.
+    h.create.mockReturnValue({
+      sendMessageStream: async (params: unknown) => {
+        const response = await h.send(params);
+        return (async function* () {
+          yield response;
+        })();
+      },
+    });
     h.send.mockResolvedValue(reply({}));
   });
 

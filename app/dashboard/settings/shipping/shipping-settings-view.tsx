@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { Check, ExternalLink, Truck } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -13,6 +18,12 @@ import type {
   ShippingRateMode,
   ShippingSettings,
 } from "@/lib/shipping/types";
+import {
+  hasMinkPrefillParam,
+  takeMinkPrefill,
+  MINK_PREFILL_PARAM,
+  type MinkShippingPrefill,
+} from "@/lib/mink/form-prefill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,6 +55,30 @@ function numberValue(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/**
+ * Fields Mink filled in for these settings, read once and cleared.
+ *
+ * ★ Only on `/dashboard/settings/shipping?prefill=mink`, and only on the
+ * client (the lazy initialiser runs on the server too, where there is no
+ * window). The product editor follows the same shape. Live Shiprocket rates
+ * are offered only when the channel is connected, so a prefill asking for
+ * them on a store without it keeps the current mode: the page would refuse
+ * that choice at the button, and refuses it here the same way.
+ */
+function minkPrefilledShipping(
+  shiprocketEnabled: boolean,
+): Partial<ShippingSettings> | null {
+  if (typeof window === "undefined") return null;
+  if (!hasMinkPrefillParam(window.location.search)) return null;
+  const prefill: MinkShippingPrefill | null = takeMinkPrefill("shipping");
+  if (!prefill) return null;
+  const fields: Partial<ShippingSettings> = { ...prefill };
+  if (prefill.mode === "shiprocket" && !shiprocketEnabled) delete fields.mode;
+  return fields;
+}
+
+const subscribeToNothing = () => () => {};
+
 export function ShippingSettingsView({
   initial,
   canManage,
@@ -51,9 +86,32 @@ export function ShippingSettingsView({
   initial: ShippingSettingsState;
   canManage: boolean;
 }) {
-  const [settings, setSettings] = useState<ShippingSettings>(initial.settings);
+  // ★ MERGED OVER THE LOADED SETTINGS, in the lazy initialiser, so a reload
+  // starts from what is saved. `freeAbove: null` in the prefill clears the
+  // threshold, the contract's meaning for it. The notice waits for hydration:
+  // the server rendered none, and adding one during hydration would make React
+  // throw the page away and draw it again.
+  const [minkPrefill] = useState(() =>
+    minkPrefilledShipping(initial.shiprocketEnabled),
+  );
+  const hydrated = useSyncExternalStore(
+    subscribeToNothing,
+    () => true,
+    () => false,
+  );
+  useEffect(() => {
+    if (!minkPrefill) return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(MINK_PREFILL_PARAM)) return;
+    url.searchParams.delete(MINK_PREFILL_PARAM);
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, [minkPrefill]);
+  const [settings, setSettings] = useState<ShippingSettings>(() => ({
+    ...initial.settings,
+    ...minkPrefill,
+  }));
   const [freeThreshold, setFreeThreshold] = useState(
-    initial.settings.freeAbove !== null,
+    () => settings.freeAbove !== null,
   );
   const [isPending, startTransition] = useTransition();
 
@@ -85,6 +143,15 @@ export function ShippingSettingsView({
         <h1>Shipping &amp; delivery</h1>
         <p>Control the prices and delivery dates shown at checkout.</p>
       </header>
+
+      {minkPrefill && hydrated && (
+        <p
+          role="status"
+          className="mt-4 rounded-md border border-[var(--dash-border)] bg-[var(--dash-accent-soft)] px-3 py-2 text-[13px] text-[var(--dash-text)]"
+        >
+          Filled in by Mink AI. Review every field before saving.
+        </p>
+      )}
 
       <section className="dash-card mt-6 p-5">
         <div className="mb-4 flex items-start gap-3">

@@ -10,15 +10,23 @@
 // the generated asset immediately also lets a same-run layout proposal prove
 // ownership without a manual hand-off.
 //
-// ★★ WHAT MAKES THIS SAFE IS STRUCTURAL, NOT A WORD FILTER. A generated
-// picture must never be presented as the ORIGINAL catalogue photograph of
-// goods the shop actually sells. That is guaranteed by the shape of the system
-// rather than by inspecting prompts: **Mink has no tool that writes
-// `products.images`**, and 9D means the only place a generated URL can land is
-// a layout section the merchant separately approves. Generated campaign art
-// may now be grounded in the authentic product image, but cannot overwrite or
-// become that source. Keep it that way — adding a product-image write is what
-// would turn this feature into a liability.
+// ★★ WHAT MAKES THIS SAFE IS STRUCTURAL, NOT A WORD FILTER. Campaign art
+// (hero, banner, gallery, feature, blog cover) must never be presented as the
+// catalogue photograph of goods the shop actually sells, and that is
+// guaranteed by the shape of the system rather than by inspecting prompts:
+// `propose_product_images` refuses any URL under the campaign-art folder, so
+// the only place such a picture can land is a layout section or a blog cover
+// the merchant separately approves.
+//
+// ★★ A CATALOGUE PHOTO IS THE ONE EXCEPTION, AND IT IS GROUNDED BY RULE
+// (owner's decision, 2026-10-17). Purpose `product` makes a clean studio
+// photograph OF AN EXISTING ITEM: the proposal path refuses it unless at least
+// one reference is the product's own photo or an image the merchant attached,
+// so Mink never invents goods from a description; the picture is stored under
+// its own folder (`MINK_GENERATED_PRODUCT_PHOTO_FOLDER`), which is the only
+// generated folder the product-photo proposal accepts; and it still reaches
+// `products.images` only through that proposal's human approval. Every
+// generated image, this one included, carries SynthID.
 //
 // ⚠ THE COROLLARY, AND IT IS NOT DECORATIVE: a keyword blocklist for brands or
 // products would be security theatre. It would fail on every misspelling and
@@ -53,8 +61,18 @@ export const MINK_MEDIA_PURPOSES = [
   "feature",
   "banner",
   "blog_cover",
+  "product",
 ] as const;
 export type MinkMediaPurpose = (typeof MINK_MEDIA_PURPOSES)[number];
+
+/**
+ * The shape a store's product cards render a photo in (`cardPhoto` in the
+ * published storefront appearance). A catalogue photo is generated in that
+ * shape, so the card shows the whole picture instead of cropping it.
+ * ★ SET BY THE SERVER, never by the model: the proposal path reads it from
+ *   the store, which is why it is not a key the request validator accepts.
+ */
+export type MinkProductPhotoShape = "portrait" | "square";
 
 export interface MinkMediaPurposeSpec {
   label: string;
@@ -92,6 +110,13 @@ export const MINK_MEDIA_PURPOSE_SPECS: Record<
     label: "Blog cover",
     aspectRatio: "16:9",
     placement: "the editorial cover above a blog post",
+  },
+  product: {
+    label: "Catalogue product photo",
+    // The portrait card is the storefront default; a square-card store gets
+    // 1:1 through `aspectRatioFor(purpose, "square")`.
+    aspectRatio: "3:4",
+    placement: "the product's own photo on its card and page, once approved",
   },
 };
 
@@ -132,6 +157,8 @@ export interface MinkMediaGenerationRequest {
    *   picture deciding whether to keep it.
    */
   alt: string;
+  /** Only for purpose `product`; read from the store, never from the caller. */
+  productPhotoShape?: MinkProductPhotoShape;
 }
 
 export function validateMinkMediaGenerationRequest(
@@ -217,8 +244,15 @@ export function validateMinkMediaGenerationRequest(
   };
 }
 
-/** The aspect the purpose pins. Never taken from the caller. */
-export function aspectRatioFor(purpose: MinkMediaPurpose): string {
+/**
+ * The aspect the purpose pins. Never taken from the caller: a catalogue
+ * photo follows the store's card shape, which the server reads.
+ */
+export function aspectRatioFor(
+  purpose: MinkMediaPurpose,
+  productPhotoShape?: MinkProductPhotoShape,
+): string {
+  if (purpose === "product" && productPhotoShape === "square") return "1:1";
   return MINK_MEDIA_PURPOSE_SPECS[purpose].aspectRatio;
 }
 
@@ -262,6 +296,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Where every generated object lives, under the store's own GCS prefix. */
 export const MINK_GENERATED_MEDIA_FOLDER = "mink-generated";
+/**
+ * Where a generated CATALOGUE photo lives: a subfolder, so it is still a
+ * generated object to every existing check (the stored-image reader, the
+ * Media Library's source backfill, the parser's own-bucket rule) while the
+ * product-photo proposal can tell it from campaign art by its path alone.
+ */
+export const MINK_GENERATED_PRODUCT_PHOTO_FOLDER = `${MINK_GENERATED_MEDIA_FOLDER}/product-photos`;
+
+/** A URL under the campaign-art folder: never a product's catalogue photo. */
+export function isMinkGeneratedCampaignArtUrl(url: string): boolean {
+  return (
+    url.includes(`/${MINK_GENERATED_MEDIA_FOLDER}/`) &&
+    !isMinkGeneratedProductPhotoUrl(url)
+  );
+}
+
+/** A URL under the catalogue-photo folder: generated for one product's photo. */
+export function isMinkGeneratedProductPhotoUrl(url: string): boolean {
+  return url.includes(`/${MINK_GENERATED_PRODUCT_PHOTO_FOLDER}/`);
+}
 
 export class MinkMediaContentError extends Error {
   constructor(message: string) {

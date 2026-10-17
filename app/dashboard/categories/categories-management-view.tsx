@@ -2,7 +2,13 @@
 
 import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
 
-import { useMemo, useState, useTransition } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import Image from "next/image";
@@ -32,6 +38,12 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { deleteCategory } from "@/app/actions/category-actions";
+import {
+  hasMinkPrefillParam,
+  takeMinkPrefill,
+  MINK_PREFILL_PARAM,
+  type MinkCategoryPrefill,
+} from "@/lib/mink/form-prefill";
 import { ImportExportMenu } from "@/app/dashboard/components/import-export-menu";
 import { CategoryEditorDialog } from "./category-editor-dialog";
 import type { Category } from "./page";
@@ -40,6 +52,21 @@ type Props = {
   categories: Category[];
   canManage?: boolean;
 };
+
+/**
+ * Fields Mink filled in for a new category, read once and cleared.
+ *
+ * ★ Only on `/dashboard/categories?prefill=mink`, and only on the client (the
+ * lazy initialiser runs on the server too, where there is no window). The
+ * product editor follows the same shape.
+ */
+function minkPrefilledCategory(): MinkCategoryPrefill | null {
+  if (typeof window === "undefined") return null;
+  if (!hasMinkPrefillParam(window.location.search)) return null;
+  return takeMinkPrefill("category");
+}
+
+const subscribeToNothing = () => () => {};
 
 export function CategoriesManagementView({
   categories,
@@ -51,6 +78,23 @@ export function CategoriesManagementView({
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
+  // ★ A waiting prefill opens the editor in "new category" mode, but only
+  // once hydrated: the server rendered no dialog, and opening one during
+  // hydration would make React throw the page away and draw it again.
+  const [minkPrefill, setMinkPrefill] = useState(minkPrefilledCategory);
+  const hydrated = useSyncExternalStore(
+    subscribeToNothing,
+    () => true,
+    () => false,
+  );
+  const minkOpen = hydrated && minkPrefill !== null;
+  useEffect(() => {
+    if (!minkPrefill) return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(MINK_PREFILL_PARAM)) return;
+    url.searchParams.delete(MINK_PREFILL_PARAM);
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, [minkPrefill]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return categories;
@@ -83,6 +127,7 @@ export function CategoriesManagementView({
   const closeEditor = () => {
     setEditorOpen(false);
     setEditing(null);
+    setMinkPrefill(null);
   };
 
   const handleSaved = () => {
@@ -283,8 +328,9 @@ export function CategoriesManagementView({
       </Dialog>
 
       <CategoryEditorDialog
-        open={editorOpen}
+        open={editorOpen || minkOpen}
         category={editing}
+        prefill={minkPrefill}
         onClose={closeEditor}
         onSaved={handleSaved}
       />

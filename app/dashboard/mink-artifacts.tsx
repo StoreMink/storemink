@@ -4,10 +4,17 @@ import {
   Boxes,
   ChartNoAxesCombined,
   CircleHelp,
+  ExternalLink,
   MapPin,
   PackageSearch,
   PanelsTopLeft,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import {
+  MINK_PREFILL_LABELS,
+  minkPrefillPath,
+  storeMinkPrefill,
+} from "@/lib/mink/form-prefill";
 import type { MinkArtifact } from "@/lib/mink/types";
 import { MinkProductImportCard } from "./mink-product-import-card";
 import { MinkProposalCard } from "./mink-proposal-card";
@@ -17,6 +24,8 @@ import { MinkMediaProposalCard } from "./mink-media-proposal-card";
 import { MinkStorefrontLayoutProposalCard } from "./mink-storefront-layout-proposal-card";
 import { MinkWorkflowCard } from "./mink-workflow-card";
 import { MinkBuilderProposalCard } from "./mink-builder-proposal-card";
+import { MinkLink } from "./mink-link";
+import { MinkChartCard } from "./mink-chart";
 
 export function MinkArtifacts({
   artifacts,
@@ -49,6 +58,22 @@ export function MinkArtifacts({
               promptDisabled={promptDisabled}
             />
           );
+        if (artifact.type === "navigation") {
+          return (
+            <NavigationArtifact
+              key={`${artifact.type}-${artifact.path}-${index}`}
+              artifact={artifact}
+            />
+          );
+        }
+        if (artifact.type === "chart") {
+          return (
+            <MinkChartCard
+              key={`${artifact.type}-${index}`}
+              artifact={artifact}
+            />
+          );
+        }
         if (artifact.type === "clarification") {
           return (
             <ClarificationArtifact
@@ -142,6 +167,109 @@ export function MinkArtifacts({
       })}
     </div>
   );
+}
+
+/**
+ * Open a page Mink was asked for, with the chat staying open beside it.
+ *
+ * ★ A BUTTON THAT NAVIGATES CLIENT-SIDE, so the answer this card sits in is
+ * still on screen when the merchant looks back; the panel also opens it on
+ * its own when the artifact arrives live (DashboardChat). A product prefill
+ * is written to session storage immediately before the navigation, where the
+ * new-product form reads and clears it on its first render.
+ */
+export function openMinkNavigation(
+  artifact: Extract<MinkArtifact, { type: "navigation" }>,
+  push: (path: string) => void,
+) {
+  if (artifact.prefill) {
+    storeMinkPrefill(artifact.prefill);
+    push(minkPrefillPath(artifact.prefill.kind));
+    return;
+  }
+  push(safeHref(artifact.path) ? artifact.path : "/dashboard");
+}
+
+function NavigationArtifact({
+  artifact,
+}: {
+  artifact: Extract<MinkArtifact, { type: "navigation" }>;
+}) {
+  const router = useRouter();
+  return (
+    <section className="overflow-hidden rounded-2xl border border-[#ded8f4] bg-[#fcfbff] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+      <ArtifactHeader
+        title={artifact.title}
+        icon={<PanelsTopLeft className="h-3.5 w-3.5" />}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-2 p-3">
+        <p className="text-xs leading-5 text-[#29272d]">
+          {artifact.prefill
+            ? `${capitalise(MINK_PREFILL_LABELS[artifact.prefill.kind])} opens with ${describePrefill(artifact.prefill.fields)} filled in. Review it and save when you are happy.`
+            : artifact.highlight
+              ? `${artifact.highlight.label} is pointed out on the page. ${artifact.highlight.hint ?? ""}`.trim()
+              : "This chat stays open while you look."}
+        </p>
+        <button
+          type="button"
+          onClick={() =>
+            openMinkNavigation(artifact, (path) => router.push(path))
+          }
+          className="inline-flex items-center gap-1 rounded-full bg-[#6d4dff] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#5b3fd0]"
+        >
+          {artifact.label}
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </button>
+      </div>
+    </section>
+  );
+}
+
+const PREFILL_FIELD_WORDS: Record<string, string> = {
+  name: "the name",
+  title: "the title",
+  description: "a description",
+  excerpt: "an excerpt",
+  body: "the text",
+  seoTitle: "SEO text",
+  seoDescription: "SEO text",
+  basePrice: "prices",
+  sellingPrice: "prices",
+  rewardType: "the reward",
+  rewardValue: "the reward",
+  minSubtotal: "a minimum order",
+  delivery: "how it applies",
+  code: "the code",
+  budget: "a budget",
+  validUntil: "an end date",
+  slug: "the URL",
+  status: "visibility",
+  category: "a category",
+  tags: "tags",
+  mode: "the rate mode",
+  flatRate: "the flat rate",
+  freeAbove: "the free-delivery threshold",
+  manualMinDays: "delivery days",
+  manualMaxDays: "delivery days",
+  handlingDays: "handling time",
+};
+
+function capitalise(text: string) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function describePrefill(fields: object) {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(
+    fields as Record<string, unknown>,
+  )) {
+    if (value === undefined) continue;
+    const word = PREFILL_FIELD_WORDS[key];
+    if (word && !parts.includes(word)) parts.push(word);
+  }
+  if (parts.length === 0) return "some details";
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
 function ClarificationArtifact({
@@ -257,12 +385,12 @@ function CatalogArtifact({
                       </div>
                     </div>
                     {safeHref(location.dashboardPath) ? (
-                      <a
+                      <MinkLink
                         href={location.dashboardPath}
                         className="shrink-0 text-[9px] font-medium text-[#5b3fd0] hover:underline"
                       >
                         Open inventory
-                      </a>
+                      </MinkLink>
                     ) : null}
                   </div>
                   <div className="mt-1.5 grid grid-cols-2 gap-1.5">
@@ -332,12 +460,12 @@ function CatalogArtifact({
                 Products &amp; variants
               </h4>
               {safeHref(artifact.inventoryDashboardPath) ? (
-                <a
+                <MinkLink
                   href={artifact.inventoryDashboardPath}
                   className="text-[10px] font-medium text-[#5b3fd0] hover:underline"
                 >
                   Open inventory
-                </a>
+                </MinkLink>
               ) : null}
             </div>
             <div className="mt-1 divide-y divide-[#eeeeef]">
@@ -346,12 +474,12 @@ function CatalogArtifact({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       {safeHref(item.dashboardPath) ? (
-                        <a
+                        <MinkLink
                           href={item.dashboardPath}
                           className="block truncate text-xs font-semibold text-[#29272d] hover:text-[#5b3fd0] hover:underline"
                         >
                           {item.title}
-                        </a>
+                        </MinkLink>
                       ) : (
                         <div className="truncate text-xs font-semibold text-[#29272d]">
                           {item.title}
@@ -526,12 +654,12 @@ function RecordArtifact({
             >
               <div className="min-w-0">
                 {safeHref(record.dashboardPath) ? (
-                  <a
+                  <MinkLink
                     href={record.dashboardPath}
                     className="block truncate text-xs font-semibold text-[#2f2460] hover:underline"
                   >
                     {record.title}
-                  </a>
+                  </MinkLink>
                 ) : (
                   <div className="truncate text-xs font-semibold text-[#2f2460]">
                     {record.title}
@@ -589,7 +717,7 @@ function SourceArtifact({
       />
       <div className="divide-y divide-[#eeeeef] px-3">
         {artifact.sources.map((source) => (
-          <a
+          <MinkLink
             key={source.url}
             href={safeHref(source.url) ? source.url : undefined}
             target="_blank"
@@ -605,7 +733,7 @@ function SourceArtifact({
                 {source.excerpt}
               </div>
             ) : null}
-          </a>
+          </MinkLink>
         ))}
       </div>
     </section>
@@ -628,13 +756,13 @@ function ArtifactHeader({
         {title}
       </span>
       {safeHref(href) ? (
-        <a
+        <MinkLink
           href={href}
           className="rounded p-1 hover:bg-[#eee9ff]"
           aria-label={`Open ${title}`}
         >
           <ArrowUpRight className="h-3.5 w-3.5" />
-        </a>
+        </MinkLink>
       ) : null}
     </header>
   );

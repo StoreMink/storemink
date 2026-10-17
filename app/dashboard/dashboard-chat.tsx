@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
+  Check,
   FileText,
   LoaderCircle,
   Maximize2,
@@ -15,6 +16,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RotateCcw,
+  Sparkles,
   Square,
   Trash2,
   X,
@@ -28,9 +30,31 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useChat } from "./chat-context";
 import { MinkAnswer } from "./mink-answer";
-import { ASSISTANT_NAME, type MinkConversationSummary } from "./mink-ai";
+import { openMinkNavigation } from "./mink-artifacts";
+import { suggestMinkFollowUps } from "@/lib/mink/follow-ups";
+import { MEMORY_KIND_LABELS } from "@/lib/mink/memory-suggestion";
+import {
+  MINK_REPLY_LANGUAGES,
+  readStoredMinkReplyLanguage,
+  storeMinkReplyLanguage,
+  type MinkReplyLanguage,
+} from "@/lib/mink/reply-language";
+import { MinkLink } from "./mink-link";
+import type { MinkMemoryPrompt } from "./mink-ai";
+import {
+  matchMinkSkills,
+  minkSlashQuery,
+  minkStarterSkills,
+  type MinkSkill,
+} from "@/lib/mink/skills";
+import {
+  ASSISTANT_NAME,
+  type MinkConversationSummary,
+  type MinkRunStep,
+} from "./mink-ai";
 import { MinkMark } from "./mink-mark";
 import { MinkMultimodalInput } from "./mink-multimodal-input";
 import { MinkArtifacts } from "./mink-artifacts";
@@ -146,6 +170,7 @@ export function DashboardChat({
     isChatOpen,
     isExpanded,
     canSaveMedia,
+    skills = [],
     closeChat,
     toggleExpand,
     messages,
@@ -158,6 +183,8 @@ export function DashboardChat({
     isHistoryLoading,
     deletingConversationId,
     statusText,
+    streamingText = "",
+    steps = [],
     error,
     feedbackSubmittingRunId,
     minkCredits,
@@ -168,9 +195,16 @@ export function DashboardChat({
     loadConversation,
     deleteConversation,
     submitFeedback,
+    memoryPrompt,
+    saveMemorySuggestion,
+    dismissMemorySuggestion,
+    showSpotlight,
   } = useChat();
   const isOverlay = variant === "overlay";
+  const router = useRouter();
+  const pathname = usePathname();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const openedNavigationRef = useRef<Set<number | string>>(new Set());
   const followLatestRef = useRef(true);
   const latestUserMessageIdRef = useRef<number | string | null>(null);
   const anchoredUserMessageIdRef = useRef<number | string | null>(null);
@@ -189,6 +223,40 @@ export function DashboardChat({
   const [deleteFailure, setDeleteFailure] = useState<string | null>(null);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  // The "/" skills menu: which match is highlighted, and the query the
+  // merchant dismissed with Escape (so the menu stays shut until they type).
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState<string | null>(null);
+  const slashQuery = minkSlashQuery(input);
+  const slashMatches =
+    slashQuery !== null && slashDismissed !== input
+      ? matchMinkSkills(skills, slashQuery).slice(0, 8)
+      : [];
+  const slashOpen = slashMatches.length > 0;
+
+  /**
+   * ★★ A NAVIGATION ARTIFACT THAT ARRIVED LIVE OPENS ITS PAGE ON ITS OWN.
+   * Live messages carry numeric ids (restored history carries strings), so a
+   * page is never re-opened by reloading a conversation; each message opens
+   * at most once. The full-view takeover collapses to the side panel and a
+   * phone-width panel closes, because the point is to look at the page with
+   * the chat still at hand, not to navigate behind a sheet that hides it.
+   */
+  useEffect(() => {
+    const latest = messages[messages.length - 1];
+    if (!latest || latest.role !== "assistant" || typeof latest.id !== "number")
+      return;
+    if (openedNavigationRef.current.has(latest.id)) return;
+    const navigation = latest.artifacts?.find(
+      (artifact) => artifact.type === "navigation",
+    );
+    if (!navigation || navigation.type !== "navigation") return;
+    openedNavigationRef.current.add(latest.id);
+    openMinkNavigation(navigation, (path) => router.push(path));
+    showSpotlight(navigation.highlight ?? null);
+    if (window.innerWidth < 640) closeChat();
+    else if (isExpanded) toggleExpand();
+  }, [messages, router, isExpanded, toggleExpand, closeChat, showSpotlight]);
 
   useEffect(() => {
     if (!isOverlay || !isChatOpen || !isExpanded) return;
@@ -333,6 +401,16 @@ export function DashboardChat({
     [send],
   );
 
+  const chooseSkill = useCallback(
+    (skill: MinkSkill) => {
+      setInput(skill.prompt);
+      setSlashDismissed(null);
+      setSlashIndex(0);
+      composerRef.current?.focus();
+    },
+    [setInput, setSlashDismissed, setSlashIndex],
+  );
+
   const jumpToLatest = useCallback(() => {
     const scroller = scrollRef.current;
     if (!scroller) return;
@@ -385,6 +463,13 @@ export function DashboardChat({
 
   const hasThread = messages.length > 0 || isReplying || Boolean(error);
   const creditWarning = minkCredits ? minkCreditWarning(minkCredits) : null;
+  const starterSkills = minkStarterSkills(skills, pathname);
+  const latestAssistantIndex = (() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "assistant") return index;
+    }
+    return -1;
+  })();
   const wrapperClass = isOverlay
     ? "mink-chat-surface fixed inset-0 z-[90] flex h-[100dvh] w-screen max-w-full min-h-0 flex-col overflow-hidden overscroll-none bg-white"
     : "mink-chat-surface dash-chat relative flex h-full flex-shrink-0 flex-col overflow-hidden overscroll-none border-l border-t border-[#e5e5e5] bg-white shadow-sm";
@@ -530,14 +615,40 @@ export function DashboardChat({
               <h3 className="mb-6 text-xl font-bold text-[#1a1a1a]">
                 I&apos;m {ASSISTANT_NAME}. How can I help?
               </h3>
-              <button
-                type="button"
-                onClick={() => sendFromChat("What's new?")}
-                className="flex items-center gap-2 rounded-full border border-[#e5e5e5] px-4 py-2 text-sm font-medium text-[#1a1a1a] shadow-sm transition-colors hover:bg-[#f9f9f9]"
-              >
-                <div className="h-2 w-2 rounded-full bg-[#6d4dff]" />
-                What&apos;s new?
-              </button>
+              {starterSkills.length > 0 ? (
+                <div
+                  className="flex max-w-md flex-wrap justify-center gap-2"
+                  aria-label="Suggested prompts"
+                >
+                  {starterSkills.map((skill) => (
+                    <button
+                      key={skill.id}
+                      type="button"
+                      onClick={() => sendFromChat(skill.prompt)}
+                      title={skill.description}
+                      className="flex items-center gap-2 rounded-full border border-[#e5e5e5] px-4 py-2 text-sm font-medium text-[#1a1a1a] shadow-sm transition-colors hover:bg-[#f9f9f9]"
+                    >
+                      <div className="h-2 w-2 rounded-full bg-[#6d4dff]" />
+                      {skill.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => sendFromChat("What's new?")}
+                  className="flex items-center gap-2 rounded-full border border-[#e5e5e5] px-4 py-2 text-sm font-medium text-[#1a1a1a] shadow-sm transition-colors hover:bg-[#f9f9f9]"
+                >
+                  <div className="h-2 w-2 rounded-full bg-[#6d4dff]" />
+                  What&apos;s new?
+                </button>
+              )}
+              {skills.length > 0 ? (
+                <p className="mt-4 text-[11px] text-[#8c9196]">
+                  Type <span className="font-semibold">/</span> in the box for
+                  saved prompts.
+                </p>
+              ) : null}
             </div>
           ) : (
             <div className="relative min-h-0 flex-1">
@@ -563,7 +674,7 @@ export function DashboardChat({
                 className="mink-message-scroll h-full min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-4 py-4"
               >
                 <div className={`${columnClass} space-y-4`}>
-                  {messages.map((message) =>
+                  {messages.map((message, index) =>
                     message.role === "user" ? (
                       <div
                         key={message.id}
@@ -586,6 +697,7 @@ export function DashboardChat({
                         className="mink-answer-row flex min-w-0 py-1"
                       >
                         <div className="min-w-0 flex-1">
+                          <MinkCheckedLine steps={message.toolSteps} />
                           <div className="pr-1">
                             <MinkAnswer text={message.text} />
                           </div>
@@ -594,6 +706,24 @@ export function DashboardChat({
                             onPrompt={sendFromChat}
                             promptDisabled={isReplying || isHistoryLoading}
                           />
+                          {index === latestAssistantIndex &&
+                          !isReplying &&
+                          !error ? (
+                            <MinkFollowUps
+                              message={message}
+                              disabled={isHistoryLoading}
+                              onPrompt={sendFromChat}
+                            />
+                          ) : null}
+                          {index === latestAssistantIndex &&
+                          !isReplying &&
+                          memoryPrompt ? (
+                            <MinkMemoryPromptCard
+                              prompt={memoryPrompt}
+                              onSave={() => void saveMemorySuggestion()}
+                              onDismiss={dismissMemorySuggestion}
+                            />
+                          ) : null}
                           <MinkFeedbackControls
                             message={message}
                             submitting={
@@ -607,11 +737,23 @@ export function DashboardChat({
                   )}
 
                   {isReplying && (
-                    <div className="flex gap-2.5" aria-live="polite">
-                      <MinkMark size="sm" />
-                      <div className="flex items-center gap-2 py-2 text-xs text-[#5c5f62]">
-                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6d4dff]" />
-                        {statusText ?? "Thinking…"}
+                    <div
+                      className="mink-answer-row flex min-w-0 py-1"
+                      aria-live="polite"
+                      data-testid="mink-pending-answer"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <MinkRunSteps steps={steps} />
+                        {streamingText ? (
+                          <div className="pr-1">
+                            <MinkAnswer text={streamingText} />
+                          </div>
+                        ) : null}
+                        <div className="flex items-center gap-2.5 py-2 text-xs text-[#5c5f62]">
+                          <MinkMark size="sm" />
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6d4dff]" />
+                          {statusText ?? "Thinking…"}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -697,13 +839,86 @@ export function DashboardChat({
                     className="flex w-full min-w-0 max-w-full flex-col gap-2 rounded-3xl border border-[#e5e5e5] bg-white px-3 py-3 shadow-sm transition-all focus-within:border-[#6d4dff] focus-within:ring-1 focus-within:ring-[#6d4dff]"
                   >
                     {attachment}
+                    {slashOpen ? (
+                      <div
+                        role="listbox"
+                        aria-label="Saved prompts"
+                        className="max-h-56 overflow-y-auto rounded-2xl border border-[#e9e6f3] bg-[#fcfbff] p-1"
+                      >
+                        {slashMatches.map((skill, index) => {
+                          const selected = index === slashIndex;
+                          return (
+                            <button
+                              key={skill.id}
+                              type="button"
+                              role="option"
+                              aria-selected={selected}
+                              onMouseEnter={() => setSlashIndex(index)}
+                              onClick={() => chooseSkill(skill)}
+                              className={`flex w-full items-baseline gap-2 rounded-xl px-3 py-2 text-left ${
+                                selected ? "bg-[#eee9ff]" : "hover:bg-[#f3f0fb]"
+                              }`}
+                            >
+                              <span className="shrink-0 text-xs font-semibold text-[#5b3fd0]">
+                                /{skill.slash}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-xs font-medium text-[#1a1a1a]">
+                                  {skill.label}
+                                </span>
+                                <span className="block truncate text-[10px] text-[#8c9196]">
+                                  {skill.description}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                     <textarea
                       ref={composerRef}
                       rows={1}
                       maxLength={MINK_MESSAGE_MAX_CHARS}
                       value={input}
-                      onChange={(event) => setInput(event.target.value)}
+                      onChange={(event) => {
+                        setSlashDismissed(null);
+                        setSlashIndex(0);
+                        setInput(event.target.value);
+                      }}
                       onKeyDown={(event) => {
+                        if (slashOpen) {
+                          if (event.key === "ArrowDown") {
+                            event.preventDefault();
+                            setSlashIndex(
+                              (current) => (current + 1) % slashMatches.length,
+                            );
+                            return;
+                          }
+                          if (event.key === "ArrowUp") {
+                            event.preventDefault();
+                            setSlashIndex(
+                              (current) =>
+                                (current - 1 + slashMatches.length) %
+                                slashMatches.length,
+                            );
+                            return;
+                          }
+                          if (
+                            (event.key === "Enter" && !event.shiftKey) ||
+                            event.key === "Tab"
+                          ) {
+                            event.preventDefault();
+                            const skill =
+                              slashMatches[slashIndex] ?? slashMatches[0];
+                            if (skill) chooseSkill(skill);
+                            return;
+                          }
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            setSlashDismissed(input);
+                            return;
+                          }
+                        }
                         if (
                           !shouldSubmitMinkComposer({
                             key: event.key,
@@ -871,6 +1086,11 @@ export function DashboardChat({
 function MinkHeaderMenu({ onNavigate }: { onNavigate: () => void }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Lazy, not an effect: the menu only ever renders on the client, inside an
+  // open panel, so the stored choice can be read on first render.
+  const [replyLanguage, setReplyLanguage] = useState<MinkReplyLanguage>(() =>
+    typeof window === "undefined" ? "auto" : readStoredMinkReplyLanguage(),
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -929,6 +1149,27 @@ function MinkHeaderMenu({ onNavigate }: { onNavigate: () => void }) {
           >
             Watches
           </Link>
+          <label className="block px-3 pb-2 pt-2 text-[11px] text-[#6f6a8a]">
+            <span className="mb-1 block font-semibold uppercase tracking-wide">
+              Reply language
+            </span>
+            <select
+              aria-label="Reply language"
+              value={replyLanguage}
+              onChange={(event) => {
+                const next = event.target.value as MinkReplyLanguage;
+                setReplyLanguage(next);
+                storeMinkReplyLanguage(next);
+              }}
+              className="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#1a1a1a]"
+            >
+              {MINK_REPLY_LANGUAGES.map((entry) => (
+                <option key={entry.code} value={entry.code}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       )}
     </div>
@@ -1106,6 +1347,192 @@ export function minkCreditIndicatorState(summary: MinkCreditSummary) {
     fraction,
     color: fraction > 0.5 ? "#16a34a" : fraction > 0.2 ? "#f59e0b" : "#dc2626",
   };
+}
+
+/**
+ * The tools a run has called so far, one line each, while it is still
+ * working. Sidekick shows the same "Reading orders" ladder; without it a
+ * twelve-second run is a single pulsing dot and nothing says what is taking
+ * the time.
+ */
+function MinkRunSteps({ steps }: { steps: MinkRunStep[] }) {
+  if (steps.length === 0) return null;
+  return (
+    <ol
+      aria-label="What Mink AI is doing"
+      className="mb-2 space-y-1 text-xs text-[#5c5f62]"
+    >
+      {steps.map((step) => (
+        <li key={step.sequence} className="flex items-center gap-2">
+          {step.state === "running" ? (
+            <LoaderCircle
+              className="h-3 w-3 shrink-0 animate-spin text-[#6d4dff]"
+              aria-hidden="true"
+            />
+          ) : step.state === "failed" ? (
+            <AlertTriangle
+              className="h-3 w-3 shrink-0 text-[#b45309]"
+              aria-hidden="true"
+            />
+          ) : (
+            <Check
+              className="h-3 w-3 shrink-0 text-emerald-600"
+              aria-hidden="true"
+            />
+          )}
+          <span>{step.status}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** "Checked sales, orders and products", above an answer that read them. */
+export function minkCheckedLine(
+  steps: MinkRunStep[] | undefined,
+): string | null {
+  if (!steps?.length) return null;
+  const labels: string[] = [];
+  for (const step of steps) {
+    if (step.state !== "completed") continue;
+    const label = step.label.replace(/^(the|a|an|your|this) /, "");
+    if (!labels.includes(label)) labels.push(label);
+  }
+  if (labels.length === 0) return null;
+  const shown = labels.slice(0, 4);
+  const rest = labels.length - shown.length;
+  const joined =
+    shown.length === 1
+      ? shown[0]
+      : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+  return `Checked ${joined}${rest > 0 ? ` and ${rest} more` : ""}`;
+}
+
+function MinkCheckedLine({ steps }: { steps?: MinkRunStep[] }) {
+  const line = minkCheckedLine(steps);
+  if (!line) return null;
+  return (
+    <p className="mb-1 flex items-center gap-1 text-[11px] text-[#8c9196]">
+      <Check className="h-3 w-3" aria-hidden="true" />
+      {line}
+    </p>
+  );
+}
+
+/** Up to three next questions under the newest answer. */
+function MinkFollowUps({
+  message,
+  disabled,
+  onPrompt,
+}: {
+  message: {
+    text: string;
+    artifacts?: Parameters<typeof suggestMinkFollowUps>[0]["artifacts"];
+  };
+  disabled: boolean;
+  onPrompt: (prompt: string) => void;
+}) {
+  const prompts = suggestMinkFollowUps(message);
+  if (prompts.length === 0) return null;
+  return (
+    <div
+      className="mt-2 flex flex-wrap gap-1.5"
+      aria-label="Suggested follow-ups"
+    >
+      {prompts.map((prompt) => (
+        <button
+          key={prompt}
+          type="button"
+          disabled={disabled}
+          onClick={() => onPrompt(prompt)}
+          className="rounded-full border border-[#e5e5e5] bg-white px-3 py-1 text-[11px] font-medium text-[#3e3262] transition-colors hover:border-[#cfc4ff] hover:bg-[#fbfaff] disabled:opacity-50"
+        >
+          {prompt}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * "Remember this?": the lasting sentence of the merchant's own message,
+ * saved with one tap through the ordinary memories API (90 days). The card
+ * shows the exact text that will be kept, because a memory the merchant did
+ * not read is one they cannot trust later.
+ */
+function MinkMemoryPromptCard({
+  prompt,
+  onSave,
+  onDismiss,
+}: {
+  prompt: MinkMemoryPrompt;
+  onSave: () => void;
+  onDismiss: () => void;
+}) {
+  const { suggestion, status, error } = prompt;
+  return (
+    <div
+      data-testid="mink-memory-prompt"
+      role="group"
+      aria-label="Remember this?"
+      className="mt-2 rounded-xl border border-[#ddd6f5] bg-[#f8f5ff] px-3 py-2 text-[12px] text-[#3e3262]"
+    >
+      {status === "saved" ? (
+        <p className="flex items-center gap-1.5">
+          <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+          Saved to your memories.
+          <MinkLink
+            href="/dashboard/mink-memories"
+            className="font-semibold text-[#5b3fd0] underline-offset-2 hover:underline"
+          >
+            Manage memories
+          </MinkLink>
+        </p>
+      ) : (
+        <>
+          <p className="flex items-center gap-1.5 font-semibold text-[#2d2350]">
+            <Sparkles
+              className="h-3.5 w-3.5 text-[#5b3fd0]"
+              aria-hidden="true"
+            />
+            Remember this?
+          </p>
+          <p className="mt-1">{suggestion.content}</p>
+          <p className="mt-1 text-[11px] text-[#6f6a8a]">
+            {MEMORY_KIND_LABELS[suggestion.kind]} · kept for 90 days, only for
+            you, only in this store
+          </p>
+          {status === "failed" && error ? (
+            <p role="alert" className="mt-1 text-[11px] text-[#b4232c]">
+              {error}
+            </p>
+          ) : null}
+          <div className="mt-2 flex gap-1.5">
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={status === "saving"}
+              className="rounded-lg bg-[#6d4dff] px-3 py-1 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {status === "saving"
+                ? "Saving…"
+                : status === "failed"
+                  ? "Try again"
+                  : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={onDismiss}
+              disabled={status === "saving"}
+              className="rounded-lg border border-[#ddd6f5] bg-white px-3 py-1 text-[11px] font-semibold text-[#5b3fd0] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Not now
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function MinkUserMessage({ text }: { text: string }) {

@@ -405,7 +405,10 @@ describe("Mink read-tool declarations", () => {
       "search_storefront_categories",
       "search_products",
       "get_sales_summary",
+      "query_analytics",
       "list_current_offers",
+      "get_shipping_settings",
+      "get_marketing_channels",
       "list_low_stock",
       "start_business_brief",
       "get_mink_watches",
@@ -415,6 +418,7 @@ describe("Mink read-tool declarations", () => {
       "start_product_launch_preparation",
       "list_orders",
       "search_help_centre",
+      "open_dashboard_page",
       "get_website_builder_context",
     ]);
     for (const declaration of declarations) {
@@ -460,6 +464,7 @@ describe("Mink read-tool declarations", () => {
       "get_mink_watches",
       "get_mink_watch_responses",
       "search_help_centre",
+      "open_dashboard_page",
     ]);
     expect(declared({ builder: ["view"] })).toEqual([
       "list_storefront_pages",
@@ -475,6 +480,7 @@ describe("Mink read-tool declarations", () => {
       "get_mink_watches",
       "get_mink_watch_responses",
       "search_help_centre",
+      "open_dashboard_page",
     ]);
     expect(declared({ categories: ["view"] })).toEqual([
       "search_storefront_categories",
@@ -482,13 +488,19 @@ describe("Mink read-tool declarations", () => {
     expect(declared({ dashboard: ["view"], analytics: ["view"] })).toEqual([
       "get_store_profile",
       "get_sales_summary",
+      "query_analytics",
       "get_mink_watches",
       "get_mink_watch_responses",
       "start_weekly_trading_report",
       "start_revenue_decline_investigation",
       "search_help_centre",
+      "open_dashboard_page",
     ]);
     expect(declared({ promotions: ["view"] })).toEqual(["list_current_offers"]);
+    expect(declared({ settings: ["view"] })).toEqual(["get_shipping_settings"]);
+    expect(declared({ marketing: ["view"] })).toEqual([
+      "get_marketing_channels",
+    ]);
     expect(declared({ blogs: ["view"] })).toEqual(["list_blogs"]);
     expect(declared({ dashboard: ["view"], inventory: ["view"] })).toEqual([
       "get_store_profile",
@@ -496,6 +508,7 @@ describe("Mink read-tool declarations", () => {
       "get_mink_watches",
       "get_mink_watch_responses",
       "search_help_centre",
+      "open_dashboard_page",
     ]);
     expect(
       declared({
@@ -512,6 +525,7 @@ describe("Mink read-tool declarations", () => {
       "get_mink_watch_responses",
       "start_product_launch_preparation",
       "search_help_centre",
+      "open_dashboard_page",
     ]);
     expect(declared({ dashboard: ["view"], orders: ["view"] })).toEqual([
       "get_store_profile",
@@ -519,6 +533,7 @@ describe("Mink read-tool declarations", () => {
       "get_mink_watch_responses",
       "list_orders",
       "search_help_centre",
+      "open_dashboard_page",
     ]);
     expect(
       minkReadToolRegistry
@@ -924,12 +939,24 @@ describe("Mink read-tool declarations", () => {
       "propose_blog_draft",
       "propose_coupon_email",
       "propose_customer_message",
+      "propose_social_posts",
       "propose_product_create",
       "propose_coupon_create",
       "propose_coupon_update",
       "propose_customer_group_create",
       "propose_customer_group_update",
       "propose_bulk_price_update",
+    ]);
+    expect(
+      names({
+        draftingEnabled: true,
+        permissions: { categories: ["view", "manage"] },
+      }),
+    ).toEqual([
+      "search_storefront_categories",
+      "get_category_for_draft",
+      "propose_category_create",
+      "propose_category_update",
     ]);
 
     const marketingTools = names({

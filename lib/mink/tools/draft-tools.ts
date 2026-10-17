@@ -3,6 +3,7 @@ import "server-only";
 import { and, count, eq, sql } from "drizzle-orm";
 import { withoutLongDashes } from "@/lib/email/coupon-campaign";
 import {
+  categories,
   coupons,
   inventoryLevels,
   products,
@@ -18,6 +19,7 @@ import {
   MAX_MINK_BULK_INVENTORY_LINES,
 } from "../draft-types";
 import { MinkRequestError, MinkToolInputError } from "../errors";
+import { isMinkGeneratedCampaignArtUrl } from "../media-generation-contract";
 import { can } from "@/app/dashboard/lib/permissions";
 import type {
   MinkActorContext,
@@ -51,6 +53,7 @@ import {
   readMinkOrderStatusTarget,
 } from "../order-status-target";
 import {
+  productPhotoDestination,
   discardPreparedMinkImage,
   prepareMinkImageForDestination,
   type MinkPreparedImageResult,
@@ -168,7 +171,7 @@ export const proposeProductImagesTool: MinkTool = {
   declaration: {
     name: "propose_product_images",
     description:
-      "Update an existing product's authentic photos using exact uploaded current-store image URLs. Resolve the product with search_products first (or use the selected product). replace_primary replaces the main photo and preserves the other gallery photos; add appends photos; replace_gallery replaces the complete gallery. Creates a private proposal for human approval, never a live write. Never generate catalogue photographs.",
+      "Update an existing product's photos using exact current-store image URLs: the merchant's own uploaded photos, or a catalogue photo generate_storefront_image made for this product with purpose=product earlier in this run. Campaign art (hero, banner, gallery, feature or blog cover images) is refused. Resolve the product with search_products first (or use the selected product). replace_primary replaces the main photo and preserves the other gallery photos; add appends photos; replace_gallery replaces the complete gallery. Creates a private proposal for human approval, never a live write.",
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -233,23 +236,22 @@ export const proposeProductImagesTool: MinkTool = {
       throw new MinkToolInputError(
         "That product is not available in this store.",
       );
+    // ★ Campaign art is refused by its folder; a catalogue photo Mink made
+    //   for a product (purpose=product) lives under its own folder and passes.
     if (
       (args.image_urls as string[]).some((url) =>
-        url.includes("/mink-generated/"),
+        isMinkGeneratedCampaignArtUrl(url),
       )
     )
       throw new MinkToolInputError(
-        "Use an authentic uploaded product photo, not generated artwork.",
+        "Use an uploaded product photo or a catalogue photo generated with purpose=product, not campaign artwork.",
       );
     const prepared: MinkPreparedImageResult[] = [];
     try {
+      const destination = await productPhotoDestination(actor.storeId);
       for (const url of args.image_urls as string[])
         prepared.push(
-          await prepareMinkImageForDestination(
-            actor,
-            url.trim(),
-            "product_photo",
-          ),
+          await prepareMinkImageForDestination(actor, url.trim(), destination),
         );
       const incoming = [...new Set(prepared.map((image) => image.url))];
       const old = product.images.filter(Boolean);
@@ -665,7 +667,7 @@ export const proposeProductCreateTool: MinkTool = {
       ? await prepareMinkImageForDestination(
           actor,
           requestedImageUrl,
-          "product_photo",
+          await productPhotoDestination(actor.storeId),
         )
       : null;
     const imageUrl = preparedImage?.url ?? "";
@@ -868,6 +870,165 @@ export const proposeCustomerGroupUpdateTool: MinkTool = {
         destinationPath: `/dashboard/users/user_groups/${group.id}/edit`,
         before: customerGroupDraftValues(group),
         content,
+      }),
+    );
+  },
+};
+
+export const getCategoryForDraftTool: MinkTool = {
+  declaration: {
+    name: "get_category_for_draft",
+    description:
+      "Read one exact category by its visible name or URL slug before proposing a change to it. Returns an opaque category_snapshot that propose_category_update needs unchanged. This does not list or change the products in the category.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "The category's exact name or URL slug.",
+        },
+      },
+      required: ["category"],
+      additionalProperties: false,
+    },
+  },
+  permission: { section: "categories", action: "view" },
+  available: draftingAvailable,
+  timeoutMs: 5_000,
+  async execute(actor, args) {
+    const category = await readCategory(
+      actor,
+      readString(args.category, "category", 200),
+    );
+    return {
+      name: category.name,
+      slug: category.slug,
+      description: category.description,
+      image_url: category.imageUrl,
+      status: category.status,
+      product_count: category.productCount,
+      category_snapshot: await categorySnapshot(actor, category),
+    };
+  },
+};
+
+export const proposeCategoryCreateTool: MinkTool = {
+  declaration: {
+    name: "propose_category_create",
+    description:
+      "Create a charged, private proposal for a new product category (a storefront collection). Give a name and URL slug, an optional description and an optional image that must be an exact current-store Media Library or catalogue URL. Visibility is active (shown in the storefront menu and shop filters) or hidden. The human approves the exact fields in the card; nothing is created until then, and this never files products under the category.",
+    parametersJsonSchema: categorySchema(false),
+  },
+  permission: { section: "categories", action: "manage" },
+  available: draftingAvailable,
+  timeoutMs: 8_000,
+  artifact: proposalArtifact,
+  async execute(actor, args) {
+    const content = categoryProposalContent(args);
+    return proposalOutput(
+      await createMinkDraftProposal({
+        actor,
+        kind: "category_create",
+        title: `New category: ${content.name}`,
+        destinationType: "category",
+        destinationLabel: `New category ${content.name}`,
+        destinationPath: "/dashboard/categories",
+        content,
+      }),
+    );
+  },
+};
+
+export const proposeCategoryUpdateTool: MinkTool = {
+  declaration: {
+    name: "propose_category_update",
+    description:
+      "Create a charged, private proposal to change an existing category's name, URL slug, description, image or visibility. First call get_category_for_draft and pass category_snapshot unchanged; send every field with its final value. This cannot add or remove products from the category.",
+    parametersJsonSchema: categorySchema(true),
+  },
+  permission: { section: "categories", action: "manage" },
+  available: draftingAvailable,
+  timeoutMs: 8_000,
+  artifact: proposalArtifact,
+  async execute(actor, args) {
+    const current = readString(args.current_category, "current_category", 200);
+    const category = await readCategory(actor, current);
+    const snapshot = readString(
+      args.category_snapshot,
+      "category_snapshot",
+      64,
+    );
+    if (snapshot !== (await categorySnapshot(actor, category))) {
+      throw new MinkToolInputError(
+        "Category details changed or were not checked. Call get_category_for_draft again before proposing an update.",
+      );
+    }
+    const content = categoryProposalContent(args);
+    return proposalOutput(
+      await createMinkDraftProposal({
+        actor,
+        kind: "category_update",
+        title: `Update category ${category.name}`,
+        destinationType: "category",
+        destinationId: category.id,
+        destinationLabel: `Category ${category.name}`,
+        destinationPath: "/dashboard/categories",
+        before: categoryDraftValues(category),
+        content,
+      }),
+    );
+  },
+};
+
+export const proposeSocialPostsTool: MinkTool = {
+  declaration: {
+    name: "propose_social_posts",
+    description:
+      "Create a charged, private set of social-media captions in the store's brand voice: an Instagram caption (required), and optionally a Facebook post, a WhatsApp status line and a hashtag line. Ground every claim in facts the merchant gave or a trusted tool returned (a product, offer or blog read); never invent prices, dates, discounts or stock. Nothing is posted anywhere: the merchant copies approved text into their own accounts.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        instagram: { type: "string", minLength: 1, maxLength: 2_200 },
+        facebook: { type: "string", maxLength: 3_000 },
+        whatsapp: { type: "string", maxLength: 1_000 },
+        hashtags: {
+          type: "string",
+          maxLength: 300,
+          description: "Space-separated hashtags, each starting with #.",
+        },
+        subject: {
+          type: "string",
+          maxLength: 120,
+          description:
+            "What the posts are about, for the card title: a product, offer or launch name.",
+        },
+      },
+      required: ["instagram"],
+      additionalProperties: false,
+    },
+  },
+  permission: { section: "marketing", action: "manage" },
+  available: draftingAvailable,
+  timeoutMs: 8_000,
+  artifact: proposalArtifact,
+  async execute(actor, args) {
+    const subject = readOptionalString(args.subject, "subject", 120);
+    return proposalOutput(
+      await createMinkDraftProposal({
+        actor,
+        kind: "social_post",
+        title: subject ? `Social posts: ${subject}` : "Social posts",
+        destinationType: "social_post",
+        destinationLabel: "Your social accounts",
+        destinationPath: "/dashboard/offers",
+        content: {
+          instagram: readString(args.instagram, "instagram", 2_200),
+          facebook: readOptionalString(args.facebook, "facebook", 3_000),
+          whatsapp: readOptionalString(args.whatsapp, "whatsapp", 1_000),
+          hashtags: readOptionalString(args.hashtags, "hashtags", 300),
+        },
       }),
     );
   },
@@ -1604,12 +1765,16 @@ export const minkDraftTools = [
   getCouponForDraftTool,
   proposeCouponEmailTool,
   proposeCustomerMessageTool,
+  proposeSocialPostsTool,
   proposeProductCreateTool,
   proposeCouponCreateTool,
   proposeCouponUpdateTool,
   getCustomerGroupForDraftTool,
   proposeCustomerGroupCreateTool,
   proposeCustomerGroupUpdateTool,
+  getCategoryForDraftTool,
+  proposeCategoryCreateTool,
+  proposeCategoryUpdateTool,
   getInventoryItemForAdjustmentTool,
   proposeInventoryAdjustmentTool,
   getInventoryItemsForBulkAdjustmentTool,
@@ -2320,6 +2485,125 @@ function customerGroupDraftValues(
     name: group.name,
     description: group.description ?? "",
     color: group.color,
+  };
+}
+
+function categorySchema(updating: boolean) {
+  const properties: Record<string, unknown> = {
+    name: { type: "string", minLength: 1, maxLength: 120 },
+    slug: {
+      type: "string",
+      minLength: 1,
+      maxLength: 200,
+      description: "Lowercase words joined by hyphens, unique in this store.",
+    },
+    description: { type: "string", maxLength: 1_000 },
+    image_url: {
+      type: "string",
+      maxLength: 2_048,
+      description:
+        "An exact image URL returned by list_storefront_media, search_products or search_storefront_categories for this store.",
+    },
+    status: { type: "string", enum: ["active", "hidden"] },
+  };
+  const required = ["name", "slug", "status"];
+  if (updating) {
+    properties.current_category = {
+      type: "string",
+      minLength: 1,
+      maxLength: 200,
+      description: "The category's current exact name or URL slug.",
+    };
+    properties.category_snapshot = {
+      type: "string",
+      minLength: 64,
+      maxLength: 64,
+    };
+    required.push("current_category", "category_snapshot");
+  }
+  return { type: "object", properties, required, additionalProperties: false };
+}
+
+function categoryProposalContent(args: Record<string, unknown>) {
+  const slug = slugify(readString(args.slug, "slug", 200)).slice(0, 200);
+  if (!slug) {
+    throw new MinkToolInputError(
+      "slug must contain at least one letter or number.",
+    );
+  }
+  const status = readString(args.status, "status", 20).toLowerCase();
+  if (status !== "active" && status !== "hidden") {
+    throw new MinkToolInputError("status must be active or hidden.");
+  }
+  return {
+    name: readString(args.name, "name", 120),
+    slug,
+    description: readOptionalString(args.description, "description", 1_000),
+    image_url: readOptionalString(args.image_url, "image_url", 2_048),
+    status,
+  };
+}
+
+async function readCategory(actor: MinkActorContext, nameOrSlug: string) {
+  const slug = slugify(nameOrSlug).slice(0, 200);
+  const rows = await withActor(actor, (db) =>
+    db
+      .select({
+        id: categories.id,
+        name: categories.name,
+        slug: categories.slug,
+        description: categories.description,
+        imageUrl: categories.imageUrl,
+        status: categories.status,
+        updatedAt: categories.updatedAt,
+        productCount: sql<number>`(select count(*) from ${products} where ${products.categoryId} = ${categories.id})`,
+      })
+      .from(categories)
+      .where(
+        and(
+          eq(categories.storeId, actor.storeId),
+          slug
+            ? sql`(${categories.name} = ${nameOrSlug} or ${categories.slug} = ${slug})`
+            : eq(categories.name, nameOrSlug),
+        ),
+      )
+      .limit(2),
+  );
+  // An exact name wins over a slug match when both resolve to different rows.
+  const exact = rows.find((row) => row.name === nameOrSlug) ?? rows[0];
+  if (!exact) {
+    throw new MinkToolInputError(
+      "That category name or slug was not found in the current store.",
+    );
+  }
+  return { ...exact, productCount: Number(exact.productCount ?? 0) };
+}
+
+async function categorySnapshot(
+  actor: MinkActorContext,
+  category: Awaited<ReturnType<typeof readCategory>>,
+) {
+  return sha256([
+    actor.storeId,
+    category.id,
+    category.name,
+    category.slug,
+    category.description,
+    category.imageUrl,
+    category.status,
+    category.updatedAt,
+  ]);
+}
+
+function categoryDraftValues(
+  category: Awaited<ReturnType<typeof readCategory>>,
+) {
+  return {
+    name: category.name,
+    slug: category.slug,
+    description: category.description ?? "",
+    image_url: category.imageUrl ?? "",
+    status: category.status,
   };
 }
 

@@ -9,6 +9,7 @@ import {
   DashboardChat,
   isMinkScrollNearBottom,
   latestMinkUserMessageId,
+  minkCheckedLine,
   minkComposerHeight,
   minkCreditIndicatorState,
   minkCreditWarning,
@@ -22,6 +23,11 @@ import { addSavedMinkMediaReference } from "@/lib/mink/media-attachment";
 
 vi.mock("./chat-context", () => ({
   useChat: vi.fn(),
+}));
+const routerPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: vi.fn(() => ({ push: routerPush })),
+  usePathname: vi.fn(() => "/dashboard"),
 }));
 
 const baseChatState = {
@@ -622,5 +628,165 @@ describe("★★ panel chrome density", () => {
     render(createElement(DashboardChat, { variant: "overlay" }));
     expect(screen.getByText("Here are your blogs.")).toBeVisible();
     expect(screen.queryByText("Mink AI")).toBeNull();
+  });
+});
+
+describe("★★ streamed answers in the panel", () => {
+  it("shows the tool ladder and the answer so far while Mink is still writing", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: "user-1", role: "user" as const, text: "How are sales?" },
+      ],
+      isReplying: true,
+      statusText: "Writing…",
+      streamingText: "Sales are **up**",
+      steps: [
+        {
+          sequence: 1,
+          name: "get_store_profile",
+          label: "store details",
+          status: "Read store details",
+          state: "completed" as const,
+        },
+        {
+          sequence: 2,
+          name: "get_sales_summary",
+          label: "sales",
+          status: "Reading sales…",
+          state: "running" as const,
+        },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    const pending = screen.getByTestId("mink-pending-answer");
+    expect(pending).toHaveTextContent("Read store details");
+    expect(pending).toHaveTextContent("Reading sales…");
+    expect(pending).toHaveTextContent("Sales are up");
+    expect(pending).toHaveTextContent("Writing…");
+    expect(
+      screen.getByRole("list", { name: "What Mink AI is doing" }).children,
+    ).toHaveLength(2);
+  });
+
+  it("labels a finished answer with what was checked, in merchant words", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: "user-1", role: "user" as const, text: "How are sales?" },
+        {
+          id: "assistant-1",
+          role: "assistant" as const,
+          text: "Up 12%.",
+          toolSteps: [
+            {
+              sequence: 1,
+              name: "get_sales_summary",
+              label: "sales",
+              status: "Read sales",
+              state: "completed" as const,
+            },
+          ],
+        },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.getByText("Checked sales")).toBeInTheDocument();
+  });
+});
+
+describe("minkCheckedLine", () => {
+  it("lists completed reads once each, drops articles, and caps the list", () => {
+    const step = (
+      name: string,
+      label: string,
+      state: "completed" | "failed",
+    ) => ({
+      sequence: 1,
+      name,
+      label,
+      status: "",
+      state,
+    });
+    expect(minkCheckedLine(undefined)).toBeNull();
+    expect(minkCheckedLine([step("a", "the catalogue", "failed")])).toBeNull();
+    expect(
+      minkCheckedLine([
+        step("a", "the catalogue", "completed"),
+        step("b", "sales", "completed"),
+        step("c", "sales", "completed"),
+      ]),
+    ).toBe("Checked catalogue and sales");
+    expect(
+      minkCheckedLine(
+        ["a", "b", "c", "d", "e", "f"].map((label) =>
+          step(label, label, "completed"),
+        ),
+      ),
+    ).toBe("Checked a, b, c and d and 2 more");
+  });
+});
+
+describe("★ Remember this?", () => {
+  const prompt = {
+    suggestion: {
+      title: "From now on, always keep answers short",
+      content: "From now on, always keep answers short.",
+      kind: "preference" as const,
+    },
+    status: "offered" as const,
+  };
+  const thread = [
+    {
+      id: 1,
+      role: "user" as const,
+      text: "From now on, always keep answers short.",
+    },
+    { id: 2, role: "assistant" as const, text: "Understood." },
+  ];
+
+  it("offers the exact sentence under the newest answer and saves on one tap", () => {
+    const saveMemorySuggestion = vi.fn(async () => null);
+    const dismissMemorySuggestion = vi.fn();
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: thread,
+      memoryPrompt: prompt,
+      saveMemorySuggestion,
+      dismissMemorySuggestion,
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    const card = screen.getByTestId("mink-memory-prompt");
+    expect(card).toHaveTextContent("Remember this?");
+    expect(card).toHaveTextContent("From now on, always keep answers short.");
+    expect(card).toHaveTextContent("Preference");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(saveMemorySuggestion).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(dismissMemorySuggestion).toHaveBeenCalledOnce();
+  });
+
+  it("confirms a save with a link to the Memories page, and shows nothing while Mink is still replying", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: thread,
+      memoryPrompt: { ...prompt, status: "saved" },
+    } as unknown as ReturnType<typeof useChat>);
+    const view = render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.getByTestId("mink-memory-prompt")).toHaveTextContent(
+      "Saved to your memories.",
+    );
+    expect(
+      screen.getByRole("link", { name: "Manage memories" }),
+    ).toHaveAttribute("href", "/dashboard/mink-memories");
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: thread,
+      memoryPrompt: prompt,
+      isReplying: true,
+    } as unknown as ReturnType<typeof useChat>);
+    view.rerender(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.queryByTestId("mink-memory-prompt")).not.toBeInTheDocument();
   });
 });

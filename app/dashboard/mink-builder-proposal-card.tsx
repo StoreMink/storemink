@@ -9,6 +9,7 @@ import {
 } from "@/lib/mink/storefront-publication-types";
 import type { readMinkBuilderReview } from "@/lib/mink/builder-actions";
 import type { MinkArtifact } from "@/lib/mink/types";
+import { MinkLink } from "./mink-link";
 type Review = Awaited<ReturnType<typeof readMinkBuilderReview>>;
 type Proposal = Extract<MinkArtifact, { type: "builder_proposal" }>;
 async function requestReview(
@@ -190,8 +191,8 @@ export function MinkBuilderProposalCard({
         {active?.explanation ?? proposal.explanation}
       </p>
       <p className="mt-2 text-xs text-gray-500">
-        {proposal.expectedCredits} AI credits · {proposal.chargedCredits}{" "}
-        charged for preparing this proposal
+        {proposal.chargedCredits} Mink credit
+        {proposal.chargedCredits === 1 ? "" : "s"} used to prepare this
       </p>
       {!done && (
         <p className="mt-2 font-medium text-gray-700">
@@ -199,7 +200,7 @@ export function MinkBuilderProposalCard({
             ? operation === "page_update"
               ? "Approval changes live page details. Page sections stay in draft until published."
               : "Approval changes the live storefront. Review every change below."
-            : "Step 1: save a private draft. Step 2: review publication to make it live."}
+            : "Approving saves this to your private draft. Publish it separately when you are ready."}
           {(operation === "chrome_publish" || operation === "page_publish") &&
             " This publishes the whole current draft, including other unpublished edits."}
         </p>
@@ -299,8 +300,8 @@ export function MinkBuilderProposalCard({
               ) : (
                 <p className="mt-1 text-gray-600">
                   Review the whole saved draft, including other unpublished
-                  edits, then approve its publication in chat. Preparing a
-                  publication proposal costs 2 AI credits.
+                  edits, then approve its publication in chat. Preparing that
+                  takes 2 Mink credits.
                 </p>
               )}
               {onPrompt ? (
@@ -360,14 +361,14 @@ export function MinkBuilderProposalCard({
           Reload review
         </button>
       )}
-      <a
+      <MinkLink
         className="ml-3 inline-block py-2 text-violet-700 underline"
         href="/dashboard/builder"
         target="_blank"
         rel="noreferrer"
       >
         Open Website Builder
-      </a>
+      </MinkLink>
     </section>
   );
 }

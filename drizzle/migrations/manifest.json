@@ -7999,6 +7999,149 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261017_0215_mink_categories_social_posts",
+      "description": "Mink AI category proposals as a guarded domain action (create_category/update_category in the three tool allowlists, category in both resource-type allowlists, provisioned for every store), the category_create/category_update/social_post draft kinds with NULL-safe target checks, and the Mink guide's capability sentences edited in place",
+      "file": "sql/20261017_0215_mink_categories_social_posts.sql",
+      "transaction": true,
+      "requires": ["20261016_0214_media_library_product_images_help"],
+      "verify": {
+        "constraints": [
+          "mink_drafts_category_target_check",
+          "mink_drafts_social_post_target_check"
+        ],
+        "queries": [
+          {
+            "name": "the tool allowlist admits category actions",
+            "sql": "select count(*)::text from pg_constraint where conname = 'mink_action_tool_access_name_check' and pg_get_constraintdef(oid) like '%create_category%' and pg_get_constraintdef(oid) like '%update_category%'",
+            "equals": "1"
+          },
+          {
+            "name": "the approval and audit tool checks admit category actions",
+            "sql": "select count(*)::text from pg_constraint where conname in ('mink_action_approvals_tool_check','mink_action_audit_tool_check') and pg_get_constraintdef(oid) like '%update_category%'",
+            "equals": "2"
+          },
+          {
+            "name": "both resource-type checks admit category",
+            "sql": "select count(*)::text from pg_constraint where conname in ('mink_action_approvals_resource_type_check','mink_action_audit_resource_type_check') and pg_get_constraintdef(oid) like '%''category''%'",
+            "equals": "2"
+          },
+          {
+            "name": "the draft kind check admits the three new kinds",
+            "sql": "select count(*)::text from pg_constraint where conname = 'mink_drafts_kind_check' and pg_get_constraintdef(oid) like '%category_create%' and pg_get_constraintdef(oid) like '%category_update%' and pg_get_constraintdef(oid) like '%social_post%'",
+            "equals": "1"
+          },
+          {
+            "name": "provisioning grants category actions",
+            "sql": "select count(*)::text from pg_proc where proname = 'enable_store_mink_access' and pg_get_functiondef(oid) like '%''update_category''%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every store has the category actions",
+            "sql": "select count(*)::text from stores s left join mink_action_tool_access a on a.store_id=s.id and a.tool_name='update_category' where a.store_id is null or not a.enabled",
+            "equals": "0"
+          },
+          {
+            "name": "the creating heading names categories",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%<h2>Creating products, coupons, customer groups and categories</h2>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the guide says what a category proposal can change",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%It cannot add or remove products from a category.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the rollback rule covers categories",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%and categories must have no products in them.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the question list names the analytics chart",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%the card links to the same report.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the drafts sentence names social captions",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Mink never posts anywhere.%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261017_0216_mink_screen_spotlight_help",
+      "description": "The Mink guide edited in place for the second Sidekick parity pass: the Remember this? card, pointing at a control and prefilled forms from chat, and the reply-language setting in the chat-header menu",
+      "file": "sql/20261017_0216_mink_screen_spotlight_help.sql",
+      "transaction": true,
+      "requires": ["20261017_0215_mink_categories_social_posts"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide describes the Remember this? card",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%<strong>Remember this?</strong> card under its answer%'",
+            "equals": "1"
+          },
+          {
+            "name": "the guide no longer says remember this saves nothing",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%in chat does not save anything%'",
+            "equals": "0"
+          },
+          {
+            "name": "the question list names pointing at a control and prefilled forms",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%so the page opens with that control pointed out%'",
+            "equals": "1"
+          },
+          {
+            "name": "the memories section names the reply-language setting",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%the same menu sets the language Mink replies in.%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261017_0217_mink_catalogue_photo_help",
+      "description": "The Mink and product-images guides edited in place: Mink can make a catalogue product photo from a real photo of the item and propose it as the product's photo, campaign art still never becomes one, and a prepared copy follows the store's card shape",
+      "file": "sql/20261017_0217_mink_catalogue_photo_help.sql",
+      "transaction": true,
+      "requires": ["20261017_0216_mink_screen_spotlight_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says a catalogue photo starts from a real photo",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%never from a description alone%'",
+            "equals": "1"
+          },
+          {
+            "name": "the guide no longer calls every generated picture non-catalogue",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%not the original catalogue photograph%'",
+            "equals": "0"
+          },
+          {
+            "name": "the photo-change sentence offers a generated catalogue photo",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%that already has one%'",
+            "equals": "1"
+          },
+          {
+            "name": "the prepared copy follows the card shape",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%in the shape of your product cards%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product-images guide names the chat catalogue photo",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%keeps it under Media and proposes it%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

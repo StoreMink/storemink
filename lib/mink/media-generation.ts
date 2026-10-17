@@ -150,7 +150,7 @@ export async function generateMinkMediaImage(
             {
               text: renderMinkImagePrompt(
                 `${request.prompt}\n\nDESTINATION COMPOSITION\n${compositionGuidance(request.purpose)}`,
-                referenceGuidance(references),
+                referenceGuidance(references, request.purpose),
               ),
             },
             ...references.flatMap((reference, index) => [
@@ -177,7 +177,10 @@ export async function generateMinkMediaImage(
           threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
         })),
         imageConfig: {
-          aspectRatio: aspectRatioFor(request.purpose),
+          aspectRatio: aspectRatioFor(
+            request.purpose,
+            request.productPhotoShape,
+          ),
           imageSize: "2K",
           // ★★ NO PEOPLE AT ALL, not even adults. A storefront image with an
           // invented person implies a release nobody obtained.
@@ -245,6 +248,12 @@ function compositionGuidance(
   if (purpose === "gallery") {
     return "Compose for a square crop. Keep the full primary subject inside a generous central safe area, add deliberate depth and supporting details, and avoid edge clipping or a flat pasted-cutout look.";
   }
+  if (purpose === "product") {
+    // ★ A CATALOGUE PHOTO IS NOT A CAMPAIGN SCENE. Every other purpose asks
+    //   for art direction; this one asks for the item itself, the way a
+    //   product card and product page show it.
+    return "Compose one clean catalogue product photograph for this store's product card and product page, not a campaign scene. The product in the reference image is the whole subject: show it complete and centred, filling most of the frame with even breathing room on every side, in the exact form, proportions, colours, materials, pattern and visible packaging of the reference. Use a plain seamless studio background (white or a soft neutral unless the merchant asked for a setting), soft even lighting, true colours, a natural contact shadow and sharp detail. No props that compete with the product, no scene, no words and no people. The result must look like the real item a customer will receive.";
+  }
   if (purpose === "blog_cover") {
     return "Compose one polished 16:9 editorial cover that expresses the article's central idea at a glance. Build a coherent visual story rather than a generic stock image or pasted product cutout. Keep the main subject fully visible inside a generous central safe area, preserve calm space for responsive crops, and do not put the article title or other words in the pixels.";
   }
@@ -253,7 +262,18 @@ function compositionGuidance(
 
 function referenceGuidance(
   references: readonly MinkMediaReferenceImage[],
+  purpose: MinkMediaGenerationRequest["purpose"] = "hero",
 ): string {
+  if (purpose === "product" && references.length > 0) {
+    // The proposal path has already refused a catalogue photo with no real
+    // photo of the item; here every reference is that item.
+    return references
+      .map(
+        (reference, index) =>
+          `Reference ${index + 1} is a real photograph of the product this catalogue photo is for (a current-store ${reference.source} image). Reproduce exactly that item: its form, proportions, colours, materials, pattern, stitching, labels and packaging as they are. Do not restyle it, correct it, add a variant or substitute a different product.`,
+      )
+      .join("\n");
+  }
   if (references.length === 0) {
     return "The relevant current-store image reads found no suitable reference. Follow the merchant's requested scene without inventing a specific real product, category asset, logo, label, or brand identity.";
   }

@@ -1,5 +1,7 @@
 import type { MinkArtifact } from "@/lib/mink/types";
 import { MINK_WORKFLOW_TEMPLATES } from "@/lib/mink/workflow-types";
+import { readMinkFormPrefill } from "@/lib/mink/form-prefill";
+import { readMinkHighlight } from "@/lib/mink/guide-targets";
 
 const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "metrics",
@@ -15,6 +17,8 @@ const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "media_image_proposal",
   "workflow",
   "product_import",
+  "navigation",
+  "chart",
 ]);
 
 export function readMinkArtifacts(value: unknown): MinkArtifact[] {
@@ -154,6 +158,12 @@ export function readMinkArtifacts(value: unknown): MinkArtifact[] {
           Number(workflow.currentStep) <= Number(workflow.totalSteps)
         );
       }
+      if (type === "navigation") {
+        return isNavigation(artifact as Record<string, unknown>);
+      }
+      if (type === "chart") {
+        return isChart(artifact as Record<string, unknown>);
+      }
       if (type === "storefront_code_proposal") {
         return isStorefrontCodeProposal(artifact as Record<string, unknown>);
       }
@@ -180,6 +190,149 @@ export function readMinkArtifacts(value: unknown): MinkArtifact[] {
       );
     })
     .slice(0, 6);
+}
+
+/**
+ * ★ THE PATH IS THE ONE FIELD HERE THE PANEL ACTS ON (it navigates to it),
+ * so it is pinned to the dashboard exactly as an answer link is: a restored
+ * history row must not be able to send the merchant to another host. A
+ * prefill is re-bounded by the same reader the product form uses.
+ */
+function isNavigation(value: Record<string, unknown>): boolean {
+  if (
+    !isBoundedText(value.title, 120) ||
+    !isBoundedText(value.label, 80) ||
+    !isBoundedText(value.path, 400) ||
+    !/^\/dashboard(?:[/?#]|$)/.test(value.path) ||
+    value.path.startsWith("//")
+  ) {
+    return false;
+  }
+  if (value.prefill !== undefined) {
+    const prefill = readMinkFormPrefill(value.prefill);
+    if (!prefill) return false;
+    value.prefill = prefill;
+  }
+  if (value.highlight !== undefined) {
+    const highlight = readMinkHighlight(value.highlight);
+    if (!highlight) return false;
+    value.highlight = highlight;
+  }
+  return true;
+}
+
+function isChart(value: Record<string, unknown>): boolean {
+  const ok =
+    isBoundedText(value.title, 120) &&
+    isChartPanelShape(value) &&
+    Array.isArray(value.filters) &&
+    value.filters.length <= 12 &&
+    (value.dashboardPath === undefined ||
+      (typeof value.dashboardPath === "string" &&
+        /^\/dashboard(?:[/?#]|$)/.test(value.dashboardPath)));
+  if (!ok) return false;
+  // ★ A MALFORMED SUMMARY OR PANEL LIST IS DROPPED, NEVER THE CHART. The
+  // series ARE the card; the lead figure and a second measure are extras, so
+  // a restored history row keeps its chart when one of them fails a bound.
+  keepChartSummary(value);
+  keepChartPanels(value);
+  return true;
+}
+
+/** The series rules a chart and each of its small-multiple panels share. */
+function isChartPanelShape(value: Record<string, unknown>): boolean {
+  const series = value.series;
+  return (
+    (value.kind === "line" || value.kind === "bar") &&
+    ["number", "currency", "percent"].includes(String(value.format)) &&
+    (value.currency === undefined || isBoundedText(value.currency, 3)) &&
+    Array.isArray(series) &&
+    series.length >= 1 &&
+    series.length <= 3 &&
+    series.every(
+      (entry) =>
+        isRecord(entry) &&
+        isBoundedText(entry.label, 60) &&
+        Array.isArray(entry.points) &&
+        entry.points.length >= 1 &&
+        entry.points.length <= 120 &&
+        entry.points.every(
+          (point) =>
+            isRecord(point) &&
+            isBoundedText(point.label, 60) &&
+            typeof point.value === "number" &&
+            Number.isFinite(point.value),
+        ),
+    )
+  );
+}
+
+/**
+ * Keeps a well-formed summary (finite, bounded numbers, a closed `goodWhen`)
+ * rebuilt from its known keys only, and removes anything else.
+ */
+function keepChartSummary(value: Record<string, unknown>): void {
+  if (value.summary === undefined) return;
+  const summary = value.summary;
+  if (!isRecord(summary)) {
+    delete value.summary;
+    return;
+  }
+  const total = summary.total;
+  const previousTotal = summary.previousTotal;
+  const trendPercent = summary.trendPercent;
+  const comparisonLabel = summary.comparisonLabel;
+  const goodWhen = summary.goodWhen;
+  if (
+    !isBoundedNumber(total) ||
+    (previousTotal !== undefined && !isBoundedNumber(previousTotal)) ||
+    (trendPercent !== undefined &&
+      trendPercent !== null &&
+      !isBoundedNumber(trendPercent)) ||
+    (comparisonLabel !== undefined && !isBoundedText(comparisonLabel, 80)) ||
+    (goodWhen !== undefined && goodWhen !== "up" && goodWhen !== "down")
+  ) {
+    delete value.summary;
+    return;
+  }
+  value.summary = {
+    total,
+    ...(previousTotal !== undefined ? { previousTotal } : {}),
+    ...(trendPercent !== undefined ? { trendPercent } : {}),
+    ...(comparisonLabel !== undefined ? { comparisonLabel } : {}),
+    ...(goodWhen !== undefined ? { goodWhen } : {}),
+  };
+}
+
+/** At most three panels, each a chart in its own right; otherwise none. */
+function keepChartPanels(value: Record<string, unknown>): void {
+  if (value.panels === undefined) return;
+  const panels = value.panels;
+  if (
+    !Array.isArray(panels) ||
+    panels.length < 1 ||
+    panels.length > 3 ||
+    !panels.every(
+      (panel) =>
+        isRecord(panel) &&
+        isBoundedText(panel.title, 120) &&
+        isChartPanelShape(panel),
+    )
+  ) {
+    delete value.panels;
+    return;
+  }
+  for (const panel of panels as Record<string, unknown>[]) {
+    keepChartSummary(panel);
+  }
+}
+
+function isBoundedNumber(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    Math.abs(value) <= 1e15
+  );
 }
 
 function isStorefrontCodeProposal(value: Record<string, unknown>): boolean {
@@ -417,7 +570,7 @@ function isGeneratedImageUrl(value: unknown): value is string {
   return (
     typeof value === "string" &&
     value.length <= 500 &&
-    /^https:\/\/storage\.googleapis\.com\/[A-Za-z0-9._-]+\/stores\/[0-9a-f-]{36}\/mink-generated\/[0-9a-f-]{36}\.(jpg|png)$/.test(
+    /^https:\/\/storage\.googleapis\.com\/[A-Za-z0-9._-]+\/stores\/[0-9a-f-]{36}\/mink-generated\/(?:product-photos\/)?[0-9a-f-]{36}\.(jpg|png)$/.test(
       value,
     )
   );
@@ -436,7 +589,7 @@ function isMediaImageProposal(value: Record<string, unknown>): boolean {
       (Number.isInteger(value.referenceImageCount) &&
         Number(value.referenceImageCount) >= 0 &&
         Number(value.referenceImageCount) <= 4)) &&
-    ["hero", "gallery", "feature", "banner", "blog_cover"].includes(
+    ["hero", "gallery", "feature", "banner", "blog_cover", "product"].includes(
       String(value.purpose),
     ) &&
     ["1:1", "4:3", "16:9", "3:4", "9:16", "21:9"].includes(

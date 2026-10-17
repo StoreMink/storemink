@@ -195,3 +195,120 @@ describe("useMinkAi history", () => {
     });
   });
 });
+
+describe("★★ useMinkAi streaming", () => {
+  function sse(blocks: string[]) {
+    const encoder = new TextEncoder();
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const block of blocks) controller.enqueue(encoder.encode(block));
+        controller.close();
+      },
+    });
+  }
+
+  it("shows the answer as it streams, names each tool step, and keeps the steps on the finished answer", async () => {
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: status\ndata: {"conversationId":"11111111-1111-4111-8111-111111111111"}\n\n' +
+              'event: tool\ndata: {"state":"running","name":"get_sales_summary","sequence":1}\n\n' +
+              'event: tool\ndata: {"state":"completed","name":"get_sales_summary","sequence":1}\n\n' +
+              'event: delta\ndata: {"text":"Sales are "}\n\n' +
+              'event: delta\ndata: {"text":"up 12%."}\n\n',
+          ),
+        );
+        await gate;
+        controller.enqueue(
+          encoder.encode(
+            'event: message\ndata: {"role":"assistant","text":"Sales are up 12%.","runId":"33333333-3333-4333-8333-333333333333","artifacts":[]}\n\n' +
+              "event: done\ndata: {}\n\n",
+          ),
+        );
+        controller.close();
+      },
+    });
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/mink/conversations") {
+        return Response.json({ conversations: [] });
+      }
+      return new Response(body, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+
+    act(() => result.current.send("How are sales?"));
+
+    await waitFor(() =>
+      expect(result.current.streamingText).toBe("Sales are up 12%."),
+    );
+    expect(result.current.steps).toEqual([
+      {
+        sequence: 1,
+        name: "get_sales_summary",
+        label: "sales",
+        status: "Read sales",
+        state: "completed",
+      },
+    ]);
+    expect(result.current.statusText).toBe("Writing…");
+    expect(result.current.isReplying).toBe(true);
+
+    act(() => release?.());
+
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.streamingText).toBe("");
+    expect(result.current.steps).toEqual([]);
+    const answer = result.current.messages.at(-1);
+    expect(answer?.text).toBe("Sales are up 12%.");
+    expect(answer?.toolSteps?.map((step) => step.status)).toEqual([
+      "Read sales",
+    ]);
+  });
+
+  it("discards streamed working-out when the server resets it or a tool starts", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/mink/conversations") {
+        return Response.json({ conversations: [] });
+      }
+      return new Response(
+        sse([
+          'event: status\ndata: {"conversationId":"11111111-1111-4111-8111-111111111111"}\n\n',
+          'event: delta\ndata: {"text":"Let me look."}\n\n',
+          "event: delta_reset\ndata: {}\n\n",
+          'event: tool\ndata: {"state":"running","name":"list_orders","sequence":1}\n\n',
+          'event: delta\ndata: {"text":"Three orders."}\n\n',
+          'event: message\ndata: {"role":"assistant","text":"Three orders.","artifacts":[]}\n\n',
+          "event: done\ndata: {}\n\n",
+        ]),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+
+    act(() => result.current.send("Orders?"));
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+
+    expect(result.current.messages.at(-1)?.text).toBe("Three orders.");
+    expect(result.current.messages.at(-1)?.toolSteps).toEqual([
+      expect.objectContaining({
+        name: "list_orders",
+        status: "Reading orders…",
+      }),
+    ]);
+  });
+});

@@ -14,6 +14,7 @@ import { createMinkDraftProposal } from "./drafts";
 import { MinkRequestError, MinkToolInputError } from "./errors";
 import {
   MINK_GENERATED_MEDIA_FOLDER,
+  MINK_GENERATED_PRODUCT_PHOTO_FOLDER,
   MINK_MEDIA_PURPOSE_SPECS,
   aspectRatioFor,
   validateMinkMediaGenerationRequest,
@@ -24,6 +25,8 @@ import {
   reserveMinkImageGeneration,
 } from "./media-generation";
 import { getMinkConfig } from "./config";
+import { getStoreChrome } from "@/lib/chrome/queries";
+import { productPhotoSpec } from "@/lib/media/image-specs";
 import type { MinkDraftContent } from "./draft-types";
 import type { MinkActorContext, MinkArtifact } from "./types";
 import { resolveMinkMediaReferenceImages } from "./media-reference-images";
@@ -102,6 +105,29 @@ export async function createMinkMediaImageProposal(
     input.actor,
     request.referenceImageUrls,
   );
+  if (request.purpose === "product") {
+    // ★★ A CATALOGUE PHOTO STARTS FROM A REAL PHOTO OF THE ITEM, or it is a
+    //    picture of goods that may not exist. The product's own image or one
+    //    the merchant attached (a Media row) qualifies; a category image or
+    //    nothing does not. Refused BEFORE the spend ceiling and the charge.
+    if (
+      !references.some(
+        (reference) =>
+          reference.source === "product" || reference.source === "media",
+      )
+    ) {
+      throw new MinkToolInputError(
+        "A catalogue product photo must start from a real photo of the item. Pass the product's own image URL from search_products or get_current_product, or the exact Media URL of a photo the merchant attached, as a reference. Mink does not invent a product from a description.",
+      );
+    }
+    // The card shape is the store's, read here so the model cannot choose it.
+    request.productPhotoShape =
+      productPhotoSpec(
+        (await getStoreChrome(input.actor.storeId)).appearance.cardPhoto,
+      ) === "product_square"
+        ? "square"
+        : "portrait";
+  }
 
   // ★ THE SPEND CEILING IS CLAIMED BEFORE THE PROVIDER CALL AND BEFORE THE
   //   CREDIT CHARGE. Charging first and then refusing would bill a merchant
@@ -118,7 +144,13 @@ export async function createMinkMediaImageProposal(
   );
 
   const extension = image.mimeType === "image/png" ? "png" : "jpg";
-  const path = `stores/${input.actor.storeId}/${MINK_GENERATED_MEDIA_FOLDER}/${crypto.randomUUID()}.${extension}`;
+  // ★ A catalogue photo lives in its own folder: that path is what lets the
+  //   product-photo proposal accept it while still refusing campaign art.
+  const folder =
+    request.purpose === "product"
+      ? MINK_GENERATED_PRODUCT_PHOTO_FOLDER
+      : MINK_GENERATED_MEDIA_FOLDER;
+  const path = `stores/${input.actor.storeId}/${folder}/${crypto.randomUUID()}.${extension}`;
   let url: string;
   try {
     url = await gcsUploadObject(path, image.bytes, image.mimeType);
@@ -214,7 +246,7 @@ export async function createMinkMediaImageProposal(
     prompt: request.prompt,
     referenceImageCount: references.length,
     purpose: request.purpose,
-    aspectRatio: aspectRatioFor(request.purpose),
+    aspectRatio: aspectRatioFor(request.purpose, request.productPhotoShape),
     placement: spec.placement,
     saved: true,
     status: "private_preview",

@@ -143,6 +143,50 @@ describe("asking Gemini for one storefront image", () => {
     );
   });
 
+  it("★★ ASKS FOR THE ITEM ITSELF, NOT A CAMPAIGN SCENE, FOR A CATALOGUE PHOTO", async () => {
+    generateContent.mockResolvedValue(imageResponse());
+    await generateMinkMediaImage(
+      config as never,
+      {
+        ...request,
+        purpose: "product",
+        prompt: "The 1 litre milk carton on a plain white studio background.",
+        referenceImageUrls: [PRODUCT_REFERENCE.url],
+        productPhotoShape: "square",
+      },
+      [PRODUCT_REFERENCE],
+    );
+
+    const call = generateContent.mock.calls[0][0];
+    // The store's card is square, so the photo is square; the default is 3:4.
+    expect(call.config.imageConfig.aspectRatio).toBe("1:1");
+    const text = call.contents[0].parts[0].text as string;
+    expect(text).toContain("catalogue product photograph");
+    expect(text).toContain("not a campaign scene");
+    expect(text).toContain("real photograph of the product");
+    expect(text).toContain("Do not restyle it");
+    // Still no people, whatever the purpose.
+    expect(call.config.imageConfig.personGeneration).toBe("ALLOW_NONE");
+  });
+
+  it("gives a portrait-card store a 3:4 catalogue photo", async () => {
+    generateContent.mockResolvedValue(imageResponse());
+    await generateMinkMediaImage(
+      config as never,
+      {
+        ...request,
+        purpose: "product",
+        prompt: "The 1 litre milk carton on a plain white studio background.",
+        referenceImageUrls: [PRODUCT_REFERENCE.url],
+        productPhotoShape: "portrait",
+      },
+      [PRODUCT_REFERENCE],
+    );
+    expect(
+      generateContent.mock.calls[0][0].config.imageConfig.aspectRatio,
+    ).toBe("3:4");
+  });
+
   it("decodes the image the provider returned", async () => {
     generateContent.mockResolvedValue(imageResponse("image/png"));
     const image = await generateMinkMediaImage(config as never, request);

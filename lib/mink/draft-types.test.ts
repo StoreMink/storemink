@@ -22,6 +22,9 @@ describe("Mink draft contracts", () => {
       coupon_update: 1,
       customer_group_create: 1,
       customer_group_update: 1,
+      category_create: 1,
+      category_update: 1,
+      social_post: 2,
       inventory_adjustment: 1,
       bulk_inventory_adjustment: 5,
       order_status_transition: 1,
@@ -268,5 +271,34 @@ describe("Mink draft contracts", () => {
         { historicalSnapshot: true },
       ),
     ).toThrow("Height mode must be auto or fixed.");
+  });
+});
+
+describe("product photo drafts and generated images", () => {
+  const STORE = "a0000000-0000-4000-8000-000000000001";
+  const base = {
+    image_url: "",
+    images_json: "",
+  };
+  const photo = `https://storage.googleapis.com/b/stores/${STORE}/mink-generated/product-photos/11111111-1111-4111-8111-111111111111.jpg`;
+  const art = `https://storage.googleapis.com/b/stores/${STORE}/mink-generated/11111111-1111-4111-8111-111111111111.jpg`;
+
+  it("accepts a catalogue photo Mink generated for the product", () => {
+    const normalized = normalizeMinkDraftContent("product_images", {
+      ...base,
+      image_url: photo,
+      images_json: JSON.stringify([photo]),
+    });
+    expect(normalized.image_url).toBe(photo);
+  });
+
+  it("★ still refuses campaign art as a product photo", () => {
+    expect(() =>
+      normalizeMinkDraftContent("product_images", {
+        ...base,
+        image_url: art,
+        images_json: JSON.stringify([art]),
+      }),
+    ).toThrow(/not campaign artwork/);
   });
 });

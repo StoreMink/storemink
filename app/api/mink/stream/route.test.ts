@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/mink/memories", () => ({
   loadMinkMemoryReference: vi.fn(async () => ""),
+  listMinkMemories: vi.fn(async () => []),
 }));
 
 const holder = vi.hoisted(() => ({
@@ -68,7 +69,7 @@ vi.mock("@/lib/observability/logger", () => ({
 }));
 
 import { POST } from "./route";
-import { loadMinkMemoryReference } from "@/lib/mink/memories";
+import { listMinkMemories, loadMinkMemoryReference } from "@/lib/mink/memories";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -191,6 +192,117 @@ describe("POST /api/mink/stream", () => {
     expect(body).toContain("You have 12 published products.");
     expect(body).toContain("event: usage");
     expect(body).toContain("event: done");
+  });
+
+  it("offers a lasting instruction back as a memory, after the answer", async () => {
+    const response = await POST(
+      request({ message: "From now on, always keep answers short." }),
+    );
+    const body = await response.text();
+    const events = body
+      .split("\n\n")
+      .filter((block) => block.startsWith("event: "))
+      .map((block) => block.slice(7, block.indexOf("\n")));
+    expect(events.indexOf("memory_suggestion")).toBeGreaterThan(
+      events.indexOf("message"),
+    );
+    expect(events.indexOf("memory_suggestion")).toBeLessThan(
+      events.indexOf("done"),
+    );
+    expect(body).toContain(
+      'event: memory_suggestion\ndata: {"kind":"preference","content":"From now on, always keep answers short.","title":"From now on, always keep answers short"}',
+    );
+    // A plain question offers nothing and reads no memories.
+    vi.mocked(listMinkMemories).mockClear();
+    const quiet = await (
+      await POST(request({ message: "What were sales yesterday?" }))
+    ).text();
+    expect(quiet).not.toContain("event: memory_suggestion");
+    expect(listMinkMemories).not.toHaveBeenCalled();
+  });
+
+  it("withholds the offer when the memories are full or already hold it", async () => {
+    const kept = Array.from({ length: 10 }, (_, i) => ({
+      id: `m-${i}`,
+      title: `t${i}`,
+      content: `c${i}`,
+      kind: "preference" as const,
+      version: 1,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      usable: true,
+    }));
+    vi.mocked(listMinkMemories).mockResolvedValueOnce(kept);
+    const full = await (
+      await POST(
+        request({ message: "From now on, always keep answers short." }),
+      )
+    ).text();
+    expect(full).not.toContain("event: memory_suggestion");
+    vi.mocked(listMinkMemories).mockResolvedValueOnce([
+      { ...kept[0]!, content: "From now on, always keep answers short." },
+    ]);
+    const held = await (
+      await POST(
+        request({ message: "From now on, always keep answers short." }),
+      )
+    ).text();
+    expect(held).not.toContain("event: memory_suggestion");
+    // A failed read costs the offer, never the answer that preceded it.
+    vi.mocked(listMinkMemories).mockRejectedValueOnce(new Error("down"));
+    const failed = await (
+      await POST(
+        request({ message: "From now on, always keep answers short." }),
+      )
+    ).text();
+    expect(failed).toContain("event: message");
+    expect(failed).toContain("event: done");
+    expect(failed).not.toContain("event: memory_suggestion");
+  });
+
+  it("forwards streamed text as delta events before the finished message", async () => {
+    holder.run.mockImplementation(
+      async (input: {
+        onEvent?: (event: Record<string, unknown>) => Promise<void> | void;
+      }) => {
+        await input.onEvent?.({ type: "text_delta", text: "You have " });
+        await input.onEvent?.({ type: "text_reset" });
+        await input.onEvent?.({ type: "text_delta", text: "12 products." });
+        return {
+          text: "12 products.",
+          model: "gemini-3.7-flash",
+          steps: 1,
+          toolCalls: 0,
+          retryCount: 0,
+          usage: {
+            promptTokens: 10,
+            outputTokens: 2,
+            thoughtTokens: 0,
+            totalTokens: 12,
+          },
+          artifacts: [],
+        };
+      },
+    );
+    const response = await POST(request({ message: "How many products?" }));
+    const body = await response.text();
+
+    const events = body
+      .split("\n\n")
+      .filter((block) => block.startsWith("event: "))
+      .map((block) => block.slice(7, block.indexOf("\n")));
+    expect(events).toEqual([
+      "status",
+      "delta",
+      "delta_reset",
+      "delta",
+      "message",
+      "usage",
+      "done",
+    ]);
+    expect(body).toContain('event: delta\ndata: {"text":"You have "}');
+    // A delta writes no telemetry row: only tool events do.
+    expect(holder.startTool).not.toHaveBeenCalled();
   });
 
   it("uses high thinking only for an authorised storefront code request", async () => {

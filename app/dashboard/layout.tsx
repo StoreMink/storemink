@@ -18,6 +18,7 @@ import { outstandingDocs } from "@/lib/legal/store";
 import { getMinkConfig } from "@/lib/mink/config";
 import { isMinkStoreInvited } from "@/lib/mink/access";
 import { ChatProvider } from "./chat-context";
+import { minkSkillsFor } from "@/lib/mink/skills";
 import { ImageRefineProvider } from "@/components/ui/image-refine-context";
 import { DashboardChat } from "./dashboard-chat";
 import {
@@ -294,6 +295,9 @@ export default async function DashboardLayout({
       <ChatProvider
         minkEnabled={minkEnabled}
         canSaveMedia={can(permissions, "media", "manage", isSuperadmin)}
+        skills={minkSkillsFor((section, action) =>
+          can(permissions, section, action, isSuperadmin),
+        )}
       >
         <ImageRefineProvider
           available={

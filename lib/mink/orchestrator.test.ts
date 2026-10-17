@@ -124,13 +124,19 @@ describe("runMinkAgent", () => {
       onEvent,
     });
 
-    expect(sendToolResponses).toHaveBeenCalledWith([
-      {
-        id: "call-1",
-        name: "get_store_profile",
-        response: { output: { storeId: "store-1" } },
-      },
-    ]);
+    expect(sendToolResponses).toHaveBeenCalledWith(
+      [
+        {
+          id: "call-1",
+          name: "get_store_profile",
+          response: { output: { storeId: "store-1" } },
+        },
+      ],
+      expect.objectContaining({
+        onDelta: expect.any(Function),
+        onReset: expect.any(Function),
+      }),
+    );
     expect(result).toEqual({
       text: "Your store is ready.",
       model: "gemini-3.7-flash",
@@ -747,5 +753,102 @@ describe("artifacts a run returns", () => {
     });
 
     expect(result.artifacts.map((a) => a.type)).toEqual(["records"]);
+  });
+});
+
+describe("★★ streamed answers", () => {
+  it("forwards each visible fragment as it arrives and keeps the finished text", async () => {
+    const session: MinkModelSession = {
+      sendUserMessage: vi.fn(async (_message, options) => {
+        options?.onDelta?.("Your ");
+        options?.onDelta?.("store is ready.");
+        return turn({ text: "Your store is ready." });
+      }),
+      sendToolResponses: vi.fn(),
+    };
+    const onEvent = vi.fn();
+
+    const result = await runMinkAgent({
+      actor: ACTOR,
+      message: "How is my store?",
+      config: config(),
+      registry: registry(),
+      session,
+      onEvent,
+    });
+
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual([
+      { type: "text_delta", text: "Your " },
+      { type: "text_delta", text: "store is ready." },
+    ]);
+    expect(result.text).toBe("Your store is ready.");
+  });
+
+  it("withdraws fragments of a turn that ends in a tool call, so working-out is never the answer", async () => {
+    const session: MinkModelSession = {
+      sendUserMessage: vi.fn(async (_message, options) => {
+        options?.onDelta?.("Let me check.");
+        return turn({
+          functionCalls: [
+            { id: "call-1", name: "get_store_profile", args: {} },
+          ],
+        });
+      }),
+      sendToolResponses: vi.fn(async (_responses, options) => {
+        options?.onDelta?.("All good.");
+        return turn({ text: "All good." });
+      }),
+    };
+    const onEvent = vi.fn();
+
+    const result = await runMinkAgent({
+      actor: ACTOR,
+      message: "How is my store?",
+      config: config(),
+      registry: registry(),
+      session,
+      onEvent,
+    });
+
+    const types = onEvent.mock.calls.map(([event]) => event.type);
+    expect(types).toEqual([
+      "text_delta",
+      "text_reset",
+      "tool_call",
+      "tool_result",
+      "text_delta",
+    ]);
+    expect(types.indexOf("text_reset")).toBeLessThan(
+      types.indexOf("tool_call"),
+    );
+    expect(result.text).toBe("All good.");
+  });
+
+  it("relays a provider retry's reset so the client discards the first attempt's text", async () => {
+    const session: MinkModelSession = {
+      sendUserMessage: vi.fn(async (_message, options) => {
+        options?.onDelta?.("Half an ans");
+        options?.onReset?.();
+        options?.onDelta?.("A whole answer.");
+        return turn({ text: "A whole answer.", retryCount: 1 });
+      }),
+      sendToolResponses: vi.fn(),
+    };
+    const onEvent = vi.fn();
+
+    await runMinkAgent({
+      actor: ACTOR,
+      message: "Hi",
+      config: config(),
+      registry: registry(),
+      session,
+      onEvent,
+    });
+
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual([
+      { type: "text_delta", text: "Half an ans" },
+      { type: "text_reset" },
+      { type: "text_delta", text: "A whole answer." },
+    ]);
   });
 });

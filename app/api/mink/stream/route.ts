@@ -19,10 +19,15 @@ import { createVertexMinkSession } from "@/lib/mink/vertex-client";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { rateLimit } from "@/lib/rate-limit";
 import { rejectForeignMinkOrigin } from "@/lib/mink/request-origin";
-import { normalizeMinkPageContext } from "@/lib/mink/page-context";
+import {
+  normalizeMinkPageContext,
+  renderMinkScreenReference,
+} from "@/lib/mink/page-context";
 import type { MinkRunProgress } from "@/lib/mink/types";
 import { selectMinkThinkingLevel } from "@/lib/mink/thinking";
-import { loadMinkMemoryReference } from "@/lib/mink/memories";
+import { listMinkMemories, loadMinkMemoryReference } from "@/lib/mink/memories";
+import { MEMORY_LIMIT } from "@/lib/mink/memory-policy";
+import { suggestMinkMemory } from "@/lib/mink/memory-suggestion";
 import { readMinkBoundedJson } from "@/lib/mink/bounded-json";
 import { MINK_MESSAGE_MAX_CHARS } from "@/lib/mink/input-policy";
 
@@ -121,6 +126,10 @@ export async function POST(request: Request) {
         abortSignal: abortController.signal,
         thinkingLevel,
         memoryReference,
+        screenReference: renderMinkScreenReference(
+          pageContext.screen,
+          pageContext.currentPath,
+        ),
       });
     } catch (error) {
       await failMinkRun({
@@ -175,6 +184,14 @@ export async function POST(request: Request) {
               progress = next;
             },
             async onEvent(event) {
+              if (event.type === "text_delta") {
+                send("delta", { text: event.text });
+                return;
+              }
+              if (event.type === "text_reset") {
+                send("delta_reset", {});
+                return;
+              }
               if (event.type === "tool_call") {
                 await startMinkToolCall({
                   actor,
@@ -231,6 +248,28 @@ export async function POST(request: Request) {
             runId: started.runId,
             artifacts: result.artifacts,
           });
+          // "Remember this?": the one lasting sentence of the merchant's own
+          // message, offered only while there is room and never for a fact
+          // already kept. A failed read costs the offer, never the answer.
+          const memorySuggestion = suggestMinkMemory(message);
+          if (memorySuggestion) {
+            try {
+              const kept = await listMinkMemories(actor);
+              if (
+                kept.length < MEMORY_LIMIT &&
+                !kept.some(
+                  (memory) => memory.content === memorySuggestion.content,
+                )
+              ) {
+                send("memory_suggestion", memorySuggestion);
+              }
+            } catch {
+              logWarn("mink.run: memory suggestion skipped", {
+                requestId,
+                reason: "memory_read_failed",
+              });
+            }
+          }
           send("usage", {
             model: result.model,
             thinkingLevel,

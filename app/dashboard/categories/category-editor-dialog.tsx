@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { ImageUpload } from "@/components/ui/image-upload";
 import { NumberField } from "@/components/ui/number-field";
 import { slugify } from "@/lib/slug";
+import type { MinkCategoryPrefill } from "@/lib/mink/form-prefill";
 import {
   createCategory,
   updateCategory,
@@ -27,6 +28,8 @@ type Props = {
   category: Category | null;
   onClose: () => void;
   onSaved: () => void;
+  /** Fields Mink filled in for a NEW category; ignored while editing one. */
+  prefill?: MinkCategoryPrefill | null;
 };
 
 const EMPTY: CategoryFormData = {
@@ -38,6 +41,18 @@ const EMPTY: CategoryFormData = {
   status: "active",
 };
 
+/** A Mink prefill over the empty form; the slug derives from the name as if typed. */
+function prefilledCategoryForm(prefill: MinkCategoryPrefill): CategoryFormData {
+  const name = prefill.name ?? "";
+  return {
+    ...EMPTY,
+    name,
+    slug: slugify(prefill.slug ?? name),
+    description: prefill.description ?? "",
+    status: prefill.status ?? "active",
+  };
+}
+
 const fieldClass =
   "w-full rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface)] px-3 py-2 text-sm text-[var(--dash-text)] outline-none placeholder:text-[var(--dash-text-3)] focus:border-[var(--dash-accent)]";
 const labelClass =
@@ -48,6 +63,7 @@ export function CategoryEditorDialog({
   category,
   onClose,
   onSaved,
+  prefill = null,
 }: Props) {
   const [form, setForm] = useState<CategoryFormData>(EMPTY);
   const [isPending, startTransition] = useTransition();
@@ -68,10 +84,10 @@ export function CategoryEditorDialog({
       });
       setSlugTouched(true); // keep the existing slug stable while editing
     } else {
-      setForm(EMPTY);
-      setSlugTouched(false);
+      setForm(prefill ? prefilledCategoryForm(prefill) : EMPTY);
+      setSlugTouched(Boolean(prefill?.slug));
     }
-  }, [open, category]);
+  }, [open, category, prefill]);
 
   const set = <K extends keyof CategoryFormData>(
     key: K,
@@ -122,6 +138,14 @@ export function CategoryEditorDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-2">
+          {!isEditing && prefill && (
+            <p
+              role="status"
+              className="rounded-md border border-[var(--dash-border)] bg-[var(--dash-accent-soft)] px-3 py-2 text-[13px] text-[var(--dash-text)]"
+            >
+              Filled in by Mink AI. Review every field before saving.
+            </p>
+          )}
           <div>
             <label className={labelClass}>Name *</label>
             <input

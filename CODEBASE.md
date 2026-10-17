@@ -92,6 +92,302 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+### Mink Sidekick parity: streaming, navigation, skills, charts, memories, categories (2026-10-17)
+
+Nine gaps against Shopify Sidekick closed in one change. No new table; one
+migration, `20261017_0215_mink_categories_social_posts`.
+★★ THE ANSWER STREAMS, AND WORKING-OUT IS WITHDRAWN. `MinkModelSession.send`
+(`vertex-client.ts`) always uses `sendMessageStream`; `consumeMinkStream`
+collects text deltas, function calls and the last usage. The orchestrator
+turns deltas into `text_delta` events and, when a turn that streamed text
+then calls a tool, a `text_reset` (the SSE route sends `delta` /
+`delta_reset`). The panel shows the text as it arrives under a progress list
+of tool steps (`lib/mink/tool-labels.ts`: merchant words per tool, "Reading
+sales…"; `tool-labels.test.ts` fails when a registered tool has no entry),
+and the finished `message` replaces the streamed text. Steps stay on the
+answer for the session as a "Checked sales, orders" line
+(`minkCheckedLine`). Phase labels, raw tool names and the per-card
+disclaimer paragraph are gone; `proposalRollbackNote` is one sentence.
+★ The SDK records chat history only after the last chunk, so a mid-stream
+failure leaves the history untouched and the retry is safe.
+★ LINKS STAY INSIDE THE APP: `app/dashboard/mink-link.tsx` renders a Next
+`Link` for `/dashboard` hrefs (every card file uses it), so the open panel
+survives a click. `open_dashboard_page` (`tools/navigation-tools.ts`,
+dashboard:view, a closed destination map re-checked against the viewer's
+sections, product by id or SKU, order by reference) emits a `navigation`
+artifact the panel opens itself for a LIVE message (never restored
+history), closing the chat under 640px; `new_product` carries a prefill
+through `lib/mink/product-prefill.ts` (localStorage, read once by the
+product editor on `?prefill=mink`), and the product-create card's "Open in
+product form" uses the same hand-off.
+★ SKILLS AND SUGGESTIONS, deterministic: `lib/mink/skills.ts` (the "/"
+menu, permission-filtered server-side in the layout; starter chips by
+current page), `lib/mink/follow-ups.ts` (≤3 next questions by artifact
+type under the newest answer).
+★ CHARTS: `query_analytics` (`tools/analytics-tools.ts`, analytics:view)
+runs the Reports builder's own whitelist (`runExploration`) for one measure
+grouped one way over one period, optionally with a comparison, and emits a
+`chart` artifact; `app/dashboard/mink-chart.tsx` draws it as an SVG line
+or bar with one axis, a legend for two or more series, hover titles, a
+table view and an "Open in Reports" link; palette
+`MINK_CHART_SERIES_COLOURS` passed the dataviz validator.
+★ "REMEMBER THIS?" (`lib/mink/memory-suggestion.ts`, pure): after an answer
+the route offers back the one sentence of the merchant's message that reads
+as lasting (fixed phrases: "from now on", "we only ship", "our tone");
+questions, skills, links and code never qualify. Sent as a
+`memory_suggestion` SSE event only while fewer than `MEMORY_LIMIT` memories
+exist and the sentence is not already kept; a failed read costs the offer,
+never the answer. One tap saves through the ordinary `/api/mink/memories`
+save command (90 days, explicit `confirmed`), so the Memories page's rules
+hold; `minkRandomUuid` falls back to `getRandomValues` on a plain-http host.
+★★ CATEGORIES ARE A GUARDED DOMAIN ACTION, the customer-group pattern:
+`get_category_for_draft` (name or slug, opaque snapshot),
+`propose_category_create` / `propose_category_update` (categories:manage;
+name, hyphenated slug, description, an owned image URL, visibility active
+or hidden), draft kinds `category_create` / `category_update`, tools
+`create_category` / `update_category` in `MINK_DOMAIN_ACTION_TOOLS`, resource
+type `category`, section `categories`. Every dispatch in `domain-actions.ts`
+names them explicitly (the §38 fallthrough lesson): write under the same
+slug advisory lock the product path takes, slug uniqueness against
+`categories_store_slug_key`, image ownership re-checked at the write, status
+pinned to active|hidden, rollback only while no product is filed under it
+(re-checked inside the DELETE, since `products.category_id` is ON DELETE SET
+NULL). The action route busts the same paths and tag `revalidateCatalog`
+does. 0215 widens the six vocabularies (found by querying for
+`create_customer_group`), adds NULL-safe target checks for the category and
+`social_post` kinds, provisions both tools for every store and edits the
+Mink guide's capability sentences in place; probed on local Postgres (valid
+drafts accepted, hollow and mis-targeted ones refused).
+★ `propose_social_posts` (marketing:manage, 2 credits) is a plain editable
+draft kind `social_post` (Instagram caption required; Facebook, WhatsApp
+status and hashtags optional); nothing is posted anywhere.
+★ `get_shipping_settings` (settings:view) is a deterministic delivery audit
+(live rates with no carrier, no fulfilling location, zero flat rate,
+shippable products without a weight, a slow promise) and
+`get_marketing_channels` (marketing:view; channel state only with
+channels:view, never a credential) a marketing overview; both in
+`tools/commerce-tools.ts`. Prompt versions `read-beta-v27` /
+`draft-action-beta-v48`, registries `read-beta-v23` / `draft-beta-v38`.
+⚠ Not run in a browser; verified by tsc, the suites named in the handoff and
+the local migration apply. The `social_post` card has no "open" destination
+of its own and links to Offers.
+
+### Mink makes catalogue product photos (2026-10-17, owner's decision)
+
+9E's standing rule was that a generated picture never becomes a product's
+photo. The owner reversed it for ONE purpose: `generate_storefront_image`
+gains `purpose: "product"`, a clean studio photograph of an EXISTING item,
+and `propose_product_images` accepts the result, so "make a catalogue photo
+of the almond shake and put it on the product" is one run and one approval.
+Migration `20261017_0217` edits the Mink and product-images guides in place.
+★★ GROUNDED BY RULE, NOT BY INSTRUCTION. `createMinkMediaImageProposal`
+refuses a product purpose unless at least one resolved reference is the
+product's own photo (`source: "product"`) or an image the merchant attached
+(`source: "media"`); a category image or an empty list is refused BEFORE
+the spend ceiling and the charge. So Mink never invents goods from a
+description; it photographs the item it was shown. The composition guidance
+asks for the item whole and centred on a plain studio background, no props,
+scene, words or people (`personGeneration` stays `ALLOW_NONE`), and the
+reference guidance tells the model to reproduce the item exactly, never
+restyle it. `docs/mink-ai-image-prompt.md` gained grounding rule 7 for the
+same case.
+★★ THE FOLDER IS THE BOUNDARY. A catalogue photo is stored under
+`mink-generated/product-photos/` (`MINK_GENERATED_PRODUCT_PHOTO_FOLDER`), a
+subfolder of the campaign-art folder, so every existing check still sees a
+generated object (the stored-image reader's prefix check, 0213's source
+backfill, the parser's own-bucket rule, which admits the subfolder) while
+`isMinkGeneratedCampaignArtUrl` / `isMinkGeneratedProductPhotoUrl`
+(client-safe, in the generation contract) tell the two apart by path alone.
+`propose_product_images` and the `product_images` draft validator refuse
+campaign art with that helper and accept a catalogue photo; the Media row's
+source stays `mink_generated` ("Made by Mink AI" in the Library).
+★ THE SHAPE IS THE STORE'S CARD SHAPE, read on the server
+(`getStoreChrome` → `productPhotoSpec`), never chosen by the model:
+`MinkMediaGenerationRequest.productPhotoShape` is set by the proposal path
+after validation (the validator refuses it on the wire), and
+`aspectRatioFor("product", shape)` gives 3:4 for the portrait default and
+1:1 for a square-card store. ★ Preparation follows the same shape:
+`media-preparation.ts` gained `product_photo_portrait` (1200×1600, the same
+contain-on-white treatment) and `productPhotoDestination(storeId)` picks it
+or the square `product_photo` by the card shape, for product-photo proposals
+AND product creation from an attachment. A 3:4 generated photo therefore
+passes through unpadded on a portrait store instead of being letterboxed
+into a square; an uploaded photo on a portrait-card store now gets a 3:4
+canvas rather than the square one the module kept from before the card
+changed shape.
+★ The generated-image card badges a product photo "Not on the product yet"
+and "Made by AI", and after saving tells the merchant to check it against
+the real item before approving the photo change. Still approved by a
+human: the product write is the ordinary `apply_product_images` approval.
+Prompt versions `read-beta-v29` / `draft-action-beta-v50` (the shared doc
+moved), registries `read-beta-v25` / `draft-beta-v41` (the generation
+tool's enum and the product-photo tool's description changed).
+★ ANSWERS ARE PLAIN AND SHORT BY RULE (same day, owner's ask). The prompt's
+one style bullet used to say only "be concise"; it now tells Mink to lead
+with the answer in one or two short sentences and stop, to use everyday
+words and never technical ones (stock, not inventory levels; the page
+address, not slug; no tool, artifact, tenant, digest or schema talk), to
+keep an ordinary answer under about 80 words and four sentences, to use a
+list only for several asked-for things, a table only for figures compared
+side by side, and no headings unless there are real sections, and to point
+at a card rather than repeat it. The 2,048-token output cap is unchanged:
+it is a ceiling against runaway output, and a hard cut mid-sentence reads
+worse than a long answer, so the prompt is the lever. Prompt versions
+`read-beta-v30` / `draft-action-beta-v51`; the system-prompt test pins the
+sentence.
+⚠ Not run against live Vertex; the request shape is the verified 9E one
+with a new aspect value (3:4 is in the model's documented list). ⚠ The
+product editor has no "Generate" button of its own; the chat is the way in.
+
+### Mink Sidekick parity, second pass: screen awareness, spotlight, prefilled forms, reply language, voice, richer charts (2026-10-17)
+
+The UI gaps that remained after the first pass, closed in one change. No
+migration: nothing here writes a row.
+★★ SCREEN AWARENESS. `app/dashboard/mink-screen.ts` reads what the merchant
+can see (document title, page headings, the address-bar filters, up to 20
+visible table rows, the selected-row count, an open dialog, a notice, and the
+labelled values of the form on screen) and `minkBrowserContext()` sends it as
+`context.screen` with every message. `lib/mink/page-context.ts`
+re-bounds it on the server (`normalizeMinkScreenContext`: every string
+capped, secrets dropped by label, 20 rows, 40 fields) and
+`renderMinkScreenReference` turns it into ONE untrusted user part placed
+after the memory reference and before the message (`vertex-client.ts`),
+never inside the system instruction. The prompt tells the model it is what
+the merchant sees, not a verified fact: resolve "this" and "these" with it,
+verify with a tool before any figure or proposal. Password, hidden and file
+inputs, and any field whose label names a key, token, secret, OTP or PIN,
+never leave the page; the Mink panel itself is excluded from the read.
+Nothing is persisted (mink_runs keeps only `current_path`).
+★ SPOTLIGHT ("show me where"). `lib/mink/guide-targets.ts` is a closed
+registry of dashboard controls (New product, New offer, New category, New
+blog, Invite user, Go live, Edit dashboard, Upload, Connect Razorpay, Use
+this theme, Customize, Add location, the delivery-rate cards, Save and
+publish, Generate with AI), each naming the navigation destination it lives
+on, its label, a hint and a pattern for its visible text.
+`open_dashboard_page` gains `highlight` (the destination may be omitted and
+is derived from the target; a mismatch is refused; the module throws at load
+if a target names an unknown destination). The artifact carries
+`highlight`, the parser re-validates it against the registry, and
+`ChatProvider` holds it so `app/dashboard/mink-spotlight.tsx` can draw a ring
+and a note around the control after the route lands, finding it by a
+`data-mink-target` hook first and then by its accessible name, waiting up to
+six seconds for the page, re-measuring on scroll and resize, and leaving on
+a click, Escape, a route change or a timeout. It lives in the provider, not
+the panel, because on a phone opening a page closes the chat. A control
+that never appears says so in a status pill rather than silently doing
+nothing.
+★ PREFILLED FORMS BEYOND PRODUCTS. `lib/mink/form-prefill.ts` is the one
+contract: kinds product, offer, category, blog and shipping, each with
+bounded fields accepted in camelCase and snake_case, `storeMinkPrefill` /
+`takeMinkPrefill` (sessionStorage, read once, stale after 10 minutes) and
+`minkPrefillPath(kind)` (`?prefill=mink`). `product-prefill.ts` is now a
+thin wrapper over it. The navigation tool fills new_product, new_offer,
+new_category, new_blog and shipping_settings (manage permission required
+when a prefill is present, where viewing the page is not); the card names
+what was filled; each editor takes the fields on first render and strips
+the flag, and shows "Filled in by Mink AI. Review every field before
+saving." The merchant still saves through the ordinary action. The four
+editors (`offers/offer-form.tsx`, `categories/categories-management-view`
+
+- `category-editor-dialog`, `blogs/blogs-management-view` +
+  `blog-editor-dialog`, `settings/shipping/shipping-settings-view`) take the
+  fields in a lazy initialiser (so a reload starts blank) and gate anything
+  STRUCTURAL (the notice, the dialog they open, the offer type picker they
+  skip) on a `useSyncExternalStore` hydrated flag: these pages are
+  server-rendered, and a server/client tree mismatch during hydration makes
+  React throw the page away. Offers: a reward value lands on `percent` or
+  `amount` by reward type, a positive `minSubtotal` switches the trigger, a
+  code implies code delivery and a code beside `automatic` is dropped
+  (`validateForm` refuses it). Categories: the slug is derived from the name
+  when absent. Blogs: `lib/mink/prefill-html.ts` turns the plain-text or
+  simple-Markdown body into the few blocks TipTap takes (escaped first; the
+  save sanitises again), and a category or tag is matched case-insensitively
+  to the store's taxonomy and dropped when it is not there. Shipping: fields
+  merge over the saved settings and a `shiprocket` mode is skipped when the
+  channel is off. ★ `pick()` in form-prefill keeps an explicit camelCase
+  `null` (`freeAbove: null` means clear the threshold); `??` dropped it on
+  the round trip.
+  ★ REPLY LANGUAGE. `lib/mink/reply-language.ts` is a closed list (match my
+  message, English, Hindi, Hinglish, Tamil, Telugu, Kannada, Marathi, Bengali,
+  Gujarati, Malayalam, Punjabi) chosen from the panel's overflow menu, kept in
+  localStorage, sent as `context.replyLanguage`, validated again on the
+  server and rendered into the trusted context through the new
+  `{{reply_language}}` placeholder. The chrome stays English; the answers
+  follow the choice, with StoreMink's own labels, product names and codes
+  kept as they appear.
+  ★ VOICE CHAT (`app/dashboard/mink-voice-mode.ts`, `lib/mink/speech-text.ts`,
+  the composer). A "Talk with Mink" toggle (`aria-pressed`) beside the mic
+  runs a hands-free loop: the existing dictation (the recorder plus
+  `/api/mink/voice`) listens, the transcript is sent through the composer's
+  own submit path (so limits and attachments apply, and a refused send leaves
+  the words in the box), the newest assistant answer is read aloud with
+  `window.speechSynthesis`, and the end of speech re-arms the mic. The hook
+  is a state machine (idle, listening, sending, waiting, speaking) and only
+  ever speaks a reply to something sent while the mode was on: restored
+  history, an error and an answer that predates the toggle stay silent. A
+  speak token makes cancellation quiet (`speechSynthesis.cancel()` fires the
+  cancelled utterance's end handler, which would otherwise re-arm the mic at
+  the wrong moment). It stops on toggle, unmount, the chat closing, the tab
+  going hidden, a chat error, a refused send, a transcription or mic failure
+  and three empty transcripts in a row, with a short notice for the
+  merchant-facing ones; Escape and a "Stop voice chat" button end it too.
+  `speakableMinkText` turns Markdown into speech (tables as "label: value"
+  lines, code blocks and dashboard paths dropped, cut at a sentence boundary
+  under 1,500 characters) and `speechLangFor` picks the utterance language
+  from the script most of the letters are in (eight Indic scripts; Latin
+  takes the browser's language). Support is read through
+  `useSyncExternalStore` with an "unsupported" server snapshot so hydration
+  matches; it needs a secure context, so it is off on plain-http local hosts.
+  ★ RICHER CHARTS. `query_analytics` takes an optional `second_metric`
+  (same measure list, refused when equal to the first, from the other dataset
+  or not valid for the grouping) and runs it in the SAME `runExploration`
+  call; it comes back INSIDE the one chart artifact as `panels[0]`, because
+  the registry, orchestrator, SSE route and history all carry exactly one
+  artifact per tool response and an artifacts array was not a small safe
+  change. The artifact gains `summary` (total, previous total, trend percent,
+  comparison label, `goodWhen`, "down" for the measures `EXPLORE_METRICS`
+  marks `lowerIsBetter`, such as discounts and returns) and `panels` (at most
+  three, each a chart in its own right); the parser re-validates both and
+  drops a malformed one while keeping the chart. `app/dashboard/mink-chart.tsx`
+  leads with the hero total and a green/red trend badge, names the series
+  "This period" / "Previous period" / "Same period last year", draws the
+  comparison dashed and lighter, labels only the peak, groups bars with a gap
+  (never stacked), thins the x labels to at most eight, prints compact Indian
+  ticks (₹1.2L, ₹3.4Cr), renders panels as small multiples (stacking at 380px),
+  and gains a Copy table button (TSV through `navigator.clipboard`, a no-op
+  without it). Palette unchanged.
+  Prompt versions `read-beta-v28` / `draft-action-beta-v49`, registries
+  `read-beta-v25` / `draft-beta-v40` (the navigation and analytics tools' schemas changed).
+  ⚠ Still not Sidekick: a native mobile app (StoreMink has only the
+  responsive web panel) and localised chrome. Help: migration 0216 edits the
+  Mink guide in place (the Remember this? card, which 0215's pass shipped
+  without its sentence; pointing at a control and prefilled forms; the
+  reply-language setting).
+
+### Mink Home suggestions (2026-10-17)
+
+"Mink suggests" is a Shopify Sidekick Pulse-style `.dash-card` on dashboard
+Home, under the "Ask anything" box and only once the store is open: at most
+five ranked next steps, each with a title, one-line detail, an "Open
+inventory"-style link and an "Ask Mink" button that opens the chat with a
+pre-written question (`startExpandedChat`, the Insights panel's rule, shown
+only when Mink is enabled). ★ DETERMINISTIC, NO MODEL CALL, NO CREDIT, NO
+MIGRATION. `lib/mink/home-suggestion-rules.ts` (pure, no imports) holds the
+fixed severity order and wording: sales down >=15% on the last 7 complete local
+days vs the 7 before (baseline >=5 orders); pending/processing orders older
+than 48 h; out of stock; low stock; WhatsApp chats needing a reply; new
+enquiries; published products missing a photo or description; "(Sample)"
+products; offers ending within 3 days or finished but still on; Mink credits
+under 10%. `lib/mink/home-suggestions.ts` (server-only) reads the signals
+under `Promise.allSettled`, each gated on the section it reveals (`analytics`,
+`orders`, `inventory`, `inbox`, `enquiries`, `products`, `promotions`, `ai`),
+location-scoped and fail-soft (a failed reader is a `logWarn`, nothing more),
+reusing `getSalesTotals`, `readMinkCatalogHealth`, `loadInboxChannelState`,
+`getNewEnquiriesCount`, `readMinkCurrentOffers`, `getAiUsage` plus two bounded
+counts (stale orders; catalogue gaps and samples). Card:
+`app/dashboard/components/mink-suggestions.tsx`; tests beside both modules.
+No Help Centre update: nothing a merchant does changes, it is a suggestion card.
+
 ### Media Library: product images, Choose from library, hidden chat attachments (2026-10-16)
 
 Three merchant asks in one change. Schema in migration
@@ -2459,7 +2755,11 @@ one charged, immutable private proposal that IS an image.
   `products.images`**, and a generated URL can land only in an owned blog-cover
   field or a layout section the merchant separately approves. So generated
   campaign artwork may be grounded in the merchant's authentic product image
-  but cannot become or overwrite a catalogue product photo. ⚠ A brand/product keyword
+  but cannot become or overwrite a catalogue product photo. ⚠ SUPERSEDED FOR
+  ONE PURPOSE on 2026-10-17: see "Mink makes catalogue product photos" above
+  (purpose `product`, grounded in a real photo of the item, through the
+  approved product-photo proposal); every other purpose keeps this rule.
+  ⚠ A brand/product keyword
   blocklist was considered and REJECTED as security theatre — it fails on every
   misspelling and every brand nobody listed, while reading like a guarantee.
   What is enforced is what can be: bounded prompts, a fixed aspect per purpose,
@@ -5848,7 +6148,15 @@ wholesip/
 │                              # 0213 adds media_assets.source (Library hides Mink chat
 │                              # attachments and resized copies) with a backfill;
 │                              # 0214 edits the Media, product images and Mink guides.
-│                              # Next free: 0215.
+│                              # 0215 admits Mink category proposals (create_category /
+│                              # update_category in every tool and resource allowlist,
+│                              # provisioned for every store), the category_create /
+│                              # category_update / social_post draft kinds with NULL-safe
+│                              # target checks, and edits the Mink guide in place.
+│                              # 0216 edits the Mink guide for the Remember this? card,
+│                              # pointing at a control, prefilled forms and the reply
+│                              # language. 0217 edits the Mink and product-images
+│                              # guides for generated catalogue photos. Next free: 0218.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import type { MinkArtifact } from "@/lib/mink/types";
+import { MinkLink } from "./mink-link";
 type ImportArtifact = Extract<MinkArtifact, { type: "product_import" }>;
 type Job = {
   id: string;
@@ -147,19 +148,19 @@ export function MinkProductImportCard({
         </p>
       )}
       <div className="mt-3 flex flex-wrap gap-3">
-        <a
+        <MinkLink
           className="text-[#5b3fd0] underline"
           href={`/api/mink/product-imports/${artifact.fileId}?download=1`}
         >
           Download CSV
-        </a>
+        </MinkLink>
         {current.jobId ? (
-          <a
+          <MinkLink
             className="text-[#5b3fd0] underline"
             href={`/dashboard/logs/import-export/${current.jobId}`}
           >
             Import details
-          </a>
+          </MinkLink>
         ) : (
           <button
             type="button"

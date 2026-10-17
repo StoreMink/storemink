@@ -43,7 +43,7 @@ describe("Mink system prompt document", () => {
     );
     expect(template).toContain("Never silently choose combined");
     expect(template).toContain(
-      "structured artifact already contains the full record list",
+      "summarize the important exceptions rather than every row",
     );
     expect(template).toContain("There is no model tool to approve");
     expect(template).toContain(
@@ -149,6 +149,12 @@ describe("Mink system prompt document", () => {
       "telling the merchant to paste, upload or select that URL themselves is an incomplete task",
     );
     expect(template).toContain("answer in at most two short sentences");
+    // ★ Plain and short, by rule: the one bullet that shapes every answer.
+    expect(template).toContain(
+      "lead with the answer in one or two short sentences, then stop",
+    );
+    expect(template).toContain("under about 80 words and four sentences");
+    expect(template).toContain('say "stock" not "inventory levels"');
     expect(template).toContain("card’s named approval button");
     expect(template).toContain("propose_website_builder_change");
     expect(template).toContain(
@@ -190,6 +196,9 @@ describe("Mink system prompt document", () => {
       "- current dashboard page: /dashboard/products/example",
     );
     expect(prompt).toContain("- selected dashboard record: product");
+    expect(prompt).toContain(
+      "- reply language: match the language and script of the merchant's message",
+    );
     expect(prompt).toContain(
       "- available tools: get_store_profile, search_products",
     );
