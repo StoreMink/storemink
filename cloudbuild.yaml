@@ -339,6 +339,11 @@ steps:
   # Private workers use the serving web digest and its acceptance build ID.
   # Scheduler routing is a one-time step (scripts/theme-studio-workers.py),
   # requiring Scheduler admin; normal releases only need existing Run admin.
+  #
+  # ★ PRODUCTION ONLY (owner's decision, 2026-10-17). Themes are never built on
+  # dev, and the dev workers counted against the asia-south1 Cloud Run quota
+  # (40 GiB and 20 vCPU for the whole project) while serving nothing, so they
+  # were deleted. Deploying them here would quietly bring them back.
   - id: theme-workers-deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: bash
@@ -348,11 +353,11 @@ steps:
         set -euo pipefail
         if [ -f /workspace/superseded ]; then exit 0; fi
         case "${_SERVICE}" in
-          storemink-web-prod|storemink-web-dev)
+          storemink-web-prod)
             python3 scripts/theme-studio-workers.py --deploy \
               --web="${_SERVICE}" --project="${_GCP_PROJECT_ID}" --region="${_RUN_REGION}"
             ;;
-          *) echo "No dedicated Studio workers for ${_SERVICE}." ;;
+          *) echo "No Theme Studio workers for ${_SERVICE}: they run in production only." ;;
         esac
 
   # 6. Update the capture job from the same build.

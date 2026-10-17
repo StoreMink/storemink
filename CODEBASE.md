@@ -9199,16 +9199,22 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `worker-runtime.ts` bounds private Sharp decoder/cache use. Private-only DB
     pools have acquisition/statement/idle-transaction deadlines.
     `scripts/theme-studio-workers.py` deploys independent private generation and
-    QA services (2 GiB, 2 CPU, concurrency 1, max 2 instances, pool 1), from the
-    serving web digest and acceptance build ID. Cloud Build releases them with
+    QA services (2 GiB, 2 CPU, concurrency 1, max 1 instance, pool 1), from the
+    serving web digest and acceptance build ID. ★ PRODUCTION ONLY, ONE INSTANCE
+    EACH (owner's decision, 2026-10-17): themes are never built on dev, so the
+    two dev workers were deleted and the script refuses `storemink-web-dev`;
+    the cap was 2. Every worker instance counts against the asia-south1 Cloud
+    Run quota (40 GiB, 20 vCPU for the whole project) that the website shares.
+    ⚠ The schedules still call storemink.com, so theme work runs inside the web
+    service until routing is switched. Cloud Build releases them with
     the web and capture job; first scheduler routing is explicit and validates
     build/role/private IAM plus combined database connection headroom. Each role
     has two independent minute schedules; the legacy web route retains two run
     lanes and its QA fallback until routing. Workers accept the application
     secret in `X-Theme-Studio-Secret` behind Cloud Run OIDC only in worker mode;
-    public web authentication is unchanged. Current web ceilings plus all planned
-    workers total 34 steady connections; routing conservatively reserves 68 for
-    old/new revision overlap plus five spare. SQL capacity must be verified
+    public web authentication is unchanged. Current web ceilings plus the
+    production workers total 28 steady connections; routing conservatively
+    reserves 56 for old/new revision overlap plus five spare. SQL capacity must be verified
     before routing. No SQL tier or merchant web capacity change is included.
     `visual-evidence.ts` preserves native phone screenshot width and prepares
     full-page overviews plus readable phone/desktop strips sequentially; visual

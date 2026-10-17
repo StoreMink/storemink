@@ -35,11 +35,15 @@ The private topology separates model work from QA and storefront requests:
 | Generation/images | `storemink-theme-studio-model-prod` | 1,200 seconds      | `storemink-theme-studio-runs`, `storemink-theme-studio-runs-peer` |
 | Visual QA         | `storemink-theme-studio-qa-prod`    | 300 seconds        | `storemink-theme-studio-qa`, `storemink-theme-studio-qa-peer`     |
 
-Dev services end in `-dev`; its schedule names add `-dev` to each production job
-name. Each service has 2 GiB memory, two CPUs, request concurrency one, maximum
-two instances and minimum zero. One lane runs in each private request. Two
+There are no dev workers. Themes are built on production only, so the two dev
+services were deleted on 2026-10-17 and Cloud Build deploys workers for
+`storemink-web-prod` alone. Each service has 2 GiB memory, two CPUs, request
+concurrency one, maximum ONE instance (two until 2026-10-17) and minimum zero:
+every worker instance counts against the asia-south1 Cloud Run quota of 40 GiB
+and 20 vCPU for the whole project, which `storemink-web-prod` shares, and
+Theme Studio is a staff-only tool. One lane runs in each private request. Two
 independent schedules allow a completed request to start again while its peer
-is busy. Every paid call remains awaited. The public web endpoint retains its
+is busy; with one instance, the second waits for the first. Every paid call remains awaited. The public web endpoint retains its
 two draining lanes and QA fallback until routing is changed.
 
 Each worker pool has one database connection with a five-second acquisition
@@ -67,12 +71,13 @@ with the service URL as audience, and the application secret in
 secret. Secret values are not printed or placed in CLI arguments.
 
 **Check the shared database before routing.** Cloud Run configuration read on
-4 October showed prod maximum 4 instances × pool 5, and dev maximum 2 × pool 3.
-The planned workers add at most eight connections across both environments:
-34 application connections at steady state. Revision-level instance ceilings
+17 October showed prod maximum 4 instances × pool 5, and dev maximum 2 × pool 3
+(both web services use the one Cloud SQL instance). The production workers add
+at most two connections (two roles × one instance × one connection): 28
+application connections at steady state. Revision-level instance ceilings
 permit old/new pools during deployment, so routing conservatively budgets
-68 connections for overlap plus five spare for administration and other jobs
-(73 with the current settings). Cloud SQL is currently `db-f1-micro`;
+56 connections for overlap plus five spare for administration and other jobs
+(61 with the current settings). Cloud SQL is currently `db-f1-micro`;
 the actual `SHOW max_connections` value was not verified because the existing
 local proxy reset its connection. Do not infer headroom from idle traffic or
 the tier name. Verify the SQL limit and tune aggregate service/pool capacity
@@ -91,7 +96,7 @@ Then route the two existing schedules and add their peers:
 python3 -B scripts/theme-studio-workers.py --route-schedulers --web=storemink-web-prod --project=storemink-prod --max-db-connections=<verified-SQL-limit>
 ```
 
-Repeat for `--web=storemink-web-dev` after dev deployment. Routing refuses an
+There is no dev equivalent: the script refuses `--web=storemink-web-dev`. Routing refuses an
 insufficient combined connection budget, a stale worker image/build/role or a
 split worker rollout. Both roles are validated before moving any schedule.
 Confirm each schedule is enabled, targets the correct
