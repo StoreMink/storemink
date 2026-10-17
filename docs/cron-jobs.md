@@ -268,8 +268,10 @@ and `_THEME_STUDIO_AUTO_QA_ENABLED=true` remain required.
 ✅ **Rolled out 2026-10-01 in dev and production.** The independent
 `POST /api/internal/theme-studio/qa` route drains two leased QA rows without
 waiting on the long model/image request. `storemink-theme-studio-qa` and
-`storemink-theme-studio-qa-dev` run every minute with a 300-second deadline and
-no scheduler retries; the database owns retries. The existing model endpoint
+`storemink-theme-studio-qa-dev` ran every minute with a 300-second deadline and
+no scheduler retries; the database owns retries. (The dev schedules were
+deleted on 2026-10-11 and the dev worker services on 2026-10-17: themes are
+built on production only.) The existing model endpoint
 retains its QA lane as a fallback. Both capture jobs run the image built from
 merge commit `621ee75`, and both capture schedules were shortened from five
 minutes to one. Leases fence overlapping capture/QA executions. First

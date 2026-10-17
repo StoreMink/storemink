@@ -39,7 +39,7 @@ class WorkerDeployment(unittest.TestCase):
     def test_honours_an_explicit_web_build_override(self):
         web = self.fixture()
         web["spec"]["template"]["spec"]["containers"][0]["env"].append({"name": "THEME_STUDIO_BUILD_ID", "value": "release-xyz"})
-        result = workers.worker_spec(web, workers.topology("storemink-web-dev")[0], "registry/web@sha256:abc")
+        result = workers.worker_spec(web, workers.topology("storemink-web-prod")[0], "registry/web@sha256:abc")
         env = {e["name"]: e for e in result["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(env["THEME_STUDIO_BUILD_ID"]["value"], "release-xyz")
 
@@ -52,12 +52,25 @@ class WorkerDeployment(unittest.TestCase):
             self.assertIn("Authorization", flags["--remove-headers"])
             self.assertEqual(flags["--max-retry-attempts"], 0)
 
-    def test_environment_names_cannot_cross_wire_the_schedules(self):
-        prod = workers.topology("storemink-web-prod")
-        dev = workers.topology("storemink-web-dev")
-        self.assertTrue(set(j for p in prod for j in p["jobs"]).isdisjoint(j for p in dev for j in p["jobs"]))
+    def test_only_production_has_workers(self):
+        # Themes are never built on dev (owner's decision, 2026-10-17), so a
+        # dev build must not recreate the two workers that were deleted.
+        with self.assertRaises(ValueError):
+            workers.topology("storemink-web-dev")
         with self.assertRaises(ValueError):
             workers.topology("unknown")
+        prod = workers.topology("storemink-web-prod")
+        self.assertEqual([w["service"] for w in prod], ["storemink-theme-studio-model-prod", "storemink-theme-studio-qa-prod"])
+        self.assertFalse(any(job.endswith("-dev") for w in prod for job in w["jobs"]))
+
+    def test_each_worker_runs_one_instance_at_most(self):
+        # Every worker instance comes out of the regional Cloud Run quota the
+        # website shares; Theme Studio is staff-only and needs one at a time.
+        self.assertEqual(workers.WORKER_MAX_INSTANCES, 1)
+        for worker in workers.topology("storemink-web-prod"):
+            annotations = workers.worker_spec(self.fixture(), worker, "registry/web@sha256:abc")["spec"]["template"]["metadata"]["annotations"]
+            self.assertEqual(annotations["autoscaling.knative.dev/maxScale"], "1")
+            self.assertEqual(annotations["autoscaling.knative.dev/minScale"], "0")
 
     def test_rejects_mutable_image_tags(self):
         with self.assertRaises(ValueError):
@@ -66,11 +79,14 @@ class WorkerDeployment(unittest.TestCase):
     def test_routing_cannot_overcommit_the_database(self):
         web = self.fixture()
         web["spec"]["template"]["metadata"]["annotations"]["autoscaling.knative.dev/maxScale"] = "4"
+        # Two webs at 4 instances × 5 connections, plus two production
+        # workers at one instance × one connection: 42 steady, 89 with overlap.
         with self.assertRaises(RuntimeError):
             workers.require_connection_budget([web, web], 25)
         with self.assertRaises(RuntimeError):
-            workers.require_connection_budget([web, web], 60)
-        self.assertEqual(workers.require_connection_budget([web, web], 120), 48)
+            workers.require_connection_budget([web, web], 88)
+        self.assertEqual(workers.require_connection_budget([web, web], 89), 42)
+        self.assertEqual(workers.require_connection_budget([web, web], 120), 42)
 
     def test_routing_rejects_a_stale_worker_build(self):
         web = self.fixture()
@@ -90,6 +106,9 @@ class WorkerDeployment(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             workers.require_worker_binding(service, web, worker, "registry/web@sha256:abc")
         service["spec"]["template"]["metadata"]["annotations"]["autoscaling.knative.dev/maxScale"] = "2"
+        with self.assertRaises(RuntimeError):
+            workers.require_worker_binding(service, web, worker, "registry/web@sha256:abc")
+        service["spec"]["template"]["metadata"]["annotations"]["autoscaling.knative.dev/maxScale"] = "1"
         service["status"]["latestCreatedRevisionName"] = "worker-pending"
         with self.assertRaises(RuntimeError):
             workers.require_worker_binding(service, web, worker, "registry/web@sha256:abc")

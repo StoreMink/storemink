@@ -10,20 +10,14 @@ import {
 import { sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { mediaAssets } from "@/drizzle/schema";
-import { getMinkCreditCycle } from "@/lib/ai/quota";
-import { aiAllowanceFor } from "@/lib/plans";
-import { getPlanAllowancesLive } from "@/lib/plans/allowances";
 import {
   gcsConfigured,
   gcsDeletePaths,
   gcsDownloadObject,
-  gcsPathFromUrl,
   gcsUploadObject,
 } from "@/lib/storage/gcs";
-import {
-  isStoreOwnedObjectPath,
-  storeStoragePrefix,
-} from "@/lib/storage/paths";
+import { ownedObjectPath } from "@/lib/storage/ownership";
+import { storeStoragePrefix } from "@/lib/storage/paths";
 import {
   IMAGE_REFINE_CREDITS,
   IMAGE_SPECS,
@@ -33,6 +27,7 @@ import {
 import { logError } from "@/lib/observability/logger";
 import { getMinkConfig, type MinkConfig } from "./config";
 import { MinkRequestError } from "./errors";
+import { canAfford, imageCreditHeadroom } from "./image-credits";
 import { reserveMinkImageGeneration } from "./media-generation";
 import { assertMediaGenerationAuthority } from "./media-image-proposals";
 import type { MinkActorContext } from "./types";
@@ -102,11 +97,7 @@ export function refinePrompt(spec: ImageSpec): string {
 }
 
 /** Which bucket object the source URL names, if it is provably this store's. */
-export function ownedSourcePath(url: string, storeId: string): string | null {
-  const path = gcsPathFromUrl(url);
-  if (!path || path.split("/").includes("..")) return null;
-  return isStoreOwnedObjectPath(path, storeId) ? path : null;
-}
+export const ownedSourcePath = ownedObjectPath;
 
 type SharpFactory = (input: Buffer) => import("sharp").Sharp;
 // Imported lazily, as everywhere else: a missing native library must surface
@@ -154,37 +145,12 @@ export async function refineStoreImage(input: {
 
   // ★ Can the store pay? Asked before the provider is called, so a store with
   //   no credits left is not handed a picture it then cannot keep.
-  const [cycle, allowances] = await Promise.all([
-    getMinkCreditCycle(actor.storeId),
-    getPlanAllowancesLive(),
-  ]);
-  const planCap = aiAllowanceFor(
-    actor.effectivePlan,
-    config.chargeCredits,
-    allowances,
-  );
-  if (planCap !== null) {
-    const remaining = await withService(async (db) => {
-      const res = await db.execute(sql`
-        select
-          greatest(${planCap}::int - coalesce((
-            select used from public.ai_usage
-            where store_id = ${actor.storeId}::uuid and period = ${cycle.period}
-          ), 0), 0)
-          + coalesce((
-            select balance from public.ai_credit_balances
-            where store_id = ${actor.storeId}::uuid
-          ), 0) as remaining
-      `);
-      return Number(
-        (res.rows[0] as { remaining?: number | string } | undefined)
-          ?.remaining ?? 0,
-      );
-    });
-    if (remaining < IMAGE_REFINE_CREDITS) {
-      throw insufficient();
-    }
+  const headroom = await imageCreditHeadroom(actor, config.chargeCredits);
+  if (!canAfford(headroom, IMAGE_REFINE_CREDITS)) {
+    throw insufficient();
   }
+  const cycle = { period: headroom.period };
+  const planCap = headroom.planCap;
 
   const refinementId = crypto.randomUUID();
   await reserveMinkImageGeneration(actor, refinementId);

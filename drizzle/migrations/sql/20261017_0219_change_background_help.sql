@@ -1,0 +1,9 @@
+-- Change background: a product photo's background can be replaced with white,
+-- a colour or transparency, keeping the real product. Two guides edited in
+-- place: a step after Refine in the product-images guide, and one sentence in
+-- the categories guide, whose image box offers the same button. No schema
+-- change (20261017_0218 holds it).
+
+UPDATE public.help_articles SET body=replace(body, $old$Refining needs Media manage permission.</li>$old$, $new$Refining needs Media manage permission.</li><li>Optional: select <strong>Change background</strong> under an uploaded photo to put your product on white, a colour or a transparent background. Your product stays exactly as you photographed it: only the background is removed, and the product is centred at the size shown under the upload box. Choose a background, select <strong>Remove background</strong>, compare the result with the original, then choose <strong>Use this photo</strong> or <strong>Keep original</strong>. Removing a photo's background uses 1 Mink credit; trying other backgrounds for the same photo afterwards is free, and nothing is charged if no product can be found in the photo. A photo with some space around the product works best, and the editor warns you when the product touches the edge of the photo or is small in it. Changing a background needs Media manage permission.</li>$new$), updated_at=now() WHERE slug='add-product-images-and-variants' AND status='published';
+
+UPDATE public.help_articles SET body=replace(body, $old$<li>Add its description and image when useful.</li>$old$, $new$<li>Add its description and image when useful. Under an uploaded image you can select <strong>Change background</strong> to put the product in it on white, a colour or a transparent background, the same way as for product photos.</li>$new$), updated_at=now() WHERE slug='organize-products-with-categories-and-card-colours' AND status='published';

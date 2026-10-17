@@ -11,11 +11,18 @@ import {
   Sparkles,
   Ruler,
   AlertTriangle,
+  Eraser,
 } from "lucide-react";
 import { Button } from "./button";
 import { ImageSourceMenu } from "./image-source-menu";
-import { useImageRefineAvailable } from "./image-refine-context";
 import {
+  useImageBackgroundAvailable,
+  useImageRefineAvailable,
+  useImageScenesAvailable,
+} from "./image-refine-context";
+import { BackgroundEditor } from "./background-editor";
+import {
+  IMAGE_CUTOUT_CREDITS,
   IMAGE_REFINE_CREDITS,
   IMAGE_SPECS,
   imageFitWarning,
@@ -29,14 +36,16 @@ interface ImageUploadProps {
   className?: string;
   /**
    * The slot this image fills (`lib/media/image-specs.ts`). States the exact
-   * size the storefront renders, warns when a photo will be cropped, and —
-   * where the slot allows it — offers Refine with Mink AI.
+   * size the storefront renders, warns when a photo will be cropped, and,
+   * where the slot allows them, offers Refine with Mink AI and a background
+   * change.
    */
   spec?: ImageSpecKey;
   /**
-   * Called instead of `onUploadSuccess` when a refined photo REPLACES the one
-   * just uploaded. Needed by list-style fields (a product gallery) whose
-   * `onUploadSuccess` APPENDS, or accepting a refine would add a second copy.
+   * Called instead of `onUploadSuccess` when a refined photo, or one with a new
+   * background, REPLACES the one just uploaded. Needed by list-style fields (a
+   * product gallery) whose `onUploadSuccess` APPENDS, or accepting it would
+   * add a second copy.
    */
   onReplace?: (previousUrl: string, nextUrl: string) => void;
   /**
@@ -68,10 +77,14 @@ export function ImageUpload({
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const [refining, setRefining] = useState(false);
   const [refined, setRefined] = useState<RefineResult | null>(null);
+  const [editingBackground, setEditingBackground] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refineAvailable = useImageRefineAvailable();
+  const backgroundAvailable = useImageBackgroundAvailable();
+  const scenesAvailable = useImageScenesAvailable();
   const slot = spec ? IMAGE_SPECS[spec] : null;
   const canRefine = Boolean(slot?.refine && refineAvailable);
+  const canBackground = Boolean(slot?.background && backgroundAvailable);
 
   const validateAndStage = (file: File) => {
     if (!file.type.startsWith("image/")) {
@@ -127,6 +140,7 @@ export function ImageUpload({
     e.stopPropagation();
     setPreviewUrl(null);
     setRefined(null);
+    setEditingBackground(false);
     setNatural(null);
     onUploadSuccess("");
   };
@@ -162,12 +176,17 @@ export function ImageUpload({
     }
   };
 
-  const acceptRefined = () => {
-    if (!refined || !previewUrl) return;
-    if (onReplace) onReplace(previewUrl, refined.url);
-    else onUploadSuccess(refined.url);
-    setPreviewUrl(refined.url);
+  const replaceWith = (nextUrl: string) => {
+    if (!previewUrl) return;
+    if (onReplace) onReplace(previewUrl, nextUrl);
+    else onUploadSuccess(nextUrl);
+    setPreviewUrl(nextUrl);
     setNatural(null);
+  };
+
+  const acceptRefined = () => {
+    if (!refined) return;
+    replaceWith(refined.url);
     setRefined(null);
   };
 
@@ -240,6 +259,24 @@ export function ImageUpload({
         {sizeLine}
         {fitWarning && <FitWarning text={fitWarning} />}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+      </div>
+    );
+  }
+
+  // — Background: choose one, compare, then use it or keep the original —
+  if (previewUrl && spec && editingBackground) {
+    return (
+      <div className={`w-full ${className}`}>
+        <BackgroundEditor
+          sourceUrl={previewUrl}
+          spec={spec}
+          scenesAvailable={scenesAvailable}
+          onUse={(url) => {
+            replaceWith(url);
+            setEditingBackground(false);
+          }}
+          onClose={() => setEditingBackground(false)}
+        />
       </div>
     );
   }
@@ -333,27 +370,59 @@ export function ImageUpload({
         </div>
         {sizeLine}
         {fitWarning && <FitWarning text={fitWarning} />}
-        {canRefine && (
+        {(canRefine || canBackground) && (
           <div className="mt-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={handleRefine}
-              disabled={refining}
-              className="gap-1.5"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              Refine with Mink AI
-              <span className="text-muted-foreground">
-                · {IMAGE_REFINE_CREDITS} credits
-              </span>
-            </Button>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Retouches lighting and background and resizes to exactly{" "}
-              {slot?.width} × {slot?.height} px. You&rsquo;ll compare before
-              using it.
-            </p>
+            <div className="flex flex-wrap gap-2">
+              {canRefine && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleRefine}
+                  disabled={refining}
+                  className="gap-1.5"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Refine with Mink AI
+                  <span className="text-muted-foreground">
+                    · {IMAGE_REFINE_CREDITS} credits
+                  </span>
+                </Button>
+              )}
+              {canBackground && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setError(null);
+                    setEditingBackground(true);
+                  }}
+                  disabled={refining}
+                  className="gap-1.5"
+                >
+                  <Eraser className="h-3.5 w-3.5" />
+                  Change background
+                  <span className="text-muted-foreground">
+                    · {IMAGE_CUTOUT_CREDITS} credit
+                  </span>
+                </Button>
+              )}
+            </div>
+            {canRefine && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Retouches lighting and background and resizes to exactly{" "}
+                {slot?.width} × {slot?.height} px. You&rsquo;ll compare before
+                using it.
+              </p>
+            )}
+            {canBackground && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Keeps your real product exactly as photographed and puts it on
+                white, a colour or a transparent background
+                {scenesAvailable ? ", or in a scene" : ""}.
+              </p>
+            )}
           </div>
         )}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
