@@ -59,7 +59,7 @@ describe("Mink skills", () => {
       minkStarterSkills(MINK_SKILLS, "/dashboard/products/abc").map(
         (skill) => skill.id,
       ),
-    ).toEqual(["product-description", "seo", "low-stock", "launch-check"]);
+    ).toEqual(["product-photo", "product-description", "seo", "low-stock"]);
     expect(
       minkStarterSkills(MINK_SKILLS, null).map((skill) => skill.id),
     ).toEqual(["whats-new", "sales-today", "low-stock", "pending-orders"]);

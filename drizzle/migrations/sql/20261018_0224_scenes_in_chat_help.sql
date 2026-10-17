@@ -1,0 +1,9 @@
+-- Scenes move out of the product editor and into Mink AI chat (owner's
+-- decision, 2026-10-18): the way Shopify Sidekick works, a merchant asks for
+-- the product in a setting in their own words, and the editor keeps only
+-- white, colour and transparent backgrounds. The product-images guide's
+-- sentence about the editor's Put in a scene option (0223) is replaced in
+-- place. mink_photo_edits (0222) is no longer written; chat product photos
+-- are charged through the Mink draft ledger as before.
+
+UPDATE public.help_articles SET body=replace(body, $old$To show the product in a setting instead, select <strong>Put in a scene</strong>: choose a scene such as a marble counter or a garden, or describe your own, for example hanging from a tree branch or worn by a model on a city street, then select <strong>Create photo</strong>. Mink AI photographs your product in the scene, so it redraws the product too: compare it with your real product before you choose <strong>Use this photo</strong>, because small details such as a print or a label can change. Each scene photo uses 5 Mink credits, <strong>Try again</strong> makes another, and every photo you make stays on screen to choose from.$old$, $new$To show the product in a setting instead, such as on a marble counter, hanging from a tree in a garden or worn by a model, ask Mink AI in the chat in your own words. On a product's page, a new chat also offers <strong>Photo in a scene</strong>. Mink makes the photo from your real one right in the chat, where you can ask for changes, select <strong>Try again</strong> or select <strong>Use as product photo</strong>. Mink redraws the product in the scene, so compare it with your real product before you use it.$new$), updated_at=now() WHERE slug='add-product-images-and-variants' AND status='published';

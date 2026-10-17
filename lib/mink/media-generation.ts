@@ -23,7 +23,7 @@ import {
   PRODUCT_FIDELITY_RULES,
   PRODUCT_PHOTO_EXCLUSIONS,
   PRODUCT_SCENE_RULES,
-} from "@/lib/media/photo-edit";
+} from "./product-photo-rules";
 import type { MinkMediaReferenceImage } from "./media-reference-images";
 import type { MinkActorContext } from "./types";
 

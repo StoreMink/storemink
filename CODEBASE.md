@@ -212,7 +212,7 @@ and colour ("Soft shadow under the product", free to switch), never on
 transparent (`canHaveShadow`); the shadowed result is filed under its own key
 (`white-shadow`). Overlays are cropped to the frame (`cropToFrame`), because
 sharp refuses one that runs past the canvas.
-⚠ SCENES BUILT HERE ON 2026-10-17 WERE REMOVED ON 2026-10-18 (next section):
+⚠ SCENES BUILT HERE ON 2026-10-17 WERE REMOVED ON 2026-10-18 (see "AI product photos, the Sidekick way" below):
 the model drew an empty set and the real cut-out was placed on it
 (`renderOnScene`, `lib/mink/image-scenes.ts`, `SCENE_FLOOR`, saved scenes
 reused free). The owner tested it on production and judged it unconvincing: a
@@ -229,13 +229,13 @@ client sending `{kind: "scene"}` is refused before any cut-out is charged.
 The dashboard never says how many Mink credits something costs or used:
 no "· 5 credits" on a button, no "2 Mink credits were used" under a result,
 no price in a refusal ("This store doesn't have enough Mink credits left to
-refine a photo."). Removed from the photo tools (Refine, Change background,
-Put in a scene and its editor), every Mink proposal card header and footer
+refine a photo."). Removed from the photo tools (Refine, Change background
+and its editor), every Mink proposal card header and footer
 ("Private Builder draft", "Private image", "Private until you approve it"),
 the Builder publication note, the chat's low-balance warning (the "a large
 request can use up to 8" half), the WhatsApp inbox draft card and Mink
 answers setting, the brand voice page's usage line, the Mink suggests and
-memories notes, and the refusal messages of `image-edit`, `image-refine`,
+memories notes, and the refusal messages of `image-refine`,
 `background-edit`, `drafts` and `inbox-actions`. Mink's runtime prompt now
 tells it never to quote a cost, even when a tool result carries the number
 (prompt versions `read-beta-v31` / `draft-action-beta-v52`, not yet
@@ -249,86 +249,70 @@ code and fails on a literal with a number of credits in it or a rendered
 model-facing tool declarations and Plans & Billing are exempt). ⚠ The Help
 Centre still states prices; it is not part of the dashboard.
 
-### AI product photos, the Sidekick way (2026-10-18)
+### AI product photos, the Sidekick way: in the chat, never the editor (2026-10-18)
 
 Owner's decisions after testing scenes on production: "i want shopify's
 sidekick like experience", Gemini 3.1 Flash Image at 5 credits a photo, and
-the editor's Scene option "the way shopify do" (pick a preset or describe
-your own). Migrations `20261018_0222` (schema) and `0223` (Help).
+then, after seeing a scene form in the product editor: "i do not want it
+here ... sidekick ... works directly in the chat. shopify does not have chat
+section inside the product edit". So a product in a scene is made ONLY in
+Mink AI chat; the product editor keeps Change background (white, colour,
+transparent) and Refine.
 ★★ THE MODEL REDRAWS THE PRODUCT, DELIBERATELY. A product only looks
 photographed in a scene when the scene's light, drape and perspective reach
-the product itself, so the merchant's real photo is sent to the image model
-with their request and comes back re-shot. `lib/media/photo-edit.ts`
-(client-safe) holds the request limits (`normalizeEditInstruction`, 3 to 400
-characters) and the prompt, whose rule blocks are SHARED with Mink chat
-(`PRODUCT_FIDELITY_RULES`: the same item, colour, cut, print and label, never
-restyled; `PRODUCT_SCENE_RULES`: a real photograph of the setting, the item
-presented as that kind of item naturally is, a person only when asked and
-then an adult who is not a real or famous person; `PRODUCT_PHOTO_EXCLUSIONS`).
-Small details can still drift, so every screen says to compare with the real
-item, and nothing changes until the merchant chooses the photo.
-★ THE PHOTO EDITOR. `ImageUpload` shows **Put in a scene** (5 credits) beside
-Change background on product and category slots (`ImageSpec.background`);
-it needs Mink and Media manage (`ImageRefineProvider` flag `scenes`, from the
-dashboard layout) but NOT the matting service, because nothing is cut out.
-`components/ui/background-editor.tsx` has two modes (Background and Scene,
-tabs when both are available): Scene shows the eight presets of
-`lib/media/scene-presets.ts` (now plain requests: `sceneInstruction` = "Photograph the product {setting}.", places never people) and
-**Or describe your own scene**; typing replaces the preset. **Create photo**
-then **Try again**, each charged 5 credits; every photo made stays on screen as a
-thumbnail to go back to, because each was paid for. `POST
-/api/mink/image-edit` takes `{url, spec, preset | instruction}`; a preset id
-becomes its request on the server, so it cannot carry text.
-`lib/mink/image-edit.ts` `editProductPhoto`: slot offers it, request
-normalised, Mink enabled with a project and GCS, `assertMediaGenerationAuthority`
-(drafting, Media manage, the store's image-generation switch), the source
-proven the store's own (`ownedObjectPath`), credits checked BEFORE the model
-(`imageCreditHeadroom`), `reserveMinkImageGeneration` (the spend ceiling),
-source flattened on white and sent inline as a ≤2048 px JPEG, Gemini with
-`personGeneration: ALLOW_ADULT`, prominent people blocked, the four harm
-filters, the slot's aspect at 2K, 90 s. A refusal that drew nothing is asked
-once more (it bills only prompt tokens); a provider error is never retried;
-a 429 is "busy". The result is fitted to the slot exactly (cover), stored at
-`stores/{id}/edited/ai-{uuid}.webp`, and charged by
-`consume_mink_photo_edit_credits` (0222: `mink_photo_edits`, one row per
-photo WITH the merchant's request, service-only, idempotent per edit id,
-plan cycle first then top-ups, `insufficient` writes nothing) in the same
-transaction as its `media_assets` row (source `mink_edited`, hidden from the
-Library). A charge that finds no credits deletes the file. Probed on local
-Postgres in a rolled-back transaction: charges once, a repeat id is free,
-refuses without writing, unlimited plans record 0, an empty request is
-refused by the CHECK, `app_user` has no grants.
-★ MINK CHAT, SIDEKICK-STYLE. `generate_storefront_image` purpose `product`
-is now a PRODUCT PHOTO, not only a studio catalogue shot: the item in any
-setting, presentation or on a model the merchant describes ("hanging from a
-tree in a garden", "now a close-up on a model in a forest"), a studio shot
-when none is named. `compositionGuidance` and `referenceGuidance` use the
-shared rule blocks; `personGenerationFor` allows adults for `product` only
-(campaign art stays `ALLOW_NONE`). A follow-up passes the item's real photo
-FIRST and the earlier photo's URL second; `isMinkAiMadePhotoUrl` (contract)
-tells them apart, so the reference guidance says the earlier picture carries
-only the scene, and the proposal path refuses a product photo whose only
-references are AI-made (a picture Mink drew is never evidence the item
-exists). A product photo is charged `IMAGE_EDIT_CREDITS` (5) through the new
-`expectedCredits` override on `createMinkDraftProposal` (bounded 0 to 20,
-never from model input); campaign art keeps the kind's 3. The chat card
+the product itself, so the merchant's real photo goes to the image model
+with their request and comes back re-shot. The rule blocks live in
+`lib/mink/product-photo-rules.ts` (`PRODUCT_FIDELITY_RULES`: the same item,
+colour, cut, print and label, never restyled; `PRODUCT_SCENE_RULES`: a real
+photograph of the setting, the item presented as that kind of item naturally
+is, a person only when asked and then an adult who is not a real or famous
+person; `PRODUCT_PHOTO_EXCLUSIONS`). Small details can still drift, so the
+card says to compare with the real item, and nothing changes on a product
+until the merchant approves it.
+★ HOW IT WORKS IN CHAT. `generate_storefront_image` purpose `product` is a
+PRODUCT PHOTO: the item in any setting, presentation or on a model the
+merchant describes ("hanging from a tree in a garden", "now a close-up on a
+model in a forest"), a studio shot when none is named. On a product's page
+the open product is the selected resource, so "this" resolves through
+`get_current_product`; an attached phone shot works as the real photo too.
+`compositionGuidance` and `referenceGuidance` use the rule blocks;
+`personGenerationFor` allows adults for `product` only (campaign art stays
+`ALLOW_NONE`). A follow-up passes the item's real photo FIRST and the earlier
+photo's URL second; `isMinkAiMadePhotoUrl` (contract) tells them apart, so
+the reference guidance says the earlier picture carries only the scene, and
+the proposal path refuses a product photo whose only references are AI-made
+(a picture Mink drew is never evidence the item exists). A product photo is
+charged `IMAGE_EDIT_CREDITS` (5) through the `expectedCredits` override on
+`createMinkDraftProposal` (bounded 0 to 20, never from model input);
+campaign art keeps the kind's 3. The chat card
 (`mink-media-proposal-card.tsx`) gives a product photo **Use as product
-photo** and **Try again**, each an ordinary chat message
-carrying the photo's exact URL (`productPhotoFollowUps`), so Mink acts
-through its usual tools and the product change is still the
-`propose_product_images` approval. `docs/mink-ai-image-prompt.md` rule 7 and
+photo** and **Try again**, each an ordinary chat message carrying the
+photo's exact URL (`productPhotoFollowUps`), so Mink acts through its usual
+tools and the product change is still the `propose_product_images` approval.
+A product's page offers the **Photo in a scene** starter chip
+(`lib/mink/skills.ts`, `product-photo`, Media manage), which asks Mink for a
+scene that suits the open product. `docs/mink-ai-image-prompt.md` rule 7 and
 its people rule follow. Prompt versions `read-beta-v31` /
-`draft-action-beta-v52`, draft registry `draft-beta-v42` (the generation
-tool's description changed; the read registry did not).
-Checked live on staging, 2026-10-18, with the final prompt on the black
-T-shirt that prompted this: the Garden preset and "worn by a model standing
-in a forest, a close-up shot" each came back in 17 to 19 s at 1,680 output
+`draft-action-beta-v52`, draft registry `draft-beta-v42`.
+⚠ THE EDITOR'S SCENE FORM SHIPPED AND WAS REMOVED THE SAME DAY. Commit
+`613b44d8` deployed a **Put in a scene** button with presets and a "Describe
+your own scene" box (`/api/mink/image-edit`, `lib/mink/image-edit.ts`,
+`lib/media/scene-presets.ts`, `lib/media/photo-edit.ts`); all of it is gone.
+Its migration `20261018_0222` (`mink_photo_edits`,
+`consume_mink_photo_edit_credits`) ran in production and stays, unused
+(forward-only); `0223` edited the Mink and product-images guides, and
+`0224` replaces 0223's editor sentence with "ask Mink AI in the chat".
+`isMinkAiMadePhotoUrl` still knows the editor's `edited/ai-*` files, which
+exist in production from that day.
+Checked live on staging, 2026-10-18, with the shared prompt on the black
+T-shirt that prompted this: a garden scene and "worn by a model standing in
+a forest, a close-up shot" each came back in 17 to 19 s at 1,680 output
 tokens (about ₹9) and read as photographs, not composites. Tests:
-`photo-edit`, `scene-presets`, `image-edit` (real sharp, mocked model),
-the image-edit route, `media-generation`, `media-image-proposals`, the chat
-card and `image-upload`. ⚠ Not run in a browser. ⚠ The per-store image
-ceiling (`reserveMinkImageGeneration`: 10 an hour, 25 a day) is shared by
-the editor and chat, so a merchant shooting a whole catalogue can reach it.
+`product-photo-rules`, `media-generation`, `media-image-proposals`, the
+chat card, `skills` and `image-upload` (which pins that the editor offers
+no scene). ⚠ Not run in a browser. ⚠ The per-store image ceiling
+(`reserveMinkImageGeneration`: 10 an hour, 25 a day) can be reached by a
+merchant shooting a whole catalogue in one day.
 
 ### Mink Sidekick parity: streaming, navigation, skills, charts, memories, categories (2026-10-17)
 
@@ -4913,8 +4897,6 @@ wholesip/
 │       ├── mink/image-background/ # ★ Change background: the real product cut out by the
 │       │                  # image-matting service onto white, a colour or
 │       │                  # transparency; 1 credit per photo, then free
-│       ├── mink/image-edit/ # ★ Put in a scene: Mink AI re-shoots the real photo in a
-│       │                  # preset or described setting; 5 credits per photo
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
 │           │                  # store-host files live under stores/{storeId}/uploads/
@@ -5542,10 +5524,6 @@ wholesip/
 │   ├── media/background-render.ts # sharp only: cutOut + renderOnBackground
 │   ├── media/background-edit.ts   # server-only: replaceProductBackground (§ Change background)
 │   ├── media/matting-client.ts    # server-only: the image-matting service's client
-│   ├── media/scene-presets.ts     # client-safe: the eight scene presets, each a request
-│   ├── media/photo-edit.ts        # client-safe: request limits + the AI product photo prompt,
-│   │                          # whose rule blocks Mink chat shares
-│   │                          # (lib/mink/image-edit.ts calls the model, stores, charges)
 │   ├── media/sources.ts       # where a media_assets row came from + which the Library hides
 │   │                          # (the "computer or Media Library" add-image menu is
 │   │                          # components/ui/image-source-menu.tsx)
@@ -6420,7 +6398,9 @@ wholesip/
 │                              # consume_mink_photo_edit_credits (AI product photos, 5
 │                              # credits; mink_image_scenes is no longer written); 0223
 │                              # edits the Mink and product-images guides for them.
-│                              # Next free: 0224.
+│                              # 0224 moves scenes to Mink chat in the product-images
+│                              # guide (the editor's scene form was removed; 0222's
+│                              # table is unused). Next free: 0225.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

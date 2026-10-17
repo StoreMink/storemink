@@ -84,6 +84,21 @@ export const MINK_SKILLS: readonly MinkSkill[] = [
     starterOn: ["/dashboard/orders", "/dashboard"],
   },
   {
+    // ★ THE PRODUCT EDITOR HAS NO SCENE FORM (owner, 2026-10-18): a product in
+    //   a setting is asked for here, the way Sidekick does it. The chip lets
+    //   Mink pick a scene that suits the item; the merchant can then say what
+    //   to change ("now on a model", "make it a close-up") in the same chat.
+    id: "product-photo",
+    slash: "product-photo",
+    label: "Photo in a scene",
+    description: "A new photo of the product you have open, in a setting",
+    prompt:
+      "Make a new photo of this product in a lifestyle scene that suits it, keeping the product exactly as it is. If no product is open, ask me which one.",
+    section: "media",
+    action: "manage",
+    starterOn: ["/dashboard/products/"],
+  },
+  {
     id: "product-description",
     slash: "product-description",
     label: "Product description",
