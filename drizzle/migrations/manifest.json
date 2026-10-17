@@ -8105,6 +8105,43 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261017_0217_mink_catalogue_photo_help",
+      "description": "The Mink and product-images guides edited in place: Mink can make a catalogue product photo from a real photo of the item and propose it as the product's photo, campaign art still never becomes one, and a prepared copy follows the store's card shape",
+      "file": "sql/20261017_0217_mink_catalogue_photo_help.sql",
+      "transaction": true,
+      "requires": ["20261017_0216_mink_screen_spotlight_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says a catalogue photo starts from a real photo",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%never from a description alone%'",
+            "equals": "1"
+          },
+          {
+            "name": "the guide no longer calls every generated picture non-catalogue",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%not the original catalogue photograph%'",
+            "equals": "0"
+          },
+          {
+            "name": "the photo-change sentence offers a generated catalogue photo",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%that already has one%'",
+            "equals": "1"
+          },
+          {
+            "name": "the prepared copy follows the card shape",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%in the shape of your product cards%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product-images guide names the chat catalogue photo",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%keeps it under Media and proposes it%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

@@ -19,6 +19,7 @@ import {
   MAX_MINK_BULK_INVENTORY_LINES,
 } from "../draft-types";
 import { MinkRequestError, MinkToolInputError } from "../errors";
+import { isMinkGeneratedCampaignArtUrl } from "../media-generation-contract";
 import { can } from "@/app/dashboard/lib/permissions";
 import type {
   MinkActorContext,
@@ -52,6 +53,7 @@ import {
   readMinkOrderStatusTarget,
 } from "../order-status-target";
 import {
+  productPhotoDestination,
   discardPreparedMinkImage,
   prepareMinkImageForDestination,
   type MinkPreparedImageResult,
@@ -169,7 +171,7 @@ export const proposeProductImagesTool: MinkTool = {
   declaration: {
     name: "propose_product_images",
     description:
-      "Update an existing product's authentic photos using exact uploaded current-store image URLs. Resolve the product with search_products first (or use the selected product). replace_primary replaces the main photo and preserves the other gallery photos; add appends photos; replace_gallery replaces the complete gallery. Creates a private proposal for human approval, never a live write. Never generate catalogue photographs.",
+      "Update an existing product's photos using exact current-store image URLs: the merchant's own uploaded photos, or a catalogue photo generate_storefront_image made for this product with purpose=product earlier in this run. Campaign art (hero, banner, gallery, feature or blog cover images) is refused. Resolve the product with search_products first (or use the selected product). replace_primary replaces the main photo and preserves the other gallery photos; add appends photos; replace_gallery replaces the complete gallery. Creates a private proposal for human approval, never a live write.",
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -234,23 +236,22 @@ export const proposeProductImagesTool: MinkTool = {
       throw new MinkToolInputError(
         "That product is not available in this store.",
       );
+    // ★ Campaign art is refused by its folder; a catalogue photo Mink made
+    //   for a product (purpose=product) lives under its own folder and passes.
     if (
       (args.image_urls as string[]).some((url) =>
-        url.includes("/mink-generated/"),
+        isMinkGeneratedCampaignArtUrl(url),
       )
     )
       throw new MinkToolInputError(
-        "Use an authentic uploaded product photo, not generated artwork.",
+        "Use an uploaded product photo or a catalogue photo generated with purpose=product, not campaign artwork.",
       );
     const prepared: MinkPreparedImageResult[] = [];
     try {
+      const destination = await productPhotoDestination(actor.storeId);
       for (const url of args.image_urls as string[])
         prepared.push(
-          await prepareMinkImageForDestination(
-            actor,
-            url.trim(),
-            "product_photo",
-          ),
+          await prepareMinkImageForDestination(actor, url.trim(), destination),
         );
       const incoming = [...new Set(prepared.map((image) => image.url))];
       const old = product.images.filter(Boolean);
@@ -666,7 +667,7 @@ export const proposeProductCreateTool: MinkTool = {
       ? await prepareMinkImageForDestination(
           actor,
           requestedImageUrl,
-          "product_photo",
+          await productPhotoDestination(actor.storeId),
         )
       : null;
     const imageUrl = preparedImage?.url ?? "";

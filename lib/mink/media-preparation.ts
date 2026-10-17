@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import type { Sharp } from "sharp";
 import { can } from "@/app/dashboard/lib/permissions";
+import { getStoreChrome } from "@/lib/chrome/queries";
+import { productPhotoSpec } from "@/lib/media/image-specs";
 import { mediaAssets } from "@/drizzle/schema";
 import { withService } from "@/lib/db/client";
 import { logError, logWarn } from "@/lib/observability/logger";
@@ -27,7 +29,10 @@ import type { MinkActorContext } from "./types";
 // product, invents pixels with a model, adds words, or overwrites the original.
 // ---------------------------------------------------------------------------
 
-export type MinkPreparedImageDestination = "product_photo" | "blog_cover";
+export type MinkPreparedImageDestination =
+  | "product_photo"
+  | "product_photo_portrait"
+  | "blog_cover";
 
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 
@@ -56,8 +61,32 @@ const DESTINATIONS: Record<
   { width: number; height: number; label: string }
 > = {
   product_photo: { width: 1_200, height: 1_200, label: "Product photo" },
+  // ★ The storefront's DEFAULT card is 3:4 (CODEBASE, "Premium product
+  //   card"); `product_photo` kept its square canvas from before that change,
+  //   so `productPhotoDestination` picks between the two by the store's
+  //   published card shape. A destination is part of the prepared file's
+  //   digest, so adding one invalidates nothing already prepared.
+  product_photo_portrait: {
+    width: 1_200,
+    height: 1_600,
+    label: "Product photo",
+  },
   blog_cover: { width: 1_600, height: 900, label: "Blog cover" },
 };
+
+/**
+ * The product-photo canvas that matches how this store's cards show a photo.
+ * A read failure falls back to portrait inside `getStoreChrome`, which is
+ * also the storefront default.
+ */
+export async function productPhotoDestination(
+  storeId: string,
+): Promise<Extract<MinkPreparedImageDestination, `product_photo${string}`>> {
+  const chrome = await getStoreChrome(storeId);
+  return productPhotoSpec(chrome.appearance.cardPhoto) === "product_square"
+    ? "product_photo"
+    : "product_photo_portrait";
+}
 
 /** The fraction of the source a centre crop to `targetRatio` would discard. */
 function croppedAwayFraction(sourceRatio: number, targetRatio: number): number {
@@ -366,7 +395,7 @@ export async function renderMinkImageForDestination(
     return null;
   }
 
-  if (destination === "product_photo") {
+  if (destination !== "blog_cover") {
     const output = await sharp(oriented)
       .resize(spec.width, spec.height, {
         fit: "contain",

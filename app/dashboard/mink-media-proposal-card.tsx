@@ -106,8 +106,11 @@ export function MinkMediaProposalCard({ proposal }: { proposal: Proposal }) {
           <Badge>
             {proposal.purpose === "blog_cover"
               ? "Not published"
-              : "Not on your storefront"}
+              : proposal.purpose === "product"
+                ? "Not on the product yet"
+                : "Not on your storefront"}
           </Badge>
+          {proposal.purpose === "product" ? <Badge>Made by AI</Badge> : null}
         </div>
 
         <details className="rounded-xl border border-[#eeeaf8] bg-[#fbfaff] px-3 py-2 text-[9px] leading-4">
@@ -134,7 +137,9 @@ export function MinkMediaProposalCard({ proposal }: { proposal: Proposal }) {
               <p className="mt-1">
                 {proposal.purpose === "blog_cover"
                   ? "The blog proposal shown with this response can use this exact cover."
-                  : "If you requested a page change, apply the Website Builder draft shown with this response."}
+                  : proposal.purpose === "product"
+                    ? "Check it against the real item before approving the product photo change shown with this response. It is AI-made from your own photo and carries an invisible AI marker."
+                    : "If you requested a page change, apply the Website Builder draft shown with this response."}
               </p>
             </div>
           </div>

@@ -172,6 +172,60 @@ channels:view, never a credential) a marketing overview; both in
 the local migration apply. The `social_post` card has no "open" destination
 of its own and links to Offers.
 
+### Mink makes catalogue product photos (2026-10-17, owner's decision)
+
+9E's standing rule was that a generated picture never becomes a product's
+photo. The owner reversed it for ONE purpose: `generate_storefront_image`
+gains `purpose: "product"`, a clean studio photograph of an EXISTING item,
+and `propose_product_images` accepts the result, so "make a catalogue photo
+of the almond shake and put it on the product" is one run and one approval.
+Migration `20261017_0217` edits the Mink and product-images guides in place.
+★★ GROUNDED BY RULE, NOT BY INSTRUCTION. `createMinkMediaImageProposal`
+refuses a product purpose unless at least one resolved reference is the
+product's own photo (`source: "product"`) or an image the merchant attached
+(`source: "media"`); a category image or an empty list is refused BEFORE
+the spend ceiling and the charge. So Mink never invents goods from a
+description; it photographs the item it was shown. The composition guidance
+asks for the item whole and centred on a plain studio background, no props,
+scene, words or people (`personGeneration` stays `ALLOW_NONE`), and the
+reference guidance tells the model to reproduce the item exactly, never
+restyle it. `docs/mink-ai-image-prompt.md` gained grounding rule 7 for the
+same case.
+★★ THE FOLDER IS THE BOUNDARY. A catalogue photo is stored under
+`mink-generated/product-photos/` (`MINK_GENERATED_PRODUCT_PHOTO_FOLDER`), a
+subfolder of the campaign-art folder, so every existing check still sees a
+generated object (the stored-image reader's prefix check, 0213's source
+backfill, the parser's own-bucket rule, which admits the subfolder) while
+`isMinkGeneratedCampaignArtUrl` / `isMinkGeneratedProductPhotoUrl`
+(client-safe, in the generation contract) tell the two apart by path alone.
+`propose_product_images` and the `product_images` draft validator refuse
+campaign art with that helper and accept a catalogue photo; the Media row's
+source stays `mink_generated` ("Made by Mink AI" in the Library).
+★ THE SHAPE IS THE STORE'S CARD SHAPE, read on the server
+(`getStoreChrome` → `productPhotoSpec`), never chosen by the model:
+`MinkMediaGenerationRequest.productPhotoShape` is set by the proposal path
+after validation (the validator refuses it on the wire), and
+`aspectRatioFor("product", shape)` gives 3:4 for the portrait default and
+1:1 for a square-card store. ★ Preparation follows the same shape:
+`media-preparation.ts` gained `product_photo_portrait` (1200×1600, the same
+contain-on-white treatment) and `productPhotoDestination(storeId)` picks it
+or the square `product_photo` by the card shape, for product-photo proposals
+AND product creation from an attachment. A 3:4 generated photo therefore
+passes through unpadded on a portrait store instead of being letterboxed
+into a square; an uploaded photo on a portrait-card store now gets a 3:4
+canvas rather than the square one the module kept from before the card
+changed shape.
+★ The generated-image card badges a product photo "Not on the product yet"
+and "Made by AI", and after saving tells the merchant to check it against
+the real item before approving the photo change. Still approved by a
+human: the product write is the ordinary `apply_product_images` approval.
+Prompt versions `read-beta-v29` / `draft-action-beta-v50` (the shared doc
+moved), registries `read-beta-v25` / `draft-beta-v41` (the generation
+tool's enum and the product-photo tool's description changed).
+⚠ Not run against live Vertex; the request shape is the verified 9E one
+with a new aspect value (3:4 is in the model's documented list). ⚠ The
+product editor has no "Generate" button of its own; the chat is the way in.
+
 ### Mink Sidekick parity, second pass: screen awareness, spotlight, prefilled forms, reply language, voice, richer charts (2026-10-17)
 
 The UI gaps that remained after the first pass, closed in one change. No
@@ -2688,7 +2742,11 @@ one charged, immutable private proposal that IS an image.
   `products.images`**, and a generated URL can land only in an owned blog-cover
   field or a layout section the merchant separately approves. So generated
   campaign artwork may be grounded in the merchant's authentic product image
-  but cannot become or overwrite a catalogue product photo. ⚠ A brand/product keyword
+  but cannot become or overwrite a catalogue product photo. ⚠ SUPERSEDED FOR
+  ONE PURPOSE on 2026-10-17: see "Mink makes catalogue product photos" above
+  (purpose `product`, grounded in a real photo of the item, through the
+  approved product-photo proposal); every other purpose keeps this rule.
+  ⚠ A brand/product keyword
   blocklist was considered and REJECTED as security theatre — it fails on every
   misspelling and every brand nobody listed, while reading like a guarantee.
   What is enforced is what can be: bounded prompts, a fixed aspect per purpose,
@@ -6084,7 +6142,8 @@ wholesip/
 │                              # target checks, and edits the Mink guide in place.
 │                              # 0216 edits the Mink guide for the Remember this? card,
 │                              # pointing at a control, prefilled forms and the reply
-│                              # language. Next free: 0217.
+│                              # language. 0217 edits the Mink and product-images
+│                              # guides for generated catalogue photos. Next free: 0218.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

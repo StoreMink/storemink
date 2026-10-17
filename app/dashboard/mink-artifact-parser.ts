@@ -570,7 +570,7 @@ function isGeneratedImageUrl(value: unknown): value is string {
   return (
     typeof value === "string" &&
     value.length <= 500 &&
-    /^https:\/\/storage\.googleapis\.com\/[A-Za-z0-9._-]+\/stores\/[0-9a-f-]{36}\/mink-generated\/[0-9a-f-]{36}\.(jpg|png)$/.test(
+    /^https:\/\/storage\.googleapis\.com\/[A-Za-z0-9._-]+\/stores\/[0-9a-f-]{36}\/mink-generated\/(?:product-photos\/)?[0-9a-f-]{36}\.(jpg|png)$/.test(
       value,
     )
   );
@@ -589,7 +589,7 @@ function isMediaImageProposal(value: Record<string, unknown>): boolean {
       (Number.isInteger(value.referenceImageCount) &&
         Number(value.referenceImageCount) >= 0 &&
         Number(value.referenceImageCount) <= 4)) &&
-    ["hero", "gallery", "feature", "banner", "blog_cover"].includes(
+    ["hero", "gallery", "feature", "banner", "blog_cover", "product"].includes(
       String(value.purpose),
     ) &&
     ["1:1", "4:3", "16:9", "3:4", "9:16", "21:9"].includes(

@@ -64,6 +64,14 @@ vi.mock("./media-generation", () => ({
 vi.mock("./media-reference-images", () => ({
   resolveMinkMediaReferenceImages: vi.fn(async () => []),
 }));
+const chrome = vi.hoisted(() => ({
+  cardPhoto: "portrait" as string | undefined,
+}));
+vi.mock("@/lib/chrome/queries", () => ({
+  getStoreChrome: vi.fn(async () => ({
+    appearance: { cardPhoto: chrome.cardPhoto },
+  })),
+}));
 
 import { createMinkMediaImageProposal } from "./media-image-proposals";
 import {
@@ -169,6 +177,69 @@ describe("createMinkMediaImageProposal", () => {
       reference,
     ]);
     expect(proposal.referenceImageCount).toBe(1);
+  });
+
+  it("★★ REFUSES A CATALOGUE PHOTO WITH NO REAL PHOTO OF THE ITEM, BEFORE SPENDING", async () => {
+    // A category image is about the category, not the item; nothing, or
+    // only that, means Mink would be inventing goods from a description.
+    vi.mocked(resolveMinkMediaReferenceImages).mockResolvedValueOnce([
+      {
+        url: "https://storage.googleapis.com/bucket/category.webp",
+        fileUri: "gs://bucket/category.webp",
+        mimeType: "image/webp",
+        source: "category",
+      },
+    ]);
+    await expect(
+      createMinkMediaImageProposal({
+        actor,
+        ...ask,
+        purpose: "product",
+        referenceImageUrls: [
+          "https://storage.googleapis.com/bucket/category.webp",
+        ],
+      }),
+    ).rejects.toThrow(/real photo of the item/);
+    expect(reserveMinkImageGeneration).not.toHaveBeenCalled();
+    expect(generateMinkMediaImage).not.toHaveBeenCalled();
+    expect(dbState.inserts).toEqual([]);
+  });
+
+  it("★ makes a catalogue photo in the store's card shape and keeps it under its own folder", async () => {
+    chrome.cardPhoto = "square";
+    const reference = {
+      url: "https://storage.googleapis.com/bucket/product.webp",
+      fileUri: "gs://bucket/product.webp",
+      mimeType: "image/webp" as const,
+      source: "product" as const,
+    };
+    vi.mocked(resolveMinkMediaReferenceImages).mockResolvedValueOnce([
+      reference,
+    ]);
+
+    const proposal = await createMinkMediaImageProposal({
+      actor,
+      ...ask,
+      purpose: "product",
+      referenceImageUrls: [reference.url],
+    });
+
+    // The shape was read from the store, never from the caller.
+    expect(vi.mocked(generateMinkMediaImage).mock.calls[0][1]).toMatchObject({
+      purpose: "product",
+      productPhotoShape: "square",
+    });
+    expect(proposal.aspectRatio).toBe("1:1");
+    expect(proposal.purpose).toBe("product");
+    // The subfolder is what lets propose_product_images accept it while still
+    // refusing campaign art.
+    expect(proposal.url).toMatch(
+      new RegExp(
+        `/stores/${STORE}/mink-generated/product-photos/[0-9a-f-]+\\.jpg$`,
+      ),
+    );
+    expect(dbState.inserts[0]).toMatchObject({ source: "mink_generated" });
+    chrome.cardPhoto = "portrait";
   });
 
   it("★ CLAIMS THE SPEND CEILING BEFORE THE PROVIDER CALL", async () => {

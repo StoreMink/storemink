@@ -1,4 +1,5 @@
 import { parseMinkProductImages } from "./product-images";
+import { isMinkGeneratedCampaignArtUrl } from "./media-generation-contract";
 import { parseMinkBulkPriceDraftLines } from "./bulk-price-policy";
 export {
   MAX_MINK_BULK_PRICE_LINES,
@@ -973,9 +974,11 @@ export function normalizeMinkDraftContent(
       urls[0] !== result.image_url
     )
       throw new Error("The primary photo must be the first gallery photo.");
-    if (urls.some((url) => url.includes("/mink-generated/")))
+    // Campaign art never becomes a product photo; a catalogue photo Mink
+    // generated for the product (its own folder) may.
+    if (urls.some((url) => isMinkGeneratedCampaignArtUrl(url)))
       throw new Error(
-        "Use an authentic uploaded product photo, not generated artwork.",
+        "Use an uploaded product photo or a catalogue photo Mink generated for this product, not campaign artwork.",
       );
   }
   if (kind === "inventory_adjustment") {

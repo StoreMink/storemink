@@ -4,6 +4,8 @@ import {
   MINK_MEDIA_PURPOSES,
   MINK_MEDIA_PURPOSE_SPECS,
   aspectRatioFor,
+  isMinkGeneratedCampaignArtUrl,
+  isMinkGeneratedProductPhotoUrl,
   validateMinkMediaGenerationRequest,
 } from "./media-generation-contract";
 
@@ -146,5 +148,48 @@ describe("the shape a purpose pins", () => {
       aspectRatio: "16:9",
     });
     expect(aspectRatioFor("blog_cover")).toBe("16:9");
+  });
+});
+
+describe("catalogue product photos (purpose product)", () => {
+  const STORE = "a0000000-0000-4000-8000-000000000001";
+  const art = `https://storage.googleapis.com/b/stores/${STORE}/mink-generated/11111111-1111-4111-8111-111111111111.jpg`;
+  const photo = `https://storage.googleapis.com/b/stores/${STORE}/mink-generated/product-photos/11111111-1111-4111-8111-111111111111.jpg`;
+  const upload = `https://storage.googleapis.com/b/stores/${STORE}/media/photo.webp`;
+
+  it("is a declared purpose whose shape follows the store's card", () => {
+    expect(MINK_MEDIA_PURPOSES).toContain("product");
+    expect(MINK_MEDIA_PURPOSE_SPECS.product.label).toBe(
+      "Catalogue product photo",
+    );
+    // Portrait is the storefront default; a square-card store gets 1:1.
+    expect(aspectRatioFor("product")).toBe("3:4");
+    expect(aspectRatioFor("product", "portrait")).toBe("3:4");
+    expect(aspectRatioFor("product", "square")).toBe("1:1");
+    // The shape never reaches any other purpose.
+    expect(aspectRatioFor("hero", "square")).toBe("21:9");
+  });
+
+  it("★ the shape is the server's, so the validator refuses it on the wire", () => {
+    const result = validateMinkMediaGenerationRequest({
+      ...valid,
+      purpose: "product",
+      productPhotoShape: "square",
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.join(" ")).toContain(
+      "productPhotoShape is not allowed",
+    );
+  });
+
+  it("★★ tells a catalogue photo from campaign art by its folder alone", () => {
+    expect(isMinkGeneratedProductPhotoUrl(photo)).toBe(true);
+    expect(isMinkGeneratedCampaignArtUrl(photo)).toBe(false);
+    expect(isMinkGeneratedCampaignArtUrl(art)).toBe(true);
+    expect(isMinkGeneratedProductPhotoUrl(art)).toBe(false);
+    // A merchant's own upload is neither.
+    expect(isMinkGeneratedCampaignArtUrl(upload)).toBe(false);
+    expect(isMinkGeneratedProductPhotoUrl(upload)).toBe(false);
   });
 });

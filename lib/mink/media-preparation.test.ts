@@ -36,6 +36,31 @@ describe("destination-safe Mink image preparation", () => {
     expect([...leftPixel.slice(0, 3)]).toEqual([255, 255, 255]);
   });
 
+  it("places a square photo on an exact 3:4 canvas for a portrait-card store", async () => {
+    const prepared = await renderMinkImageForDestination(
+      await solid(900, 900),
+      "product_photo_portrait",
+    );
+    expect(prepared).not.toBeNull();
+    const metadata = await sharp(prepared!).metadata();
+    expect(metadata).toMatchObject({ width: 1_200, height: 1_600 });
+    // White top padding: `contain`, so nothing of the item is cropped away.
+    const topPixel = await sharp(prepared!)
+      .extract({ left: 600, top: 0, width: 1, height: 1 })
+      .raw()
+      .toBuffer();
+    expect([...topPixel.slice(0, 3)]).toEqual([255, 255, 255]);
+  });
+
+  it("leaves a 3:4 catalogue photo alone on a portrait-card store", async () => {
+    expect(
+      await renderMinkImageForDestination(
+        await solid(1_200, 1_600),
+        "product_photo_portrait",
+      ),
+    ).toBeNull();
+  });
+
   it("turns a portrait attachment into an exact 16:9 blog cover", async () => {
     const prepared = await renderMinkImageForDestination(
       await solid(600, 1_000),

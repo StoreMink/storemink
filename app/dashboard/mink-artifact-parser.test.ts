@@ -274,10 +274,23 @@ describe("readMinkArtifacts", () => {
       creditSource: "plan",
     };
     expect(readMinkArtifacts([valid])).toEqual([valid]);
+    // A catalogue photo lives one folder down, still in our own bucket.
+    const productPhoto = {
+      ...valid,
+      url: "https://storage.googleapis.com/sm-media/stores/a0000000-0000-4000-8000-000000000001/mink-generated/product-photos/33333333-3333-4333-8333-333333333333.jpg",
+      purpose: "product",
+      aspectRatio: "3:4",
+    };
+    expect(readMinkArtifacts([productPhoto])).toEqual([productPhoto]);
 
     expect(
       readMinkArtifacts([
         { ...valid, url: "https://attacker.example/pixel.jpg" },
+        // Any other subfolder is still refused.
+        {
+          ...valid,
+          url: "https://storage.googleapis.com/sm-media/stores/a0000000-0000-4000-8000-000000000001/mink-generated/other/33333333-3333-4333-8333-333333333333.jpg",
+        },
         // A real host, a real-looking path, and NOT under mink-generated: the
         // near miss a prefix-only check would let through.
         {
