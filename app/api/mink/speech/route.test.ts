@@ -33,11 +33,16 @@ import { GET, POST } from "./route";
 import { MinkSpeechUnsupportedError } from "@/lib/mink/speech-synthesis";
 
 const url = "https://echos.dev.storemink.com/api/mink/speech";
-const req = (body: unknown, origin = new URL(url).origin) =>
+const req = (
+  body: unknown,
+  origin = new URL(url).origin,
+  signal?: AbortSignal,
+) =>
   new Request(url, {
     method: "POST",
     headers: { origin, "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
 
 async function* chunks(...parts: number[][]): AsyncGenerator<Buffer> {
@@ -200,6 +205,32 @@ describe("POST /api/mink/speech", () => {
     await Promise.all(open.slice(1).map((response) => response.body!.cancel()));
   });
 
+  it("★ frees a slot nobody is draining when the request is aborted", async () => {
+    // A connection that stays open but stops reading never reaches `pull`,
+    // so only the signal can give its slot back: here the request's own
+    // abort stands in for the 60-second ceiling, which shares that signal.
+    h.stream.mockImplementation(async (_p, _t, _l, signal: AbortSignal) =>
+      heldOpen(signal),
+    );
+    const stalled = new AbortController();
+    const open: Response[] = [];
+    open.push(await POST(req({ text: "Stalled" }, undefined, stalled.signal)));
+    for (let i = 1; i < 12; i += 1)
+      open.push(await POST(req({ text: `Answer ${i}` })));
+    expect((await POST(req({ text: "One too many" }))).status).toBe(429);
+
+    stalled.abort();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const providerSignal = h.stream.mock.calls[0][3] as AbortSignal;
+    expect(providerSignal.aborted).toBe(true);
+    const next = await POST(req({ text: "Next" }));
+    expect(next.status).toBe(200);
+    // The stalled response's body is errored, never left readable.
+    await expect(open[0].arrayBuffer()).rejects.toThrow();
+    await next.body!.cancel();
+    await Promise.all(open.slice(1).map((response) => response.body!.cancel()));
+  });
+
   it("refuses another site and a disabled Mink before any work", async () => {
     expect(
       (await POST(req({ text: "Hi" }, "https://evil.example"))).status,
@@ -218,5 +249,16 @@ describe("GET /api/mink/speech", () => {
       provider: "bulbul_v4_flash",
     });
     expect(await (await GET()).json()).toEqual({ enabled: false });
+  });
+
+  it("is bounded per actor like every other Mink read", async () => {
+    h.rateLimit.mockResolvedValueOnce({ allowed: false });
+    const response = await GET();
+    expect(response.status).toBe(429);
+    expect(h.rateLimit).toHaveBeenCalledWith("mink-speech:ask:echos:owner", {
+      max: 30,
+      windowSeconds: 60,
+    });
+    expect(h.settings).not.toHaveBeenCalled();
   });
 });

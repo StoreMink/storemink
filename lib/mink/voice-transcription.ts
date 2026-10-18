@@ -67,17 +67,21 @@ let authClient: Promise<GoogleAuthClient> | null = null;
  * next call can try again.
  */
 export async function googleAccessToken(): Promise<string> {
-  authClient ??= import("google-auth-library").then(({ GoogleAuth }) =>
-    new GoogleAuth({
-      scopes: "https://www.googleapis.com/auth/cloud-platform",
-    }).getClient(),
-  );
+  const client = (authClient ??= import("google-auth-library").then(
+    ({ GoogleAuth }) =>
+      new GoogleAuth({
+        scopes: "https://www.googleapis.com/auth/cloud-platform",
+      }).getClient(),
+  ));
   try {
-    const { token } = await (await authClient).getAccessToken();
+    const { token } = await (await client).getAccessToken();
     if (!token) throw new Error("Google Cloud credentials are unavailable.");
     return token;
   } catch (error) {
-    authClient = null;
+    // Forget only the client that failed: a concurrent caller may already
+    // have replaced it with one that works, and dropping that would cost the
+    // very token fetch this cache exists to avoid.
+    if (authClient === client) authClient = null;
     throw error;
   }
 }

@@ -113,6 +113,38 @@ describe("parseWav", () => {
     expect([...(parsed?.pcm ?? [])]).toEqual([1, 2, 3, 4]);
   });
 
+  it("★ accepts an extensible header whose sub-format is PCM", () => {
+    const pcm = Buffer.from([5, 6, 7, 8]);
+    const file = wavOf(pcm);
+    // Rebuild the fmt chunk as WAVE_FORMAT_EXTENSIBLE (40 bytes).
+    const fmt = Buffer.alloc(48);
+    fmt.write("fmt ", 0, "ascii");
+    fmt.writeUInt32LE(40, 4);
+    fmt.writeUInt16LE(0xfffe, 8);
+    fmt.writeUInt16LE(1, 10);
+    fmt.writeUInt32LE(24_000, 12);
+    fmt.writeUInt32LE(24_000 * 2, 16);
+    fmt.writeUInt16LE(2, 20);
+    fmt.writeUInt16LE(16, 22);
+    fmt.writeUInt16LE(22, 24); // cbSize
+    fmt.writeUInt16LE(16, 26); // valid bits
+    fmt.writeUInt32LE(4, 28); // channel mask
+    fmt.writeUInt16LE(1, 32); // sub-format: PCM
+    const extensible = Buffer.concat([
+      file.subarray(0, 12),
+      fmt,
+      file.subarray(12 + 24),
+    ]);
+    const parsed = parseWav(extensible);
+    expect(parsed?.rate).toBe(24_000);
+    expect([...(parsed?.pcm ?? [])]).toEqual([5, 6, 7, 8]);
+    // An extensible header carrying a non-PCM sub-format is still refused.
+    fmt.writeUInt16LE(3, 32);
+    expect(
+      parseWav(Buffer.concat([file.subarray(0, 12), fmt, file.subarray(36)])),
+    ).toBeNull();
+  });
+
   it("refuses anything the browser player cannot decode", () => {
     const pcm = Buffer.from([1, 2, 3, 4]);
     expect(parseWav(wavOf(pcm, { channels: 2 }))).toBeNull();
@@ -247,10 +279,12 @@ describe("Sarvam Bulbul V4 Flash (piece by piece)", () => {
   const words = (n: number, word: string) =>
     `${Array.from({ length: n }, () => word).join(" ")}.`;
   // A short first piece, then two longer ones (the splitter's 160 / 600).
+  // Each sentence starts with a capital, as an answer's do: a full stop
+  // followed by a lowercase word ("Rs. 500") is not a sentence end.
   const answer = [
-    words(15, "sales"),
-    words(50, "orders"),
-    words(70, "stock"),
+    words(15, "Sales"),
+    words(50, "Orders"),
+    words(70, "Stock"),
   ].join(" ");
 
   const bulbul = (pcm: number[]) => ({
@@ -288,7 +322,7 @@ describe("Sarvam Bulbul V4 Flash (piece by piece)", () => {
       ([, request]) => JSON.parse(request.body) as Record<string, unknown>,
     );
     expect(sent[0]).toEqual({
-      text: words(15, "sales"),
+      text: words(15, "Sales"),
       language_code: "hi-IN",
       model: "bulbul:v4-flash",
       speaker: BULBUL_V4_FLASH_SPEAKERS["hi-IN"],

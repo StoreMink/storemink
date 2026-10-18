@@ -26,6 +26,15 @@ function chunkRms(chunk: Float32Array): number {
  * think mid-sentence does not cut the merchant off. `endOnSilence: false`
  * keeps the 30-second cap, which still finishes and transcribes.
  *
+ * ★ A CLIP WITH NO SPEECH IN IT IS REPORTED AS NONE. Done, and the cap, used
+ * to hand over whatever had been captured, so a merchant who pressed the mic
+ * and then Done without speaking sent room noise to the provider: a
+ * transcription call, an input-quota slot and a 400 "Voice transcript is
+ * invalid." for a clip the recorder already knew held nothing. The floor
+ * that arms the silence detector (180 ms above the speech threshold) decides,
+ * so `done(null)` reaches the composer's existing "No speech was recorded"
+ * path and voice chat's empty-transcript path without a round trip.
+ *
  * `onLevel` receives each chunk's loudness (RMS, 0 to 1) for the live
  * waveform. It runs about 125 times a second, so it must not set React state.
  */
@@ -53,6 +62,8 @@ export async function startMinkRecording(
   let lastSpeechSample = 0;
   let chunks: Float32Array[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const spoken = () =>
+    voicedSamples >= (MINK_AUDIO_RATE * MINK_MIN_SPEECH_MS) / 1_000;
   const stop = (keep = false) => {
     if (finished) return;
     finished = true;
@@ -66,7 +77,8 @@ export async function startMinkRecording(
     stream?.getTracks().forEach((track) => track.stop());
     if (context && context.state !== "closed")
       void context.close().catch(() => {});
-    if (keep && total) {
+    const heard = total > 0 && spoken();
+    if (keep && heard) {
       const samples = new Float32Array(total);
       let offset = 0;
       chunks.forEach((chunk) => {
@@ -79,7 +91,7 @@ export async function startMinkRecording(
         }),
       );
     }
-    if (keep && !total) done(null);
+    if (keep && !heard) done(null);
     chunks = [];
   };
   const cancel = () => stop(false);
@@ -121,14 +133,10 @@ export async function startMinkRecording(
       }
       options.onLevel?.(rms);
       progress(Math.floor(total / MINK_AUDIO_RATE));
-      const speechArmed =
-        voicedSamples >= (MINK_AUDIO_RATE * MINK_MIN_SPEECH_MS) / 1_000;
       const silenceSamples = (MINK_AUDIO_RATE * MINK_END_SILENCE_MS) / 1_000;
       if (
         total >= MINK_AUDIO_RATE * MINK_AUDIO_SECONDS ||
-        (endOnSilence &&
-          speechArmed &&
-          total - lastSpeechSample >= silenceSamples)
+        (endOnSilence && spoken() && total - lastSpeechSample >= silenceSamples)
       )
         stop(true);
     };

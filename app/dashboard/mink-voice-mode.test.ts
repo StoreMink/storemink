@@ -526,6 +526,56 @@ describe("★★ read-aloud model", () => {
     await speakOneAnswer(false);
     expect(speechPlayer.play).not.toHaveBeenCalled();
     expect(synth.speak).toHaveBeenCalledOnce();
+    // ★ And the context opened on the click is closed as soon as the
+    // platform says nothing will play through it.
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0].close).toHaveBeenCalled();
+  });
+
+  it("★ tells the merchant when the model stopped partway, then listens again", async () => {
+    speechPlayer.play.mockResolvedValue({ outcome: "truncated" });
+    const { input, result } = await speakOneAnswer(true);
+    await act(async () => {});
+    expect(input.onNotice).toHaveBeenCalledWith(
+      "The rest of that answer could not be read aloud.",
+    );
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(input.listen).toHaveBeenCalledTimes(2);
+    expect(result.current.state).toBe("listening");
+  });
+
+  it("★ a late answer from an earlier session cannot pick the voice", async () => {
+    let answerFirst!: (value: unknown) => void;
+    const first = new Promise((resolve) => (answerFirst = resolve));
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => first)
+      .mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ enabled: true }),
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    speechPlayer.play.mockImplementation(() => new Promise(() => {}));
+    const input = makeInput();
+    const hook = renderHook(
+      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
+      { initialProps: input },
+    );
+    await act(async () => hook.result.current.toggle());
+    await act(async () => hook.result.current.toggle());
+    await act(async () => hook.result.current.toggle());
+    // The first session's GET answers "off" only now.
+    await act(async () => {
+      answerFirst({ ok: true, json: async () => ({ enabled: false }) });
+    });
+    await act(async () => hook.result.current.reportTranscript("Sales?"));
+    hook.rerender({
+      ...input,
+      messages: [...input.messages, assistant("a1", "Sales are up.")],
+    });
+    // The current session's "on" stands, and its context was not closed.
+    expect(speechPlayer.play).toHaveBeenCalledOnce();
+    expect(contexts[1].close).not.toHaveBeenCalled();
   });
 
   it("stopping voice chat cancels model playback", async () => {

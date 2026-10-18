@@ -52,7 +52,22 @@ let streaming = 0;
 export async function GET() {
   if (!getMinkConfig().enabled) return json({ enabled: false });
   try {
-    await getMinkActorContext(crypto.randomUUID());
+    const actor = await getMinkActorContext(crypto.randomUUID());
+    // Resolving the actor alone costs a permissions read, a store/locations
+    // read and the brand-voice read, so this is bounded per actor like every
+    // other Mink read route; voice chat asks once per session.
+    const limited = await rateLimit(
+      `mink-speech:ask:${actor.storeId}:${actor.adminId}`,
+      { max: 30, windowSeconds: 60 },
+    );
+    if (!limited.allowed)
+      return json(
+        {
+          error: "Read-aloud is receiving too many requests.",
+          code: "speech_rate_limited",
+        },
+        429,
+      );
     const settings = await getMinkSpeechSettings();
     return json({ enabled: settings.enabled });
   } catch (error) {
@@ -73,7 +88,11 @@ export async function GET() {
  *
  * ★ THE SLOT IS HELD UNTIL THE STREAM ENDS, not until this handler returns,
  * and the merchant stopping voice chat cancels the provider call through the
- * request's own signal.
+ * request's own signal. ★ THE SIGNAL FREES THE SLOT TOO: `pull` runs only
+ * while the consumer drains, so a connection that stays open but stops
+ * reading (a backgrounded tab on a poor link) never reaches `pull` again,
+ * and the 60-second ceiling used to abort the provider call while leaving
+ * the slot counted until the socket finally closed.
  *
  * ★ NO CREDITS, like dictation: the cost is bounded by the rate limits here
  * and the ≤1,500-character answers the voice chat sends.
@@ -146,8 +165,20 @@ export async function POST(request: Request) {
     const iterator = speech.pcm;
     const streamProvider = provider;
     let bytes = 0;
-    const finish = () => {
+    let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const onAbort = () => {
       release();
+      void iterator.return(undefined).catch(() => undefined);
+      // A no-op once the stream has already closed or errored.
+      controller?.error(signal.reason ?? new Error("Read-aloud stopped."));
+    };
+    /** The slot goes back and the abort listener with it. */
+    const settle = () => {
+      release();
+      signal.removeEventListener("abort", onAbort);
+    };
+    const finish = () => {
+      settle();
       logInfo("mink.speech.completed", {
         requestId,
         storeId: actor.storeId,
@@ -159,18 +190,23 @@ export async function POST(request: Request) {
       });
     };
     const stream = new ReadableStream<Uint8Array>({
-      async pull(controller) {
+      start(c) {
+        controller = c;
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort, { once: true });
+      },
+      async pull(c) {
         try {
           const { value, done } = await iterator.next();
           if (done) {
-            controller.close();
+            c.close();
             finish();
             return;
           }
           bytes += value.length;
-          controller.enqueue(new Uint8Array(value));
+          c.enqueue(new Uint8Array(value));
         } catch (error) {
-          release();
+          settle();
           // The text being read is never logged, only the transport failure.
           if (!signal.aborted)
             logError("mink.speech.stream_failed", error, {
@@ -178,13 +214,15 @@ export async function POST(request: Request) {
               provider: streamProvider,
               bytes,
             });
-          controller.error(error);
+          c.error(error);
         }
       },
       async cancel() {
         // The slot goes back first: the iterator may be mid-read, and a
-        // return() queued behind that read settles only once it does.
-        release();
+        // return() queued behind that read settles only once it does. The
+        // listener comes off before the abort, or it would error a stream
+        // the consumer has just cancelled.
+        settle();
         stop.abort();
         await iterator.return(undefined).catch(() => undefined);
       },

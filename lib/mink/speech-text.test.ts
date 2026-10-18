@@ -142,6 +142,29 @@ describe("splitSpeechChunks", () => {
     expect(pieces.length).toBeGreaterThan(2);
   });
 
+  it("★ keeps decimals, abbreviations and version numbers in one piece", () => {
+    expect(
+      splitSpeechChunks(
+        "Sales were ₹4.5 lakh this week. Returns fell.",
+        40,
+        40,
+      ),
+    ).toEqual(["Sales were ₹4.5 lakh this week.", "Returns fell."]);
+    expect(
+      splitSpeechChunks("Rs. 500 is the price. Pay with v2.1 now.", 25, 25),
+    ).toEqual(["Rs. 500 is the price.", "Pay with v2.1 now."]);
+    // A terminator followed by a lowercase word continues the sentence, and
+    // a leading ellipsis is not dropped on the floor.
+    expect(splitSpeechChunks("...wait. e.g. this one. Done.", 24, 24)).toEqual([
+      "...wait. e.g. this one.",
+      "Done.",
+    ]);
+    expect(splitSpeechChunks('She said "Yes." Then left.', 16, 16)).toEqual([
+      'She said "Yes."',
+      "Then left.",
+    ]);
+  });
+
   it("splits at the danda and cuts an overlong sentence at a space", () => {
     expect(splitSpeechChunks("आज पाँच ऑर्डर आए। कल तीन आए।", 20, 40)).toEqual([
       "आज पाँच ऑर्डर आए।",

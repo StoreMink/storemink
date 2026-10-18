@@ -189,7 +189,21 @@ export function speechLangFor(text: string, fallback: string): string {
   return best.count > 0 ? best.lang : safeFallback;
 }
 
-const SENTENCE = /[^.!?।॥]+(?:[.!?।॥]+["'”’)\]]*|$)\s*/g;
+/**
+ * A sentence ends at . ! ? । ॥ (plus any closing quotes or brackets) only
+ * when whitespace or the end of the text follows, and the next word does not
+ * start with a lowercase Latin letter or a digit: "4.5", "Rs. 500", "v2.1"
+ * and "e.g. this" stay in one piece. ★ OVER-JOINING IS THE SAFE DIRECTION:
+ * a piece is only a unit of work for the model, which reads the punctuation
+ * itself, while a split inside a number is spoken as two numbers with a
+ * pause between them. A terminator that is not an end is an ordinary
+ * character of the sentence it sits in, so a leading "..." is kept too.
+ */
+const SENTENCE_END = String.raw`[.!?।॥]+["'”’)\]]*(?=\s+(?![a-z0-9])|$)`;
+const SENTENCE = new RegExp(
+  String.raw`(?:[^.!?।॥]|[.!?।॥](?!["'”’)\]]*(?:\s+(?![a-z0-9])|$)))+(?:${SENTENCE_END}|$)\s*`,
+  "g",
+);
 
 function splitLong(sentence: string, max: number): string[] {
   const parts: string[] = [];

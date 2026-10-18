@@ -176,6 +176,8 @@ type Live = {
    */
   audio: AudioContext | null;
   speechAbort: AbortController | null;
+  /** Bumped on every toggle on, so a late GET from an earlier session is ignored. */
+  session: number;
 };
 
 /** A context for model audio, or null where Web Audio is missing (jsdom). */
@@ -208,6 +210,7 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
     serverSpeech: "unknown",
     audio: null,
     speechAbort: null,
+    session: 0,
   });
   const [enabled, setEnabled] = useState(false);
   const [state, setState] = useState<MinkVoiceState>("idle");
@@ -237,6 +240,18 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
     if (typeof window !== "undefined") window.speechSynthesis?.cancel();
   }, []);
 
+  /**
+   * Closes the model-audio context. Called when voice chat stops, and as
+   * soon as the platform says the browser voice reads: an open AudioContext
+   * takes the audio session (iOS ducks other media for it), which is a poor
+   * trade for a context nothing will ever play through.
+   */
+  const releaseAudio = useCallback(() => {
+    const l = live.current;
+    void l.audio?.close().catch(() => {});
+    l.audio = null;
+  }, []);
+
   const stop = useCallback(
     (reason: MinkVoiceStopReason, notice?: string) => {
       const l = live.current;
@@ -244,14 +259,13 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
       l.enabled = false;
       l.armToken += 1;
       cancelSpeech();
-      void l.audio?.close().catch(() => {});
-      l.audio = null;
+      releaseAudio();
       latest.current.stopListening();
       setPhase("idle");
       setEnabled(false);
       if (notice && reason !== "toggle") latest.current.onNotice?.(notice);
     },
-    [cancelSpeech, setPhase],
+    [cancelSpeech, releaseAudio, setPhase],
   );
 
   const arm = useCallback(async () => {
@@ -345,15 +359,24 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
         if (token !== l.speakToken || !l.enabled) return;
         if (l.speechAbort === controller) l.speechAbort = null;
         if (result.outcome === "cancelled") return;
-        if (result.outcome === "done") {
+        if (result.outcome === "done" || result.outcome === "truncated") {
+          // The player cannot say where the words stopped, so the rest is
+          // not re-read; the merchant is told rather than left to wonder.
+          if (result.outcome === "truncated")
+            latest.current.onNotice?.(
+              "The rest of that answer could not be read aloud.",
+            );
           void arm();
           return;
         }
-        if (result.outcome === "off") l.serverSpeech = "off";
+        if (result.outcome === "off") {
+          l.serverSpeech = "off";
+          releaseAudio();
+        }
         speakWithBrowser(result.remaining, lang, token);
       });
     },
-    [arm, setPhase, speakWithBrowser],
+    [arm, releaseAudio, setPhase, speakWithBrowser],
   );
 
   const toggle = useCallback(() => {
@@ -375,20 +398,24 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
     l.empties = 0;
     l.audio = startAudio();
     l.serverSpeech = "unknown";
+    const session = ++l.session;
     // Asked now, while the merchant is still speaking, so the first answer
-    // already knows which voice to use.
+    // already knows which voice to use. An answer that arrives after this
+    // session ended (toggled off and on again) must not decide for the next.
+    const settle = (on: boolean) => {
+      if (session !== l.session || l.serverSpeech !== "unknown") return;
+      l.serverSpeech = on ? "on" : "off";
+      if (!on) releaseAudio();
+    };
     void fetch("/api/mink/speech", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
-      .then((data: { enabled?: unknown } | null) => {
-        if (l.serverSpeech === "unknown")
-          l.serverSpeech = data?.enabled === true ? "on" : "off";
-      })
-      .catch(() => {
-        if (l.serverSpeech === "unknown") l.serverSpeech = "off";
-      });
+      .then((data: { enabled?: unknown } | null) =>
+        settle(data?.enabled === true),
+      )
+      .catch(() => settle(false));
     setEnabled(true);
     void arm();
-  }, [arm, stop]);
+  }, [arm, releaseAudio, stop]);
 
   const reportTranscript = useCallback(
     (text: string | null) => {

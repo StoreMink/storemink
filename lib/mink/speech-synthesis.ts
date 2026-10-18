@@ -75,7 +75,9 @@ export function bulbulLanguageFor(lang: string): string | null {
 /**
  * The PCM inside a WAV file, walking its chunks rather than assuming a
  * 44-byte header (providers add LIST and other chunks). Only 16-bit mono PCM
- * is accepted, because that is what the browser player decodes.
+ * is accepted, because that is what the browser player decodes; a
+ * WAVE_FORMAT_EXTENSIBLE header whose sub-format is PCM counts, since many
+ * encoders write that header for 16-bit audio and the data is plain PCM.
  */
 export function parseWav(audio: Buffer): PcmPart | null {
   if (
@@ -96,8 +98,18 @@ export function parseWav(audio: Buffer): PcmPart | null {
     const size = audio.readUInt32LE(offset + 4);
     const body = offset + 8;
     if (id === "fmt " && body + 16 <= audio.length) {
+      let code = audio.readUInt16LE(body);
+      // Extensible: cbSize(2) validBits(2) channelMask(4) then the sub-format
+      // GUID, whose first two bytes are the real format tag.
+      if (
+        code === 0xfffe &&
+        size >= 40 &&
+        body + 26 <= audio.length &&
+        audio.readUInt16LE(body + 24) === 1
+      )
+        code = 1;
       format = {
-        code: audio.readUInt16LE(body),
+        code,
         channels: audio.readUInt16LE(body + 2),
         rate: audio.readUInt32LE(body + 4),
         bits: audio.readUInt16LE(body + 14),

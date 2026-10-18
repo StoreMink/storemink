@@ -75,10 +75,23 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+/** A 200 whose body never yields a byte. */
+function silentResponse() {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({ "X-Mink-Audio": "pcm16le;rate=24000" }),
+    body: new ReadableStream<Uint8Array>({
+      pull: () => new Promise<void>(() => {}),
+    }),
+  };
+}
+
 function play(
   audio: FakeAudioContext,
   signal = new AbortController().signal,
   onStart = vi.fn(),
+  options: { firstAudioMs?: number } = {},
 ) {
   return playMinkServerSpeech({
     text: "Sales are up today.",
@@ -86,6 +99,7 @@ function play(
     audio: audio as unknown as AudioContext,
     signal,
     onStart,
+    ...options,
   });
 }
 
@@ -172,11 +186,55 @@ describe("playMinkServerSpeech", () => {
     expect((await play(audio)).outcome).toBe("browser");
   });
 
-  it("plays what arrived when the stream breaks partway", async () => {
+  it("plays what arrived when the stream breaks partway, and says so", async () => {
     fetchMock.mockResolvedValue(pcmResponse([[0x00, 0x40]], { fail: true }));
     const audio = new FakeAudioContext();
-    expect(await play(audio)).toEqual({ outcome: "done" });
+    // Truncated, not done: the caller tells the merchant the rest was lost.
+    expect(await play(audio)).toEqual({ outcome: "truncated" });
     expect(audio.sources).toHaveLength(1);
+  });
+
+  it("★ hands the answer to the browser voice when no audio arrives in time", async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      fetchMock.mockImplementation(async (_url: string, init: RequestInit) => {
+        init.signal?.addEventListener("abort", () => {
+          aborted = true;
+        });
+        return silentResponse();
+      });
+      const onStart = vi.fn();
+      const pending = play(new FakeAudioContext(), undefined, onStart, {
+        firstAudioMs: 500,
+      });
+      await vi.advanceTimersByTimeAsync(499);
+      expect(aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toEqual({
+        outcome: "browser",
+        remaining: "Sales are up today.",
+      });
+      // The request itself is cancelled, not left running in the background.
+      expect(aborted).toBe(true);
+      expect(onStart).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("★ the first-audio deadline is off once something has played", async () => {
+    vi.useFakeTimers();
+    try {
+      const audio = new FakeAudioContext();
+      fetchMock.mockResolvedValue(pcmResponse([[0x00, 0x40]]));
+      const pending = play(audio, undefined, vi.fn(), { firstAudioMs: 50 });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await pending).toEqual({ outcome: "done" });
+      expect(audio.sources).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stops every scheduled chunk when voice chat is stopped", async () => {

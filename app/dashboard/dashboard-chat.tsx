@@ -276,6 +276,15 @@ export function DashboardChat({
       : [];
   const slashOpen = slashMatches.length > 0;
 
+  // The page the merchant is about to look at sits behind the chat: the
+  // full-view takeover collapses to the side panel and a phone-width panel
+  // closes. One rule for a navigation artifact and a followed link, so the
+  // two cannot drift apart.
+  const leaveForPage = useCallback(() => {
+    if (window.innerWidth < 640) closeChat();
+    else if (isExpanded) toggleExpand();
+  }, [closeChat, isExpanded, toggleExpand]);
+
   /**
    * ★★ A NAVIGATION ARTIFACT THAT ARRIVED LIVE OPENS ITS PAGE ON ITS OWN.
    * Live messages carry numeric ids (restored history carries strings), so a
@@ -296,17 +305,14 @@ export function DashboardChat({
     openedNavigationRef.current.add(latest.id);
     openMinkNavigation(navigation, (path) => router.push(path));
     showSpotlight(navigation.highlight ?? null);
-    if (window.innerWidth < 640) closeChat();
-    else if (isExpanded) toggleExpand();
-  }, [messages, router, isExpanded, toggleExpand, closeChat, showSpotlight]);
+    leaveForPage();
+  }, [messages, router, leaveForPage, showSpotlight]);
 
   // Capture phase: MinkLink's own click handler (next/link) cancels the
   // browser default on the way back up, so a bubbling listener cannot tell a
   // followed link from one that did nothing.
   const leaveForLinkedPage = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (!isMinkInAppLinkClick(event, window.location.origin)) return;
-    if (window.innerWidth < 640) closeChat();
-    else if (isExpanded) toggleExpand();
+    if (isMinkInAppLinkClick(event, window.location.origin)) leaveForPage();
   };
 
   useEffect(() => {
