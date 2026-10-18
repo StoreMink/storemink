@@ -4,7 +4,7 @@ const h = vi.hoisted(() => ({
   actor: vi.fn(),
   config: vi.fn(),
   settings: vi.fn(),
-  synthesize: vi.fn(),
+  stream: vi.fn(),
   rateLimit: vi.fn(),
   log: vi.fn(),
   logError: vi.fn(),
@@ -18,9 +18,9 @@ vi.mock("@/lib/mink/voice-settings", () => ({
 vi.mock("@/lib/mink/speech-synthesis", async () => {
   class MinkSpeechUnsupportedError extends Error {}
   return {
-    MINK_SPEECH_MAX_CHARS: 1_000,
+    MINK_SPEECH_MAX_CHARS: 2_000,
     MinkSpeechUnsupportedError,
-    synthesizeMinkSpeech: h.synthesize,
+    streamMinkSpeech: h.stream,
   };
 });
 vi.mock("@/lib/rate-limit", () => ({ rateLimit: h.rateLimit }));
@@ -40,6 +40,23 @@ const req = (body: unknown, origin = new URL(url).origin) =>
     body: JSON.stringify(body),
   });
 
+async function* chunks(...parts: number[][]): AsyncGenerator<Buffer> {
+  for (const part of parts) yield Buffer.from(part);
+}
+
+/** A stream that holds its slot until the request's signal is aborted. */
+function heldOpen(signal: AbortSignal) {
+  async function* pcm(): AsyncGenerator<Buffer> {
+    yield Buffer.from([0, 0]);
+    await new Promise((_, reject) =>
+      signal.addEventListener("abort", () => reject(signal.reason), {
+        once: true,
+      }),
+    );
+  }
+  return { sampleRate: 24_000, pcm: pcm() };
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   h.config.mockReturnValue({ enabled: true });
@@ -49,28 +66,35 @@ beforeEach(() => {
     provider: "bulbul_v4_flash",
   });
   h.rateLimit.mockResolvedValue({ allowed: true });
-  h.synthesize.mockResolvedValue({
-    audio: Buffer.from("ID3audio"),
-    mimeType: "audio/mpeg",
-  });
+  h.stream.mockImplementation(async () => ({
+    sampleRate: 24_000,
+    pcm: chunks([1, 2, 3, 4], [5, 6]),
+  }));
 });
 
 describe("POST /api/mink/speech", () => {
-  it("returns the chosen model's audio for one stretch of an answer", async () => {
+  it("streams the chosen model's PCM as it arrives, with its format", async () => {
     const response = await POST(
       req({ text: "आज पाँच ऑर्डर आए।", lang: "hi-IN" }),
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("Content-Type")).toBe("audio/mpeg");
-    expect(response.headers.get("Cache-Control")).toBe("no-store, private");
-    expect(Buffer.from(await response.arrayBuffer()).toString()).toBe(
-      "ID3audio",
+    expect(response.headers.get("Content-Type")).toBe(
+      "application/octet-stream",
     );
-    expect(h.synthesize).toHaveBeenCalledWith(
+    expect(response.headers.get("X-Mink-Audio")).toBe("pcm16le;rate=24000");
+    expect(response.headers.get("Cache-Control")).toBe("no-store, private");
+    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([
+      1, 2, 3, 4, 5, 6,
+    ]);
+    expect(h.stream).toHaveBeenCalledWith(
       "bulbul_v4_flash",
       "आज पाँच ऑर्डर आए।",
       "hi-IN",
       expect.any(AbortSignal),
+    );
+    expect(h.log).toHaveBeenCalledWith(
+      "mink.speech.completed",
+      expect.objectContaining({ bytes: 6, provider: "bulbul_v4_flash" }),
     );
     // The text being read never reaches the log.
     expect(JSON.stringify(h.log.mock.calls)).not.toContain("ऑर्डर");
@@ -84,11 +108,11 @@ describe("POST /api/mink/speech", () => {
     const response = await POST(req({ text: "Hello", lang: "en-IN" }));
     expect(response.status).toBe(204);
     expect(response.headers.get("X-Mink-Speech")).toBe("off");
-    expect(h.synthesize).not.toHaveBeenCalled();
+    expect(h.stream).not.toHaveBeenCalled();
   });
 
   it("answers 204 unsupported for a language the model has no voice for", async () => {
-    h.synthesize.mockRejectedValue(new MinkSpeechUnsupportedError("ml-IN"));
+    h.stream.mockRejectedValue(new MinkSpeechUnsupportedError("ml-IN"));
     const response = await POST(req({ text: "ഇന്ന്", lang: "ml-IN" }));
     expect(response.status).toBe(204);
     expect(response.headers.get("X-Mink-Speech")).toBe("unsupported");
@@ -97,9 +121,10 @@ describe("POST /api/mink/speech", () => {
 
   it("refuses empty or overlong text, a junk language becomes en-IN", async () => {
     expect((await POST(req({ text: "  " }))).status).toBe(400);
-    expect((await POST(req({ text: "x".repeat(1_001) }))).status).toBe(400);
-    await POST(req({ text: "Hi", lang: "<script>" }));
-    expect(h.synthesize).toHaveBeenLastCalledWith(
+    expect((await POST(req({ text: "x".repeat(2_001) }))).status).toBe(400);
+    const response = await POST(req({ text: "Hi", lang: "<script>" }));
+    await response.arrayBuffer();
+    expect(h.stream).toHaveBeenLastCalledWith(
       "bulbul_v4_flash",
       "Hi",
       "en-IN",
@@ -111,15 +136,19 @@ describe("POST /api/mink/speech", () => {
     h.rateLimit.mockResolvedValueOnce({ allowed: false });
     const response = await POST(req({ text: "Hello" }));
     expect(response.status).toBe(429);
-    expect(h.synthesize).not.toHaveBeenCalled();
+    expect(h.stream).not.toHaveBeenCalled();
     expect(h.rateLimit).toHaveBeenCalledWith("mink-speech:admin:echos:owner", {
-      max: 60,
+      max: 20,
       windowSeconds: 60,
+    });
+    expect(h.rateLimit).toHaveBeenCalledWith("mink-speech:store:echos", {
+      max: 300,
+      windowSeconds: 3_600,
     });
   });
 
-  it("reports a provider outage as 503 and logs it", async () => {
-    h.synthesize.mockRejectedValue(new Error("Gemini TTS returned 500."));
+  it("reports a provider outage before any audio as 503 and logs it", async () => {
+    h.stream.mockRejectedValue(new Error("Gemini TTS returned 500."));
     const response = await POST(req({ text: "Hello" }));
     expect(response.status).toBe(503);
     expect(h.logError).toHaveBeenCalledWith(
@@ -127,6 +156,48 @@ describe("POST /api/mink/speech", () => {
       expect.any(Error),
       expect.objectContaining({ provider: "bulbul_v4_flash" }),
     );
+  });
+
+  it("errors the body when the provider fails mid-answer, and logs it", async () => {
+    h.stream.mockImplementation(async () => ({
+      sampleRate: 24_000,
+      pcm: (async function* () {
+        yield Buffer.from([1, 2]);
+        throw new Error("Gemini TTS stream failed (INTERNAL).");
+      })(),
+    }));
+    const response = await POST(req({ text: "Hello" }));
+    expect(response.status).toBe(200);
+    await expect(response.arrayBuffer()).rejects.toThrow();
+    expect(h.logError).toHaveBeenCalledWith(
+      "mink.speech.stream_failed",
+      expect.any(Error),
+      expect.objectContaining({ bytes: 2 }),
+    );
+  });
+
+  it("holds a slot per open stream and gives it back when the listener stops", async () => {
+    h.stream.mockImplementation(async (_p, _t, _l, signal: AbortSignal) =>
+      heldOpen(signal),
+    );
+    const open: Response[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      const response = await POST(req({ text: `Answer ${i}` }));
+      expect(response.status).toBe(200);
+      open.push(response);
+    }
+    const busy = await POST(req({ text: "One too many" }));
+    expect(busy.status).toBe(429);
+
+    // Stopping one stream (voice chat ended) frees its slot at once and
+    // cancels the provider call through the shared signal.
+    const signal = h.stream.mock.calls[0][3] as AbortSignal;
+    await open[0].body!.cancel();
+    expect(signal.aborted).toBe(true);
+    const next = await POST(req({ text: "Next" }));
+    expect(next.status).toBe(200);
+    await next.body!.cancel();
+    await Promise.all(open.slice(1).map((response) => response.body!.cancel()));
   });
 
   it("refuses another site and a disabled Mink before any work", async () => {

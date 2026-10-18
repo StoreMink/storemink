@@ -1,26 +1,46 @@
 import "server-only";
 
+import { splitSpeechChunks } from "./speech-text";
 import { googleAccessToken, refusalReason } from "./voice-transcription";
 import type { MinkSpeechProvider } from "./voice-provider";
 
 /**
- * Reads one stretch of a Mink answer aloud with the platform's chosen
- * text-to-speech model. The voice chat asks for an answer a few sentences at
- * a time (`splitSpeechChunks`), so each call here is short.
+ * Reads a Mink answer aloud with the platform's chosen text-to-speech model,
+ * as a STREAM of raw 16-bit mono PCM the browser plays while it arrives.
  *
- * ★ NOTHING IS STORED. The text goes to the provider and the audio comes
- * straight back to the merchant's browser; neither is logged or saved.
+ * ★★ STREAMING IS THE WHOLE OPTIMISATION. Measured 2026-10-18 against Vertex
+ * (storemink-staging): waiting for the complete clip took 3.0 s for a sentence,
+ * 4.2 s for 154 characters and 8.4 s for 567, while `streamGenerateContent`
+ * delivered the first audio in 1.2 to 1.6 s whatever the length, and finished
+ * sooner too (5.9 s for the 567). So Gemini is one streamed call per answer,
+ * which also keeps one even voice across the whole answer.
+ *
+ * ★ Sarvam Bulbul V4 Flash keeps its documented REST call, made a few
+ * sentences at a time with the next piece requested while the current one
+ * streams out, so its first audio waits only for the first short piece.
+ * (Sarvam's own streaming endpoint is not used until it can be verified.)
+ *
+ * ★ NOTHING IS STORED. Text goes to the provider, audio straight back to the
+ * merchant's browser; neither is logged or saved.
  */
 
-export type MinkSpeechAudio = { audio: Buffer; mimeType: string };
-
-/** The longest stretch one request may carry; the browser sends ≤600. */
-export const MINK_SPEECH_MAX_CHARS = 1_000;
+/** One answer per request: the voice chat sends ≤1,500 characters. */
+export const MINK_SPEECH_MAX_CHARS = 2_000;
 
 /** Raised when the model cannot read this language; the browser voice takes over. */
 export class MinkSpeechUnsupportedError extends Error {}
 
+export type MinkSpeechStream = {
+  /** Samples per second of every chunk in `pcm`. */
+  sampleRate: number;
+  /** Raw signed 16-bit little-endian mono PCM. */
+  pcm: AsyncGenerator<Buffer>;
+};
+
+type PcmPart = { rate: number; pcm: Buffer };
+
 const GEMINI_TTS_MODEL = "gemini-3.8-flash-lite-tts";
+const SARVAM_SAMPLE_RATE = 24_000;
 
 /**
  * Sarvam's Bulbul V4 Flash voices each belong to one language, so the voice
@@ -52,63 +72,90 @@ export function bulbulLanguageFor(lang: string): string | null {
   return tag in BULBUL_V4_FLASH_SPEAKERS ? tag : null;
 }
 
-/** What the bytes are, read from the bytes rather than trusted from a header. */
-export function sniffAudioMime(audio: Buffer): string | null {
-  if (audio.length < 12) return null;
+/**
+ * The PCM inside a WAV file, walking its chunks rather than assuming a
+ * 44-byte header (providers add LIST and other chunks). Only 16-bit mono PCM
+ * is accepted, because that is what the browser player decodes.
+ */
+export function parseWav(audio: Buffer): PcmPart | null {
   if (
-    audio.toString("ascii", 0, 4) === "RIFF" &&
-    audio.toString("ascii", 8, 12) === "WAVE"
+    audio.length < 12 ||
+    audio.toString("ascii", 0, 4) !== "RIFF" ||
+    audio.toString("ascii", 8, 12) !== "WAVE"
   )
-    return "audio/wav";
-  if (audio.toString("ascii", 0, 3) === "ID3") return "audio/mpeg";
-  if (audio[0] === 0xff && (audio[1] & 0xe0) === 0xe0) return "audio/mpeg";
+    return null;
+  let offset = 12;
+  let format: {
+    code: number;
+    channels: number;
+    rate: number;
+    bits: number;
+  } | null = null;
+  while (offset + 8 <= audio.length) {
+    const id = audio.toString("ascii", offset, offset + 4);
+    const size = audio.readUInt32LE(offset + 4);
+    const body = offset + 8;
+    if (id === "fmt " && body + 16 <= audio.length) {
+      format = {
+        code: audio.readUInt16LE(body),
+        channels: audio.readUInt16LE(body + 2),
+        rate: audio.readUInt32LE(body + 4),
+        bits: audio.readUInt16LE(body + 14),
+      };
+    } else if (id === "data") {
+      if (
+        !format ||
+        format.code !== 1 ||
+        format.channels !== 1 ||
+        format.bits !== 16
+      )
+        return null;
+      const end =
+        size === 0xffffffff || body + size > audio.length
+          ? audio.length
+          : body + size;
+      return { rate: format.rate, pcm: audio.subarray(body, end) };
+    }
+    offset = body + size + (size % 2);
+  }
   return null;
 }
 
-/** Raw 16-bit mono PCM (Gemini's `audio/L16`) wrapped in a WAV header. */
-export function pcm16ToWav(pcm: Buffer, sampleRate: number): Buffer {
-  const header = Buffer.alloc(44);
-  header.write("RIFF", 0, "ascii");
-  header.writeUInt32LE(36 + pcm.length, 4);
-  header.write("WAVE", 8, "ascii");
-  header.write("fmt ", 12, "ascii");
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(sampleRate * 2, 28);
-  header.writeUInt16LE(2, 32);
-  header.writeUInt16LE(16, 34);
-  header.write("data", 36, "ascii");
-  header.writeUInt32LE(pcm.length, 40);
-  return Buffer.concat([header, pcm]);
+/** A Gemini audio part: raw `audio/l16; rate=…` PCM, or a WAV file. */
+function geminiAudioPart(mimeType: string, data: string): PcmPart | null {
+  const bytes = Buffer.from(data, "base64");
+  if (/^audio\/(l16|pcm)/i.test(mimeType))
+    return {
+      rate: Number(/rate=(\d+)/i.exec(mimeType)?.[1]) || 24_000,
+      pcm: bytes,
+    };
+  return parseWav(bytes);
 }
 
 function geminiModel(): string {
   const override = process.env.MINK_TTS_GEMINI_MODEL?.trim();
   // Only a dated version of the same model; another family is a different
-  // product the operator switch never offered.
+  // product the operator choice never offered.
   return override && override.startsWith(GEMINI_TTS_MODEL)
     ? override
     : GEMINI_TTS_MODEL;
 }
 
 /**
- * Gemini 3.8 Flash-Lite TTS on Vertex (global only, Preview). Verified
- * 2026-10-18 against storemink-staging: `voiceConfig.voice` takes a voice
- * name and the answer is one complete 24 kHz mono WAV in `inlineData`. The
- * language is read from the text itself.
+ * Gemini 3.8 Flash-Lite TTS on Vertex (global only, Preview), streamed over
+ * SSE. Verified 2026-10-18: each event carries one `audio/l16; rate=24000;
+ * channels=1` part; the language is read from the text itself.
  */
-async function synthesizeWithGemini(
+async function* geminiPcm(
   text: string,
   signal: AbortSignal,
-): Promise<MinkSpeechAudio> {
+): AsyncGenerator<PcmPart> {
   const project = process.env.GCP_PROJECT_ID;
   if (!project) throw new Error("GCP_PROJECT_ID is not configured.");
   const voice = process.env.MINK_TTS_GEMINI_VOICE?.trim() || "Kore";
   const token = await googleAccessToken();
   const response = await fetch(
-    `https://aiplatform.googleapis.com/v1/projects/${encodeURIComponent(project)}/locations/global/publishers/google/models/${encodeURIComponent(geminiModel())}:generateContent`,
+    `https://aiplatform.googleapis.com/v1/projects/${encodeURIComponent(project)}/locations/global/publishers/google/models/${encodeURIComponent(geminiModel())}:streamGenerateContent?alt=sse`,
     {
       method: "POST",
       headers: {
@@ -126,51 +173,70 @@ async function synthesizeWithGemini(
       signal,
     },
   );
-  if (!response.ok)
+  if (!response.ok || !response.body)
     throw new Error(
       `Gemini TTS returned ${response.status}${await refusalReason(response)}.`,
     );
-  const data = (await response.json()) as {
-    candidates?: Array<{
-      content?: {
-        parts?: Array<{ inlineData?: { mimeType?: unknown; data?: unknown } }>;
-      };
-    }>;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  const partsOf = (line: string): PcmPart[] => {
+    if (!line.startsWith("data:")) return [];
+    const event = JSON.parse(line.slice(5)) as {
+      error?: { status?: unknown };
+      candidates?: Array<{
+        content?: {
+          parts?: Array<{
+            inlineData?: { mimeType?: unknown; data?: unknown };
+          }>;
+        };
+      }>;
+    };
+    // An error after the stream opened arrives as an event, not a status.
+    // Only its status code is kept: the message may quote the request back.
+    if (event.error)
+      throw new Error(
+        `Gemini TTS stream failed${typeof event.error.status === "string" ? ` (${event.error.status})` : ""}.`,
+      );
+    const found: PcmPart[] = [];
+    for (const part of event.candidates?.[0]?.content?.parts ?? []) {
+      const inline = part.inlineData;
+      if (typeof inline?.data !== "string") continue;
+      const audio = geminiAudioPart(
+        typeof inline.mimeType === "string" ? inline.mimeType : "",
+        inline.data,
+      );
+      if (!audio) throw new Error("Gemini TTS returned unreadable audio.");
+      found.push(audio);
+    }
+    return found;
   };
-  const inline = data.candidates?.[0]?.content?.parts?.find(
-    (part) => typeof part.inlineData?.data === "string",
-  )?.inlineData;
-  if (!inline || typeof inline.data !== "string")
-    throw new Error("Gemini TTS returned no audio.");
-  const bytes = Buffer.from(inline.data, "base64");
-  const declared = typeof inline.mimeType === "string" ? inline.mimeType : "";
-  // Earlier Gemini TTS models answered raw PCM (`audio/L16;rate=24000`).
-  if (/^audio\/(l16|pcm)/i.test(declared)) {
-    const rate = Number(/rate=(\d+)/i.exec(declared)?.[1]) || 24_000;
-    return { audio: pcm16ToWav(bytes, rate), mimeType: "audio/wav" };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffered += decoder.decode(value, { stream: true });
+      let newline: number;
+      while ((newline = buffered.indexOf("\n")) >= 0) {
+        const line = buffered.slice(0, newline).trim();
+        buffered = buffered.slice(newline + 1);
+        yield* partsOf(line);
+      }
+    }
+    yield* partsOf(buffered.trim());
+  } finally {
+    // An early stop (the merchant ended voice chat) closes the provider call.
+    await reader.cancel().catch(() => {});
   }
-  const mimeType = sniffAudioMime(bytes);
-  if (!mimeType) throw new Error("Gemini TTS returned unreadable audio.");
-  return { audio: bytes, mimeType };
 }
 
-/**
- * Sarvam Bulbul V4 Flash (`bulbul:v4-flash`). The request needs the language
- * and a voice from that language; MP3 keeps a long answer small. The answer
- * is base64 audio in `audios`.
- */
-async function synthesizeWithBulbul(
+/** One Bulbul V4 Flash request: WAV at 24 kHz, the language's own voice. */
+async function bulbulPiece(
   text: string,
-  lang: string,
+  languageCode: string,
+  apiKey: string,
   signal: AbortSignal,
-): Promise<MinkSpeechAudio> {
-  const apiKey = process.env.SARVAM_API_KEY;
-  if (!apiKey) throw new Error("SARVAM_API_KEY is not configured.");
-  const languageCode = bulbulLanguageFor(lang);
-  if (!languageCode)
-    throw new MinkSpeechUnsupportedError(
-      `Bulbul V4 Flash has no voice for ${lang}.`,
-    );
+): Promise<PcmPart> {
   const response = await fetch("https://api.sarvam.ai/text-to-speech", {
     method: "POST",
     headers: {
@@ -182,8 +248,8 @@ async function synthesizeWithBulbul(
       language_code: languageCode,
       model: "bulbul:v4-flash",
       speaker: BULBUL_V4_FLASH_SPEAKERS[languageCode],
-      speech_sample_rate: 24000,
-      output_audio_codec: "mp3",
+      speech_sample_rate: SARVAM_SAMPLE_RATE,
+      output_audio_codec: "wav",
     }),
     cache: "no-store",
     signal,
@@ -196,19 +262,76 @@ async function synthesizeWithBulbul(
   const first = Array.isArray(data.audios) ? data.audios[0] : null;
   if (typeof first !== "string" || !first)
     throw new Error("Bulbul V4 Flash returned no audio.");
-  const bytes = Buffer.from(first, "base64");
-  const mimeType = sniffAudioMime(bytes);
-  if (!mimeType) throw new Error("Bulbul V4 Flash returned unreadable audio.");
-  return { audio: bytes, mimeType };
+  const audio = parseWav(Buffer.from(first, "base64"));
+  if (!audio) throw new Error("Bulbul V4 Flash returned unreadable audio.");
+  return audio;
 }
 
-export function synthesizeMinkSpeech(
+/**
+ * Sarvam Bulbul V4 Flash, a short first piece then longer ones, each requested
+ * while the one before streams out.
+ */
+async function* bulbulPcm(
+  text: string,
+  lang: string,
+  signal: AbortSignal,
+): AsyncGenerator<PcmPart> {
+  const apiKey = process.env.SARVAM_API_KEY;
+  if (!apiKey) throw new Error("SARVAM_API_KEY is not configured.");
+  const languageCode = bulbulLanguageFor(lang);
+  if (!languageCode)
+    throw new MinkSpeechUnsupportedError(
+      `Bulbul V4 Flash has no voice for ${lang}.`,
+    );
+  const pieces = splitSpeechChunks(text);
+  const request = (index: number) => {
+    const pending = bulbulPiece(pieces[index], languageCode, apiKey, signal);
+    // A prefetch abandoned by an early stop must not surface as unhandled.
+    pending.catch(() => {});
+    return pending;
+  };
+  let next = request(0);
+  for (let index = 0; index < pieces.length; index += 1) {
+    const current = await next;
+    if (index + 1 < pieces.length) next = request(index + 1);
+    yield current;
+  }
+}
+
+/**
+ * Starts reading `text` aloud and resolves once the first audio exists, so a
+ * provider refusal or an unsupported language is known before the route
+ * commits to a streamed 200. Later chunks follow through `pcm`.
+ */
+export async function streamMinkSpeech(
   provider: MinkSpeechProvider,
   text: string,
   lang: string,
   signal: AbortSignal,
-): Promise<MinkSpeechAudio> {
-  return provider === "bulbul_v4_flash"
-    ? synthesizeWithBulbul(text, lang, signal)
-    : synthesizeWithGemini(text, signal);
+): Promise<MinkSpeechStream> {
+  const source =
+    provider === "bulbul_v4_flash"
+      ? bulbulPcm(text, lang, signal)
+      : geminiPcm(text, signal);
+  const first = await source.next();
+  if (first.done) throw new Error("The read-aloud model returned no audio.");
+  const head = first.value;
+  const sampleRate = head.rate;
+  async function* pcm(): AsyncGenerator<Buffer> {
+    try {
+      yield head.pcm;
+      for await (const part of source) {
+        if (part.rate !== sampleRate)
+          throw new Error(
+            "The read-aloud audio changed sample rate mid-answer.",
+          );
+        yield part.pcm;
+      }
+    } finally {
+      // A stop while the first chunk was still in hand never reached the
+      // for-await, so the provider call is closed here instead.
+      await source.return(undefined);
+    }
+  }
+  return { sampleRate, pcm: pcm() };
 }

@@ -3400,28 +3400,56 @@ speech-to-text switch, a "Text-to-speech model" card
 holds two segmented choices: the first, Browser voice or Text-to-speech model,
 decides whether a model reads voice chat answers at all
 (`mink_voice_settings.speech_enabled`, default off: each merchant's browser
-voice, as before), the second, live only while a model is chosen, picks **Gemini 3.8 Flash-Lite TTS** (`gemini-3.8-flash-lite-tts`,
-Vertex `global`, Preview, voice `Kore`) or **Sarvam Bulbul V4 Flash**
-(`bulbul:v4-flash`, MP3, one conversational or customer-service voice per
-language in `BULBUL_V4_FLASH_SPEAKERS`; Malayalam and Odia have no V4 Flash
-voice and fall back to the browser) in `speech_provider` (migration
-`0226`). `lib/mink/speech-synthesis.ts` makes the audio (no SDK: REST with
-ADC, and `SARVAM_API_KEY`, both already deployed; optional
-`MINK_TTS_GEMINI_MODEL` (same family only) and `MINK_TTS_GEMINI_VOICE`).
-`POST /api/mink/speech` reads one stretch (≤1,000 characters) for the
-signed-in admin: same-origin, Mink enabled, 60 a minute per admin and 600 an
-hour per store, no credits (like dictation), text never logged. It answers
-204 with `X-Mink-Speech: off` when no model is on and `unsupported` for a
-language the model has no voice for; `GET` says whether a model is on and is
-asked once as voice chat starts. The browser (`mink-speech-player.ts`) splits
-an answer at sentences (`splitSpeechChunks`: a ≤160-character first piece,
-then ≤600) and fetches the next piece while one plays, through one audio
-element unlocked on the toggle click (iOS plays audio only from a gesture);
-any piece the model cannot deliver or the browser refuses to play, and
-everything after it, is read by `speechSynthesis`. Verified live 2026-10-18 on
-storemink-staging: Gemini answered a Hindi sentence as a 24 kHz WAV in about
-3 to 5 s. ⚠ Bulbul has not been called live from here (its key lives only in
-the Cloud Build trigger); its request follows Sarvam's reference.
+voice, as before), the second, live only while a model is chosen, picks
+**Gemini 3.8 Flash-Lite TTS** (`gemini-3.8-flash-lite-tts`, Vertex `global`,
+Preview, voice `Kore`) or **Sarvam Bulbul V4 Flash** (`bulbul:v4-flash`, one
+conversational or customer-service voice per language in
+`BULBUL_V4_FLASH_SPEAKERS`; Malayalam and Odia have no V4 Flash voice and fall
+back to the browser) in `speech_provider` (migration `0226`).
+★★ THE ANSWER STREAMS, AND THAT IS THE WHOLE OPTIMISATION. Measured
+2026-10-18 on storemink-staging: waiting for a complete clip took 3.0 s for a
+sentence, 4.2 s for 154 characters and 8.4 s for 567, while Gemini's
+`streamGenerateContent?alt=sse` delivered the first audio in 1.2 to 1.6 s
+whatever the length (a 276-character answer through the shipped module: first
+audio 1.2 s, 15.4 s of speech, all of it in 4.1 s). So
+`lib/mink/speech-synthesis.ts` `streamMinkSpeech` is ONE streamed Gemini call
+per answer (one even voice across it), yielding raw 16-bit mono PCM as each SSE
+event lands (`audio/l16; rate=24000`; a WAV part is read with `parseWav`, which
+walks the chunks rather than assuming a 44-byte header). Bulbul keeps Sarvam's
+documented REST call, asked for WAV a few sentences at a time
+(`splitSpeechChunks`: a ≤160-character first piece, then ≤600) with the next
+piece requested while the current one streams out; Sarvam's own streaming
+endpoint is not used until it can be verified. `streamMinkSpeech` resolves only
+once the first audio exists, so a refusal or an unsupported language is known
+before the route commits to a 200; a sample-rate change mid-answer throws, and
+an early stop closes the provider call. No SDK: REST with ADC (one cached
+GoogleAuth client, shared with transcription, below) and `SARVAM_API_KEY`;
+optional `MINK_TTS_GEMINI_MODEL` (same family only) and
+`MINK_TTS_GEMINI_VOICE`. `POST /api/mink/speech` takes the whole answer
+(≤2,000 characters; the voice chat sends ≤1,500) and streams the PCM back
+(`application/octet-stream`, `X-Mink-Audio: pcm16le;rate=…`): same-origin,
+Mink enabled, 20 a minute per admin and 300 an hour per store (one request per
+answer now, not per sentence), no credits (like dictation), text never logged.
+It answers 204 `X-Mink-Speech: off` when no model is on and `unsupported` for a
+language the model has no voice for, and 503 when the provider fails before any
+audio; `GET` says whether a model is on and is asked once as voice chat starts.
+★ At most 12 streams per instance (`MAX_STREAMS`), each holding its slot until
+the stream ends rather than until the handler returns, released FIRST when the
+listener goes away, with the provider call cancelled through the request's
+signal and a 60 s ceiling; a 429 there does not make Cloud Run add an instance,
+so the cap sits above ordinary use. `mink.speech.completed` logs bytes, time to
+first audio and total time. The browser (`mink-speech-player.ts`) makes one
+request per answer and schedules each chunk on the Web Audio clock the moment
+it lands (a 0.25 s lead, 0.1 s after the network fell behind, an odd byte
+carried to the next chunk, a 15 s stall limit), through ONE `AudioContext`
+created and resumed on the toggle click (iOS starts audio only from a gesture)
+and closed when voice chat stops. A model that fails before any audio, a
+missing Web Audio, or a stream that breaks before its first byte hands the
+whole answer to `speechSynthesis`; a stream that breaks after audio started
+plays what arrived. ⚠ Bulbul has not been called live from here (its key lives
+only in the Cloud Build trigger); its request follows Sarvam's reference. ⚠ Not
+played in a browser end to end: verified by the suites (a fake AudioContext)
+and the live Vertex stream above.
 
 The Mink runs page in the platform operator console contains one global choice
 between Google Chirp 3 and Sarvam Saaras v4 (a segmented choice,
@@ -3433,7 +3461,17 @@ the service-only singleton `mink_voice_settings`; there is no per-store override
 superadmins, and `POST /api/mink/voice` resolves the singleton for every request,
 so a change applies to dictation from all stores immediately. Chirp uses Cloud
 Speech-to-Text V2 with ADC and automatic language detection. Saaras uses its
-server-side API key and automatic language detection. By explicit operator
+server-side API key and automatic language detection. ★ Measured 2026-10-18: Chirp 3 with automatic
+language detection answers only in the `us` and `eu` multi-regions (the Asia
+regions refuse `auto`), and `us` returned a transcript in about 3 s, so
+`MINK_CHIRP_LOCATION` stays `us`. ★ `googleAccessToken` keeps ONE GoogleAuth
+client per process (it caches and refreshes its own token) instead of building
+a new one, and re-fetching a token, for every dictation and every answer read
+aloud; a failed token read drops the client so the next request starts clean.
+★ `/api/mink/voice` takes up to 8 transcriptions per instance at once
+(`MAX_TRANSCRIPTIONS`, was 2): each holds one 30-second WAV (about 1 MB) and
+waits on the network, and voice chat makes dictation turn-by-turn, so the old
+cap refused a third merchant on an instance with room for dozens. By explicit operator
 choice, `SARVAM_API_KEY` is supplied as the regular `_SARVAM_API_KEY` Cloud Build
 trigger substitution and copied into the authoritative Cloud Run environment
 rather than Secret Manager; principals who can inspect a trigger or revision can

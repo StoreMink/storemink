@@ -1,21 +1,21 @@
 "use client";
 
-import { splitSpeechChunks } from "@/lib/mink/speech-text";
-
 /**
- * Plays a Mink answer through the platform's read-aloud model
- * (`/api/mink/speech`), a few sentences at a time: the first short piece is
- * fetched and played while the next is already being made, so the merchant
- * hears the first words a couple of seconds after the answer lands instead
- * of waiting for the whole answer to be synthesised.
+ * Plays a Mink answer through the platform's read-aloud model as it streams
+ * in: `/api/mink/speech` answers raw 16-bit mono PCM, and each chunk is
+ * scheduled on the Web Audio clock the moment it lands, so the merchant hears
+ * the first words about a second and a half after the answer (Gemini's
+ * measured time to first audio) instead of after the whole answer is
+ * synthesised.
  *
  * Outcomes:
- * - `done`: everything was played.
- * - `off`: no model is switched on; the browser voice reads the answer and
+ * - `done`: the audio played to the end (or a stream that broke after it had
+ *   started was allowed to finish what had arrived).
+ * - `off`: no model is switched on; the browser voice reads this answer and
  *   the rest of the voice chat.
- * - `browser`: this answer could not be played by the model (a language it has
- *   no voice for, a provider failure, a blocked playback); `remaining` is what
- *   still needs reading, which the browser voice takes over.
+ * - `browser`: the model could not read this answer (a language it has no
+ *   voice for, a provider failure before any audio); the browser voice reads
+ *   it.
  * - `cancelled`: speech was stopped by the voice chat.
  */
 export type MinkServerSpeechResult =
@@ -23,170 +23,167 @@ export type MinkServerSpeechResult =
   | { outcome: "cancelled" }
   | { outcome: "off" | "browser"; remaining: string };
 
-type Fetched =
-  | { kind: "audio"; url: string }
-  | { kind: "off" }
-  | { kind: "browser" };
+/** Audio held ahead of the playhead before the first chunk plays. */
+const START_LEAD_S = 0.25;
+/** The smaller cushion used after the network fell behind playback. */
+const RECOVER_LEAD_S = 0.1;
+/** No bytes for this long means the stream has stalled. */
+const STALL_MS = 15_000;
 
-async function fetchSpeech(
-  text: string,
-  lang: string,
-  signal: AbortSignal,
-): Promise<Fetched> {
+function readWithin<T>(
+  reader: ReadableStreamDefaultReader<T>,
+  ms: number,
+): Promise<ReadableStreamReadResult<T> | "stalled"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    reader.read(),
+    new Promise<"stalled">((resolve) => {
+      timer = setTimeout(() => resolve("stalled"), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+export async function playMinkServerSpeech({
+  text,
+  lang,
+  audio,
+  signal,
+  onStart,
+}: {
+  text: string;
+  lang: string;
+  /** Created and resumed on the click that turned voice chat on. */
+  audio: AudioContext;
+  signal: AbortSignal;
+  /** The first audio is about to play (the loop moves to "Speaking…"). */
+  onStart: () => void;
+}): Promise<MinkServerSpeechResult> {
+  const browser = { outcome: "browser" as const, remaining: text };
+  let response: Response;
   try {
-    const response = await fetch("/api/mink/speech", {
+    response = await fetch("/api/mink/speech", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, lang }),
       cache: "no-store",
       signal,
     });
-    if (response.status === 204)
-      return response.headers?.get("X-Mink-Speech") === "off"
-        ? { kind: "off" }
-        : { kind: "browser" };
-    const type = response.headers?.get("Content-Type") ?? "";
-    if (!response.ok || !type.startsWith("audio/")) return { kind: "browser" };
-    const blob = await response.blob();
-    return { kind: "audio", url: URL.createObjectURL(blob) };
   } catch {
-    return { kind: "browser" };
+    return signal.aborted ? { outcome: "cancelled" } : browser;
   }
-}
+  if (response.status === 204)
+    return response.headers.get("X-Mink-Speech") === "off"
+      ? { outcome: "off", remaining: text }
+      : browser;
+  const format = response.headers.get("X-Mink-Audio") ?? "";
+  if (!response.ok || !response.body || !format.startsWith("pcm16le"))
+    return browser;
+  const rate = Number(/rate=(\d+)/.exec(format)?.[1]) || 24_000;
 
-/** Generous: a piece that never reports its end must not hold the loop. */
-function pieceWatchdogMs(text: string) {
-  return Math.min(120_000, 15_000 + text.length * 120);
-}
+  if (audio.state === "suspended") await audio.resume().catch(() => {});
+  const reader = response.body.getReader();
+  const sources: AudioBufferSourceNode[] = [];
+  let playhead = 0;
+  let started = false;
+  let carry: number | null = null;
+  let lastEnded: Promise<void> = Promise.resolve();
 
-function playPiece(
-  player: HTMLAudioElement,
-  url: string,
-  text: string,
-  signal: AbortSignal,
-): Promise<"ended" | "error" | "cancelled"> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const settle = (result: "ended" | "error" | "cancelled") => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(watchdog);
-      player.onended = null;
-      player.onerror = null;
-      signal.removeEventListener("abort", onAbort);
-      resolve(result);
-    };
-    const onAbort = () => {
-      player.pause();
-      settle("cancelled");
-    };
-    const watchdog = setTimeout(() => settle("ended"), pieceWatchdogMs(text));
-    signal.addEventListener("abort", onAbort, { once: true });
-    player.onended = () => settle("ended");
-    player.onerror = () => settle("error");
-    player.src = url;
-    try {
-      const started = player.play();
-      if (started && typeof started.catch === "function")
-        started.catch(() => settle("error"));
-    } catch {
-      settle("error");
+  const schedule = (chunk: Uint8Array) => {
+    // A chunk can split a 16-bit sample; the odd byte waits for the next.
+    let bytes = chunk;
+    if (carry !== null) {
+      const joined = new Uint8Array(chunk.length + 1);
+      joined[0] = carry;
+      joined.set(chunk, 1);
+      bytes = joined;
+      carry = null;
     }
-  });
-}
-
-export async function playMinkServerSpeech({
-  text,
-  lang,
-  player,
-  signal,
-  onStart,
-}: {
-  text: string;
-  lang: string;
-  player: HTMLAudioElement;
-  signal: AbortSignal;
-  /** The first audio is about to play (the loop moves to "Speaking…"). */
-  onStart: () => void;
-}): Promise<MinkServerSpeechResult> {
-  const pieces = splitSpeechChunks(text);
-  if (!pieces.length) return { outcome: "done" };
-  // Its own controller, so an early stop also cancels the piece being
-  // prefetched; the caller's signal still cancels everything.
-  const local = new AbortController();
-  const forward = () => local.abort();
-  signal.addEventListener("abort", forward, { once: true });
-  let finished = false;
-  const urls: string[] = [];
-  const track = (fetched: Promise<Fetched>) =>
-    fetched.then((result) => {
-      if (result.kind === "audio") {
-        if (finished) URL.revokeObjectURL(result.url);
-        else urls.push(result.url);
-      }
-      return result;
+    if (bytes.length % 2) {
+      carry = bytes[bytes.length - 1];
+      bytes = bytes.subarray(0, bytes.length - 1);
+    }
+    const samples = bytes.length / 2;
+    if (!samples) return;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+    const buffer = audio.createBuffer(1, samples, rate);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < samples; i += 1)
+      channel[i] = view.getInt16(i * 2, true) / 32_768;
+    const source = audio.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audio.destination);
+    const now = audio.currentTime;
+    if (playhead < now + 0.02)
+      playhead = now + (started ? RECOVER_LEAD_S : START_LEAD_S);
+    source.start(playhead);
+    playhead += buffer.duration;
+    sources.push(source);
+    lastEnded = new Promise((resolve) => {
+      source.onended = () => {
+        source.disconnect();
+        resolve();
+      };
     });
-  try {
-    let next = track(fetchSpeech(pieces[0], lang, local.signal));
-    for (let index = 0; index < pieces.length; index += 1) {
-      const current = await next;
-      if (signal.aborted) return { outcome: "cancelled" };
-      if (current.kind !== "audio")
-        return {
-          outcome: current.kind,
-          remaining: pieces.slice(index).join(" "),
-        };
-      if (index + 1 < pieces.length)
-        next = track(fetchSpeech(pieces[index + 1], lang, local.signal));
-      if (index === 0) onStart();
-      const played = await playPiece(
-        player,
-        current.url,
-        pieces[index],
-        signal,
-      );
-      if (played === "cancelled") return { outcome: "cancelled" };
-      if (played === "error")
-        return {
-          outcome: "browser",
-          remaining: pieces.slice(index).join(" "),
-        };
+    if (!started) {
+      started = true;
+      onStart();
     }
-    return { outcome: "done" };
-  } finally {
-    finished = true;
-    local.abort();
-    signal.removeEventListener("abort", forward);
-    urls.splice(0).forEach((url) => URL.revokeObjectURL(url));
-  }
-}
+  };
 
-/**
- * A tiny silent WAV, played once on the click that turns voice chat on.
- * ★ Browsers only let a page start audio from a user gesture; iOS Safari
- * applies that per audio element. Playing this on the toggle click "unlocks"
- * the one element every later answer is played through.
- */
-export function silentWavUrl(): string {
-  const samples = 800;
-  const buffer = new ArrayBuffer(44 + samples * 2);
-  const view = new DataView(buffer);
-  const write = (offset: number, value: string) =>
-    [...value].forEach((char, i) =>
-      view.setUint8(offset + i, char.charCodeAt(0)),
-    );
-  write(0, "RIFF");
-  view.setUint32(4, 36 + samples * 2, true);
-  write(8, "WAVE");
-  write(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, 8000, true);
-  view.setUint32(28, 16000, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  write(36, "data");
-  view.setUint32(40, samples * 2, true);
-  return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+  const stopAll = () => {
+    for (const source of sources) {
+      try {
+        source.stop();
+      } catch {
+        // Already ended.
+      }
+    }
+  };
+  const cancelled = new Promise<"cancelled">((resolve) => {
+    if (signal.aborted) resolve("cancelled");
+    signal.addEventListener("abort", () => resolve("cancelled"), {
+      once: true,
+    });
+  });
+
+  try {
+    for (;;) {
+      const read = await Promise.race([
+        readWithin(reader, STALL_MS),
+        cancelled,
+      ]);
+      if (read === "cancelled") {
+        stopAll();
+        return { outcome: "cancelled" };
+      }
+      if (read === "stalled" || read.done) break;
+      if (read.value?.length) schedule(read.value);
+    }
+  } catch {
+    if (signal.aborted) {
+      stopAll();
+      return { outcome: "cancelled" };
+    }
+    // A stream that broke: what already arrived still plays, below.
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+  if (!started) return browser;
+  // Let what was scheduled finish, with a safety margin in case an `ended`
+  // event never comes.
+  const remainingMs =
+    Math.max(0, (playhead - audio.currentTime) * 1000) + 1_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ended = await Promise.race([
+    lastEnded.then(() => "ended" as const),
+    cancelled,
+    new Promise<"ended">((resolve) => {
+      timer = setTimeout(() => resolve("ended"), remainingMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  if (ended === "cancelled") {
+    stopAll();
+    return { outcome: "cancelled" };
+  }
+  return { outcome: "done" };
 }

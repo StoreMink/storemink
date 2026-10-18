@@ -12,11 +12,9 @@ import {
 
 const speechPlayer = vi.hoisted(() => ({
   play: vi.fn(),
-  silent: vi.fn(() => "blob:silent"),
 }));
 vi.mock("./mink-speech-player", () => ({
   playMinkServerSpeech: speechPlayer.play,
-  silentWavUrl: speechPlayer.silent,
 }));
 
 class FakeUtterance {
@@ -452,6 +450,25 @@ describe("useMinkVoiceMode", () => {
 describe("★★ read-aloud model", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  /** Model audio plays through a context started by the toggle click. */
+  const contexts: Array<{
+    resume: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+  }> = [];
+  beforeEach(() => {
+    contexts.length = 0;
+    Object.defineProperty(window, "AudioContext", {
+      value: class {
+        resume = vi.fn(async () => {});
+        close = vi.fn(async () => {});
+        constructor() {
+          contexts.push(this);
+        }
+      },
+      configurable: true,
+    });
+  });
+
   async function speakOneAnswer(enabled: boolean) {
     vi.stubGlobal(
       "fetch",
@@ -481,6 +498,10 @@ describe("★★ read-aloud model", () => {
     const call = speechPlayer.play.mock.calls[0][0];
     expect(call.text).toBe("Sales are up.");
     expect(call.lang).toBe("en-IN");
+    // The context started (and resumed) on the toggle click is the one used.
+    expect(contexts).toHaveLength(1);
+    expect(call.audio).toBe(contexts[0]);
+    expect(contexts[0].resume).toHaveBeenCalled();
     expect(synth.speak).not.toHaveBeenCalled();
     expect(result.current.state).toBe("waiting");
     act(() => call.onStart());
@@ -514,5 +535,17 @@ describe("★★ read-aloud model", () => {
     expect(signal.aborted).toBe(false);
     await act(async () => result.current.toggle());
     expect(signal.aborted).toBe(true);
+    // And the audio context is closed, so no output device stays held.
+    expect(contexts[0].close).toHaveBeenCalled();
+  });
+
+  it("uses the browser voice when the browser has no Web Audio", async () => {
+    Object.defineProperty(window, "AudioContext", {
+      value: class {},
+      configurable: true,
+    });
+    await speakOneAnswer(true);
+    expect(speechPlayer.play).not.toHaveBeenCalled();
+    expect(synth.speak).toHaveBeenCalledOnce();
   });
 });
