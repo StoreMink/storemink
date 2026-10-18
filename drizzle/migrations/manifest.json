@@ -8309,6 +8309,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261018_0224_scenes_in_chat_help",
+      "description": "The product-images guide's Put in a scene sentence replaced in place: a product in a scene is asked for in Mink AI chat (with the Photo in a scene suggestion on a product's page), and the product editor keeps only white, colour and transparent backgrounds",
+      "file": "sql/20261018_0224_scenes_in_chat_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0223_ai_product_photos_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide sends scenes to Mink chat and no longer offers Put in a scene",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%ask Mink AI in the chat in your own words%' and body not like '%select <strong>Put in a scene</strong>%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

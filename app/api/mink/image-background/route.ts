@@ -27,8 +27,8 @@ const json = (body: unknown, status = 200) =>
  *   would queue behind it.
  * ★ NOT GATED ON MINK BEING ENABLED: no model is asked anything; the cut-out
  *   comes from the image-matting service, whose own switch is
- *   IMAGE_MATTING_URL. A scene is a separate route (/api/mink/image-edit),
- *   because it is a Mink image call with image generation's gates.
+ *   IMAGE_MATTING_URL. A product in a scene is made in Mink AI chat, never
+ *   here (owner, 2026-10-18).
  * ★ The browser names a photo, a slot KEY and a background; the size comes from
  *   the server's catalogue and the actor, store and permissions are derived
  *   here, never sent.

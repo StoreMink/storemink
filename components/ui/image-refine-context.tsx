@@ -4,40 +4,35 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 
 /**
  * Which photo tools can work for the signed-in admin: Refine with Mink AI,
- * and changing a product photo's background.
+ * and changing a product photo's background. (A product in a scene is made
+ * in Mink AI chat, never from the upload box.)
  *
  * ★ Both default to FALSE, so the shared `ImageUpload` offers no button
  *   anywhere the dashboard layout has not explicitly said it may (the
  *   storefront, the platform console). The server re-checks every gate; this
  *   only keeps a button that would always fail off the screen.
- * ★ Three flags, because they have different gates: Refine and scenes are
- *   Mink model calls, background removal is the image-matting service. A
- *   scene does not need background removal: Mink AI re-shoots the whole
- *   photo, so it works while the matting service is off.
+ * ★ Two flags, not one, because they have different gates: Refine is a Mink
+ *   model call, background removal is the image-matting service.
  */
 const ImageToolsContext = createContext({
   refine: false,
   background: false,
-  scenes: false,
 });
 
 export function ImageRefineProvider({
   available,
   background = false,
-  scenes = false,
   children,
 }: {
   /** Refine with Mink AI. */
   available: boolean;
   /** Changing a product photo's background. */
   background?: boolean;
-  /** Re-shooting a product photo in a scene with Mink AI. */
-  scenes?: boolean;
   children: ReactNode;
 }) {
   const value = useMemo(
-    () => ({ refine: available, background, scenes }),
-    [available, background, scenes],
+    () => ({ refine: available, background }),
+    [available, background],
   );
   return (
     <ImageToolsContext.Provider value={value}>
@@ -52,8 +47,4 @@ export function useImageRefineAvailable(): boolean {
 
 export function useImageBackgroundAvailable(): boolean {
   return useContext(ImageToolsContext).background;
-}
-
-export function useImageScenesAvailable(): boolean {
-  return useContext(ImageToolsContext).scenes;
 }

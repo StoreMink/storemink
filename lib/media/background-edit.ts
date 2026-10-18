@@ -63,9 +63,10 @@ import {
 //    anything is stored.
 // ★ The original is never touched: every result is a new object, and the
 //    merchant compares and chooses before a product uses it.
-// ★ A SCENE IS NOT MADE HERE. The editor's Scene option re-shoots the photo
-//    with Mink AI (lib/mink/image-edit.ts); a cut-out placed on a drawn set
-//    was tried first and judged unconvincing (owner, 2026-10-18).
+// ★ A SCENE IS NOT MADE HERE. A product in a scene is a Mink AI chat request
+//    ("show this hanging from a tree in a garden"), the way Shopify Sidekick
+//    works (owner, 2026-10-18); a cut-out placed on a drawn set was tried
+//    first and judged unconvincing.
 // ---------------------------------------------------------------------------
 
 /** Source download ceiling; uploads are capped at 5 MiB. */

@@ -401,154 +401,24 @@ describe("The shadow", () => {
   });
 });
 
-describe("Put in a scene (Mink AI)", () => {
-  const first = "https://storage.googleapis.com/b/stores/s/edited/ai-1.webp";
-  const second = "https://storage.googleapis.com/b/stores/s/edited/ai-2.webp";
-
-  /** Each POST answers with the next body. */
-  function server(posts: Record<string, unknown>[]) {
-    const fetchMock = vi.fn<typeof fetch>(async () => {
-      const body = posts.shift() ?? { error: "unexpected" };
-      return new Response(JSON.stringify(body), {
-        status: body.error ? 402 : 200,
-      });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    return fetchMock;
-  }
-
-  const posted = (fetchMock: ReturnType<typeof server>, n: number) =>
-    JSON.parse(String(fetchMock.mock.calls[n][1]?.body));
-
-  function renderUpload(
-    flags: { background?: boolean; scenes?: boolean },
-    onReplace = vi.fn(),
-  ) {
+describe("No scenes in the product editor", () => {
+  it("offers only the background tool: scenes are made in Mink AI chat", () => {
     render(
-      <ImageRefineProvider
-        available={false}
-        background={flags.background ?? false}
-        scenes={flags.scenes ?? true}
-      >
+      <ImageRefineProvider available background>
         <ImageUpload
           spec="product"
           defaultImage={original}
           onUploadSuccess={() => {}}
-          onReplace={onReplace}
-        />
-      </ImageRefineProvider>,
-    );
-    return onReplace;
-  }
-
-  it("is offered where the layout allows it, even without background removal", () => {
-    server([]);
-    renderUpload({ background: false, scenes: true });
-    expect(
-      screen.getByRole("button", { name: /^Put in a scene$/ }),
-    ).toBeTruthy();
-    expect(screen.queryByText(/Change background/)).toBeNull();
-    cleanup();
-
-    renderUpload({ background: true, scenes: false });
-    expect(screen.queryByText(/Put in a scene/)).toBeNull();
-    cleanup();
-
-    // Never for a slot that is a scene already.
-    render(
-      <ImageRefineProvider available={false} background scenes>
-        <ImageUpload
-          spec="blog_cover"
-          defaultImage={original}
-          onUploadSuccess={() => {}}
         />
       </ImageRefineProvider>,
     );
     expect(screen.queryByText(/Put in a scene/)).toBeNull();
-  });
-
-  it("creates a photo from a preset, compares, then replaces", async () => {
-    const fetchMock = server([{ url: first, chargedCredits: 5 }]);
-    const onReplace = renderUpload({ scenes: true });
-    fireEvent.click(screen.getByRole("button", { name: /Put in a scene/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Garden/ }));
-    fireEvent.click(screen.getByRole("button", { name: /^Create photo$/ }));
-    expect(await screen.findByAltText("In the new scene")).toBeTruthy();
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/mink/image-edit");
-    expect(posted(fetchMock, 0)).toEqual({
-      url: original,
-      spec: "product",
-      preset: "garden",
-    });
-    expect(document.body.textContent).not.toMatch(/\d+\s*(Mink )?credits?/);
-    // Said plainly: the product is redrawn, so compare before using it.
-    expect(screen.getByText(/redraws the\s+product too/)).toBeTruthy();
-    expect(onReplace).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByText("Use this photo"));
-    expect(onReplace).toHaveBeenCalledWith(original, first);
-  });
-
-  it("sends the merchant's own words, tries again, and keeps every photo", async () => {
-    const fetchMock = server([
-      { url: first, chargedCredits: 5 },
-      { url: second, chargedCredits: 5 },
-    ]);
-    const onReplace = renderUpload({ scenes: true });
-    fireEvent.click(screen.getByRole("button", { name: /Put in a scene/ }));
-    fireEvent.change(screen.getByLabelText(/Or describe your own scene/), {
-      target: { value: "  hanging from a tree branch  in a garden " },
-    });
-    // Typing replaces the preset.
-    expect(
-      screen
-        .getByRole("button", { name: /Studio/ })
-        .getAttribute("aria-pressed"),
-    ).toBe("false");
-    fireEvent.click(screen.getByRole("button", { name: /Create photo/ }));
-    await screen.findByAltText("In the new scene");
-    expect(posted(fetchMock, 0)).toEqual({
-      url: original,
-      spec: "product",
-      instruction: "hanging from a tree branch in a garden",
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /^Try again$/ }));
-    await screen.findByRole("button", { name: /Photo 2:/ });
-    expect(posted(fetchMock, 1)).toEqual(posted(fetchMock, 0));
-    expect(document.body.textContent).not.toMatch(/\d+\s*(Mink )?credits?/);
-    expect(
-      (screen.getByAltText("In the new scene") as HTMLImageElement).src,
-    ).toBe(second);
-
-    // The first photo was paid for too: it can still be chosen.
-    fireEvent.click(screen.getByRole("button", { name: /Photo 1:/ }));
-    expect(
-      (screen.getByAltText("In the new scene") as HTMLImageElement).src,
-    ).toBe(first);
-    fireEvent.click(screen.getByText("Use this photo"));
-    expect(onReplace).toHaveBeenCalledWith(original, first);
-  });
-
-  it("shows the server's reason and offers nothing to use", async () => {
-    server([{ error: "No credits left." }]);
-    renderUpload({ scenes: true });
-    fireEvent.click(screen.getByRole("button", { name: /Put in a scene/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Create photo/ }));
-    expect(await screen.findByText("No credits left.")).toBeTruthy();
-    expect(screen.queryByText("Use this photo")).toBeNull();
-  });
-
-  it("switches between the background and scene tools", () => {
-    server([]);
-    renderUpload({ background: true, scenes: true });
     fireEvent.click(screen.getByText(/Change background/));
+    expect(screen.queryByRole("tab", { name: "Scene" })).toBeNull();
+    expect(screen.queryByText(/describe your own scene/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Garden/ })).toBeNull();
     expect(
       screen.getByRole("button", { name: /Remove background/ }),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "Scene" }));
-    expect(
-      screen.queryByRole("button", { name: /Remove background/ }),
-    ).toBeNull();
-    expect(screen.getByRole("button", { name: /Create photo/ })).toBeTruthy();
   });
 });
