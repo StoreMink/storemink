@@ -17,7 +17,6 @@ import {
   readMinkMemorySuggestion,
   type MinkMemorySuggestion,
 } from "@/lib/mink/memory-suggestion";
-import { readStoredMinkReplyLanguage } from "@/lib/mink/reply-language";
 import { readMinkScreen } from "./mink-screen";
 
 export const ASSISTANT_NAME = "Mink AI";
@@ -715,14 +714,12 @@ function minkBrowserContext() {
   const type = selected?.dataset.minkResourceType;
   const id = selected?.dataset.minkResourceId;
   const screen = readMinkScreen();
-  const replyLanguage = readStoredMinkReplyLanguage();
   return {
     currentPath: `${window.location.pathname}${window.location.search}`,
     ...((type === "product" || type === "order") && id
       ? { selectedResource: { type, id } }
       : {}),
     ...(screen ? { screen } : {}),
-    ...(replyLanguage !== "auto" ? { replyLanguage } : {}),
   };
 }
 

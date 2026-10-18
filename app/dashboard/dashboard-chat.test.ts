@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clampMinkPanelWidth,
   DashboardChat,
+  isMinkInAppLinkClick,
   isMinkScrollNearBottom,
   latestMinkUserMessageId,
   minkCheckedLine,
@@ -788,5 +789,98 @@ describe("★ Remember this?", () => {
     } as unknown as ReturnType<typeof useChat>);
     view.rerender(createElement(DashboardChat, { variant: "overlay" }));
     expect(screen.queryByTestId("mink-memory-prompt")).not.toBeInTheDocument();
+  });
+});
+
+describe("★★ a followed link leaves the full view", () => {
+  const ORIGIN = "https://echoss.storemink.com";
+  const clickOn = (html: string, overrides: Partial<MouseEvent> = {}) => {
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    const target = host.querySelector("[data-hit]") ?? host.firstElementChild;
+    return isMinkInAppLinkClick(
+      {
+        target,
+        button: 0,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        ...overrides,
+      },
+      ORIGIN,
+    );
+  };
+
+  it("counts a plain click on a dashboard link, including one inside the link", () => {
+    expect(clickOn('<a href="/dashboard/orders?q=ORD1">ORD1</a>')).toBe(true);
+    expect(clickOn('<a href="/dashboard">Home</a>')).toBe(true);
+    expect(
+      clickOn(
+        '<a href="/dashboard/products/p1"><span data-hit>Shoe</span></a>',
+      ),
+    ).toBe(true);
+    expect(clickOn(`<a href="${ORIGIN}/dashboard/orders">Orders</a>`)).toBe(
+      true,
+    );
+  });
+
+  it("ignores new-tab, modified, download and off-dashboard clicks", () => {
+    const link = '<a href="/dashboard/orders">Orders</a>';
+    expect(clickOn('<a href="/dashboard/orders" target="_blank">x</a>')).toBe(
+      false,
+    );
+    expect(clickOn('<a href="/dashboard/orders" download>x</a>')).toBe(false);
+    expect(clickOn(link, { metaKey: true })).toBe(false);
+    expect(clickOn(link, { ctrlKey: true })).toBe(false);
+    expect(clickOn(link, { shiftKey: true })).toBe(false);
+    expect(clickOn(link, { button: 1 })).toBe(false);
+    expect(clickOn('<a href="/shop/almond-shake">Shop</a>')).toBe(false);
+    expect(clickOn('<a href="/dashboardish">x</a>')).toBe(false);
+    expect(
+      clickOn('<a href="https://help.storemink.com/dashboard/x">Help</a>'),
+    ).toBe(false);
+    expect(clickOn("<button data-hit>Send</button>")).toBe(false);
+  });
+
+  const withLink = (isExpanded: boolean) =>
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      isExpanded,
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant" as const,
+          text: "The oldest is [ORD101010726](/dashboard/orders?q=ORD101010726).",
+        },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+
+  it("collapses the full view to the side panel when an answer link is clicked", () => {
+    withLink(true);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    fireEvent.click(screen.getByRole("link", { name: "ORD101010726" }));
+    expect(baseChatState.toggleExpand).toHaveBeenCalledTimes(1);
+    expect(baseChatState.closeChat).not.toHaveBeenCalled();
+  });
+
+  it("closes the chat on a phone, where any surface covers the page", () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 390,
+    });
+    withLink(false);
+    render(createElement(DashboardChat, { variant: "panel" }));
+    fireEvent.click(screen.getByRole("link", { name: "ORD101010726" }));
+    expect(baseChatState.closeChat).toHaveBeenCalledTimes(1);
+    expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
+  });
+
+  it("leaves the desktop side panel open, beside the page it opened", () => {
+    withLink(false);
+    render(createElement(DashboardChat, { variant: "panel" }));
+    fireEvent.click(screen.getByRole("link", { name: "ORD101010726" }));
+    expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
+    expect(baseChatState.closeChat).not.toHaveBeenCalled();
   });
 });

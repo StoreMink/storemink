@@ -8326,6 +8326,63 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261018_0225_dictation_done_button_help",
+      "description": "The Mink guide's two dictation sentences replaced in place: dictation is finished with the Done button (a live sound wave and timer show while it listens) instead of ending on a pause",
+      "file": "sql/20261018_0225_dictation_done_button_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0224_scenes_in_chat_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide tells merchants to select Done and no longer to pause",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%then select <strong>Done</strong> (the tick)%' and body like '%pausing to think does not stop the recording%' and body not like '%pause briefly%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261018_0226_mink_speech_provider",
+      "description": "Text-to-speech for Mink AI voice chat: mink_voice_settings gains speech_enabled (off = the browser's own voice) and speech_provider (Gemini 3.8 Flash-Lite TTS or Sarvam Bulbul V4 Flash), additive with defaults",
+      "file": "sql/20261018_0226_mink_speech_provider.sql",
+      "transaction": true,
+      "requires": ["20261018_0225_dictation_done_button_help"],
+      "verify": {
+        "columns": [
+          "mink_voice_settings.speech_enabled",
+          "mink_voice_settings.speech_provider"
+        ],
+        "constraints": ["mink_voice_settings_speech_provider_check"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "read-aloud models start switched off, so every store keeps its browser voice",
+            "sql": "select count(*)::text from mink_voice_settings where speech_enabled",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261018_0227_mink_reply_language_help",
+      "description": "The Mink guide's sentence about the chat menu setting the reply language replaced in place: Mink replies in the language the merchant writes or speaks in",
+      "file": "sql/20261018_0227_mink_reply_language_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0226_mink_speech_provider"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says Mink follows the merchant's language and no longer offers a reply-language setting",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Mink replies in the language you write or speak in%' and body not like '%sets the language Mink replies in%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

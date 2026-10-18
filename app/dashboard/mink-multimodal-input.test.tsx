@@ -104,7 +104,7 @@ function LiveComposer({
       canSaveMedia={canSaveMedia}
       onSubmit={onSubmit}
     >
-      {({ attach, attachment, voice, submit }) => (
+      {({ attach, attachment, voice, submit, recorder }) => (
         <div>
           {attachment}
           {attach}
@@ -113,6 +113,7 @@ function LiveComposer({
             value={value}
             onChange={(event) => setValue(event.target.value)}
           />
+          {recorder}
           {voice}
           <button type="button" onClick={() => void submit()}>
             Send message
@@ -514,6 +515,84 @@ describe("Mink dictation", () => {
   });
 });
 
+describe("★★ dictation lives inside the composer, ChatGPT-style", () => {
+  it("swaps the old status bar for a waveform, a clock, Cancel and Done", async () => {
+    render(<LiveComposer initial="" />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    const recorder = await screen.findByTestId("mink-recorder");
+    expect(screen.getByTestId("mink-waveform")).toBeInTheDocument();
+    expect(recorder).toHaveTextContent("0:00");
+    expect(
+      screen.getByRole("button", { name: "Cancel dictation" }),
+    ).toBeEnabled();
+    const done = screen.getByRole("button", { name: "Finish dictation" });
+    await waitFor(() => expect(done).toBeEnabled());
+    await waitFor(() => expect(done).toHaveFocus());
+    // The full-width bar and its instruction are gone.
+    expect(screen.queryByText(/pause when you are finished/i)).toBeNull();
+  });
+
+  it("keeps listening through a pause and finishes on Done", async () => {
+    const stop = vi.fn(() =>
+      recording.done?.(
+        new File(["wav"], "voice-note.wav", { type: "audio/wav" }),
+      ),
+    );
+    recording.start.mockImplementation((signal, done, progress) => {
+      recording.signal = signal;
+      recording.done = done;
+      progress(4);
+      return Promise.resolve(stop);
+    });
+    render(<LiveComposer initial="" />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    await waitFor(() => expect(recording.start).toHaveBeenCalledOnce());
+    expect(recording.start.mock.calls[0][3]).toMatchObject({
+      endOnSilence: false,
+    });
+    expect(await screen.findByTestId("mink-recorder")).toHaveTextContent(
+      "0:04",
+    );
+    const done = screen.getByRole("button", { name: "Finish dictation" });
+    await waitFor(() => expect(done).toBeEnabled());
+    fireEvent.click(done);
+    expect(stop).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Message")).toHaveValue(
+        "Visible product and storefront details",
+      ),
+    );
+    expect(screen.queryByTestId("mink-recorder")).toBeNull();
+  });
+
+  it("shows Transcribing… while the recording is converted", async () => {
+    let answer!: (value: unknown) => void;
+    fetchMock.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    render(<LiveComposer initial="" />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    await waitFor(() => expect(recording.done).not.toBeNull());
+    act(() =>
+      recording.done?.(
+        new File(["wav"], "voice-note.wav", { type: "audio/wav" }),
+      ),
+    );
+    expect(await screen.findByText("Transcribing…")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Finish dictation" }),
+    ).toBeDisabled();
+    await act(async () =>
+      answer({ ok: true, json: async () => ({ text: "Hello" }) }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Message")).toHaveValue("Hello"),
+    );
+  });
+});
+
 class FakeUtterance {
   text: string;
   lang = "";
@@ -640,6 +719,17 @@ describe("Mink voice chat", () => {
     expect(
       screen.getByRole("button", { name: "Talk with Mink" }),
     ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("★ ends a voice-chat turn on a pause, inside the composer", async () => {
+    render(<LiveComposer onSubmit={vi.fn()} />);
+    await turnVoiceChatOn();
+    expect(recording.start.mock.calls[0][3]).toMatchObject({
+      endOnSilence: true,
+    });
+    expect(screen.getByTestId("mink-recorder")).toContainElement(
+      screen.getByRole("button", { name: "Stop voice chat" }),
+    );
   });
 
   it("listens again after an empty recording", async () => {

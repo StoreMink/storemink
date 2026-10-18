@@ -33,7 +33,7 @@ function cleanTranscript(value: unknown): string {
  * to parse is simply omitted — a diagnostic must never be able to fail the call
  * it is describing.
  */
-async function refusalReason(response: Response): Promise<string> {
+export async function refusalReason(response: Response): Promise<string> {
   try {
     const body = (await response.text()).slice(0, 4_000);
     const parsed = JSON.parse(body) as {
@@ -53,15 +53,37 @@ async function refusalReason(response: Response): Promise<string> {
   }
 }
 
-async function googleAccessToken(): Promise<string> {
-  const { GoogleAuth } = await import("google-auth-library");
-  const auth = new GoogleAuth({
-    scopes: "https://www.googleapis.com/auth/cloud-platform",
-  });
-  const client = await auth.getClient();
-  const { token } = await client.getAccessToken();
-  if (!token) throw new Error("Google Cloud credentials are unavailable.");
-  return token;
+type GoogleAuthClient = Awaited<
+  ReturnType<import("google-auth-library").GoogleAuth["getClient"]>
+>;
+let authClient: Promise<GoogleAuthClient> | null = null;
+
+/**
+ * ★ ONE CLIENT PER INSTANCE. A new GoogleAuth per call threw away the token
+ * the library caches, so every transcription and every read-aloud request
+ * fetched a fresh token first (the metadata server on Cloud Run, a full
+ * refresh exchange locally). The shared client reuses its token until shortly
+ * before expiry and refreshes it itself; a failed setup is forgotten so the
+ * next call can try again.
+ */
+export async function googleAccessToken(): Promise<string> {
+  const client = (authClient ??= import("google-auth-library").then(
+    ({ GoogleAuth }) =>
+      new GoogleAuth({
+        scopes: "https://www.googleapis.com/auth/cloud-platform",
+      }).getClient(),
+  ));
+  try {
+    const { token } = await (await client).getAccessToken();
+    if (!token) throw new Error("Google Cloud credentials are unavailable.");
+    return token;
+  } catch (error) {
+    // Forget only the client that failed: a concurrent caller may already
+    // have replaced it with one that works, and dropping that would cost the
+    // very token fetch this cache exists to avoid.
+    if (authClient === client) authClient = null;
+    throw error;
+  }
 }
 
 async function transcribeWithChirp3(

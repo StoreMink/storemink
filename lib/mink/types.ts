@@ -1,6 +1,5 @@
 import type { MinkFormPrefill } from "./form-prefill";
 import type { MinkHighlight } from "./guide-targets";
-import type { MinkReplyLanguage } from "./reply-language";
 import type {
   DesignFont,
   DesignPaletteToken,
@@ -453,8 +452,6 @@ export interface MinkActorContext {
   defaultLowStockThreshold: number;
   currentPath?: string | null;
   selectedResource?: MinkSelectedResource | null;
-  /** The merchant's chosen reply language, validated against a closed list. */
-  replyLanguage?: MinkReplyLanguage;
   /** Trusted run id is attached only after the run row is created. */
   runId?: string;
   /** Operator-controlled Phase 3 access; never inferred from the prompt. */

@@ -115,7 +115,7 @@ describe("Mink system prompt document", () => {
       "search_storefront_categories for a named category",
     );
     expect(template).toContain(
-      "ends automatically after the user speaks and then pauses",
+      "ends when the user selects Done, or after 30 seconds",
     );
     expect(template).toContain(
       "call generate_storefront_image only after selecting exact returned reference URLs",
@@ -196,8 +196,10 @@ describe("Mink system prompt document", () => {
       "- current dashboard page: /dashboard/products/example",
     );
     expect(prompt).toContain("- selected dashboard record: product");
+    // No reply-language setting: the rule follows the merchant's own message.
+    expect(prompt).not.toContain("- reply language:");
     expect(prompt).toContain(
-      "- reply language: match the language and script of the merchant's message",
+      "Answer in the language and script of the merchant's latest message, whether they typed it or spoke it",
     );
     expect(prompt).toContain(
       "- available tools: get_store_profile, search_products",

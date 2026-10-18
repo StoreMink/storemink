@@ -28,6 +28,17 @@ const json = (body: unknown, status = 200) =>
     },
   });
 
+/**
+ * Concurrent transcriptions per instance. Each holds at most one 30-second
+ * WAV (about 1 MB) and waits on the provider's network round trip, so the
+ * work is network-bound, not memory- or CPU-bound. ★ A 429 here does not make
+ * Cloud Run add an instance (it only scales on its own concurrency of 80), so
+ * the old cap of 2 refused a third merchant dictating at the same moment on
+ * an instance that had room for dozens. Voice chat makes this a turn-by-turn
+ * path, not an occasional one.
+ */
+const MAX_TRANSCRIPTIONS = 8;
+
 let processing = 0;
 
 export async function POST(request: Request) {
@@ -35,7 +46,7 @@ export async function POST(request: Request) {
   if (origin) return origin;
   if (!getMinkConfig().enabled)
     return json({ error: "Voice dictation is not enabled." }, 404);
-  if (processing >= 2)
+  if (processing >= MAX_TRANSCRIPTIONS)
     return json(
       { error: "Voice transcription is busy. Try again shortly." },
       429,

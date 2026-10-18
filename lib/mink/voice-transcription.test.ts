@@ -26,6 +26,37 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+describe("googleAccessToken", () => {
+  it("★ a failed token read forgets only its own client", async () => {
+    const { googleAccessToken } = await import("./voice-transcription");
+    let failA!: (reason: Error) => void;
+    let failC!: (reason: Error) => void;
+    const tokenA = new Promise<never>((_, reject) => (failA = reject));
+    const tokenC = new Promise<never>((_, reject) => (failC = reject));
+    h.token
+      .mockReturnValueOnce(tokenA)
+      .mockReturnValueOnce(tokenC)
+      .mockResolvedValue({ token: "fresh" });
+    // Two callers share the one cached client while its tokens are pending.
+    const a = googleAccessToken();
+    const c = googleAccessToken();
+    a.catch(() => {});
+    c.catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const built = h.getClient.mock.calls.length;
+    // A fails: the shared client is forgotten and the next call builds one.
+    failA(new Error("token endpoint hiccup"));
+    await expect(a).rejects.toThrow("token endpoint hiccup");
+    await expect(googleAccessToken()).resolves.toBe("fresh");
+    expect(h.getClient).toHaveBeenCalledTimes(built + 1);
+    // C, still on the old client, fails late: the fresh client survives it.
+    failC(new Error("late failure"));
+    await expect(c).rejects.toThrow("late failure");
+    await expect(googleAccessToken()).resolves.toBe("fresh");
+    expect(h.getClient).toHaveBeenCalledTimes(built + 1);
+  });
+});
+
 describe("Mink voice providers", () => {
   it("asks Chirp 3 to detect the language automatically", async () => {
     fetchMock.mockResolvedValue(

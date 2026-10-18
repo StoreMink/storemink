@@ -334,7 +334,14 @@ disclaimer paragraph are gone; `proposalRollbackNote` is one sentence.
 failure leaves the history untouched and the retry is safe.
 ★ LINKS STAY INSIDE THE APP: `app/dashboard/mink-link.tsx` renders a Next
 `Link` for `/dashboard` hrefs (every card file uses it), so the open panel
-survives a click. `open_dashboard_page` (`tools/navigation-tools.ts`,
+survives a click. ★ A plain click on any `/dashboard` link inside the chat
+(an answer, a card, a menu) collapses the full view to the side panel, and
+closes the chat under 640px (`isMinkInAppLinkClick`, a capture-phase
+listener on the chat surface in `dashboard-chat.tsx`), because the full view
+covers the dashboard and the page used to open unseen behind it, so the
+link looked broken (2026-10-18). New-tab, modified and download clicks and
+links off the dashboard leave the chat as it is; the desktop side panel stays
+open beside the page. `open_dashboard_page` (`tools/navigation-tools.ts`,
 dashboard:view, a closed destination map re-checked against the viewer's
 sections, product by id or SKU, order by reference) emits a `navigation`
 artifact the panel opens itself for a LIVE message (never restored
@@ -529,21 +536,23 @@ editors (`offers/offer-form.tsx`, `categories/categories-management-view`
   channel is off. ★ `pick()` in form-prefill keeps an explicit camelCase
   `null` (`freeAbove: null` means clear the threshold); `??` dropped it on
   the round trip.
-  ★ REPLY LANGUAGE. `lib/mink/reply-language.ts` is a closed list (match my
-  message, English, Hindi, Hinglish, Tamil, Telugu, Kannada, Marathi, Bengali,
-  Gujarati, Malayalam, Punjabi) chosen from the panel's overflow menu, kept in
-  localStorage, sent as `context.replyLanguage`, validated again on the
-  server and rendered into the trusted context through the new
-  `{{reply_language}}` placeholder. The chrome stays English; the answers
-  follow the choice, with StoreMink's own labels, product names and codes
-  kept as they appear.
+  ★ REPLY LANGUAGE WAS REMOVED (2026-10-18, owner's request). There is no
+  menu choice any more: the prompt tells Mink to answer in the language and
+  script of the merchant's latest message, typed or spoken, switching when
+  they switch (Hinglish in Latin letters gets Hinglish, Devanagari gets
+  Devanagari). `lib/mink/reply-language.ts`, `context.replyLanguage` and the
+  `{{reply_language}}` placeholder are gone; a tab opened before the change
+  that still sends `replyLanguage` is ignored by `normalizeMinkPageContext`.
+  Prompt versions `read-beta-v32` / `draft-action-beta-v53`. Help: `0227`.
   ★ VOICE CHAT (`app/dashboard/mink-voice-mode.ts`, `lib/mink/speech-text.ts`,
   the composer). A "Talk with Mink" toggle (`aria-pressed`) beside the mic
   runs a hands-free loop: the existing dictation (the recorder plus
   `/api/mink/voice`) listens, the transcript is sent through the composer's
   own submit path (so limits and attachments apply, and a refused send leaves
-  the words in the box), the newest assistant answer is read aloud with
-  `window.speechSynthesis`, and the end of speech re-arms the mic. The hook
+  the words in the box), the newest assistant answer is read aloud, and the
+  end of speech re-arms the mic. ★ READ ALOUD BY A MODEL WHEN THE OPERATOR
+  SAYS SO (2026-10-18): see "Global Mink voice provider"; otherwise, and for
+  anything a model could not play, `window.speechSynthesis`. The hook
   is a state machine (idle, listening, sending, waiting, speaking) and only
   ever speaks a reply to something sent while the mode was on: restored
   history, an error and an answer that predates the toggle stay silent. A
@@ -2139,15 +2148,24 @@ item is never cropped or overwritten; an already-correct ratio is reused. The
 proposal and later approval bind the prepared URL, so the merchant is never
 sent away to resize or reupload it.
 `lib/mink/voice-recorder.ts` captures one canonical mono 16 kHz PCM WAV locally.
-After speech begins, 1.2 seconds of sustained silence finishes the utterance;
-the 30-second cap remains a stalled-audio fallback. The temporary recording is
+★★ DICTATION IS FINISHED WITH DONE, ChatGPT/Claude-style (2026-10-18, owner's
+request): the mic replaces the composer's toolbar row with a live waveform
+(`app/dashboard/mink-waveform.tsx`, painted from a decaying loudness peak in a
+ref, never React state), a clock, Cancel and Done, and the empty text box hides
+until the transcript lands; the full-width "Listening… pause when you are
+finished" bar is gone. A pause no longer ends dictation (`endOnSilence: false`);
+only voice chat, which has no button to press, still ends a turn after 1.2
+seconds of silence. The 30-second cap still finishes and transcribes, and a
+recording with no speech in it (Done pressed without speaking, or the cap
+reached in silence) is reported as none, so the composer says "No speech was
+recorded" without a transcription call or an input-quota slot. Voice chat
+shows the same waveform with its status and End in the same row. The temporary recording is
 sent to `POST /api/mink/voice`; the route authenticates the current store,
 applies the shared input quotas, validates the real WAV bytes and reads the
 platform-wide voice provider before making one transcription request. The
 composer inserts the single final transcript once, after processing, so cumulative interim
-browser results cannot repeat phrases. Text typed during recording is preserved,
-the merchant does not have to press Stop or Finish, and Cancel aborts the
-recording or request without changing the message.
+browser results cannot repeat phrases. Text typed before recording is preserved,
+and Cancel aborts the recording or request without changing the message.
 Every newly submitted turn is anchored with its user question near the top of
 the contained message viewport while Mink works, with temporary tail room so
 the browser can establish that position before a long answer exists.
@@ -3379,14 +3397,97 @@ handoff; it adds no Help Centre section.
 
 ### Global Mink voice provider (2026-09-14)
 
-The Mink runs page in the platform operator console contains one global binary
-switch between Google Chirp 3 and Sarvam Saaras v4. The selection is stored in
+★★ AND A READ-ALOUD MODEL (2026-10-18, owner's request). Below the
+speech-to-text switch, a "Text-to-speech model" card
+(`speech-provider-switch.tsx`, `setMinkSpeechSettings`, superadmin only)
+holds two segmented choices: the first, Browser voice or Text-to-speech model,
+decides whether a model reads voice chat answers at all
+(`mink_voice_settings.speech_enabled`, default off: each merchant's browser
+voice, as before), the second, live only while a model is chosen, picks
+**Gemini 3.8 Flash-Lite TTS** (`gemini-3.8-flash-lite-tts`, Vertex `global`,
+Preview, voice `Kore`) or **Sarvam Bulbul V4 Flash** (`bulbul:v4-flash`, one
+conversational or customer-service voice per language in
+`BULBUL_V4_FLASH_SPEAKERS`; Malayalam and Odia have no V4 Flash voice and fall
+back to the browser) in `speech_provider` (migration `0226`).
+★★ THE ANSWER STREAMS, AND THAT IS THE WHOLE OPTIMISATION. Measured
+2026-10-18 on storemink-staging: waiting for a complete clip took 3.0 s for a
+sentence, 4.2 s for 154 characters and 8.4 s for 567, while Gemini's
+`streamGenerateContent?alt=sse` delivered the first audio in 1.2 to 1.6 s
+whatever the length (a 276-character answer through the shipped module: first
+audio 1.2 s, 15.4 s of speech, all of it in 4.1 s). So
+`lib/mink/speech-synthesis.ts` `streamMinkSpeech` is ONE streamed Gemini call
+per answer (one even voice across it), yielding raw 16-bit mono PCM as each SSE
+event lands (`audio/l16; rate=24000`; a WAV part is read with `parseWav`, which
+walks the chunks rather than assuming a 44-byte header and accepts an
+extensible header whose sub-format is PCM). Bulbul keeps Sarvam's documented
+REST call, asked for WAV a few sentences at a time (`splitSpeechChunks`: a
+≤160-character first piece, then ≤600, cut only where whitespace follows a
+terminator and the next word is not lowercase or a digit, so "₹4.5", "Rs. 500"
+and "e.g." are never split; over-joining only lengthens a piece) with the next
+piece requested while the current one streams out; Sarvam's own streaming
+endpoint is not used until it can be verified. `streamMinkSpeech` resolves only
+once the first audio exists, so a refusal or an unsupported language is known
+before the route commits to a 200; a sample-rate change mid-answer throws, and
+an early stop closes the provider call. No SDK: REST with ADC (one cached
+GoogleAuth client, shared with transcription, below) and `SARVAM_API_KEY`;
+optional `MINK_TTS_GEMINI_MODEL` (same family only) and
+`MINK_TTS_GEMINI_VOICE`. `POST /api/mink/speech` takes the whole answer
+(≤2,000 characters; the voice chat sends ≤1,500) and streams the PCM back
+(`application/octet-stream`, `X-Mink-Audio: pcm16le;rate=…`): same-origin,
+Mink enabled, 20 a minute per admin and 300 an hour per store (one request per
+answer now, not per sentence), no credits (like dictation), text never logged.
+It answers 204 `X-Mink-Speech: off` when no model is on and `unsupported` for a
+language the model has no voice for, and 503 when the provider fails before any
+audio; `GET` says whether a model is on and is asked once as voice chat starts,
+bounded per actor (30 a minute) like every other Mink read.
+★ At most 12 streams per instance (`MAX_STREAMS`), each holding its slot until
+the stream ends rather than until the handler returns, released FIRST when the
+listener goes away, with the provider call cancelled through the request's
+signal and a 60 s ceiling; a 429 there does not make Cloud Run add an instance,
+so the cap sits above ordinary use. ★ THE SIGNAL FREES THE SLOT TOO: `pull`
+runs only while the consumer drains, so a connection that stays open but stops
+reading never reaches it, and the ceiling used to abort the provider call while
+leaving the slot counted until the socket closed; an abort listener now
+releases it, returns the iterator and errors the stream. `mink.speech.completed` logs bytes, time to
+first audio and total time. The browser (`mink-speech-player.ts`) makes one
+request per answer and schedules each chunk on the Web Audio clock the moment
+it lands (a 0.25 s lead, 0.1 s after the network fell behind, an odd byte
+carried to the next chunk, a 15 s stall limit once audio has started, and a
+20 s first-audio watchdog, `MINK_FIRST_AUDIO_MS`, because the browser voice had
+one and this path relied on the server's ceiling), through ONE `AudioContext`
+created and resumed on the toggle click (iOS starts audio only from a gesture)
+and closed when voice chat stops or as soon as the platform says the browser
+voice reads (an open context holds the audio session; a late GET from an
+earlier toggle is ignored by a session counter). A model that fails before any
+audio, a missing Web Audio, a stream that breaks before its first byte or no
+audio within the watchdog hands the whole answer to `speechSynthesis`; a stream
+that breaks after audio started plays what arrived and the merchant is told the
+rest could not be read (`truncated`). ⚠ Bulbul has not been called live from here (its key lives
+only in the Cloud Build trigger); its request follows Sarvam's reference. ⚠ Not
+played in a browser end to end: verified by the suites (a fake AudioContext)
+and the live Vertex stream above.
+
+The Mink runs page in the platform operator console contains one global choice
+between Google Chirp 3 and Sarvam Saaras v4 (a segmented choice,
+`segmented-choice.tsx`, since 2026-10-18: an on/off switch left the Chirp side
+looking switched off to a new operator, so every option is named and the one in
+use is filled violet; a saved choice that is not in use is shown grey). The selection is stored in
 the service-only singleton `mink_voice_settings`; there is no per-store override.
 `app/actions/mink-operator-actions.ts` restricts changes to platform
 superadmins, and `POST /api/mink/voice` resolves the singleton for every request,
 so a change applies to dictation from all stores immediately. Chirp uses Cloud
 Speech-to-Text V2 with ADC and automatic language detection. Saaras uses its
-server-side API key and automatic language detection. By explicit operator
+server-side API key and automatic language detection. ★ Measured 2026-10-18: Chirp 3 with automatic
+language detection answers only in the `us` and `eu` multi-regions (the Asia
+regions refuse `auto`), and `us` returned a transcript in about 3 s, so
+`MINK_CHIRP_LOCATION` stays `us`. ★ `googleAccessToken` keeps ONE GoogleAuth
+client per process (it caches and refreshes its own token) instead of building
+a new one, and re-fetching a token, for every dictation and every answer read
+aloud; a failed token read drops only the client that failed, so a concurrent caller's fresh client survives it.
+★ `/api/mink/voice` takes up to 8 transcriptions per instance at once
+(`MAX_TRANSCRIPTIONS`, was 2): each holds one 30-second WAV (about 1 MB) and
+waits on the network, and voice chat makes dictation turn-by-turn, so the old
+cap refused a third merchant on an instance with room for dozens. By explicit operator
 choice, `SARVAM_API_KEY` is supplied as the regular `_SARVAM_API_KEY` Cloud Build
 trigger substitution and copied into the authoritative Cloud Run environment
 rather than Secret Manager; principals who can inspect a trigger or revision can
@@ -6400,7 +6501,11 @@ wholesip/
 │                              # edits the Mink and product-images guides for them.
 │                              # 0224 moves scenes to Mink chat in the product-images
 │                              # guide (the editor's scene form was removed; 0222's
-│                              # table is unused). Next free: 0225.
+│                              # table is unused). 0225 edits the Mink guide's two
+│                              # dictation sentences for the Done button. 0226 adds
+│                              # mink_voice_settings.speech_enabled/speech_provider
+│                              # (read-aloud model); 0227 edits the Mink guide's
+│                              # reply-language sentence. Next free: 0228.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

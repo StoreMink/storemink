@@ -10,6 +10,13 @@ import {
   type MinkVoiceModeInput,
 } from "./mink-voice-mode";
 
+const speechPlayer = vi.hoisted(() => ({
+  play: vi.fn(),
+}));
+vi.mock("./mink-speech-player", () => ({
+  playMinkServerSpeech: speechPlayer.play,
+}));
+
 class FakeUtterance {
   text: string;
   lang = "";
@@ -437,5 +444,158 @@ describe("useMinkVoiceMode", () => {
     await act(async () => result.current.toggle());
     expect(result.current.enabled).toBe(false);
     expect(input.listen).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ read-aloud model", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Model audio plays through a context started by the toggle click. */
+  const contexts: Array<{
+    resume: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+  }> = [];
+  beforeEach(() => {
+    contexts.length = 0;
+    Object.defineProperty(window, "AudioContext", {
+      value: class {
+        resume = vi.fn(async () => {});
+        close = vi.fn(async () => {});
+        constructor() {
+          contexts.push(this);
+        }
+      },
+      configurable: true,
+    });
+  });
+
+  async function speakOneAnswer(enabled: boolean) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ enabled }) })),
+    );
+    const input = makeInput();
+    const hook = renderHook(
+      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
+      { initialProps: input },
+    );
+    await act(async () => hook.result.current.toggle());
+    await act(async () => hook.result.current.reportTranscript("Sales?"));
+    hook.rerender({
+      ...input,
+      messages: [...input.messages, assistant("a1", "Sales are **up**.")],
+    });
+    return { ...hook, input };
+  }
+
+  it("plays the answer through the model, Thinking until the audio starts", async () => {
+    let finish!: (value: unknown) => void;
+    speechPlayer.play.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const { result, input } = await speakOneAnswer(true);
+    expect(speechPlayer.play).toHaveBeenCalledOnce();
+    const call = speechPlayer.play.mock.calls[0][0];
+    expect(call.text).toBe("Sales are up.");
+    expect(call.lang).toBe("en-IN");
+    // The context started (and resumed) on the toggle click is the one used.
+    expect(contexts).toHaveLength(1);
+    expect(call.audio).toBe(contexts[0]);
+    expect(contexts[0].resume).toHaveBeenCalled();
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(result.current.state).toBe("waiting");
+    act(() => call.onStart());
+    expect(result.current.state).toBe("speaking");
+    await act(async () => finish({ outcome: "done" }));
+    expect(input.listen).toHaveBeenCalledTimes(2);
+    expect(result.current.state).toBe("listening");
+  });
+
+  it("lets the browser voice read whatever the model could not", async () => {
+    speechPlayer.play.mockResolvedValue({
+      outcome: "browser",
+      remaining: "Sales are up.",
+    });
+    await speakOneAnswer(true);
+    await act(async () => {});
+    expect(synth.speak).toHaveBeenCalledOnce();
+    expect(lastUtterance().text).toBe("Sales are up.");
+  });
+
+  it("uses the browser voice straight away when no model is on", async () => {
+    await speakOneAnswer(false);
+    expect(speechPlayer.play).not.toHaveBeenCalled();
+    expect(synth.speak).toHaveBeenCalledOnce();
+    // ★ And the context opened on the click is closed as soon as the
+    // platform says nothing will play through it.
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0].close).toHaveBeenCalled();
+  });
+
+  it("★ tells the merchant when the model stopped partway, then listens again", async () => {
+    speechPlayer.play.mockResolvedValue({ outcome: "truncated" });
+    const { input, result } = await speakOneAnswer(true);
+    await act(async () => {});
+    expect(input.onNotice).toHaveBeenCalledWith(
+      "The rest of that answer could not be read aloud.",
+    );
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(input.listen).toHaveBeenCalledTimes(2);
+    expect(result.current.state).toBe("listening");
+  });
+
+  it("★ a late answer from an earlier session cannot pick the voice", async () => {
+    let answerFirst!: (value: unknown) => void;
+    const first = new Promise((resolve) => (answerFirst = resolve));
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => first)
+      .mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ enabled: true }),
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    speechPlayer.play.mockImplementation(() => new Promise(() => {}));
+    const input = makeInput();
+    const hook = renderHook(
+      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
+      { initialProps: input },
+    );
+    await act(async () => hook.result.current.toggle());
+    await act(async () => hook.result.current.toggle());
+    await act(async () => hook.result.current.toggle());
+    // The first session's GET answers "off" only now.
+    await act(async () => {
+      answerFirst({ ok: true, json: async () => ({ enabled: false }) });
+    });
+    await act(async () => hook.result.current.reportTranscript("Sales?"));
+    hook.rerender({
+      ...input,
+      messages: [...input.messages, assistant("a1", "Sales are up.")],
+    });
+    // The current session's "on" stands, and its context was not closed.
+    expect(speechPlayer.play).toHaveBeenCalledOnce();
+    expect(contexts[1].close).not.toHaveBeenCalled();
+  });
+
+  it("stopping voice chat cancels model playback", async () => {
+    speechPlayer.play.mockImplementation(() => new Promise(() => {}));
+    const { result } = await speakOneAnswer(true);
+    const { signal } = speechPlayer.play.mock.calls[0][0];
+    expect(signal.aborted).toBe(false);
+    await act(async () => result.current.toggle());
+    expect(signal.aborted).toBe(true);
+    // And the audio context is closed, so no output device stays held.
+    expect(contexts[0].close).toHaveBeenCalled();
+  });
+
+  it("uses the browser voice when the browser has no Web Audio", async () => {
+    Object.defineProperty(window, "AudioContext", {
+      value: class {},
+      configurable: true,
+    });
+    await speakOneAnswer(true);
+    expect(speechPlayer.play).not.toHaveBeenCalled();
+    expect(synth.speak).toHaveBeenCalledOnce();
   });
 });

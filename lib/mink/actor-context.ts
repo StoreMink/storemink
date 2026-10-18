@@ -156,7 +156,6 @@ export async function getMinkActorContext(
       (settings["inventory.lowStockThreshold"] as number | undefined) ?? 5,
     currentPath: options.pageContext?.currentPath ?? null,
     selectedResource: trusted.selectedResource ?? null,
-    replyLanguage: options.pageContext?.replyLanguage ?? "auto",
     draftingEnabled: minkAccess?.draftingEnabled === true,
     brandVoice,
     requestId,

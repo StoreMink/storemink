@@ -28,6 +28,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent,
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -36,12 +37,6 @@ import { MinkAnswer } from "./mink-answer";
 import { openMinkNavigation } from "./mink-artifacts";
 import { suggestMinkFollowUps } from "@/lib/mink/follow-ups";
 import { MEMORY_KIND_LABELS } from "@/lib/mink/memory-suggestion";
-import {
-  MINK_REPLY_LANGUAGES,
-  readStoredMinkReplyLanguage,
-  storeMinkReplyLanguage,
-  type MinkReplyLanguage,
-} from "@/lib/mink/reply-language";
 import { MinkLink } from "./mink-link";
 import type { MinkMemoryPrompt } from "./mink-ai";
 import {
@@ -158,6 +153,49 @@ export function shouldSubmitMinkComposer(input: {
   return input.key === "Enter" && !input.shiftKey && !input.isComposing;
 }
 
+/**
+ * ★★ A LINK THE MERCHANT FOLLOWS LEAVES THE FULL VIEW, as a navigation
+ * artifact does. MinkLink keeps the click client-side so the chat survives
+ * it, but the full view covers the whole dashboard, so the page opened
+ * BEHIND the takeover and a merchant clicking an order reference saw nothing
+ * change and read the link as broken. Only a plain left click on a
+ * same-origin `/dashboard` link counts: a new-tab or modified click, a
+ * download, and a link to the storefront or Help leave the chat as it is.
+ */
+export function isMinkInAppLinkClick(
+  event: {
+    target: EventTarget | null;
+    button: number;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+  },
+  origin: string,
+) {
+  if (event.button !== 0) return false;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return false;
+  }
+  const target = event.target;
+  if (!(target instanceof Element)) return false;
+  const anchor = target.closest("a[href]");
+  if (!anchor) return false;
+  const opensIn = anchor.getAttribute("target");
+  if (opensIn && opensIn !== "_self") return false;
+  if (anchor.hasAttribute("download")) return false;
+  let url: URL;
+  try {
+    url = new URL(anchor.getAttribute("href") ?? "", origin);
+  } catch {
+    return false;
+  }
+  if (url.origin !== origin) return false;
+  return (
+    url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")
+  );
+}
+
 // Two surfaces, one conversation (state lives in ChatProvider):
 //  - "panel"   → the resizable right sheet opened from the topbar
 //  - "overlay" → the full-view takeover opened from Home/maximize
@@ -211,6 +249,10 @@ export function DashboardChat({
   const autoAnchorSubmissionRef = useRef(true);
   const turnAnchorSpaceRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // A dictated transcript can arrive while the empty box is hidden behind the
+  // recorder, so focusing it inside onAdd misses; this retries after the
+  // render that shows it again.
+  const focusComposerAfterAdd = useRef(false);
   const deleteButtonRef = useRef<HTMLButtonElement>(null);
   const resizeRef = useRef<{
     pointerId: number;
@@ -234,6 +276,15 @@ export function DashboardChat({
       : [];
   const slashOpen = slashMatches.length > 0;
 
+  // The page the merchant is about to look at sits behind the chat: the
+  // full-view takeover collapses to the side panel and a phone-width panel
+  // closes. One rule for a navigation artifact and a followed link, so the
+  // two cannot drift apart.
+  const leaveForPage = useCallback(() => {
+    if (window.innerWidth < 640) closeChat();
+    else if (isExpanded) toggleExpand();
+  }, [closeChat, isExpanded, toggleExpand]);
+
   /**
    * ★★ A NAVIGATION ARTIFACT THAT ARRIVED LIVE OPENS ITS PAGE ON ITS OWN.
    * Live messages carry numeric ids (restored history carries strings), so a
@@ -254,9 +305,15 @@ export function DashboardChat({
     openedNavigationRef.current.add(latest.id);
     openMinkNavigation(navigation, (path) => router.push(path));
     showSpotlight(navigation.highlight ?? null);
-    if (window.innerWidth < 640) closeChat();
-    else if (isExpanded) toggleExpand();
-  }, [messages, router, isExpanded, toggleExpand, closeChat, showSpotlight]);
+    leaveForPage();
+  }, [messages, router, leaveForPage, showSpotlight]);
+
+  // Capture phase: MinkLink's own click handler (next/link) cancels the
+  // browser default on the way back up, so a bubbling listener cannot tell a
+  // followed link from one that did nothing.
+  const leaveForLinkedPage = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (isMinkInAppLinkClick(event, window.location.origin)) leaveForPage();
+  };
 
   useEffect(() => {
     if (!isOverlay || !isChatOpen || !isExpanded) return;
@@ -458,8 +515,35 @@ export function DashboardChat({
     }
   };
 
+  useEffect(() => {
+    if (!focusComposerAfterAdd.current) return;
+    focusComposerAfterAdd.current = false;
+    composerRef.current?.focus();
+  }, [input]);
+
   if (!isChatOpen) return null;
   if (isOverlay !== isExpanded) return null;
+
+  const stopReply = (
+    <button
+      type="button"
+      onClick={cancel}
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] text-white"
+      aria-label="Stop Mink AI"
+    >
+      <Square className="h-4 w-4 fill-current" />
+    </button>
+  );
+  const sendButton = (
+    <button
+      type="submit"
+      disabled={!input.trim() || isHistoryLoading}
+      className="flex h-9 w-9 items-center justify-center rounded-full bg-[#6d4dff] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
+      aria-label="Send message"
+    >
+      <ArrowUp className="h-4 w-4" />
+    </button>
+  );
 
   const hasThread = messages.length > 0 || isReplying || Boolean(error);
   const creditWarning = minkCredits ? minkCreditWarning(minkCredits) : null;
@@ -483,6 +567,7 @@ export function DashboardChat({
       data-testid="mink-chat-surface"
       className={wrapperClass}
       style={panelStyle}
+      onClickCapture={leaveForLinkedPage}
     >
       {!isOverlay && (
         <div
@@ -824,13 +909,21 @@ export function DashboardChat({
                 message={input}
                 onAdd={(value) => {
                   setInput(value);
+                  focusComposerAfterAdd.current = true;
                   composerRef.current?.focus();
                 }}
                 disabled={isReplying || isHistoryLoading}
                 canSaveMedia={canSaveMedia}
                 onSubmit={sendFromChat}
               >
-                {({ attach, attachment, voice, submit }) => (
+                {({
+                  attach,
+                  attachment,
+                  voice,
+                  submit,
+                  recorder,
+                  recording,
+                }) => (
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
@@ -950,33 +1043,24 @@ export function DashboardChat({
                       autoComplete="off"
                       autoCapitalize="sentences"
                       autoCorrect="on"
-                      className="min-h-6 max-h-40 w-full min-w-0 resize-none border-none bg-transparent px-2 py-0.5 text-base leading-6 text-[#1a1a1a] outline-none placeholder:text-[#8c9196] sm:text-sm sm:leading-5"
+                      className={`min-h-6 max-h-40 w-full min-w-0 resize-none border-none bg-transparent px-2 py-0.5 text-base leading-6 text-[#1a1a1a] outline-none placeholder:text-[#8c9196] sm:text-sm sm:leading-5 ${
+                        recording === "dictation" && !input ? "hidden" : ""
+                      }`}
                     />
-                    <div className="flex w-full items-center justify-between">
-                      {attach}
-                      <div className="flex items-center gap-2">
-                        {voice}
-                        {isReplying ? (
-                          <button
-                            type="button"
-                            onClick={cancel}
-                            className="flex h-9 w-9 items-center justify-center rounded-full bg-[#1a1a1a] text-white"
-                            aria-label="Stop Mink AI"
-                          >
-                            <Square className="h-4 w-4 fill-current" />
-                          </button>
-                        ) : (
-                          <button
-                            type="submit"
-                            disabled={!input.trim() || isHistoryLoading}
-                            className="flex h-9 w-9 items-center justify-center rounded-full bg-[#6d4dff] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
-                            aria-label="Send message"
-                          >
-                            <ArrowUp className="h-4 w-4" />
-                          </button>
-                        )}
+                    {recording ? (
+                      <div className="flex w-full min-w-0 items-center gap-2">
+                        {recorder}
+                        {recording === "voice" && isReplying ? stopReply : null}
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex w-full items-center justify-between">
+                        {attach}
+                        <div className="flex items-center gap-2">
+                          {voice}
+                          {isReplying ? stopReply : sendButton}
+                        </div>
+                      </div>
+                    )}
                   </form>
                 )}
               </MinkMultimodalInput>
@@ -1086,11 +1170,6 @@ export function DashboardChat({
 function MinkHeaderMenu({ onNavigate }: { onNavigate: () => void }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  // Lazy, not an effect: the menu only ever renders on the client, inside an
-  // open panel, so the stored choice can be read on first render.
-  const [replyLanguage, setReplyLanguage] = useState<MinkReplyLanguage>(() =>
-    typeof window === "undefined" ? "auto" : readStoredMinkReplyLanguage(),
-  );
 
   useEffect(() => {
     if (!open) return;
@@ -1149,27 +1228,6 @@ function MinkHeaderMenu({ onNavigate }: { onNavigate: () => void }) {
           >
             Watches
           </Link>
-          <label className="block px-3 pb-2 pt-2 text-[11px] text-[#6f6a8a]">
-            <span className="mb-1 block font-semibold uppercase tracking-wide">
-              Reply language
-            </span>
-            <select
-              aria-label="Reply language"
-              value={replyLanguage}
-              onChange={(event) => {
-                const next = event.target.value as MinkReplyLanguage;
-                setReplyLanguage(next);
-                storeMinkReplyLanguage(next);
-              }}
-              className="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#1a1a1a]"
-            >
-              {MINK_REPLY_LANGUAGES.map((entry) => (
-                <option key={entry.code} value={entry.code}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
       )}
     </div>

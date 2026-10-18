@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AudioLines,
+  Check,
   FileText,
   Loader2,
   Mic,
@@ -24,6 +25,7 @@ import {
   inputKind,
   minkAttachmentsFit,
   minkReadingBudget,
+  MINK_AUDIO_SECONDS,
   MINK_INPUT_BYTES,
   MINK_INPUT_FILES,
   MINK_MESSAGE_MAX_CHARS,
@@ -38,6 +40,7 @@ import {
 import { startMinkRecording } from "@/lib/mink/voice-recorder";
 import { useChat } from "./chat-context";
 import { useMinkVoiceMode } from "./mink-voice-mode";
+import { formatMinkClock, MinkWaveform } from "./mink-waveform";
 
 const COMPOSER_FILE_ACCEPT =
   ".png,.jpg,.jpeg,.webp,.pdf,.txt,.md,.csv,text/csv,image/png,image/jpeg,image/webp,application/pdf,text/plain,text/markdown";
@@ -86,6 +89,13 @@ export function MinkMultimodalInput({
     attachment: ReactNode;
     voice: ReactNode;
     submit: () => Promise<void>;
+    /**
+     * What the composer shows while the microphone is in use, in place of its
+     * toolbar row (ChatGPT/Claude style): the live waveform with Cancel and
+     * Done for dictation, or the voice chat status with End. Null otherwise.
+     */
+    recorder: ReactNode;
+    recording: "dictation" | "voice" | null;
   }) => ReactNode;
 }) {
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -105,6 +115,13 @@ export function MinkMultimodalInput({
   // that created them, and the state in that render's closure is stale by
   // then: `startDictation` would refuse because it still saw "processing".
   const dictationRef = useRef<typeof dictationState>(null);
+  const [elapsed, setElapsed] = useState(0);
+  // A decaying peak of the microphone's loudness for the waveform. Written on
+  // every audio chunk, so it is a ref: state would re-render 125 times a second.
+  const levelRef = useRef(0);
+  // Stops the live recording and keeps it (Done). Null when nothing records.
+  const finishRef = useRef<(() => void) | null>(null);
+  const doneButtonRef = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState("");
   const latestMessage = useRef({ message, onAdd, onSubmit, disabled });
   const operation = useRef<AbortController | null>(null);
@@ -219,6 +236,13 @@ export function MinkMultimodalInput({
     window.addEventListener("pagehide", discard);
     return () => window.removeEventListener("pagehide", discard);
   }, []);
+
+  // The mic button the merchant pressed is replaced by the recorder, so focus
+  // would fall to the page; it moves to Done, where Enter or Space finishes.
+  useEffect(() => {
+    if (dictationState === "listening" && !voiceMode.enabled)
+      doneButtonRef.current?.focus({ preventScroll: true });
+  }, [dictationState, voiceMode.enabled]);
 
   useEffect(() => {
     if (!error) return;
@@ -425,11 +449,14 @@ export function MinkMultimodalInput({
     const controller = new AbortController();
     operation.current = controller;
     setDictation("starting");
+    setElapsed(0);
+    levelRef.current = 0;
     try {
-      await startMinkRecording(
+      const finish = await startMinkRecording(
         controller.signal,
         (recording) => {
           if (id !== generation.current || controller.signal.aborted) return;
+          finishRef.current = null;
           if (!recording) {
             if (forVoice && voiceEnabledRef.current) {
               handOffToVoice(null);
@@ -443,12 +470,24 @@ export function MinkMultimodalInput({
           setDictation("processing");
           void transcribeRecording(recording, id, controller, forVoice);
         },
-        () => {
-          if (id === generation.current) setDictation("listening");
+        (seconds) => {
+          if (id !== generation.current) return;
+          setDictation("listening");
+          setElapsed(Number.isFinite(seconds) ? seconds : 0);
+        },
+        {
+          // Voice chat has no Done button, so a pause ends the turn there;
+          // dictation keeps listening until the merchant presses Done.
+          endOnSilence: forVoice,
+          onLevel: (level) => {
+            levelRef.current = Math.max(level, levelRef.current * 0.9);
+          },
         },
       );
-      if (id === generation.current) setDictation("listening");
-      return id === generation.current;
+      if (id !== generation.current) return false;
+      if (dictationRef.current === "starting") setDictation("listening");
+      finishRef.current = dictationRef.current === "listening" ? finish : null;
+      return true;
     } catch (e) {
       if (id === generation.current) {
         operation.current = null;
@@ -531,9 +570,17 @@ export function MinkMultimodalInput({
 
   function cancelDictation() {
     generation.current++;
+    finishRef.current = null;
     operation.current?.abort();
     operation.current = null;
     setDictation(null);
+  }
+
+  /** Done: stop listening and turn what was said into editable text. */
+  function finishDictation() {
+    const finish = finishRef.current;
+    finishRef.current = null;
+    finish?.();
   }
 
   /**
@@ -543,6 +590,7 @@ export function MinkMultimodalInput({
    */
   function handOffToVoice(transcript: string | null) {
     generation.current++;
+    finishRef.current = null;
     operation.current = null;
     setDictation(null);
     voiceMode.reportTranscript(transcript);
@@ -822,7 +870,102 @@ export function MinkMultimodalInput({
           ? "Starting microphone…"
           : "Listening…"
         : "Thinking…";
-  const micLive = !voiceOn || dictationState === "listening";
+  const recording: "dictation" | "voice" | null = voiceOn
+    ? "voice"
+    : dictationState
+      ? "dictation"
+      : null;
+  const listening = dictationState === "listening";
+  const nearCap = elapsed >= MINK_AUDIO_SECONDS - 5;
+  const recorder =
+    recording === "dictation" ? (
+      <div
+        className="flex min-h-9 w-full min-w-0 items-center gap-2"
+        data-testid="mink-recorder"
+      >
+        <span role="status" aria-live="polite" className="sr-only">
+          {dictationState === "starting"
+            ? "Starting microphone…"
+            : dictationState === "processing"
+              ? "Converting speech to text…"
+              : "Listening. Select Done when you have finished."}
+        </span>
+        {dictationState === "processing" ? (
+          <span className="flex min-w-0 flex-1 items-center gap-2 px-2 text-sm text-[#5c5f62]">
+            <Loader2
+              className="h-4 w-4 shrink-0 animate-spin"
+              aria-hidden="true"
+            />
+            Transcribing…
+          </span>
+        ) : (
+          <>
+            <MinkWaveform
+              levelRef={levelRef}
+              live={listening}
+              className="flex-1 px-2 text-[#1a1a1a]"
+            />
+            <span
+              aria-hidden="true"
+              title={`Dictation stops at ${formatMinkClock(MINK_AUDIO_SECONDS)}`}
+              className={`w-9 shrink-0 text-right text-xs tabular-nums ${
+                nearCap ? "font-medium text-[#b45309]" : "text-[#8c9196]"
+              }`}
+            >
+              {formatMinkClock(elapsed)}
+            </span>
+          </>
+        )}
+        <button
+          type="button"
+          aria-label="Cancel dictation"
+          title="Cancel"
+          className={iconButton}
+          onClick={cancelDictation}
+        >
+          <X className="h-5 w-5" aria-hidden="true" />
+        </button>
+        <button
+          ref={doneButtonRef}
+          type="button"
+          aria-label="Finish dictation"
+          title="Done"
+          disabled={!listening}
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] text-white transition hover:bg-[#333] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-30"
+          onClick={finishDictation}
+        >
+          <Check className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+    ) : recording === "voice" ? (
+      <div
+        className="flex min-h-9 w-full min-w-0 items-center gap-3 rounded-full border border-[#ddd6f5] bg-[#f8f5ff] py-0.5 pl-4 pr-0.5"
+        data-testid="mink-recorder"
+      >
+        <MinkWaveform
+          levelRef={levelRef}
+          live={listening}
+          className="flex-1 text-[#5b3fd0]"
+        />
+        <span
+          role="status"
+          aria-live="polite"
+          className="shrink-0 text-xs font-medium text-[#5b3fd0]"
+        >
+          {voiceStatus}
+        </span>
+        <button
+          type="button"
+          aria-label="Stop voice chat"
+          title="End voice chat"
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-[#1a1a1a] px-3 text-xs font-medium text-white transition hover:bg-[#333] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] focus-visible:ring-offset-2"
+          onClick={() => voiceMode.toggle()}
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
+          End
+        </button>
+      </div>
+    ) : null;
   const attachment = attachments.length ? (
     <div className="mb-2 flex max-w-full flex-wrap gap-2">
       {attachments.map((item) =>
@@ -1019,43 +1162,6 @@ export function MinkMultimodalInput({
           </div>
         </div>
       )}
-      {(dictationState || voiceOn) && (
-        <div
-          role="status"
-          aria-live="polite"
-          className={
-            voiceOn
-              ? "mb-3 flex items-center gap-3 rounded-2xl border border-[#ddd6f5] bg-[#f8f5ff] px-4 py-3 text-sm text-[#333]"
-              : "mb-3 flex items-center gap-3 rounded-2xl border border-[#e5e5e5] bg-[#f7f7f7] px-4 py-3 text-sm text-[#333]"
-          }
-        >
-          <span className="relative flex h-3 w-3 shrink-0" aria-hidden="true">
-            <span
-              className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${micLive ? "bg-red-400" : "bg-[#b9a9f3]"}`}
-            />
-            <span
-              className={`relative inline-flex h-3 w-3 rounded-full ${micLive ? "bg-red-500" : "bg-[#5b3fd0]"}`}
-            />
-          </span>
-          <span className="min-w-0 flex-1">
-            {voiceStatus ??
-              (dictationState === "starting"
-                ? "Starting microphone…"
-                : dictationState === "processing"
-                  ? "Converting speech to editable text…"
-                  : "Listening… pause when you are finished.")}
-          </span>
-          <button
-            type="button"
-            className={iconButton}
-            aria-label={voiceOn ? "Stop voice chat" : "Cancel dictation"}
-            title={voiceOn ? "Stop voice chat" : "Cancel dictation"}
-            onClick={() => (voiceOn ? voiceMode.toggle() : cancelDictation())}
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </div>
-      )}
       {error && (
         <p
           role="alert"
@@ -1065,14 +1171,16 @@ export function MinkMultimodalInput({
         </p>
       )}
       {children ? (
-        children({ attach, attachment, voice, submit })
+        children({ attach, attachment, voice, submit, recorder, recording })
       ) : (
         <>
           {attachment}
-          <div className="flex items-center justify-between">
-            {attach}
-            {voice}
-          </div>
+          {recorder ?? (
+            <div className="flex items-center justify-between">
+              {attach}
+              {voice}
+            </div>
+          )}
         </>
       )}
       {dragging && (

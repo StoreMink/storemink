@@ -74,7 +74,6 @@ describe("getMinkActorContext", () => {
       defaultLowStockThreshold: 7,
       currentPath: null,
       selectedResource: null,
-      replyLanguage: "auto",
       draftingEnabled: true,
       brandVoice: "Warm, concise, and honest.",
       requestId: "request-1",
