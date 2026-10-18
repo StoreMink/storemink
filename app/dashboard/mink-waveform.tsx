@@ -24,8 +24,9 @@ export function formatMinkClock(seconds: number) {
 }
 
 /**
- * The live microphone waveform inside the composer, ChatGPT-style: newest
- * bar on the right, older ones drifting left.
+ * The live microphone waveform, ChatGPT-style: newest bar on the right,
+ * older ones drifting left. `size` picks the composer's slim strip or the
+ * voice view's stage.
  *
  * ★ IT NEVER RE-RENDERS. The recorder reports a level about 125 times a
  * second, far too often for React state, so the composer keeps a decaying peak
@@ -37,11 +38,15 @@ export function MinkWaveform({
   levelRef,
   live,
   className = "",
+  size = "sm",
 }: {
   levelRef: RefObject<number>;
   live: boolean;
   className?: string;
+  size?: "sm" | "lg";
 }) {
+  const height = size === "lg" ? "h-16" : "h-6";
+  const bar = size === "lg" ? "h-16 w-1" : "h-6 w-[3px]";
   const barsRef = useRef<HTMLDivElement>(null);
   const history = useRef<number[]>(Array(BARS).fill(0));
 
@@ -70,12 +75,12 @@ export function MinkWaveform({
       ref={barsRef}
       aria-hidden="true"
       data-testid="mink-waveform"
-      className={`flex h-6 min-w-0 items-center justify-end gap-[3px] overflow-hidden ${className}`}
+      className={`flex ${height} min-w-0 items-center justify-end gap-[3px] overflow-hidden ${className}`}
     >
       {Array.from({ length: BARS }, (_, index) => (
         <span
           key={index}
-          className="block h-6 w-[3px] shrink-0 rounded-full bg-current transition-transform duration-75 motion-reduce:transition-none"
+          className={`block ${bar} shrink-0 rounded-full bg-current transition-transform duration-75 motion-reduce:transition-none`}
           style={{ transform: `scaleY(${REST})` }}
         />
       ))}

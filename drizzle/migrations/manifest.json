@@ -8383,6 +8383,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261018_0228_mink_voice_chat_help",
+      "description": "The Mink guide's dictation paragraph no longer ends by ruling out a voice conversation: it points at Talk with Mink, where Mink answers out loud as it works and can be interrupted by speaking",
+      "file": "sql/20261018_0228_mink_voice_chat_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0227_mink_reply_language_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide offers Talk with Mink for a spoken conversation and no longer says dictation is not one",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%choose Talk with Mink (the sound-wave button beside the microphone)%' and body not like '%This is dictation, not a live voice conversation.%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

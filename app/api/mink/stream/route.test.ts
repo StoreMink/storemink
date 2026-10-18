@@ -305,6 +305,100 @@ describe("POST /api/mink/stream", () => {
     expect(holder.startTool).not.toHaveBeenCalled();
   });
 
+  it("★ streams a voice turn's spoken block apart from the written answer, and keeps only the written", async () => {
+    holder.actor.mockResolvedValue({
+      storeId: "store-1",
+      adminId: "admin-1",
+      email: "owner@example.com",
+      roleSlug: "superadmin",
+      permissions: {},
+      isSuperadmin: true,
+      effectivePlan: "pro",
+      locationIds: null,
+      analyticsTimeZone: "Asia/Kolkata",
+      currency: "INR",
+      defaultLowStockThreshold: 5,
+      answerMedium: "spoken",
+      requestId: "request-1",
+    });
+    holder.run.mockImplementation(
+      async (input: {
+        onEvent?: (event: Record<string, unknown>) => Promise<void> | void;
+      }) => {
+        await input.onEvent?.({ type: "text_delta", text: "<spok" });
+        await input.onEvent?.({
+          type: "text_delta",
+          text: "en>You have twelve orders today.</spo",
+        });
+        await input.onEvent?.({ type: "text_delta", text: "ken>\n\n**12" });
+        await input.onEvent?.({ type: "text_delta", text: " orders** today." });
+        return {
+          text: "<spoken>You have twelve orders today.</spoken>\n\n**12 orders** today.",
+          model: "gemini-3.7-flash",
+          steps: 1,
+          toolCalls: 0,
+          retryCount: 0,
+          usage: {
+            promptTokens: 10,
+            outputTokens: 2,
+            thoughtTokens: 0,
+            totalTokens: 12,
+          },
+          artifacts: [],
+        };
+      },
+    );
+    const response = await POST(
+      request({
+        message: "How many orders today?",
+        context: { currentPath: "/dashboard", voice: true },
+      }),
+    );
+    const body = await response.text();
+    const events = body
+      .split("\n\n")
+      .filter((block) => block.startsWith("event: "))
+      .map((block) => block.slice(7, block.indexOf("\n")));
+    expect(events).toEqual([
+      "status",
+      "spoken",
+      "spoken_end",
+      "delta",
+      "delta",
+      "message",
+      "usage",
+      "done",
+    ]);
+    expect(body).toContain(
+      'event: spoken\ndata: {"text":"You have twelve orders today."}',
+    );
+    expect(body).toContain('event: delta\ndata: {"text":"\\n\\n**12"}');
+    expect(body).toContain(
+      'event: message\ndata: {"role":"assistant","text":"**12 orders** today.","spoken":"You have twelve orders today."',
+    );
+    // The persisted answer (and so the history replay) never carries the block.
+    expect(holder.completeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({ text: "**12 orders** today." }),
+      }),
+    );
+    expect(holder.actor).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        pageContext: expect.objectContaining({ voice: true }),
+      }),
+    );
+  });
+
+  it("marks a written turn's message with no spoken text and no tag handling", async () => {
+    const response = await POST(request({ message: "How many products?" }));
+    const body = await response.text();
+    expect(body).toContain(
+      'event: message\ndata: {"role":"assistant","text":"You have 12 published products.","spoken":null',
+    );
+    expect(body).not.toContain("event: spoken");
+  });
+
   it("uses high thinking only for an authorised storefront code request", async () => {
     holder.declarations = [{ name: "propose_storefront_custom_code" }];
     const response = await POST(

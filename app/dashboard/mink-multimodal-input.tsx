@@ -38,8 +38,8 @@ import {
   type MinkCsvReference,
 } from "@/lib/mink/csv-input";
 import { startMinkRecording } from "@/lib/mink/voice-recorder";
-import { useChat } from "./chat-context";
-import { useMinkVoiceMode } from "./mink-voice-mode";
+import { transcribeMinkRecording } from "@/lib/mink/voice-turn";
+import { useMinkVoice } from "./chat-context";
 import { formatMinkClock, MinkWaveform } from "./mink-waveform";
 
 const COMPOSER_FILE_ACCEPT =
@@ -90,12 +90,12 @@ export function MinkMultimodalInput({
     voice: ReactNode;
     submit: () => Promise<void>;
     /**
-     * What the composer shows while the microphone is in use, in place of its
-     * toolbar row (ChatGPT/Claude style): the live waveform with Cancel and
-     * Done for dictation, or the voice chat status with End. Null otherwise.
+     * What the composer shows while dictating, in place of its toolbar row
+     * (ChatGPT/Claude style): the live waveform with Cancel and Done. Null
+     * otherwise. Voice chat has its own full-screen view in the chat surface.
      */
     recorder: ReactNode;
-    recording: "dictation" | "voice" | null;
+    recording: "dictation" | null;
   }) => ReactNode;
 }) {
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -127,7 +127,6 @@ export function MinkMultimodalInput({
   const operation = useRef<AbortController | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
-  const voiceEnabledRef = useRef(false);
 
   useEffect(() => {
     latestMessage.current = { message, onAdd, onSubmit, disabled };
@@ -144,29 +143,12 @@ export function MinkMultimodalInput({
   }
 
   /**
-   * Hands-free voice chat (the "Talk with Mink" toggle). The hook owns the
-   * loop; this composer still owns the microphone and the send, so limits,
-   * attachments and the one transcription route apply exactly as they do to
-   * ordinary dictation. `useChat` without a provider returns a safe default
-   * whose `isChatOpen` is false, which simply keeps the loop off.
+   * The spoken conversation (the "Talk with Mink" toggle) lives in
+   * ChatProvider, which owns the microphone and the send for it; this
+   * composer only offers the button and stays out of the way while it is on.
+   * Outside a provider the toggle is disabled.
    */
-  const chat = useChat();
-  const voiceMode = useMinkVoiceMode({
-    messages: chat.messages,
-    isReplying: chat.isReplying,
-    isChatOpen: chat.isChatOpen,
-    error: chat.error,
-    listen: () => startDictation(true),
-    stopListening: cancelDictation,
-    send: (text) => submitMessage(text),
-    onNotice: setError,
-    langFallback:
-      typeof navigator !== "undefined" ? navigator.language : undefined,
-  });
-
-  useEffect(() => {
-    voiceEnabledRef.current = voiceMode.enabled;
-  }, [voiceMode.enabled]);
+  const voiceChat = useMinkVoice();
 
   function updateAttachments(
     updater: (current: ComposerAttachment[]) => ComposerAttachment[],
@@ -240,9 +222,9 @@ export function MinkMultimodalInput({
   // The mic button the merchant pressed is replaced by the recorder, so focus
   // would fall to the page; it moves to Done, where Enter or Space finishes.
   useEffect(() => {
-    if (dictationState === "listening" && !voiceMode.enabled)
+    if (dictationState === "listening")
       doneButtonRef.current?.focus({ preventScroll: true });
-  }, [dictationState, voiceMode.enabled]);
+  }, [dictationState]);
 
   useEffect(() => {
     if (!error) return;
@@ -432,12 +414,10 @@ export function MinkMultimodalInput({
   }
 
   /**
-   * Starts the microphone. `forVoice` marks a recording the voice loop asked
-   * for: its transcript goes to the loop instead of the box, and a silent
-   * recording is reported as empty rather than shown as an error. Resolves
-   * once the recorder is live, false when it could not start.
+   * Starts the microphone for dictation. Resolves once the recorder is live,
+   * false when it could not start.
    */
-  async function startDictation(forVoice = false): Promise<boolean> {
+  async function startDictation(): Promise<boolean> {
     if (
       latestMessage.current.disabled ||
       submittingRef.current ||
@@ -458,17 +438,13 @@ export function MinkMultimodalInput({
           if (id !== generation.current || controller.signal.aborted) return;
           finishRef.current = null;
           if (!recording) {
-            if (forVoice && voiceEnabledRef.current) {
-              handOffToVoice(null);
-              return;
-            }
             operation.current = null;
             setDictation(null);
             setError("No speech was recorded. Try again or type your message.");
             return;
           }
           setDictation("processing");
-          void transcribeRecording(recording, id, controller, forVoice);
+          void transcribeRecording(recording, id, controller);
         },
         (seconds) => {
           if (id !== generation.current) return;
@@ -476,9 +452,9 @@ export function MinkMultimodalInput({
           setElapsed(Number.isFinite(seconds) ? seconds : 0);
         },
         {
-          // Voice chat has no Done button, so a pause ends the turn there;
-          // dictation keeps listening until the merchant presses Done.
-          endOnSilence: forVoice,
+          // Dictation keeps listening until the merchant presses Done; a
+          // pause ends a turn only in voice chat, which has no button.
+          endOnSilence: false,
           onLevel: (level) => {
             levelRef.current = Math.max(level, levelRef.current * 0.9);
           },
@@ -503,38 +479,17 @@ export function MinkMultimodalInput({
     recording: File,
     id: number,
     controller: AbortController,
-    forVoice = false,
   ) {
-    const toVoice = () => forVoice && voiceEnabledRef.current;
     try {
-      const response = await fetch("/api/mink/voice", {
-        method: "POST",
-        headers: {
-          "Content-Type": "audio/wav",
-          "X-Mink-Request-Key": crypto.randomUUID(),
-        },
-        body: recording,
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      const data = await response.json();
+      const transcript = await transcribeMinkRecording(
+        recording,
+        controller.signal,
+      );
       if (id !== generation.current) return;
-      const failure = () =>
-        new Error(
-          typeof data.error === "string"
-            ? data.error
-            : "Voice transcription failed. Try again or type your message.",
+      if (!transcript)
+        throw new Error(
+          "Voice transcription failed. Try again or type your message.",
         );
-      if (!response.ok || typeof data.text !== "string") throw failure();
-      const transcript = data.text.trim();
-      if (!transcript) {
-        // Nothing was said: the loop listens again instead of showing an error.
-        if (toVoice()) {
-          handOffToVoice(null);
-          return;
-        }
-        throw failure();
-      }
       const current = latestMessage.current;
       const before = current.message.trimEnd();
       const combined = before ? `${before} ${transcript}` : transcript;
@@ -542,24 +497,14 @@ export function MinkMultimodalInput({
         throw new Error(
           `The transcript does not fit in the ${MINK_MESSAGE_MAX_CHARS.toLocaleString()}-character message limit. Shorten the message and try again.`,
         );
-      if (toVoice()) {
-        handOffToVoice(combined);
-        return;
-      }
       current.onAdd(combined);
     } catch (e) {
-      if (id === generation.current && !controller.signal.aborted) {
-        const message =
+      if (id === generation.current && !controller.signal.aborted)
+        setError(
           e instanceof Error
             ? e.message
-            : "Voice transcription failed. Try again or type your message.";
-        if (toVoice()) {
-          voiceMode.reportTranscriptionFailure();
-          setError(`${message} Voice chat turned off.`);
-        } else {
-          setError(message);
-        }
-      }
+            : "Voice transcription failed. Try again or type your message.",
+        );
     } finally {
       if (id === generation.current) {
         operation.current = null;
@@ -581,19 +526,6 @@ export function MinkMultimodalInput({
     const finish = finishRef.current;
     finishRef.current = null;
     finish?.();
-  }
-
-  /**
-   * Hands a finished recording to the voice loop. The generation moves on
-   * first, so this dictation's own cleanup cannot clobber the recording the
-   * loop starts next, and the box is free for the send it makes.
-   */
-  function handOffToVoice(transcript: string | null) {
-    generation.current++;
-    finishRef.current = null;
-    operation.current = null;
-    setDictation(null);
-    voiceMode.reportTranscript(transcript);
   }
 
   async function extractAttachment(
@@ -646,28 +578,16 @@ export function MinkMultimodalInput({
   }
 
   /**
-   * The one send path. A typed send reads the box; the voice loop passes its
-   * transcript explicitly, because `latestMessage` only learns a new value on
-   * the next render. Resolves true once the message reached `onSubmit`; a
-   * spoken message that could not be sent is left in the box instead.
+   * The one send path: reads the box, uploads what is staged, and hands the
+   * message to `onSubmit`. Resolves true once it did.
    */
-  async function submitMessage(explicit?: string): Promise<boolean> {
-    const spoken = explicit !== undefined;
-    const current = (explicit ?? latestMessage.current.message).trim();
+  async function submitMessage(): Promise<boolean> {
+    const current = latestMessage.current.message.trim();
     const { disabled: off, onSubmit: send } = latestMessage.current;
-    if (dictationRef.current) {
-      // A typed send while the voice loop is listening wins: the merchant
-      // chose the keyboard, so the mic stops rather than the send refusing.
-      if (spoken || !voiceEnabledRef.current) return false;
-      cancelDictation();
-    }
-    if (!current || off || submittingRef.current || !send) {
-      if (spoken && current) latestMessage.current.onAdd(current);
-      return false;
-    }
+    if (dictationRef.current) return false;
+    if (!current || off || submittingRef.current || !send) return false;
     const staged = attachmentsRef.current;
     if (!staged.length) {
-      if (!spoken) voiceMode.noteSend();
       send(current);
       return true;
     }
@@ -783,7 +703,6 @@ export function MinkMultimodalInput({
       setAttachments([]);
       setPreviewId(null);
       latestMessage.current.onAdd(prepared);
-      if (!spoken) voiceMode.noteSend();
       send(prepared);
       return true;
     } catch (e) {
@@ -791,7 +710,6 @@ export function MinkMultimodalInput({
         setError(
           e instanceof Error ? e.message : "Could not process this attachment.",
         );
-        if (spoken) latestMessage.current.onAdd(current);
       }
       return false;
     } finally {
@@ -821,7 +739,7 @@ export function MinkMultimodalInput({
       <Plus className="h-5 w-5" aria-hidden="true" />
     </button>
   );
-  const voiceOn = voiceMode.enabled;
+  const voiceOn = voiceChat.enabled;
   const micLabel = dictationState
     ? "Dictation in progress"
     : voiceOn
@@ -847,34 +765,20 @@ export function MinkMultimodalInput({
         aria-label="Talk with Mink"
         aria-pressed={voiceOn}
         title={
-          voiceMode.support.ok ? "Talk with Mink" : voiceMode.support.reason
+          voiceChat.support.ok ? "Talk with Mink" : voiceChat.support.reason
         }
         disabled={
-          !voiceMode.support.ok || (!voiceOn && (disabled || submitting))
+          !voiceChat.support.ok ||
+          (!voiceOn && (disabled || submitting || Boolean(dictationState)))
         }
         className={voiceOn ? voiceToggleOn : iconButton}
-        onClick={() => voiceMode.toggle()}
+        onClick={() => voiceChat.toggle()}
       >
         <AudioLines className="h-5 w-5" aria-hidden="true" />
       </button>
     </>
   );
-  // What the loop is doing, in the merchant's words. Transcription counts as
-  // thinking: the mic is closed and Mink is working out what was said.
-  const voiceStatus = !voiceOn
-    ? null
-    : voiceMode.state === "speaking"
-      ? "Speaking…"
-      : voiceMode.state === "listening" && dictationState !== "processing"
-        ? dictationState === "starting"
-          ? "Starting microphone…"
-          : "Listening…"
-        : "Thinking…";
-  const recording: "dictation" | "voice" | null = voiceOn
-    ? "voice"
-    : dictationState
-      ? "dictation"
-      : null;
+  const recording: "dictation" | null = dictationState ? "dictation" : null;
   const listening = dictationState === "listening";
   const nearCap = elapsed >= MINK_AUDIO_SECONDS - 5;
   const recorder =
@@ -935,34 +839,6 @@ export function MinkMultimodalInput({
           onClick={finishDictation}
         >
           <Check className="h-4 w-4" aria-hidden="true" />
-        </button>
-      </div>
-    ) : recording === "voice" ? (
-      <div
-        className="flex min-h-9 w-full min-w-0 items-center gap-3 rounded-full border border-[#ddd6f5] bg-[#f8f5ff] py-0.5 pl-4 pr-0.5"
-        data-testid="mink-recorder"
-      >
-        <MinkWaveform
-          levelRef={levelRef}
-          live={listening}
-          className="flex-1 text-[#5b3fd0]"
-        />
-        <span
-          role="status"
-          aria-live="polite"
-          className="shrink-0 text-xs font-medium text-[#5b3fd0]"
-        >
-          {voiceStatus}
-        </span>
-        <button
-          type="button"
-          aria-label="Stop voice chat"
-          title="End voice chat"
-          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-[#1a1a1a] px-3 text-xs font-medium text-white transition hover:bg-[#333] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] focus-visible:ring-offset-2"
-          onClick={() => voiceMode.toggle()}
-        >
-          <X className="h-3.5 w-3.5" aria-hidden="true" />
-          End
         </button>
       </div>
     ) : null;
@@ -1058,10 +934,7 @@ export function MinkMultimodalInput({
       className="relative min-w-0"
       aria-label="Mink AI composer"
       onKeyDown={(event) => {
-        if (event.key === "Escape" && voiceOn) {
-          event.stopPropagation();
-          voiceMode.toggle();
-        } else if (event.key === "Escape" && dictationState) {
+        if (event.key === "Escape" && dictationState) {
           event.stopPropagation();
           cancelDictation();
         } else if (event.key === "Escape" && previewId) {

@@ -544,24 +544,58 @@ editors (`offers/offer-form.tsx`, `categories/categories-management-view`
   `{{reply_language}}` placeholder are gone; a tab opened before the change
   that still sends `replyLanguage` is ignored by `normalizeMinkPageContext`.
   Prompt versions `read-beta-v32` / `draft-action-beta-v53`. Help: `0227`.
-  ★ VOICE CHAT (`app/dashboard/mink-voice-mode.ts`, `lib/mink/speech-text.ts`,
-  the composer). A "Talk with Mink" toggle (`aria-pressed`) beside the mic
-  runs a hands-free loop: the existing dictation (the recorder plus
-  `/api/mink/voice`) listens, the transcript is sent through the composer's
-  own submit path (so limits and attachments apply, and a refused send leaves
-  the words in the box), the newest assistant answer is read aloud, and the
-  end of speech re-arms the mic. ★ READ ALOUD BY A MODEL WHEN THE OPERATOR
-  SAYS SO (2026-10-18): see "Global Mink voice provider"; otherwise, and for
-  anything a model could not play, `window.speechSynthesis`. The hook
-  is a state machine (idle, listening, sending, waiting, speaking) and only
-  ever speaks a reply to something sent while the mode was on: restored
-  history, an error and an answer that predates the toggle stay silent. A
-  speak token makes cancellation quiet (`speechSynthesis.cancel()` fires the
-  cancelled utterance's end handler, which would otherwise re-arm the mic at
-  the wrong moment). It stops on toggle, unmount, the chat closing, the tab
-  going hidden, a chat error, a refused send, a transcription or mic failure
-  and three empty transcripts in a row, with a short notice for the
-  merchant-facing ones; Escape and a "Stop voice chat" button end it too.
+  ★★ VOICE CHAT IS A SPOKEN CONVERSATION (2026-10-18, owner: "it should feel
+  we are speaking to human"). `app/dashboard/mink-voice-mode.ts` runs the
+  loop from `ChatProvider`, not the composer: the composer is keyed on the
+  conversation and remounts when a new conversation gets its id or the panel
+  swaps with the full view, and a loop inside it died mid-sentence on every
+  such remount. `useMinkVoice()` hands it to the composer's "Talk with Mink"
+  toggle and to `app/dashboard/mink-voice-view.tsx`, the full-screen view
+  that replaces the thread while voice chat is on (status, a large waveform,
+  "You said", the sentence Mink is saying, Stop while replying, End; the
+  composer stays mounted but `hidden`, so staged uploads survive).
+  ★ MINK SPEAKS WHILE IT IS STILL WRITING. A voice send carries
+  `context.voice: true`; the actor gets `answerMedium: "spoken"` and the
+  prompt gains `{{answer_medium}}` plus `{{spoken_answer_rules}}` (the marked
+  `MINK_SPOKEN_RULES` block of `docs/mink-ai-system-prompt.md`, rendered only
+  on a voice turn): the reply opens with `<spoken>…</spoken>`, one to three
+  conversational sentences in the merchant's language (no brackets, lists,
+  paths or SKUs; "rupees" and "per cent" said, not written), then the
+  ordinary written answer. `lib/mink/spoken-answer.ts` splits the two on the
+  stream route: spoken fragments go out as `spoken` events as they arrive,
+  `spoken_end` closes the block, written text keeps `delta`, and only the
+  written text is persisted and shown (`message.spoken` rides along). The
+  browser (`lib/mink/speech-stream.ts`) cuts the spoken text into sentences
+  that have provably ended (a long opener is cut at a clause after 140
+  characters), and `app/dashboard/mink-speech-session.ts` plays each piece on
+  ONE `MinkSpeechPlayhead`, fetched one piece ahead and scheduled exactly
+  where the piece before ends, so the first words play a second or two after
+  Mink starts answering and the loop is back to listening while the written
+  tail and its cards are still arriving. A reply with no spoken block is read
+  from the written answer, as before.
+  ★ THE MICROPHONE IS OPEN FOR THE WHOLE TURN (`lib/mink/voice-turn.ts` over
+  the recorder's `voice` option): echo cancellation is requested, a pre-roll
+  ring keeps the 400 ms before speech, the 30 s cap counts from speech start,
+  the idle clock pauses while Mink plays, and a stricter gate
+  (`MINK_BARGE_IN_GATE`: louder and longer, swapped in place) applies from
+  send until the answer has played, so a cough does not cancel a reply.
+  Speech over Mink's voice (after a 300 ms grace) stops playback; speech
+  while Mink is thinking also cancels the unfinished reply (not charged; the
+  chat keeps the merchant's message only), and the new words become the next
+  turn. A transcript that lands while a reply is still closing is parked and
+  sent once `isReplying` falls; `send` now returns whether it took the
+  message, so nothing is lost to `run`'s silent early return. An echo of
+  Mink's own words (`isEchoTranscript`) counts as nothing heard. Only a turn
+  the loop opened is spoken: restored history, an answer that predates the
+  toggle and a conversation loaded while listening stay silent; a typed send
+  while voice chat is on gets a spoken answer too. It stops on End, Escape,
+  toggle, unmount, the chat closing, the tab going hidden, a chat error, a
+  refused send, a failed microphone or transcription and three empty
+  transcripts in a row, with a short notice for the merchant-facing ones
+  (in the view, or above the composer once off). Prompt versions
+  `read-beta-v33` / `draft-action-beta-v54`; Help: `0228`. ⚠ Not run in a
+  browser: verified by the suites (hook, session, segmenter, splitter,
+  recorder, routes) and the system-prompt render.
   `speakableMinkText` turns Markdown into speech (tables as "label: value"
   lines, code blocks and dashboard paths dropped, cut at a sentence boundary
   under 1,500 characters) and `speechLangFor` picks the utterance language
@@ -2159,7 +2193,7 @@ seconds of silence. The 30-second cap still finishes and transcribes, and a
 recording with no speech in it (Done pressed without speaking, or the cap
 reached in silence) is reported as none, so the composer says "No speech was
 recorded" without a transcription call or an input-quota slot. Voice chat
-shows the same waveform with its status and End in the same row. The temporary recording is
+has its own full-screen view (above). The temporary recording is
 sent to `POST /api/mink/voice`; the route authenticates the current store,
 applies the shared input quotas, validates the real WAV bytes and reads the
 platform-wide voice provider before making one transcription request. The
@@ -3434,8 +3468,9 @@ optional `MINK_TTS_GEMINI_MODEL` (same family only) and
 `MINK_TTS_GEMINI_VOICE`. `POST /api/mink/speech` takes the whole answer
 (≤2,000 characters; the voice chat sends ≤1,500) and streams the PCM back
 (`application/octet-stream`, `X-Mink-Audio: pcm16le;rate=…`): same-origin,
-Mink enabled, 20 a minute per admin and 300 an hour per store (one request per
-answer now, not per sentence), no credits (like dictation), text never logged.
+Mink enabled, 60 a minute per admin and 1,200 an hour per store (since the
+spoken conversation, a request per sentence or two, one fetched ahead of the
+piece playing), no credits (like dictation), text never logged.
 It answers 204 `X-Mink-Speech: off` when no model is on and `unsupported` for a
 language the model has no voice for, and 503 when the provider fails before any
 audio; `GET` says whether a model is on and is asked once as voice chat starts,
@@ -3449,9 +3484,10 @@ runs only while the consumer drains, so a connection that stays open but stops
 reading never reaches it, and the ceiling used to abort the provider call while
 leaving the slot counted until the socket closed; an abort listener now
 releases it, returns the iterator and errors the stream. `mink.speech.completed` logs bytes, time to
-first audio and total time. The browser (`mink-speech-player.ts`) makes one
-request per answer and schedules each chunk on the Web Audio clock the moment
-it lands (a 0.25 s lead, 0.1 s after the network fell behind, an odd byte
+first audio and total time. The browser (`mink-speech-player.ts`, split into
+`fetchMinkSpeech` and `MinkSpeechPlayhead`; `mink-speech-session.ts` composes
+them sentence by sentence for the spoken conversation) schedules each chunk on
+the Web Audio clock the moment it lands (a 0.25 s lead, 0.1 s after the network fell behind, an odd byte
 carried to the next chunk, a 15 s stall limit once audio has started, and a
 20 s first-audio watchdog, `MINK_FIRST_AUDIO_MS`, because the browser voice had
 one and this path relied on the server's ceiling), through ONE `AudioContext`
@@ -4231,7 +4267,12 @@ wholesip/
 │   │   ├── mink-artifact-parser.ts # Restores every bounded card type, including private
 │   │   │                      # proposal review cards, from live SSE and saved history.
 │   │   ├── chat-context.tsx   # Shares the same Mink thread between Home, drawer and
-│   │   │                      # expanded view; receives the private server-side flag.
+│   │   │                      # expanded view; receives the private server-side flag;
+│   │   │                      # runs the voice loop and exposes it as useMinkVoice().
+│   │   ├── mink-voice-mode.ts # ★ The spoken conversation's loop: mic open all turn,
+│   │   │                      # barge-in, parked sends, one speech session per reply;
+│   │   │                      # mink-speech-session.ts plays its sentences on one
+│   │   │                      # playhead; mink-voice-view.tsx is the full-screen view.
 │   │   ├── dashboard-chat.tsx # Mink panel/full-view renderer: Codex-style history sidebar
 │   │   │                      # with confirmed deletion, persisted drag/keyboard width,
 │   │   │                      # Help-matched robot identity and auto-growing composer;
@@ -4824,7 +4865,9 @@ wholesip/
 │       │                      # transient retry + a hard run timeout, records partial/
 │       │                      # unavailable usage honestly, records
 │       │                      # redacted tool/token telemetry, and emits typed status/
-│       │                      # tool/message/usage/done events to the dashboard client.
+│       │                      # tool/message/usage/done events to the dashboard client;
+│       │                      # a voice turn's <spoken> block goes out as `spoken` /
+│       │                      # `spoken_end` events and stays out of the stored text.
 │       ├── mink/conversations/ # ★ No-store, rate-limited recent-history API: list the
 │       │   └── [conversationId]/ # actor/store's last ten; load or same-origin delete one.
 │       ├── mink/media/discard/ # ★ Same-origin, actor-resolved `keepalive` transport
@@ -5635,6 +5678,12 @@ wholesip/
 │   ├── media/image-hosts.ts   # client-safe canOptimizeImage(): may next/image optimise
 │   │                          # this URL? Mirrors next.config.ts remotePatterns (a test
 │   │                          # reads that file); any other host renders `unoptimized`
+│   ├── mink/spoken-answer.ts  # pure: splits a voice reply's <spoken> block from the
+│   │                          # written answer, fragment by fragment, on the stream route
+│   ├── mink/speech-stream.ts  # pure: sentence segmenter for streamed spoken text + the
+│   │                          # echo check
+│   ├── mink/voice-turn.ts     # client-safe: one voice turn, mic to transcript (shares
+│   │                          # transcription with dictation)
 │   ├── mink/                  # ★ Dashboard agent foundation (docs/mink-ai-dashboard-plan.md):
 │   │                          # default-on global + fail-closed invited-store access;
 │   │                          # system-prompt.ts, image-prompt.ts and whatsapp-prompt.ts
@@ -6505,7 +6554,9 @@ wholesip/
 │                              # dictation sentences for the Done button. 0226 adds
 │                              # mink_voice_settings.speech_enabled/speech_provider
 │                              # (read-aloud model); 0227 edits the Mink guide's
-│                              # reply-language sentence. Next free: 0228.
+│                              # reply-language sentence; 0228 replaces the last
+│                              # sentence of its dictation paragraph with Talk with
+│                              # Mink, the spoken conversation. Next free: 0229.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

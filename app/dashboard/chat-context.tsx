@@ -21,6 +21,7 @@ import type { MinkFeedbackIssue, MinkFeedbackRating } from "@/lib/mink/types";
 import type { MinkSkill } from "@/lib/mink/skills";
 import type { MinkHighlight } from "@/lib/mink/guide-targets";
 import { MinkSpotlight } from "./mink-spotlight";
+import { useMinkVoiceMode, type MinkVoiceMode } from "./mink-voice-mode";
 
 interface ChatContextType {
   isChatOpen: boolean;
@@ -48,6 +49,10 @@ interface ChatContextType {
   statusText: string | null;
   /** The answer so far while Mink is still writing it. */
   streamingText: string;
+  /** A voice turn's spoken words so far; empty on a typed turn. */
+  spokenText: string;
+  /** The spoken block has closed; the written answer follows. */
+  spokenEnded: boolean;
   /** The tools the current run has called, in order. */
   steps: MinkRunStep[];
   error: { code: string; message: string } | null;
@@ -60,7 +65,8 @@ interface ChatContextType {
   saveMemorySuggestion: () => Promise<MinkUiError | null>;
   dismissMemorySuggestion: () => void;
   minkCredits: MinkCreditSummary | null;
-  send: (raw?: string) => void;
+  /** `voice` marks a transcript from voice chat; a typed send leaves it unset. */
+  send: (raw?: string, options?: { voice?: boolean }) => void;
   cancel: () => void;
   retry: () => void;
   reset: () => void;
@@ -111,6 +117,30 @@ function readMinkCredits(value: unknown): MinkCreditSummary | null {
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
+/**
+ * The spoken conversation, in its own context so the captions it updates
+ * several times a second while Mink talks do not re-render every consumer
+ * of the chat. Outside a provider (the platform console) the toggle is
+ * simply disabled.
+ */
+const NO_VOICE: MinkVoiceMode = {
+  enabled: false,
+  state: "idle",
+  mic: "closed",
+  support: { ok: false, reason: "Voice chat is unavailable here." },
+  levelRef: { current: 0 },
+  heard: null,
+  said: null,
+  notice: null,
+  toggle: () => {},
+  noteSend: () => {},
+};
+const MinkVoiceContext = createContext<MinkVoiceMode>(NO_VOICE);
+
+export function useMinkVoice(): MinkVoiceMode {
+  return useContext(MinkVoiceContext);
+}
+
 export function ChatProvider({
   children,
   minkEnabled,
@@ -138,7 +168,34 @@ export function ChatProvider({
   // Conversation state lives here (not in each surface) so a message typed in
   // the Home box carries over into the panel/full view that opens.
   const mink = useMinkAi({ enabled: minkEnabled });
-  const { send } = mink;
+  // ★ THE VOICE LOOP LIVES HERE, NOT IN THE COMPOSER. The composer is keyed
+  // on the conversation and remounts when a new conversation gets its id or
+  // the panel swaps with the full view; a loop inside it ended on every such
+  // remount, mid-sentence.
+  const voice = useMinkVoiceMode({
+    messages: mink.messages,
+    isReplying: mink.isReplying,
+    isChatOpen,
+    error: mink.error,
+    spokenText: mink.spokenText,
+    spokenEnded: mink.spokenEnded,
+    streamingText: mink.streamingText,
+    send: mink.send,
+    cancel: mink.cancel,
+    langFallback:
+      typeof navigator !== "undefined" ? navigator.language : undefined,
+  });
+  const minkSend = mink.send;
+  const { noteSend } = voice;
+  // A typed, Home-box or card send while voice chat is on gets a spoken
+  // answer too; the loop's own sends mark themselves `voice` and skip this.
+  const send = useCallback(
+    (raw?: string, options?: { voice?: boolean }) => {
+      if (!minkSend(raw, options)) return;
+      if (!options?.voice) noteSend();
+    },
+    [minkSend, noteSend],
+  );
 
   const refreshMinkCredits = useCallback(async () => {
     if (!minkEnabled) return;
@@ -188,6 +245,7 @@ export function ChatProvider({
       toggleExpand,
       startExpandedChat,
       ...mink,
+      send,
     }),
     [
       isChatOpen,
@@ -202,15 +260,18 @@ export function ChatProvider({
       toggleExpand,
       startExpandedChat,
       mink,
+      send,
     ],
   );
 
   return (
     <ChatContext.Provider value={value}>
-      {children}
-      {spotlight ? (
-        <MinkSpotlight highlight={spotlight} onDone={clearSpotlight} />
-      ) : null}
+      <MinkVoiceContext.Provider value={voice}>
+        {children}
+        {spotlight ? (
+          <MinkSpotlight highlight={spotlight} onDone={clearSpotlight} />
+        ) : null}
+      </MinkVoiceContext.Provider>
     </ChatContext.Provider>
   );
 }
@@ -244,6 +305,8 @@ export function useChat() {
       deletingConversationId: null,
       statusText: null,
       streamingText: "",
+      spokenText: "",
+      spokenEnded: false,
       steps: [],
       error: null,
       feedbackSubmittingRunId: null,

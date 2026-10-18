@@ -36,6 +36,12 @@ export type MinkMessage = {
   id: number | string;
   role: "user" | "assistant";
   text: string;
+  /**
+   * What Mink said aloud for a voice turn, kept apart from the written text
+   * (which is what the chat shows and the server persists). Null on a written
+   * turn; absent on a message restored from history.
+   */
+  spoken?: string | null;
   runId?: string;
   artifacts?: MinkArtifact[];
   /** What the run read or prepared, kept on the answer for this session only. */
@@ -94,6 +100,12 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
   const [statusText, setStatusText] = useState<string | null>(null);
   // The answer as it streams in, before the finished message replaces it.
   const [streamingText, setStreamingText] = useState("");
+  // ★ The spoken block of a voice turn as it streams in, and whether the
+  // server has seen its close. The voice loop cuts it into sentences and
+  // starts reading before the written answer has finished; nothing here is
+  // shown or kept.
+  const [spokenText, setSpokenText] = useState("");
+  const [spokenEnded, setSpokenEnded] = useState(false);
   const [steps, setSteps] = useState<MinkRunStep[]>([]);
   const stepsRef = useRef<MinkRunStep[]>([]);
   const [error, setError] = useState<MinkUiError | null>(null);
@@ -240,7 +252,11 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
   }, [enabled, loadConversations]);
 
   const run = useCallback(
-    async (text: string, appendUser: boolean) => {
+    async (
+      text: string,
+      appendUser: boolean,
+      options: { voice?: boolean } = {},
+    ) => {
       if (!text || isReplyingRef.current) return;
       shouldRestoreLatest.current = false;
       if (appendUser) {
@@ -254,6 +270,8 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
       lastFailedMessage.current = null;
       setStatusText(enabled ? "Thinking…" : "Getting ready…");
       setStreamingText("");
+      setSpokenText("");
+      setSpokenEnded(false);
       stepsRef.current = [];
       setSteps([]);
       setMemoryPrompt(null);
@@ -289,7 +307,13 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
             ...(conversationId.current
               ? { conversationId: conversationId.current }
               : {}),
-            context: minkBrowserContext(),
+            // `voice: true` marks a spoken turn: the server asks Mink for a
+            // short spoken block before the written answer. Style only; the
+            // server re-derives every permission as it always did.
+            context: {
+              ...minkBrowserContext(),
+              ...(options.voice ? { voice: true } : {}),
+            },
           }),
           signal: controller.signal,
         });
@@ -333,14 +357,26 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
             // ★ A tool call is working-out: any text that streamed before it
             // is withdrawn (the server says so too), and the status line names
             // what is being read rather than the generic "Thinking…".
-            if (state === "running") setStreamingText("");
+            if (state === "running") {
+              setStreamingText("");
+              setSpokenText("");
+              setSpokenEnded(false);
+            }
             setStatusText(state === "completed" ? "Thinking…" : step.status);
           } else if (event === "delta" && typeof data.text === "string") {
             const fragment = data.text;
             setStreamingText((previous) => previous + fragment);
             setStatusText("Writing…");
+          } else if (event === "spoken" && typeof data.text === "string") {
+            const fragment = data.text;
+            setSpokenText((previous) => previous + fragment);
+            setStatusText("Writing…");
+          } else if (event === "spoken_end") {
+            setSpokenEnded(true);
           } else if (event === "delta_reset") {
             setStreamingText("");
+            setSpokenText("");
+            setSpokenEnded(false);
             setStatusText("Thinking…");
           } else if (event === "message" && typeof data.text === "string") {
             const responseText = data.text;
@@ -353,6 +389,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
                 id: nextId.current++,
                 role: "assistant",
                 text: responseText,
+                spoken: typeof data.spoken === "string" ? data.spoken : null,
                 ...(runId ? { runId } : {}),
                 artifacts: readMinkArtifacts(data.artifacts),
                 ...(stepsRef.current.length
@@ -362,6 +399,8 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
               },
             ]);
             setStreamingText("");
+            setSpokenText("");
+            setSpokenEnded(false);
           } else if (event === "memory_suggestion") {
             const suggestion = readMinkMemorySuggestion(data);
             if (suggestion) setMemoryPrompt({ suggestion, status: "offered" });
@@ -392,6 +431,8 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
           abortController.current = null;
           setStatusText(null);
           setStreamingText("");
+          setSpokenText("");
+          setSpokenEnded(false);
           setSteps([]);
           setReplying(false);
         }
@@ -400,10 +441,17 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     [enabled, loadConversations, setReplying, setMemoryPrompt],
   );
 
+  /**
+   * Returns whether the message was taken: false for an empty box or while
+   * a reply is running, which is what lets the voice loop park a transcript
+   * instead of losing it to `run`'s silent early return.
+   */
   const send = useCallback(
-    (raw?: string) => {
+    (raw?: string, options: { voice?: boolean } = {}): boolean => {
       const text = (raw ?? input).trim();
-      void run(text, true);
+      if (!text || isReplyingRef.current) return false;
+      void run(text, true, options);
+      return true;
     },
     [input, run],
   );
@@ -431,6 +479,8 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     setInput("");
     setStatusText(null);
     setStreamingText("");
+    setSpokenText("");
+    setSpokenEnded(false);
     stepsRef.current = [];
     setSteps([]);
     setMemoryPrompt(null);
@@ -543,6 +593,8 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     deletingConversationId,
     statusText,
     streamingText,
+    spokenText,
+    spokenEnded,
     steps,
     error,
     feedbackSubmittingRunId,

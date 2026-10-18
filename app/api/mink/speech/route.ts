@@ -144,11 +144,11 @@ export async function POST(request: Request) {
 
     const [perAdmin, perStore] = await Promise.all([
       rateLimit(`mink-speech:admin:${actor.storeId}:${actor.adminId}`, {
-        max: 20,
+        max: 60,
         windowSeconds: 60,
       }),
       rateLimit(`mink-speech:store:${actor.storeId}`, {
-        max: 300,
+        max: 1_200,
         windowSeconds: 3_600,
       }),
     ]);

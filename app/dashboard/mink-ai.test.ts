@@ -278,6 +278,68 @@ describe("★★ useMinkAi streaming", () => {
     ]);
   });
 
+  it("★ keeps a voice turn's spoken words apart from the written answer", async () => {
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: status\ndata: {"conversationId":"11111111-1111-4111-8111-111111111111"}\n\n' +
+              'event: spoken\ndata: {"text":"You have twelve "}\n\n' +
+              'event: spoken\ndata: {"text":"orders today."}\n\n' +
+              "event: spoken_end\ndata: {}\n\n" +
+              'event: delta\ndata: {"text":"**12 orders** today."}\n\n',
+          ),
+        );
+        await gate;
+        controller.enqueue(
+          encoder.encode(
+            'event: message\ndata: {"role":"assistant","text":"**12 orders** today.","spoken":"You have twelve orders today.","artifacts":[]}\n\n' +
+              "event: done\ndata: {}\n\n",
+          ),
+        );
+        controller.close();
+      },
+    });
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/mink/conversations") {
+        return Response.json({ conversations: [] });
+      }
+      return new Response(body, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+    act(() => result.current.send("How many orders today?", { voice: true }));
+
+    await waitFor(() =>
+      expect(result.current.spokenText).toBe("You have twelve orders today."),
+    );
+    expect(result.current.spokenEnded).toBe(true);
+    expect(result.current.streamingText).toBe("**12 orders** today.");
+    // The send carried the voice flag in its context, nothing else changed.
+    const streamCall = (
+      fetch.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit?]>
+    ).find(([input]) => String(input) === "/api/mink/stream");
+    expect(JSON.parse(String(streamCall?.[1]?.body)).context.voice).toBe(true);
+
+    act(() => release?.());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.spokenText).toBe("");
+    expect(result.current.spokenEnded).toBe(false);
+    const answer = result.current.messages.at(-1);
+    expect(answer?.text).toBe("**12 orders** today.");
+    expect(answer?.spoken).toBe("You have twelve orders today.");
+  });
+
   it("discards streamed working-out when the server resets it or a tool starts", async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === "/api/mink/conversations") {

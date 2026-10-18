@@ -158,6 +158,7 @@ export async function getMinkActorContext(
     selectedResource: trusted.selectedResource ?? null,
     draftingEnabled: minkAccess?.draftingEnabled === true,
     brandVoice,
+    ...(options.pageContext?.voice ? { answerMedium: "spoken" as const } : {}),
     requestId,
   };
 }

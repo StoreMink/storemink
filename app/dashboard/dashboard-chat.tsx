@@ -32,7 +32,7 @@ import {
   type PointerEvent,
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useChat } from "./chat-context";
+import { useChat, useMinkVoice } from "./chat-context";
 import { MinkAnswer } from "./mink-answer";
 import { openMinkNavigation } from "./mink-artifacts";
 import { suggestMinkFollowUps } from "@/lib/mink/follow-ups";
@@ -52,6 +52,7 @@ import {
 } from "./mink-ai";
 import { MinkMark } from "./mink-mark";
 import { MinkMultimodalInput } from "./mink-multimodal-input";
+import { MinkVoiceView } from "./mink-voice-view";
 import { MinkArtifacts } from "./mink-artifacts";
 import { MinkFeedbackControls } from "./mink-feedback";
 import { readMinkCsvReference } from "@/lib/mink/csv-input";
@@ -238,6 +239,10 @@ export function DashboardChat({
     dismissMemorySuggestion,
     showSpotlight,
   } = useChat();
+  // The spoken conversation, run by ChatProvider; while it is on this surface
+  // shows the voice view in place of the thread and keeps the composer
+  // mounted but hidden (unmounting it would discard staged attachments).
+  const voiceChat = useMinkVoice();
   const isOverlay = variant === "overlay";
   const router = useRouter();
   const pathname = usePathname();
@@ -591,23 +596,25 @@ export function DashboardChat({
 
       <header className="flex min-h-[64px] w-full max-w-full shrink-0 items-center justify-between gap-3 border-b border-[#ededed] px-3 py-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setHistoryOpen((open) => !open)}
-            aria-label={
-              historyOpen
-                ? "Hide conversation sidebar"
-                : "Show conversation sidebar"
-            }
-            aria-expanded={historyOpen}
-            className="rounded-lg p-2 text-[#5c5f62] transition-colors hover:bg-[#f1f1f1] hover:text-[#1a1a1a]"
-          >
-            {historyOpen ? (
-              <PanelLeftClose className="h-4 w-4" />
-            ) : (
-              <PanelLeftOpen className="h-4 w-4" />
-            )}
-          </button>
+          {!voiceChat.enabled && (
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((open) => !open)}
+              aria-label={
+                historyOpen
+                  ? "Hide conversation sidebar"
+                  : "Show conversation sidebar"
+              }
+              aria-expanded={historyOpen}
+              className="rounded-lg p-2 text-[#5c5f62] transition-colors hover:bg-[#f1f1f1] hover:text-[#1a1a1a]"
+            >
+              {historyOpen ? (
+                <PanelLeftClose className="h-4 w-4" />
+              ) : (
+                <PanelLeftOpen className="h-4 w-4" />
+              )}
+            </button>
+          )}
           <MinkMark />
           {/* ★ ONE LINE, NOT TWO. The purple ASSISTANT_NAME wordmark sat above
               the title saying what the avatar beside it and the topbar button
@@ -651,7 +658,7 @@ export function DashboardChat({
       </header>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        {historyOpen && (
+        {historyOpen && !voiceChat.enabled && (
           <ConversationSidebar
             conversations={conversations}
             activeConversationId={activeConversationId}
@@ -689,7 +696,13 @@ export function DashboardChat({
         )}
 
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
-          {!hasThread ? (
+          {voiceChat.enabled ? (
+            <MinkVoiceView
+              voice={voiceChat}
+              isReplying={isReplying}
+              onStopReply={cancel}
+            />
+          ) : !hasThread ? (
             <div className="flex min-h-0 flex-1 touch-pan-y flex-col items-center justify-center overflow-y-auto overscroll-contain p-6 text-center">
               <div className="mb-4">
                 <MinkMark size="lg" />
@@ -886,8 +899,19 @@ export function DashboardChat({
             </div>
           )}
 
-          <div className="shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4">
+          <div
+            hidden={voiceChat.enabled}
+            className="shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4"
+          >
             <div className={columnClass}>
+              {voiceChat.notice ? (
+                <div
+                  role="alert"
+                  className="mb-2 rounded-xl border border-[#f2ddb4] bg-[#fdf9ef] px-3 py-2 text-[11px] text-[#8a5a12]"
+                >
+                  {voiceChat.notice}
+                </div>
+              ) : null}
               {creditWarning ? (
                 <div
                   role="status"
@@ -1050,7 +1074,6 @@ export function DashboardChat({
                     {recording ? (
                       <div className="flex w-full min-w-0 items-center gap-2">
                         {recorder}
-                        {recording === "voice" && isReplying ? stopReply : null}
                       </div>
                     ) : (
                       <div className="flex w-full items-center justify-between">

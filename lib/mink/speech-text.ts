@@ -205,6 +205,24 @@ const SENTENCE = new RegExp(
   "g",
 );
 
+/**
+ * Offsets just past each sentence that has PROVABLY ended: the same terminator
+ * rule as `SENTENCE`, but the whitespace must be followed by a further word,
+ * never the end of the text. Streamed text grows at its end, so a full stop
+ * that is the last character may still be "Rs." with "500" on its way; a
+ * stop with a capitalised word already after it is settled.
+ */
+const SENTENCE_END_FOLLOWED = /[.!?।॥]+["'”’)\]]*(?=\s+[^\sa-z0-9])/g;
+
+export function speechSentenceEnds(text: string): number[] {
+  if (typeof text !== "string" || !text) return [];
+  const ends: number[] = [];
+  for (const match of text.matchAll(SENTENCE_END_FOLLOWED)) {
+    ends.push(match.index + match[0].length);
+  }
+  return ends;
+}
+
 function splitLong(sentence: string, max: number): string[] {
   const parts: string[] = [];
   let rest = sentence.trim();

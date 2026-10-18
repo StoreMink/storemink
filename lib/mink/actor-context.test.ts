@@ -80,6 +80,27 @@ describe("getMinkActorContext", () => {
     });
   });
 
+  it("marks a spoken turn only from the server-normalized voice flag", async () => {
+    const spoken = await getMinkActorContext("request-2", {
+      pageContext: {
+        currentPath: "/dashboard",
+        selectedResource: null,
+        screen: null,
+        voice: true,
+      },
+    });
+    expect(spoken.answerMedium).toBe("spoken");
+    const written = await getMinkActorContext("request-3", {
+      pageContext: {
+        currentPath: "/dashboard",
+        selectedResource: null,
+        screen: null,
+        voice: false,
+      },
+    });
+    expect(written).not.toHaveProperty("answerMedium");
+  });
+
   it("rejects an unauthenticated request before reading a store", async () => {
     holder.viewer.mockResolvedValue(null);
 

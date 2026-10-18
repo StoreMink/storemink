@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { MinkActorContext, MinkToolDeclaration } from "./types";
 import {
+  getMinkSpokenAnswerRules,
   getMinkSystemPromptTemplate,
+  parseMinkSpokenAnswerRules,
   parseMinkSystemPromptDocument,
   renderMinkSystemInstruction,
 } from "./system-prompt";
@@ -118,6 +120,11 @@ describe("Mink system prompt document", () => {
       "ends when the user selects Done, or after 30 seconds",
     );
     expect(template).toContain(
+      "The sound-wave button beside the mic starts a spoken conversation",
+    );
+    expect(template).toContain("{{spoken_answer_rules}}");
+    expect(template).toContain("- answer medium: {{answer_medium}}");
+    expect(template).toContain(
       "call generate_storefront_image only after selecting exact returned reference URLs",
     );
     expect(template).toContain(
@@ -206,12 +213,69 @@ describe("Mink system prompt document", () => {
     );
     expect(prompt).toContain("Clear and practical {{available_tool_names}}");
     expect(prompt).not.toContain("secret-record-id");
+    // A typed turn: no spoken block is asked for.
+    expect(prompt).toContain("- answer medium: written");
+    expect(prompt).not.toContain("<spoken>");
+  });
+
+  it("★ adds the spoken answer rules only for a voice turn", () => {
+    const actor = {
+      effectivePlan: "basic",
+      roleSlug: "admin",
+      currentPath: null,
+      selectedResource: null,
+      brandVoice: undefined,
+      answerMedium: "spoken",
+    } satisfies Pick<
+      MinkActorContext,
+      | "effectivePlan"
+      | "roleSlug"
+      | "currentPath"
+      | "selectedResource"
+      | "brandVoice"
+      | "answerMedium"
+    >;
+    const prompt = renderMinkSystemInstruction(actor, []);
+    expect(prompt).toContain("- answer medium: spoken");
+    expect(prompt).toContain(
+      "open with the tag <spoken> and close with </spoken>",
+    );
+    expect(prompt).toContain("never in a turn that calls a tool");
+    expect(prompt).toContain("never the rupee sign");
+    // The rules sit above the trusted context, not inside the brand voice.
+    expect(prompt.indexOf("<spoken>")).toBeLessThan(
+      prompt.indexOf("Trusted server context:"),
+    );
+    expect(getMinkSpokenAnswerRules()).not.toMatch(/\{\{/);
   });
 
   it("keeps the checked-in document parseable with every placeholder once", () => {
     expect(() =>
       parseMinkSystemPromptDocument(readFileSync(DOCUMENT_PATH, "utf8")),
     ).not.toThrow();
+  });
+
+  it("fails closed when the spoken rules block drifts", () => {
+    const document = readFileSync(DOCUMENT_PATH, "utf8");
+    expect(() => parseMinkSpokenAnswerRules(document)).not.toThrow();
+    expect(() =>
+      parseMinkSpokenAnswerRules(
+        document.replace("<!-- MINK_SPOKEN_RULES_END -->", ""),
+      ),
+    ).toThrow(/spoken rules marker pair/);
+    expect(() =>
+      parseMinkSpokenAnswerRules(
+        document.replace(
+          "Spoken answer rules for this turn.",
+          "{{plan}} rules.",
+        ),
+      ),
+    ).toThrow(/placeholder/);
+    expect(() =>
+      parseMinkSpokenAnswerRules(document.replace(/<\/?spoken>/g, "")),
+    ).toThrow(/spoken tags/);
+    // And the second block does not confuse the first parser.
+    expect(() => parseMinkSystemPromptDocument(document)).not.toThrow();
   });
 
   it("fails closed when markers, fences or placeholders drift", () => {

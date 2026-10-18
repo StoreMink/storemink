@@ -458,8 +458,16 @@ export interface MinkActorContext {
   draftingEnabled?: boolean;
   /** Store-authored style context. It may shape copy but never authority. */
   brandVoice?: string;
+  /**
+   * How the merchant will take the answer in: `spoken` when the message came
+   * from the hands-free voice chat, so the reply opens with a short spoken
+   * block before the written answer. Absent means written.
+   */
+  answerMedium?: MinkAnswerMedium;
   requestId: string;
 }
+
+export type MinkAnswerMedium = "written" | "spoken";
 
 export interface MinkToolPermission {
   section: string;

@@ -22,8 +22,23 @@ import { MINK_MAX_RUN_CREDITS } from "@/lib/mink/metering";
 import { useChat } from "./chat-context";
 import { addSavedMinkMediaReference } from "@/lib/mink/media-attachment";
 
+const voiceChat = vi.hoisted(() => ({
+  value: {
+    enabled: false,
+    state: "idle",
+    mic: "closed",
+    support: { ok: true },
+    levelRef: { current: 0 },
+    heard: null as string | null,
+    said: null as string | null,
+    notice: null as string | null,
+    toggle: vi.fn(),
+    noteSend: vi.fn(),
+  },
+}));
 vi.mock("./chat-context", () => ({
   useChat: vi.fn(),
+  useMinkVoice: vi.fn(() => voiceChat.value),
 }));
 const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -87,6 +102,52 @@ beforeEach(() => {
   vi.mocked(useChat).mockReturnValue(
     baseChatState as unknown as ReturnType<typeof useChat>,
   );
+  voiceChat.value.enabled = false;
+  voiceChat.value.notice = null;
+});
+
+describe("★★ voice chat takes over the chat surface", () => {
+  it("shows the voice view in place of the thread and keeps the composer mounted but hidden", () => {
+    voiceChat.value.enabled = true;
+    voiceChat.value.state = "speaking";
+    voiceChat.value.heard = "How many orders today?";
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: "u1", role: "user", text: "How many orders today?" },
+        { id: "a1", role: "assistant", text: "You have **12 orders** today." },
+      ],
+      isReplying: true,
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(
+      screen.getByRole("region", { name: "Voice chat with Mink" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("How many orders today?")).toBeInTheDocument();
+    expect(screen.queryByTestId("mink-message-scroller")).toBeNull();
+    // No way into the history while talking.
+    expect(
+      screen.queryByRole("button", { name: /conversation sidebar/i }),
+    ).toBeNull();
+    // The composer survives (its draft and staged uploads with it) but is
+    // out of the way; the voice view's own buttons are the only controls.
+    const composer = screen.getByLabelText("Mink AI composer");
+    expect(composer.closest("[hidden]")).not.toBeNull();
+    expect(
+      screen.getAllByRole("button", { name: "Stop Mink AI" }),
+    ).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Stop voice chat" }));
+    expect(voiceChat.value.toggle).toHaveBeenCalledOnce();
+  });
+
+  it("shows the loop's notice above the composer once voice chat is off", () => {
+    voiceChat.value.notice = "Voice chat turned off: nothing was heard.";
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.queryByTestId("mink-voice-view")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Voice chat turned off: nothing was heard.",
+    );
+  });
 });
 
 describe("Mink full view", () => {

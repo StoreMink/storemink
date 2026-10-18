@@ -142,12 +142,14 @@ describe("POST /api/mink/speech", () => {
     const response = await POST(req({ text: "Hello" }));
     expect(response.status).toBe(429);
     expect(h.stream).not.toHaveBeenCalled();
+    // Voice chat sends an answer a sentence or two at a time and fetches one
+    // piece ahead, so the per-answer budget is several requests, not one.
     expect(h.rateLimit).toHaveBeenCalledWith("mink-speech:admin:echos:owner", {
-      max: 20,
+      max: 60,
       windowSeconds: 60,
     });
     expect(h.rateLimit).toHaveBeenCalledWith("mink-speech:store:echos", {
-      max: 300,
+      max: 1_200,
       windowSeconds: 3_600,
     });
   });

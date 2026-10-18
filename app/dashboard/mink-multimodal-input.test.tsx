@@ -28,22 +28,27 @@ vi.mock("@/app/actions/media-actions", () => ({
   uploadMediaAsset: media.upload,
   deleteMediaAsset: media.remove,
 }));
-// The composer reads the chat only for the voice loop; one mutable value the
-// voice tests move and every other test ignores.
-const chat = vi.hoisted(() => {
+// The composer reads the voice loop only for its toggle; one mutable value
+// the voice tests move and every other test ignores.
+const voice = vi.hoisted(() => {
   const value = {
-    isChatOpen: true,
-    messages: [] as Array<{
-      id: string | number;
-      role: "user" | "assistant";
-      text: string;
-    }>,
-    isReplying: false,
-    error: null as { code: string; message: string } | null,
+    enabled: false,
+    state: "idle",
+    mic: "closed",
+    support: { ok: true } as { ok: true } | { ok: false; reason: string },
+    levelRef: { current: 0 },
+    heard: null as string | null,
+    said: null as string | null,
+    notice: null as string | null,
+    toggle: vi.fn(),
+    noteSend: vi.fn(),
   };
-  return { value, useChat: vi.fn(() => value) };
+  return { value, useMinkVoice: vi.fn(() => value) };
 });
-vi.mock("./chat-context", () => ({ useChat: chat.useChat }));
+vi.mock("./chat-context", () => ({
+  useChat: vi.fn(),
+  useMinkVoice: voice.useMinkVoice,
+}));
 
 const fetchMock = vi.fn();
 const SAVED_URL =
@@ -73,10 +78,9 @@ beforeEach(() => {
   });
   URL.createObjectURL = vi.fn(() => "blob:local");
   URL.revokeObjectURL = vi.fn();
-  chat.value.isChatOpen = true;
-  chat.value.messages = [];
-  chat.value.isReplying = false;
-  chat.value.error = null;
+  voice.value.enabled = false;
+  voice.value.support = { ok: true };
+  voice.value.toggle.mockReset();
 });
 
 afterEach(() => {
@@ -593,90 +597,15 @@ describe("★★ dictation lives inside the composer, ChatGPT-style", () => {
   });
 });
 
-class FakeUtterance {
-  text: string;
-  lang = "";
-  onend: null | (() => void) = null;
-  onerror: null | (() => void) = null;
-  constructor(text: string) {
-    this.text = text;
-  }
-}
-const synth = { speak: vi.fn(), cancel: vi.fn() };
-
-// jsdom has neither a synthesiser nor a microphone, so each is installed by
-// hand and removed again, which is also what makes the unsupported test real.
-function installSpeechBrowser() {
-  Object.defineProperty(window, "isSecureContext", {
-    value: true,
-    configurable: true,
-  });
-  Object.defineProperty(window, "AudioContext", {
-    value: class {},
-    configurable: true,
-  });
-  Object.defineProperty(navigator, "mediaDevices", {
-    value: { getUserMedia: vi.fn() },
-    configurable: true,
-  });
-  Object.defineProperty(window, "speechSynthesis", {
-    value: synth,
-    configurable: true,
-  });
-  Object.defineProperty(window, "SpeechSynthesisUtterance", {
-    value: FakeUtterance,
-    configurable: true,
-  });
-}
-function removeSpeechBrowser() {
-  for (const key of [
-    "isSecureContext",
-    "AudioContext",
-    "speechSynthesis",
-    "SpeechSynthesisUtterance",
-  ]) {
-    delete (window as unknown as Record<string, unknown>)[key];
-  }
-  delete (navigator as unknown as Record<string, unknown>).mediaDevices;
-}
-
-async function turnVoiceChatOn() {
-  const toggle = screen.getByRole("button", { name: "Talk with Mink" });
-  await waitFor(() => expect(toggle).toBeEnabled());
-  fireEvent.click(toggle);
-  expect(toggle).toHaveAttribute("aria-pressed", "true");
-  await waitFor(() => expect(recording.start).toHaveBeenCalledOnce());
-  expect(await screen.findByText("Listening…")).toBeVisible();
-  return toggle;
-}
-
-function replyArrives(
-  view: ReturnType<typeof render>,
-  text: string,
-  onSubmit: (message: string) => void,
-) {
-  chat.value.messages = [
-    ...chat.value.messages,
-    { id: `a${chat.value.messages.length}`, role: "assistant", text },
-  ];
-  view.rerender(
-    <LiveComposer onSubmit={onSubmit} tick={chat.value.messages.length} />,
-  );
-}
-
 describe("Mink voice chat", () => {
-  beforeEach(() => {
-    synth.speak.mockReset();
-    synth.cancel.mockReset();
-    installSpeechBrowser();
-  });
-  afterEach(removeSpeechBrowser);
-
-  it("renders the toggle disabled with the reason when the browser cannot speak", async () => {
-    removeSpeechBrowser();
+  it("renders the toggle disabled with the reason when the browser cannot run it", () => {
+    voice.value.support = {
+      ok: false,
+      reason: "Voice chat needs a browser that can read answers aloud.",
+    };
     render(<MinkMultimodalInput message="" onAdd={vi.fn()} disabled={false} />);
     const toggle = screen.getByRole("button", { name: "Talk with Mink" });
-    await waitFor(() => expect(toggle).toBeDisabled());
+    expect(toggle).toBeDisabled();
     expect(toggle).toHaveAttribute(
       "title",
       "Voice chat needs a browser that can read answers aloud.",
@@ -684,98 +613,42 @@ describe("Mink voice chat", () => {
     expect(toggle).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("listens, sends the transcript, speaks the reply and listens again", async () => {
-    const submit = vi.fn();
-    // A restored answer is on screen before the toggle: never read aloud.
-    chat.value.messages = [{ id: "old", role: "assistant", text: "Earlier." }];
-    const view = render(<LiveComposer onSubmit={submit} />);
-    await turnVoiceChatOn();
-    expect(synth.speak).not.toHaveBeenCalled();
+  it("★ the sound-wave button hands over to the shared loop, which owns the microphone", () => {
+    render(<MinkMultimodalInput message="" onAdd={vi.fn()} disabled={false} />);
+    fireEvent.click(screen.getByRole("button", { name: "Talk with Mink" }));
+    expect(voice.value.toggle).toHaveBeenCalledOnce();
+    // The composer opens no microphone of its own for voice chat.
+    expect(recording.start).not.toHaveBeenCalled();
+  });
 
-    act(() =>
-      recording.done?.(
-        new File(["wav"], "voice-note.wav", { type: "audio/wav" }),
-      ),
-    );
-    await waitFor(() =>
-      expect(submit).toHaveBeenCalledWith(
-        "Visible product and storefront details",
-      ),
-    );
-    // Sent, not parked in the box for a Send click.
-    expect(screen.getByLabelText("Message")).toHaveValue("");
-    expect(screen.getByText("Thinking…")).toBeVisible();
+  it("while voice chat is on, dictation is unavailable and the toggle reads pressed", () => {
+    voice.value.enabled = true;
+    render(<MinkMultimodalInput message="" onAdd={vi.fn()} disabled={false} />);
+    const toggle = screen.getByRole("button", { name: "Talk with Mink" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Voice chat is listening for you" }),
+    ).toBeDisabled();
+    expect(screen.queryByTestId("mink-recorder")).toBeNull();
+  });
 
-    replyArrives(view, "**Sales** are up this week.", submit);
-    await waitFor(() => expect(synth.speak).toHaveBeenCalledOnce());
-    const utterance = synth.speak.mock.calls[0][0] as FakeUtterance;
-    expect(utterance.text).toBe("Sales are up this week.");
-    expect(utterance.lang).toBe(navigator.language);
-    expect(screen.getByText("Speaking…")).toBeVisible();
-
-    act(() => utterance.onend?.());
-    await waitFor(() => expect(recording.start).toHaveBeenCalledTimes(2));
-    expect(screen.getByText("Listening…")).toBeVisible();
+  it("while dictating, voice chat cannot be started", async () => {
+    render(<LiveComposer onSubmit={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    await waitFor(() => expect(recording.start).toHaveBeenCalledOnce());
     expect(
       screen.getByRole("button", { name: "Talk with Mink" }),
-    ).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("★ ends a voice-chat turn on a pause, inside the composer", async () => {
-    render(<LiveComposer onSubmit={vi.fn()} />);
-    await turnVoiceChatOn();
-    expect(recording.start.mock.calls[0][3]).toMatchObject({
-      endOnSilence: true,
-    });
-    expect(screen.getByTestId("mink-recorder")).toContainElement(
-      screen.getByRole("button", { name: "Stop voice chat" }),
-    );
-  });
-
-  it("listens again after an empty recording", async () => {
-    render(<LiveComposer onSubmit={vi.fn()} />);
-    await turnVoiceChatOn();
-    act(() => recording.done?.(null));
-    await waitFor(() => expect(recording.start).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByText("Listening…")).toBeVisible();
-  });
-
-  it("turns off from the status row and releases the microphone", async () => {
-    render(<LiveComposer onSubmit={vi.fn()} />);
-    const toggle = await turnVoiceChatOn();
-    await waitFor(() => expect(recording.signal).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "Stop voice chat" }));
-    expect(recording.signal?.aborted).toBe(true);
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByRole("status")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Dictate message" }),
-    ).toBeEnabled();
-  });
-
-  it("lets a typed send interrupt the microphone and still speaks the reply", async () => {
-    const submit = vi.fn();
-    const view = render(<LiveComposer onSubmit={submit} />);
-    await turnVoiceChatOn();
-    await waitFor(() => expect(recording.signal).not.toBeNull());
-    fireEvent.change(screen.getByLabelText("Message"), {
-      target: { value: "Typed instead" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(submit).toHaveBeenCalledWith("Typed instead"));
-    expect(recording.signal?.aborted).toBe(true);
-    expect(screen.getByText("Thinking…")).toBeVisible();
-
-    replyArrives(view, "Here you go.", submit);
-    await waitFor(() => expect(synth.speak).toHaveBeenCalledOnce());
-    expect(screen.getByText("Speaking…")).toBeVisible();
+    ).toBeDisabled();
   });
 
   it("keeps plain dictation unchanged while voice chat is off", async () => {
     const submit = vi.fn();
     render(<LiveComposer initial="Please" onSubmit={submit} />);
     fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    expect(recording.start.mock.calls[0][3]).toMatchObject({
+      endOnSilence: false,
+    });
     act(() =>
       recording.done?.(
         new File(["wav"], "voice-note.wav", { type: "audio/wav" }),
@@ -787,7 +660,7 @@ describe("Mink voice chat", () => {
       ),
     );
     expect(submit).not.toHaveBeenCalled();
-    expect(synth.speak).not.toHaveBeenCalled();
+    expect(voice.value.toggle).not.toHaveBeenCalled();
   });
 });
 

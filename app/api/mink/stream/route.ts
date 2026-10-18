@@ -30,6 +30,10 @@ import { MEMORY_LIMIT } from "@/lib/mink/memory-policy";
 import { suggestMinkMemory } from "@/lib/mink/memory-suggestion";
 import { readMinkBoundedJson } from "@/lib/mink/bounded-json";
 import { MINK_MESSAGE_MAX_CHARS } from "@/lib/mink/input-policy";
+import {
+  createSpokenAnswerSplitter,
+  splitSpokenAnswer,
+} from "@/lib/mink/spoken-answer";
 
 export const runtime = "nodejs";
 
@@ -149,6 +153,12 @@ export async function POST(request: Request) {
     }
     const encoder = new TextEncoder();
     const startedAt = Date.now();
+    // ★ One splitter per run. On a voice turn the reply opens with a
+    // <spoken> block: those words stream out as `spoken` events the moment
+    // they arrive and are read aloud, the close of the block is `spoken_end`,
+    // and only the written answer after it streams as `delta` and is kept.
+    // A written turn carries no tags and passes through unchanged.
+    const splitter = createSpokenAnswerSplitter();
     let consumerCancelled = false;
     let timedOut = false;
     const timeoutId = setTimeout(() => {
@@ -185,10 +195,16 @@ export async function POST(request: Request) {
             },
             async onEvent(event) {
               if (event.type === "text_delta") {
-                send("delta", { text: event.text });
+                for (const part of splitter.push(event.text)) {
+                  if (part.kind === "spoken")
+                    send("spoken", { text: part.text });
+                  else if (part.kind === "spoken_end") send("spoken_end", {});
+                  else send("delta", { text: part.text });
+                }
                 return;
               }
               if (event.type === "text_reset") {
+                splitter.reset();
                 send("delta_reset", {});
                 return;
               }
@@ -221,10 +237,13 @@ export async function POST(request: Request) {
               }
             },
           });
+          // The persisted answer, the history replay and the screen all get
+          // the written half; the spoken block was for the ear only.
+          const { written, spoken } = splitSpokenAnswer(result.text);
           const { draftCredits } = await completeMinkRun({
             actor,
             started,
-            result,
+            result: { ...result, text: written },
             latencyMs: Date.now() - startedAt,
             pricingLocation: config.location,
           });
@@ -244,7 +263,8 @@ export async function POST(request: Request) {
           });
           send("message", {
             role: "assistant",
-            text: result.text,
+            text: written,
+            spoken,
             runId: started.runId,
             artifacts: result.artifacts,
           });
@@ -287,6 +307,7 @@ export async function POST(request: Request) {
             requestId,
             storeId: actor.storeId,
             adminId: actor.adminId,
+            medium: actor.answerMedium ?? "written",
             model: result.model,
             steps: result.steps,
             toolCalls: result.toolCalls,
