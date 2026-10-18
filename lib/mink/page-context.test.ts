@@ -18,12 +18,12 @@ describe("normalizeMinkPageContext", () => {
       currentPath: "/dashboard/products/one?tab=inventory",
       selectedResource: { type: "product", id: ID },
       screen: null,
-      replyLanguage: "auto",
     });
   });
 
-  it("keeps a validated reply language and a bounded screen", () => {
-    const context = normalizeMinkPageContext({
+  it("keeps a bounded screen and ignores a retired reply language", () => {
+    // Tabs opened before the Reply language menu was removed still send it.
+    const input = {
       currentPath: "/dashboard/orders",
       replyLanguage: "hi",
       screen: {
@@ -38,17 +38,15 @@ describe("normalizeMinkPageContext", () => {
           { label: "Password", value: "hunter2" },
         ],
       },
-    });
-    expect(context.replyLanguage).toBe("hi");
+    };
+    const context = normalizeMinkPageContext(input);
+    expect(context).not.toHaveProperty("replyLanguage");
     expect(context.screen?.headings).toEqual(["Orders", "x".repeat(80)]);
     expect(context.screen?.rows).toHaveLength(20);
     expect(context.screen?.selectedCount).toBe(2);
     expect(context.screen?.fields).toEqual([
       { label: "Search", value: "ORD1001" },
     ]);
-    expect(
-      normalizeMinkPageContext({ replyLanguage: "fr" }).replyLanguage,
-    ).toBe("auto");
     expect(normalizeMinkScreenContext({ title: "   " })).toBeNull();
     expect(normalizeMinkScreenContext("nope")).toBeNull();
     const reference = renderMinkScreenReference(
@@ -71,7 +69,6 @@ describe("normalizeMinkPageContext", () => {
       currentPath: null,
       selectedResource: null,
       screen: null,
-      replyLanguage: "auto",
     });
     expect(
       normalizeMinkPageContext({ currentPath: "/dashboard-attacker" }),
@@ -79,7 +76,6 @@ describe("normalizeMinkPageContext", () => {
       currentPath: null,
       selectedResource: null,
       screen: null,
-      replyLanguage: "auto",
     });
   });
 });

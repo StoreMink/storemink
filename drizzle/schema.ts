@@ -2925,12 +2925,17 @@ export const platformAnalyticsSettings = pgTable(
   () => [check("platform_analytics_settings_id_check", sql`id`)],
 );
 
-/** The one voice-transcription provider used by Mink across every store. */
+/** The one voice-transcription provider, and read-aloud model, used by Mink across every store. */
 export const minkVoiceSettings = pgTable(
   "mink_voice_settings",
   {
     id: boolean().default(true).primaryKey().notNull(),
     provider: text().default("chirp_3").notNull(),
+    /** Read voice chat answers aloud with a model (false = the browser voice). */
+    speechEnabled: boolean("speech_enabled").default(false).notNull(),
+    speechProvider: text("speech_provider")
+      .default("gemini_3_8_flash_lite_tts")
+      .notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
@@ -2941,6 +2946,10 @@ export const minkVoiceSettings = pgTable(
     check(
       "mink_voice_settings_provider_check",
       sql`provider = ANY (ARRAY['chirp_3'::text, 'saaras_v4'::text])`,
+    ),
+    check(
+      "mink_voice_settings_speech_provider_check",
+      sql`speech_provider = ANY (ARRAY['gemini_3_8_flash_lite_tts'::text, 'bulbul_v4_flash'::text])`,
     ),
   ],
 );

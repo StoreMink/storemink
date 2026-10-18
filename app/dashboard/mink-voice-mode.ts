@@ -13,6 +13,7 @@ import {
   speechLangFor,
 } from "@/lib/mink/speech-text";
 import type { MinkMessage } from "./mink-ai";
+import { playMinkServerSpeech, silentWavUrl } from "./mink-speech-player";
 
 /**
  * The hands-free voice loop behind the composer's "Talk with Mink" toggle.
@@ -21,8 +22,14 @@ import type { MinkMessage } from "./mink-ai";
  * dictation (the recorder plus /api/mink/voice), `send()` is its existing
  * submit path (so limits and attachments apply), and it reports each final
  * transcript here. This hook owns everything in between: the state machine,
- * speaking the newest answer with window.speechSynthesis, re-arming the mic
- * when speech ends, and the conditions that stop the loop.
+ * speaking the newest answer, re-arming the mic when speech ends, and the
+ * conditions that stop the loop.
+ *
+ * ★ TWO VOICES. When the operator has a read-aloud model switched on
+ * (Gemini 3.8 Flash-Lite TTS or Sarvam Bulbul V4 Flash, asked once through
+ * GET /api/mink/speech as the mode turns on), answers are played through one
+ * audio element unlocked by the toggle click; otherwise, and for whatever a
+ * model could not play, the browser's own window.speechSynthesis reads them.
  *
  * ★ ONLY A REPLY TO SOMETHING SENT WHILE THE MODE WAS ON IS SPOKEN. Toggling
  * on records every message id present; a message is spoken only when it is
@@ -159,7 +166,31 @@ type Live = {
   speakToken: number;
   watchdog: ReturnType<typeof setTimeout> | null;
   utterance: SpeechSynthesisUtterance | null;
+  /** Whether a read-aloud model is on; unknown until GET /api/mink/speech answers. */
+  serverSpeech: "unknown" | "on" | "off";
+  /** The one element model audio plays through, unlocked by the toggle click. */
+  player: HTMLAudioElement | null;
+  speechAbort: AbortController | null;
 };
+
+let silentUrl: string | null = null;
+
+/**
+ * Starts the audio element on the user's click so later answers may play.
+ * jsdom and old browsers have no object URLs or playable audio; then the
+ * browser voice simply does all the reading.
+ */
+function unlockPlayer(player: HTMLAudioElement) {
+  if (typeof URL.createObjectURL !== "function") return;
+  try {
+    silentUrl ??= silentWavUrl();
+    player.src = silentUrl;
+    const started = player.play() as Promise<void> | undefined;
+    if (started && typeof started.catch === "function") started.catch(() => {});
+  } catch {
+    // Not unlocked: a later play() is refused and the browser voice reads.
+  }
+}
 
 export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
   const latest = useRef(input);
@@ -174,6 +205,9 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
     speakToken: 0,
     watchdog: null,
     utterance: null,
+    serverSpeech: "unknown",
+    player: null,
+    speechAbort: null,
   });
   const [enabled, setEnabled] = useState(false);
   const [state, setState] = useState<MinkVoiceState>("idle");
@@ -198,6 +232,9 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
     if (l.watchdog) clearTimeout(l.watchdog);
     l.watchdog = null;
     l.utterance = null;
+    l.speechAbort?.abort();
+    l.speechAbort = null;
+    l.player?.pause();
     if (typeof window !== "undefined") window.speechSynthesis?.cancel();
   }, []);
 
@@ -232,10 +269,10 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
       stop("mic", "Voice chat turned off: the microphone could not start.");
   }, [setPhase, stop]);
 
-  const speak = useCallback(
-    (markdown: string) => {
+  /** The browser's own voice: the fallback, and the voice when no model is on. */
+  const speakWithBrowser = useCallback(
+    (text: string, lang: string, token: number) => {
       const l = live.current;
-      const text = speakableMinkText(markdown);
       const synth =
         typeof window !== "undefined" ? window.speechSynthesis : undefined;
       if (
@@ -246,14 +283,10 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
         void arm();
         return;
       }
-      const token = ++l.speakToken;
       if (l.watchdog) clearTimeout(l.watchdog);
       synth.cancel();
       const utterance = new window.SpeechSynthesisUtterance(text);
-      utterance.lang = speechLangFor(
-        text,
-        latest.current.langFallback ?? DEFAULT_SPEECH_LANG,
-      );
+      utterance.lang = lang;
       const finish = () => {
         if (token !== l.speakToken || !l.enabled) return;
         if (l.watchdog) clearTimeout(l.watchdog);
@@ -276,6 +309,52 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
     [arm, setPhase],
   );
 
+  const speak = useCallback(
+    (markdown: string) => {
+      const l = live.current;
+      const text = speakableMinkText(markdown);
+      if (!text) {
+        void arm();
+        return;
+      }
+      const token = ++l.speakToken;
+      if (l.watchdog) clearTimeout(l.watchdog);
+      l.watchdog = null;
+      l.speechAbort?.abort();
+      const lang = speechLangFor(
+        text,
+        latest.current.langFallback ?? DEFAULT_SPEECH_LANG,
+      );
+      if (l.serverSpeech !== "on" || !l.player) {
+        speakWithBrowser(text, lang, token);
+        return;
+      }
+      // "Thinking…" until the first audio is ready, then "Speaking…".
+      const controller = new AbortController();
+      l.speechAbort = controller;
+      void playMinkServerSpeech({
+        text,
+        lang,
+        player: l.player,
+        signal: controller.signal,
+        onStart: () => {
+          if (token === l.speakToken && l.enabled) setPhase("speaking");
+        },
+      }).then((result) => {
+        if (token !== l.speakToken || !l.enabled) return;
+        if (l.speechAbort === controller) l.speechAbort = null;
+        if (result.outcome === "cancelled") return;
+        if (result.outcome === "done") {
+          void arm();
+          return;
+        }
+        if (result.outcome === "off") l.serverSpeech = "off";
+        speakWithBrowser(result.remaining, lang, token);
+      });
+    },
+    [arm, setPhase, speakWithBrowser],
+  );
+
   const toggle = useCallback(() => {
     const l = live.current;
     if (l.enabled) {
@@ -293,6 +372,26 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
     l.spokenIds = new Set();
     l.baselineError = error;
     l.empties = 0;
+    if (!l.player && typeof window.Audio === "function") {
+      try {
+        l.player = new window.Audio();
+      } catch {
+        l.player = null;
+      }
+    }
+    if (l.player) unlockPlayer(l.player);
+    l.serverSpeech = "unknown";
+    // Asked now, while the merchant is still speaking, so the first answer
+    // already knows which voice to use.
+    void fetch("/api/mink/speech", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { enabled?: unknown } | null) => {
+        if (l.serverSpeech === "unknown")
+          l.serverSpeech = data?.enabled === true ? "on" : "off";
+      })
+      .catch(() => {
+        if (l.serverSpeech === "unknown") l.serverSpeech = "off";
+      });
     setEnabled(true);
     void arm();
   }, [arm, stop]);

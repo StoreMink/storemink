@@ -1,5 +1,4 @@
 import type { MinkSelectedResource } from "./types";
-import { isMinkReplyLanguage, type MinkReplyLanguage } from "./reply-language";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -8,7 +7,6 @@ export interface MinkPageContextInput {
   currentPath?: unknown;
   selectedResource?: unknown;
   screen?: unknown;
-  replyLanguage?: unknown;
 }
 
 /** What the merchant can see, bounded on the server before anything reads it. */
@@ -27,7 +25,6 @@ export interface MinkPageContext {
   currentPath: string | null;
   selectedResource: MinkSelectedResource | null;
   screen: MinkScreenContext | null;
-  replyLanguage: MinkReplyLanguage;
 }
 
 const SCREEN_LIMITS = {
@@ -172,13 +169,9 @@ export function normalizeMinkPageContext(
       selectedResource = { type: row.type, id: row.id };
     }
   }
-  const replyLanguage = isMinkReplyLanguage(input?.replyLanguage)
-    ? input.replyLanguage
-    : "auto";
   return {
     currentPath,
     selectedResource,
     screen: normalizeMinkScreenContext(input?.screen),
-    replyLanguage,
   };
 }

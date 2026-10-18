@@ -37,12 +37,6 @@ import { MinkAnswer } from "./mink-answer";
 import { openMinkNavigation } from "./mink-artifacts";
 import { suggestMinkFollowUps } from "@/lib/mink/follow-ups";
 import { MEMORY_KIND_LABELS } from "@/lib/mink/memory-suggestion";
-import {
-  MINK_REPLY_LANGUAGES,
-  readStoredMinkReplyLanguage,
-  storeMinkReplyLanguage,
-  type MinkReplyLanguage,
-} from "@/lib/mink/reply-language";
 import { MinkLink } from "./mink-link";
 import type { MinkMemoryPrompt } from "./mink-ai";
 import {
@@ -1170,11 +1164,6 @@ export function DashboardChat({
 function MinkHeaderMenu({ onNavigate }: { onNavigate: () => void }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  // Lazy, not an effect: the menu only ever renders on the client, inside an
-  // open panel, so the stored choice can be read on first render.
-  const [replyLanguage, setReplyLanguage] = useState<MinkReplyLanguage>(() =>
-    typeof window === "undefined" ? "auto" : readStoredMinkReplyLanguage(),
-  );
 
   useEffect(() => {
     if (!open) return;
@@ -1233,27 +1222,6 @@ function MinkHeaderMenu({ onNavigate }: { onNavigate: () => void }) {
           >
             Watches
           </Link>
-          <label className="block px-3 pb-2 pt-2 text-[11px] text-[#6f6a8a]">
-            <span className="mb-1 block font-semibold uppercase tracking-wide">
-              Reply language
-            </span>
-            <select
-              aria-label="Reply language"
-              value={replyLanguage}
-              onChange={(event) => {
-                const next = event.target.value as MinkReplyLanguage;
-                setReplyLanguage(next);
-                storeMinkReplyLanguage(next);
-              }}
-              className="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#1a1a1a]"
-            >
-              {MINK_REPLY_LANGUAGES.map((entry) => (
-                <option key={entry.code} value={entry.code}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
       )}
     </div>

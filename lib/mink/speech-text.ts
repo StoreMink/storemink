@@ -188,3 +188,58 @@ export function speechLangFor(text: string, fallback: string): string {
   }
   return best.count > 0 ? best.lang : safeFallback;
 }
+
+const SENTENCE = /[^.!?।॥]+(?:[.!?।॥]+["'”’)\]]*|$)\s*/g;
+
+function splitLong(sentence: string, max: number): string[] {
+  const parts: string[] = [];
+  let rest = sentence.trim();
+  while (rest.length > max) {
+    const cut = rest.lastIndexOf(" ", max);
+    const at = cut > max / 2 ? cut : max;
+    parts.push(rest.slice(0, at).trim());
+    rest = rest.slice(at).trim();
+  }
+  if (rest) parts.push(rest);
+  return parts;
+}
+
+/**
+ * An answer split for a read-aloud model, at sentence boundaries: a short
+ * first piece (≤ `firstMax`) so the first words play quickly, then pieces of
+ * up to `restMax` fetched while the one before is playing. A sentence longer
+ * than its piece is cut at a space. Every character of `text` reaches exactly
+ * one piece, in order.
+ */
+export function splitSpeechChunks(
+  text: string,
+  firstMax = 160,
+  restMax = 600,
+): string[] {
+  const clean =
+    typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
+  if (!clean) return [];
+  const sentences = (clean.match(SENTENCE) ?? [clean])
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const chunks: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    const max = chunks.length === 0 ? firstMax : restMax;
+    const joined = current ? `${current} ${sentence}` : sentence;
+    if (joined.length <= max) {
+      current = joined;
+      continue;
+    }
+    if (current) {
+      chunks.push(current);
+      current = "";
+    }
+    const limit = chunks.length === 0 ? firstMax : restMax;
+    const pieces = splitLong(sentence, Math.max(limit, 1));
+    current = pieces.pop() ?? "";
+    chunks.push(...pieces);
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}

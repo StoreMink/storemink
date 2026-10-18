@@ -4,6 +4,7 @@ import {
   SPEAKABLE_MAX_CHARS,
   speakableMinkText,
   speechLangFor,
+  splitSpeechChunks,
 } from "./speech-text";
 
 describe("speakableMinkText", () => {
@@ -116,5 +117,40 @@ describe("speechLangFor", () => {
       ),
     ).toBe("en-IN");
     expect(speechLangFor("Order आपका ऑर्डर तैयार है।", "en-IN")).toBe("hi-IN");
+  });
+});
+
+describe("splitSpeechChunks", () => {
+  it("keeps a short answer whole", () => {
+    expect(splitSpeechChunks("You have 12 orders today.")).toEqual([
+      "You have 12 orders today.",
+    ]);
+    expect(splitSpeechChunks("   ")).toEqual([]);
+  });
+
+  it("starts with a short piece, then packs sentences, losing nothing", () => {
+    const sentences = Array.from(
+      { length: 12 },
+      (_, i) => `Sentence number ${i + 1} tells you something useful today.`,
+    );
+    const text = sentences.join(" ");
+    const pieces = splitSpeechChunks(text, 120, 300);
+    expect(pieces[0].length).toBeLessThanOrEqual(120);
+    for (const piece of pieces.slice(1))
+      expect(piece.length).toBeLessThanOrEqual(300);
+    expect(pieces.join(" ")).toBe(text);
+    expect(pieces.length).toBeGreaterThan(2);
+  });
+
+  it("splits at the danda and cuts an overlong sentence at a space", () => {
+    expect(splitSpeechChunks("आज पाँच ऑर्डर आए। कल तीन आए।", 20, 40)).toEqual([
+      "आज पाँच ऑर्डर आए।",
+      "कल तीन आए।",
+    ]);
+    const long = "word ".repeat(80).trim();
+    const pieces = splitSpeechChunks(long, 50, 100);
+    expect(pieces.every((piece) => piece.length <= 100)).toBe(true);
+    expect(pieces.every((piece) => !piece.startsWith(" "))).toBe(true);
+    expect(pieces.join(" ")).toBe(long);
   });
 });

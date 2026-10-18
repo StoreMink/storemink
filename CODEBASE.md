@@ -536,21 +536,23 @@ editors (`offers/offer-form.tsx`, `categories/categories-management-view`
   channel is off. ★ `pick()` in form-prefill keeps an explicit camelCase
   `null` (`freeAbove: null` means clear the threshold); `??` dropped it on
   the round trip.
-  ★ REPLY LANGUAGE. `lib/mink/reply-language.ts` is a closed list (match my
-  message, English, Hindi, Hinglish, Tamil, Telugu, Kannada, Marathi, Bengali,
-  Gujarati, Malayalam, Punjabi) chosen from the panel's overflow menu, kept in
-  localStorage, sent as `context.replyLanguage`, validated again on the
-  server and rendered into the trusted context through the new
-  `{{reply_language}}` placeholder. The chrome stays English; the answers
-  follow the choice, with StoreMink's own labels, product names and codes
-  kept as they appear.
+  ★ REPLY LANGUAGE WAS REMOVED (2026-10-18, owner's request). There is no
+  menu choice any more: the prompt tells Mink to answer in the language and
+  script of the merchant's latest message, typed or spoken, switching when
+  they switch (Hinglish in Latin letters gets Hinglish, Devanagari gets
+  Devanagari). `lib/mink/reply-language.ts`, `context.replyLanguage` and the
+  `{{reply_language}}` placeholder are gone; a tab opened before the change
+  that still sends `replyLanguage` is ignored by `normalizeMinkPageContext`.
+  Prompt versions `read-beta-v32` / `draft-action-beta-v53`. Help: `0227`.
   ★ VOICE CHAT (`app/dashboard/mink-voice-mode.ts`, `lib/mink/speech-text.ts`,
   the composer). A "Talk with Mink" toggle (`aria-pressed`) beside the mic
   runs a hands-free loop: the existing dictation (the recorder plus
   `/api/mink/voice`) listens, the transcript is sent through the composer's
   own submit path (so limits and attachments apply, and a refused send leaves
-  the words in the box), the newest assistant answer is read aloud with
-  `window.speechSynthesis`, and the end of speech re-arms the mic. The hook
+  the words in the box), the newest assistant answer is read aloud, and the
+  end of speech re-arms the mic. ★ READ ALOUD BY A MODEL WHEN THE OPERATOR
+  SAYS SO (2026-10-18): see "Global Mink voice provider"; otherwise, and for
+  anything a model could not play, `window.speechSynthesis`. The hook
   is a state machine (idle, listening, sending, waiting, speaking) and only
   ever speaks a reply to something sent while the mode was on: restored
   history, an error and an answer that predates the toggle stay silent. A
@@ -3392,8 +3394,40 @@ handoff; it adds no Help Centre section.
 
 ### Global Mink voice provider (2026-09-14)
 
-The Mink runs page in the platform operator console contains one global binary
-switch between Google Chirp 3 and Sarvam Saaras v4. The selection is stored in
+★★ AND A READ-ALOUD MODEL (2026-10-18, owner's request). Below the
+speech-to-text switch, a "Text-to-speech model" card
+(`speech-provider-switch.tsx`, `setMinkSpeechSettings`, superadmin only)
+holds two segmented choices: the first, Browser voice or Text-to-speech model,
+decides whether a model reads voice chat answers at all
+(`mink_voice_settings.speech_enabled`, default off: each merchant's browser
+voice, as before), the second, live only while a model is chosen, picks **Gemini 3.8 Flash-Lite TTS** (`gemini-3.8-flash-lite-tts`,
+Vertex `global`, Preview, voice `Kore`) or **Sarvam Bulbul V4 Flash**
+(`bulbul:v4-flash`, MP3, one conversational or customer-service voice per
+language in `BULBUL_V4_FLASH_SPEAKERS`; Malayalam and Odia have no V4 Flash
+voice and fall back to the browser) in `speech_provider` (migration
+`0226`). `lib/mink/speech-synthesis.ts` makes the audio (no SDK: REST with
+ADC, and `SARVAM_API_KEY`, both already deployed; optional
+`MINK_TTS_GEMINI_MODEL` (same family only) and `MINK_TTS_GEMINI_VOICE`).
+`POST /api/mink/speech` reads one stretch (≤1,000 characters) for the
+signed-in admin: same-origin, Mink enabled, 60 a minute per admin and 600 an
+hour per store, no credits (like dictation), text never logged. It answers
+204 with `X-Mink-Speech: off` when no model is on and `unsupported` for a
+language the model has no voice for; `GET` says whether a model is on and is
+asked once as voice chat starts. The browser (`mink-speech-player.ts`) splits
+an answer at sentences (`splitSpeechChunks`: a ≤160-character first piece,
+then ≤600) and fetches the next piece while one plays, through one audio
+element unlocked on the toggle click (iOS plays audio only from a gesture);
+any piece the model cannot deliver or the browser refuses to play, and
+everything after it, is read by `speechSynthesis`. Verified live 2026-10-18 on
+storemink-staging: Gemini answered a Hindi sentence as a 24 kHz WAV in about
+3 to 5 s. ⚠ Bulbul has not been called live from here (its key lives only in
+the Cloud Build trigger); its request follows Sarvam's reference.
+
+The Mink runs page in the platform operator console contains one global choice
+between Google Chirp 3 and Sarvam Saaras v4 (a segmented choice,
+`segmented-choice.tsx`, since 2026-10-18: an on/off switch left the Chirp side
+looking switched off to a new operator, so every option is named and the one in
+use is filled violet; a saved choice that is not in use is shown grey). The selection is stored in
 the service-only singleton `mink_voice_settings`; there is no per-store override.
 `app/actions/mink-operator-actions.ts` restricts changes to platform
 superadmins, and `POST /api/mink/voice` resolves the singleton for every request,
@@ -6414,7 +6448,10 @@ wholesip/
 │                              # 0224 moves scenes to Mink chat in the product-images
 │                              # guide (the editor's scene form was removed; 0222's
 │                              # table is unused). 0225 edits the Mink guide's two
-│                              # dictation sentences for the Done button. Next free: 0226.
+│                              # dictation sentences for the Done button. 0226 adds
+│                              # mink_voice_settings.speech_enabled/speech_provider
+│                              # (read-aloud model); 0227 edits the Mink guide's
+│                              # reply-language sentence. Next free: 0228.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

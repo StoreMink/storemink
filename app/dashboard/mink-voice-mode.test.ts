@@ -10,6 +10,15 @@ import {
   type MinkVoiceModeInput,
 } from "./mink-voice-mode";
 
+const speechPlayer = vi.hoisted(() => ({
+  play: vi.fn(),
+  silent: vi.fn(() => "blob:silent"),
+}));
+vi.mock("./mink-speech-player", () => ({
+  playMinkServerSpeech: speechPlayer.play,
+  silentWavUrl: speechPlayer.silent,
+}));
+
 class FakeUtterance {
   text: string;
   lang = "";
@@ -437,5 +446,73 @@ describe("useMinkVoiceMode", () => {
     await act(async () => result.current.toggle());
     expect(result.current.enabled).toBe(false);
     expect(input.listen).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ read-aloud model", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function speakOneAnswer(enabled: boolean) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ enabled }) })),
+    );
+    const input = makeInput();
+    const hook = renderHook(
+      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
+      { initialProps: input },
+    );
+    await act(async () => hook.result.current.toggle());
+    await act(async () => hook.result.current.reportTranscript("Sales?"));
+    hook.rerender({
+      ...input,
+      messages: [...input.messages, assistant("a1", "Sales are **up**.")],
+    });
+    return { ...hook, input };
+  }
+
+  it("plays the answer through the model, Thinking until the audio starts", async () => {
+    let finish!: (value: unknown) => void;
+    speechPlayer.play.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const { result, input } = await speakOneAnswer(true);
+    expect(speechPlayer.play).toHaveBeenCalledOnce();
+    const call = speechPlayer.play.mock.calls[0][0];
+    expect(call.text).toBe("Sales are up.");
+    expect(call.lang).toBe("en-IN");
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(result.current.state).toBe("waiting");
+    act(() => call.onStart());
+    expect(result.current.state).toBe("speaking");
+    await act(async () => finish({ outcome: "done" }));
+    expect(input.listen).toHaveBeenCalledTimes(2);
+    expect(result.current.state).toBe("listening");
+  });
+
+  it("lets the browser voice read whatever the model could not", async () => {
+    speechPlayer.play.mockResolvedValue({
+      outcome: "browser",
+      remaining: "Sales are up.",
+    });
+    await speakOneAnswer(true);
+    await act(async () => {});
+    expect(synth.speak).toHaveBeenCalledOnce();
+    expect(lastUtterance().text).toBe("Sales are up.");
+  });
+
+  it("uses the browser voice straight away when no model is on", async () => {
+    await speakOneAnswer(false);
+    expect(speechPlayer.play).not.toHaveBeenCalled();
+    expect(synth.speak).toHaveBeenCalledOnce();
+  });
+
+  it("stopping voice chat cancels model playback", async () => {
+    speechPlayer.play.mockImplementation(() => new Promise(() => {}));
+    const { result } = await speakOneAnswer(true);
+    const { signal } = speechPlayer.play.mock.calls[0][0];
+    expect(signal.aborted).toBe(false);
+    await act(async () => result.current.toggle());
+    expect(signal.aborted).toBe(true);
   });
 });

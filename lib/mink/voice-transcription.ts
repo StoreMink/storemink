@@ -33,7 +33,7 @@ function cleanTranscript(value: unknown): string {
  * to parse is simply omitted — a diagnostic must never be able to fail the call
  * it is describing.
  */
-async function refusalReason(response: Response): Promise<string> {
+export async function refusalReason(response: Response): Promise<string> {
   try {
     const body = (await response.text()).slice(0, 4_000);
     const parsed = JSON.parse(body) as {
@@ -53,7 +53,7 @@ async function refusalReason(response: Response): Promise<string> {
   }
 }
 
-async function googleAccessToken(): Promise<string> {
+export async function googleAccessToken(): Promise<string> {
   const { GoogleAuth } = await import("google-auth-library");
   const auth = new GoogleAuth({
     scopes: "https://www.googleapis.com/auth/cloud-platform",
