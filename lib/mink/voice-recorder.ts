@@ -17,12 +17,25 @@ function chunkRms(chunk: Float32Array): number {
   for (const sample of chunk) energy += sample * sample;
   return Math.sqrt(energy / chunk.length);
 }
-/** Browser-only microphone lifecycle. Tracks close on every success/error/cancel path. */
+/**
+ * Browser-only microphone lifecycle. Tracks close on every success/error/cancel path.
+ *
+ * ★ A PAUSE ENDS VOICE CHAT, NOT DICTATION. The hands-free loop has no button
+ * to press, so it needs the silence detector; dictation is finished with the
+ * composer's Done button, the way ChatGPT and Claude dictate, so stopping to
+ * think mid-sentence does not cut the merchant off. `endOnSilence: false`
+ * keeps the 30-second cap, which still finishes and transcribes.
+ *
+ * `onLevel` receives each chunk's loudness (RMS, 0 to 1) for the live
+ * waveform. It runs about 125 times a second, so it must not set React state.
+ */
 export async function startMinkRecording(
   signal: AbortSignal,
   done: (file: File | null) => void,
   progress: (seconds: number) => void,
+  options: { endOnSilence?: boolean; onLevel?: (level: number) => void } = {},
 ) {
+  const endOnSilence = options.endOnSilence ?? true;
   if (
     !window.isSecureContext ||
     !navigator.mediaDevices?.getUserMedia ||
@@ -101,17 +114,21 @@ export async function startMinkRecording(
       }
       chunks.push(chunk);
       total += chunk.length;
-      if (chunkRms(chunk) >= MINK_SPEECH_RMS_THRESHOLD) {
+      const rms = chunkRms(chunk);
+      if (rms >= MINK_SPEECH_RMS_THRESHOLD) {
         voicedSamples += chunk.length;
         lastSpeechSample = total;
       }
+      options.onLevel?.(rms);
       progress(Math.floor(total / MINK_AUDIO_RATE));
       const speechArmed =
         voicedSamples >= (MINK_AUDIO_RATE * MINK_MIN_SPEECH_MS) / 1_000;
       const silenceSamples = (MINK_AUDIO_RATE * MINK_END_SILENCE_MS) / 1_000;
       if (
         total >= MINK_AUDIO_RATE * MINK_AUDIO_SECONDS ||
-        (speechArmed && total - lastSpeechSample >= silenceSamples)
+        (endOnSilence &&
+          speechArmed &&
+          total - lastSpeechSample >= silenceSamples)
       )
         stop(true);
     };

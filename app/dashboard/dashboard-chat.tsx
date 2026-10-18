@@ -255,6 +255,10 @@ export function DashboardChat({
   const autoAnchorSubmissionRef = useRef(true);
   const turnAnchorSpaceRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // A dictated transcript can arrive while the empty box is hidden behind the
+  // recorder, so focusing it inside onAdd misses; this retries after the
+  // render that shows it again.
+  const focusComposerAfterAdd = useRef(false);
   const deleteButtonRef = useRef<HTMLButtonElement>(null);
   const resizeRef = useRef<{
     pointerId: number;
@@ -511,8 +515,35 @@ export function DashboardChat({
     }
   };
 
+  useEffect(() => {
+    if (!focusComposerAfterAdd.current) return;
+    focusComposerAfterAdd.current = false;
+    composerRef.current?.focus();
+  }, [input]);
+
   if (!isChatOpen) return null;
   if (isOverlay !== isExpanded) return null;
+
+  const stopReply = (
+    <button
+      type="button"
+      onClick={cancel}
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] text-white"
+      aria-label="Stop Mink AI"
+    >
+      <Square className="h-4 w-4 fill-current" />
+    </button>
+  );
+  const sendButton = (
+    <button
+      type="submit"
+      disabled={!input.trim() || isHistoryLoading}
+      className="flex h-9 w-9 items-center justify-center rounded-full bg-[#6d4dff] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
+      aria-label="Send message"
+    >
+      <ArrowUp className="h-4 w-4" />
+    </button>
+  );
 
   const hasThread = messages.length > 0 || isReplying || Boolean(error);
   const creditWarning = minkCredits ? minkCreditWarning(minkCredits) : null;
@@ -878,13 +909,21 @@ export function DashboardChat({
                 message={input}
                 onAdd={(value) => {
                   setInput(value);
+                  focusComposerAfterAdd.current = true;
                   composerRef.current?.focus();
                 }}
                 disabled={isReplying || isHistoryLoading}
                 canSaveMedia={canSaveMedia}
                 onSubmit={sendFromChat}
               >
-                {({ attach, attachment, voice, submit }) => (
+                {({
+                  attach,
+                  attachment,
+                  voice,
+                  submit,
+                  recorder,
+                  recording,
+                }) => (
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
@@ -1004,33 +1043,24 @@ export function DashboardChat({
                       autoComplete="off"
                       autoCapitalize="sentences"
                       autoCorrect="on"
-                      className="min-h-6 max-h-40 w-full min-w-0 resize-none border-none bg-transparent px-2 py-0.5 text-base leading-6 text-[#1a1a1a] outline-none placeholder:text-[#8c9196] sm:text-sm sm:leading-5"
+                      className={`min-h-6 max-h-40 w-full min-w-0 resize-none border-none bg-transparent px-2 py-0.5 text-base leading-6 text-[#1a1a1a] outline-none placeholder:text-[#8c9196] sm:text-sm sm:leading-5 ${
+                        recording === "dictation" && !input ? "hidden" : ""
+                      }`}
                     />
-                    <div className="flex w-full items-center justify-between">
-                      {attach}
-                      <div className="flex items-center gap-2">
-                        {voice}
-                        {isReplying ? (
-                          <button
-                            type="button"
-                            onClick={cancel}
-                            className="flex h-9 w-9 items-center justify-center rounded-full bg-[#1a1a1a] text-white"
-                            aria-label="Stop Mink AI"
-                          >
-                            <Square className="h-4 w-4 fill-current" />
-                          </button>
-                        ) : (
-                          <button
-                            type="submit"
-                            disabled={!input.trim() || isHistoryLoading}
-                            className="flex h-9 w-9 items-center justify-center rounded-full bg-[#6d4dff] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
-                            aria-label="Send message"
-                          >
-                            <ArrowUp className="h-4 w-4" />
-                          </button>
-                        )}
+                    {recording ? (
+                      <div className="flex w-full min-w-0 items-center gap-2">
+                        {recorder}
+                        {recording === "voice" && isReplying ? stopReply : null}
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex w-full items-center justify-between">
+                        {attach}
+                        <div className="flex items-center gap-2">
+                          {voice}
+                          {isReplying ? stopReply : sendButton}
+                        </div>
+                      </div>
+                    )}
                   </form>
                 )}
               </MinkMultimodalInput>

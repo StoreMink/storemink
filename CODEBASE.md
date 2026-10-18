@@ -2146,15 +2146,21 @@ item is never cropped or overwritten; an already-correct ratio is reused. The
 proposal and later approval bind the prepared URL, so the merchant is never
 sent away to resize or reupload it.
 `lib/mink/voice-recorder.ts` captures one canonical mono 16 kHz PCM WAV locally.
-After speech begins, 1.2 seconds of sustained silence finishes the utterance;
-the 30-second cap remains a stalled-audio fallback. The temporary recording is
+★★ DICTATION IS FINISHED WITH DONE, ChatGPT/Claude-style (2026-10-18, owner's
+request): the mic replaces the composer's toolbar row with a live waveform
+(`app/dashboard/mink-waveform.tsx`, painted from a decaying loudness peak in a
+ref, never React state), a clock, Cancel and Done, and the empty text box hides
+until the transcript lands; the full-width "Listening… pause when you are
+finished" bar is gone. A pause no longer ends dictation (`endOnSilence: false`);
+only voice chat, which has no button to press, still ends a turn after 1.2
+seconds of silence. The 30-second cap still finishes and transcribes. Voice chat
+shows the same waveform with its status and End in the same row. The temporary recording is
 sent to `POST /api/mink/voice`; the route authenticates the current store,
 applies the shared input quotas, validates the real WAV bytes and reads the
 platform-wide voice provider before making one transcription request. The
 composer inserts the single final transcript once, after processing, so cumulative interim
-browser results cannot repeat phrases. Text typed during recording is preserved,
-the merchant does not have to press Stop or Finish, and Cancel aborts the
-recording or request without changing the message.
+browser results cannot repeat phrases. Text typed before recording is preserved,
+and Cancel aborts the recording or request without changing the message.
 Every newly submitted turn is anchored with its user question near the top of
 the contained message viewport while Mink works, with temporary tail room so
 the browser can establish that position before a long answer exists.
@@ -6407,7 +6413,8 @@ wholesip/
 │                              # edits the Mink and product-images guides for them.
 │                              # 0224 moves scenes to Mink chat in the product-images
 │                              # guide (the editor's scene form was removed; 0222's
-│                              # table is unused). Next free: 0225.
+│                              # table is unused). 0225 edits the Mink guide's two
+│                              # dictation sentences for the Done button. Next free: 0226.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

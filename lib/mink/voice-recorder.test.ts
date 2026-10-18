@@ -155,6 +155,43 @@ describe("microphone privacy lifecycle", () => {
     );
     expect(h.stop).toHaveBeenCalledOnce();
   });
+  it("keeps dictating through a pause when the caller finishes it by hand", async () => {
+    const done = vi.fn();
+    const stop = await startMinkRecording(
+      new AbortController().signal,
+      done,
+      vi.fn(),
+      { endOnSilence: false },
+    );
+    h.node.port.onmessage?.({ data: new Float32Array(3200).fill(0.08) });
+    h.node.port.onmessage?.({ data: new Float32Array(19200) });
+    expect(done).not.toHaveBeenCalled();
+    expect(h.stop).not.toHaveBeenCalled();
+    stop();
+    expect(done).toHaveBeenCalledOnce();
+    expect(done).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "voice-note.wav", type: "audio/wav" }),
+    );
+  });
+  it("still finishes a hand-finished dictation at the time cap", async () => {
+    const done = vi.fn();
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      endOnSilence: false,
+    });
+    h.node.port.onmessage?.({ data: new Float32Array(3200).fill(0.08) });
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(done).toHaveBeenCalledOnce();
+  });
+  it("reports each chunk's loudness for the waveform", async () => {
+    const onLevel = vi.fn();
+    await startMinkRecording(new AbortController().signal, vi.fn(), vi.fn(), {
+      onLevel,
+    });
+    h.node.port.onmessage?.({ data: new Float32Array(128).fill(0.5) });
+    h.node.port.onmessage?.({ data: new Float32Array(128) });
+    expect(onLevel).toHaveBeenNthCalledWith(1, 0.5);
+    expect(onLevel).toHaveBeenNthCalledWith(2, 0);
+  });
   it("does not finish from silence before the user has spoken", async () => {
     const done = vi.fn();
     await startMinkRecording(new AbortController().signal, done, vi.fn());
