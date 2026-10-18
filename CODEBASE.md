@@ -334,7 +334,14 @@ disclaimer paragraph are gone; `proposalRollbackNote` is one sentence.
 failure leaves the history untouched and the retry is safe.
 ★ LINKS STAY INSIDE THE APP: `app/dashboard/mink-link.tsx` renders a Next
 `Link` for `/dashboard` hrefs (every card file uses it), so the open panel
-survives a click. `open_dashboard_page` (`tools/navigation-tools.ts`,
+survives a click. ★ A plain click on any `/dashboard` link inside the chat
+(an answer, a card, a menu) collapses the full view to the side panel, and
+closes the chat under 640px (`isMinkInAppLinkClick`, a capture-phase
+listener on the chat surface in `dashboard-chat.tsx`), because the full view
+covers the dashboard and the page used to open unseen behind it, so the
+link looked broken (2026-10-18). New-tab, modified and download clicks and
+links off the dashboard leave the chat as it is; the desktop side panel stays
+open beside the page. `open_dashboard_page` (`tools/navigation-tools.ts`,
 dashboard:view, a closed destination map re-checked against the viewer's
 sections, product by id or SKU, order by reference) emits a `navigation`
 artifact the panel opens itself for a LIVE message (never restored

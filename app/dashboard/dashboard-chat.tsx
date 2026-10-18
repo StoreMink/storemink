@@ -28,6 +28,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent,
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -158,6 +159,49 @@ export function shouldSubmitMinkComposer(input: {
   return input.key === "Enter" && !input.shiftKey && !input.isComposing;
 }
 
+/**
+ * ★★ A LINK THE MERCHANT FOLLOWS LEAVES THE FULL VIEW, as a navigation
+ * artifact does. MinkLink keeps the click client-side so the chat survives
+ * it, but the full view covers the whole dashboard, so the page opened
+ * BEHIND the takeover and a merchant clicking an order reference saw nothing
+ * change and read the link as broken. Only a plain left click on a
+ * same-origin `/dashboard` link counts: a new-tab or modified click, a
+ * download, and a link to the storefront or Help leave the chat as it is.
+ */
+export function isMinkInAppLinkClick(
+  event: {
+    target: EventTarget | null;
+    button: number;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+  },
+  origin: string,
+) {
+  if (event.button !== 0) return false;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return false;
+  }
+  const target = event.target;
+  if (!(target instanceof Element)) return false;
+  const anchor = target.closest("a[href]");
+  if (!anchor) return false;
+  const opensIn = anchor.getAttribute("target");
+  if (opensIn && opensIn !== "_self") return false;
+  if (anchor.hasAttribute("download")) return false;
+  let url: URL;
+  try {
+    url = new URL(anchor.getAttribute("href") ?? "", origin);
+  } catch {
+    return false;
+  }
+  if (url.origin !== origin) return false;
+  return (
+    url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")
+  );
+}
+
 // Two surfaces, one conversation (state lives in ChatProvider):
 //  - "panel"   → the resizable right sheet opened from the topbar
 //  - "overlay" → the full-view takeover opened from Home/maximize
@@ -257,6 +301,15 @@ export function DashboardChat({
     if (window.innerWidth < 640) closeChat();
     else if (isExpanded) toggleExpand();
   }, [messages, router, isExpanded, toggleExpand, closeChat, showSpotlight]);
+
+  // Capture phase: MinkLink's own click handler (next/link) cancels the
+  // browser default on the way back up, so a bubbling listener cannot tell a
+  // followed link from one that did nothing.
+  const leaveForLinkedPage = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!isMinkInAppLinkClick(event, window.location.origin)) return;
+    if (window.innerWidth < 640) closeChat();
+    else if (isExpanded) toggleExpand();
+  };
 
   useEffect(() => {
     if (!isOverlay || !isChatOpen || !isExpanded) return;
@@ -483,6 +536,7 @@ export function DashboardChat({
       data-testid="mink-chat-surface"
       className={wrapperClass}
       style={panelStyle}
+      onClickCapture={leaveForLinkedPage}
     >
       {!isOverlay && (
         <div
