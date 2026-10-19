@@ -1930,6 +1930,14 @@ function repeatSafe(tool: MinkTool): MinkTool {
   return { ...tool, repeatSafe: true };
 }
 
+/**
+ * Harmless to run again in a restarted attempt, though not to serve from the
+ * memo (registry.ts `restartSafe`).
+ */
+function restartSafe(tool: MinkTool): MinkTool {
+  return { ...tool, restartSafe: true };
+}
+
 export const minkReadToolRegistry = new MinkToolRegistry([
   // ★ `repeatSafe(...)` marks a PURE read: same arguments, same answer, no side
   // effect, so the orchestrator may serve a repeat from its per-run memo.
@@ -1965,9 +1973,11 @@ export const minkReadToolRegistry = new MinkToolRegistry([
   repeatSafe(listOrdersTool),
   repeatSafe(currentOrderTool),
   repeatSafe(searchHelpCentreTool),
-  // ⚠ Unmarked: a navigation is something the panel ACTS on, so a repeated
-  // identical call must reach the client each time rather than the memo.
-  openDashboardPage,
+  // ⚠ Not repeat-safe: a navigation is something the panel ACTS on, so a
+  // repeated identical call must reach the client each time rather than the
+  // memo. ★ Restart-safe: the panel acts only on the FINAL message's
+  // artifacts, so a navigation from an abandoned attempt is never opened.
+  restartSafe(openDashboardPage),
   // ⚠ Unmarked: these create proposals, charge credits, or generate an image
   // that costs real money per call.
   ...minkDraftTools,

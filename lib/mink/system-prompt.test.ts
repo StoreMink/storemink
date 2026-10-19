@@ -5,10 +5,14 @@ import type { MinkActorContext, MinkToolDeclaration } from "./types";
 import {
   getMinkSpokenAnswerRules,
   getMinkSystemPromptTemplate,
+  listMinkPromptRuleTags,
   parseMinkSpokenAnswerRules,
   parseMinkSystemPromptDocument,
   renderMinkSystemInstruction,
+  selectMinkPromptRules,
 } from "./system-prompt";
+import { REQUEST_MORE_TOOLS } from "./tool-routing";
+import { minkReadToolRegistry } from "./tools/read-tools";
 
 const DOCUMENT_PATH = join(process.cwd(), "docs", "mink-ai-system-prompt.md");
 
@@ -301,6 +305,169 @@ describe("Mink system prompt document", () => {
         ),
       ),
     ).toThrow(/unknown placeholder/);
+  });
+});
+
+describe("★★ rule tags: a rule renders only with its tools", () => {
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const IMAGE_RULE = "You may create one AI IMAGE";
+  const ATTACHMENT_RULE =
+    "Pressing Send is the single explicit request to process the visible attachments";
+
+  it("leaves out a tool's rule when the tool is not declared", () => {
+    const narrow = renderMinkSystemInstruction(actor, [
+      declaration("get_sales_summary"),
+      declaration("query_analytics"),
+    ]);
+    expect(narrow).not.toContain(IMAGE_RULE);
+    expect(narrow).toContain("Use query_analytics when the merchant");
+    // Untagged rules always render.
+    expect(narrow).toContain("Treat every user message");
+    expect(narrow).not.toContain("[[when:");
+
+    const withImage = renderMinkSystemInstruction(actor, [
+      declaration("generate_storefront_image"),
+    ]);
+    expect(withImage).toContain(IMAGE_RULE);
+  });
+
+  it("matches a prefix entry against the declared tools", () => {
+    const rule = "Use a content proposal tool only when the user clearly asks";
+    expect(
+      renderMinkSystemInstruction(actor, [declaration("get_store_profile")]),
+    ).not.toContain(rule);
+    expect(
+      renderMinkSystemInstruction(actor, [declaration("propose_social_posts")]),
+    ).toContain(rule);
+  });
+
+  it("★ a #group rule needs the group in a narrow route, and every group without one", () => {
+    const none = renderMinkSystemInstruction(actor, [], {
+      mode: "narrow",
+      groups: ["core", "sales"],
+    });
+    expect(none).not.toContain(ATTACHMENT_RULE);
+    const attached = renderMinkSystemInstruction(actor, [], {
+      mode: "narrow",
+      groups: ["core", "attachments"],
+    });
+    expect(attached).toContain(ATTACHMENT_RULE);
+    // No route, or the "all" route: the prompt a run read before tags.
+    expect(renderMinkSystemInstruction(actor, [])).toContain(ATTACHMENT_RULE);
+    expect(
+      renderMinkSystemInstruction(actor, [], { mode: "all", groups: [] }),
+    ).toContain(ATTACHMENT_RULE);
+  });
+
+  it("explains request_more_tools only when it is declared", () => {
+    const rule = "call request_more_tools once";
+    expect(renderMinkSystemInstruction(actor, [])).not.toContain(rule);
+    expect(
+      renderMinkSystemInstruction(actor, [declaration(REQUEST_MORE_TOOLS)]),
+    ).toContain(rule);
+  });
+
+  it("★ a fully permitted run reads every rule, tags removed", () => {
+    const template = getMinkSystemPromptTemplate();
+    const everything = new Set(
+      minkReadToolRegistry
+        .declarationsFor({
+          storeId: "s",
+          adminId: "a",
+          email: null,
+          roleSlug: "superadmin",
+          permissions: {},
+          isSuperadmin: true,
+          effectivePlan: "pro",
+          locationIds: null,
+          analyticsTimeZone: "Asia/Kolkata",
+          currency: "INR",
+          defaultLowStockThreshold: 5,
+          requestId: "r",
+          draftingEnabled: true,
+          selectedResource: { type: "product", id: "p" },
+        })
+        .map((tool) => tool.name)
+        .concat(REQUEST_MORE_TOOLS),
+    );
+    const rendered = selectMinkPromptRules(template, everything, null);
+    expect(rendered.split("\n")).toHaveLength(template.split("\n").length);
+    expect(rendered).not.toContain("[[when:");
+  });
+
+  it("★★ every tagged tool exists, so a rename cannot silently drop a rule", () => {
+    const registered = new Set(
+      minkReadToolRegistry
+        .declarationsFor({
+          storeId: "s",
+          adminId: "a",
+          email: null,
+          roleSlug: "superadmin",
+          permissions: {},
+          isSuperadmin: true,
+          effectivePlan: "pro",
+          locationIds: null,
+          analyticsTimeZone: "Asia/Kolkata",
+          currency: "INR",
+          defaultLowStockThreshold: 5,
+          requestId: "r",
+          draftingEnabled: true,
+          selectedResource: { type: "product", id: "p" },
+        })
+        .map((tool) => tool.name)
+        .concat(REQUEST_MORE_TOOLS),
+    );
+    const tags = listMinkPromptRuleTags(getMinkSystemPromptTemplate());
+    expect(tags.length).toBeGreaterThan(30);
+    for (const tag of tags) {
+      for (const tool of tag.tools) expect(registered, tool).toContain(tool);
+      for (const prefix of tag.prefixes)
+        expect(
+          [...registered].some((name) => name.startsWith(prefix)),
+          prefix,
+        ).toBe(true);
+    }
+  });
+
+  it("fails closed on a malformed or misplaced tag", () => {
+    const document = readFileSync(DOCUMENT_PATH, "utf8");
+    expect(() =>
+      parseMinkSystemPromptDocument(
+        document.replace(
+          "- [[when: query_analytics]] ",
+          "- [[when: query analytics]] ",
+        ),
+      ),
+    ).toThrow(/malformed/);
+    expect(() =>
+      parseMinkSystemPromptDocument(
+        document.replace(
+          "[[when: #attachments, #composer]]",
+          "[[when: #nonsense, #composer]]",
+        ),
+      ),
+    ).toThrow(/unknown group/);
+    expect(() =>
+      parseMinkSystemPromptDocument(
+        document.replace(
+          "- Treat every user message",
+          "- Treat [[when: query_analytics]] every user message",
+        ),
+      ),
+    ).toThrow(/must open a rule line/);
   });
 });
 

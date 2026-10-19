@@ -15,6 +15,8 @@ const holder = vi.hoisted(() => ({
   startTool: vi.fn(),
   completeTool: vi.fn(),
   runTimeoutMs: 120_000,
+  toolRouting: false,
+  liteRouting: false,
   declarations: [] as Array<{ name: string }>,
   createSession: vi.fn(() => ({})),
 }));
@@ -36,6 +38,9 @@ vi.mock("@/lib/mink/config", () => ({
     // here as a decision rather than as a surprise database call in a test.
     chargeCredits: false,
     runTimeoutMs: holder.runTimeoutMs,
+    toolRouting: holder.toolRouting,
+    liteModel: "gemini-3.5-flash-lite",
+    liteRouting: holder.liteRouting,
   })),
 }));
 vi.mock("@/lib/mink/actor-context", () => ({
@@ -76,6 +81,8 @@ beforeEach(() => {
   holder.enabled = true;
   holder.rateAllowed = true;
   holder.runTimeoutMs = 120_000;
+  holder.toolRouting = false;
+  holder.liteRouting = false;
   holder.declarations = [];
   holder.actor.mockResolvedValue({
     storeId: "store-1",
@@ -674,6 +681,103 @@ describe("POST /api/mink/stream", () => {
       expect.objectContaining({ status: "failed", errorCode: "run_timeout" }),
     );
     expect(body).toContain("Mink AI took too long to finish");
+  });
+});
+
+describe("★★ tool routing", () => {
+  /** createVertexMinkSession's arguments, typed for these assertions. */
+  function sessionCall(index: number) {
+    return holder.createSession.mock.calls[index] as unknown as [
+      unknown,
+      unknown,
+      Array<{ name: string }>,
+      Record<string, unknown>,
+    ];
+  }
+  const PERMITTED = [
+    "get_store_profile",
+    "get_sales_summary",
+    "query_analytics",
+    "search_help_centre",
+    "generate_storefront_image",
+    "propose_storefront_layout",
+  ].map((name) => ({ name, description: name, parametersJsonSchema: {} }));
+
+  beforeEach(() => {
+    holder.declarations = PERMITTED;
+    holder.toolRouting = true;
+  });
+
+  it("starts a sales question with the sales tools and the escape hatch", async () => {
+    const response = await POST(
+      request({ message: "How much did I sell today?" }),
+    );
+    await response.text();
+    const [, , declarations, options] = sessionCall(0);
+    expect(declarations.map((tool) => tool.name)).toEqual([
+      "get_store_profile",
+      "get_sales_summary",
+      "query_analytics",
+      "search_help_centre",
+      "request_more_tools",
+    ]);
+    expect(options).toMatchObject({
+      model: "gemini-3.7-flash",
+      route: expect.objectContaining({ mode: "narrow" }),
+      allDeclarations: PERMITTED,
+    });
+  });
+
+  it("★ keeps the lite model off until it is switched on", async () => {
+    await (
+      await POST(request({ message: "How much did I sell today?" }))
+    ).text();
+    expect(sessionCall(0)[3]).toMatchObject({
+      model: "gemini-3.7-flash",
+    });
+    holder.liteRouting = true;
+    await (
+      await POST(request({ message: "How much did I sell today?" }))
+    ).text();
+    expect(sessionCall(1)[3]).toMatchObject({
+      model: "gemini-3.5-flash-lite",
+    });
+    // A change request is never light, switch or not.
+    await (
+      await POST(request({ message: "Create a banner for my homepage" }))
+    ).text();
+    expect(sessionCall(2)[3]).toMatchObject({
+      model: "gemini-3.7-flash",
+    });
+  });
+
+  it("sends every tool, unrouted, when routing is off or the message names no subject", async () => {
+    holder.toolRouting = false;
+    await (
+      await POST(request({ message: "How much did I sell today?" }))
+    ).text();
+    expect(sessionCall(0)[2]).toBe(PERMITTED);
+    expect(sessionCall(0)[3]).toMatchObject({
+      route: null,
+    });
+    expect(sessionCall(0)[3]).not.toHaveProperty("allDeclarations");
+    holder.toolRouting = true;
+    await (
+      await POST(request({ message: "Tell me something useful." }))
+    ).text();
+    expect(sessionCall(1)[2]).toBe(PERMITTED);
+  });
+
+  it("★ records the model that actually answered when a run fails", async () => {
+    holder.liteRouting = true;
+    holder.createSession.mockReturnValueOnce({ model: "gemini-3.7-flash" });
+    holder.run.mockRejectedValueOnce(new Error("boom"));
+    await (
+      await POST(request({ message: "How much did I sell today?" }))
+    ).text();
+    expect(holder.failRun).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gemini-3.7-flash" }),
+    );
   });
 });
 

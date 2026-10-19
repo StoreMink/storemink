@@ -1611,3 +1611,23 @@ dashboard screen when the prompt is sent.
 | Press End                                                                                  | Back to the written chat with every answer and card from the voice session in place.                                                                                                                                                                                                     |
 | "Chart sales and orders by week for the last 90 days against the previous period"          | One chart card: the total and a trend badge against the previous period, the comparison dashed, orders drawn as a second panel beside sales, compact rupee ticks, a Copy table button, and Open in Reports with both measures.                                                           |
 | "Chart discounts by month this year"                                                       | A rise in discounts shows a red badge (lower is better); the figures match the Reports builder for the same measure and period.                                                                                                                                                          |
+
+## Tool routing and the lite model
+
+A run starts with only the tools its message needs (`lib/mink/tool-routing.ts`)
+and can ask for the rest (`request_more_tools`). These prompts check that a
+narrow start never costs the merchant an answer. Five more are in the
+repeatable harness as the `routing-*` cases in `evals/mink/read-alpha.json`,
+and `npx vitest run lib/mink/live-eval.local.test.ts` with `MINK_LIVE_EVAL=1`
+runs the whole corpus with routing off, on, and on with the lite model.
+
+| Prompt / action                                                                     | Expected result                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| "How do I upload a photo for a product?"                                            | A Help answer (and possibly the Products page with the control ringed). The run log shows `toolRoute: narrow` with the help groups; no Website Builder or image tools were declared. |
+| "How much did I sell today?", then "and yesterday?"                                 | Both answered from the sales read. The second is routed by the first (the log's groups include `sales`), not sent every tool.                                                        |
+| On a product, "Write a better description for this product", then "make it shorter" | Two description proposals; the follow-up keeps the proposal tool because it continues the first request.                                                                             |
+| "Show my pending orders and write an Instagram caption about the newest product"    | The order list and a social-post proposal in one run; if the first route missed a tool the log shows `mink.run: tools restarted` and the answer still arrives, charged once.         |
+| "yes" right after Mink offers to draft something                                    | The draft is prepared: a bare go-ahead carries the change the conversation was about.                                                                                                |
+| With `MINK_LITE_ROUTING=true`: "Which products are running low?"                    | Answered by `gemini-3.5-flash-lite` (run log `model`), with the same items and counts the main model gives, scoped and linked.                                                       |
+| With `MINK_LITE_ROUTING=true`: "Create a coupon for Diwali"                         | Not the lite model: a change request always starts on the main model.                                                                                                                |
+| With `MINK_TOOL_ROUTING=false`                                                      | Every permitted tool is declared again (`toolRoute: off`), and the prompt carries every rule for every tool the admin has.                                                           |

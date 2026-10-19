@@ -96,6 +96,52 @@ describe("estimateMinkCost", () => {
   });
 });
 
+describe("the lite model", () => {
+  it("prices Gemini 3.5 Flash-Lite at its list rate, thought tokens as output", () => {
+    // 1,000 × 0.30 + 250 × 2.50 = 925 micro-USD.
+    expect(
+      estimateMinkCost({
+        model: "gemini-3.5-flash-lite",
+        location: "global",
+        usage,
+      }),
+    ).toEqual({
+      estimatedCostMicrousd: 925,
+      pricingVersion: `gemini-3.5-flash-lite-global-2026-list-c${CACHED_INPUT_RATE_MULTIPLIER}`,
+    });
+  });
+
+  it("charges its cached prompt tokens at the same reduced share", () => {
+    const cached = estimateMinkCost({
+      model: "publishers/google/models/gemini-3.5-flash-lite",
+      location: "global",
+      usage: { ...usage, cachedTokens: 800 },
+    }).estimatedCostMicrousd;
+    expect(cached).toBe(
+      Math.round(
+        200 * 0.3 + 800 * 0.3 * CACHED_INPUT_RATE_MULTIPLIER + 250 * 2.5,
+      ),
+    );
+  });
+
+  it("★ leaves a regional or other lite model unpriced rather than guessing", () => {
+    expect(
+      estimateMinkCost({
+        model: "gemini-3.5-flash-lite",
+        location: "asia-south1",
+        usage,
+      }).estimatedCostMicrousd,
+    ).toBeNull();
+    expect(
+      estimateMinkCost({
+        model: "gemini-3.1-flash-lite",
+        location: "global",
+        usage,
+      }).estimatedCostMicrousd,
+    ).toBeNull();
+  });
+});
+
 describe("cachedPromptTokens", () => {
   it("clamps a provider count that exceeds the prompt it is a subset of", () => {
     // This value is written to a column whose CHECK sits in the SAME

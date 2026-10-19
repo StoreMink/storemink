@@ -248,11 +248,11 @@ export async function startMinkRun(input: {
         model,
         thinkingLevel: input.thinkingLevel ?? "low",
         promptVersion: actor.draftingEnabled
-          ? "draft-action-beta-v54"
-          : "read-beta-v33",
+          ? "draft-action-beta-v55"
+          : "read-beta-v34",
         toolRegistryVersion: actor.draftingEnabled
-          ? "draft-beta-v42"
-          : "read-beta-v25",
+          ? "draft-beta-v43"
+          : "read-beta-v26",
         riskTier: actor.draftingEnabled ? "R1" : "R0",
         currentPath: actor.currentPath ?? null,
         selectedResourceType: actor.selectedResource?.type ?? null,
@@ -303,6 +303,10 @@ export async function completeMinkRun(input: {
       .update(minkRuns)
       .set({
         status: "succeeded",
+        // ★ The model that ANSWERED: startMinkRun records the configured one
+        // before routing decides, and a light route may start on the lite
+        // model and restart on the main one.
+        model: result.model,
         inputTokens: result.usage.promptTokens,
         outputTokens: result.usage.outputTokens,
         thoughtTokens: result.usage.thoughtTokens,
@@ -389,6 +393,7 @@ export async function failMinkRun(input: {
       .update(minkRuns)
       .set({
         status: input.status,
+        model: input.model,
         errorCode: safeErrorCode(input.errorCode),
         inputTokens: input.progress.usage.promptTokens,
         outputTokens: input.progress.usage.outputTokens,

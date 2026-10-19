@@ -61,6 +61,16 @@ export interface MinkTool {
    * proposal, or spend money on an image.
    */
   repeatSafe?: boolean;
+  /**
+   * Running it twice in one request does no harm, though a repeat must still
+   * reach the client (so it is not `repeatSafe`). A narrowed run that has
+   * called only repeat-safe or restart-safe tools may restart with every tool
+   * (`request_more_tools`); one that has run anything else may not, or the
+   * restart would save, queue or pay for it a second time.
+   *
+   * ⚠ OPT-IN for `repeatSafe`'s reason: the default must be "not safe".
+   */
+  restartSafe?: boolean;
   available?: (actor: MinkActorContext) => boolean;
   artifact?: (output: Record<string, unknown>) => MinkArtifact | undefined;
   execute: (
@@ -84,6 +94,16 @@ export class MinkToolRegistry {
   /** Whether a repeated identical call may be served from a per-run memo. */
   isRepeatSafe(name: string): boolean {
     return this.tools.get(name)?.repeatSafe === true;
+  }
+
+  /**
+   * Whether running this tool again in a restarted attempt is harmless. A
+   * name the registry does not know ran nothing, so it is.
+   */
+  isRestartSafe(name: string): boolean {
+    const tool = this.tools.get(name);
+    if (!tool) return true;
+    return tool.repeatSafe === true || tool.restartSafe === true;
   }
 
   /** Deterministic success copy for an explicitly safe last-turn finalizer. */

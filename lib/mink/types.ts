@@ -561,6 +561,17 @@ export interface MinkModelSession {
     responses: MinkToolResponse[],
     options?: MinkStreamOptions,
   ): Promise<MinkModelTurn>;
+  /**
+   * The model answering right now: the lite model until a restart, the main
+   * model after one. Absent means the configured model.
+   */
+  readonly model?: string;
+  /**
+   * Swap a narrowed session for one with every permitted tool, on the main
+   * model, keeping the stored conversation. False when there is nothing to
+   * widen: the run was never narrowed, or it already was widened.
+   */
+  restartWithAllTools?(): boolean;
 }
 
 export type MinkRunEvent =
@@ -574,7 +585,12 @@ export type MinkRunEvent =
       ok: boolean;
       errorCode?: string;
       artifact?: MinkArtifact;
-    };
+    }
+  /**
+   * A narrowed run asked for more tools and started again with all of them.
+   * `usage` is the abandoned attempt's, which the run's own usage excludes.
+   */
+  | { type: "tools_restarted"; abandonedModel: string; usage: MinkUsage };
 
 export interface MinkRunResult {
   text: string;
@@ -584,6 +600,17 @@ export interface MinkRunResult {
   retryCount: number;
   usage: MinkUsage;
   artifacts: MinkArtifact[];
+  /**
+   * Set when the run restarted with every tool. ★ The abandoned attempt's
+   * tokens are reported here and NOT in `usage`: a routing miss is
+   * StoreMink's to pay for, and `usage` is what the merchant is metered on.
+   */
+  restart?: {
+    abandonedModel: string;
+    usage: MinkUsage;
+    steps: number;
+    toolCalls: number;
+  };
 }
 
 export interface MinkRunProgress {

@@ -1911,6 +1911,126 @@ says write nothing), and a reconciler for runs left with a NULL
 they owe nothing, and `discardFailedMinkRunDrafts` already compensates any
 proposal credits they reserved.
 
+### Mink tool routing: each run carries only the tools it needs (2026-10-19)
+
+**★★ EVERY MODEL STEP RE-SENT THE WHOLE PROMPT AND EVERY TOOL.** For an owner
+that was 55,447 characters of system prompt plus 71,234 of tool declarations
+(60 tools), about 25,000 to 27,000 tokens a step on the local ledger, so "How
+much did I sell today?" paid for the Website Builder, the image generator and
+six background workflows on every step. Three changes, all internal:
+
+- **★ `lib/mink/tool-routing.ts` picks the tool GROUPS a message needs** (pure,
+  no server imports): its wording (English word patterns plus Hinglish and
+  Devanagari substrings, over the merchant's words only; attachment payloads
+  after the composer's markers are data and never read), the record open in
+  the dashboard (a product brings the catalogue reads, an order the order
+  reads), the page when the message points at it ("this", "here"), and the
+  question a follow-up continues ("make it shorter", "and yesterday?", a bare
+  "yes", which also carries that question's change intent). Proposal tools
+  come only when the message asks for a change (change verbs, Hinglish "bana
+  do" and similar); "how do I…" is a question unless it also asks. A message
+  with no subject ("do it", "what can you do?") keeps EVERY permitted tool:
+  `mode: "all"` is the fallback, never an error. It only narrows what the
+  registry's permission filter already allowed. `tool-routing.test.ts` fails
+  when a registered tool has no group, and checks every eval-corpus case's
+  expected tools are routed.
+- **★★ A MISS IS RECOVERABLE, AND NEVER BILLED.** A narrowed run also declares
+  `request_more_tools`. When the model calls it, the orchestrator swaps the
+  session for one with every permitted tool on the main model
+  (`restartWithAllTools`, once per run) and asks the merchant's message again
+  from the stored conversation; calls in the same turn are dropped unrun and
+  the per-run memo is cleared. ⚠ It is REFUSED (answered in place) once the
+  attempt has run a tool that is not safe to run twice: only `repeatSafe`
+  reads and `restartSafe` tools (`open_dashboard_page`, whose artifact the
+  panel acts on only from the final message) may have run first. ★ The
+  abandoned attempt's tokens go in `MinkRunResult.restart` and the
+  `mink.run: tools restarted` log line, never in `usage`, so a routing miss
+  is StoreMink's cost and not the merchant's credits. ⚠ It is therefore also
+  missing from the ledger's cost estimate; the log line carries it.
+- **★ PROMPT RULES FOLLOW THEIR TOOLS** (`[[when: ...]]` tags,
+  docs/mink-ai-system-prompt.md §3a; the spoken-rules mechanism generalised).
+  A tagged rule renders only when one of its tools is declared, a `prefix*`
+  matches, or a `#group` (`#attachments`, `#composer`) is routed; an unrouted
+  run counts every group present, so it reads exactly the old prompt for the
+  tools it has. A misplaced tag, a malformed entry or an unknown group fails
+  closed at parse; `system-prompt.test.ts` checks every tagged tool against
+  the registry. ⚠ A side effect for limited roles even with routing off: a
+  rule for a tool the role cannot use is no longer sent.
+
+Measured on the budget test's owner (characters per step, prompt plus
+declarations): every tool 126,681; a help question 19,074; a sales question
+15,537; a stock question 15,355; an orders question 11,585; smalltalk 10,642;
+"create a banner for my homepage for the diwali offer" 56,300. A live smoke
+run's first step was 3,325 prompt tokens against ~25,000 before.
+**`lib/mink/prompt-budget.test.ts` is the budget**: the whole set, the untagged
+core (9,000), each routed example and every single declaration (6,000) have a
+ceiling, so growth is a decision in the diff rather than drift.
+
+**★ THE LITE TIER (`MINK_LITE_ROUTING`, OFF by default).** A light route
+(narrow, read-only, no attachment, not a voice turn, no boundary-probing
+phrasing, only the plain read groups) may start on `MINK_LITE_MODEL`
+(`gemini-3.5-flash-lite`, GA at `global` in both projects; anything but a
+Flash-Lite id falls back to it). It always has the escape hatch, which
+restarts on the main model. `estimateMinkCost` prices it at Google's list
+rate ($0.30 / $2.50 per million, global only). Routing itself is ON by
+default (`MINK_TOOL_ROUTING`, opt-out). `lib/mink/live-eval.local.test.ts`
+(`MINK_LIVE_EVAL=1`, local database only, paid) runs the eval corpus with
+routing off, on, and on with the lite model, scores tool choice with
+`scripts/mink-eval-core.mjs`, has the main model compare each answer with the
+unrouted one, and writes a report. A run that hears nothing from the provider
+for 25 s is abandoned and asked again (six attempts), and so is an HTTP 429 or
+503; both are counted per model. A lite-mode case whose route is not light is
+the routed configuration, so its routed run is reused. The judge runs six at
+a time with a 25 s deadline per call, and every finished run is appended to
+`<out>.progress.jsonl`.
+
+**★ MEASURED, 2026-10-19** (local echoss store, storemink-staging Vertex, 82
+of the 88 cases; summary without answers in
+`evals/mink/routing-live-2026-10-19.json`). 78 cases routed narrow, 4 fell
+back to every tool, 37 were light. Routing cut the median first-step prompt
+from 24,826 to 3,332 tokens and the median prompt per run from 49,971 to
+7,192; the estimated cost per answered run went from $0.0261 (every tool) to
+$0.0070 (routed), and $0.0028 on the lite model (the main model on the same
+light routes: $0.0058). No `request_more_tools` restart fired in 65 narrowed
+runs and no routed run missed an expected tool. Where both answered, the
+judge rated 9 of 9 routed answers the same as the unrouted ones; of 16 lite
+answers, 10 the same, 1 better, 4 worse but acceptable (fewer SKUs,
+thresholds and links, denser wording) and 1 unacceptable (it gave up on
+"Main Store" where the main model found "Main"). Lite answered "How do I
+upload a photo?" without searching the Help Centre, in both runs. Tool
+choice: lite 33 of 37; the main model 22 of 29 unrouted and 20 of 28 routed,
+whose failures are the same over-calling in both (starting a workflow a case
+expects refused), not missing tools.
+⚠ **The samples are small because the main model kept failing.**
+gemini-3.7-flash on storemink-staging (served only at `global`; every
+regional endpoint answers 404) stalled 295 of 424 attempts in the main pass
+and answered none of 300 in a retry pass (173 stalls, 127 HTTP 429
+RESOURCE_EXHAUSTED). The lite model answered all 37 runs (p50 3.6 s, p90
+4.5 s, against 11.1 s and 29.2 s). A one-word prompt with no tools stalled
+the same way, sequential or concurrent, so it is Google's shared capacity,
+not the request (the project's own quota is 10M input tokens a minute).
+Production's last 30 days: 94 runs ok and 2 timed out at exactly 180 s, the
+same signature; median 8.3 s.
+So `MINK_LITE_ROUTING` stays off; turning it on is the owner's call. It is
+cheaper, faster and was the only model answering today, but measurably less
+thorough. ⚠ Known lite gaps: Help questions answered ungrounded (the `help`
+group is in `LIGHT_GROUPS`), and a location name it cannot resolve ends the
+answer instead of being retried. ⚠ Not built: a time-to-first-chunk watchdog
+with one retry in `vertex-client.ts` (the WhatsApp Mink path has one), which
+would turn a 180 s stall into a retry after about 25 s.
+
+The session (`createVertexMinkSession`) takes `model`, `route` and
+`allDeclarations`; the stream route routes AFTER `startMinkRun` (a follow-up
+needs the stored conversation), so `mink_runs.model` is provisional until
+`completeMinkRun` / `failMinkRun`, which now record the model that answered.
+The run log gains `toolRoute`, `toolGroups`, `declaredTools`,
+`permittedTools` and, after a restart, `abandonedModel` / `abandonedTokens`.
+Prompt versions `read-beta-v34` / `draft-action-beta-v55`, registries
+`read-beta-v26` / `draft-beta-v43`. Cloud Build passes `_MINK_TOOL_ROUTING`
+("true"), `_MINK_LITE_MODEL` and `_MINK_LITE_ROUTING` ("false").
+No merchant-visible change, no Help Centre update: the same answers and
+cards, from fewer tokens.
+
 ### Mink marginal metering — the merchant pays for their own work (2026-09-23)
 
 **★★ THE 1-CREDIT BAND WAS UNREACHABLE FOR ANY RUN THAT TOUCHED A TOOL, AND A
@@ -1961,7 +2081,8 @@ the MERCHANT is charged; StoreMink still pays for every re-sent prefix, and
 `cached_tokens` exists to measure how much of it a provider cache is already
 serving. Treat the tool declaration set as a budget: a new tool raises our cost
 on every existing merchant's every question, permanently — it simply no longer
-raises THEIRS.
+raises THEIRS. (Since 2026-10-19 a run carries only its routed tools and their
+rules, and `prompt-budget.test.ts` holds the sizes: see "Mink tool routing".)
 
 Migration `20260923_0126_mink_marginal_metering` adds `base_prompt_tokens`
 (NOT NULL DEFAULT 0, CHECK `0 ≤ base ≤ input_tokens`). **No Help Centre update:
@@ -5788,6 +5909,13 @@ wholesip/
 │   │                          # route and selected product/order construction; bounded
 │   │                          # orchestrator; official Google Gen AI SDK Vertex client;
 │   │                          # abort-aware one-retry transport + hard run/tool timeouts;
+│   │                          # tool-routing.ts picks the tool groups a message needs
+│   │                          # (wording, page, open record, the question it follows),
+│   │                          # declares request_more_tools for a narrowed run and marks
+│   │                          # light routes for the lite model; system-prompt.ts renders a
+│   │                          # `[[when: ...]]`-tagged rule only with its tools;
+│   │                          # prompt-budget.test.ts caps their size per step and
+│   │                          # live-eval.local.test.ts (opt-in, paid) compares answers;
 │   │                          # permission-filtered/rechecked store/profile, catalogue,
 │   │                          # product, recognized-sales, low-stock, order/current-order
 │   │                          # and hybrid Help read tools. Quantitative tools return rich
@@ -5911,7 +6039,7 @@ wholesip/
 │   │                          # No model tool can publish, schedule, send or execute a live mutation;
 │   │                          # Phase 7D publication remains an authenticated human-only action.
 │   │                          # `evals/mink/read-alpha.json` + `npm run mink:eval` are the
-│   │                          # 81-case live tool/safety/latency gate.
+│   │                          # 88-case live tool/safety/latency gate.
 │   ├── theme-studio/          # ★ OPERATOR-ONLY AI Theme Studio Phase 0 contracts
 │   │                          # (docs/mink-ai-theme-studio-phase0.md; no routes or provider
 │   │                          # runtime yet). contracts.ts owns the bounded ThemeIntent and
@@ -12751,7 +12879,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
      retries, tool names, tokens and known shadow cost but never selects or
      renders prompts, answers, tool arguments/results, provider state or
      reasoning. `evals/mink/read-alpha.json` and `npm run mink:eval` provide the
-     81-case live tool-choice/security/latency gate. The complementary
+     88-case live tool-choice/security/latency gate. The complementary
      `docs/mink-ai-test-prompts.md` catalogue covers phase-wise manual prompts
      plus UX, permission, tenancy, credit, approval, conflict, idempotency and
      rollback acceptance scenarios. The original migration
@@ -19875,7 +20003,10 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   (`gemini-3.1-flash-image`) and **`MINK_IMAGE_LOCATION`** (`global`; still an
   independent override from the chat location), plus reliability controls
   **`MINK_MAX_MODEL_RETRIES`** (1, bounded 0–2) and
-  **`MINK_RUN_TIMEOUT_SECONDS`** (180, bounded 15–300). The dashboard layout reads the private
+  **`MINK_RUN_TIMEOUT_SECONDS`** (180, bounded 15–300). Tool routing reads
+  **`MINK_TOOL_ROUTING`** (on unless "false"/"0"), **`MINK_LITE_MODEL`** (default
+  `gemini-3.5-flash-lite`; anything but a Flash-Lite id falls back to it) and
+  **`MINK_LITE_ROUTING`** (off unless "true"/"1"); see "Mink tool routing". The dashboard layout reads the private
   flag server-side: enabled sessions use the SSE client and durable alpha
   records; disabled sessions keep the canned placeholder. Reported or partial
   token usage receives a versioned provider-cost estimate; unavailable usage

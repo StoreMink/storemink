@@ -23,6 +23,7 @@ import type { MinkStoredMessage } from "./persistence";
 import { MinkRetryError, withMinkRetry } from "./retry";
 import { renderMinkSystemInstruction } from "./system-prompt";
 import type { MinkThinkingLevel } from "./thinking";
+import type { MinkToolRoute } from "./tool-routing";
 
 export function createVertexMinkSession(
   config: MinkConfig,
@@ -35,6 +36,15 @@ export function createVertexMinkSession(
     memoryReference?: string;
     /** The merchant's current screen, as a separate untrusted part (page-context.ts). */
     screenReference?: string;
+    /** The model the run starts on (the lite model for a light route). */
+    model?: string;
+    /** The route `declarations` were narrowed by; selects the prompt rules. */
+    route?: Pick<MinkToolRoute, "mode" | "groups"> | null;
+    /**
+     * Every permitted declaration. Present only for a narrowed run, and what
+     * `restartWithAllTools` widens to.
+     */
+    allDeclarations?: MinkToolDeclaration[];
   },
 ): MinkModelSession {
   if (!config.projectId) {
@@ -53,33 +63,61 @@ export function createVertexMinkSession(
     // The SDK is restricted to one attempt to avoid multiplying both policies.
     httpOptions: { retryOptions: { attempts: 1 } },
   });
-  const functionDeclarations: FunctionDeclaration[] = declarations.map(
-    (declaration) => ({
-      name: declaration.name,
-      description: declaration.description,
-      parametersJsonSchema: declaration.parametersJsonSchema,
-    }),
-  );
-  const chat = ai.chats.create({
-    model: config.model,
-    history: toVertexHistory(options.history),
-    config: {
-      systemInstruction: renderMinkSystemInstruction(actor, declarations),
-      maxOutputTokens: config.maxOutputTokens,
-      thinkingConfig: {
-        thinkingLevel:
-          options.thinkingLevel === "high"
-            ? ThinkingLevel.HIGH
-            : ThinkingLevel.LOW,
+  const openChat = (
+    model: string,
+    tools: MinkToolDeclaration[],
+    route: Pick<MinkToolRoute, "mode" | "groups"> | null,
+  ) => {
+    const functionDeclarations: FunctionDeclaration[] = tools.map(
+      (declaration) => ({
+        name: declaration.name,
+        description: declaration.description,
+        parametersJsonSchema: declaration.parametersJsonSchema,
+      }),
+    );
+    return ai.chats.create({
+      model,
+      // The SDK clones the history it is given, so a restart starts from the
+      // stored conversation, never from the abandoned attempt's turns.
+      history: toVertexHistory(options.history),
+      config: {
+        systemInstruction: renderMinkSystemInstruction(actor, tools, route),
+        maxOutputTokens: config.maxOutputTokens,
+        thinkingConfig: {
+          thinkingLevel:
+            options.thinkingLevel === "high"
+              ? ThinkingLevel.HIGH
+              : ThinkingLevel.LOW,
+        },
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        ...(functionDeclarations.length
+          ? { tools: [{ functionDeclarations }] }
+          : {}),
       },
-      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-      ...(functionDeclarations.length
-        ? { tools: [{ functionDeclarations }] }
-        : {}),
-    },
-  });
+    });
+  };
+  let model = options.model ?? config.model;
+  let chat = openChat(model, declarations, options.route ?? null);
+  let widened = false;
 
   return {
+    get model() {
+      return model;
+    },
+    /**
+     * ★ ONE WIDENING PER RUN, AND ALWAYS ONTO THE MAIN MODEL. A run that
+     * asked for more tools has shown its route was wrong, and a lite model
+     * that guessed wrong is not the one to trust with the rest. The new chat
+     * sees the stored conversation only; the orchestrator re-sends the
+     * merchant's message.
+     */
+    restartWithAllTools() {
+      if (widened || !options.allDeclarations) return false;
+      widened = true;
+      model = config.model;
+      chat = openChat(model, options.allDeclarations, null);
+      return true;
+    },
     async sendUserMessage(message, stream) {
       // Reference parts come BEFORE the message and never inside the system
       // instruction: memories first (durable), then the screen (this turn).

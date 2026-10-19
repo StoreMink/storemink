@@ -14,6 +14,7 @@ import type {
   MinkUsage,
 } from "./types";
 import type { MinkToolRegistry } from "./tools/registry";
+import { REQUEST_MORE_TOOLS } from "./tool-routing";
 
 const EMPTY_USAGE: MinkUsage = {
   promptTokens: 0,
@@ -49,6 +50,11 @@ export async function runMinkAgent(input: {
   // to do with the tool that had actually failed. Two jobs, two counters.
   let recorded = 0;
   let retryCount = 0;
+  // ★ Whether this attempt has run a tool that is not safe to run again. Once
+  // one has (a proposal saved, a workflow queued, an image paid for), a
+  // restart would do it twice, so `request_more_tools` is refused instead.
+  let sideEffects = false;
+  let restart: MinkRunResult["restart"];
   const artifacts: MinkArtifact[] = [];
   // ★★ PER-RUN, NEVER ON THE REGISTRY. The registry is a module-level
   // singleton shared by every request in the container, so a memo living
@@ -83,6 +89,54 @@ export async function runMinkAgent(input: {
       streamed = 0;
       await onEvent?.({ type: "text_reset" });
     }
+    // ★★ A NARROWED RUN THAT ASKS FOR MORE TOOLS STARTS AGAIN, IT IS NOT
+    // TOPPED UP. Adding declarations mid-chat would re-send the whole prompt
+    // anyway, and the turns already taken were reasoned without the missing
+    // tool. So the session is swapped for one with every permitted tool on
+    // the main model and the merchant's message is asked again from the
+    // stored conversation. Calls in the same turn are dropped unrun; reads
+    // already made are made again, which is why only restart-safe tools may
+    // have run first. The abandoned usage is reported apart (`restart`) so a
+    // routing miss is never metered to the merchant.
+    if (
+      !restart &&
+      !sideEffects &&
+      turn.functionCalls.some((call) => call.name === REQUEST_MORE_TOOLS)
+    ) {
+      const abandonedModel = session.model ?? config.model;
+      if (session.restartWithAllTools?.()) {
+        restart = {
+          abandonedModel,
+          usage: { ...usage },
+          steps,
+          toolCalls,
+        };
+        await onEvent?.({
+          type: "tools_restarted",
+          abandonedModel,
+          usage: { ...usage },
+        });
+        steps = 1;
+        toolCalls = 0;
+        artifacts.splice(0);
+        // The memo would answer the new attempt's first reads with "you
+        // already requested this", which from its side it never did.
+        memo.clear();
+        turn = await session.sendUserMessage(message, streamOptions);
+        usage = { ...turn.usage };
+        retryCount += turn.retryCount;
+        onProgress?.({ steps, toolCalls, retryCount, usage: { ...usage } });
+        continue;
+      }
+    }
+    // A refused request is answered in place, never run through the
+    // registry, never recorded in the tool ledger and never counted.
+    const calls = turn.functionCalls.filter(
+      (call) => call.name !== REQUEST_MORE_TOOLS,
+    );
+    const refused = turn.functionCalls
+      .filter((call) => call.name === REQUEST_MORE_TOOLS)
+      .map((call) => moreToolsRefused(call, sideEffects));
     // ★★ THE MODEL HAS ALREADY SPENT THIS TURN. The production offer-banner
     // trace reached turn 12 after successfully creating its image, then
     // returned another function call. Rejecting at the top of this loop threw
@@ -92,8 +146,8 @@ export async function runMinkAgent(input: {
     // here; reads, image generation, workflows, live actions and multiple calls
     // remain refused. This spends no thirteenth prose-only model turn.
     const stepLimitCompletionText =
-      steps >= config.maxSteps && turn.functionCalls.length === 1
-        ? registry.stepLimitCompletionText(turn.functionCalls[0].name)
+      steps >= config.maxSteps && calls.length === 1 && refused.length === 0
+        ? registry.stepLimitCompletionText(calls[0].name)
         : undefined;
     if (steps >= config.maxSteps && !stepLimitCompletionText) {
       throw new MinkAgentError(
@@ -108,7 +162,7 @@ export async function runMinkAgent(input: {
     // the model not to repeat a successful read; this makes it true whether it
     // complies or not. Only `repeatSafe` tools qualify, so nothing that queues
     // work, creates a proposal or spends money is ever served from here.
-    const fresh = turn.functionCalls.filter((call) => !memo.has(memoKey(call)));
+    const fresh = calls.filter((call) => !memo.has(memoKey(call)));
     if (toolCalls + fresh.length > config.maxToolCalls) {
       throw new MinkAgentError(
         "tool_limit_reached",
@@ -119,13 +173,10 @@ export async function runMinkAgent(input: {
     const responses = [];
     for (
       let offset = 0;
-      offset < turn.functionCalls.length;
+      offset < calls.length;
       offset += config.maxParallelReadTools
     ) {
-      const batch = turn.functionCalls.slice(
-        offset,
-        offset + config.maxParallelReadTools,
-      );
+      const batch = calls.slice(offset, offset + config.maxParallelReadTools);
       await Promise.all(
         batch.map((call, batchIndex) =>
           onEvent?.({
@@ -144,6 +195,7 @@ export async function runMinkAgent(input: {
             // filled the memo, or the provider cannot pair the response up.
             return { response: repeatedResponse(hit, call.id), repeat: true };
           }
+          if (!registry.isRestartSafe(call.name)) sideEffects = true;
           const response = await registry.execute(actor, call);
           // ★ Only a SUCCESS is remembered. A failure is often transient, and
           // replaying it would deny the model its one legitimate retry.
@@ -190,10 +242,11 @@ export async function runMinkAgent(input: {
       }
     }
 
+    responses.push(...refused);
     // Only the calls actually executed count against the budget; the ledger
     // numbers every call the model made, including the ones the memo served.
     toolCalls += fresh.length;
-    recorded += turn.functionCalls.length;
+    recorded += calls.length;
     if (stepLimitCompletionText) {
       // The opt-in is authority to finish only after the tool genuinely
       // succeeded and produced the review artifact its card needs. A tool
@@ -215,12 +268,13 @@ export async function runMinkAgent(input: {
       onProgress?.({ steps, toolCalls, retryCount, usage: { ...usage } });
       return {
         text: stepLimitCompletionText,
-        model: config.model,
+        model: session.model ?? config.model,
         steps,
         toolCalls,
         retryCount,
         usage,
         artifacts: presentableArtifacts(artifacts),
+        ...(restart ? { restart } : {}),
       };
     }
     steps += 1;
@@ -240,12 +294,35 @@ export async function runMinkAgent(input: {
 
   return {
     text: turn.text,
-    model: config.model,
+    model: session.model ?? config.model,
     steps,
     toolCalls,
     retryCount,
     usage,
     artifacts: presentableArtifacts(artifacts),
+    ...(restart ? { restart } : {}),
+  };
+}
+
+/**
+ * The answer to a `request_more_tools` the run cannot honour. Said to the
+ * model, never the merchant, so it is plain about what to do next.
+ */
+function moreToolsRefused(
+  call: MinkToolCall,
+  sideEffects: boolean,
+): MinkToolResponse {
+  return {
+    ...(call.id === undefined ? {} : { id: call.id }),
+    name: call.name,
+    response: {
+      error: {
+        code: "more_tools_unavailable",
+        message: sideEffects
+          ? "No more tools can be added now, because this run has already prepared or queued something. Finish with the tools you have and tell the merchant what is ready; they can ask for the rest in a new message."
+          : "Every tool this admin may use is already declared. Answer with what you have, and say plainly if the request needs something StoreMink cannot do.",
+      },
+    },
   };
 }
 

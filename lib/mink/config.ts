@@ -44,6 +44,39 @@ export interface MinkConfig {
    * triple the charge on ordinary runs.
    */
   chargeCredits: boolean;
+  /**
+   * Whether a run starts with only the tools its message needs
+   * (`tool-routing.ts`). ON unless `MINK_TOOL_ROUTING` is "false" or "0":
+   * a narrowed run can always ask for the rest (`request_more_tools`).
+   */
+  toolRouting: boolean;
+  /** The cheaper model a light route may start on (`liteRouting`). */
+  liteModel: string;
+  /**
+   * Whether a light route (a narrow, read-only, ordinary question) starts on
+   * `liteModel`. ⚠ OFF unless `MINK_LITE_ROUTING` is "true" or "1": it
+   * changes who answers, so it is switched on only after the live eval
+   * (`lib/mink/live-eval.local.test.ts`) shows the answers hold.
+   */
+  liteRouting: boolean;
+}
+
+/**
+ * The lite tier may only be a Flash-Lite model: a typo or another family
+ * must not quietly become the model ordinary questions are answered by.
+ */
+const LITE_MODEL = /^gemini-\d+(?:\.\d+)?-flash-lite(?:-[0-9a-z.-]+)?$/;
+const DEFAULT_LITE_MODEL = "gemini-3.5-flash-lite";
+
+function liteModel(value: string | undefined): string {
+  const model = value?.trim().toLowerCase();
+  return model && LITE_MODEL.test(model) ? model : DEFAULT_LITE_MODEL;
+}
+
+/** Off unless explicitly "true" or "1". */
+function optIn(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "true" || normalized === "1";
 }
 
 function enabled(value: string | undefined): boolean {
@@ -121,5 +154,8 @@ export function getMinkConfig(): MinkConfig {
     maxModelRetries: boundedInt(process.env.MINK_MAX_MODEL_RETRIES, 1, 0, 2),
     runTimeoutMs:
       boundedInt(process.env.MINK_RUN_TIMEOUT_SECONDS, 180, 15, 300) * 1_000,
+    toolRouting: optOut(process.env.MINK_TOOL_ROUTING),
+    liteModel: liteModel(process.env.MINK_LITE_MODEL),
+    liteRouting: optIn(process.env.MINK_LITE_ROUTING),
   };
 }
