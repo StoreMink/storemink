@@ -19,6 +19,8 @@ const holder = vi.hoisted(() => ({
   liteRouting: false,
   declarations: [] as Array<{ name: string }>,
   createSession: vi.fn(() => ({})),
+  name: vi.fn(async (): Promise<string | null> => null),
+  after: vi.fn(),
 }));
 
 vi.mock("@/lib/mink/config", () => ({
@@ -63,6 +65,13 @@ vi.mock("@/lib/mink/tools/read-tools", () => ({
 }));
 vi.mock("@/lib/mink/vertex-client", () => ({
   createVertexMinkSession: holder.createSession,
+}));
+vi.mock("@/lib/mink/conversation-namer", () => ({
+  nameMinkConversation: holder.name,
+}));
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: holder.after,
 }));
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: vi.fn(async () => ({ allowed: holder.rateAllowed })),
@@ -942,6 +951,100 @@ describe("★★ tool routing", () => {
     expect(holder.failRun).toHaveBeenCalledWith(
       expect.objectContaining({ model: "gemini-3.7-flash" }),
     );
+  });
+});
+
+describe("★★ a new chat's title", () => {
+  const CHAT = "11111111-1111-4111-8111-111111111111";
+  const created = () =>
+    holder.startRun.mockResolvedValueOnce({
+      conversationId: CHAT,
+      runId: "22222222-2222-4222-8222-222222222222",
+      history: [],
+      createdTitle: "How many orders did I get today?",
+    });
+
+  it("is asked of the namer the moment the run creates the chat, and streams to the browser", async () => {
+    created();
+    holder.name.mockResolvedValueOnce("Today's order count");
+
+    const body = await (
+      await POST(request({ message: "How many orders did I get today?" }))
+    ).text();
+
+    expect(holder.name).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ liteModel: "gemini-3.5-flash-lite" }),
+        actor: expect.objectContaining({ storeId: "store-1" }),
+        conversationId: CHAT,
+        provisionalTitle: "How many orders did I get today?",
+        message: "How many orders did I get today?",
+      }),
+    );
+    expect(body).toContain(
+      `event: title\ndata: {"conversationId":"${CHAT}","title":"Today's order count"}`,
+    );
+    // After the chat is named in the status event, before the stream ends.
+    expect(body.indexOf("event: title")).toBeGreaterThan(
+      body.indexOf("event: status"),
+    );
+    expect(body.indexOf("event: title")).toBeLessThan(
+      body.indexOf("event: done"),
+    );
+  });
+
+  it("★ is kept alive past the end of the stream, so a late title is still saved", async () => {
+    created();
+    holder.name.mockResolvedValueOnce("Today's order count");
+
+    await (await POST(request({ message: "Orders today?" }))).text();
+
+    expect(holder.after).toHaveBeenCalledOnce();
+    const task = holder.after.mock.calls[0][0] as () => Promise<unknown>;
+    await expect(task()).resolves.toBe("Today's order count");
+  });
+
+  it("is never asked for a chat the run continued", async () => {
+    const body = await (
+      await POST(request({ message: "And yesterday?" }))
+    ).text();
+
+    expect(holder.name).not.toHaveBeenCalled();
+    expect(holder.after).not.toHaveBeenCalled();
+    expect(body).not.toContain("event: title");
+  });
+
+  it("sends nothing when the chat keeps its provisional title", async () => {
+    created();
+    holder.name.mockResolvedValueOnce(null);
+
+    const body = await (
+      await POST(request({ message: "Orders today?" }))
+    ).text();
+
+    expect(body).not.toContain("event: title");
+    expect(body).toContain("event: done");
+  });
+
+  it("★ a title that lands after the stream closed is not written to the closed stream", async () => {
+    created();
+    let resolveTitle!: (title: string | null) => void;
+    holder.name.mockReturnValueOnce(
+      new Promise<string | null>((resolve) => {
+        resolveTitle = resolve;
+      }),
+    );
+
+    const body = await (
+      await POST(request({ message: "Orders today?" }))
+    ).text();
+    // Resolving now would throw inside the stream if the guard were missing,
+    // which fails the run as an unhandled rejection.
+    resolveTitle("Today's order count");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(body).not.toContain("event: title");
+    expect(body).toContain("event: done");
   });
 });
 

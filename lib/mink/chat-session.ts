@@ -25,6 +25,15 @@
 /** A chat with no message for this long is not reopened; a new one starts. */
 export const MINK_CHAT_RESUME_MS = 2 * 60 * 60 * 1000;
 
+/**
+ * What a chat is called until its title arrives (conversation-title.ts), in
+ * the header and the History sidebar, as ChatGPT and Claude show it.
+ */
+export const MINK_NEW_CHAT_TITLE = "New chat";
+
+/** Recent chats kept per admin and store; starting another prunes the oldest. */
+export const MINK_CONVERSATION_LIMIT = 10;
+
 const STORAGE_KEY = "storemink:mink-active-chat";
 
 export type MinkActiveChat = { id: string; lastActivityAt: number };

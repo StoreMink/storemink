@@ -15,6 +15,7 @@ import {
 import { withService, type Db } from "@/lib/db/client";
 import { basePromptTokens, cachedPromptTokens, estimateMinkCost } from "./cost";
 import { historyWithCompaction } from "./compaction";
+import { provisionalMinkConversationTitle } from "./conversation-title";
 import { MinkRequestError } from "./errors";
 import { minkShadowMeter } from "./metering";
 import { discardFailedMinkRunDrafts, getMinkRunDraftUsage } from "./drafts";
@@ -112,6 +113,11 @@ export interface MinkStartedRun {
   conversationId: string;
   runId: string;
   history: MinkStoredMessage[];
+  /**
+   * The provisional title, present only when this run created the chat: the
+   * stream route then asks for a generated one (conversation-namer.ts).
+   */
+  createdTitle?: string;
 }
 
 export type MinkUsageStatus = "reported" | "partial" | "unavailable";
@@ -128,6 +134,7 @@ export async function startMinkRun(input: {
 
   return withService(async (db) => {
     let conversationId = input.conversationId;
+    let createdTitle: string | undefined;
     if (conversationId) {
       await db.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`mink-conversation:${conversationId}`}, 0))`,
@@ -158,12 +165,15 @@ export async function startMinkRun(input: {
       await db.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`mink-conversations:${actor.storeId}:${actor.adminId}`}, 0))`,
       );
+      // A short excerpt until a model names the chat (conversation-namer.ts),
+      // and what stays if it cannot.
+      createdTitle = provisionalMinkConversationTitle(message);
       const created = await db
         .insert(minkConversations)
         .values({
           storeId: actor.storeId,
           adminId: actor.adminId,
-          title: conversationTitle(message),
+          title: createdTitle,
         })
         .returning({ id: minkConversations.id });
       conversationId = created[0]?.id;
@@ -285,8 +295,39 @@ export async function startMinkRun(input: {
       conversationId,
       runId,
       history: compacted.history,
+      ...(createdTitle ? { createdTitle } : {}),
     };
   });
+}
+
+/**
+ * Gives a chat its generated title.
+ *
+ * ★ COMPARE-AND-SET: only while the chat still has the title it was created
+ * with, so a title that arrives late cannot overwrite anything else, and a
+ * chat deleted meanwhile is simply not found. True when it was renamed.
+ */
+export async function renameMinkConversation(input: {
+  actor: Pick<MinkActorContext, "storeId" | "adminId">;
+  conversationId: string;
+  from: string;
+  to: string;
+}): Promise<boolean> {
+  const updated = await withService((db) =>
+    db
+      .update(minkConversations)
+      .set({ title: input.to, updatedAt: new Date().toISOString() })
+      .where(
+        and(
+          eq(minkConversations.id, input.conversationId),
+          eq(minkConversations.storeId, input.actor.storeId),
+          eq(minkConversations.adminId, input.actor.adminId),
+          eq(minkConversations.title, input.from),
+        ),
+      )
+      .returning({ id: minkConversations.id }),
+  );
+  return updated.length > 0;
 }
 
 export async function completeMinkRun(input: {
@@ -480,13 +521,6 @@ export async function completeMinkToolCall(input: {
         ),
       ),
   );
-}
-
-export function conversationTitle(message: string): string {
-  const compact = message.replace(/\s+/g, " ").trim();
-  const characters = Array.from(compact);
-  if (characters.length <= 80) return compact;
-  return `${characters.slice(0, 77).join("").trimEnd()}…`;
 }
 
 function toStoredMessage(row: {

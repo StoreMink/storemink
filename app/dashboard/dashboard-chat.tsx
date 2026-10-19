@@ -60,6 +60,7 @@ import { readMinkCsvReference } from "@/lib/mink/csv-input";
 import { readReviewedMinkDocument } from "@/lib/mink/document-input";
 import { readSavedMinkMediaReference } from "@/lib/mink/media-attachment";
 import { MINK_MESSAGE_MAX_CHARS } from "@/lib/mink/input-policy";
+import { MINK_NEW_CHAT_TITLE } from "@/lib/mink/chat-session";
 import { BrandMark } from "@/app/platform/brand-mark";
 import { MINK_MAX_RUN_CREDITS } from "@/lib/mink/metering";
 import type { MinkCreditSummary } from "./chat-context";
@@ -646,7 +647,7 @@ export function DashboardChat({
               "whic…". The title is the only part of this block that carries
               information the merchant does not already have. */}
           <span className="min-w-0 truncate text-sm font-semibold text-[#1a1a1a]">
-            {activeConversationTitle ?? "New conversation"}
+            {activeConversationTitle ?? MINK_NEW_CHAT_TITLE}
           </span>
           {isHistoryLoading && (
             <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-[#8c9196]" />

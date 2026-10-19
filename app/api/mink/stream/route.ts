@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { getMinkActorContext } from "@/lib/mink/actor-context";
 import { getMinkConfig } from "@/lib/mink/config";
+import { nameMinkConversation } from "@/lib/mink/conversation-namer";
 import { MinkAgentError, MinkRequestError } from "@/lib/mink/errors";
 import { runMinkAgent } from "@/lib/mink/orchestrator";
 import {
@@ -115,6 +116,20 @@ export async function POST(request: Request) {
       model: config.model,
       thinkingLevel,
     });
+    // ★ A CHAT THIS RUN CREATED IS NAMED BY A MODEL, alongside the answer and
+    // never in its way (conversation-namer.ts): started now so it is under way
+    // before the answer's own setup, and kept alive past the end of the stream
+    // by after(). It never rejects.
+    const naming = started.createdTitle
+      ? nameMinkConversation({
+          config,
+          actor,
+          conversationId: started.conversationId,
+          provisionalTitle: started.createdTitle,
+          message,
+        })
+      : null;
+    if (naming) after(() => naming);
     // ★ ROUTED AFTER THE RUN STARTS, because a follow-up ("make it shorter")
     // is routed by the question it follows, and the stored conversation is
     // read inside startMinkRun. The run row's model is provisional until the
@@ -185,6 +200,8 @@ export async function POST(request: Request) {
     // A written turn carries no tags and passes through unchanged.
     const splitter = createSpokenAnswerSplitter();
     let consumerCancelled = false;
+    // Set as the stream closes: the chat's title can arrive after that.
+    let streamClosed = false;
     let timedOut = false;
     const timeoutId = setTimeout(() => {
       timedOut = true;
@@ -194,7 +211,7 @@ export async function POST(request: Request) {
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         const send = (event: string, data: Record<string, unknown>) => {
-          if (consumerCancelled) return;
+          if (consumerCancelled || streamClosed) return;
           controller.enqueue(
             encoder.encode(
               `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
@@ -224,6 +241,13 @@ export async function POST(request: Request) {
           requestId,
           conversationId: started.conversationId,
           runId: started.runId,
+        });
+        // The title the moment the namer has it, while the stream is open
+        // (usually long before the answer). One that lands after the stream
+        // closes is still saved; the chat reads it from the list instead.
+        void naming?.then((title) => {
+          if (title)
+            send("title", { conversationId: started.conversationId, title });
         });
         try {
           const result = await runMinkAgent({
@@ -482,6 +506,7 @@ export async function POST(request: Request) {
         } finally {
           clearTimeout(timeoutId);
           request.signal.removeEventListener("abort", abortFromRequest);
+          streamClosed = true;
           if (!consumerCancelled) controller.close();
         }
       },

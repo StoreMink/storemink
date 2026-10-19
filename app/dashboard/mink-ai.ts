@@ -21,6 +21,8 @@ import { readMinkScreen } from "./mink-screen";
 import {
   clearMinkActiveChat,
   isMinkChatStale,
+  MINK_CONVERSATION_LIMIT,
+  MINK_NEW_CHAT_TITLE,
   minkSessionStorage,
   readMinkActiveChat,
   writeMinkActiveChat,
@@ -29,6 +31,8 @@ import {
 export const ASSISTANT_NAME = "Mink AI";
 export const CANNED_REPLY = `Hi, I'm ${ASSISTANT_NAME} - your store assistant. I'm coming soon, and I'll be able to answer questions about your products, orders and customers right here.`;
 const REPLY_DELAY_MS = 500;
+/** How long after a send History asks again for a title that had not arrived. */
+const TITLE_REFRESH_MS = 4_000;
 
 /** One tool the run called, as the progress list shows it. */
 export type MinkRunStep = {
@@ -199,6 +203,11 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
   const sendSerial = useRef(0);
   // Object URLs the chat now owns (sent pictures), released with the thread.
   const ownedPreviews = useRef(new Set<string>());
+  // ★ A chat this tab created whose generated title has not arrived yet. It
+  // is called "New chat" until then, in the header and History alike, rather
+  // than flashing its stored excerpt first (lib/mink/conversation-title.ts).
+  const pendingTitleId = useRef<string | null>(null);
+  const titleRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setReplying = useCallback((value: boolean) => {
     isReplyingRef.current = value;
@@ -274,8 +283,14 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
         });
         if (!response.ok) throw await responseError(response);
         const body = (await response.json()) as unknown;
-        const recent = readConversationSummaries(body);
+        const pending = pendingTitleId.current;
+        const recent = readConversationSummaries(body).map((item) =>
+          item.id === pending ? { ...item, title: MINK_NEW_CHAT_TITLE } : item,
+        );
         setConversations(recent);
+        // The header names the open chat as History does.
+        const open = recent.find((item) => item.id === conversationId.current);
+        if (open) setActiveConversationTitle(open.title);
         if (
           restoreLatest &&
           shouldRestoreLatest.current &&
@@ -366,6 +381,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
       running?.abort();
       historyAbortController.current?.abort();
       if (replyTimer.current) clearTimeout(replyTimer.current);
+      if (titleRefreshTimer.current) clearTimeout(titleRefreshTimer.current);
       releasePreviews();
     };
   }, [enabled, loadConversations, releasePreviews]);
@@ -460,9 +476,10 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
       let receivedMessage = false;
       let streamedError: MinkUiError | null = null;
       let message = text;
-      // What the header calls a new chat until the server's title arrives.
-      const titleSource =
-        text || prepared?.attachments[0]?.name || "Attachment";
+      // A send with no chat open creates one, which the server then names.
+      const creatingChat = conversationId.current === null;
+      // Assigned in the stream's callback, so typed wide rather than narrowed.
+      let createdChatId = null as string | null;
 
       if (prepared) {
         // ★★ THE MESSAGE IS ALREADY IN THE CHAT; ITS FILES ARE READ HERE.
@@ -555,14 +572,52 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
         await consumeMinkSse(response.body, (event, data) => {
           if (event === "status") {
             if (typeof data.conversationId === "string") {
-              conversationId.current = data.conversationId;
+              const id = data.conversationId;
+              conversationId.current = id;
               touchActivity();
-              setActiveConversationId(data.conversationId);
-              setActiveConversationTitle(
-                (current) => current ?? conversationTitle(titleSource),
-              );
+              setActiveConversationId(id);
+              if (creatingChat && createdChatId === null) {
+                // ★ In History at once, as "New chat", the way ChatGPT and
+                // Claude list a chat before its title arrives. The server
+                // pruned the oldest beyond the limit as it created this one.
+                createdChatId = id;
+                pendingTitleId.current = id;
+                setActiveConversationTitle(MINK_NEW_CHAT_TITLE);
+                const now = new Date().toISOString();
+                setConversations((previous) =>
+                  previous.some((item) => item.id === id)
+                    ? previous
+                    : [
+                        {
+                          id,
+                          title: MINK_NEW_CHAT_TITLE,
+                          lastMessageAt: now,
+                          createdAt: now,
+                        },
+                        ...previous,
+                      ].slice(0, MINK_CONVERSATION_LIMIT),
+                );
+              }
             }
             setStatusText("Thinking…");
+          } else if (event === "title") {
+            // The generated title of the chat this send created.
+            const id =
+              typeof data.conversationId === "string"
+                ? data.conversationId
+                : null;
+            const title =
+              typeof data.title === "string" ? data.title.trim() : "";
+            if (id && title) {
+              if (pendingTitleId.current === id) pendingTitleId.current = null;
+              setConversations((previous) =>
+                previous.map((item) =>
+                  item.id === id ? { ...item, title } : item,
+                ),
+              );
+              if (conversationId.current === id)
+                setActiveConversationTitle(title);
+            }
           } else if (event === "tool") {
             const name =
               typeof data.name === "string" ? data.name : "store_data";
@@ -683,6 +738,21 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
           setSpokenKept("");
           setSteps([]);
           setReplying(false);
+        }
+        // ★ The title is usually ready long before the answer. When it was
+        // not (a fast answer, a busy model, a stopped run), it is still saved
+        // on the server, so History asks once more a moment later; a chat that
+        // could not be named then shows its stored excerpt.
+        const awaited = createdChatId;
+        if (awaited && pendingTitleId.current === awaited) {
+          if (titleRefreshTimer.current)
+            clearTimeout(titleRefreshTimer.current);
+          titleRefreshTimer.current = setTimeout(() => {
+            titleRefreshTimer.current = null;
+            if (pendingTitleId.current === awaited)
+              pendingTitleId.current = null;
+            void loadConversations();
+          }, TITLE_REFRESH_MS);
         }
       }
     },
@@ -1096,13 +1166,6 @@ function readMinkFeedback(value: unknown): MinkMessage["feedback"] {
       ? row.issueCategory
       : null;
   return { rating: row.rating, issueCategory };
-}
-
-function conversationTitle(message: string): string {
-  const compact = message.replace(/\s+/g, " ").trim();
-  const characters = Array.from(compact);
-  if (characters.length <= 80) return compact;
-  return `${characters.slice(0, 77).join("").trimEnd()}…`;
 }
 
 /** Replace the step with the same sequence, else append; sorted by sequence. */
