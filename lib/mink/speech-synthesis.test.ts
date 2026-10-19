@@ -9,10 +9,12 @@ vi.mock("./voice-transcription", () => ({
 import {
   BULBUL_V4_FLASH_SPEAKERS,
   bulbulLanguageFor,
+  MINK_SPEECH_MAX_CHARS,
   MinkSpeechUnsupportedError,
   parseWav,
   streamMinkSpeech,
 } from "./speech-synthesis";
+import { MINK_SPEECH_PIECE_MAX } from "./speech-text";
 
 const fetchMock = vi.fn();
 const signal = new AbortController().signal;
@@ -375,5 +377,12 @@ describe("Sarvam Bulbul V4 Flash (piece by piece)", () => {
       signal,
     );
     await expect(drain(speech.pcm)).rejects.toThrow("changed sample rate");
+  });
+});
+
+describe("★ the read-aloud request cap", () => {
+  it("is one piece of an answer, the most the voice chat ever sends", () => {
+    expect(MINK_SPEECH_MAX_CHARS).toBe(MINK_SPEECH_PIECE_MAX);
+    expect(MINK_SPEECH_MAX_CHARS).toBeLessThanOrEqual(600);
   });
 });

@@ -71,6 +71,26 @@ describe("createSpokenAnswerSplitter", () => {
     expect(splitter.finish()).toEqual([]);
   });
 
+  it("★ drops a closing tag the output limit cut short, and ends the block", () => {
+    const splitter = createSpokenAnswerSplitter();
+    expect(splitter.push("<spoken>Twelve orders today.</spo")).toEqual([
+      { kind: "spoken", text: "Twelve orders today." },
+    ]);
+    // "</spo" can only have been the tag: it is never said, and the block ends.
+    expect(splitter.finish()).toEqual([{ kind: "spoken_end" }]);
+
+    const lone = createSpokenAnswerSplitter();
+    lone.push("<spoken>Twelve.<");
+    expect(lone.finish()).toEqual([{ kind: "spoken_end" }]);
+
+    // Outside the block a held "<" is still text, flushed as written.
+    const written = createSpokenAnswerSplitter();
+    expect(written.push("Stock is low <")).toEqual([
+      { kind: "written", text: "Stock is low " },
+    ]);
+    expect(written.finish()).toEqual([{ kind: "written", text: "<" }]);
+  });
+
   it("starts over on reset, so a withdrawn block can open again", () => {
     const splitter = createSpokenAnswerSplitter();
     splitter.push("<spoken>Let me check.</spoken>");
@@ -116,5 +136,29 @@ describe("splitSpokenAnswer", () => {
       spoken: "Said but unclosed",
     });
     expect(splitSpokenAnswer("")).toEqual({ written: "", spoken: null });
+  });
+
+  it("★ never carries a cut-off closing tag into either half", () => {
+    expect(
+      splitSpokenAnswer("<spoken>You have twelve orders today.</spo"),
+    ).toEqual({
+      written: "You have twelve orders today.",
+      spoken: "You have twelve orders today.",
+    });
+  });
+
+  it("★ shows a reply that is only a closed spoken block", () => {
+    expect(
+      splitSpokenAnswer(
+        "<spoken>You have twelve orders today.\nThree need packing.</spoken>",
+      ),
+    ).toEqual({
+      written: "You have twelve orders today.\nThree need packing.",
+      spoken: "You have twelve orders today. Three need packing.",
+    });
+    expect(splitSpokenAnswer("<spoken>  </spoken>")).toEqual({
+      written: "",
+      spoken: null,
+    });
   });
 });

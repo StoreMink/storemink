@@ -249,6 +249,8 @@ export function DashboardChat({
   const scrollRef = useRef<HTMLDivElement>(null);
   const openedNavigationRef = useRef<Set<number | string>>(new Set());
   const followLatestRef = useRef(true);
+  /** The thread was swapped out for the voice view and has not come back yet. */
+  const voiceHidThreadRef = useRef(false);
   const latestUserMessageIdRef = useRef<number | string | null>(null);
   const anchoredUserMessageIdRef = useRef<number | string | null>(null);
   const autoAnchorSubmissionRef = useRef(true);
@@ -365,8 +367,25 @@ export function DashboardChat({
   }, [isOverlay, panelWidth]);
 
   useEffect(() => {
+    if (voiceChat.enabled) {
+      voiceHidThreadRef.current = true;
+      return;
+    }
     const scroller = scrollRef.current;
     if (!scroller) return;
+    if (voiceHidThreadRef.current) {
+      // ★ The voice view unmounted the thread, and it remounts at its top.
+      // Nothing else re-runs this effect when voice chat ends (the answers
+      // landed while it was hidden), so the merchant came back to their
+      // oldest message with no way to tell the newest were below. Open it at
+      // the latest message, as a restored conversation opens.
+      voiceHidThreadRef.current = false;
+      followLatestRef.current = true;
+      anchoredUserMessageIdRef.current = null;
+      latestUserMessageIdRef.current = latestMinkUserMessageId(messages);
+      if (turnAnchorSpaceRef.current)
+        turnAnchorSpaceRef.current.style.minHeight = "0px";
+    }
     const latestUserId = latestMinkUserMessageId(messages);
     const receivedNewUserMessage =
       latestUserId !== null && latestUserId !== latestUserMessageIdRef.current;
@@ -422,7 +441,7 @@ export function DashboardChat({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, isReplying, error, statusText]);
+  }, [messages, isReplying, error, statusText, voiceChat.enabled]);
 
   useEffect(() => {
     const composer = composerRef.current;

@@ -71,6 +71,13 @@ export type MinkMemoryPrompt = {
   error?: string;
 };
 
+export type MinkSendOptions = {
+  /** A spoken turn: the server asks Mink for a short spoken block first. */
+  voice?: boolean;
+  /** Replace the last question when it got no answer (see `run`). */
+  replaceUnanswered?: boolean;
+};
+
 type SsePayload = Record<string, unknown>;
 
 export function useMinkAi({ enabled }: { enabled: boolean }) {
@@ -255,15 +262,24 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     async (
       text: string,
       appendUser: boolean,
-      options: { voice?: boolean } = {},
+      options: MinkSendOptions = {},
     ) => {
       if (!text || isReplyingRef.current) return;
       shouldRestoreLatest.current = false;
       if (appendUser) {
-        setMessages((previous) => [
-          ...previous,
-          { id: nextId.current++, role: "user", text },
-        ]);
+        setMessages((previous) => {
+          // ★ A spoken question asked again with the words that followed it
+          // replaces the half that was cancelled. That half got no answer,
+          // and only answered turns are in the conversation's history, so it
+          // would vanish on reload while the model never saw it.
+          const unanswered =
+            options.replaceUnanswered &&
+            previous[previous.length - 1]?.role === "user";
+          return [
+            ...(unanswered ? previous.slice(0, -1) : previous),
+            { id: nextId.current++, role: "user", text },
+          ];
+        });
       }
       setInput("");
       setError(null);
@@ -447,7 +463,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
    * instead of losing it to `run`'s silent early return.
    */
   const send = useCallback(
-    (raw?: string, options: { voice?: boolean } = {}): boolean => {
+    (raw?: string, options: MinkSendOptions = {}): boolean => {
       const text = (raw ?? input).trim();
       if (!text || isReplyingRef.current) return false;
       void run(text, true, options);

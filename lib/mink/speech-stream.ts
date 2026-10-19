@@ -11,6 +11,8 @@
  * before a tool call (`delta_reset`), and React may batch that reset with the
  * fragments that follow it, so the segmenter never sees an empty string in
  * between: "not an extension of what I saw last" is the test, not "empty".
+ * What follows is a new answer, so `spoke` and the length cap start again:
+ * a withdrawn "Let me check" must not stop the answer after it being read.
  * ★ CLOSED MEANS INERT. Once the block is closed the chat client clears its
  * spoken text (on the final message and again in its finally), and that
  * clearing must not read as a withdrawal that drops pieces still queued.
@@ -21,6 +23,8 @@
  */
 
 import {
+  MINK_SPEECH_FIRST_PIECE_MAX,
+  MINK_SPEECH_PIECE_MAX,
   SPEAKABLE_MAX_CHARS,
   speakableMinkText,
   speechSentenceEnds,
@@ -29,8 +33,6 @@ import {
 
 export const MINK_FIRST_PIECE_MAX = 140;
 const CLAUSE_MIN = 60;
-const FIRST_PIECE_CHUNK = 160;
-const PIECE_CHUNK = 600;
 
 export type MinkSpeechSegmenter = {
   /** Feed the latest complete spoken text; returns the pieces ready to say. */
@@ -40,7 +42,7 @@ export type MinkSpeechSegmenter = {
   readonly emitted: number;
   readonly seen: string;
   readonly closed: boolean;
-  /** Whether any piece has been handed out this turn. */
+  /** Whether any piece has been handed out since the text was last withdrawn. */
   readonly spoke: boolean;
 };
 
@@ -77,6 +79,17 @@ export function speechCutPoint(
   return cut;
 }
 
+/**
+ * What the final spoken text adds after what has been said, compared with
+ * whitespace collapsed; null when it does not continue it at all.
+ */
+function unsaidTail(final: string, said: string): string | null {
+  const flat = (text: string) => text.replace(/\s+/g, " ").trim();
+  const whole = flat(final);
+  const done = flat(said);
+  return whole.startsWith(done) ? whole.slice(done.length) : null;
+}
+
 export function createMinkSpeechSegmenter(
   options: { maxChars?: number; firstPieceMax?: number } = {},
 ): MinkSpeechSegmenter {
@@ -93,8 +106,8 @@ export function createMinkSpeechSegmenter(
     if (!clean || spokenChars >= maxChars) return [];
     const pieces = splitSpeechChunks(
       clean,
-      spoke ? PIECE_CHUNK : FIRST_PIECE_CHUNK,
-      PIECE_CHUNK,
+      spoke ? MINK_SPEECH_PIECE_MAX : MINK_SPEECH_FIRST_PIECE_MAX,
+      MINK_SPEECH_PIECE_MAX,
     );
     for (const piece of pieces) spokenChars += piece.length;
     if (pieces.length) spoke = true;
@@ -109,6 +122,8 @@ export function createMinkSpeechSegmenter(
       if (!text.startsWith(seen)) {
         reset = true;
         emitted = 0;
+        spoke = false;
+        spokenChars = 0;
       }
       seen = text;
       const pending = text.slice(emitted);
@@ -120,10 +135,18 @@ export function createMinkSpeechSegmenter(
     close(final) {
       if (closed) return [];
       closed = true;
-      const source =
-        typeof final === "string" && final.startsWith(seen) ? final : seen;
-      const tail = source.slice(emitted);
-      emitted = source.length;
+      let tail: string;
+      if (typeof final !== "string" || final.startsWith(seen)) {
+        const source = typeof final === "string" ? final : seen;
+        tail = source.slice(emitted);
+      } else {
+        // ★ The final text is the server's split, whitespace collapsed; the
+        // stream kept its line breaks. Compared exactly, a block with one
+        // never matched, and only what had streamed was said: the sentences
+        // that arrived with the answer itself were lost.
+        tail = unsaidTail(final, seen.slice(0, emitted)) ?? seen.slice(emitted);
+      }
+      emitted = seen.length;
       return bounded(tail);
     },
     get emitted() {
@@ -141,22 +164,35 @@ export function createMinkSpeechSegmenter(
   };
 }
 
-const WORD = /[^\p{L}\p{N}]+/u;
+// ★ Combining marks are part of a word. Devanagari, Bengali, Tamil and every
+// other Indic script write vowels and the virama as marks (\p{M}), so a
+// splitter on letters and digits alone cut "बिक्री" into fragments that
+// matched almost anything Mink had said in Hindi.
+const WORD = /[^\p{L}\p{M}\p{N}]+/u;
 function words(text: string): string[] {
-  return text.toLowerCase().normalize("NFKC").split(WORD).filter(Boolean);
+  return text.normalize("NFKC").toLowerCase().split(WORD).filter(Boolean);
 }
 
 /**
  * Whether a transcript is Mink's own voice coming back through the
- * microphone: most of its words are in the last few hundred characters Mink
- * said. The backstop for an echo canceller that converged late; a short
- * transcript is never judged, because "yes" and "okay" overlap with anything.
+ * microphone: its words are in the last few hundred characters Mink said.
+ * The backstop for an echo canceller that converged late, or a read-aloud
+ * voice the canceller never heard.
+ *
+ * ★ The voice loop asks this ONLY for speech that began while Mink was
+ * talking. Speech after Mink finished is the merchant's reply, and a reply
+ * that reuses Mink's words ("keep it as a draft") is an answer, not an echo.
+ * ★ A word or two counts as an echo only when every one of them is Mink's:
+ * the clip a self-interruption captures is the fraction of a second of
+ * Mink's voice before playback stopped ("sales are"), which used to be too
+ * short to judge and was sent to Mink as a new question.
  */
 export function isEchoTranscript(text: string, said: string): boolean {
   const heard = words(text);
-  if (heard.length < 3) return false;
+  if (!heard.length) return false;
   const recent = new Set(words(said.slice(-300)));
   if (!recent.size) return false;
   const overlap = heard.filter((word) => recent.has(word)).length;
+  if (heard.length < 3) return overlap === heard.length;
   return overlap / heard.length >= 0.8;
 }

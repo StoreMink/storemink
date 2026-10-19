@@ -232,6 +232,17 @@ export function fetchMinkSpeech({
   };
 }
 
+/** One chunk on the playhead, until it ends or is cut. */
+type ScheduledChunk = {
+  source: AudioBufferSourceNode;
+  /** Audio-clock time it starts. */
+  at: number;
+  /** Audio-clock time it ends. */
+  end: number;
+  ended: Promise<void>;
+  settle: () => void;
+};
+
 /**
  * One playhead for a whole voice-chat answer. Every piece of audio is placed
  * at the end of the last one, so pieces fetched one after another play with
@@ -240,21 +251,50 @@ export function fetchMinkSpeech({
  */
 export class MinkSpeechPlayhead {
   private playhead = 0;
-  private sources: AudioBufferSourceNode[] = [];
+  private scheduled: ScheduledChunk[] = [];
   private lastEnded: Promise<void> = Promise.resolve();
+  private paused = false;
+  private resumeWaiters: (() => void)[] = [];
   /** Whether anything has been scheduled yet. */
   started = false;
 
   constructor(private readonly audio: AudioContext) {}
 
-  /** The audio-clock time the scheduled audio ends. */
-  get endsAt(): number {
-    return this.playhead;
+  /**
+   * Holds every sound where it is: the context's clock stops, so what is
+   * playing stops mid-word and what is scheduled keeps its place. Audio
+   * scheduled meanwhile queues behind it.
+   */
+  pause(): void {
+    if (this.paused) return;
+    this.paused = true;
+    void this.audio.suspend().catch(() => {});
   }
 
-  /** Schedules samples to play right after whatever is already queued. */
-  schedule(samples: Int16Array, rate: number): void {
-    if (!samples.length) return;
+  /** After `pause()`: the clock runs again and everything carries on. */
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    void this.audio.resume().catch(() => {});
+    this.wake();
+  }
+
+  /** True between `pause()` and `resume()`. */
+  get isPaused(): boolean {
+    return this.paused;
+  }
+
+  private wake(): void {
+    for (const resolve of this.resumeWaiters.splice(0)) resolve();
+  }
+
+  /**
+   * Schedules samples to play right after whatever is already queued, and
+   * returns the audio-clock time they start (null for no samples): what is
+   * on screen follows the moment words are heard, not when they are queued.
+   */
+  schedule(samples: Int16Array, rate: number): number | null {
+    if (!samples.length) return null;
     const buffer = this.audio.createBuffer(1, samples.length, rate);
     const channel = buffer.getChannelData(0);
     for (let i = 0; i < samples.length; i += 1)
@@ -265,45 +305,111 @@ export class MinkSpeechPlayhead {
     const now = this.audio.currentTime;
     if (this.playhead < now + 0.02)
       this.playhead = now + (this.started ? RECOVER_LEAD_S : START_LEAD_S);
-    source.start(this.playhead);
+    const at = this.playhead;
+    source.start(at);
     this.playhead += buffer.duration;
-    this.sources.push(source);
-    this.lastEnded = new Promise((resolve) => {
-      source.onended = () => {
-        source.disconnect();
-        resolve();
-      };
+    let settle!: () => void;
+    const ended = new Promise<void>((resolve) => {
+      settle = resolve;
     });
+    const chunk: ScheduledChunk = {
+      source,
+      at,
+      end: this.playhead,
+      ended,
+      settle,
+    };
+    source.onended = () => {
+      source.disconnect();
+      this.scheduled = this.scheduled.filter((item) => item !== chunk);
+      settle();
+    };
+    this.scheduled.push(chunk);
+    this.lastEnded = ended;
     this.started = true;
+    return at;
+  }
+
+  /**
+   * Withdraws every chunk scheduled to start at or after `at`, none of which
+   * has been heard; anything already playing finishes. The next audio is
+   * placed straight after what is left.
+   */
+  cutFrom(at: number): void {
+    const kept: ScheduledChunk[] = [];
+    for (const chunk of this.scheduled) {
+      if (chunk.at < at) {
+        kept.push(chunk);
+        continue;
+      }
+      chunk.source.onended = null;
+      try {
+        chunk.source.stop();
+      } catch {
+        // Already ended.
+      }
+      chunk.source.disconnect();
+      chunk.settle();
+    }
+    this.scheduled = kept;
+    const last = kept[kept.length - 1];
+    this.playhead = last ? last.end : 0;
+    this.lastEnded = last ? last.ended : Promise.resolve();
   }
 
   /**
    * Resolves once the last scheduled audio has played, with a safety margin
    * in case an `ended` event never comes. Immediate when nothing was queued.
+   * ★ A cut settles the audio it withdrew, so a wait on it ends at once and
+   * whatever is left is waited for instead.
+   * ★ Paused audio has not played: its clock has stopped, so the safety
+   * margin, which runs on the wall clock, waits for `resume()` before it can
+   * call the audio finished.
    */
   async drained(): Promise<void> {
     if (!this.started) return;
-    const remainingMs =
-      Math.max(0, (this.playhead - this.audio.currentTime) * 1000) + 1_000;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      this.lastEnded,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, remainingMs);
-      }),
-    ]).finally(() => clearTimeout(timer));
+    for (;;) {
+      const waitingOn = this.lastEnded;
+      const remainingMs =
+        Math.max(0, (this.playhead - this.audio.currentTime) * 1000) + 1_000;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let timedOut = false;
+      await Promise.race([
+        waitingOn,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            timedOut = true;
+            resolve();
+          }, remainingMs);
+        }),
+      ]).finally(() => clearTimeout(timer));
+      if (timedOut && this.paused) {
+        await new Promise<void>((resolve) => this.resumeWaiters.push(resolve));
+        continue;
+      }
+      if (this.lastEnded === waitingOn) return;
+    }
   }
 
-  /** Stops every scheduled source at once. */
+  /**
+   * Stops every scheduled source at once. A paused context is set running
+   * again, with nothing left in it, so the next answer's audio is not held.
+   */
   stop(): void {
-    for (const source of this.sources) {
+    for (const chunk of this.scheduled) {
       try {
-        source.stop();
+        chunk.source.stop();
       } catch {
         // Already ended.
       }
+      chunk.settle();
     }
-    this.sources = [];
+    this.scheduled = [];
+    if (this.paused) {
+      this.paused = false;
+      void this.audio.resume().catch(() => {});
+    }
+    this.wake();
   }
 }
 

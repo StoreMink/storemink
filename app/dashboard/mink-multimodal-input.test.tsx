@@ -9,6 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { useState } from "react";
+import type { MinkVoiceComposer } from "./chat-context";
 import {
   MinkMultimodalInput,
   shouldReadMinkImageAsStorefrontDesign,
@@ -42,6 +43,9 @@ const voice = vi.hoisted(() => {
     notice: null as string | null,
     toggle: vi.fn(),
     noteSend: vi.fn(),
+    registerComposer: vi.fn<(composer: MinkVoiceComposer) => () => void>(
+      () => () => {},
+    ),
   };
   return { value, useMinkVoice: vi.fn(() => value) };
 });
@@ -487,6 +491,67 @@ describe("Mink attachment intent", () => {
   });
 });
 
+describe("★★ a spoken turn takes what is staged in the hidden composer", () => {
+  /** What the composer registered with voice chat when it mounted. */
+  const registered = () => voice.value.registerComposer.mock.calls.at(-1)?.[0];
+
+  it("hands back nothing when nothing is staged, so the transcript goes alone", () => {
+    render(<LiveComposer initial="" />);
+    expect(
+      registered()?.(
+        "Sales?",
+        vi.fn(() => true),
+      ),
+    ).toBeNull();
+  });
+
+  it("sends the draft, the words and the staged image together, and keeps the upload", async () => {
+    const submit = vi.fn();
+    const view = render(
+      <LiveComposer
+        initial="Create a new product from this image"
+        canSaveMedia
+        onSubmit={submit}
+      />,
+    );
+    await stageImage();
+    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    const deliver = vi.fn<(message: string) => boolean>(() => true);
+    let taken: boolean | null | undefined;
+    await act(async () => {
+      taken = await registered()?.("call it Almond Shake", deliver);
+    });
+    expect(taken).toBe(true);
+    // Voice chat delivers it as a spoken turn; the typed send is not used.
+    expect(submit).not.toHaveBeenCalled();
+    const sent = deliver.mock.calls[0][0] as string;
+    expect(
+      sent.startsWith(
+        "Create a new product from this image call it Almond Shake",
+      ),
+    ).toBe(true);
+    expect(sent).toContain(SAVED_URL);
+    expect(screen.queryByRole("button", { name: "View echos.png" })).toBeNull();
+    // The composer remounts once the new conversation has its id: the image
+    // went with the message, so its upload must survive that.
+    view.unmount();
+    expect(media.remove).not.toHaveBeenCalled();
+  });
+
+  it("leaves the words in the box when the turn cannot go", async () => {
+    render(<LiveComposer initial="Draft" />);
+    let taken: boolean | null | undefined;
+    await act(async () => {
+      taken = await registered()?.(
+        "and more",
+        vi.fn(() => false),
+      );
+    });
+    expect(taken).toBe(false);
+    expect(screen.getByLabelText("Message")).toHaveValue("Draft and more");
+  });
+});
+
 describe("Mink dictation", () => {
   it("inserts one final transcript and waits for Send", async () => {
     const submit = vi.fn();
@@ -507,6 +572,27 @@ describe("Mink dictation", () => {
     expect(submit).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(submit).toHaveBeenCalledOnce();
+  });
+
+  it("★ says no words were recognised, not that transcription failed, when the clip held none", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: "", languageCode: null }),
+    });
+    render(<LiveComposer initial="Please" />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    expect(await screen.findByText(/Listening/i)).toBeVisible();
+    act(() =>
+      recording.done?.(
+        new File(["wav"], "voice-note.wav", { type: "audio/wav" }),
+      ),
+    );
+    expect(
+      await screen.findByText(
+        "No speech was recognised. Try again or type your message.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Message")).toHaveValue("Please");
   });
 
   it("cancels dictation without changing the message", async () => {

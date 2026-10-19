@@ -19,6 +19,14 @@
  * ★ AN UNCLOSED BLOCK IS SPOKEN TO THE END, and the finished split falls back
  * to the same text for the written side, so a reply that forgot its closing
  * tag still shows something on screen.
+ * ★ BUT A TAG CUT SHORT IS NOT WORDS. When the output limit stops a reply
+ * mid-way through "</spoken>", the held "</spo" can only have been that tag:
+ * the flush drops it and closes the block, so it is never read aloud or
+ * printed after the last sentence.
+ * ★ SO DOES A REPLY THAT IS ONLY A SPOKEN BLOCK. The written half is what is
+ * stored, shown and replayed as history, and the database refuses an empty
+ * message, so a model that skipped the written answer used to fail the whole
+ * run and discard its drafts. The spoken words become the written answer.
  */
 
 const OPEN = "<spoken>";
@@ -87,14 +95,25 @@ export function createSpokenAnswerSplitter(): SpokenAnswerSplitter {
         parts.push({ kind: "spoken_end" });
       }
     }
+    let cutClose = false;
     if (!flush) {
       const hold = tagPrefixLength(rest);
       if (hold) {
         held = rest.slice(rest.length - hold);
         rest = rest.slice(0, rest.length - hold);
       }
+    } else if (inside) {
+      const cut = tagPrefixLength(rest);
+      if (cut) {
+        cutClose = CLOSE.startsWith(rest.slice(rest.length - cut));
+        rest = rest.slice(0, rest.length - cut);
+      }
     }
     emit(rest);
+    if (cutClose) {
+      inside = false;
+      parts.push({ kind: "spoken_end" });
+    }
     return parts;
   };
 
@@ -124,9 +143,10 @@ export function splitSpokenAnswer(text: string): {
     else if (part.kind === "written") written += part.text;
     else ended = true;
   }
-  spoken = spoken.replace(/\s+/g, " ").trim();
+  const said = spoken.trim();
+  spoken = said.replace(/\s+/g, " ");
   written = written.trim();
-  if (spoken && !ended && !written) written = spoken;
-  else if (spoken && !ended) written = `${written}\n\n${spoken}`.trim();
+  if (said && !written) written = said;
+  else if (said && !ended) written = `${written}\n\n${said}`;
   return { written, spoken: spoken || null };
 }

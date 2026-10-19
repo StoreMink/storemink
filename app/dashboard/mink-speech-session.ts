@@ -32,6 +32,30 @@ import {
  * ★ CANCEL BUMPS A GENERATION. Every awaited continuation re-checks it, so a
  * fetch that lands or an utterance that ends after a barge-in acts on
  * nothing; `onIdle` never fires for a cancelled session.
+ * ★ AN ENDED SESSION CAN BE REOPENED. A run that spoke a sentence and then
+ * withdrew it for a tool call has a second spoken block coming, the one with
+ * the answer; `reopen()` takes pieces again, and `onStart` and `onIdle` fire
+ * again for what follows. Pieces that arrive while the last audio drains are
+ * played, not dropped.
+ * ★ A PIECE IS ANNOUNCED WHEN IT IS HEARD, NOT WHEN IT IS QUEUED. A sentence
+ * is scheduled as soon as its audio arrives, which with a piece fetched ahead
+ * is while the one before it still has seconds to play; announcing it then
+ * put the next sentence on screen while the merchant was still hearing the
+ * last one. `onStart` and `onPieceStart` wait for the audio clock to reach
+ * the piece, and any still waiting are announced, in order, before idle.
+ * ★ A WITHDRAWN SENTENCE THAT HAS NOT BEEN HEARD IS NOT HEARD. `dropPending()`
+ * forgets the queue, drops the piece being fetched, and cuts from the
+ * playhead any audio scheduled to start later, so the run's withdrawn words
+ * (a tool call follows) are not read out after the fact. The piece already
+ * playing finishes.
+ * ★★ A PAUSE LOSES NOTHING. Speech over Mink holds its voice (`pause()`)
+ * until the transcript says whether the merchant said anything; a cough, a
+ * door or Mink's own voice through the speaker gives it back (`resume()`).
+ * The model's audio is held on the context's clock, so it carries on from
+ * the very syllable; the browser voice cannot be paused reliably everywhere,
+ * so its sentence is stopped and said again from its start. While paused no
+ * piece is announced, no browser sentence starts, and the session does not
+ * call itself idle.
  */
 
 /** Pieces fetched ahead of the one playing. */
@@ -63,10 +87,19 @@ export type MinkSpeechSessionEvents = {
 
 export type MinkSpeechSession = {
   enqueue(text: string, lang: string): void;
-  /** Forget pieces not yet playing; the one playing finishes. */
+  /**
+   * Forget every piece not yet heard (queued, being fetched, or scheduled to
+   * play later); the one playing finishes.
+   */
   dropPending(): void;
   /** No more pieces will come; `onIdle` fires once the last has played. */
   end(): void;
+  /** After `end()`: more pieces are coming after all. */
+  reopen(): void;
+  /** Hold the voice where it is; nothing is lost (see the header). */
+  pause(): void;
+  /** After `pause()`: carry on where the voice stopped. */
+  resume(): void;
   /** Stop everything now; nothing fires afterwards. */
   cancel(): void;
   readonly active: boolean;
@@ -81,6 +114,20 @@ type Piece = {
   finished: boolean;
   truncated: boolean;
   wake: (() => void) | null;
+  /** Audio-clock time its first audio plays (the model voice). */
+  startsAt: number | null;
+  /** The browser voice began reading it. */
+  speaking: boolean;
+  /** Its words have been put on screen (the browser voice may say it twice). */
+  announced: boolean;
+  /** Withdrawn before it was heard: never played, never announced. */
+  dropped: boolean;
+};
+
+type Announcement = {
+  piece: Piece;
+  gen: number;
+  timer: ReturnType<typeof setTimeout> | null;
 };
 
 export function createMinkSpeechSession(options: {
@@ -114,8 +161,16 @@ export function createMinkSpeechSession(options: {
   let driving = false;
   let startedAny = false;
   let truncatedNoticed = false;
+  let paused = false;
+  const resumeWaiters: (() => void)[] = [];
+  // The browser sentence being read, so `pause()` can stop it.
+  let reading: { stop(): void } | null = null;
   const queue: Piece[] = [];
   let active: Piece | null = null;
+  // Model pieces with audio on the playhead not yet heard, in playing order.
+  let scheduled: Piece[] = [];
+  // Pieces scheduled but not yet heard, waiting to be announced, in order.
+  const announcements: Announcement[] = [];
   // Chrome drops end events for an utterance nothing references.
   const utterances = new Set<SpeechSynthesisUtterance>();
 
@@ -180,34 +235,102 @@ export function createMinkSpeechSession(options: {
     events.onPieceStart(piece.text);
   };
 
+  const audioNow = () => options.audio?.currentTime ?? 0;
+  const heard = (piece: Piece) =>
+    piece.speaking || (piece.startsAt !== null && piece.startsAt <= audioNow());
+
+  /** Announces every waiting piece up to and including `through` (all when absent). */
+  const releaseAnnouncements = (through?: Announcement) => {
+    if (through && !announcements.includes(through)) return;
+    while (announcements.length) {
+      const next = announcements.shift()!;
+      if (next.timer) clearTimeout(next.timer);
+      if (!next.piece.dropped) announce(next.piece);
+      if (next === through) return;
+    }
+  };
+
+  /**
+   * Times an announcement to the audio clock. ★ Not while paused: the clock
+   * has stopped, and a timer on the wall clock would put the sentence on
+   * screen before anyone hears it; `resume()` sets them again.
+   */
+  const armAnnouncement = (entry: Announcement) => {
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = null;
+    if (paused) return;
+    const waitMs = ((entry.piece.startsAt ?? 0) - audioNow()) * 1000;
+    if (waitMs <= 0) {
+      releaseAnnouncements(entry);
+      return;
+    }
+    entry.timer = setTimeout(() => {
+      if (entry.gen === generation) releaseAnnouncements(entry);
+    }, waitMs);
+  };
+
+  const announceWhenHeard = (piece: Piece, gen: number) => {
+    const entry: Announcement = { piece, gen, timer: null };
+    announcements.push(entry);
+    armAnnouncement(entry);
+  };
+
+  /** Waits out a pause; returns at once when not paused or no longer current. */
+  const whilePaused = async (gen: number) => {
+    while (paused && gen === generation)
+      await new Promise<void>((resolve) => resumeWaiters.push(resolve));
+  };
+  const wakeResumeWaiters = () => {
+    for (const resolve of resumeWaiters.splice(0)) resolve();
+  };
+
+  const forgetAnnouncements = (drop: (piece: Piece) => boolean) => {
+    for (let i = announcements.length - 1; i >= 0; i -= 1) {
+      const entry = announcements[i];
+      if (!drop(entry.piece)) continue;
+      if (entry.timer) clearTimeout(entry.timer);
+      announcements.splice(i, 1);
+    }
+  };
+
   const driveModel = async (
     piece: Piece,
     gen: number,
-  ): Promise<"played" | "browser" | "off" | "cancelled"> => {
+  ): Promise<"played" | "browser" | "off" | "cancelled" | "dropped"> => {
     if (!playhead) return "browser";
     startFetch(piece);
     while (!piece.head) {
+      if (piece.dropped) return "dropped";
       await waitFor(piece);
       if (gen !== generation) return "cancelled";
     }
+    // Before the head is read: an aborted fetch answers "cancelled", which
+    // must not hand withdrawn words to the browser voice.
+    if (piece.dropped) return "dropped";
     const head = piece.head;
     if (head.kind === "off") return "off";
     if (head.kind !== "pcm") return "browser";
-    if (options.audio?.state === "suspended")
+    // A context the browser suspended is woken; one this session paused is
+    // left for `resume()`.
+    if (!paused && options.audio?.state === "suspended")
       await options.audio.resume().catch(() => {});
     if (gen !== generation) return "cancelled";
-    let announced = false;
+    let scheduledAny = false;
     const flush = () => {
       for (const samples of piece.buffered.splice(0)) {
-        playhead.schedule(samples, head.rate);
-        if (!announced && playhead.started) {
-          announced = true;
-          announce(piece);
-        }
+        if (piece.dropped) return;
+        const at = playhead.schedule(samples, head.rate);
+        if (at === null || scheduledAny) continue;
+        scheduledAny = true;
+        piece.startsAt = at;
+        scheduled = scheduled.filter((item) => !heard(item));
+        scheduled.push(piece);
+        announceWhenHeard(piece, gen);
       }
     };
     for (;;) {
       flush();
+      if (piece.dropped) return "dropped";
       if (piece.finished) {
         flush();
         break;
@@ -215,7 +338,8 @@ export function createMinkSpeechSession(options: {
       await waitFor(piece);
       if (gen !== generation) return "cancelled";
     }
-    if (!announced) return "browser";
+    if (piece.dropped) return "dropped";
+    if (!scheduledAny) return "browser";
     if (piece.truncated && !truncatedNoticed) {
       truncatedNoticed = true;
       events.onNotice(MINK_SPEECH_TRUNCATED_NOTICE);
@@ -229,34 +353,58 @@ export function createMinkSpeechSession(options: {
       await playhead.drained();
       if (gen !== generation) return;
     }
+    // The model's audio has played, so its announcements are all due.
+    releaseAnnouncements();
     if (!synth || typeof Utterance === "undefined") return;
-    await new Promise<void>((resolve) => {
-      const utterance = new Utterance(piece.text);
-      utterance.lang = piece.lang;
-      utterances.add(utterance);
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(watchdog);
-        utterances.delete(utterance);
-        resolve();
-      };
-      const watchdog = setTimeout(() => {
-        if (gen === generation) synth.cancel();
-        finish();
-      }, speechWatchdogMs(piece.text));
-      utterance.onend = finish;
-      utterance.onerror = finish;
-      announce(piece);
-      synth.speak(utterance);
-    });
+    /** Reads the piece once; true when `pause()` stopped it mid-sentence. */
+    const readOnce = () =>
+      new Promise<boolean>((resolve) => {
+        const utterance = new Utterance(piece.text);
+        utterance.lang = piece.lang;
+        utterances.add(utterance);
+        let settled = false;
+        const finish = (stopped: boolean) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(watchdog);
+          utterances.delete(utterance);
+          if (reading === current) reading = null;
+          resolve(stopped);
+        };
+        const current = {
+          stop: () => {
+            // Settled first, so the end event the cancel raises is ignored.
+            finish(true);
+            synth.cancel();
+          },
+        };
+        const watchdog = setTimeout(() => {
+          if (gen === generation) synth.cancel();
+          finish(false);
+        }, speechWatchdogMs(piece.text));
+        utterance.onend = () => finish(false);
+        utterance.onerror = () => finish(false);
+        reading = current;
+        piece.speaking = true;
+        if (!piece.announced) {
+          piece.announced = true;
+          announce(piece);
+        }
+        synth.speak(utterance);
+      });
+    for (;;) {
+      await whilePaused(gen);
+      if (gen !== generation || piece.dropped) return;
+      // Stopped by a pause: the sentence is said again, from its start.
+      if (!(await readOnce())) return;
+    }
   };
 
   const drive = async (piece: Piece, gen: number) => {
     if (voice === "model") {
       const result = await driveModel(piece, gen);
-      if (result === "cancelled" || result === "played") return;
+      if (result === "cancelled" || result === "played" || result === "dropped")
+        return;
       if (result === "off") {
         voice = "browser";
         abortQueuedFetches();
@@ -268,7 +416,10 @@ export function createMinkSpeechSession(options: {
 
   const settleIdle = async (gen: number) => {
     if (playhead) await playhead.drained();
-    if (gen !== generation || idleFired) return;
+    // Reopened, or handed another piece, while the last audio drained.
+    if (gen !== generation || idleFired || !ended || queue.length) return;
+    // Everything has played: no piece is announced after the session idles.
+    releaseAnnouncements();
     idleFired = true;
     events.onIdle(truncatedNoticed ? "truncated" : "done");
   };
@@ -282,8 +433,10 @@ export function createMinkSpeechSession(options: {
         if (!active) {
           active = queue.shift() ?? null;
           if (!active) {
-            if (ended) await settleIdle(gen);
-            return;
+            if (!ended) return;
+            await settleIdle(gen);
+            if (gen !== generation || idleFired) return;
+            continue;
           }
         }
         startFetch(active);
@@ -309,6 +462,10 @@ export function createMinkSpeechSession(options: {
         finished: false,
         truncated: false,
         wake: null,
+        startsAt: null,
+        speaking: false,
+        announced: false,
+        dropped: false,
       });
       if (!driving) void pump();
       else if (active && queue.length <= MINK_SPEECH_PREFETCH)
@@ -317,18 +474,59 @@ export function createMinkSpeechSession(options: {
     dropPending() {
       abortQueuedFetches();
       queue.length = 0;
+      const unheard = scheduled.filter((piece) => !heard(piece));
+      if (active && !heard(active) && !unheard.includes(active))
+        unheard.push(active);
+      for (const piece of unheard) {
+        piece.dropped = true;
+        piece.fetch?.abort();
+      }
+      // Pieces play in order, so the first one with audio is where to cut.
+      const cutAt = unheard.find((piece) => piece.startsAt !== null)?.startsAt;
+      if (playhead && cutAt != null) playhead.cutFrom(cutAt);
+      scheduled = scheduled.filter((piece) => !piece.dropped);
+      forgetAnnouncements((piece) => piece.dropped);
+      if (active?.dropped) notify(active);
     },
     end() {
       if (dead) return;
       ended = true;
       if (!driving) void pump();
     },
+    reopen() {
+      if (dead) return;
+      ended = false;
+      idleFired = false;
+      startedAny = false;
+    },
+    pause() {
+      if (dead || paused) return;
+      paused = true;
+      playhead?.pause();
+      for (const entry of announcements) {
+        if (entry.timer) clearTimeout(entry.timer);
+        entry.timer = null;
+      }
+      reading?.stop();
+    },
+    resume() {
+      if (dead || !paused) return;
+      paused = false;
+      playhead?.resume();
+      for (const entry of [...announcements]) armAnnouncement(entry);
+      wakeResumeWaiters();
+    },
     cancel() {
       if (dead) return;
       dead = true;
       generation += 1;
+      paused = false;
+      wakeResumeWaiters();
+      reading = null;
       abortQueuedFetches();
       queue.length = 0;
+      forgetAnnouncements(() => true);
+      scheduled = [];
       if (active) {
         active.fetch?.abort();
         notify(active);

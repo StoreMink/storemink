@@ -340,6 +340,81 @@ describe("★★ useMinkAi streaming", () => {
     expect(answer?.spoken).toBe("You have twelve orders today.");
   });
 
+  it("★ a spoken question asked again with more words replaces the unanswered half", async () => {
+    const encoder = new TextEncoder();
+    let streams = 0;
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === "/api/mink/conversations") {
+          return Response.json({ conversations: [] });
+        }
+        streams += 1;
+        const first = streams === 1;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            if (first) {
+              // Mink is still thinking when the merchant carries on talking.
+              init?.signal?.addEventListener("abort", () =>
+                controller.error(new DOMException("Aborted", "AbortError")),
+              );
+              return;
+            }
+            controller.enqueue(
+              encoder.encode(
+                'event: message\ndata: {"role":"assistant","text":"Sales were up last week.","artifacts":[]}\n\n' +
+                  "event: done\ndata: {}\n\n",
+              ),
+            );
+            controller.close();
+          },
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+    act(() => {
+      result.current.send("Show me sales for", { voice: true });
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(true));
+    act(() => result.current.cancel());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.messages.map((message) => message.text)).toEqual([
+      "Show me sales for",
+    ]);
+    act(() => {
+      result.current.send("Show me sales for last week", {
+        voice: true,
+        replaceUnanswered: true,
+      });
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.messages.map((message) => message.text)).toEqual([
+      "Show me sales for last week",
+      "Sales were up last week.",
+    ]);
+    // An answered question is never replaced.
+    act(() => {
+      result.current.send("And this week?", {
+        voice: true,
+        replaceUnanswered: true,
+      });
+    });
+    await waitFor(() => expect(result.current.messages).toHaveLength(4));
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.messages.map((message) => message.text)).toEqual([
+      "Show me sales for last week",
+      "Sales were up last week.",
+      "And this week?",
+      "Sales were up last week.",
+    ]);
+  });
+
   it("discards streamed working-out when the server resets it or a tool starts", async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === "/api/mink/conversations") {

@@ -39,7 +39,7 @@ import {
 } from "@/lib/mink/csv-input";
 import { startMinkRecording } from "@/lib/mink/voice-recorder";
 import { transcribeMinkRecording } from "@/lib/mink/voice-turn";
-import { useMinkVoice } from "./chat-context";
+import { useMinkVoice, type MinkVoiceComposer } from "./chat-context";
 import { formatMinkClock, MinkWaveform } from "./mink-waveform";
 
 const COMPOSER_FILE_ACCEPT =
@@ -145,10 +145,31 @@ export function MinkMultimodalInput({
   /**
    * The spoken conversation (the "Talk with Mink" toggle) lives in
    * ChatProvider, which owns the microphone and the send for it; this
-   * composer only offers the button and stays out of the way while it is on.
+   * composer offers the button and stays out of the way while it is on.
    * Outside a provider the toggle is disabled.
+   *
+   * ★ Voice chat hides this composer but keeps it mounted, so a draft and
+   * staged attachments wait here, and each spoken turn comes here first to
+   * take them along (`submitMessage`). The newest submit path is read through
+   * a ref, because the registration outlives the render that made it.
    */
   const voiceChat = useMinkVoice();
+  const { registerComposer } = voiceChat;
+  const voiceTurn = useRef<MinkVoiceComposer | null>(null);
+  useEffect(() => {
+    voiceTurn.current = (transcript, deliver) =>
+      latestMessage.current.message.trim() || attachmentsRef.current.length
+        ? submitMessage({ transcript, deliver })
+        : null;
+  });
+  useEffect(
+    () =>
+      registerComposer(
+        (transcript, deliver) =>
+          voiceTurn.current?.(transcript, deliver) ?? null,
+      ),
+    [registerComposer],
+  );
 
   function updateAttachments(
     updater: (current: ComposerAttachment[]) => ComposerAttachment[],
@@ -486,9 +507,10 @@ export function MinkMultimodalInput({
         controller.signal,
       );
       if (id !== generation.current) return;
+      // The provider heard sound but no words: nothing failed.
       if (!transcript)
         throw new Error(
-          "Voice transcription failed. Try again or type your message.",
+          "No speech was recognised. Try again or type your message.",
         );
       const current = latestMessage.current;
       const before = current.message.trimEnd();
@@ -580,16 +602,42 @@ export function MinkMultimodalInput({
   /**
    * The one send path: reads the box, uploads what is staged, and hands the
    * message to `onSubmit`. Resolves true once it did.
+   *
+   * A spoken turn from voice chat (`voice`) puts its transcript after what is
+   * in the box and goes to `deliver` instead, so the draft and the staged
+   * attachments go with it, the way they would with a typed message. If it
+   * cannot go, its words are left in the box rather than lost.
    */
-  async function submitMessage(): Promise<boolean> {
-    const current = latestMessage.current.message.trim();
-    const { disabled: off, onSubmit: send } = latestMessage.current;
-    if (dictationRef.current) return false;
-    if (!current || off || submittingRef.current || !send) return false;
+  async function submitMessage(voice?: {
+    transcript: string;
+    deliver: (message: string) => boolean;
+  }): Promise<boolean> {
+    const draft = latestMessage.current.message.trim();
+    const current = voice
+      ? [draft, voice.transcript.trim()].filter(Boolean).join(" ")
+      : draft;
+    const { disabled: off, onSubmit } = latestMessage.current;
+    const send =
+      voice?.deliver ??
+      (onSubmit
+        ? (message: string) => {
+            onSubmit(message);
+            return true;
+          }
+        : null);
+    const keepSpoken = () => {
+      if (voice && current) latestMessage.current.onAdd(current);
+    };
+    if (dictationRef.current || !current || off || submittingRef.current) {
+      keepSpoken();
+      return false;
+    }
+    if (!send) return false;
     const staged = attachmentsRef.current;
     if (!staged.length) {
-      send(current);
-      return true;
+      if (send(current)) return true;
+      keepSpoken();
+      return false;
     }
 
     setSubmitting(true);
@@ -702,14 +750,16 @@ export function MinkMultimodalInput({
       attachmentsRef.current = [];
       setAttachments([]);
       setPreviewId(null);
+      // The prepared message (with its file references) stays in the box if
+      // the send is refused, so nothing staged is lost.
       latestMessage.current.onAdd(prepared);
-      send(prepared);
-      return true;
+      return send(prepared);
     } catch (e) {
       if (id === generation.current && !controller.signal.aborted) {
         setError(
           e instanceof Error ? e.message : "Could not process this attachment.",
         );
+        keepSpoken();
       }
       return false;
     } finally {

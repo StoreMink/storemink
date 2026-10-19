@@ -24,8 +24,9 @@ import {
   type MinkSpeechGate,
 } from "@/lib/mink/voice-recorder";
 import {
-  captureMinkVoiceTurn,
+  createMinkVoiceCapture,
   MinkVoiceCaptureError,
+  type MinkVoiceCapture,
 } from "@/lib/mink/voice-turn";
 import type { MinkMessage } from "./mink-ai";
 import {
@@ -41,28 +42,53 @@ export { speechWatchdogMs } from "./mink-speech-session";
  * It lives in `ChatProvider`, not the composer: the composer is keyed on the
  * conversation and remounts when a new conversation gets its id or the panel
  * swaps with the full view, and a loop inside it died on every such remount.
- * It owns the microphone (`captureMinkVoiceTurn`), the sentence segmenter and
- * the speech session for the current answer; the chat client supplies the
- * stream (`spokenText`, `spokenEnded`, `streamingText`, `messages`) and the
- * two verbs, `send` and `cancel`.
+ * It owns the microphone (`createMinkVoiceCapture`), the sentence segmenter
+ * and the speech session for the current answer; the chat client supplies
+ * the stream (`spokenText`, `spokenEnded`, `messages`) and the two verbs,
+ * `send` and `cancel`.
  *
  * ★ MINK SPEAKS WHILE IT IS STILL WRITING. A voice turn's reply opens with a
  * spoken block that the stream route forwards fragment by fragment; each
  * completed sentence is handed to the speech session the moment it ends, so
  * the first words play a second or two after Mink starts answering and the
  * loop is back to listening while the written answer and its cards are still
- * arriving in the chat.
- * ★ THE MICROPHONE IS OPEN FOR THE WHOLE TURN. The recorder is re-armed the
- * instant a transcript is sent, with a stricter gate while Mink is thinking
- * or talking (`MINK_BARGE_IN_GATE`, swapped in place so the recorder reads it
- * without restarting). Speech over Mink's voice stops the playback and, while
- * Mink is still thinking, cancels the unfinished reply; the words become the
- * next turn. A cancelled run is not charged.
+ * arriving in the chat. The block ends at its own close tag or when the
+ * answer lands, never because written text appeared first. A block the run
+ * withdrew after it closed (a sentence before a tool call) reopens the turn
+ * for the block that carries the answer; an empty block leaves the written
+ * answer to be read.
+ * ★ THE MICROPHONE IS OPEN FOR THE WHOLE CHAT: one stream from the first turn
+ * to the last, so the browser's echo canceller keeps what it has learned
+ * about the speaker. The recorder is re-armed the instant a transcript is
+ * sent, with a stricter gate while Mink is thinking or talking
+ * (`MINK_BARGE_IN_GATE`, swapped in place so the recorder reads it without
+ * restarting).
+ * ★★ LOUDNESS HOLDS MINK'S VOICE; THE TRANSCRIPT DECIDES. Speech over Mink's
+ * voice pauses it where it is. If the transcript has words, the merchant
+ * interrupted: the voice ends for good, and the written answer, its cards and
+ * its drafts still land in the chat. If it has none (a cough, a door, Mink's
+ * own voice through the speaker), the voice carries on from where it paused,
+ * and nothing was lost. Speech while Mink is still THINKING about a spoken
+ * question cancels that reply (not charged) and carries its words into the
+ * next transcript, so a question split by a pause ("show me sales for",
+ * "last week") is asked whole and replaces the unanswered half in the thread;
+ * a burst with no words asks the question again. A typed question, or one
+ * that carried a draft or attachments, is never cancelled by speech: its
+ * answer's voice is held like any other.
+ * ★ ONLY SPEECH OVER MINK CAN BE MINK'S OWN VOICE. A transcript is compared
+ * with what Mink said this turn only when the speech began while Mink was
+ * talking; a reply that reuses Mink's words after it finished is an answer.
+ * An echo confirmed once means the speaker reaches the microphone, so talking
+ * over Mink is switched off for the rest of the chat and the merchant is
+ * told why; the pause that echo caused is given back, so Mink never cuts
+ * itself off.
  * ★ A TRANSCRIPT WAITS FOR THE CHAT TO BE FREE. `send` refuses while a reply
  * is running, and a cancelled reply stays "replying" until its stream has
  * closed, so a transcript is parked in `pendingSend` and sent from the effect
  * that sees `isReplying` fall. The slot is cleared BEFORE `send`, so the
- * effect and a direct call cannot send it twice.
+ * effect and a direct call cannot send it twice. `send` may resolve later:
+ * a draft or attachments staged in the composer go with the transcript, and
+ * uploading them takes time.
  * ★ ONLY A TURN THIS LOOP OPENED IS SPOKEN. Restored history, an answer that
  * predates the toggle and a conversation loaded while listening stay silent,
  * as before; a typed send while voice chat is on gets a turn too.
@@ -103,6 +129,9 @@ export const MAX_EMPTY_TRANSCRIPTS = 3;
 export const MINK_BARGE_IN_GRACE_MS = 300;
 /** How long a notice stays on screen. */
 export const MINK_VOICE_NOTICE_MS = 5_000;
+/** Said once, when Mink is caught interrupting itself through the speaker. */
+export const MINK_ECHO_NOTICE =
+  "Mink heard its own voice through your speaker, so it will finish speaking before it listens. Use headphones to interrupt Mink.";
 
 export type MinkVoiceSupport = { ok: true } | { ok: false; reason: string };
 
@@ -151,6 +180,16 @@ function readSupport(): MinkVoiceSupport {
 }
 const noSubscription = () => () => {};
 
+export type MinkVoiceSendOptions = {
+  voice: true;
+  /**
+   * The question carries the words of one cancelled while Mink was thinking:
+   * it replaces that unanswered question in the thread instead of following
+   * it.
+   */
+  replaceUnanswered?: boolean;
+};
+
 export type MinkVoiceModeInput = {
   messages: MinkMessage[];
   isReplying: boolean;
@@ -160,19 +199,22 @@ export type MinkVoiceModeInput = {
   spokenText: string;
   /** The spoken block has closed; the written answer follows. */
   spokenEnded: boolean;
-  /** The written answer so far. */
-  streamingText: string;
   /**
    * Send a transcript as a voice turn. False when the chat refused it (a
-   * reply is still running, or the text is empty).
+   * reply is still running, or the text is empty). A promise when it went
+   * through the composer with a staged draft or attachments, which resolves
+   * once they were uploaded and sent (or could not be).
    */
-  send: (text: string, options: { voice: true }) => boolean;
+  send: (
+    text: string,
+    options: MinkVoiceSendOptions,
+  ) => boolean | Promise<boolean>;
   /** Stop the reply in progress; the chat keeps the merchant's message only. */
   cancel: () => void;
   /** BCP-47 tag for Latin-script answers; the browser's own language in the dashboard. */
   langFallback?: string;
   /** Injected in tests. */
-  capture?: typeof captureMinkVoiceTurn;
+  createCapture?: () => MinkVoiceCapture;
   createSession?: typeof createMinkSpeechSession;
 };
 
@@ -196,8 +238,9 @@ export type MinkVoiceMode = {
 
 type Turn = {
   session: MinkSpeechSession;
+  /** Replaced when the turn reopens or its block turns out to be empty. */
   segmenter: MinkSpeechSegmenter;
-  /** The spoken block is over (its end arrived, or the written answer did). */
+  /** The spoken block is over (its end arrived having said something, or the answer landed). */
   closed: boolean;
   /** The written answer landed. */
   finalised: boolean;
@@ -225,13 +268,38 @@ type Live = {
   turn: Turn | null;
   /** A transcript waiting for the chat to be free. */
   pendingSend: string | null;
+  /** The parked transcript replaces an unanswered question (`MinkVoiceSendOptions`). */
+  pendingReplaces: boolean;
+  /** A send that went through the composer and has not resolved yet. */
+  sending: object | null;
   /** A send went out and the chat has not yet shown it replying. */
   replyPending: boolean;
+  /**
+   * The spoken question in flight, while speech may still cancel it: only a
+   * plain voice question the loop sent itself. Null for a typed question and
+   * for one that went out with a draft or attachments.
+   */
+  asked: string | null;
+  /** The words of a question cancelled while Mink was thinking, asked again with the next transcript. */
+  carry: string | null;
   captureAbort: AbortController | null;
   /** Bumped on every arm and stop, so a late transcript is inert. */
   captureId: number;
   /** The recorder reported speech during the current capture. */
   speechStarted: boolean;
+  /** What the loop was doing when that speech began; only speech over Mink can be its echo. */
+  speechFrom: MinkVoiceState | null;
+  /** Mink's own voice came back as a question once: talking over it is off for this chat. */
+  echoProne: boolean;
+  /**
+   * Mink's voice is held for speech that began over it, until the transcript
+   * says whether the merchant said anything.
+   */
+  held: boolean;
+  /** What the loop was doing when the voice was held, to go back to. */
+  heldFrom: MinkVoiceState | null;
+  /** The microphone for this voice chat; null while voice chat is off. */
+  microphone: MinkVoiceCapture | null;
   /** The floor the recorder reads on every chunk. Swapped in place. */
   gate: { current: MinkSpeechGate };
   /** When the current answer's audio started, for the barge-in grace. */
@@ -289,10 +357,19 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     session: 0,
     turn: null,
     pendingSend: null,
+    pendingReplaces: false,
+    sending: null,
     replyPending: false,
+    asked: null,
+    carry: null,
     captureAbort: null,
     captureId: 0,
     speechStarted: false,
+    speechFrom: null,
+    echoProne: false,
+    held: false,
+    heldFrom: null,
+    microphone: null,
     gate: { current: MINK_SPEECH_GATE },
     playingSince: 0,
     said: "",
@@ -327,6 +404,8 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   const dropTurn = () => {
     l.turn?.session.cancel();
     l.turn = null;
+    l.held = false;
+    l.heldFrom = null;
     l.gate.current = MINK_SPEECH_GATE;
   };
 
@@ -336,10 +415,17 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     l.captureId += 1;
     l.captureAbort?.abort();
     l.captureAbort = null;
+    l.microphone?.close();
+    l.microphone = null;
     dropTurn();
     l.pendingSend = null;
+    l.pendingReplaces = false;
+    l.sending = null;
     l.replyPending = false;
+    l.asked = null;
+    l.carry = null;
     l.speechStarted = false;
+    l.speechFrom = null;
     releaseAudio();
     levelRef.current = 0;
     setPhase("idle");
@@ -349,18 +435,58 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   };
 
   /**
-   * The merchant started talking over Mink: playback stops, and a reply
-   * still being produced is cancelled (its stream closes with no answer, and
-   * nothing is charged). A reply whose answer has already landed is left to
-   * finish writing; only its voice is cut.
+   * Speech began over Mink: its voice is held where it is, not stopped,
+   * until the transcript says whether the merchant said anything.
+   */
+  const hold = () => {
+    if (!l.turn) return;
+    l.heldFrom = l.state;
+    l.held = true;
+    l.turn.session.pause();
+  };
+
+  /** The speech over Mink held no words: its voice carries on where it paused. */
+  const release = () => {
+    const turn = l.turn;
+    const from = l.heldFrom;
+    l.held = false;
+    l.heldFrom = null;
+    if (!turn) return;
+    turn.session.resume();
+    if (turn.idle) return;
+    // The speaker's first syllable reaching the mic again is not an interruption.
+    l.playingSince = Date.now();
+    if (from === "speaking" || from === "waiting") setPhase(from);
+  };
+
+  /**
+   * The merchant started talking over Mink. Its voice is held; the reply
+   * keeps writing, and its answer, cards and drafts land in the chat as usual.
+   *
+   * ★★ ONLY A QUESTION MINK IS STILL THINKING ABOUT IS CANCELLED. Talking over
+   * Mink's voice used to cancel the run too, and with the browser voice the
+   * spoken block plays while the written answer is still being produced: one
+   * "okay" over Mink, or Mink's own voice through the speaker, threw away the
+   * answer and every draft it had prepared. While Mink is thinking, a spoken
+   * question is cancelled (nothing is charged) and its words are carried into
+   * the next transcript, because the merchant was usually not finished: a
+   * pause mid-question ends a turn. A typed question, or one that went out
+   * with a draft or attachments, is never cancelled by speech; the new words
+   * wait for it to finish.
    */
   const interrupt = () => {
-    const unfinished =
-      (l.state === "waiting" || l.state === "speaking") &&
-      (latest.current.isReplying || l.replyPending);
-    dropTurn();
-    if (unfinished) latest.current.cancel();
-    l.replyPending = false;
+    const thinking =
+      l.state === "waiting" && (latest.current.isReplying || l.replyPending);
+    const asked = l.asked;
+    l.asked = null;
+    if (thinking && asked !== null) {
+      dropTurn();
+      l.carry = asked;
+      l.replyPending = false;
+      latest.current.cancel();
+      return;
+    }
+    hold();
   };
 
   const enqueue = (turn: Turn, pieces: string[]) => {
@@ -375,6 +501,9 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     l.empties = 0;
     l.replyPending = true;
     l.gate.current = MINK_BARGE_IN_GATE;
+    // An echo is judged against this answer's words only: an earlier
+    // answer's are not what is coming out of the speaker now.
+    l.said = "";
     set.said(null);
     const createSession =
       latest.current.createSession ?? createMinkSpeechSession;
@@ -393,6 +522,9 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
         onStart: () => {
           if (l.turn !== turn) return;
           l.playingSince = Date.now();
+          // A reopened turn can start again after it went idle, when the
+          // ordinary floor is back: Mink's voice must not trip it.
+          l.gate.current = MINK_BARGE_IN_GATE;
           setPhase("speaking");
         },
         onPieceStart: (text) => {
@@ -425,18 +557,45 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   };
 
   const trySend = () => {
-    if (!l.enabled || !l.pendingSend || latest.current.isReplying) return;
+    if (!l.enabled || !l.pendingSend || l.sending) return;
+    if (latest.current.isReplying) return;
     const text = l.pendingSend;
+    const replace = l.pendingReplaces;
     l.pendingSend = null;
-    if (!latest.current.send(text, { voice: true })) {
-      stop(
-        "send_refused",
-        "Voice chat turned off: the message could not be sent.",
-      );
+    l.pendingReplaces = false;
+    const session = l.session;
+    const settle = (taken: boolean, asked: string | null) => {
+      if (!l.enabled || session !== l.session) return;
+      if (!taken) {
+        stop(
+          "send_refused",
+          "Voice chat turned off: the message could not be sent.",
+        );
+        return;
+      }
+      beginTurn();
+      l.asked = asked;
+      // A send through the composer resolves after its upload, by which time
+      // the chat may already show the reply running.
+      if (latest.current.isReplying) l.replyPending = false;
+      arm();
+    };
+    const result = latest.current.send(
+      text,
+      replace ? { voice: true, replaceUnanswered: true } : { voice: true },
+    );
+    if (typeof result === "boolean") {
+      settle(result, text);
       return;
     }
-    beginTurn();
-    arm();
+    const token = {};
+    l.sending = token;
+    const done = (taken: boolean) => {
+      if (l.sending === token) l.sending = null;
+      // It carried a draft or attachments: speech never withdraws it.
+      settle(taken, null);
+    };
+    void result.then(done, () => done(false));
   };
 
   /** The recorder reached its speech floor; may it start a turn now? */
@@ -444,15 +603,20 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     if (!l.enabled || id !== l.captureId) return false;
     switch (l.state) {
       case "listening":
+        l.speechFrom = "listening";
         l.speechStarted = true;
         return true;
       case "speaking":
+        // The speaker reaches the microphone here: Mink finishes first.
+        if (l.echoProne) return false;
         if (Date.now() - l.playingSince < MINK_BARGE_IN_GRACE_MS) return false;
+        l.speechFrom = "speaking";
         interrupt();
         setPhase("listening");
         l.speechStarted = true;
         return true;
       case "waiting":
+        l.speechFrom = "waiting";
         interrupt();
         setPhase("listening");
         l.speechStarted = true;
@@ -462,16 +626,53 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     }
   };
 
+  /** Park a transcript for the chat, and send it at once if the chat is free. */
+  const queueSend = (text: string, replace: boolean) => {
+    l.pendingSend = text;
+    l.pendingReplaces = replace;
+    set.heard(text);
+    setPhase("sending");
+    trySend();
+  };
+
   const onTranscript = (text: string | null, id: number) => {
     if (id !== l.captureId) return;
     l.captureAbort = null;
     set.mic("closed");
     if (!l.enabled) return;
     const heard = (text ?? "").trim();
-    if (!heard || isEchoTranscript(heard, l.said)) {
+    // ★ Only speech that began over Mink's voice can be that voice coming
+    // back. Compared after Mink finished, a reply that reuses its words
+    // ("keep it as a draft") was dropped as an echo, and three in a row
+    // switched voice chat off as "nothing was heard".
+    const echo =
+      heard !== "" &&
+      l.speechFrom === "speaking" &&
+      isEchoTranscript(heard, l.said);
+    if (echo && !l.echoProne) {
+      l.echoProne = true;
+      notice(MINK_ECHO_NOTICE);
+    }
+    const carried = l.carry;
+    l.carry = null;
+    if (!heard || echo) {
+      // The burst that cancelled a question while Mink was thinking said
+      // nothing (a cough, a door): ask the question again, not nothing.
+      if (carried !== null) {
+        queueSend(carried, true);
+        return;
+      }
+      // ★ The burst over Mink's voice said nothing (a cough, a door, Mink's
+      // own voice through the speaker): Mink carries on where it paused.
+      if (l.held) {
+        release();
+        arm();
+        return;
+      }
       // Silence while listening counts; the recorder's own cap closing an
-      // open mic during a long answer does not.
-      if (l.speechStarted || l.state === "listening") {
+      // open mic during a long answer does not, and nor does an echo, which
+      // is Mink's voice and not a merchant who went quiet.
+      if (!echo && (l.speechStarted || l.state === "listening")) {
         l.empties += 1;
         if (l.empties >= MAX_EMPTY_TRANSCRIPTS) {
           stop("silence", "Voice chat turned off: nothing was heard.");
@@ -481,11 +682,13 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
       arm();
       return;
     }
+    // The merchant said something: the voice they talked over ends for good.
+    if (l.held) dropTurn();
     l.empties = 0;
-    l.pendingSend = heard;
-    set.heard(heard);
-    setPhase("sending");
-    trySend();
+    queueSend(
+      carried !== null ? `${carried} ${heard}` : heard,
+      carried !== null,
+    );
   };
 
   const onCaptureError = (error: unknown, id: number) => {
@@ -502,30 +705,33 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     else stop("mic", "Voice chat turned off: the microphone could not start.");
   };
 
-  /** Opens the microphone unless it is already open. */
+  /** Starts listening on the chat's microphone unless it already is. */
   const arm = () => {
-    if (!l.enabled || l.captureAbort) return;
+    const microphone = l.microphone;
+    if (!l.enabled || l.captureAbort || !microphone) return;
     const controller = new AbortController();
     const id = ++l.captureId;
     l.captureAbort = controller;
     l.speechStarted = false;
+    l.speechFrom = null;
     levelRef.current = 0;
     set.mic("starting");
-    const capture = latest.current.capture ?? captureMinkVoiceTurn;
-    capture({
-      signal: controller.signal,
-      gate: l.gate,
-      onLevel: (level) => {
-        levelRef.current = Math.max(level, levelRef.current * 0.9);
-      },
-      onSpeechStart: () => onSpeechStart(id),
-      onPhase: (phase) => {
-        if (id === l.captureId) set.mic(phase);
-      },
-    }).then(
-      (text) => onTranscript(text, id),
-      (error: unknown) => onCaptureError(error, id),
-    );
+    microphone
+      .capture({
+        signal: controller.signal,
+        gate: l.gate,
+        onLevel: (level) => {
+          levelRef.current = Math.max(level, levelRef.current * 0.9);
+        },
+        onSpeechStart: () => onSpeechStart(id),
+        onPhase: (phase) => {
+          if (id === l.captureId) set.mic(phase);
+        },
+      })
+      .then(
+        (text) => onTranscript(text, id),
+        (error: unknown) => onCaptureError(error, id),
+      );
   };
 
   const toggle = () => {
@@ -539,6 +745,11 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
       return;
     }
     const { messages, error } = latest.current;
+    // Whatever turned the last session off is history now, and "Voice chat
+    // turned off" under "Listening…" reads as the new session failing.
+    if (l.noticeTimer) clearTimeout(l.noticeTimer);
+    l.noticeTimer = null;
+    set.notice(null);
     l.enabled = true;
     l.baselineIds = new Set(messages.map((message) => String(message.id)));
     l.spokenIds = new Set();
@@ -546,8 +757,16 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     l.empties = 0;
     l.said = "";
     l.pendingSend = null;
+    l.pendingReplaces = false;
+    l.sending = null;
     l.replyPending = false;
+    l.asked = null;
+    l.carry = null;
+    l.echoProne = false;
+    l.held = false;
+    l.heldFrom = null;
     l.gate.current = MINK_SPEECH_GATE;
+    l.microphone = (latest.current.createCapture ?? createMinkVoiceCapture)();
     l.audio = startAudio();
     l.serverSpeech = "unknown";
     const session = ++l.session;
@@ -572,13 +791,54 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     arm();
   };
 
+  /**
+   * A typed (or Home-box, or card) send while voice chat is on: its answer is
+   * spoken too. ★ It never cancels anything: the chat has already started the
+   * new run, so a cancel here would stop the question just asked.
+   */
   const noteSend = () => {
     if (!l.enabled) return;
-    interrupt();
+    dropTurn();
     l.pendingSend = null;
+    l.pendingReplaces = false;
+    l.carry = null;
     set.heard(null);
     beginTurn();
+    l.asked = null;
     arm();
+  };
+
+  /**
+   * The block the turn closed on was withdrawn: the run spoke a sentence and
+   * then called a tool. The answer comes in another block, so the turn takes
+   * pieces again, from a fresh segmenter, through the same session.
+   */
+  const reopenTurn = (turn: Turn) => {
+    turn.session.dropPending();
+    turn.segmenter = createMinkSpeechSegmenter();
+    turn.closed = false;
+    turn.idle = false;
+    turn.session.reopen();
+    // Back to thinking, unless the merchant has already started talking.
+    if (l.state === "listening" && !l.speechStarted && !l.pendingSend) {
+      l.gate.current = MINK_BARGE_IN_GATE;
+      setPhase("waiting");
+    }
+  };
+
+  /** The block closed: its tail plays and the session ends after it. */
+  const closeBlock = (turn: Turn) => {
+    const tail = turn.segmenter.close();
+    if (!turn.segmenter.spoke) {
+      // An empty block (or one with nothing speakable): the turn stays open,
+      // so the written answer is read when it lands, as for a reply with no
+      // block at all. A fresh segmenter keeps taking text if it is withdrawn.
+      turn.segmenter = createMinkSpeechSegmenter();
+      return;
+    }
+    turn.closed = true;
+    enqueue(turn, tail);
+    turn.session.end();
   };
 
   /** The chat stream moved: feed the open turn, or notice that it ended. */
@@ -587,11 +847,9 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     isReplying: boolean;
     spokenText: string;
     spokenEnded: boolean;
-    streamingText: string;
   }) => {
     if (!l.enabled) return;
-    const { messages, isReplying, spokenText, spokenEnded, streamingText } =
-      input;
+    const { messages, isReplying, spokenText, spokenEnded } = input;
     if (isReplying) l.replyPending = false;
     const turn = l.turn;
     if (turn && !turn.finalised) {
@@ -623,15 +881,21 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
         dropTurn();
         if (l.state === "waiting" || l.state === "speaking")
           setPhase(l.pendingSend ? "sending" : "listening");
-      } else if (!turn.closed) {
-        // (2) The spoken block is streaming.
-        const { pieces, reset } = turn.segmenter.push(spokenText);
-        if (reset) turn.session.dropPending();
-        enqueue(turn, pieces);
-        if (spokenEnded || (streamingText && turn.segmenter.seen)) {
-          turn.closed = true;
-          enqueue(turn, turn.segmenter.close());
-          turn.session.end();
+      } else {
+        // ★ A closed block whose text is no longer there was withdrawn by
+        // the run (a tool call follows): reopen for the block with the
+        // answer. The text clearing once the answer lands is case (1), and
+        // once the run has ended, case (3); neither reaches here.
+        if (turn.closed && !spokenText.startsWith(turn.segmenter.seen))
+          reopenTurn(turn);
+        if (!turn.closed) {
+          // (2) The spoken block is streaming. ★ It ends at its own close
+          // tag: written text arriving first (even a newline before the
+          // block) used to close the turn on its first sentence.
+          const { pieces, reset } = turn.segmenter.push(spokenText);
+          if (reset) turn.session.dropPending();
+          enqueue(turn, pieces);
+          if (spokenEnded) closeBlock(turn);
         }
       }
     }
@@ -700,16 +964,10 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
   // it the way a subscription callback would, so the loop's phase moves in
   // step with spoken text arriving, an answer landing or a send failing.
   const { messages, isReplying, isChatOpen, error } = input;
-  const { spokenText, spokenEnded, streamingText } = input;
+  const { spokenText, spokenEnded } = input;
   useEffect(() => {
-    loop.onChat({
-      messages,
-      isReplying,
-      spokenText,
-      spokenEnded,
-      streamingText,
-    });
-  }, [loop, messages, isReplying, spokenText, spokenEnded, streamingText]);
+    loop.onChat({ messages, isReplying, spokenText, spokenEnded });
+  }, [loop, messages, isReplying, spokenText, spokenEnded]);
 
   useEffect(() => {
     if (!isChatOpen) loop.stop("chat_closed");

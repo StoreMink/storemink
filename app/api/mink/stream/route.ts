@@ -33,6 +33,7 @@ import { MINK_MESSAGE_MAX_CHARS } from "@/lib/mink/input-policy";
 import {
   createSpokenAnswerSplitter,
   splitSpokenAnswer,
+  type SpokenAnswerPart,
 } from "@/lib/mink/spoken-answer";
 
 export const runtime = "nodejs";
@@ -177,6 +178,14 @@ export async function POST(request: Request) {
           );
         };
 
+        const forward = (parts: SpokenAnswerPart[]) => {
+          for (const part of parts) {
+            if (part.kind === "spoken") send("spoken", { text: part.text });
+            else if (part.kind === "spoken_end") send("spoken_end", {});
+            else send("delta", { text: part.text });
+          }
+        };
+
         send("status", {
           state: "thinking",
           requestId,
@@ -195,12 +204,7 @@ export async function POST(request: Request) {
             },
             async onEvent(event) {
               if (event.type === "text_delta") {
-                for (const part of splitter.push(event.text)) {
-                  if (part.kind === "spoken")
-                    send("spoken", { text: part.text });
-                  else if (part.kind === "spoken_end") send("spoken_end", {});
-                  else send("delta", { text: part.text });
-                }
+                forward(splitter.push(event.text));
                 return;
               }
               if (event.type === "text_reset") {
@@ -237,9 +241,22 @@ export async function POST(request: Request) {
               }
             },
           });
+          // A tail the splitter held back in case it began a tag (a closing
+          // "</spo" cut off by the output limit) is still part of the reply:
+          // without this the stream never carried it, and the spoken words
+          // streamed fell short of the message's own.
+          forward(splitter.finish());
           // The persisted answer, the history replay and the screen all get
-          // the written half; the spoken block was for the ear only.
+          // the written half; the spoken block was for the ear only. A reply
+          // that is only a spoken block is shown as written (spoken-answer.ts);
+          // one with no words at all (an empty block) fails like any other
+          // empty reply instead of tripping the empty-message CHECK.
           const { written, spoken } = splitSpokenAnswer(result.text);
+          if (!written)
+            throw new MinkAgentError(
+              "empty_model_response",
+              "Mink AI returned an empty response.",
+            );
           const { draftCredits } = await completeMinkRun({
             actor,
             started,

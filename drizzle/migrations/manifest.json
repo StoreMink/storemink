@@ -8400,6 +8400,32 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261019_0229_rate_limit_cost",
+      "description": "check_rate_limit_cost: a weighted twin of check_rate_limit that adds a cost instead of 1, so Mink read-aloud's free allowance can be a character budget rather than a request count; service-only",
+      "file": "sql/20261019_0229_rate_limit_cost.sql",
+      "transaction": true,
+      "requires": ["20261018_0228_mink_voice_chat_help"],
+      "verify": {
+        "functions": ["check_rate_limit_cost(text,integer,integer,integer)"],
+        "queries": [
+          {
+            "name": "only the service role may call the weighted limiter",
+            "sql": "select (has_function_privilege('app_service', 'public.check_rate_limit_cost(text,integer,integer,integer)', 'EXECUTE') and not has_function_privilege('app_user', 'public.check_rate_limit_cost(text,integer,integer,integer)', 'EXECUTE'))::text",
+            "equals": "true"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the weighted limiter runs as its owner with an empty search path, like check_rate_limit",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.check_rate_limit_cost(text,integer,integer,integer)'::regprocedure and prosecdef and proconfig @> array['search_path=\"\"']",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

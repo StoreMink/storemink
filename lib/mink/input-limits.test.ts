@@ -3,7 +3,7 @@ const h = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("@/lib/db/client", () => ({
   withService: (fn: (db: unknown) => unknown) => fn({ execute: h.execute }),
 }));
-import { reserveMinkInput } from "./input-limits";
+import { reserveMinkInput, reserveMinkVoice } from "./input-limits";
 import { MINK_INPUT_FILES } from "./input-policy";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { MinkActorContext } from "./types";
@@ -51,5 +51,38 @@ describe("fail-closed input budget", () => {
   it("does not fail open on database errors", async () => {
     h.execute.mockRejectedValue(new Error("db unavailable"));
     await expect(reserveMinkInput(actor, "request")).rejects.toThrow();
+  });
+});
+
+describe("voice budget", () => {
+  const params = () =>
+    h.execute.mock.calls.map(
+      ([query]) => new PgDialect().sqlToQuery(query).params,
+    );
+
+  it("★ reserves its own buckets, never the attachment ones", async () => {
+    await reserveMinkVoice(actor, "request");
+    expect(params()).toEqual([
+      ["mink-voice-owner:echos:owner", 20, 60],
+      ["mink-voice-store:echos", 300, 3600],
+      ["mink-voice-day:echos", 1000, 86400],
+      ["mink-voice-global", 5000, 3600],
+      ["mink-voice-replay:echos:owner:request", 1, 3600],
+    ]);
+    // A conversation must not spend the store's attachments for the hour.
+    expect(
+      params().some(([key]) => String(key).startsWith("mink-input-")),
+    ).toBe(false);
+  });
+
+  it("refuses in the merchant's words, and fails closed", async () => {
+    h.execute.mockResolvedValue({ rows: [{ allowed: false }] });
+    const refused = await reserveMinkVoice(actor, "request").catch(
+      (error: unknown) => error,
+    );
+    expect(refused).toMatchObject({ code: "voice_rate_limit", status: 429 });
+    expect(String((refused as Error).message)).not.toMatch(/[\u2014\u2013]/);
+    h.execute.mockRejectedValue(new Error("db unavailable"));
+    await expect(reserveMinkVoice(actor, "request")).rejects.toThrow();
   });
 });

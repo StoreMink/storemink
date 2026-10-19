@@ -34,6 +34,7 @@ const voiceChat = vi.hoisted(() => ({
     notice: null as string | null,
     toggle: vi.fn(),
     noteSend: vi.fn(),
+    registerComposer: vi.fn(() => () => {}),
   },
 }));
 vi.mock("./chat-context", () => ({
@@ -138,6 +139,47 @@ describe("★★ voice chat takes over the chat surface", () => {
     ).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Stop voice chat" }));
     expect(voiceChat.value.toggle).toHaveBeenCalledOnce();
+  });
+
+  it("★ opens the thread at the newest message when voice chat ends", async () => {
+    const scrollTops = new WeakMap<HTMLElement, number>();
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get: () => 1600,
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return scrollTops.get(this) ?? 0;
+      },
+      set(this: HTMLElement, value: number) {
+        scrollTops.set(this, value);
+      },
+    });
+    try {
+      // The answers landed while the voice view hid the thread.
+      const state = {
+        ...baseChatState,
+        messages: [
+          { id: "u1", role: "user", text: "How many orders today?" },
+          { id: "a1", role: "assistant", text: "Twelve orders today." },
+          { id: "u2", role: "user", text: "And yesterday?" },
+          { id: "a2", role: "assistant", text: "Nine yesterday." },
+        ],
+      } as unknown as ReturnType<typeof useChat>;
+      vi.mocked(useChat).mockReturnValue(state);
+      voiceChat.value.enabled = true;
+      const view = render(createElement(DashboardChat, { variant: "overlay" }));
+      expect(screen.queryByTestId("mink-message-scroller")).toBeNull();
+      // End: nothing about the chat changed except voice chat being off.
+      voiceChat.value.enabled = false;
+      view.rerender(createElement(DashboardChat, { variant: "overlay" }));
+      const scroller = screen.getByTestId("mink-message-scroller");
+      await waitFor(() => expect(scroller.scrollTop).toBe(1600));
+    } finally {
+      delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+      delete (HTMLElement.prototype as { scrollTop?: number }).scrollTop;
+    }
   });
 
   it("shows the loop's notice above the composer once voice chat is off", () => {

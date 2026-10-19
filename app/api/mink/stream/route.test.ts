@@ -390,6 +390,151 @@ describe("POST /api/mink/stream", () => {
     );
   });
 
+  function streamingRun(fragments: string[], text: string) {
+    holder.run.mockImplementation(
+      async (input: {
+        onEvent?: (event: Record<string, unknown>) => Promise<void> | void;
+      }) => {
+        for (const fragment of fragments)
+          await input.onEvent?.({ type: "text_delta", text: fragment });
+        return {
+          text,
+          model: "gemini-3.7-flash",
+          steps: 1,
+          toolCalls: 0,
+          retryCount: 0,
+          usage: {
+            promptTokens: 10,
+            outputTokens: 2,
+            thoughtTokens: 0,
+            totalTokens: 12,
+          },
+          artifacts: [],
+        };
+      },
+    );
+  }
+
+  function streamed(body: string) {
+    const out = { events: [] as string[], written: "", spoken: "" };
+    for (const block of body.split("\n\n")) {
+      if (!block.startsWith("event: ")) continue;
+      const event = block.slice(7, block.indexOf("\n"));
+      out.events.push(event);
+      const data = JSON.parse(block.slice(block.indexOf("data: ") + 6));
+      if (event === "delta") out.written += data.text;
+      if (event === "spoken") out.spoken += data.text;
+    }
+    return out;
+  }
+
+  it("★ flushes the tail the splitter held, so the streamed text adds up to the message", async () => {
+    // A reply that ends in "<" holds it back in case a tag follows; the run
+    // ending is what settles it, and the stream must still carry it.
+    streamingRun(["Stock is low <"], "Stock is low <");
+    const body = await (
+      await POST(request({ message: "How is stock?" }))
+    ).text();
+    const { events, written } = streamed(body);
+    expect(written).toBe("Stock is low <");
+    expect(events.indexOf("delta")).toBeLessThan(events.indexOf("message"));
+    expect(events.lastIndexOf("delta")).toBeLessThan(events.indexOf("message"));
+    expect(body).toContain(
+      'event: message\ndata: {"role":"assistant","text":"Stock is low <"',
+    );
+  });
+
+  it("★ ends a spoken block the output limit cut short, never saying the cut tag", async () => {
+    streamingRun(
+      ["<spoken>You have twelve ", "orders today.</spo"],
+      "<spoken>You have twelve orders today.</spo",
+    );
+    const body = await (
+      await POST(
+        request({
+          message: "How many orders today?",
+          context: { currentPath: "/dashboard", voice: true },
+        }),
+      )
+    ).text();
+    const { events, spoken } = streamed(body);
+    expect(spoken).toBe("You have twelve orders today.");
+    expect(events.filter((event) => event === "spoken_end")).toHaveLength(1);
+    expect(events.indexOf("spoken_end")).toBeLessThan(
+      events.indexOf("message"),
+    );
+    expect(body).toContain(
+      'event: message\ndata: {"role":"assistant","text":"You have twelve orders today.","spoken":"You have twelve orders today."',
+    );
+  });
+
+  it("★ stores a spoken-only voice reply as its written answer", async () => {
+    holder.run.mockResolvedValue({
+      text: "<spoken>You have twelve orders today.</spoken>",
+      model: "gemini-3.7-flash",
+      steps: 1,
+      toolCalls: 0,
+      retryCount: 0,
+      usage: {
+        promptTokens: 10,
+        outputTokens: 2,
+        thoughtTokens: 0,
+        totalTokens: 12,
+      },
+      artifacts: [],
+    });
+    const response = await POST(
+      request({
+        message: "How many orders today?",
+        context: { currentPath: "/dashboard", voice: true },
+      }),
+    );
+    const body = await response.text();
+    expect(holder.completeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          text: "You have twelve orders today.",
+        }),
+      }),
+    );
+    expect(holder.failRun).not.toHaveBeenCalled();
+    expect(body).toContain(
+      'event: message\ndata: {"role":"assistant","text":"You have twelve orders today.","spoken":"You have twelve orders today."',
+    );
+  });
+
+  it("★ fails a reply with no words at all instead of storing an empty message", async () => {
+    holder.run.mockResolvedValue({
+      text: "<spoken> </spoken>",
+      model: "gemini-3.7-flash",
+      steps: 1,
+      toolCalls: 0,
+      retryCount: 0,
+      usage: {
+        promptTokens: 10,
+        outputTokens: 2,
+        thoughtTokens: 0,
+        totalTokens: 12,
+      },
+      artifacts: [],
+    });
+    const response = await POST(
+      request({
+        message: "How many orders today?",
+        context: { currentPath: "/dashboard", voice: true },
+      }),
+    );
+    const body = await response.text();
+    expect(holder.completeRun).not.toHaveBeenCalled();
+    expect(holder.failRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "empty_model_response",
+      }),
+    );
+    expect(body).toContain('"code":"empty_model_response"');
+  });
+
   it("marks a written turn's message with no spoken text and no tag handling", async () => {
     const response = await POST(request({ message: "How many products?" }));
     const body = await response.text();

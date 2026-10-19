@@ -110,6 +110,29 @@ describe("Mink voice providers", () => {
     expect((init.body as FormData).get("model")).toBe("saaras:v4");
     expect((init.body as FormData).get("language_code")).toBe("unknown");
   });
+
+  it("★ returns no words as an empty transcript rather than throwing", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ results: [] }), { status: 200 }),
+    );
+    await expect(
+      transcribeMinkVoice(
+        "chirp_3",
+        Buffer.from("wav"),
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({ text: "", languageCode: null });
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ transcript: "  " }), { status: 200 }),
+    );
+    await expect(
+      transcribeMinkVoice(
+        "saaras_v4",
+        Buffer.from("wav"),
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({ text: "", languageCode: null });
+  });
 });
 
 // ---------------------------------------------------------------------------

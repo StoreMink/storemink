@@ -4,6 +4,11 @@ import {
   isEchoTranscript,
   speechCutPoint,
 } from "./speech-stream";
+import {
+  MINK_SPEECH_PIECE_MAX,
+  speakableMinkText,
+  splitSpeechChunks,
+} from "./speech-text";
 
 describe("speechCutPoint", () => {
   it("cuts after a sentence once the next word has arrived", () => {
@@ -84,6 +89,19 @@ describe("createMinkSpeechSegmenter", () => {
     });
   });
 
+  it("★ forgets a withdrawn sentence, so the answer after it is still read", () => {
+    const segmenter = createMinkSpeechSegmenter();
+    expect(segmenter.push("Let me check your orders. Then").pieces).toEqual([
+      "Let me check your orders.",
+    ]);
+    expect(segmenter.spoke).toBe(true);
+    // A tool call withdrew it, and the final answer brought no block at all.
+    segmenter.push("");
+    expect(segmenter.spoke).toBe(false);
+    expect(segmenter.close()).toEqual([]);
+    expect(segmenter.spoke).toBe(false);
+  });
+
   it("closes with the unsaid tail, using the final text only when it extends what streamed", () => {
     const segmenter = createMinkSpeechSegmenter();
     segmenter.push("First sentence. Second");
@@ -103,6 +121,18 @@ describe("createMinkSpeechSegmenter", () => {
       "Second half.",
     ]);
     expect(createMinkSpeechSegmenter().close()).toEqual([]);
+  });
+
+  it("★ closes on a final text whose whitespace differs from the stream's", () => {
+    const segmenter = createMinkSpeechSegmenter();
+    // The stream kept a line break; the final split collapsed it, and the
+    // last sentence arrived only with the answer.
+    expect(segmenter.push("Your sales today are up.\n\nOrders").pieces).toEqual(
+      ["Your sales today are up."],
+    );
+    expect(
+      segmenter.close("Your sales today are up. Orders are steady this week."),
+    ).toEqual(["Orders are steady this week."]);
   });
 
   it("speaks markdown as words and bounds the first piece short", () => {
@@ -143,5 +173,55 @@ describe("isEchoTranscript", () => {
     );
     expect(isEchoTranscript("yes", said)).toBe(false);
     expect(isEchoTranscript("ok thanks", "")).toBe(false);
+  });
+
+  it("★ judges a word or two only when every one of them is Mink's", () => {
+    const said = "Your sales today are twelve thousand rupees.";
+    // The fraction of a second a self-interruption captures.
+    expect(isEchoTranscript("Sales are", said)).toBe(true);
+    expect(isEchoTranscript("twelve", said)).toBe(true);
+    expect(isEchoTranscript("stop", said)).toBe(false);
+    expect(isEchoTranscript("sales yesterday", said)).toBe(false);
+  });
+
+  it("★ keeps Indic vowel signs inside a word, so a Hindi reply is not an echo", () => {
+    // Each reply below was judged an echo when marks split the words into
+    // single consonants ("स्टॉक" became "स", "ट", "क").
+    const said =
+      "आज की बिक्री बारह हज़ार रुपये है। तीन ऑर्डर अभी पैक होने बाकी हैं।";
+    expect(isEchoTranscript("कौन से ऑर्डर बाकी हैं", said)).toBe(false);
+    expect(
+      isEchoTranscript(
+        "स्टॉक बढ़ा दो",
+        "बादाम शेक का स्टॉक कम है, सिर्फ़ पाँच बोतलें बची हैं।",
+      ),
+    ).toBe(false);
+    expect(isEchoTranscript("तीन ऑर्डर अभी पैक होने बाकी हैं", said)).toBe(
+      true,
+    );
+  });
+});
+
+describe("★ every piece fits one read-aloud request", () => {
+  it("never hands the speech route more than the route accepts", () => {
+    const words = (count: number) =>
+      Array.from({ length: count }, (_, i) => `word${i}`).join(" ");
+    const answer = [
+      // A sentence far longer than a piece, with no break in sight.
+      `${words(260)}.`,
+      "Short one.",
+      // A run with no sentence end at all.
+      words(400),
+    ].join(" ");
+    const segmenter = createMinkSpeechSegmenter({ maxChars: 100_000 });
+    const pieces: string[] = [];
+    for (let at = 1; at <= answer.length; at += 37)
+      pieces.push(...segmenter.push(answer.slice(0, at)).pieces);
+    pieces.push(...segmenter.close(answer));
+    // And the written-answer fallback for a reply with no spoken block.
+    pieces.push(...splitSpeechChunks(speakableMinkText(answer)));
+    expect(pieces.length).toBeGreaterThan(4);
+    for (const piece of pieces)
+      expect(piece.length).toBeLessThanOrEqual(MINK_SPEECH_PIECE_MAX);
   });
 });

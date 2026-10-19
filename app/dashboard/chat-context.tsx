@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   useCallback,
   useMemo,
@@ -21,7 +22,11 @@ import type { MinkFeedbackIssue, MinkFeedbackRating } from "@/lib/mink/types";
 import type { MinkSkill } from "@/lib/mink/skills";
 import type { MinkHighlight } from "@/lib/mink/guide-targets";
 import { MinkSpotlight } from "./mink-spotlight";
-import { useMinkVoiceMode, type MinkVoiceMode } from "./mink-voice-mode";
+import {
+  useMinkVoiceMode,
+  type MinkVoiceMode,
+  type MinkVoiceSendOptions,
+} from "./mink-voice-mode";
 
 interface ChatContextType {
   isChatOpen: boolean;
@@ -118,12 +123,34 @@ function readMinkCredits(value: unknown): MinkCreditSummary | null {
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
 /**
+ * The composer's half of a spoken turn. Given the transcript, it puts the
+ * draft in the box in front of it, uploads and reads the staged attachments,
+ * and hands the finished message to `deliver`, resolving whether it went.
+ * Null when nothing is staged, so the transcript is sent on its own.
+ */
+export type MinkVoiceComposer = (
+  transcript: string,
+  deliver: (message: string) => boolean,
+) => Promise<boolean> | null;
+
+export type MinkVoiceChat = MinkVoiceMode & {
+  /**
+   * The mounted composer offers to carry each spoken turn; returns the
+   * unregister. ★ Voice chat keeps the composer mounted but hidden, so a
+   * draft and staged attachments wait in it. A spoken turn used to bypass it:
+   * the attachments were never sent, the run cleared the draft, and the
+   * composer's remount for the new conversation deleted the uploads.
+   */
+  registerComposer: (composer: MinkVoiceComposer) => () => void;
+};
+
+/**
  * The spoken conversation, in its own context so the captions it updates
  * several times a second while Mink talks do not re-render every consumer
  * of the chat. Outside a provider (the platform console) the toggle is
  * simply disabled.
  */
-const NO_VOICE: MinkVoiceMode = {
+const NO_VOICE: MinkVoiceChat = {
   enabled: false,
   state: "idle",
   mic: "closed",
@@ -134,10 +161,11 @@ const NO_VOICE: MinkVoiceMode = {
   notice: null,
   toggle: () => {},
   noteSend: () => {},
+  registerComposer: () => () => {},
 };
-const MinkVoiceContext = createContext<MinkVoiceMode>(NO_VOICE);
+const MinkVoiceContext = createContext<MinkVoiceChat>(NO_VOICE);
 
-export function useMinkVoice(): MinkVoiceMode {
+export function useMinkVoice(): MinkVoiceChat {
   return useContext(MinkVoiceContext);
 }
 
@@ -168,25 +196,44 @@ export function ChatProvider({
   // Conversation state lives here (not in each surface) so a message typed in
   // the Home box carries over into the panel/full view that opens.
   const mink = useMinkAi({ enabled: minkEnabled });
+  const minkSend = mink.send;
+  const voiceComposer = useRef<MinkVoiceComposer | null>(null);
+  const registerComposer = useCallback((composer: MinkVoiceComposer) => {
+    voiceComposer.current = composer;
+    return () => {
+      if (voiceComposer.current === composer) voiceComposer.current = null;
+    };
+  }, []);
+  // A spoken turn goes through the composer when something is staged there,
+  // and straight to the chat when nothing is.
+  const voiceSend = useCallback(
+    (text: string, options: MinkVoiceSendOptions) => {
+      const deliver = (message: string) => minkSend(message, options);
+      return voiceComposer.current?.(text, deliver) ?? deliver(text);
+    },
+    [minkSend],
+  );
   // ★ THE VOICE LOOP LIVES HERE, NOT IN THE COMPOSER. The composer is keyed
   // on the conversation and remounts when a new conversation gets its id or
   // the panel swaps with the full view; a loop inside it ended on every such
   // remount, mid-sentence.
-  const voice = useMinkVoiceMode({
+  const voiceMode = useMinkVoiceMode({
     messages: mink.messages,
     isReplying: mink.isReplying,
     isChatOpen,
     error: mink.error,
     spokenText: mink.spokenText,
     spokenEnded: mink.spokenEnded,
-    streamingText: mink.streamingText,
-    send: mink.send,
+    send: voiceSend,
     cancel: mink.cancel,
     langFallback:
       typeof navigator !== "undefined" ? navigator.language : undefined,
   });
-  const minkSend = mink.send;
-  const { noteSend } = voice;
+  const voice = useMemo(
+    () => ({ ...voiceMode, registerComposer }),
+    [voiceMode, registerComposer],
+  );
+  const { noteSend } = voiceMode;
   // A typed, Home-box or card send while voice chat is on gets a spoken
   // answer too; the loop's own sends mark themselves `voice` and skip this.
   const send = useCallback(

@@ -17,8 +17,9 @@ vi.mock("@/lib/mink/voice-settings", () => ({
 }));
 vi.mock("@/lib/mink/speech-synthesis", async () => {
   class MinkSpeechUnsupportedError extends Error {}
+  const { MINK_SPEECH_PIECE_MAX } = await import("@/lib/mink/speech-text");
   return {
-    MINK_SPEECH_MAX_CHARS: 2_000,
+    MINK_SPEECH_MAX_CHARS: MINK_SPEECH_PIECE_MAX,
     MinkSpeechUnsupportedError,
     streamMinkSpeech: h.stream,
   };
@@ -126,7 +127,8 @@ describe("POST /api/mink/speech", () => {
 
   it("refuses empty or overlong text, a junk language becomes en-IN", async () => {
     expect((await POST(req({ text: "  " }))).status).toBe(400);
-    expect((await POST(req({ text: "x".repeat(2_001) }))).status).toBe(400);
+    // One piece of an answer per request, never a whole answer.
+    expect((await POST(req({ text: "x".repeat(601) }))).status).toBe(400);
     const response = await POST(req({ text: "Hi", lang: "<script>" }));
     await response.arrayBuffer();
     expect(h.stream).toHaveBeenLastCalledWith(
@@ -152,6 +154,34 @@ describe("POST /api/mink/speech", () => {
       max: 1_200,
       windowSeconds: 3_600,
     });
+  });
+
+  it("★★ spends a character budget at exactly the old ceilings", async () => {
+    const response = await POST(req({ text: "Hello there" }));
+    await response.arrayBuffer();
+    // 20 requests a minute and 300 an hour of up to 2,000 characters each:
+    // the old limits, now counted in the unit the provider bills.
+    expect(h.rateLimit).toHaveBeenCalledWith(
+      "mink-speech-chars:admin:echos:owner",
+      { max: 20 * 2_000, windowSeconds: 60, cost: 11 },
+    );
+    expect(h.rateLimit).toHaveBeenCalledWith("mink-speech-chars:store:echos", {
+      max: 300 * 2_000,
+      windowSeconds: 3_600,
+      cost: 11,
+    });
+  });
+
+  it("refuses once the character budget is spent, with requests to spare", async () => {
+    h.rateLimit.mockImplementation(async (key: string) => ({
+      allowed: key !== "mink-speech-chars:store:echos",
+    }));
+    const response = await POST(req({ text: "Hello" }));
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({
+      code: "speech_rate_limited",
+    });
+    expect(h.stream).not.toHaveBeenCalled();
   });
 
   it("reports a provider outage before any audio as 503 and logs it", async () => {

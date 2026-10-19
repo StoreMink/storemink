@@ -19,6 +19,17 @@
 
 export const SPEAKABLE_MAX_CHARS = 1_500;
 
+/**
+ * The longest text one read-aloud request may carry. ★ It is a cost bound,
+ * not a style choice: the voice loop cuts every answer into pieces no longer
+ * than this and the speech route refuses anything longer, so the route's rate
+ * limits (a request per sentence or two) cap the characters a merchant can
+ * have read aloud, which StoreMink pays for and does not charge.
+ */
+export const MINK_SPEECH_PIECE_MAX = 600;
+/** The first piece of an answer is shorter, so the first words play sooner. */
+export const MINK_SPEECH_FIRST_PIECE_MAX = 160;
+
 /** A line that already ends a sentence, or one that clearly continues (a comma). */
 const ENDED = /(?:[.!?।…]|[,;:])["')\]]*$/;
 const SENTENCE_BOUNDARY = /[.!?।…]["')\]]*(?=\s)/g;
@@ -245,8 +256,8 @@ function splitLong(sentence: string, max: number): string[] {
  */
 export function splitSpeechChunks(
   text: string,
-  firstMax = 160,
-  restMax = 600,
+  firstMax = MINK_SPEECH_FIRST_PIECE_MAX,
+  restMax = MINK_SPEECH_PIECE_MAX,
 ): string[] {
   const clean =
     typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
