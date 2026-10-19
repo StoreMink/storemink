@@ -60,6 +60,48 @@ describe("getMinkConfig", () => {
     });
   });
 
+  // ★ Routing is on by default (a narrowed run can always ask for the rest);
+  // the lite model is off by default, because it changes who answers.
+  it("routes tools by default and keeps the lite model off", () => {
+    delete process.env.MINK_TOOL_ROUTING;
+    delete process.env.MINK_LITE_ROUTING;
+    delete process.env.MINK_LITE_MODEL;
+    expect(getMinkConfig()).toMatchObject({
+      toolRouting: true,
+      liteRouting: false,
+      liteModel: "gemini-3.5-flash-lite",
+    });
+  });
+  it.each(["false", "0", " FALSE "])(
+    "turns routing off on an explicit %s",
+    (value) => {
+      process.env.MINK_TOOL_ROUTING = value;
+      expect(getMinkConfig().toolRouting).toBe(false);
+    },
+  );
+  it.each([
+    ["true", true],
+    ["1", true],
+    [" TRUE ", true],
+    ["yes", false],
+    ["", false],
+  ] as const)("reads MINK_LITE_ROUTING=%j as %s", (value, expected) => {
+    process.env.MINK_LITE_ROUTING = value;
+    expect(getMinkConfig().liteRouting).toBe(expected);
+  });
+  it("accepts only a Flash-Lite model for the lite tier", () => {
+    process.env.MINK_LITE_MODEL = "gemini-3.1-flash-lite";
+    expect(getMinkConfig().liteModel).toBe("gemini-3.1-flash-lite");
+    process.env.MINK_LITE_MODEL = "gemini-3.5-flash-lite-preview-10-2026";
+    expect(getMinkConfig().liteModel).toBe(
+      "gemini-3.5-flash-lite-preview-10-2026",
+    );
+    for (const value of ["gemini-3.1-pro", "gemini-3.7-flash", "lite", ""]) {
+      process.env.MINK_LITE_MODEL = value;
+      expect(getMinkConfig().liteModel, value).toBe("gemini-3.5-flash-lite");
+    }
+  });
+
   it("is available to every store without an invitation", () => {
     expect(getMinkConfig().betaRequireInvite).toBe(false);
   });

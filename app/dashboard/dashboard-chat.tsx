@@ -31,10 +31,9 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent,
 } from "react";
-import { usePathname, useRouter } from "next/navigation";
-import { useChat } from "./chat-context";
+import { usePathname } from "next/navigation";
+import { useChat, useMinkVoice } from "./chat-context";
 import { MinkAnswer } from "./mink-answer";
-import { openMinkNavigation } from "./mink-artifacts";
 import { suggestMinkFollowUps } from "@/lib/mink/follow-ups";
 import { MEMORY_KIND_LABELS } from "@/lib/mink/memory-suggestion";
 import { MinkLink } from "./mink-link";
@@ -48,10 +47,13 @@ import {
 import {
   ASSISTANT_NAME,
   type MinkConversationSummary,
+  type MinkPendingAttachment,
+  type MinkPreparedSend,
   type MinkRunStep,
 } from "./mink-ai";
 import { MinkMark } from "./mink-mark";
 import { MinkMultimodalInput } from "./mink-multimodal-input";
+import { MinkVoiceView } from "./mink-voice-view";
 import { MinkArtifacts } from "./mink-artifacts";
 import { MinkFeedbackControls } from "./mink-feedback";
 import { readMinkCsvReference } from "@/lib/mink/csv-input";
@@ -227,23 +229,27 @@ export function DashboardChat({
     feedbackSubmittingRunId,
     minkCredits,
     send,
+    sendPrepared,
     cancel,
     retry,
-    reset,
+    startNewChat,
     loadConversation,
     deleteConversation,
     submitFeedback,
     memoryPrompt,
     saveMemorySuggestion,
     dismissMemorySuggestion,
-    showSpotlight,
   } = useChat();
+  // The spoken conversation, run by ChatProvider; while it is on this surface
+  // shows the voice view in place of the thread and keeps the composer
+  // mounted but hidden (unmounting it would discard staged attachments).
+  const voiceChat = useMinkVoice();
   const isOverlay = variant === "overlay";
-  const router = useRouter();
   const pathname = usePathname();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const openedNavigationRef = useRef<Set<number | string>>(new Set());
   const followLatestRef = useRef(true);
+  /** The thread was swapped out for the voice view and has not come back yet. */
+  const voiceHidThreadRef = useRef(false);
   const latestUserMessageIdRef = useRef<number | string | null>(null);
   const anchoredUserMessageIdRef = useRef<number | string | null>(null);
   const autoAnchorSubmissionRef = useRef(true);
@@ -278,35 +284,17 @@ export function DashboardChat({
 
   // The page the merchant is about to look at sits behind the chat: the
   // full-view takeover collapses to the side panel and a phone-width panel
-  // closes. One rule for a navigation artifact and a followed link, so the
-  // two cannot drift apart.
+  // closes.
+  //
+  // ★★ ONLY WHEN THEY CLICK A LINK. A page Mink finds is a link card in its
+  // answer (mink-artifacts, NavigationArtifact) and never opens by itself:
+  // the panel used to navigate as soon as such an answer arrived, which on a
+  // phone also shut the chat, so the merchant was taken to a page they had
+  // only asked about, mid-conversation.
   const leaveForPage = useCallback(() => {
     if (window.innerWidth < 640) closeChat();
     else if (isExpanded) toggleExpand();
   }, [closeChat, isExpanded, toggleExpand]);
-
-  /**
-   * ★★ A NAVIGATION ARTIFACT THAT ARRIVED LIVE OPENS ITS PAGE ON ITS OWN.
-   * Live messages carry numeric ids (restored history carries strings), so a
-   * page is never re-opened by reloading a conversation; each message opens
-   * at most once. The full-view takeover collapses to the side panel and a
-   * phone-width panel closes, because the point is to look at the page with
-   * the chat still at hand, not to navigate behind a sheet that hides it.
-   */
-  useEffect(() => {
-    const latest = messages[messages.length - 1];
-    if (!latest || latest.role !== "assistant" || typeof latest.id !== "number")
-      return;
-    if (openedNavigationRef.current.has(latest.id)) return;
-    const navigation = latest.artifacts?.find(
-      (artifact) => artifact.type === "navigation",
-    );
-    if (!navigation || navigation.type !== "navigation") return;
-    openedNavigationRef.current.add(latest.id);
-    openMinkNavigation(navigation, (path) => router.push(path));
-    showSpotlight(navigation.highlight ?? null);
-    leaveForPage();
-  }, [messages, router, leaveForPage, showSpotlight]);
 
   // Capture phase: MinkLink's own click handler (next/link) cancels the
   // browser default on the way back up, so a bubbling listener cannot tell a
@@ -360,8 +348,25 @@ export function DashboardChat({
   }, [isOverlay, panelWidth]);
 
   useEffect(() => {
+    if (voiceChat.enabled) {
+      voiceHidThreadRef.current = true;
+      return;
+    }
     const scroller = scrollRef.current;
     if (!scroller) return;
+    if (voiceHidThreadRef.current) {
+      // ★ The voice view unmounted the thread, and it remounts at its top.
+      // Nothing else re-runs this effect when voice chat ends (the answers
+      // landed while it was hidden), so the merchant came back to their
+      // oldest message with no way to tell the newest were below. Open it at
+      // the latest message, as a restored conversation opens.
+      voiceHidThreadRef.current = false;
+      followLatestRef.current = true;
+      anchoredUserMessageIdRef.current = null;
+      latestUserMessageIdRef.current = latestMinkUserMessageId(messages);
+      if (turnAnchorSpaceRef.current)
+        turnAnchorSpaceRef.current.style.minHeight = "0px";
+    }
     const latestUserId = latestMinkUserMessageId(messages);
     const receivedNewUserMessage =
       latestUserId !== null && latestUserId !== latestUserMessageIdRef.current;
@@ -417,7 +422,7 @@ export function DashboardChat({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, isReplying, error, statusText]);
+  }, [messages, isReplying, error, statusText, voiceChat.enabled]);
 
   useEffect(() => {
     const composer = composerRef.current;
@@ -457,6 +462,28 @@ export function DashboardChat({
     },
     [send],
   );
+
+  // The same anchoring for a message whose attachments Mink reads in the chat.
+  const sendPreparedFromChat = useCallback(
+    (prepared: MinkPreparedSend) => {
+      followLatestRef.current = false;
+      autoAnchorSubmissionRef.current = true;
+      return sendPrepared(prepared);
+    },
+    [sendPrepared],
+  );
+
+  /** New chat, from the header or the History sidebar. */
+  const startFreshChat = useCallback(() => {
+    followLatestRef.current = true;
+    setShowJumpToLatest(false);
+    latestUserMessageIdRef.current = null;
+    anchoredUserMessageIdRef.current = null;
+    if (turnAnchorSpaceRef.current) {
+      turnAnchorSpaceRef.current.style.minHeight = "0px";
+    }
+    startNewChat();
+  }, [startNewChat]);
 
   const chooseSkill = useCallback(
     (skill: MinkSkill) => {
@@ -534,10 +561,11 @@ export function DashboardChat({
       <Square className="h-4 w-4 fill-current" />
     </button>
   );
-  const sendButton = (
+  // A photo or a file on its own is a message too, as in ChatGPT and Claude.
+  const sendButton = (hasAttachments: boolean) => (
     <button
       type="submit"
-      disabled={!input.trim() || isHistoryLoading}
+      disabled={(!input.trim() && !hasAttachments) || isHistoryLoading}
       className="flex h-9 w-9 items-center justify-center rounded-full bg-[#6d4dff] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
       aria-label="Send message"
     >
@@ -591,23 +619,25 @@ export function DashboardChat({
 
       <header className="flex min-h-[64px] w-full max-w-full shrink-0 items-center justify-between gap-3 border-b border-[#ededed] px-3 py-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setHistoryOpen((open) => !open)}
-            aria-label={
-              historyOpen
-                ? "Hide conversation sidebar"
-                : "Show conversation sidebar"
-            }
-            aria-expanded={historyOpen}
-            className="rounded-lg p-2 text-[#5c5f62] transition-colors hover:bg-[#f1f1f1] hover:text-[#1a1a1a]"
-          >
-            {historyOpen ? (
-              <PanelLeftClose className="h-4 w-4" />
-            ) : (
-              <PanelLeftOpen className="h-4 w-4" />
-            )}
-          </button>
+          {!voiceChat.enabled && (
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((open) => !open)}
+              aria-label={
+                historyOpen
+                  ? "Hide conversation sidebar"
+                  : "Show conversation sidebar"
+              }
+              aria-expanded={historyOpen}
+              className="rounded-lg p-2 text-[#5c5f62] transition-colors hover:bg-[#f1f1f1] hover:text-[#1a1a1a]"
+            >
+              {historyOpen ? (
+                <PanelLeftClose className="h-4 w-4" />
+              ) : (
+                <PanelLeftOpen className="h-4 w-4" />
+              )}
+            </button>
+          )}
           <MinkMark />
           {/* ★ ONE LINE, NOT TWO. The purple ASSISTANT_NAME wordmark sat above
               the title saying what the avatar beside it and the topbar button
@@ -624,6 +654,22 @@ export function DashboardChat({
         </div>
 
         <div className="flex shrink-0 items-center gap-1 text-[#5c5f62]">
+          {!voiceChat.enabled && (
+            <button
+              type="button"
+              onClick={startFreshChat}
+              disabled={isReplying || !hasThread}
+              className="rounded-md p-1.5 transition-colors hover:bg-[#f1f1f1] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              aria-label="New chat"
+              title={
+                isReplying
+                  ? "Wait for Mink to finish, or stop it, to start a new chat"
+                  : "New chat"
+              }
+            >
+              <MessageSquarePlus className="h-4 w-4" />
+            </button>
+          )}
           <MinkHeaderMenu onNavigate={closeChat} />
           <button
             type="button"
@@ -651,7 +697,7 @@ export function DashboardChat({
       </header>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        {historyOpen && (
+        {historyOpen && !voiceChat.enabled && (
           <ConversationSidebar
             conversations={conversations}
             activeConversationId={activeConversationId}
@@ -660,14 +706,7 @@ export function DashboardChat({
             isHistoryLoading={isHistoryLoading}
             deletingConversationId={deletingConversationId}
             onNewConversation={() => {
-              followLatestRef.current = true;
-              setShowJumpToLatest(false);
-              latestUserMessageIdRef.current = null;
-              anchoredUserMessageIdRef.current = null;
-              if (turnAnchorSpaceRef.current) {
-                turnAnchorSpaceRef.current.style.minHeight = "0px";
-              }
-              reset();
+              startFreshChat();
               if (!isOverlay) setHistoryOpen(false);
             }}
             onSelect={(conversation) => {
@@ -689,7 +728,13 @@ export function DashboardChat({
         )}
 
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
-          {!hasThread ? (
+          {voiceChat.enabled ? (
+            <MinkVoiceView
+              voice={voiceChat}
+              isReplying={isReplying}
+              onStopReply={cancel}
+            />
+          ) : !hasThread ? (
             <div className="flex min-h-0 flex-1 touch-pan-y flex-col items-center justify-center overflow-y-auto overscroll-contain p-6 text-center">
               <div className="mb-4">
                 <MinkMark size="lg" />
@@ -767,7 +812,11 @@ export function DashboardChat({
                         data-mink-message-role="user"
                         className="flex scroll-mt-4 justify-end"
                       >
-                        <MinkUserMessage text={message.text} />
+                        <MinkUserMessage
+                          text={message.text}
+                          pending={message.pendingAttachments}
+                          localPreviews={message.localPreviews}
+                        />
                       </div>
                     ) : (
                       /* ★ NO PER-MESSAGE ATTRIBUTION. The avatar and the name
@@ -848,17 +897,19 @@ export function DashboardChat({
                       <MinkMark size="sm" />
                       <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-[#fff4f4] px-3.5 py-2.5 text-sm text-[#5c1b14]">
                         <div>{error.message}</div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            followLatestRef.current = true;
-                            retry();
-                          }}
-                          className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#6d4dff] hover:underline"
-                        >
-                          <RotateCcw className="h-3 w-3" />
-                          Retry
-                        </button>
+                        {error.retryable !== false && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              followLatestRef.current = true;
+                              retry();
+                            }}
+                            className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#6d4dff] hover:underline"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Retry
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -886,8 +937,19 @@ export function DashboardChat({
             </div>
           )}
 
-          <div className="shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4">
+          <div
+            hidden={voiceChat.enabled}
+            className="shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4"
+          >
             <div className={columnClass}>
+              {voiceChat.notice ? (
+                <div
+                  role="alert"
+                  className="mb-2 rounded-xl border border-[#f2ddb4] bg-[#fdf9ef] px-3 py-2 text-[11px] text-[#8a5a12]"
+                >
+                  {voiceChat.notice}
+                </div>
+              ) : null}
               {creditWarning ? (
                 <div
                   role="status"
@@ -915,6 +977,7 @@ export function DashboardChat({
                 disabled={isReplying || isHistoryLoading}
                 canSaveMedia={canSaveMedia}
                 onSubmit={sendFromChat}
+                onSubmitPrepared={sendPreparedFromChat}
               >
                 {({
                   attach,
@@ -923,6 +986,7 @@ export function DashboardChat({
                   submit,
                   recorder,
                   recording,
+                  hasAttachments,
                 }) => (
                   <form
                     onSubmit={(event) => {
@@ -1022,7 +1086,11 @@ export function DashboardChat({
                           return;
                         }
                         event.preventDefault();
-                        if (input.trim() && !isHistoryLoading && !isReplying) {
+                        if (
+                          (input.trim() || hasAttachments) &&
+                          !isHistoryLoading &&
+                          !isReplying
+                        ) {
                           void submit();
                         }
                       }}
@@ -1050,14 +1118,13 @@ export function DashboardChat({
                     {recording ? (
                       <div className="flex w-full min-w-0 items-center gap-2">
                         {recorder}
-                        {recording === "voice" && isReplying ? stopReply : null}
                       </div>
                     ) : (
                       <div className="flex w-full items-center justify-between">
                         {attach}
                         <div className="flex items-center gap-2">
                           {voice}
-                          {isReplying ? stopReply : sendButton}
+                          {isReplying ? stopReply : sendButton(hasAttachments)}
                         </div>
                       </div>
                     )}
@@ -1593,47 +1660,100 @@ function MinkMemoryPromptCard({
   );
 }
 
-function MinkUserMessage({ text }: { text: string }) {
+/**
+ * The merchant's own message. ★ A message that is still being read carries
+ * its attachments as `pending` (the photo they picked, from this tab), so it
+ * shows in full the moment they press Enter, the way ChatGPT and Claude show
+ * a sent photo, instead of waiting in the composer under a spinner. Once read,
+ * the finished text's file references take over, and `localPreviews` keeps the
+ * same picture on screen rather than reloading it from storage.
+ */
+function MinkUserMessage({
+  text,
+  pending,
+  localPreviews,
+}: {
+  text: string;
+  pending?: MinkPendingAttachment[];
+  localPreviews?: Record<string, string>;
+}) {
   const [viewingImage, setViewingImage] = useState<{
     filename: string;
-    url: string;
+    src: string;
   } | null>(null);
   let visibleText = text;
   const attachments: Array<
-    | { kind: "media"; filename: string; url: string }
+    | { kind: "media"; filename: string; src: string }
     | { kind: "reference"; filename: string; sourceKind: string }
   > = [];
 
-  while (true) {
-    const csv = readMinkCsvReference(visibleText);
-    if (csv) {
-      visibleText = csv.message;
-      attachments.unshift({
-        kind: "reference",
-        filename: csv.file.filename,
-        sourceKind: "Product CSV",
-      });
-      continue;
+  if (pending?.length) {
+    for (const item of pending) {
+      if (item.previewUrl)
+        attachments.push({
+          kind: "media",
+          filename: item.name,
+          src: item.previewUrl,
+        });
+      else
+        attachments.push({
+          kind: "reference",
+          filename: item.name,
+          sourceKind: item.kind === "image" ? "Image" : "Document",
+        });
     }
-    const document = readReviewedMinkDocument(visibleText);
-    if (document) {
-      visibleText = document.message;
-      attachments.unshift({
-        kind: "reference",
-        filename: document.attachment.filename || "Reviewed reference",
-        sourceKind: document.attachment.kind === "image" ? "Image" : "Document",
-      });
-      continue;
+  } else {
+    while (true) {
+      const csv = readMinkCsvReference(visibleText);
+      if (csv) {
+        visibleText = csv.message;
+        attachments.unshift({
+          kind: "reference",
+          filename: csv.file.filename,
+          sourceKind: "Product CSV",
+        });
+        continue;
+      }
+      const document = readReviewedMinkDocument(visibleText);
+      if (document) {
+        visibleText = document.message;
+        const filename = document.attachment.filename || "Reviewed reference";
+        const local =
+          document.attachment.kind === "image"
+            ? localPreviews?.[`file:${document.attachment.filename}`]
+            : undefined;
+        attachments.unshift(
+          local
+            ? { kind: "media", filename, src: local }
+            : {
+                kind: "reference",
+                filename,
+                sourceKind:
+                  document.attachment.kind === "image" ? "Image" : "Document",
+              },
+        );
+        continue;
+      }
+      const media = readSavedMinkMediaReference(visibleText);
+      if (media) {
+        visibleText = media.message;
+        const local = localPreviews?.[`url:${media.asset.url}`];
+        const src =
+          local ??
+          (isRenderableMinkMediaUrl(media.asset.url)
+            ? `/api/og-image?url=${encodeURIComponent(media.asset.url)}`
+            : "");
+        attachments.unshift({
+          kind: "media",
+          filename: media.asset.filename,
+          src,
+        });
+        continue;
+      }
+      break;
     }
-    const media = readSavedMinkMediaReference(visibleText);
-    if (media) {
-      visibleText = media.message;
-      attachments.unshift({ kind: "media", ...media.asset });
-      continue;
-    }
-    break;
   }
-  const savedImageNames = new Set(
+  const imageNames = new Set(
     attachments
       .filter((attachment) => attachment.kind === "media")
       .map((attachment) => attachment.filename),
@@ -1642,7 +1762,7 @@ function MinkUserMessage({ text }: { text: string }) {
     (attachment) =>
       attachment.kind === "media" ||
       attachment.sourceKind !== "Image" ||
-      !savedImageNames.has(attachment.filename),
+      !imageNames.has(attachment.filename),
   );
 
   return (
@@ -1656,10 +1776,10 @@ function MinkUserMessage({ text }: { text: string }) {
             {renderedAttachments.map((attachment, index) =>
               attachment.kind === "media" ? (
                 <div
-                  key={`${attachment.url}:${index}`}
+                  key={`${attachment.filename}:${index}`}
                   className="min-w-0 overflow-hidden rounded-xl border border-black/10 bg-white/80"
                 >
-                  {isRenderableMinkMediaUrl(attachment.url) && (
+                  {attachment.src && (
                     <button
                       type="button"
                       aria-label={`View ${attachment.filename || "attached image"}`}
@@ -1668,7 +1788,7 @@ function MinkUserMessage({ text }: { text: string }) {
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={`/api/og-image?url=${encodeURIComponent(attachment.url)}`}
+                        src={attachment.src}
                         alt={attachment.filename || "Attached storefront image"}
                         className="h-28 w-44 max-w-full object-cover"
                       />
@@ -1726,7 +1846,7 @@ function MinkUserMessage({ text }: { text: string }) {
             </button>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={`/api/og-image?url=${encodeURIComponent(viewingImage.url)}`}
+              src={viewingImage.src}
               alt={viewingImage.filename || "Attached image"}
               className="max-h-[82dvh] max-w-full rounded-xl object-contain"
             />

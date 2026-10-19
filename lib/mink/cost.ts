@@ -64,6 +64,7 @@ export function estimateMinkCost(input: {
   usage: MinkUsage;
   at?: Date;
 }): MinkCostEstimate {
+  if (isLiteModel(input.model)) return estimateLiteCost(input);
   if (!isGemini37Flash(input.model)) {
     return { estimatedCostMicrousd: null, pricingVersion: null };
   }
@@ -95,6 +96,46 @@ export function estimateMinkCost(input: {
     // against a corrected rate only if the version says which one produced it.
     pricingVersion: `gemini-3.7-flash-${global ? "global" : "regional"}-${intro ? "2026-intro" : "2027-standard"}-c${CACHED_INPUT_RATE_MULTIPLIER}`,
   };
+}
+
+/**
+ * The lite tier (`config.liteModel`): Gemini 3.5 Flash-Lite at Google's list
+ * price, $0.30 per million input tokens and $2.50 per million output tokens
+ * (ai.google.dev pricing, read 2026-10-19), with no announced 2027 change.
+ *
+ * ⚠ GLOBAL ONLY. Mink calls Vertex at `global`; a regional rate for this model
+ * has not been checked, and an unknown cost stays unknown (null) rather than
+ * borrowing 3.7 Flash's regional uplift.
+ */
+function estimateLiteCost(input: {
+  model: string;
+  location: string;
+  usage: MinkUsage;
+}): MinkCostEstimate {
+  if (input.location.trim().toLowerCase() !== "global") {
+    return { estimatedCostMicrousd: null, pricingVersion: null };
+  }
+  const inputRate = 0.3;
+  const outputRate = 2.5;
+  const outputTokens = input.usage.outputTokens + input.usage.thoughtTokens;
+  const cachedTokens = cachedPromptTokens(input.usage);
+  const freshTokens = input.usage.promptTokens - cachedTokens;
+  return {
+    estimatedCostMicrousd: Math.max(
+      0,
+      Math.round(
+        freshTokens * inputRate +
+          cachedTokens * inputRate * CACHED_INPUT_RATE_MULTIPLIER +
+          outputTokens * outputRate,
+      ),
+    ),
+    pricingVersion: `gemini-3.5-flash-lite-global-2026-list-c${CACHED_INPUT_RATE_MULTIPLIER}`,
+  };
+}
+
+function isLiteModel(model: string): boolean {
+  const leaf = model.trim().toLowerCase().split("/").at(-1) ?? "";
+  return leaf === "gemini-3.5-flash-lite";
 }
 
 function isGemini37Flash(model: string): boolean {

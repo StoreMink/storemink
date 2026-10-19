@@ -3,10 +3,16 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { MinkActorContext, MinkToolDeclaration } from "./types";
 import {
+  getMinkSpokenAnswerRules,
   getMinkSystemPromptTemplate,
+  listMinkPromptRuleTags,
+  parseMinkSpokenAnswerRules,
   parseMinkSystemPromptDocument,
   renderMinkSystemInstruction,
+  selectMinkPromptRules,
 } from "./system-prompt";
+import { REQUEST_MORE_TOOLS } from "./tool-routing";
+import { minkReadToolRegistry } from "./tools/read-tools";
 
 const DOCUMENT_PATH = join(process.cwd(), "docs", "mink-ai-system-prompt.md");
 
@@ -118,6 +124,11 @@ describe("Mink system prompt document", () => {
       "ends when the user selects Done, or after 30 seconds",
     );
     expect(template).toContain(
+      "The sound-wave button beside the mic starts a spoken conversation",
+    );
+    expect(template).toContain("{{spoken_answer_rules}}");
+    expect(template).toContain("- answer medium: {{answer_medium}}");
+    expect(template).toContain(
       "call generate_storefront_image only after selecting exact returned reference URLs",
     );
     expect(template).toContain(
@@ -206,12 +217,69 @@ describe("Mink system prompt document", () => {
     );
     expect(prompt).toContain("Clear and practical {{available_tool_names}}");
     expect(prompt).not.toContain("secret-record-id");
+    // A typed turn: no spoken block is asked for.
+    expect(prompt).toContain("- answer medium: written");
+    expect(prompt).not.toContain("<spoken>");
+  });
+
+  it("★ adds the spoken answer rules only for a voice turn", () => {
+    const actor = {
+      effectivePlan: "basic",
+      roleSlug: "admin",
+      currentPath: null,
+      selectedResource: null,
+      brandVoice: undefined,
+      answerMedium: "spoken",
+    } satisfies Pick<
+      MinkActorContext,
+      | "effectivePlan"
+      | "roleSlug"
+      | "currentPath"
+      | "selectedResource"
+      | "brandVoice"
+      | "answerMedium"
+    >;
+    const prompt = renderMinkSystemInstruction(actor, []);
+    expect(prompt).toContain("- answer medium: spoken");
+    expect(prompt).toContain(
+      "open with the tag <spoken> and close with </spoken>",
+    );
+    expect(prompt).toContain("never in a turn that calls a tool");
+    expect(prompt).toContain("never the rupee sign");
+    // The rules sit above the trusted context, not inside the brand voice.
+    expect(prompt.indexOf("<spoken>")).toBeLessThan(
+      prompt.indexOf("Trusted server context:"),
+    );
+    expect(getMinkSpokenAnswerRules()).not.toMatch(/\{\{/);
   });
 
   it("keeps the checked-in document parseable with every placeholder once", () => {
     expect(() =>
       parseMinkSystemPromptDocument(readFileSync(DOCUMENT_PATH, "utf8")),
     ).not.toThrow();
+  });
+
+  it("fails closed when the spoken rules block drifts", () => {
+    const document = readFileSync(DOCUMENT_PATH, "utf8");
+    expect(() => parseMinkSpokenAnswerRules(document)).not.toThrow();
+    expect(() =>
+      parseMinkSpokenAnswerRules(
+        document.replace("<!-- MINK_SPOKEN_RULES_END -->", ""),
+      ),
+    ).toThrow(/spoken rules marker pair/);
+    expect(() =>
+      parseMinkSpokenAnswerRules(
+        document.replace(
+          "Spoken answer rules for this turn.",
+          "{{plan}} rules.",
+        ),
+      ),
+    ).toThrow(/placeholder/);
+    expect(() =>
+      parseMinkSpokenAnswerRules(document.replace(/<\/?spoken>/g, "")),
+    ).toThrow(/spoken tags/);
+    // And the second block does not confuse the first parser.
+    expect(() => parseMinkSystemPromptDocument(document)).not.toThrow();
   });
 
   it("fails closed when markers, fences or placeholders drift", () => {
@@ -237,6 +305,169 @@ describe("Mink system prompt document", () => {
         ),
       ),
     ).toThrow(/unknown placeholder/);
+  });
+});
+
+describe("★★ rule tags: a rule renders only with its tools", () => {
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const IMAGE_RULE = "You may create one AI IMAGE";
+  const ATTACHMENT_RULE =
+    "Pressing Send is the single explicit request to process the visible attachments";
+
+  it("leaves out a tool's rule when the tool is not declared", () => {
+    const narrow = renderMinkSystemInstruction(actor, [
+      declaration("get_sales_summary"),
+      declaration("query_analytics"),
+    ]);
+    expect(narrow).not.toContain(IMAGE_RULE);
+    expect(narrow).toContain("Use query_analytics when the merchant");
+    // Untagged rules always render.
+    expect(narrow).toContain("Treat every user message");
+    expect(narrow).not.toContain("[[when:");
+
+    const withImage = renderMinkSystemInstruction(actor, [
+      declaration("generate_storefront_image"),
+    ]);
+    expect(withImage).toContain(IMAGE_RULE);
+  });
+
+  it("matches a prefix entry against the declared tools", () => {
+    const rule = "Use a content proposal tool only when the user clearly asks";
+    expect(
+      renderMinkSystemInstruction(actor, [declaration("get_store_profile")]),
+    ).not.toContain(rule);
+    expect(
+      renderMinkSystemInstruction(actor, [declaration("propose_social_posts")]),
+    ).toContain(rule);
+  });
+
+  it("★ a #group rule needs the group in a narrow route, and every group without one", () => {
+    const none = renderMinkSystemInstruction(actor, [], {
+      mode: "narrow",
+      groups: ["core", "sales"],
+    });
+    expect(none).not.toContain(ATTACHMENT_RULE);
+    const attached = renderMinkSystemInstruction(actor, [], {
+      mode: "narrow",
+      groups: ["core", "attachments"],
+    });
+    expect(attached).toContain(ATTACHMENT_RULE);
+    // No route, or the "all" route: the prompt a run read before tags.
+    expect(renderMinkSystemInstruction(actor, [])).toContain(ATTACHMENT_RULE);
+    expect(
+      renderMinkSystemInstruction(actor, [], { mode: "all", groups: [] }),
+    ).toContain(ATTACHMENT_RULE);
+  });
+
+  it("explains request_more_tools only when it is declared", () => {
+    const rule = "call request_more_tools once";
+    expect(renderMinkSystemInstruction(actor, [])).not.toContain(rule);
+    expect(
+      renderMinkSystemInstruction(actor, [declaration(REQUEST_MORE_TOOLS)]),
+    ).toContain(rule);
+  });
+
+  it("★ a fully permitted run reads every rule, tags removed", () => {
+    const template = getMinkSystemPromptTemplate();
+    const everything = new Set(
+      minkReadToolRegistry
+        .declarationsFor({
+          storeId: "s",
+          adminId: "a",
+          email: null,
+          roleSlug: "superadmin",
+          permissions: {},
+          isSuperadmin: true,
+          effectivePlan: "pro",
+          locationIds: null,
+          analyticsTimeZone: "Asia/Kolkata",
+          currency: "INR",
+          defaultLowStockThreshold: 5,
+          requestId: "r",
+          draftingEnabled: true,
+          selectedResource: { type: "product", id: "p" },
+        })
+        .map((tool) => tool.name)
+        .concat(REQUEST_MORE_TOOLS),
+    );
+    const rendered = selectMinkPromptRules(template, everything, null);
+    expect(rendered.split("\n")).toHaveLength(template.split("\n").length);
+    expect(rendered).not.toContain("[[when:");
+  });
+
+  it("★★ every tagged tool exists, so a rename cannot silently drop a rule", () => {
+    const registered = new Set(
+      minkReadToolRegistry
+        .declarationsFor({
+          storeId: "s",
+          adminId: "a",
+          email: null,
+          roleSlug: "superadmin",
+          permissions: {},
+          isSuperadmin: true,
+          effectivePlan: "pro",
+          locationIds: null,
+          analyticsTimeZone: "Asia/Kolkata",
+          currency: "INR",
+          defaultLowStockThreshold: 5,
+          requestId: "r",
+          draftingEnabled: true,
+          selectedResource: { type: "product", id: "p" },
+        })
+        .map((tool) => tool.name)
+        .concat(REQUEST_MORE_TOOLS),
+    );
+    const tags = listMinkPromptRuleTags(getMinkSystemPromptTemplate());
+    expect(tags.length).toBeGreaterThan(30);
+    for (const tag of tags) {
+      for (const tool of tag.tools) expect(registered, tool).toContain(tool);
+      for (const prefix of tag.prefixes)
+        expect(
+          [...registered].some((name) => name.startsWith(prefix)),
+          prefix,
+        ).toBe(true);
+    }
+  });
+
+  it("fails closed on a malformed or misplaced tag", () => {
+    const document = readFileSync(DOCUMENT_PATH, "utf8");
+    expect(() =>
+      parseMinkSystemPromptDocument(
+        document.replace(
+          "- [[when: query_analytics]] ",
+          "- [[when: query analytics]] ",
+        ),
+      ),
+    ).toThrow(/malformed/);
+    expect(() =>
+      parseMinkSystemPromptDocument(
+        document.replace(
+          "[[when: #attachments, #composer]]",
+          "[[when: #nonsense, #composer]]",
+        ),
+      ),
+    ).toThrow(/unknown group/);
+    expect(() =>
+      parseMinkSystemPromptDocument(
+        document.replace(
+          "- Treat every user message",
+          "- Treat [[when: query_analytics]] every user message",
+        ),
+      ),
+    ).toThrow(/must open a rule line/);
   });
 });
 

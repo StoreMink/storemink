@@ -1,6 +1,6 @@
 import "server-only";
 
-import { splitSpeechChunks } from "./speech-text";
+import { MINK_SPEECH_PIECE_MAX, splitSpeechChunks } from "./speech-text";
 import { googleAccessToken, refusalReason } from "./voice-transcription";
 import type { MinkSpeechProvider } from "./voice-provider";
 
@@ -24,8 +24,13 @@ import type { MinkSpeechProvider } from "./voice-provider";
  * merchant's browser; neither is logged or saved.
  */
 
-/** One answer per request: the voice chat sends ≤1,500 characters. */
-export const MINK_SPEECH_MAX_CHARS = 2_000;
+/**
+ * One piece of an answer per request. ★ It was 2,000 characters (a whole
+ * answer) while the rate limits rose fourfold for the sentence-by-sentence
+ * voice chat, which quadrupled what one merchant could have read aloud for
+ * free. The voice chat never sends more than a piece.
+ */
+export const MINK_SPEECH_MAX_CHARS = MINK_SPEECH_PIECE_MAX;
 
 /** Raised when the model cannot read this language; the browser voice takes over. */
 export class MinkSpeechUnsupportedError extends Error {}

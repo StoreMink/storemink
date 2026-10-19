@@ -4,34 +4,105 @@ import { act, renderHook } from "@testing-library/react";
 import type { MinkMessage } from "./mink-ai";
 import {
   MAX_EMPTY_TRANSCRIPTS,
-  speechWatchdogMs,
+  MINK_BARGE_IN_GRACE_MS,
+  MINK_ECHO_NOTICE,
+  MINK_VOICE_NOTICE_MS,
   useMinkVoiceMode,
   voiceChatSupport,
   type MinkVoiceModeInput,
 } from "./mink-voice-mode";
+import {
+  MINK_BARGE_IN_GATE,
+  MINK_SPEECH_GATE,
+} from "@/lib/mink/voice-recorder";
+import {
+  MinkVoiceCaptureError,
+  type MinkVoiceCapture,
+} from "@/lib/mink/voice-turn";
+import type {
+  createMinkSpeechSession,
+  MinkSpeechSessionEvents,
+} from "./mink-speech-session";
 
-const speechPlayer = vi.hoisted(() => ({
-  play: vi.fn(),
-}));
-vi.mock("./mink-speech-player", () => ({
-  playMinkServerSpeech: speechPlayer.play,
-}));
+type CaptureInput = Parameters<MinkVoiceCapture["capture"]>[0];
+type CaptureCall = {
+  input: CaptureInput;
+  resolve: (text: string | null) => void;
+  reject: (error: unknown) => void;
+};
 
-class FakeUtterance {
-  text: string;
-  lang = "";
-  onend: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  constructor(text: string) {
-    this.text = text;
-  }
+/**
+ * A microphone the test drives: speech starts and transcripts land on cue.
+ * One is created per voice chat, as the loop keeps its microphone open.
+ */
+function makeCapture() {
+  const calls: CaptureCall[] = [];
+  const capture = vi.fn(
+    (input: CaptureInput) =>
+      new Promise<string | null>((resolve, reject) => {
+        calls.push({ input, resolve, reject });
+        input.signal.addEventListener("abort", () =>
+          reject(new DOMException("Voice capture cancelled.", "AbortError")),
+        );
+      }),
+  );
+  const close = vi.fn();
+  const createCapture = vi.fn((): MinkVoiceCapture => ({ capture, close }));
+  return {
+    createCapture,
+    close,
+    calls,
+    last: () => calls[calls.length - 1],
+  };
 }
 
-const synth = {
-  speak: vi.fn<(utterance: FakeUtterance) => void>(),
-  cancel: vi.fn(),
-  speaking: false,
+type FakeSession = {
+  options: Parameters<typeof createMinkSpeechSession>[0];
+  events: MinkSpeechSessionEvents;
+  enqueue: ReturnType<typeof vi.fn>;
+  dropPending: ReturnType<typeof vi.fn>;
+  end: ReturnType<typeof vi.fn>;
+  reopen: ReturnType<typeof vi.fn>;
+  pause: ReturnType<typeof vi.fn>;
+  resume: ReturnType<typeof vi.fn>;
+  cancel: ReturnType<typeof vi.fn>;
+  active: boolean;
 };
+
+function makeSessions() {
+  const sessions: FakeSession[] = [];
+  const createSession = vi.fn(
+    (options: Parameters<typeof createMinkSpeechSession>[0]) => {
+      const session: FakeSession = {
+        options,
+        events: options.events,
+        enqueue: vi.fn(),
+        dropPending: vi.fn(),
+        end: vi.fn(),
+        reopen: vi.fn(),
+        pause: vi.fn(),
+        resume: vi.fn(),
+        cancel: vi.fn(),
+        active: false,
+      };
+      sessions.push(session);
+      return session;
+    },
+  );
+  return {
+    createSession: createSession as unknown as typeof createMinkSpeechSession,
+    sessions,
+    last: () => sessions[sessions.length - 1],
+  };
+}
+
+const synth = { speak: vi.fn(), cancel: vi.fn(), speaking: false };
+class FakeUtterance {}
+/** Model audio plays through a context started by the toggle click. */
+const contexts: Array<{
+  resume: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+}> = [];
 
 function installBrowser(options: { speech?: boolean; mic?: boolean } = {}) {
   const { speech = true, mic = true } = options;
@@ -40,7 +111,15 @@ function installBrowser(options: { speech?: boolean; mic?: boolean } = {}) {
     configurable: true,
   });
   Object.defineProperty(window, "AudioContext", {
-    value: mic ? class {} : undefined,
+    value: mic
+      ? class {
+          resume = vi.fn(async () => {});
+          close = vi.fn(async () => {});
+          constructor() {
+            contexts.push(this);
+          }
+        }
+      : undefined,
     configurable: true,
   });
   Object.defineProperty(navigator, "mediaDevices", {
@@ -57,240 +136,872 @@ function installBrowser(options: { speech?: boolean; mic?: boolean } = {}) {
   });
 }
 
-function assistant(id: number | string, text: string): MinkMessage {
-  return { id, role: "assistant", text };
+function assistant(
+  id: number | string,
+  text: string,
+  spoken: string | null = null,
+): MinkMessage {
+  return { id, role: "assistant", text, spoken };
 }
 function user(id: number | string, text: string): MinkMessage {
   return { id, role: "user", text };
 }
 
-function makeInput(
-  overrides: Partial<MinkVoiceModeInput> = {},
-): MinkVoiceModeInput & {
-  listen: ReturnType<typeof vi.fn>;
-  send: ReturnType<typeof vi.fn>;
-  stopListening: ReturnType<typeof vi.fn>;
-  onNotice: ReturnType<typeof vi.fn>;
-} {
-  return {
+type Harness = ReturnType<typeof makeHarness>;
+function makeHarness(overrides: Partial<MinkVoiceModeInput> = {}) {
+  const mic = makeCapture();
+  const speech = makeSessions();
+  const input: MinkVoiceModeInput = {
     messages: [assistant("old", "Hello before voice mode")],
     isReplying: false,
     isChatOpen: true,
     error: null,
-    listen: vi.fn(async () => true),
-    stopListening: vi.fn(),
-    send: vi.fn(async () => true),
-    onNotice: vi.fn(),
+    spokenText: "",
+    spokenEnded: false,
+    send: vi.fn(() => true),
+    cancel: vi.fn(),
     langFallback: "en-IN",
+    createCapture: mic.createCapture,
+    createSession: speech.createSession,
     ...overrides,
-  } as never;
+  };
+  const hook = renderHook(
+    (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
+    {
+      initialProps: input,
+    },
+  );
+  const send = input.send as ReturnType<typeof vi.fn>;
+  const cancel = input.cancel as ReturnType<typeof vi.fn>;
+  return { ...hook, input, mic, speech, send, cancel };
 }
 
-function lastUtterance(): FakeUtterance {
-  const calls = synth.speak.mock.calls;
-  return calls[calls.length - 1][0];
+/** Toggle on, open the mic, say `text`, and let the transcript land. */
+async function say(h: Harness, text: string) {
+  const call = h.mic.last();
+  act(() => {
+    call.input.onPhase?.("open");
+  });
+  let accepted = false;
+  act(() => {
+    accepted = call.input.onSpeechStart();
+  });
+  expect(accepted).toBe(true);
+  await act(async () => call.resolve(text));
 }
 
 beforeEach(() => {
   synth.speak.mockReset();
   synth.cancel.mockReset();
+  contexts.length = 0;
   installBrowser();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({ ok: true, json: async () => ({ enabled: true }) })),
+  );
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
 describe("useMinkVoiceMode", () => {
-  it("runs listen, send, wait, speak, listen as one hands-free loop", async () => {
-    const input = makeInput();
-    const { result, rerender } = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
-    );
-    expect(result.current.enabled).toBe(false);
-    expect(result.current.state).toBe("idle");
-    expect(result.current.support.ok).toBe(true);
+  it("★★ speaks the answer sentence by sentence while it streams, mic open throughout", async () => {
+    const h = makeHarness();
+    expect(h.result.current.enabled).toBe(false);
+    expect(h.result.current.support.ok).toBe(true);
 
-    await act(async () => result.current.toggle());
-    expect(result.current.enabled).toBe(true);
-    expect(result.current.state).toBe("listening");
-    expect(input.listen).toHaveBeenCalledOnce();
+    await act(async () => h.result.current.toggle());
+    expect(h.result.current.enabled).toBe(true);
+    expect(h.result.current.state).toBe("listening");
+    expect(h.result.current.mic).toBe("starting");
+    expect(h.mic.calls).toHaveLength(1);
+    // The ordinary floor while listening.
+    expect(h.mic.calls[0].input.gate.current).toBe(MINK_SPEECH_GATE);
 
-    await act(async () =>
-      result.current.reportTranscript("How many orders today?"),
-    );
-    expect(input.send).toHaveBeenCalledWith("How many orders today?");
-    expect(result.current.state).toBe("waiting");
-
-    // The user turn lands and Mink starts replying: nothing is spoken yet.
-    rerender({
-      ...input,
-      messages: [...input.messages, user("u1", "How many orders today?")],
-      isReplying: true,
+    act(() => h.mic.calls[0].input.onPhase?.("open"));
+    expect(h.result.current.mic).toBe("open");
+    await say(h, "How many orders today?");
+    expect(h.send).toHaveBeenCalledOnce();
+    expect(h.send).toHaveBeenCalledWith("How many orders today?", {
+      voice: true,
     });
-    expect(synth.speak).not.toHaveBeenCalled();
+    expect(h.result.current.state).toBe("waiting");
+    expect(h.result.current.heard).toBe("How many orders today?");
+    // The microphone is re-armed at once, under the stricter floor.
+    expect(h.mic.calls).toHaveLength(2);
+    expect(h.mic.calls[1].input.gate).toBe(h.mic.calls[0].input.gate);
+    expect(h.mic.calls[1].input.gate.current).toBe(MINK_BARGE_IN_GATE);
+    expect(h.speech.sessions).toHaveLength(1);
+    const session = h.speech.last();
+    expect(session.options.voice).toBe("model");
+    expect(session.options.audio).toBe(contexts[0]);
 
-    rerender({
-      ...input,
+    const messages = [
+      ...h.input.messages,
+      user("u1", "How many orders today?"),
+    ];
+    h.rerender({ ...h.input, messages, isReplying: true });
+    expect(session.enqueue).not.toHaveBeenCalled();
+
+    // The first sentence is handed over the moment it provably ends.
+    h.rerender({
+      ...h.input,
+      messages,
+      isReplying: true,
+      spokenText: "You have twelve orders today. Seven are",
+    });
+    expect(session.enqueue).toHaveBeenCalledTimes(1);
+    expect(session.enqueue).toHaveBeenCalledWith(
+      "You have twelve orders today.",
+      "en-IN",
+    );
+    expect(session.end).not.toHaveBeenCalled();
+
+    act(() => session.events.onStart());
+    expect(h.result.current.state).toBe("speaking");
+    act(() => session.events.onPieceStart("You have twelve orders today."));
+    expect(h.result.current.said).toBe("You have twelve orders today.");
+
+    // The block closes: the tail goes out and the session is told it is the end.
+    h.rerender({
+      ...h.input,
+      messages,
+      isReplying: true,
+      spokenText: "You have twelve orders today. Seven are still open.",
+      spokenEnded: true,
+    });
+    expect(session.enqueue).toHaveBeenCalledTimes(2);
+    expect(session.enqueue).toHaveBeenLastCalledWith(
+      "Seven are still open.",
+      "en-IN",
+    );
+    expect(session.end).toHaveBeenCalledOnce();
+
+    // The written answer keeps streaming; nothing more is enqueued.
+    h.rerender({
+      ...h.input,
+      messages,
+      isReplying: true,
+      spokenText: "You have twelve orders today. Seven are still open.",
+      spokenEnded: true,
+    });
+    expect(session.enqueue).toHaveBeenCalledTimes(2);
+
+    // Speech finishes before the written answer has: back to listening,
+    // with the same microphone still open.
+    act(() => session.events.onIdle("done"));
+    expect(h.result.current.state).toBe("listening");
+    expect(h.mic.calls).toHaveLength(2);
+    expect(h.mic.calls[1].input.gate.current).toBe(MINK_SPEECH_GATE);
+
+    h.rerender({
+      ...h.input,
       messages: [
-        ...input.messages,
-        user("u1", "How many orders today?"),
-        assistant("a1", "You have **12 orders** today."),
+        ...messages,
+        assistant(
+          "a1",
+          "You have **12 orders** today.",
+          "You have twelve orders today. Seven are still open.",
+        ),
       ],
       isReplying: false,
     });
-    expect(result.current.state).toBe("speaking");
-    expect(synth.cancel).toHaveBeenCalled();
-    expect(synth.speak).toHaveBeenCalledOnce();
-    expect(lastUtterance().text).toBe("You have 12 orders today.");
-    expect(lastUtterance().lang).toBe("en-IN");
+    expect(session.enqueue).toHaveBeenCalledTimes(2);
+    expect(session.end).toHaveBeenCalledOnce();
+    expect(h.result.current.state).toBe("listening");
+    expect(h.speech.sessions).toHaveLength(1);
+  });
 
-    await act(async () => lastUtterance().onend?.());
-    expect(result.current.state).toBe("listening");
-    expect(input.listen).toHaveBeenCalledTimes(2);
+  it("★ reads the written answer when the reply carried no spoken block", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await say(h, "Show the CSV");
+    const session = h.speech.last();
+    h.rerender({
+      ...h.input,
+      messages: [
+        ...h.input.messages,
+        user("u1", "Show the CSV"),
+        assistant("a1", "Sales are **up** this week."),
+      ],
+      isReplying: false,
+    });
+    expect(session.enqueue).toHaveBeenCalledWith(
+      "Sales are up this week.",
+      "en-IN",
+    );
+    expect(session.end).toHaveBeenCalledOnce();
+    // Nothing speakable at all: the session ends empty and the loop listens.
+    await say(h, "And the code?");
+    const second = h.speech.last();
+    h.rerender({
+      ...h.input,
+      messages: [
+        ...h.input.messages,
+        user("u2", "And the code?"),
+        assistant("a2", "```\nonly,code\n```"),
+      ],
+      isReplying: false,
+    });
+    expect(second.enqueue).not.toHaveBeenCalled();
+    expect(second.end).toHaveBeenCalledOnce();
+    act(() => second.events.onIdle("done"));
+    expect(h.result.current.state).toBe("listening");
+  });
+
+  it("picks the utterance language from each piece's script", async () => {
+    const h = makeHarness({ langFallback: "en-GB" });
+    await act(async () => h.result.current.toggle());
+    await say(h, "आज कितने ऑर्डर आए?");
+    const session = h.speech.last();
+    h.rerender({
+      ...h.input,
+      isReplying: true,
+      spokenText: "आज बारह ऑर्डर आए हैं। ",
+      spokenEnded: true,
+    });
+    expect(session.enqueue).toHaveBeenCalledWith(
+      "आज बारह ऑर्डर आए हैं।",
+      "hi-IN",
+    );
+  });
+
+  it("★ a withdrawn spoken text forgets what has not played yet", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await say(h, "Sales?");
+    const session = h.speech.last();
+    h.rerender({
+      ...h.input,
+      isReplying: true,
+      spokenText: "Sales are up. Orders are up too. Let me",
+    });
+    // Two short sentences travel as one piece: the first fetch is the one
+    // that decides how soon the merchant hears anything.
+    expect(session.enqueue).toHaveBeenCalledOnce();
+    expect(session.enqueue).toHaveBeenCalledWith(
+      "Sales are up. Orders are up too.",
+      "en-IN",
+    );
+    // A tool call withdrew the working-out; React batched the reset with
+    // the regrowth, so the text is simply no longer an extension.
+    h.rerender({
+      ...h.input,
+      isReplying: true,
+      spokenText: "Checked the figures: sales are up five per cent. And",
+    });
+    expect(session.dropPending).toHaveBeenCalledOnce();
+    expect(session.enqueue).toHaveBeenCalledTimes(2);
+    expect(session.enqueue).toHaveBeenLastCalledWith(
+      "Checked the figures: sales are up five per cent.",
+      "en-IN",
+    );
+  });
+
+  describe("★★ interrupting Mink by speaking", () => {
+    async function speaking(h: Harness) {
+      await act(async () => h.result.current.toggle());
+      await say(h, "Sales?");
+      const session = h.speech.last();
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "Sales are up this week. Orders are up too.",
+        spokenEnded: true,
+      });
+      act(() => session.events.onStart());
+      expect(h.result.current.state).toBe("speaking");
+      return session;
+    }
+
+    it("while speaking: holds the voice, ends it once words arrive, leaves a finished answer alone and takes the new question", async () => {
+      vi.useFakeTimers();
+      const h = makeHarness();
+      const session = await speaking(h);
+      // The written answer already landed.
+      h.rerender({
+        ...h.input,
+        messages: [
+          ...h.input.messages,
+          user("u1", "Sales?"),
+          assistant("a1", "Sales are up.", "Sales are up this week."),
+        ],
+        isReplying: false,
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MINK_BARGE_IN_GRACE_MS + 10);
+      });
+      const mic = h.mic.last();
+      let accepted = false;
+      act(() => {
+        accepted = mic.input.onSpeechStart();
+      });
+      expect(accepted).toBe(true);
+      // Loudness alone only holds the voice; the transcript decides.
+      expect(session.pause).toHaveBeenCalledOnce();
+      expect(session.cancel).not.toHaveBeenCalled();
+      expect(h.cancel).not.toHaveBeenCalled();
+      expect(h.result.current.state).toBe("listening");
+      await act(async () => mic.resolve("What about returns?"));
+      expect(session.cancel).toHaveBeenCalledOnce();
+      expect(session.resume).not.toHaveBeenCalled();
+      expect(h.send).toHaveBeenCalledTimes(2);
+      expect(h.send).toHaveBeenLastCalledWith("What about returns?", {
+        voice: true,
+      });
+      expect(h.speech.sessions).toHaveLength(2);
+    });
+
+    it("inside the grace window the recorder is told to keep listening", async () => {
+      vi.useFakeTimers();
+      const h = makeHarness();
+      const session = await speaking(h);
+      let accepted = true;
+      act(() => {
+        accepted = h.mic.last().input.onSpeechStart();
+      });
+      expect(accepted).toBe(false);
+      expect(session.cancel).not.toHaveBeenCalled();
+      expect(h.result.current.state).toBe("speaking");
+    });
+
+    it("★ while Mink is still thinking: cancels the reply, and asks the whole question once the chat is free", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "Sales?");
+      const first = h.speech.last();
+      h.rerender({ ...h.input, isReplying: true });
+      expect(h.result.current.state).toBe("waiting");
+      const mic = h.mic.last();
+      let accepted = false;
+      act(() => {
+        accepted = mic.input.onSpeechStart();
+      });
+      expect(accepted).toBe(true);
+      expect(h.cancel).toHaveBeenCalledOnce();
+      expect(first.cancel).toHaveBeenCalledOnce();
+      expect(h.result.current.state).toBe("listening");
+      // The cancelled run is still closing when the transcript lands.
+      await act(async () => mic.resolve("Actually, show returns."));
+      expect(h.send).toHaveBeenCalledOnce();
+      expect(h.result.current.state).toBe("sending");
+      expect(h.result.current.heard).toBe("Sales? Actually, show returns.");
+      // The run ends with no answer: nothing is spoken, and the parked
+      // transcript goes out exactly once, carrying the cancelled question's
+      // words and taking its place in the thread.
+      h.rerender({ ...h.input, isReplying: false });
+      expect(h.send).toHaveBeenCalledTimes(2);
+      expect(h.send).toHaveBeenLastCalledWith(
+        "Sales? Actually, show returns.",
+        { voice: true, replaceUnanswered: true },
+      );
+      expect(h.result.current.state).toBe("waiting");
+      h.rerender({ ...h.input, isReplying: false });
+      expect(h.send).toHaveBeenCalledTimes(2);
+      expect(h.speech.sessions).toHaveLength(2);
+    });
+
+    it("a transcript that is Mink's own voice coming back is not a question", async () => {
+      vi.useFakeTimers();
+      const h = makeHarness();
+      const session = await speaking(h);
+      act(() =>
+        session.events.onPieceStart(
+          "Sales are up this week, orders are up too.",
+        ),
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MINK_BARGE_IN_GRACE_MS + 10);
+      });
+      const mic = h.mic.last();
+      act(() => {
+        mic.input.onSpeechStart();
+      });
+      await act(async () =>
+        mic.resolve("sales are up this week orders are up too"),
+      );
+      expect(h.send).toHaveBeenCalledOnce();
+      // Its voice carries on where it paused, and the mic listens again.
+      expect(session.pause).toHaveBeenCalledOnce();
+      expect(session.resume).toHaveBeenCalledOnce();
+      expect(session.cancel).not.toHaveBeenCalled();
+      expect(h.mic.calls).toHaveLength(3);
+      expect(h.result.current.state).toBe("speaking");
+    });
+
+    it("★★ over Mink's voice while the answer is still being written: the voice ends, the run does not", async () => {
+      vi.useFakeTimers();
+      const h = makeHarness();
+      const session = await speaking(h);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MINK_BARGE_IN_GRACE_MS + 10);
+      });
+      const mic = h.mic.last();
+      let accepted = false;
+      act(() => {
+        accepted = mic.input.onSpeechStart();
+      });
+      expect(accepted).toBe(true);
+      expect(session.pause).toHaveBeenCalledOnce();
+      // The answer, its cards and its drafts still land in the chat.
+      expect(h.cancel).not.toHaveBeenCalled();
+      await act(async () => mic.resolve("And returns?"));
+      expect(session.cancel).toHaveBeenCalledOnce();
+      expect(h.cancel).not.toHaveBeenCalled();
+      expect(h.send).toHaveBeenCalledOnce();
+      h.rerender({
+        ...h.input,
+        messages: [
+          ...h.input.messages,
+          user("u1", "Sales?"),
+          assistant("a1", "Sales are up.", "Sales are up this week."),
+        ],
+        isReplying: false,
+      });
+      expect(h.send).toHaveBeenCalledTimes(2);
+      expect(h.send).toHaveBeenLastCalledWith("And returns?", { voice: true });
+    });
+
+    it("★ Mink heard through the speaker: its own clip is not sent, its voice carries on, it says so once, and it then finishes speaking", async () => {
+      vi.useFakeTimers();
+      const h = makeHarness();
+      const session = await speaking(h);
+      act(() => session.events.onPieceStart("Sales are up this week."));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MINK_BARGE_IN_GRACE_MS + 10);
+      });
+      const mic = h.mic.last();
+      act(() => {
+        mic.input.onSpeechStart();
+      });
+      // The fraction of a second of Mink's voice before it was held.
+      await act(async () => mic.resolve("Sales are"));
+      expect(h.send).toHaveBeenCalledOnce();
+      expect(h.result.current.notice).toBe(MINK_ECHO_NOTICE);
+      expect(h.result.current.enabled).toBe(true);
+      // ★ Mink never cuts itself off: the pause its own voice caused is given back.
+      expect(session.resume).toHaveBeenCalledOnce();
+      expect(session.cancel).not.toHaveBeenCalled();
+      expect(h.result.current.state).toBe("speaking");
+      // The interrupted answer finishes writing; the next question follows.
+      h.rerender({
+        ...h.input,
+        messages: [
+          ...h.input.messages,
+          user("u1", "Sales?"),
+          assistant("a1", "Sales are up.", "Sales are up this week."),
+        ],
+        isReplying: false,
+      });
+      // Mink finishes the answer it was saying, then listens.
+      act(() => session.events.onIdle("done"));
+      expect(h.result.current.state).toBe("listening");
+      await say(h, "Orders?");
+      expect(h.speech.sessions).toHaveLength(2);
+      const next = h.speech.last();
+      act(() => next.events.onStart());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MINK_BARGE_IN_GRACE_MS + 10);
+      });
+      let accepted = true;
+      act(() => {
+        accepted = h.mic.last().input.onSpeechStart();
+      });
+      expect(accepted).toBe(false);
+      expect(next.cancel).not.toHaveBeenCalled();
+      expect(h.result.current.state).toBe("speaking");
+    });
+
+    it("★★ a cough over Mink's voice gives it back where it paused, however many times", async () => {
+      vi.useFakeTimers();
+      const h = makeHarness();
+      const session = await speaking(h);
+      for (let i = 1; i <= MAX_EMPTY_TRANSCRIPTS + 1; i += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(MINK_BARGE_IN_GRACE_MS + 10);
+        });
+        const mic = h.mic.last();
+        let accepted = false;
+        act(() => {
+          accepted = mic.input.onSpeechStart();
+        });
+        expect(accepted).toBe(true);
+        expect(session.pause).toHaveBeenCalledTimes(i);
+        expect(h.result.current.state).toBe("listening");
+        // Nobody said anything: a cough, a door.
+        await act(async () => mic.resolve(null));
+        expect(session.resume).toHaveBeenCalledTimes(i);
+        expect(h.result.current.state).toBe("speaking");
+        // Not a merchant who went quiet, so it never turns voice chat off.
+        expect(h.result.current.enabled).toBe(true);
+      }
+      expect(session.cancel).not.toHaveBeenCalled();
+      expect(h.cancel).not.toHaveBeenCalled();
+      expect(h.send).toHaveBeenCalledOnce();
+    });
+
+    it("★ a cough while Mink thinks about a typed question holds its answer's voice, then gives it back", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      act(() => h.result.current.noteSend());
+      h.rerender({ ...h.input, isReplying: true });
+      const session = h.speech.last();
+      const mic = h.mic.last();
+      act(() => {
+        mic.input.onSpeechStart();
+      });
+      expect(h.cancel).not.toHaveBeenCalled();
+      expect(session.pause).toHaveBeenCalledOnce();
+      expect(session.cancel).not.toHaveBeenCalled();
+      await act(async () => mic.resolve(null));
+      expect(session.resume).toHaveBeenCalledOnce();
+      expect(h.result.current.state).toBe("waiting");
+      // Its answer is still read aloud when it comes.
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "Here you go. ",
+        spokenEnded: true,
+      });
+      expect(session.enqueue).toHaveBeenCalledWith("Here you go.", "en-IN");
+    });
+
+    it("★ an echo is judged against the answer playing now, not an earlier one", async () => {
+      vi.useFakeTimers();
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "Sales?");
+      const first = h.speech.last();
+      act(() => first.events.onStart());
+      act(() =>
+        first.events.onPieceStart(
+          "Your sales today are twelve thousand rupees.",
+        ),
+      );
+      act(() => first.events.onIdle("done"));
+      await say(h, "Orders?");
+      const second = h.speech.last();
+      act(() => second.events.onStart());
+      act(() => second.events.onPieceStart("Three orders need packing."));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MINK_BARGE_IN_GRACE_MS + 10);
+      });
+      const mic = h.mic.last();
+      act(() => {
+        mic.input.onSpeechStart();
+      });
+      await act(async () => mic.resolve("twelve thousand rupees"));
+      expect(h.send).toHaveBeenLastCalledWith("twelve thousand rupees", {
+        voice: true,
+      });
+    });
+
+    it("★ a barge-in that said nothing asks the cancelled question again, instead of losing it", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "Sales?");
+      h.rerender({ ...h.input, isReplying: true });
+      const mic = h.mic.last();
+      act(() => {
+        mic.input.onSpeechStart();
+      });
+      expect(h.cancel).toHaveBeenCalledOnce();
+      // A cough crossed the floor; nobody said anything.
+      await act(async () => mic.resolve(null));
+      h.rerender({ ...h.input, isReplying: false });
+      expect(h.send).toHaveBeenCalledTimes(2);
+      expect(h.send).toHaveBeenLastCalledWith("Sales?", {
+        voice: true,
+        replaceUnanswered: true,
+      });
+      expect(h.result.current.enabled).toBe(true);
+    });
+
+    it("★ speech while Mink thinks about a typed question waits for it instead of cancelling it", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      act(() => h.result.current.noteSend());
+      expect(h.cancel).not.toHaveBeenCalled();
+      h.rerender({ ...h.input, isReplying: true });
+      const mic = h.mic.last();
+      act(() => {
+        mic.input.onSpeechStart();
+      });
+      expect(h.cancel).not.toHaveBeenCalled();
+      await act(async () => mic.resolve("And returns?"));
+      h.rerender({ ...h.input, isReplying: false });
+      expect(h.send).toHaveBeenLastCalledWith("And returns?", { voice: true });
+    });
+  });
+
+  describe("★ a spoken turn that takes staged files along", () => {
+    it("waits for the upload, then opens the turn; speech never cancels it", async () => {
+      let resolveSend!: (taken: boolean) => void;
+      const h = makeHarness({
+        send: vi.fn(
+          () =>
+            new Promise<boolean>((resolve) => {
+              resolveSend = resolve;
+            }),
+        ),
+      });
+      await act(async () => h.result.current.toggle());
+      await say(h, "Make a product from this photo");
+      expect(h.result.current.state).toBe("sending");
+      expect(h.speech.sessions).toHaveLength(0);
+      expect(h.mic.calls).toHaveLength(1);
+      await act(async () => resolveSend(true));
+      expect(h.result.current.state).toBe("waiting");
+      expect(h.speech.sessions).toHaveLength(1);
+      expect(h.mic.calls).toHaveLength(2);
+      h.rerender({ ...h.input, isReplying: true });
+      act(() => {
+        h.mic.last().input.onSpeechStart();
+      });
+      expect(h.cancel).not.toHaveBeenCalled();
+    });
+
+    it("stops voice chat with a notice when it could not be sent", async () => {
+      let resolveSend!: (taken: boolean) => void;
+      const h = makeHarness({
+        send: vi.fn(
+          () =>
+            new Promise<boolean>((resolve) => {
+              resolveSend = resolve;
+            }),
+        ),
+      });
+      await act(async () => h.result.current.toggle());
+      await say(h, "Make a product from this photo");
+      await act(async () => resolveSend(false));
+      expect(h.result.current.enabled).toBe(false);
+      expect(h.result.current.notice).toBe(
+        "Voice chat turned off: the message could not be sent.",
+      );
+    });
+  });
+
+  describe("★ spoken blocks that end oddly", () => {
+    it("a sentence spoken before a tool call does not silence the answer after it", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "How many orders?");
+      const session = h.speech.last();
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "Let me check your orders.",
+        spokenEnded: true,
+      });
+      expect(session.enqueue).toHaveBeenCalledWith(
+        "Let me check your orders.",
+        "en-IN",
+      );
+      expect(session.end).toHaveBeenCalledOnce();
+      act(() => session.events.onStart());
+      act(() => session.events.onIdle("done"));
+      expect(h.result.current.state).toBe("listening");
+      // The tool call withdraws it; the answer comes in a block of its own.
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "",
+        spokenEnded: false,
+      });
+      expect(session.reopen).toHaveBeenCalledOnce();
+      expect(h.result.current.state).toBe("waiting");
+      expect(h.mic.last().input.gate.current).toBe(MINK_BARGE_IN_GATE);
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "You have twelve orders today.",
+        spokenEnded: true,
+      });
+      expect(session.enqueue).toHaveBeenLastCalledWith(
+        "You have twelve orders today.",
+        "en-IN",
+      );
+      expect(session.end).toHaveBeenCalledTimes(2);
+    });
+
+    it("an empty spoken block leaves the written answer to be read", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "Sales?");
+      const session = h.speech.last();
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "",
+        spokenEnded: true,
+      });
+      expect(session.end).not.toHaveBeenCalled();
+      h.rerender({
+        ...h.input,
+        messages: [
+          ...h.input.messages,
+          user("u1", "Sales?"),
+          assistant("a1", "Sales are **up** this week."),
+        ],
+        isReplying: false,
+      });
+      expect(session.enqueue).toHaveBeenCalledWith(
+        "Sales are up this week.",
+        "en-IN",
+      );
+      expect(session.end).toHaveBeenCalledOnce();
+    });
+
+    it("a withdrawn sentence does not stop a written answer with no block being read", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "Sales?");
+      const session = h.speech.last();
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "Let me check. One",
+      });
+      expect(session.enqueue).toHaveBeenCalledWith("Let me check.", "en-IN");
+      h.rerender({ ...h.input, isReplying: true, spokenText: "" });
+      expect(session.dropPending).toHaveBeenCalledOnce();
+      h.rerender({
+        ...h.input,
+        messages: [
+          ...h.input.messages,
+          user("u1", "Sales?"),
+          assistant("a1", "Sales are **up** this week."),
+        ],
+        isReplying: false,
+        spokenText: "",
+      });
+      expect(session.enqueue).toHaveBeenLastCalledWith(
+        "Sales are up this week.",
+        "en-IN",
+      );
+    });
+  });
+
+  it("★ a reply after Mink finished is never mistaken for its echo, even in Mink's own words", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await say(h, "Publish the blog");
+    const session = h.speech.last();
+    act(() => session.events.onStart());
+    act(() =>
+      session.events.onPieceStart(
+        "Should I keep it as a draft or publish it now?",
+      ),
+    );
+    act(() => session.events.onIdle("done"));
+    expect(h.result.current.state).toBe("listening");
+    await say(h, "keep it as a draft");
+    expect(h.send).toHaveBeenLastCalledWith("keep it as a draft", {
+      voice: true,
+    });
+  });
+
+  it("★ a run that ends without an answer puts the loop back to listening", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await say(h, "Sales?");
+    const session = h.speech.last();
+    h.rerender({ ...h.input, isReplying: true });
+    h.rerender({ ...h.input, isReplying: false });
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(h.result.current.state).toBe("listening");
+    expect(h.result.current.enabled).toBe(true);
+  });
+
+  it("a typed send while voice chat is on gets a spoken answer too", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    act(() => h.result.current.noteSend());
+    expect(h.result.current.state).toBe("waiting");
+    expect(h.speech.sessions).toHaveLength(1);
+    const session = h.speech.last();
+    h.rerender({
+      ...h.input,
+      isReplying: true,
+      spokenText: "Here you go. ",
+      spokenEnded: true,
+    });
+    expect(session.enqueue).toHaveBeenCalledWith("Here you go.", "en-IN");
+    // A second typed send cuts the first answer's voice, and never cancels
+    // the run the chat has just started for it.
+    act(() => session.events.onStart());
+    act(() => h.result.current.noteSend());
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(h.cancel).not.toHaveBeenCalled();
+    expect(h.result.current.state).toBe("waiting");
+    expect(h.speech.sessions).toHaveLength(2);
   });
 
   it("never speaks history present when the mode was switched on, or an answer nobody asked for", async () => {
-    const input = makeInput({
+    const h = makeHarness({
       messages: [user("u0", "Hi"), assistant("a0", "Restored answer")],
     });
-    const { result, rerender } = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
-    );
-    await act(async () => result.current.toggle());
-    // A re-render with the same baseline answer, before anything was sent.
-    rerender({ ...input, messages: [...input.messages] });
-    expect(synth.speak).not.toHaveBeenCalled();
-    // A conversation loaded while listening (nothing sent) stays silent.
-    rerender({
-      ...input,
+    await act(async () => h.result.current.toggle());
+    h.rerender({ ...h.input, messages: [...h.input.messages] });
+    h.rerender({
+      ...h.input,
       messages: [user("x", "Other"), assistant("a9", "Loaded from history")],
     });
-    expect(synth.speak).not.toHaveBeenCalled();
-    expect(result.current.state).toBe("listening");
-  });
-
-  it("speaks an answer to a typed send and cancels speech when a new send starts", async () => {
-    const input = makeInput();
-    const { result, rerender } = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
-    );
-    await act(async () => result.current.toggle());
-    await act(async () => result.current.noteSend());
-    expect(result.current.state).toBe("waiting");
-    rerender({
-      ...input,
-      messages: [...input.messages, assistant("a1", "First answer.")],
-    });
-    expect(result.current.state).toBe("speaking");
-    const first = lastUtterance();
-    synth.cancel.mockClear();
-
-    await act(async () => result.current.noteSend());
-    expect(synth.cancel).toHaveBeenCalledOnce();
-    expect(result.current.state).toBe("waiting");
-    // The cancelled utterance's end event must not re-arm the mic.
-    await act(async () => first.onend?.());
-    expect(input.listen).toHaveBeenCalledOnce();
-    expect(result.current.state).toBe("waiting");
-  });
-
-  it("picks the utterance language from the answer's script", async () => {
-    const input = makeInput({ langFallback: "en-GB" });
-    const { result, rerender } = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
-    );
-    await act(async () => result.current.toggle());
-    await act(async () =>
-      result.current.reportTranscript("आज कितने ऑर्डर आए?"),
-    );
-    rerender({
-      ...input,
-      messages: [...input.messages, assistant("a1", "आज 12 ऑर्डर आए हैं।")],
-    });
-    expect(lastUtterance().lang).toBe("hi-IN");
+    expect(h.speech.sessions).toHaveLength(0);
+    expect(h.result.current.state).toBe("listening");
   });
 
   it("re-arms on an empty transcript and stops after three in a row", async () => {
-    const input = makeInput();
-    const { result } = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
-    );
-    await act(async () => result.current.toggle());
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
     for (let i = 1; i < MAX_EMPTY_TRANSCRIPTS; i++) {
-      await act(async () =>
-        result.current.reportTranscript(i % 2 ? null : "   "),
-      );
-      expect(result.current.enabled).toBe(true);
-      expect(result.current.state).toBe("listening");
-      expect(input.listen).toHaveBeenCalledTimes(i + 1);
+      await act(async () => h.mic.last().resolve(i % 2 ? null : "   "));
+      expect(h.result.current.enabled).toBe(true);
+      expect(h.result.current.state).toBe("listening");
+      expect(h.mic.calls).toHaveLength(i + 1);
     }
-    await act(async () => result.current.reportTranscript(null));
-    expect(result.current.enabled).toBe(false);
-    expect(result.current.state).toBe("idle");
-    expect(input.onNotice).toHaveBeenCalledWith(
+    await act(async () => h.mic.last().resolve(null));
+    expect(h.result.current.enabled).toBe(false);
+    expect(h.result.current.state).toBe("idle");
+    expect(h.result.current.notice).toBe(
       "Voice chat turned off: nothing was heard.",
     );
-    expect(input.stopListening).toHaveBeenCalled();
   });
 
-  it("a real transcript resets the empty count", async () => {
-    const input = makeInput();
-    const { result, rerender } = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
-    );
-    await act(async () => result.current.toggle());
-    await act(async () => result.current.reportTranscript(null));
-    await act(async () => result.current.reportTranscript(null));
-    await act(async () => result.current.reportTranscript("Hello"));
-    rerender({
-      ...input,
-      messages: [...input.messages, assistant("a1", "Hi.")],
-    });
-    await act(async () => lastUtterance().onend?.());
-    await act(async () => result.current.reportTranscript(null));
-    await act(async () => result.current.reportTranscript(null));
-    expect(result.current.enabled).toBe(true);
+  it("a real transcript resets the empty count, and the mic's own cap during an answer is silent", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await act(async () => h.mic.last().resolve(null));
+    await act(async () => h.mic.last().resolve(null));
+    await say(h, "Hello");
+    // Waiting for the answer: the recorder closed on its ceiling.
+    await act(async () => h.mic.last().resolve(null));
+    await act(async () => h.mic.last().resolve(null));
+    await act(async () => h.mic.last().resolve(null));
+    expect(h.result.current.enabled).toBe(true);
+    expect(h.result.current.state).toBe("waiting");
   });
 
   it("stops on toggle off, a closed chat, a hidden tab, a chat error and a refused send", async () => {
-    // Toggle off.
-    let input = makeInput();
-    let hook = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      {
-        initialProps: input,
-      },
-    );
-    await act(async () => hook.result.current.toggle());
-    await act(async () => hook.result.current.toggle());
-    expect(hook.result.current.enabled).toBe(false);
-    expect(input.stopListening).toHaveBeenCalledOnce();
-    expect(input.onNotice).not.toHaveBeenCalled();
-    hook.unmount();
+    let h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    const signal = h.mic.last().input.signal;
+    await act(async () => h.result.current.toggle());
+    expect(h.result.current.enabled).toBe(false);
+    expect(signal.aborted).toBe(true);
+    expect(h.result.current.notice).toBeNull();
+    h.unmount();
 
-    // The chat closes.
-    input = makeInput();
-    hook = renderHook((props: MinkVoiceModeInput) => useMinkVoiceMode(props), {
-      initialProps: input,
-    });
-    await act(async () => hook.result.current.toggle());
-    hook.rerender({ ...input, isChatOpen: false });
-    expect(hook.result.current.enabled).toBe(false);
-    hook.unmount();
+    h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    h.rerender({ ...h.input, isChatOpen: false });
+    expect(h.result.current.enabled).toBe(false);
+    h.unmount();
 
-    // The tab goes hidden.
-    input = makeInput();
-    hook = renderHook((props: MinkVoiceModeInput) => useMinkVoiceMode(props), {
-      initialProps: input,
-    });
-    await act(async () => hook.result.current.toggle());
+    h = makeHarness();
+    await act(async () => h.result.current.toggle());
     Object.defineProperty(document, "hidden", {
       value: true,
       configurable: true,
@@ -302,126 +1013,190 @@ describe("useMinkVoiceMode", () => {
       value: false,
       configurable: true,
     });
-    expect(hook.result.current.enabled).toBe(false);
-    expect(input.onNotice).toHaveBeenCalledWith(
+    expect(h.result.current.enabled).toBe(false);
+    expect(h.result.current.notice).toBe(
       "Voice chat turned off while the tab was hidden.",
     );
-    hook.unmount();
+    h.unmount();
 
-    // A send error from the chat (a pre-existing error does not count).
     const stale = { code: "old", message: "Earlier" };
-    input = makeInput({ error: stale });
-    hook = renderHook((props: MinkVoiceModeInput) => useMinkVoiceMode(props), {
-      initialProps: input,
-    });
-    await act(async () => hook.result.current.toggle());
-    hook.rerender({ ...input, error: stale });
-    expect(hook.result.current.enabled).toBe(true);
-    hook.rerender({ ...input, error: { code: "run_failed", message: "Boom" } });
-    expect(hook.result.current.enabled).toBe(false);
-    expect(input.onNotice).toHaveBeenCalledWith(
+    h = makeHarness({ error: stale });
+    await act(async () => h.result.current.toggle());
+    h.rerender({ ...h.input, error: stale });
+    expect(h.result.current.enabled).toBe(true);
+    h.rerender({ ...h.input, error: { code: "run_failed", message: "Boom" } });
+    expect(h.result.current.enabled).toBe(false);
+    expect(h.result.current.notice).toBe(
       "Voice chat turned off after an error.",
     );
-    hook.unmount();
+    h.unmount();
 
-    // The composer refuses the send.
-    input = makeInput({ send: vi.fn(async () => false) });
-    hook = renderHook((props: MinkVoiceModeInput) => useMinkVoiceMode(props), {
-      initialProps: input,
-    });
-    await act(async () => hook.result.current.toggle());
-    await act(async () => hook.result.current.reportTranscript("Too long"));
-    expect(hook.result.current.enabled).toBe(false);
-    expect(input.onNotice).toHaveBeenCalledWith(
+    h = makeHarness({ send: vi.fn(() => false) });
+    await act(async () => h.result.current.toggle());
+    await say(h, "Too long");
+    expect(h.result.current.enabled).toBe(false);
+    expect(h.result.current.notice).toBe(
       "Voice chat turned off: the message could not be sent.",
     );
-    hook.unmount();
+    h.unmount();
   });
 
-  it("stops when the microphone cannot start or transcription fails", async () => {
-    let input = makeInput({ listen: vi.fn(async () => false) });
-    let hook = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      {
-        initialProps: input,
-      },
+  it("★★ keeps one microphone for the whole chat, and closes it when voice chat ends", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    expect(h.mic.createCapture).toHaveBeenCalledOnce();
+    await say(h, "Sales?");
+    const first = h.speech.last();
+    h.rerender({
+      ...h.input,
+      messages: [
+        ...h.input.messages,
+        user("u1", "Sales?"),
+        assistant("a1", "Sales are up."),
+      ],
+      isReplying: false,
+    });
+    act(() => first.events.onIdle("done"));
+    await say(h, "Orders?");
+    // Every turn records on the same microphone.
+    expect(h.mic.calls.length).toBeGreaterThanOrEqual(3);
+    expect(h.mic.createCapture).toHaveBeenCalledOnce();
+    expect(h.mic.close).not.toHaveBeenCalled();
+    await act(async () => h.result.current.toggle());
+    expect(h.mic.close).toHaveBeenCalledOnce();
+    await act(async () => h.result.current.toggle());
+    expect(h.mic.createCapture).toHaveBeenCalledTimes(2);
+  });
+
+  it("★ clears the last session's notice when voice chat is turned on again", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    for (let i = 0; i < MAX_EMPTY_TRANSCRIPTS; i += 1)
+      await act(async () => h.mic.last().resolve(null));
+    expect(h.result.current.notice).toBe(
+      "Voice chat turned off: nothing was heard.",
     );
-    await act(async () => hook.result.current.toggle());
-    expect(hook.result.current.enabled).toBe(false);
-    expect(input.onNotice).toHaveBeenCalledWith(
+    await act(async () => h.result.current.toggle());
+    expect(h.result.current.enabled).toBe(true);
+    expect(h.result.current.notice).toBeNull();
+  });
+
+  it("stops when the microphone cannot start or transcription fails, naming which", async () => {
+    let h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await act(async () =>
+      h.mic
+        .last()
+        .reject(new MinkVoiceCaptureError("mic", "Permission denied.")),
+    );
+    expect(h.result.current.enabled).toBe(false);
+    expect(h.result.current.notice).toBe(
       "Voice chat turned off: the microphone could not start.",
     );
-    hook.unmount();
+    h.unmount();
 
-    input = makeInput();
-    hook = renderHook((props: MinkVoiceModeInput) => useMinkVoiceMode(props), {
-      initialProps: input,
-    });
-    await act(async () => hook.result.current.toggle());
-    await act(async () => hook.result.current.reportTranscriptionFailure());
-    expect(hook.result.current.enabled).toBe(false);
-    hook.unmount();
-  });
-
-  it("cancels speech and aborts the mic on unmount", async () => {
-    const input = makeInput();
-    const { result, rerender, unmount } = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
+    h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await act(async () =>
+      h.mic
+        .last()
+        .reject(
+          new MinkVoiceCaptureError(
+            "transcription",
+            "The voice service is busy.",
+          ),
+        ),
     );
-    await act(async () => result.current.toggle());
-    await act(async () => result.current.reportTranscript("Hello"));
-    rerender({
-      ...input,
-      messages: [...input.messages, assistant("a1", "Hi there.")],
-    });
-    const utterance = lastUtterance();
-    synth.cancel.mockClear();
-    unmount();
-    expect(synth.cancel).toHaveBeenCalledOnce();
-    expect(input.stopListening).toHaveBeenCalled();
-    await act(async () => utterance.onend?.());
-    expect(input.listen).toHaveBeenCalledOnce();
-  });
-
-  it("re-arms without speaking when the answer has nothing speakable", async () => {
-    const input = makeInput();
-    const { result, rerender } = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
+    expect(h.result.current.enabled).toBe(false);
+    expect(h.result.current.notice).toBe(
+      "The voice service is busy. Voice chat turned off.",
     );
-    await act(async () => result.current.toggle());
-    await act(async () => result.current.reportTranscript("Show the CSV"));
-    await act(async () => {
-      rerender({
-        ...input,
-        messages: [...input.messages, assistant("a1", "```\nonly,code\n```")],
-      });
-    });
-    expect(synth.speak).not.toHaveBeenCalled();
-    expect(result.current.state).toBe("listening");
-    expect(input.listen).toHaveBeenCalledTimes(2);
   });
 
-  it("treats a missing end event as the end after the watchdog", async () => {
+  it("stopping clears a parked transcript and cuts the answer's voice, and the reply still lands in the chat", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await say(h, "Sales?");
+    const session = h.speech.last();
+    h.rerender({ ...h.input, isReplying: true });
+    const mic = h.mic.last();
+    act(() => {
+      mic.input.onSpeechStart();
+    });
+    await act(async () => mic.resolve("Parked question"));
+    expect(h.send).toHaveBeenCalledOnce();
+    await act(async () => h.result.current.toggle());
+    expect(session.cancel).toHaveBeenCalled();
+    expect(contexts[0].close).toHaveBeenCalled();
+    h.rerender({ ...h.input, isReplying: false });
+    expect(h.send).toHaveBeenCalledOnce();
+    // A reply still running is not cancelled by ending voice chat.
+    expect(h.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces a session notice and clears it, and closes the audio once the model is known to be off", async () => {
     vi.useFakeTimers();
-    const input = makeInput();
-    const { result, rerender } = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await say(h, "Sales?");
+    const session = h.speech.last();
+    act(() =>
+      session.events.onNotice(
+        "The rest of that answer could not be read aloud.",
+      ),
     );
-    await act(async () => result.current.toggle());
-    await act(async () => result.current.reportTranscript("Hello"));
-    rerender({
-      ...input,
-      messages: [...input.messages, assistant("a1", "Hi there.")],
-    });
-    expect(result.current.state).toBe("speaking");
+    expect(h.result.current.notice).toBe(
+      "The rest of that answer could not be read aloud.",
+    );
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(speechWatchdogMs("Hi there.") + 1);
+      await vi.advanceTimersByTimeAsync(MINK_VOICE_NOTICE_MS + 1);
     });
-    expect(result.current.state).toBe("listening");
-    expect(input.listen).toHaveBeenCalledTimes(2);
+    expect(h.result.current.notice).toBeNull();
+    act(() => session.events.onVoiceOff());
+    expect(contexts[0].close).not.toHaveBeenCalled();
+    act(() => session.events.onIdle("done"));
+    expect(contexts[0].close).toHaveBeenCalled();
+    // The next turn starts on the browser voice.
+    await say(h, "Orders?");
+    expect(h.speech.last().options.voice).toBe("browser");
+    expect(h.speech.last().options.audio).toBeNull();
+  });
+
+  it("uses the browser voice straight away when no model is on, and ignores a late answer from an earlier session", async () => {
+    let answerFirst!: (value: unknown) => void;
+    const first = new Promise((resolve) => (answerFirst = resolve));
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementationOnce(() => first)
+        .mockImplementation(async () => ({
+          ok: true,
+          json: async () => ({ enabled: true }),
+        })),
+    );
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await act(async () => h.result.current.toggle());
+    await act(async () => h.result.current.toggle());
+    await act(async () => {
+      answerFirst({ ok: true, json: async () => ({ enabled: false }) });
+    });
+    await say(h, "Sales?");
+    // The current session's "on" stands, and its context was not closed.
+    expect(h.speech.last().options.voice).toBe("model");
+    expect(contexts[1].close).not.toHaveBeenCalled();
+    h.unmount();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ enabled: false }) })),
+    );
+    const off = makeHarness();
+    await act(async () => off.result.current.toggle());
+    await say(off, "Sales?");
+    expect(off.speech.last().options.voice).toBe("browser");
+    expect(contexts[2].close).toHaveBeenCalled();
   });
 
   it("reports why the browser cannot run voice chat", async () => {
@@ -435,167 +1210,13 @@ describe("useMinkVoiceMode", () => {
       ok: false,
       reason: "Voice chat needs a browser with microphone support.",
     });
-    const input = makeInput();
-    const { result } = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
+    const h = makeHarness();
+    expect(h.result.current.support.ok).toBe(false);
+    await act(async () => h.result.current.toggle());
+    expect(h.result.current.enabled).toBe(false);
+    expect(h.mic.calls).toHaveLength(0);
+    expect(h.result.current.notice).toBe(
+      "Voice chat needs a browser with microphone support.",
     );
-    expect(result.current.support.ok).toBe(false);
-    await act(async () => result.current.toggle());
-    expect(result.current.enabled).toBe(false);
-    expect(input.listen).not.toHaveBeenCalled();
-  });
-});
-
-describe("★★ read-aloud model", () => {
-  afterEach(() => vi.unstubAllGlobals());
-
-  /** Model audio plays through a context started by the toggle click. */
-  const contexts: Array<{
-    resume: ReturnType<typeof vi.fn>;
-    close: ReturnType<typeof vi.fn>;
-  }> = [];
-  beforeEach(() => {
-    contexts.length = 0;
-    Object.defineProperty(window, "AudioContext", {
-      value: class {
-        resume = vi.fn(async () => {});
-        close = vi.fn(async () => {});
-        constructor() {
-          contexts.push(this);
-        }
-      },
-      configurable: true,
-    });
-  });
-
-  async function speakOneAnswer(enabled: boolean) {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: true, json: async () => ({ enabled }) })),
-    );
-    const input = makeInput();
-    const hook = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
-    );
-    await act(async () => hook.result.current.toggle());
-    await act(async () => hook.result.current.reportTranscript("Sales?"));
-    hook.rerender({
-      ...input,
-      messages: [...input.messages, assistant("a1", "Sales are **up**.")],
-    });
-    return { ...hook, input };
-  }
-
-  it("plays the answer through the model, Thinking until the audio starts", async () => {
-    let finish!: (value: unknown) => void;
-    speechPlayer.play.mockImplementation(
-      () => new Promise((resolve) => (finish = resolve)),
-    );
-    const { result, input } = await speakOneAnswer(true);
-    expect(speechPlayer.play).toHaveBeenCalledOnce();
-    const call = speechPlayer.play.mock.calls[0][0];
-    expect(call.text).toBe("Sales are up.");
-    expect(call.lang).toBe("en-IN");
-    // The context started (and resumed) on the toggle click is the one used.
-    expect(contexts).toHaveLength(1);
-    expect(call.audio).toBe(contexts[0]);
-    expect(contexts[0].resume).toHaveBeenCalled();
-    expect(synth.speak).not.toHaveBeenCalled();
-    expect(result.current.state).toBe("waiting");
-    act(() => call.onStart());
-    expect(result.current.state).toBe("speaking");
-    await act(async () => finish({ outcome: "done" }));
-    expect(input.listen).toHaveBeenCalledTimes(2);
-    expect(result.current.state).toBe("listening");
-  });
-
-  it("lets the browser voice read whatever the model could not", async () => {
-    speechPlayer.play.mockResolvedValue({
-      outcome: "browser",
-      remaining: "Sales are up.",
-    });
-    await speakOneAnswer(true);
-    await act(async () => {});
-    expect(synth.speak).toHaveBeenCalledOnce();
-    expect(lastUtterance().text).toBe("Sales are up.");
-  });
-
-  it("uses the browser voice straight away when no model is on", async () => {
-    await speakOneAnswer(false);
-    expect(speechPlayer.play).not.toHaveBeenCalled();
-    expect(synth.speak).toHaveBeenCalledOnce();
-    // ★ And the context opened on the click is closed as soon as the
-    // platform says nothing will play through it.
-    expect(contexts).toHaveLength(1);
-    expect(contexts[0].close).toHaveBeenCalled();
-  });
-
-  it("★ tells the merchant when the model stopped partway, then listens again", async () => {
-    speechPlayer.play.mockResolvedValue({ outcome: "truncated" });
-    const { input, result } = await speakOneAnswer(true);
-    await act(async () => {});
-    expect(input.onNotice).toHaveBeenCalledWith(
-      "The rest of that answer could not be read aloud.",
-    );
-    expect(synth.speak).not.toHaveBeenCalled();
-    expect(input.listen).toHaveBeenCalledTimes(2);
-    expect(result.current.state).toBe("listening");
-  });
-
-  it("★ a late answer from an earlier session cannot pick the voice", async () => {
-    let answerFirst!: (value: unknown) => void;
-    const first = new Promise((resolve) => (answerFirst = resolve));
-    const fetchMock = vi
-      .fn()
-      .mockImplementationOnce(() => first)
-      .mockImplementation(async () => ({
-        ok: true,
-        json: async () => ({ enabled: true }),
-      }));
-    vi.stubGlobal("fetch", fetchMock);
-    speechPlayer.play.mockImplementation(() => new Promise(() => {}));
-    const input = makeInput();
-    const hook = renderHook(
-      (props: MinkVoiceModeInput) => useMinkVoiceMode(props),
-      { initialProps: input },
-    );
-    await act(async () => hook.result.current.toggle());
-    await act(async () => hook.result.current.toggle());
-    await act(async () => hook.result.current.toggle());
-    // The first session's GET answers "off" only now.
-    await act(async () => {
-      answerFirst({ ok: true, json: async () => ({ enabled: false }) });
-    });
-    await act(async () => hook.result.current.reportTranscript("Sales?"));
-    hook.rerender({
-      ...input,
-      messages: [...input.messages, assistant("a1", "Sales are up.")],
-    });
-    // The current session's "on" stands, and its context was not closed.
-    expect(speechPlayer.play).toHaveBeenCalledOnce();
-    expect(contexts[1].close).not.toHaveBeenCalled();
-  });
-
-  it("stopping voice chat cancels model playback", async () => {
-    speechPlayer.play.mockImplementation(() => new Promise(() => {}));
-    const { result } = await speakOneAnswer(true);
-    const { signal } = speechPlayer.play.mock.calls[0][0];
-    expect(signal.aborted).toBe(false);
-    await act(async () => result.current.toggle());
-    expect(signal.aborted).toBe(true);
-    // And the audio context is closed, so no output device stays held.
-    expect(contexts[0].close).toHaveBeenCalled();
-  });
-
-  it("uses the browser voice when the browser has no Web Audio", async () => {
-    Object.defineProperty(window, "AudioContext", {
-      value: class {},
-      configurable: true,
-    });
-    await speakOneAnswer(true);
-    expect(speechPlayer.play).not.toHaveBeenCalled();
-    expect(synth.speak).toHaveBeenCalledOnce();
   });
 });

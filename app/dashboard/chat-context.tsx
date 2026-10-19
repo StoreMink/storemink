@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   useCallback,
   useMemo,
@@ -14,6 +15,7 @@ import {
   type MinkConversationSummary,
   type MinkMemoryPrompt,
   type MinkMessage,
+  type MinkPreparedSend,
   type MinkRunStep,
   type MinkUiError,
 } from "./mink-ai";
@@ -21,6 +23,11 @@ import type { MinkFeedbackIssue, MinkFeedbackRating } from "@/lib/mink/types";
 import type { MinkSkill } from "@/lib/mink/skills";
 import type { MinkHighlight } from "@/lib/mink/guide-targets";
 import { MinkSpotlight } from "./mink-spotlight";
+import {
+  useMinkVoiceMode,
+  type MinkVoiceMode,
+  type MinkVoiceSendOptions,
+} from "./mink-voice-mode";
 
 interface ChatContextType {
   isChatOpen: boolean;
@@ -33,7 +40,8 @@ interface ChatContextType {
   toggleChat: () => void;
   closeChat: () => void;
   toggleExpand: () => void;
-  // Home "Ask anything…" box → open the chat in full view AND send the message.
+  // Home "Ask anything…" box → open the chat in full view AND send the
+  // message, in a new chat (see lib/mink/chat-session).
   startExpandedChat: (message: string) => void;
   // The shared Mink AI conversation (one thread across the Home box + panel).
   messages: MinkMessage[];
@@ -48,9 +56,13 @@ interface ChatContextType {
   statusText: string | null;
   /** The answer so far while Mink is still writing it. */
   streamingText: string;
+  /** A voice turn's spoken words so far; empty on a typed turn. */
+  spokenText: string;
+  /** The spoken block has closed; the written answer follows. */
+  spokenEnded: boolean;
   /** The tools the current run has called, in order. */
   steps: MinkRunStep[];
-  error: { code: string; message: string } | null;
+  error: MinkUiError | null;
   feedbackSubmittingRunId: string | null;
   /** A control Mink is pointing at on the current page, until dismissed. */
   spotlight: MinkHighlight | null;
@@ -60,10 +72,18 @@ interface ChatContextType {
   saveMemorySuggestion: () => Promise<MinkUiError | null>;
   dismissMemorySuggestion: () => void;
   minkCredits: MinkCreditSummary | null;
-  send: (raw?: string) => void;
+  /** `voice` marks a transcript from voice chat; a typed send leaves it unset. */
+  send: (raw?: string, options?: { voice?: boolean }) => void;
+  /**
+   * A typed message with attachments: it shows in the chat at once and Mink
+   * reads the files as its first step. False when it could not be taken.
+   */
+  sendPrepared: (prepared: MinkPreparedSend) => boolean;
   cancel: () => void;
   retry: () => void;
   reset: () => void;
+  /** Leaves the open chat for a new, empty one; History keeps it. */
+  startNewChat: () => void;
   loadConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<MinkUiError | null>;
   submitFeedback: (input: {
@@ -111,6 +131,53 @@ function readMinkCredits(value: unknown): MinkCreditSummary | null {
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
+/**
+ * The composer's half of a spoken turn. Given the transcript, it puts the
+ * draft in the box in front of it, uploads and reads the staged attachments,
+ * and hands the finished message to `deliver`, resolving whether it went.
+ * Null when nothing is staged, so the transcript is sent on its own.
+ */
+export type MinkVoiceComposer = (
+  transcript: string,
+  deliver: (message: string) => boolean,
+) => Promise<boolean> | null;
+
+export type MinkVoiceChat = MinkVoiceMode & {
+  /**
+   * The mounted composer offers to carry each spoken turn; returns the
+   * unregister. ★ Voice chat keeps the composer mounted but hidden, so a
+   * draft and staged attachments wait in it. A spoken turn used to bypass it:
+   * the attachments were never sent, the run cleared the draft, and the
+   * composer's remount for the new conversation deleted the uploads.
+   */
+  registerComposer: (composer: MinkVoiceComposer) => () => void;
+};
+
+/**
+ * The spoken conversation, in its own context so the captions it updates
+ * several times a second while Mink talks do not re-render every consumer
+ * of the chat. Outside a provider (the platform console) the toggle is
+ * simply disabled.
+ */
+const NO_VOICE: MinkVoiceChat = {
+  enabled: false,
+  state: "idle",
+  mic: "closed",
+  support: { ok: false, reason: "Voice chat is unavailable here." },
+  levelRef: { current: 0 },
+  heard: null,
+  said: null,
+  notice: null,
+  toggle: () => {},
+  noteSend: () => {},
+  registerComposer: () => () => {},
+};
+const MinkVoiceContext = createContext<MinkVoiceChat>(NO_VOICE);
+
+export function useMinkVoice(): MinkVoiceChat {
+  return useContext(MinkVoiceContext);
+}
+
 export function ChatProvider({
   children,
   minkEnabled,
@@ -138,7 +205,63 @@ export function ChatProvider({
   // Conversation state lives here (not in each surface) so a message typed in
   // the Home box carries over into the panel/full view that opens.
   const mink = useMinkAi({ enabled: minkEnabled });
-  const { send } = mink;
+  const minkSend = mink.send;
+  const voiceComposer = useRef<MinkVoiceComposer | null>(null);
+  const registerComposer = useCallback((composer: MinkVoiceComposer) => {
+    voiceComposer.current = composer;
+    return () => {
+      if (voiceComposer.current === composer) voiceComposer.current = null;
+    };
+  }, []);
+  // A spoken turn goes through the composer when something is staged there,
+  // and straight to the chat when nothing is.
+  const voiceSend = useCallback(
+    (text: string, options: MinkVoiceSendOptions) => {
+      const deliver = (message: string) => minkSend(message, options);
+      return voiceComposer.current?.(text, deliver) ?? deliver(text);
+    },
+    [minkSend],
+  );
+  // ★ THE VOICE LOOP LIVES HERE, NOT IN THE COMPOSER. The composer is keyed
+  // on the conversation and remounts when a new conversation gets its id or
+  // the panel swaps with the full view; a loop inside it ended on every such
+  // remount, mid-sentence.
+  const voiceMode = useMinkVoiceMode({
+    messages: mink.messages,
+    isReplying: mink.isReplying,
+    isChatOpen,
+    error: mink.error,
+    spokenText: mink.spokenText,
+    spokenEnded: mink.spokenEnded,
+    send: voiceSend,
+    cancel: mink.cancel,
+    langFallback:
+      typeof navigator !== "undefined" ? navigator.language : undefined,
+  });
+  const voice = useMemo(
+    () => ({ ...voiceMode, registerComposer }),
+    [voiceMode, registerComposer],
+  );
+  const { noteSend } = voiceMode;
+  // A typed, Home-box or card send while voice chat is on gets a spoken
+  // answer too; the loop's own sends mark themselves `voice` and skip this.
+  const send = useCallback(
+    (raw?: string, options?: { voice?: boolean }) => {
+      if (!minkSend(raw, options)) return;
+      if (!options?.voice) noteSend();
+    },
+    [minkSend, noteSend],
+  );
+  const minkSendPrepared = mink.sendPrepared;
+  const sendPrepared = useCallback(
+    (prepared: MinkPreparedSend) => {
+      if (!minkSendPrepared(prepared)) return false;
+      noteSend();
+      return true;
+    },
+    [minkSendPrepared, noteSend],
+  );
+  const { isReplying, setInput, startNewChat, resumeOrStartFresh } = mink;
 
   const refreshMinkCredits = useCallback(async () => {
     if (!minkEnabled) return;
@@ -158,20 +281,34 @@ export function ChatProvider({
     return () => window.clearTimeout(timer);
   }, [mink.isReplying, refreshMinkCredits]);
 
-  const toggleChat = useCallback(() => setIsChatOpen((prev) => !prev), []);
+  // ★ Opening Mink continues the chat it was showing, unless that chat has
+  // gone quiet for hours, when a new one starts (ChatGPT, Claude, Sidekick).
+  const toggleChat = useCallback(() => {
+    if (!isChatOpen) resumeOrStartFresh();
+    setIsChatOpen(!isChatOpen);
+  }, [isChatOpen, resumeOrStartFresh]);
   const closeChat = useCallback(() => {
     setIsChatOpen(false);
     setIsExpanded(false);
   }, []);
   const toggleExpand = useCallback(() => setIsExpanded((prev) => !prev), []);
 
+  // ★ A question from Home or an "Ask Mink" button is a new topic, so it
+  // starts a new chat rather than landing in whatever thread was open last.
+  // While Mink is still answering, the question waits in the box instead:
+  // starting a new chat then would stop that answer.
   const startExpandedChat = useCallback(
     (message: string) => {
       setIsChatOpen(true);
       setIsExpanded(true);
+      if (isReplying) {
+        setInput(message);
+        return;
+      }
+      startNewChat();
       send(message);
     },
-    [send],
+    [isReplying, setInput, startNewChat, send],
   );
 
   const value = useMemo(
@@ -188,6 +325,8 @@ export function ChatProvider({
       toggleExpand,
       startExpandedChat,
       ...mink,
+      send,
+      sendPrepared,
     }),
     [
       isChatOpen,
@@ -202,15 +341,19 @@ export function ChatProvider({
       toggleExpand,
       startExpandedChat,
       mink,
+      send,
+      sendPrepared,
     ],
   );
 
   return (
     <ChatContext.Provider value={value}>
-      {children}
-      {spotlight ? (
-        <MinkSpotlight highlight={spotlight} onDone={clearSpotlight} />
-      ) : null}
+      <MinkVoiceContext.Provider value={voice}>
+        {children}
+        {spotlight ? (
+          <MinkSpotlight highlight={spotlight} onDone={clearSpotlight} />
+        ) : null}
+      </MinkVoiceContext.Provider>
     </ChatContext.Provider>
   );
 }
@@ -244,6 +387,8 @@ export function useChat() {
       deletingConversationId: null,
       statusText: null,
       streamingText: "",
+      spokenText: "",
+      spokenEnded: false,
       steps: [],
       error: null,
       feedbackSubmittingRunId: null,
@@ -252,9 +397,11 @@ export function useChat() {
       dismissMemorySuggestion: () => {},
       minkCredits: null,
       send: () => {},
+      sendPrepared: () => false,
       cancel: () => {},
       retry: () => {},
       reset: () => {},
+      startNewChat: () => {},
       loadConversation: async () => {},
       deleteConversation: async () => ({
         code: "mink_unavailable",

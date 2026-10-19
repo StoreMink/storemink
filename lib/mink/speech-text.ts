@@ -19,6 +19,17 @@
 
 export const SPEAKABLE_MAX_CHARS = 1_500;
 
+/**
+ * The longest text one read-aloud request may carry. ★ It is a cost bound,
+ * not a style choice: the voice loop cuts every answer into pieces no longer
+ * than this and the speech route refuses anything longer, so the route's rate
+ * limits (a request per sentence or two) cap the characters a merchant can
+ * have read aloud, which StoreMink pays for and does not charge.
+ */
+export const MINK_SPEECH_PIECE_MAX = 600;
+/** The first piece of an answer is shorter, so the first words play sooner. */
+export const MINK_SPEECH_FIRST_PIECE_MAX = 160;
+
 /** A line that already ends a sentence, or one that clearly continues (a comma). */
 const ENDED = /(?:[.!?।…]|[,;:])["')\]]*$/;
 const SENTENCE_BOUNDARY = /[.!?।…]["')\]]*(?=\s)/g;
@@ -205,6 +216,24 @@ const SENTENCE = new RegExp(
   "g",
 );
 
+/**
+ * Offsets just past each sentence that has PROVABLY ended: the same terminator
+ * rule as `SENTENCE`, but the whitespace must be followed by a further word,
+ * never the end of the text. Streamed text grows at its end, so a full stop
+ * that is the last character may still be "Rs." with "500" on its way; a
+ * stop with a capitalised word already after it is settled.
+ */
+const SENTENCE_END_FOLLOWED = /[.!?।॥]+["'”’)\]]*(?=\s+[^\sa-z0-9])/g;
+
+export function speechSentenceEnds(text: string): number[] {
+  if (typeof text !== "string" || !text) return [];
+  const ends: number[] = [];
+  for (const match of text.matchAll(SENTENCE_END_FOLLOWED)) {
+    ends.push(match.index + match[0].length);
+  }
+  return ends;
+}
+
 function splitLong(sentence: string, max: number): string[] {
   const parts: string[] = [];
   let rest = sentence.trim();
@@ -227,8 +256,8 @@ function splitLong(sentence: string, max: number): string[] {
  */
 export function splitSpeechChunks(
   text: string,
-  firstMax = 160,
-  restMax = 600,
+  firstMax = MINK_SPEECH_FIRST_PIECE_MAX,
+  restMax = MINK_SPEECH_PIECE_MAX,
 ): string[] {
   const clean =
     typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";

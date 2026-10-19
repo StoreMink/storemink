@@ -4,7 +4,7 @@ import { getMinkActorContext } from "@/lib/mink/actor-context";
 import { rejectForeignMinkOrigin } from "@/lib/mink/request-origin";
 import { readMinkBoundedBytes } from "@/lib/mink/bounded-json";
 import { validateMinkInput } from "@/lib/mink/input-validation";
-import { reserveMinkInput } from "@/lib/mink/input-limits";
+import { reserveMinkVoice } from "@/lib/mink/input-limits";
 import { MinkRequestError } from "@/lib/mink/errors";
 import { getMinkVoiceProvider } from "@/lib/mink/voice-settings";
 import { transcribeMinkVoice } from "@/lib/mink/voice-transcription";
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
         "Invalid voice request.",
         400,
       );
-    await reserveMinkInput(actor, requestKey);
+    await reserveMinkVoice(actor, requestKey);
     const bytes = await readMinkBoundedBytes(request, MAX_WAV_BYTES, signal);
     const checked = await validateMinkInput(
       { kind: "audio", bytes, name: "voice-note.wav", requestKey },
@@ -88,7 +88,19 @@ export async function POST(request: Request) {
     const result = await transcribeMinkVoice(provider, checked.bytes, signal);
     signal.throwIfAborted();
     await getMinkActorContext(requestId);
-    if (!result.text || result.text.length > 4_000)
+    // A clip with no words in it (a cough, a door) is an ordinary answer:
+    // the composer says nothing was recognised and voice chat keeps
+    // listening. It is not a provider failure, so it is neither a 503 nor
+    // an error in the log.
+    if (!result.text) {
+      logInfo("mink.voice.empty", {
+        requestId,
+        storeId: actor.storeId,
+        provider,
+      });
+      return json({ text: "", languageCode: result.languageCode });
+    }
+    if (result.text.length > 4_000)
       throw new MinkRequestError(
         "invalid_voice",
         "Voice transcript is invalid.",

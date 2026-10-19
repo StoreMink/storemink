@@ -8383,6 +8383,101 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261018_0228_mink_voice_chat_help",
+      "description": "The Mink guide's dictation paragraph no longer ends by ruling out a voice conversation: it points at Talk with Mink, where Mink answers out loud as it works and can be interrupted by speaking",
+      "file": "sql/20261018_0228_mink_voice_chat_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0227_mink_reply_language_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide offers Talk with Mink for a spoken conversation and no longer says dictation is not one",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%choose Talk with Mink (the sound-wave button beside the microphone)%' and body not like '%This is dictation, not a live voice conversation.%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261019_0229_rate_limit_cost",
+      "description": "check_rate_limit_cost: a weighted twin of check_rate_limit that adds a cost instead of 1, so Mink read-aloud's free allowance can be a character budget rather than a request count; service-only",
+      "file": "sql/20261019_0229_rate_limit_cost.sql",
+      "transaction": true,
+      "requires": ["20261018_0228_mink_voice_chat_help"],
+      "verify": {
+        "functions": ["check_rate_limit_cost(text,integer,integer,integer)"],
+        "queries": [
+          {
+            "name": "only the service role may call the weighted limiter",
+            "sql": "select (has_function_privilege('app_service', 'public.check_rate_limit_cost(text,integer,integer,integer)', 'EXECUTE') and not has_function_privilege('app_user', 'public.check_rate_limit_cost(text,integer,integer,integer)', 'EXECUTE'))::text",
+            "equals": "true"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the weighted limiter runs as its owner with an empty search path, like check_rate_limit",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.check_rate_limit_cost(text,integer,integer,integer)'::regprocedure and prosecdef and proconfig @> array['search_path=\"\"']",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261019_0230_mink_chat_continuity_help",
+      "description": "The Mink guide describes how a chat continues (this tab's chat until two hours quiet; a new tab, Home question or Ask Mink starts a new one; deleting the open chat leaves an empty one; New chat in the header), page links that open only when selected, and Send moving attachments into the chat at once and back to the box if a file cannot be read",
+      "file": "sql/20261019_0230_mink_chat_continuity_help.sql",
+      "transaction": true,
+      "requires": ["20261019_0229_rate_limit_cost"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide names the New chat button beside New conversation",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%<strong>New chat</strong> at the top of Mink AI%' and body not like '%<strong>New conversation</strong> starts a separate topic.%'",
+            "equals": "1"
+          },
+          {
+            "name": "deleting the open chat leaves an empty one rather than opening the next",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Deleting the conversation you are in leaves a new, empty one%' and body not like '%opens the next recent thread when the active thread is deleted%'",
+            "equals": "1"
+          },
+          {
+            "name": "a refresh continues this tab's chat, and a new tab or two quiet hours starts a new one",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%coming back after two hours without a message%' and body not like '%The newest remaining conversation is restored after a dashboard refresh.%'",
+            "equals": "1"
+          },
+          {
+            "name": "a page link opens only when the merchant selects it",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%nothing opens until you select it%' and body not like '%so the page opens with that control pointed out%'",
+            "equals": "1"
+          },
+          {
+            "name": "Send shows the message and its attachments in the chat straight away",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%your message and its attachments appear in the chat straight away%' and body not like '%Mink processes the visible attachments with your request and shows them with the sent message.%'",
+            "equals": "1"
+          },
+          {
+            "name": "Send moves attachments into the chat at once, and a photo can go without words",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%a photo or file can be sent without any words%' and body not like '%once to process the visible attachments with your request.%'",
+            "equals": "1"
+          },
+          {
+            "name": "a file that cannot be read sends the message back to the box",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%If a file cannot be read, your message and its attachments go back to the message box%' and body not like '%After a failure, wait and press Send again%'",
+            "equals": "1"
+          },
+          {
+            "name": "closing Mink no longer abandons a message whose files are being read",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%closing Mink AI does not, and the answer is waiting when you reopen it%' and body not like '%Closing, discarding or changing conversations cancels pending local work%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

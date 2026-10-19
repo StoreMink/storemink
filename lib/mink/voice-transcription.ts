@@ -133,7 +133,6 @@ async function transcribeWithChirp3(
   const languageCode = (data.results ?? []).find(
     (result) => typeof result.languageCode === "string",
   )?.languageCode;
-  if (!text) throw new Error("Chirp 3 returned an empty transcript.");
   return {
     text,
     languageCode: typeof languageCode === "string" ? languageCode : null,
@@ -171,7 +170,6 @@ async function transcribeWithSaarasV4(
     language_code?: unknown;
   };
   const text = cleanTranscript(data.transcript);
-  if (!text) throw new Error("Saaras v4 returned an empty transcript.");
   return {
     text,
     languageCode:
@@ -179,6 +177,13 @@ async function transcribeWithSaarasV4(
   };
 }
 
+/**
+ * ★ NO WORDS IS AN ANSWER, NOT A FAILURE. A cough, a door or a breath that
+ * crossed the speech floor comes back with an empty transcript, and throwing
+ * on it turned it into a 503: dictation said the service was down, and voice
+ * chat switched itself off over a sound in the room. The text is "" instead,
+ * and each caller treats it as nothing heard.
+ */
 export function transcribeMinkVoice(
   provider: MinkVoiceProvider,
   audio: Buffer,

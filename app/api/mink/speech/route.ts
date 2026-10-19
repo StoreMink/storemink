@@ -26,6 +26,22 @@ const LANG = /^[a-z]{2,3}(?:-[A-Za-z]{2,4})?$/;
  */
 const MAX_STREAMS = 12;
 
+/**
+ * ★★ THE FREE ALLOWANCE IS COUNTED IN CHARACTERS. Read-aloud costs the
+ * merchant no credits and the provider bills StoreMink per character, so the
+ * spend ceiling is a character budget: 40,000 a minute per admin and 600,000
+ * an hour per store, exactly what the old limits allowed (20 and 300 requests
+ * of up to 2,000 characters each). Voice chat sends a sentence or two per
+ * request, so it needs far more requests than reading whole answers did; the
+ * request limits below were raised for that, and on their own they let 1.2
+ * times the old characters through.
+ */
+const CHARS_PER_ADMIN_MINUTE = 40_000;
+const CHARS_PER_STORE_HOUR = 600_000;
+/** Requests, for the overhead each one costs; the budget above bounds the spend. */
+const REQUESTS_PER_ADMIN_MINUTE = 60;
+const REQUESTS_PER_STORE_HOUR = 1_200;
+
 const json = (body: unknown, status = 200) =>
   NextResponse.json(body, {
     status,
@@ -94,8 +110,9 @@ export async function GET() {
  * and the 60-second ceiling used to abort the provider call while leaving
  * the slot counted until the socket finally closed.
  *
- * ★ NO CREDITS, like dictation: the cost is bounded by the rate limits here
- * and the ≤1,500-character answers the voice chat sends.
+ * ★ NO CREDITS, like dictation: the cost is bounded by the character budget
+ * here and the one piece of an answer (at most `MINK_SPEECH_MAX_CHARS`) each
+ * request carries.
  */
 export async function POST(request: Request) {
   const origin = rejectForeignMinkOrigin(request);
@@ -142,17 +159,27 @@ export async function POST(request: Request) {
         ? body.lang
         : "en-IN";
 
-    const [perAdmin, perStore] = await Promise.all([
+    const limits = await Promise.all([
       rateLimit(`mink-speech:admin:${actor.storeId}:${actor.adminId}`, {
-        max: 20,
+        max: REQUESTS_PER_ADMIN_MINUTE,
         windowSeconds: 60,
       }),
       rateLimit(`mink-speech:store:${actor.storeId}`, {
-        max: 300,
+        max: REQUESTS_PER_STORE_HOUR,
         windowSeconds: 3_600,
       }),
+      rateLimit(`mink-speech-chars:admin:${actor.storeId}:${actor.adminId}`, {
+        max: CHARS_PER_ADMIN_MINUTE,
+        windowSeconds: 60,
+        cost: text.length,
+      }),
+      rateLimit(`mink-speech-chars:store:${actor.storeId}`, {
+        max: CHARS_PER_STORE_HOUR,
+        windowSeconds: 3_600,
+        cost: text.length,
+      }),
     ]);
-    if (!perAdmin.allowed || !perStore.allowed)
+    if (limits.some((limit) => !limit.allowed))
       throw new MinkRequestError(
         "speech_rate_limited",
         "Read-aloud is resting for a moment.",

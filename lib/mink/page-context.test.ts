@@ -18,7 +18,18 @@ describe("normalizeMinkPageContext", () => {
       currentPath: "/dashboard/products/one?tab=inventory",
       selectedResource: { type: "product", id: ID },
       screen: null,
+      voice: false,
     });
+  });
+
+  it("keeps the voice flag only when it is exactly true", () => {
+    expect(
+      normalizeMinkPageContext({ currentPath: "/dashboard", voice: true })
+        .voice,
+    ).toBe(true);
+    expect(normalizeMinkPageContext({ voice: "yes" }).voice).toBe(false);
+    expect(normalizeMinkPageContext({ voice: 1 }).voice).toBe(false);
+    expect(normalizeMinkPageContext(undefined).voice).toBe(false);
   });
 
   it("keeps a bounded screen and ignores a retired reply language", () => {
@@ -69,6 +80,7 @@ describe("normalizeMinkPageContext", () => {
       currentPath: null,
       selectedResource: null,
       screen: null,
+      voice: false,
     });
     expect(
       normalizeMinkPageContext({ currentPath: "/dashboard-attacker" }),
@@ -76,6 +88,7 @@ describe("normalizeMinkPageContext", () => {
       currentPath: null,
       selectedResource: null,
       screen: null,
+      voice: false,
     });
   });
 });

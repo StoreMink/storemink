@@ -38,8 +38,9 @@ import {
   type MinkCsvReference,
 } from "@/lib/mink/csv-input";
 import { startMinkRecording } from "@/lib/mink/voice-recorder";
-import { useChat } from "./chat-context";
-import { useMinkVoiceMode } from "./mink-voice-mode";
+import { transcribeMinkRecording } from "@/lib/mink/voice-turn";
+import { useMinkVoice, type MinkVoiceComposer } from "./chat-context";
+import type { MinkPreparedSend } from "./mink-ai";
 import { formatMinkClock, MinkWaveform } from "./mink-waveform";
 
 const COMPOSER_FILE_ACCEPT =
@@ -70,10 +71,15 @@ type ComposerAttachment = {
   reading: { mode: "extract" | "design"; text: string } | null;
 };
 
+type AttachmentProgress = Partial<
+  Pick<ComposerAttachment, "asset" | "csvFile" | "reading">
+>;
+
 export function MinkMultimodalInput({
   message,
   onAdd,
   onSubmit,
+  onSubmitPrepared,
   disabled,
   canSaveMedia = false,
   children,
@@ -81,6 +87,16 @@ export function MinkMultimodalInput({
   message: string;
   onAdd: (message: string) => void;
   onSubmit?: (message: string) => void;
+  /**
+   * ★★ A typed message with attachments goes here instead of `onSubmit`, at
+   * once, before anything is uploaded or read. The chat shows it (photo and
+   * all) and reads the files as Mink's first step, the way ChatGPT, Claude
+   * and Sidekick do; the composer used to keep the photo under a second
+   * spinner until every file was read, so it looked like it was uploading
+   * again. Returns false when the chat could not take it (a reply is
+   * running), and then nothing leaves the box.
+   */
+  onSubmitPrepared?: (prepared: MinkPreparedSend) => boolean;
   disabled: boolean;
   /** Resolved server-side; the upload action rechecks this permission. */
   canSaveMedia?: boolean;
@@ -90,12 +106,14 @@ export function MinkMultimodalInput({
     voice: ReactNode;
     submit: () => Promise<void>;
     /**
-     * What the composer shows while the microphone is in use, in place of its
-     * toolbar row (ChatGPT/Claude style): the live waveform with Cancel and
-     * Done for dictation, or the voice chat status with End. Null otherwise.
+     * What the composer shows while dictating, in place of its toolbar row
+     * (ChatGPT/Claude style): the live waveform with Cancel and Done. Null
+     * otherwise. Voice chat has its own full-screen view in the chat surface.
      */
     recorder: ReactNode;
-    recording: "dictation" | "voice" | null;
+    recording: "dictation" | null;
+    /** Something is staged, so the message may be sent without words. */
+    hasAttachments: boolean;
   }) => ReactNode;
 }) {
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -123,15 +141,36 @@ export function MinkMultimodalInput({
   const finishRef = useRef<(() => void) | null>(null);
   const doneButtonRef = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState("");
-  const latestMessage = useRef({ message, onAdd, onSubmit, disabled });
+  const latestMessage = useRef({
+    message,
+    onAdd,
+    onSubmit,
+    onSubmitPrepared,
+    disabled,
+  });
   const operation = useRef<AbortController | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
-  const voiceEnabledRef = useRef(false);
+  // Whether this composer is still on screen, for a handed-over message that
+  // comes back (see `handOver`).
+  const mountedRef = useRef(false);
 
   useEffect(() => {
-    latestMessage.current = { message, onAdd, onSubmit, disabled };
-  }, [message, onAdd, onSubmit, disabled]);
+    latestMessage.current = {
+      message,
+      onAdd,
+      onSubmit,
+      onSubmitPrepared,
+      disabled,
+    };
+  }, [message, onAdd, onSubmit, onSubmitPrepared, disabled]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   function setDictation(next: typeof dictationState) {
     dictationRef.current = next;
@@ -144,29 +183,33 @@ export function MinkMultimodalInput({
   }
 
   /**
-   * Hands-free voice chat (the "Talk with Mink" toggle). The hook owns the
-   * loop; this composer still owns the microphone and the send, so limits,
-   * attachments and the one transcription route apply exactly as they do to
-   * ordinary dictation. `useChat` without a provider returns a safe default
-   * whose `isChatOpen` is false, which simply keeps the loop off.
+   * The spoken conversation (the "Talk with Mink" toggle) lives in
+   * ChatProvider, which owns the microphone and the send for it; this
+   * composer offers the button and stays out of the way while it is on.
+   * Outside a provider the toggle is disabled.
+   *
+   * ★ Voice chat hides this composer but keeps it mounted, so a draft and
+   * staged attachments wait here, and each spoken turn comes here first to
+   * take them along (`submitMessage`). The newest submit path is read through
+   * a ref, because the registration outlives the render that made it.
    */
-  const chat = useChat();
-  const voiceMode = useMinkVoiceMode({
-    messages: chat.messages,
-    isReplying: chat.isReplying,
-    isChatOpen: chat.isChatOpen,
-    error: chat.error,
-    listen: () => startDictation(true),
-    stopListening: cancelDictation,
-    send: (text) => submitMessage(text),
-    onNotice: setError,
-    langFallback:
-      typeof navigator !== "undefined" ? navigator.language : undefined,
-  });
-
+  const voiceChat = useMinkVoice();
+  const { registerComposer } = voiceChat;
+  const voiceTurn = useRef<MinkVoiceComposer | null>(null);
   useEffect(() => {
-    voiceEnabledRef.current = voiceMode.enabled;
-  }, [voiceMode.enabled]);
+    voiceTurn.current = (transcript, deliver) =>
+      latestMessage.current.message.trim() || attachmentsRef.current.length
+        ? submitMessage({ transcript, deliver })
+        : null;
+  });
+  useEffect(
+    () =>
+      registerComposer(
+        (transcript, deliver) =>
+          voiceTurn.current?.(transcript, deliver) ?? null,
+      ),
+    [registerComposer],
+  );
 
   function updateAttachments(
     updater: (current: ComposerAttachment[]) => ComposerAttachment[],
@@ -240,9 +283,9 @@ export function MinkMultimodalInput({
   // The mic button the merchant pressed is replaced by the recorder, so focus
   // would fall to the page; it moves to Done, where Enter or Space finishes.
   useEffect(() => {
-    if (dictationState === "listening" && !voiceMode.enabled)
+    if (dictationState === "listening")
       doneButtonRef.current?.focus({ preventScroll: true });
-  }, [dictationState, voiceMode.enabled]);
+  }, [dictationState]);
 
   useEffect(() => {
     if (!error) return;
@@ -395,26 +438,17 @@ export function MinkMultimodalInput({
       ),
     );
     const promise = (async () => {
-      const form = new FormData();
-      form.set("file", attachment.file);
-      // Kept so Mink can use it, but not listed in the Media Library: it was
-      // handed to Mink, not chosen for the library.
-      form.set("purpose", "mink_attachment");
-      const result = await uploadMediaAsset(form);
-      if (result.error || !result.asset)
-        throw new Error(result.error || "Could not upload this image.");
+      const asset = await uploadMinkImage(attachment.file);
       if (removedAttachmentIds.current.has(id)) {
-        await deleteMediaAsset(result.asset.id);
+        await deleteMediaAsset(asset.id);
         return null;
       }
       updateAttachments((current) =>
         current.map((item) =>
-          item.id === id
-            ? { ...item, asset: result.asset!, uploadState: "ready" }
-            : item,
+          item.id === id ? { ...item, asset, uploadState: "ready" } : item,
         ),
       );
-      return result.asset;
+      return asset;
     })();
     uploadPromises.current.set(id, promise);
     try {
@@ -432,12 +466,10 @@ export function MinkMultimodalInput({
   }
 
   /**
-   * Starts the microphone. `forVoice` marks a recording the voice loop asked
-   * for: its transcript goes to the loop instead of the box, and a silent
-   * recording is reported as empty rather than shown as an error. Resolves
-   * once the recorder is live, false when it could not start.
+   * Starts the microphone for dictation. Resolves once the recorder is live,
+   * false when it could not start.
    */
-  async function startDictation(forVoice = false): Promise<boolean> {
+  async function startDictation(): Promise<boolean> {
     if (
       latestMessage.current.disabled ||
       submittingRef.current ||
@@ -458,17 +490,13 @@ export function MinkMultimodalInput({
           if (id !== generation.current || controller.signal.aborted) return;
           finishRef.current = null;
           if (!recording) {
-            if (forVoice && voiceEnabledRef.current) {
-              handOffToVoice(null);
-              return;
-            }
             operation.current = null;
             setDictation(null);
             setError("No speech was recorded. Try again or type your message.");
             return;
           }
           setDictation("processing");
-          void transcribeRecording(recording, id, controller, forVoice);
+          void transcribeRecording(recording, id, controller);
         },
         (seconds) => {
           if (id !== generation.current) return;
@@ -476,9 +504,9 @@ export function MinkMultimodalInput({
           setElapsed(Number.isFinite(seconds) ? seconds : 0);
         },
         {
-          // Voice chat has no Done button, so a pause ends the turn there;
-          // dictation keeps listening until the merchant presses Done.
-          endOnSilence: forVoice,
+          // Dictation keeps listening until the merchant presses Done; a
+          // pause ends a turn only in voice chat, which has no button.
+          endOnSilence: false,
           onLevel: (level) => {
             levelRef.current = Math.max(level, levelRef.current * 0.9);
           },
@@ -503,38 +531,18 @@ export function MinkMultimodalInput({
     recording: File,
     id: number,
     controller: AbortController,
-    forVoice = false,
   ) {
-    const toVoice = () => forVoice && voiceEnabledRef.current;
     try {
-      const response = await fetch("/api/mink/voice", {
-        method: "POST",
-        headers: {
-          "Content-Type": "audio/wav",
-          "X-Mink-Request-Key": crypto.randomUUID(),
-        },
-        body: recording,
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      const data = await response.json();
+      const transcript = await transcribeMinkRecording(
+        recording,
+        controller.signal,
+      );
       if (id !== generation.current) return;
-      const failure = () =>
-        new Error(
-          typeof data.error === "string"
-            ? data.error
-            : "Voice transcription failed. Try again or type your message.",
+      // The provider heard sound but no words: nothing failed.
+      if (!transcript)
+        throw new Error(
+          "No speech was recognised. Try again or type your message.",
         );
-      if (!response.ok || typeof data.text !== "string") throw failure();
-      const transcript = data.text.trim();
-      if (!transcript) {
-        // Nothing was said: the loop listens again instead of showing an error.
-        if (toVoice()) {
-          handOffToVoice(null);
-          return;
-        }
-        throw failure();
-      }
       const current = latestMessage.current;
       const before = current.message.trimEnd();
       const combined = before ? `${before} ${transcript}` : transcript;
@@ -542,24 +550,14 @@ export function MinkMultimodalInput({
         throw new Error(
           `The transcript does not fit in the ${MINK_MESSAGE_MAX_CHARS.toLocaleString()}-character message limit. Shorten the message and try again.`,
         );
-      if (toVoice()) {
-        handOffToVoice(combined);
-        return;
-      }
       current.onAdd(combined);
     } catch (e) {
-      if (id === generation.current && !controller.signal.aborted) {
-        const message =
+      if (id === generation.current && !controller.signal.aborted)
+        setError(
           e instanceof Error
             ? e.message
-            : "Voice transcription failed. Try again or type your message.";
-        if (toVoice()) {
-          voiceMode.reportTranscriptionFailure();
-          setError(`${message} Voice chat turned off.`);
-        } else {
-          setError(message);
-        }
-      }
+            : "Voice transcription failed. Try again or type your message.",
+        );
     } finally {
       if (id === generation.current) {
         operation.current = null;
@@ -583,198 +581,90 @@ export function MinkMultimodalInput({
     finish?.();
   }
 
-  /**
-   * Hands a finished recording to the voice loop. The generation moves on
-   * first, so this dictation's own cleanup cannot clobber the recording the
-   * loop starts next, and the box is free for the send it makes.
-   */
-  function handOffToVoice(transcript: string | null) {
-    generation.current++;
-    finishRef.current = null;
-    operation.current = null;
-    setDictation(null);
-    voiceMode.reportTranscript(transcript);
-  }
-
-  async function extractAttachment(
-    source: File,
-    mode: "extract" | "design",
-    id: number,
-    controller: AbortController,
-    maxCharacters: number,
-  ) {
-    const bytes = new Uint8Array(await source.arrayBuffer());
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += 8192)
-      binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    if (id !== generation.current)
-      throw new DOMException("Aborted", "AbortError");
-    const response = await fetch("/api/mink/input", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      cache: "no-store",
-      body: JSON.stringify({
-        name: source.name,
-        data: btoa(binary),
-        requestKey: crypto.randomUUID(),
-        // Send is explicit permission to process this visible attachment. It
-        // never counts as approval for a product/storefront mutation.
-        confirmed: true,
-        maxCharacters,
-        ...(mode === "design" ? { mode } : {}),
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok)
-      throw new Error(
-        typeof data.error === "string"
-          ? data.error
-          : "Could not process this attachment.",
-      );
-    if (
-      typeof data.text !== "string" ||
-      !data.text.trim() ||
-      data.text.length > maxCharacters
-    )
-      throw new Error("The attachment returned an invalid result.");
-    return data.text.trim();
-  }
-
   async function submit() {
     await submitMessage();
   }
 
   /**
-   * The one send path. A typed send reads the box; the voice loop passes its
-   * transcript explicitly, because `latestMessage` only learns a new value on
-   * the next render. Resolves true once the message reached `onSubmit`; a
-   * spoken message that could not be sent is left in the box instead.
+   * The one send path: reads the box, uploads what is staged, and hands the
+   * message to `onSubmit`. Resolves true once it did.
+   *
+   * A spoken turn from voice chat (`voice`) puts its transcript after what is
+   * in the box and goes to `deliver` instead, so the draft and the staged
+   * attachments go with it, the way they would with a typed message. If it
+   * cannot go, its words are left in the box rather than lost.
    */
-  async function submitMessage(explicit?: string): Promise<boolean> {
-    const spoken = explicit !== undefined;
-    const current = (explicit ?? latestMessage.current.message).trim();
-    const { disabled: off, onSubmit: send } = latestMessage.current;
-    if (dictationRef.current) {
-      // A typed send while the voice loop is listening wins: the merchant
-      // chose the keyboard, so the mic stops rather than the send refusing.
-      if (spoken || !voiceEnabledRef.current) return false;
-      cancelDictation();
-    }
-    if (!current || off || submittingRef.current || !send) {
-      if (spoken && current) latestMessage.current.onAdd(current);
+  async function submitMessage(voice?: {
+    transcript: string;
+    deliver: (message: string) => boolean;
+  }): Promise<boolean> {
+    const draft = latestMessage.current.message.trim();
+    const current = voice
+      ? [draft, voice.transcript.trim()].filter(Boolean).join(" ")
+      : draft;
+    const { disabled: off, onSubmit, onSubmitPrepared } = latestMessage.current;
+    const send =
+      voice?.deliver ??
+      (onSubmit
+        ? (message: string) => {
+            onSubmit(message);
+            return true;
+          }
+        : null);
+    const keepSpoken = () => {
+      if (voice && current) latestMessage.current.onAdd(current);
+    };
+    const staged = attachmentsRef.current;
+    if (
+      dictationRef.current ||
+      (!current && !staged.length) ||
+      off ||
+      submittingRef.current
+    ) {
+      keepSpoken();
       return false;
     }
-    const staged = attachmentsRef.current;
+    if (!send) return false;
     if (!staged.length) {
-      if (!spoken) voiceMode.noteSend();
-      send(current);
-      return true;
+      if (send(current)) return true;
+      keepSpoken();
+      return false;
     }
+    if (
+      staged.some((attachment) => Boolean(attachment.preview)) &&
+      shouldUseMinkImageOnStorefront(current) &&
+      !canSaveMedia
+    ) {
+      setError(
+        "You need permission to add Media Library images before Mink can use this image for a product or storefront change.",
+      );
+      keepSpoken();
+      return false;
+    }
+    if (!voice && onSubmitPrepared)
+      return handOver(current, staged, onSubmitPrepared);
 
+    // ★ A spoken turn still prepares here, out of sight: voice chat hides
+    // this composer and waits for the finished message before it listens.
     setSubmitting(true);
     setError("");
     const id = ++generation.current;
     const controller = new AbortController();
     operation.current = controller;
     try {
-      if (
-        staged.some((attachment) => Boolean(attachment.preview)) &&
-        shouldUseMinkImageOnStorefront(current) &&
-        !canSaveMedia
-      )
-        throw new Error(
-          "You need permission to add Media Library images before Mink can use this image for a product or storefront change.",
-        );
-
-      let prepared = current;
-      let pendingReadings = staged.filter(
-        (attachment) =>
-          attachment.localText === null &&
-          !/\.csv$/i.test(attachment.file.name),
-      ).length;
-      for (const attachment of staged) {
-        if (/\.csv$/i.test(attachment.file.name)) {
-          let file = attachment.csvFile;
-          if (!file) {
-            const response = await fetch("/api/mink/product-imports", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              signal: controller.signal,
-              cache: "no-store",
-              body: JSON.stringify({
-                id: attachment.id,
-                filename: attachment.file.name.slice(0, 160),
-                csv: new TextDecoder("utf-8", { fatal: true }).decode(
-                  await attachment.file.arrayBuffer(),
-                ),
-              }),
-            });
-            const data = await response.json();
-            if (!response.ok || typeof data.file?.id !== "string")
-              throw new Error(data.error || "Could not upload this CSV.");
-            file = data.file as MinkCsvReference;
-            updateAttachments((items) =>
-              items.map((item) =>
-                item.id === attachment.id ? { ...item, csvFile: file } : item,
-              ),
-            );
-          }
-          if (id !== generation.current) return false;
-          prepared = addMinkCsvReference(prepared, file);
-          continue;
-        }
-        const image = Boolean(attachment.preview);
-        const asset =
-          attachment.asset ??
-          (image && canSaveMedia ? await startUpload(attachment.id) : null);
-        if (id !== generation.current) return false;
-        if (asset)
-          prepared = addSavedMinkMediaReference(prepared, {
-            url: asset.url,
-            filename: asset.filename || attachment.file.name,
-          });
-
-        let extracted: string;
-        if (attachment.localText !== null) {
-          extracted = attachment.localText;
-        } else {
-          const mode =
-            image && shouldReadMinkImageAsStorefrontDesign(current)
-              ? "design"
-              : "extract";
-          // ★ The budget is recomputed from the message as it really stands,
-          //   so a long reading early on narrows what is left for the rest
-          //   instead of overflowing addReviewedMinkDocument at the end.
-          const budget = minkReadingBudget(prepared.length, pendingReadings);
-          if (budget === null)
-            throw new Error(
-              `Your message and these files do not fit in ${MINK_MESSAGE_MAX_CHARS.toLocaleString()} characters. Remove a file or shorten your message, then send again.`,
-            );
-          extracted =
-            attachment.reading?.mode === mode
-              ? attachment.reading.text
-              : await extractAttachment(
-                  attachment.file,
-                  mode,
-                  id,
-                  controller,
-                  budget,
-                );
-          if (id !== generation.current) return false;
-          const reading = { mode, text: extracted } as const;
-          updateAttachments((currentAttachments) =>
-            currentAttachments.map((item) =>
-              item.id === attachment.id ? { ...item, reading } : item,
+      const prepared = await prepareMinkAttachments({
+        text: current,
+        attachments: staged,
+        signal: controller.signal,
+        uploadImage: (attachment) =>
+          canSaveMedia ? startUpload(attachment.id) : Promise.resolve(null),
+        onProgress: (attachmentId, patch) =>
+          updateAttachments((items) =>
+            items.map((item) =>
+              item.id === attachmentId ? { ...item, ...patch } : item,
             ),
-          );
-          pendingReadings--;
-        }
-        prepared = addReviewedMinkDocument(prepared, extracted, {
-          filename: attachment.file.name,
-          kind: image ? "image" : "document",
-        });
-      }
+          ),
+      });
       if (id !== generation.current) return false;
       for (const attachment of staged) {
         if (attachment.preview) URL.revokeObjectURL(attachment.preview);
@@ -782,16 +672,16 @@ export function MinkMultimodalInput({
       attachmentsRef.current = [];
       setAttachments([]);
       setPreviewId(null);
+      // The prepared message (with its file references) stays in the box if
+      // the send is refused, so nothing staged is lost.
       latestMessage.current.onAdd(prepared);
-      if (!spoken) voiceMode.noteSend();
-      send(prepared);
-      return true;
+      return send(prepared);
     } catch (e) {
       if (id === generation.current && !controller.signal.aborted) {
         setError(
           e instanceof Error ? e.message : "Could not process this attachment.",
         );
-        if (spoken) latestMessage.current.onAdd(current);
+        keepSpoken();
       }
       return false;
     } finally {
@@ -800,6 +690,115 @@ export function MinkMultimodalInput({
         setSubmitting(false);
       }
     }
+  }
+
+  /**
+   * Gives a typed message and its staged files to the chat, which shows it at
+   * once and reads the files while Mink works (mink-ai `run`). The box is
+   * cleared now; the files come back to it, with the reason, only if they
+   * could not be read or the merchant stopped Mink first.
+   *
+   * ★ The reading runs on the chat's own stop signal, never on this
+   * composer's `generation`: the composer remounts when the panel and the
+   * full view swap, and a message the merchant has already sent must not die
+   * with it. Each step's result (upload, CSV copy, reading) is kept on its
+   * record, so a retry after a failure redoes only what failed, as before.
+   */
+  function handOver(
+    draft: string,
+    staged: ComposerAttachment[],
+    deliver: (prepared: MinkPreparedSend) => boolean,
+  ): boolean {
+    const records = staged.map((item) => ({ ...item }));
+    const inFlight = new Map(
+      records.flatMap((record) => {
+        const pending = uploadPromises.current.get(record.id);
+        return pending ? [[record.id, pending] as const] : [];
+      }),
+    );
+    const patch = (id: string, change: AttachmentProgress) => {
+      const record = records.find((item) => item.id === id);
+      if (record) Object.assign(record, change);
+    };
+    const putWordsBack = () => {
+      if (!draft) return;
+      const now = latestMessage.current.message.trim();
+      latestMessage.current.onAdd(now ? `${draft} ${now}` : draft);
+    };
+    const letGo = () => {
+      for (const record of records) {
+        removedAttachmentIds.current.add(record.id);
+        if (record.preview) URL.revokeObjectURL(record.preview);
+        if (record.asset) void deleteMediaAsset(record.asset.id);
+      }
+    };
+    const prepared: MinkPreparedSend = {
+      draft,
+      attachments: records.map((record) => ({
+        name: record.file.name,
+        kind: record.preview ? "image" : "document",
+        previewUrl: record.preview || null,
+      })),
+      prepare: async ({ signal, setStatus }) => {
+        const message = await prepareMinkAttachments({
+          text: draft,
+          attachments: records,
+          signal,
+          uploadImage: async (record) => {
+            if (!canSaveMedia) return null;
+            const pending = inFlight.get(record.id);
+            inFlight.delete(record.id);
+            // The upload that began when the photo was picked, if any.
+            const asset = pending ? await pending : null;
+            return asset ?? uploadMinkImage(record.file);
+          },
+          onProgress: patch,
+          onStatus: setStatus,
+        });
+        const previews: Record<string, string> = {};
+        for (const record of records) {
+          if (!record.preview) continue;
+          previews[
+            record.asset
+              ? `url:${record.asset.url}`
+              : `file:${record.file.name}`
+          ] = record.preview;
+        }
+        return { message, previews };
+      },
+      restore: (failure) => {
+        if (!mountedRef.current) {
+          // The chat closed or swapped views meanwhile, taking this box with
+          // it: the words go back, the files are let go.
+          letGo();
+          putWordsBack();
+          return false;
+        }
+        updateAttachments((current) => [
+          ...records.map((record) => ({
+            ...record,
+            uploadState: record.asset
+              ? ("ready" as const)
+              : uploadPromises.current.has(record.id)
+                ? ("uploading" as const)
+                : ("local" as const),
+          })),
+          ...current,
+        ]);
+        putWordsBack();
+        if (failure) setError(failure.message);
+        return true;
+      },
+      discard: letGo,
+    };
+    attachmentsRef.current = [];
+    setAttachments([]);
+    setPreviewId(null);
+    setError("");
+    if (deliver(prepared)) return true;
+    attachmentsRef.current = staged;
+    setAttachments(staged);
+    return false;
   }
 
   const iconButton =
@@ -821,7 +820,7 @@ export function MinkMultimodalInput({
       <Plus className="h-5 w-5" aria-hidden="true" />
     </button>
   );
-  const voiceOn = voiceMode.enabled;
+  const voiceOn = voiceChat.enabled;
   const micLabel = dictationState
     ? "Dictation in progress"
     : voiceOn
@@ -847,34 +846,20 @@ export function MinkMultimodalInput({
         aria-label="Talk with Mink"
         aria-pressed={voiceOn}
         title={
-          voiceMode.support.ok ? "Talk with Mink" : voiceMode.support.reason
+          voiceChat.support.ok ? "Talk with Mink" : voiceChat.support.reason
         }
         disabled={
-          !voiceMode.support.ok || (!voiceOn && (disabled || submitting))
+          !voiceChat.support.ok ||
+          (!voiceOn && (disabled || submitting || Boolean(dictationState)))
         }
         className={voiceOn ? voiceToggleOn : iconButton}
-        onClick={() => voiceMode.toggle()}
+        onClick={() => voiceChat.toggle()}
       >
         <AudioLines className="h-5 w-5" aria-hidden="true" />
       </button>
     </>
   );
-  // What the loop is doing, in the merchant's words. Transcription counts as
-  // thinking: the mic is closed and Mink is working out what was said.
-  const voiceStatus = !voiceOn
-    ? null
-    : voiceMode.state === "speaking"
-      ? "Speaking…"
-      : voiceMode.state === "listening" && dictationState !== "processing"
-        ? dictationState === "starting"
-          ? "Starting microphone…"
-          : "Listening…"
-        : "Thinking…";
-  const recording: "dictation" | "voice" | null = voiceOn
-    ? "voice"
-    : dictationState
-      ? "dictation"
-      : null;
+  const recording: "dictation" | null = dictationState ? "dictation" : null;
   const listening = dictationState === "listening";
   const nearCap = elapsed >= MINK_AUDIO_SECONDS - 5;
   const recorder =
@@ -935,34 +920,6 @@ export function MinkMultimodalInput({
           onClick={finishDictation}
         >
           <Check className="h-4 w-4" aria-hidden="true" />
-        </button>
-      </div>
-    ) : recording === "voice" ? (
-      <div
-        className="flex min-h-9 w-full min-w-0 items-center gap-3 rounded-full border border-[#ddd6f5] bg-[#f8f5ff] py-0.5 pl-4 pr-0.5"
-        data-testid="mink-recorder"
-      >
-        <MinkWaveform
-          levelRef={levelRef}
-          live={listening}
-          className="flex-1 text-[#5b3fd0]"
-        />
-        <span
-          role="status"
-          aria-live="polite"
-          className="shrink-0 text-xs font-medium text-[#5b3fd0]"
-        >
-          {voiceStatus}
-        </span>
-        <button
-          type="button"
-          aria-label="Stop voice chat"
-          title="End voice chat"
-          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-[#1a1a1a] px-3 text-xs font-medium text-white transition hover:bg-[#333] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] focus-visible:ring-offset-2"
-          onClick={() => voiceMode.toggle()}
-        >
-          <X className="h-3.5 w-3.5" aria-hidden="true" />
-          End
         </button>
       </div>
     ) : null;
@@ -1058,10 +1015,7 @@ export function MinkMultimodalInput({
       className="relative min-w-0"
       aria-label="Mink AI composer"
       onKeyDown={(event) => {
-        if (event.key === "Escape" && voiceOn) {
-          event.stopPropagation();
-          voiceMode.toggle();
-        } else if (event.key === "Escape" && dictationState) {
+        if (event.key === "Escape" && dictationState) {
           event.stopPropagation();
           cancelDictation();
         } else if (event.key === "Escape" && previewId) {
@@ -1171,7 +1125,15 @@ export function MinkMultimodalInput({
         </p>
       )}
       {children ? (
-        children({ attach, attachment, voice, submit, recorder, recording })
+        children({
+          attach,
+          attachment,
+          voice,
+          submit,
+          recorder,
+          recording,
+          hasAttachments: attachments.length > 0,
+        })
       ) : (
         <>
           {attachment}
@@ -1194,6 +1156,200 @@ export function MinkMultimodalInput({
       )}
     </div>
   );
+}
+
+function stopIfAborted(signal: AbortSignal) {
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+}
+
+function shortName(name: string) {
+  const characters = Array.from(name);
+  return characters.length > 40 ? `${characters.slice(0, 37).join("")}…` : name;
+}
+
+/** The Media Library copy of a picked photo, kept for Mink, not listed. */
+async function uploadMinkImage(file: File): Promise<MediaAsset> {
+  const form = new FormData();
+  form.set("file", file);
+  // Kept so Mink can use it, but not listed in the Media Library: it was
+  // handed to Mink, not chosen for the library.
+  form.set("purpose", "mink_attachment");
+  const result = await uploadMediaAsset(form);
+  if (result.error || !result.asset)
+    throw new Error(result.error || "Could not upload this image.");
+  return result.asset;
+}
+
+async function uploadMinkCsv(
+  attachment: ComposerAttachment,
+  signal: AbortSignal,
+): Promise<MinkCsvReference> {
+  const response = await fetch("/api/mink/product-imports", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    cache: "no-store",
+    body: JSON.stringify({
+      id: attachment.id,
+      filename: attachment.file.name.slice(0, 160),
+      csv: new TextDecoder("utf-8", { fatal: true }).decode(
+        await attachment.file.arrayBuffer(),
+      ),
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok || typeof data.file?.id !== "string")
+    throw new Error(data.error || "Could not upload this CSV.");
+  return data.file as MinkCsvReference;
+}
+
+async function readMinkAttachment(
+  source: File,
+  mode: "extract" | "design",
+  signal: AbortSignal,
+  maxCharacters: number,
+) {
+  const bytes = new Uint8Array(await source.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 8192)
+    binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  stopIfAborted(signal);
+  const response = await fetch("/api/mink/input", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    cache: "no-store",
+    body: JSON.stringify({
+      name: source.name,
+      data: btoa(binary),
+      requestKey: crypto.randomUUID(),
+      // Send is explicit permission to process this visible attachment. It
+      // never counts as approval for a product/storefront mutation.
+      confirmed: true,
+      maxCharacters,
+      ...(mode === "design" ? { mode } : {}),
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok)
+    throw new Error(
+      typeof data.error === "string"
+        ? data.error
+        : "Could not process this attachment.",
+    );
+  if (
+    typeof data.text !== "string" ||
+    !data.text.trim() ||
+    data.text.length > maxCharacters
+  )
+    throw new Error("The attachment returned an invalid result.");
+  return data.text.trim();
+}
+
+/**
+ * Turns a message and its staged files into the one message Mink receives:
+ * each CSV copied and referenced, each photo saved (with media:manage) and
+ * read, each document read, all within the message limit.
+ *
+ * ★ Every step's result is reported through `onProgress` as soon as it
+ * exists, BEFORE the next abort check, so a send stopped or failed halfway
+ * keeps the uploads and readings it already paid for, and a retry redoes only
+ * what is left. A stop after an upload therefore never strands that upload.
+ */
+async function prepareMinkAttachments({
+  text,
+  attachments,
+  signal,
+  uploadImage,
+  onProgress,
+  onStatus,
+}: {
+  text: string;
+  attachments: ComposerAttachment[];
+  signal: AbortSignal;
+  /** The photo's saved copy; null without media:manage. Throws on failure. */
+  uploadImage: (attachment: ComposerAttachment) => Promise<MediaAsset | null>;
+  onProgress: (id: string, patch: AttachmentProgress) => void;
+  onStatus?: (status: string) => void;
+}): Promise<string> {
+  let prepared = text;
+  const several = attachments.length > 1;
+  let pendingReadings = attachments.filter(
+    (attachment) =>
+      attachment.localText === null && !/\.csv$/i.test(attachment.file.name),
+  ).length;
+  for (const attachment of attachments) {
+    stopIfAborted(signal);
+    const name = shortName(attachment.file.name);
+    if (/\.csv$/i.test(attachment.file.name)) {
+      let file = attachment.csvFile;
+      if (!file) {
+        onStatus?.(several ? `Reading ${name}…` : "Reading your file…");
+        file = await uploadMinkCsv(attachment, signal);
+        onProgress(attachment.id, { csvFile: file });
+      }
+      prepared = addMinkCsvReference(prepared, file);
+      continue;
+    }
+    const image = Boolean(attachment.preview);
+    let asset = attachment.asset;
+    if (!asset && image) {
+      onStatus?.(several ? `Uploading ${name}…` : "Uploading your photo…");
+      asset = await uploadImage(attachment);
+      if (asset) onProgress(attachment.id, { asset });
+      stopIfAborted(signal);
+    }
+    if (asset)
+      prepared = addSavedMinkMediaReference(prepared, {
+        url: asset.url,
+        filename: asset.filename || attachment.file.name,
+      });
+
+    let extracted: string;
+    if (attachment.localText !== null) {
+      extracted = attachment.localText;
+    } else {
+      const mode =
+        image && shouldReadMinkImageAsStorefrontDesign(text)
+          ? "design"
+          : "extract";
+      // ★ The budget is recomputed from the message as it really stands,
+      //   so a long reading early on narrows what is left for the rest
+      //   instead of overflowing addReviewedMinkDocument at the end.
+      const budget = minkReadingBudget(prepared.length, pendingReadings);
+      if (budget === null)
+        throw new Error(
+          `Your message and these files do not fit in ${MINK_MESSAGE_MAX_CHARS.toLocaleString()} characters. Remove a file or shorten your message, then send again.`,
+        );
+      if (attachment.reading?.mode === mode) {
+        extracted = attachment.reading.text;
+      } else {
+        onStatus?.(
+          image
+            ? several
+              ? `Looking at ${name}…`
+              : "Looking at your photo…"
+            : several
+              ? `Reading ${name}…`
+              : "Reading your file…",
+        );
+        extracted = await readMinkAttachment(
+          attachment.file,
+          mode,
+          signal,
+          budget,
+        );
+        onProgress(attachment.id, { reading: { mode, text: extracted } });
+      }
+      pendingReadings--;
+    }
+    prepared = addReviewedMinkDocument(prepared, extracted, {
+      filename: attachment.file.name,
+      kind: image ? "image" : "document",
+    });
+  }
+  stopIfAborted(signal);
+  return prepared;
 }
 
 /** Product images and storefront placements need a durable exact URL. */

@@ -709,6 +709,45 @@ Use for:
 
 Flash-Lite never directly authorizes a mutation.
 
+**Status (2026-10-19): built as a whole-run starting model, default off.**
+What shipped differs from the list above. There is no separate classifier
+call: `lib/mink/tool-routing.ts` decides deterministically, from the
+message's wording, the page and the open record, which tool groups a run
+needs, and marks the route _light_ when it is narrow, read-only, has no
+attachment, is not a voice turn and touches only plain read groups. With
+`MINK_LITE_ROUTING=true` a light route starts on `MINK_LITE_MODEL`
+(`gemini-3.5-flash-lite`, GA at `global`; 3.1 Flash-Lite in the table above
+is the older generation) for the whole run. Every narrowed run also carries
+`request_more_tools`, which restarts the run once on the main model with
+every permitted tool, so a lite run that meets something it cannot do is not
+stuck with the cheaper model. The variables are `MINK_LITE_ROUTING` (off by
+default) and `MINK_LITE_MODEL`, not the `MINK_VERTEX_FAST_MODEL` suggested in
+§5.2. Cost is estimated at Google's list price ($0.30 / $2.50 per million,
+global only). Measured before deciding to switch it on (2026-10-19, 82
+read-alpha cases on the local echoss store, storemink-staging Vertex;
+`evals/mink/routing-live-2026-10-19.json`):
+
+| Configuration                | Answered | Tool choice passed | Median first-step prompt | Median latency (p90) | Est. cost per answered run |
+| ---------------------------- | -------: | -----------------: | -----------------------: | -------------------: | -------------------------: |
+| Every tool, 3.7 Flash        |  29 / 82 |            22 / 29 |            24,826 tokens |      11.1 s (29.2 s) |                    $0.0261 |
+| Routed, 3.7 Flash            |  28 / 82 |            20 / 28 |             3,332 tokens |       7.9 s (30.5 s) |                    $0.0070 |
+| Routed, light routes on lite |  37 / 37 |            33 / 37 |             3,263 tokens |        3.6 s (4.5 s) |                    $0.0028 |
+
+Judged against the every-tool answer where both answered: routed 9 of 9 the
+same; lite 10 the same, 1 better, 4 worse but acceptable (fewer SKUs,
+thresholds and links; denser wording) and 1 unacceptable (it gave up on a
+location name the main model resolved). Lite also answered a Help question
+without searching the Help Centre. 3.7 Flash failed most attempts for
+capacity that day (stalls with no answer, and HTTP 429 RESOURCE_EXHAUSTED,
+even for a one-word prompt; it is served only at `global`), which is why
+its samples are small; the lite model answered every request.
+
+Decision: routing on by default, the lite tier off until the owner chooses
+it. Before switching it on, keep Help questions off the lite tier and let a
+location-name miss be retried. A time-to-first-chunk watchdog with one retry
+(the WhatsApp Mink path has one) would also stop a stalled 3.7 Flash call
+from holding a merchant for the full 180 s run deadline.
+
 ### Gemini 3.7 Flash
 
 Use as the normal agent for:

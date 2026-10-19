@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { playMinkServerSpeech } from "./mink-speech-player";
+import { MinkSpeechPlayhead, playMinkServerSpeech } from "./mink-speech-player";
 
 type FakeSource = {
   buffer: { duration: number; data: Float32Array } | null;
@@ -21,6 +21,9 @@ class FakeAudioContext {
   autoEnd = true;
   resume = vi.fn(async () => {
     this.state = "running";
+  });
+  suspend = vi.fn(async () => {
+    this.state = "suspended";
   });
   createBuffer(_channels: number, length: number, rate: number) {
     const data = new Float32Array(length);
@@ -263,5 +266,90 @@ describe("playMinkServerSpeech", () => {
     expect(await play(new FakeAudioContext(), controller.signal)).toEqual({
       outcome: "cancelled",
     });
+  });
+});
+
+describe("MinkSpeechPlayhead", () => {
+  const second = () => new Int16Array(24_000).fill(1000);
+
+  it("★ says when each chunk starts, back to back after the lead", () => {
+    const audio = new FakeAudioContext();
+    const playhead = new MinkSpeechPlayhead(audio as unknown as AudioContext);
+    expect(playhead.schedule(new Int16Array(0), 24_000)).toBeNull();
+    expect(playhead.schedule(second(), 24_000)).toBeCloseTo(10.25);
+    expect(playhead.schedule(second(), 24_000)).toBeCloseTo(11.25);
+  });
+
+  it("★ cuts what has not started and places the next audio after what is left", () => {
+    const audio = new FakeAudioContext();
+    audio.autoEnd = false;
+    const playhead = new MinkSpeechPlayhead(audio as unknown as AudioContext);
+    playhead.schedule(second(), 24_000);
+    const cutAt = playhead.schedule(second(), 24_000)!;
+    playhead.schedule(second(), 24_000);
+    audio.currentTime = 10.5;
+    playhead.cutFrom(cutAt);
+    expect(audio.sources[0].stop).not.toHaveBeenCalled();
+    expect(audio.sources[1].stop).toHaveBeenCalled();
+    expect(audio.sources[2].stop).toHaveBeenCalled();
+    expect(playhead.schedule(second(), 24_000)).toBeCloseTo(11.25);
+  });
+
+  it("★ holds its clock on pause, and a wait for the end waits for the resume", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudioContext();
+    audio.autoEnd = false;
+    const playhead = new MinkSpeechPlayhead(audio as unknown as AudioContext);
+    playhead.schedule(second(), 24_000);
+    playhead.pause();
+    expect(audio.suspend).toHaveBeenCalledOnce();
+    expect(playhead.isPaused).toBe(true);
+    let drained = false;
+    void playhead.drained().then(() => {
+      drained = true;
+    });
+    // Long past the wall-clock fallback: paused audio has not played.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(drained).toBe(false);
+    playhead.resume();
+    expect(audio.resume).toHaveBeenCalledOnce();
+    audio.sources[0].onended?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(drained).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("stop releases a pause: the context runs again and waits end", async () => {
+    const audio = new FakeAudioContext();
+    audio.autoEnd = false;
+    const playhead = new MinkSpeechPlayhead(audio as unknown as AudioContext);
+    playhead.schedule(second(), 24_000);
+    playhead.pause();
+    let drained = false;
+    void playhead.drained().then(() => {
+      drained = true;
+    });
+    playhead.stop();
+    await vi.waitFor(() => expect(drained).toBe(true));
+    expect(playhead.isPaused).toBe(false);
+    expect(audio.resume).toHaveBeenCalledOnce();
+  });
+
+  it("★ a wait on audio that is then cut waits for what is left, no longer", async () => {
+    const audio = new FakeAudioContext();
+    audio.autoEnd = false;
+    const playhead = new MinkSpeechPlayhead(audio as unknown as AudioContext);
+    playhead.schedule(second(), 24_000);
+    const cutAt = playhead.schedule(second(), 24_000)!;
+    let drained = false;
+    void playhead.drained().then(() => {
+      drained = true;
+    });
+    playhead.cutFrom(cutAt);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The first second is still playing: the cut must not end the wait.
+    expect(drained).toBe(false);
+    audio.sources[0].onended?.();
+    await vi.waitFor(() => expect(drained).toBe(true));
   });
 });

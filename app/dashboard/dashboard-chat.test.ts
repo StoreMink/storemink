@@ -22,9 +22,54 @@ import { MINK_MAX_RUN_CREDITS } from "@/lib/mink/metering";
 import { useChat } from "./chat-context";
 import { addSavedMinkMediaReference } from "@/lib/mink/media-attachment";
 
+const voiceChat = vi.hoisted(() => ({
+  value: {
+    enabled: false,
+    state: "idle",
+    mic: "closed",
+    support: { ok: true },
+    levelRef: { current: 0 },
+    heard: null as string | null,
+    said: null as string | null,
+    notice: null as string | null,
+    toggle: vi.fn(),
+    noteSend: vi.fn(),
+    registerComposer: vi.fn(() => () => {}),
+  },
+}));
 vi.mock("./chat-context", () => ({
   useChat: vi.fn(),
+  useMinkVoice: vi.fn(() => voiceChat.value),
 }));
+// A plain anchor stands in for next/link, so a click can be observed without
+// an app router: it runs the link's own onClick and stops the browser there.
+vi.mock("next/link", async () => {
+  const { createElement: h } = await import("react");
+  return {
+    default: ({
+      href,
+      onClick,
+      children,
+      ...rest
+    }: {
+      href: string;
+      onClick?: (event: { preventDefault(): void }) => void;
+      children?: unknown;
+    }) =>
+      h(
+        "a",
+        {
+          ...rest,
+          href,
+          onClick: (event: { preventDefault(): void }) => {
+            onClick?.(event);
+            event.preventDefault();
+          },
+        },
+        children as never,
+      ),
+  };
+});
 const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: vi.fn(() => ({ push: routerPush })),
@@ -51,9 +96,12 @@ const baseChatState = {
   feedbackSubmittingRunId: null,
   minkCredits: null,
   send: vi.fn(),
+  sendPrepared: vi.fn(() => true),
   cancel: vi.fn(),
   retry: vi.fn(),
   reset: vi.fn(),
+  startNewChat: vi.fn(),
+  showSpotlight: vi.fn(),
   loadConversation: vi.fn(),
   deleteConversation: vi.fn(),
   submitFeedback: vi.fn(),
@@ -87,6 +135,93 @@ beforeEach(() => {
   vi.mocked(useChat).mockReturnValue(
     baseChatState as unknown as ReturnType<typeof useChat>,
   );
+  voiceChat.value.enabled = false;
+  voiceChat.value.notice = null;
+});
+
+describe("★★ voice chat takes over the chat surface", () => {
+  it("shows the voice view in place of the thread and keeps the composer mounted but hidden", () => {
+    voiceChat.value.enabled = true;
+    voiceChat.value.state = "speaking";
+    voiceChat.value.heard = "How many orders today?";
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: "u1", role: "user", text: "How many orders today?" },
+        { id: "a1", role: "assistant", text: "You have **12 orders** today." },
+      ],
+      isReplying: true,
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(
+      screen.getByRole("region", { name: "Voice chat with Mink" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("How many orders today?")).toBeInTheDocument();
+    expect(screen.queryByTestId("mink-message-scroller")).toBeNull();
+    // No way into the history while talking.
+    expect(
+      screen.queryByRole("button", { name: /conversation sidebar/i }),
+    ).toBeNull();
+    // The composer survives (its draft and staged uploads with it) but is
+    // out of the way; the voice view's own buttons are the only controls.
+    const composer = screen.getByLabelText("Mink AI composer");
+    expect(composer.closest("[hidden]")).not.toBeNull();
+    expect(
+      screen.getAllByRole("button", { name: "Stop Mink AI" }),
+    ).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Stop voice chat" }));
+    expect(voiceChat.value.toggle).toHaveBeenCalledOnce();
+  });
+
+  it("★ opens the thread at the newest message when voice chat ends", async () => {
+    const scrollTops = new WeakMap<HTMLElement, number>();
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get: () => 1600,
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return scrollTops.get(this) ?? 0;
+      },
+      set(this: HTMLElement, value: number) {
+        scrollTops.set(this, value);
+      },
+    });
+    try {
+      // The answers landed while the voice view hid the thread.
+      const state = {
+        ...baseChatState,
+        messages: [
+          { id: "u1", role: "user", text: "How many orders today?" },
+          { id: "a1", role: "assistant", text: "Twelve orders today." },
+          { id: "u2", role: "user", text: "And yesterday?" },
+          { id: "a2", role: "assistant", text: "Nine yesterday." },
+        ],
+      } as unknown as ReturnType<typeof useChat>;
+      vi.mocked(useChat).mockReturnValue(state);
+      voiceChat.value.enabled = true;
+      const view = render(createElement(DashboardChat, { variant: "overlay" }));
+      expect(screen.queryByTestId("mink-message-scroller")).toBeNull();
+      // End: nothing about the chat changed except voice chat being off.
+      voiceChat.value.enabled = false;
+      view.rerender(createElement(DashboardChat, { variant: "overlay" }));
+      const scroller = screen.getByTestId("mink-message-scroller");
+      await waitFor(() => expect(scroller.scrollTop).toBe(1600));
+    } finally {
+      delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+      delete (HTMLElement.prototype as { scrollTop?: number }).scrollTop;
+    }
+  });
+
+  it("shows the loop's notice above the composer once voice chat is off", () => {
+    voiceChat.value.notice = "Voice chat turned off: nothing was heard.";
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.queryByTestId("mink-voice-view")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Voice chat turned off: nothing was heard.",
+    );
+  });
 });
 
 describe("Mink full view", () => {
@@ -882,5 +1017,205 @@ describe("★★ a followed link leaves the full view", () => {
     fireEvent.click(screen.getByRole("link", { name: "ORD101010726" }));
     expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
     expect(baseChatState.closeChat).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ a page Mink finds opens only when the merchant clicks it", () => {
+  const answer = {
+    id: 7,
+    role: "assistant" as const,
+    text: "Use **New product** on the Products page.",
+    artifacts: [
+      {
+        type: "navigation" as const,
+        title: "Products",
+        path: "/dashboard/products",
+        label: "Open Products",
+        highlight: { target: "add_product" as const, label: "New product" },
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("does not navigate, close or collapse the chat when the answer arrives", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: 6, role: "user", text: "Where do I add a product?" },
+        answer,
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(
+      screen.getByRole("link", { name: /Open Products/i }),
+    ).toHaveAttribute("href", "/dashboard/products");
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(baseChatState.closeChat).not.toHaveBeenCalled();
+    expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
+    expect(baseChatState.showSpotlight).not.toHaveBeenCalled();
+  });
+
+  it("opens the page, points out the control and steps the chat aside on a click", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [answer],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    fireEvent.click(screen.getByRole("link", { name: /Open Products/i }));
+
+    expect(baseChatState.showSpotlight).toHaveBeenCalledWith(
+      answer.artifacts[0]!.highlight,
+    );
+    // The full view collapses so the page behind it can be seen.
+    expect(baseChatState.toggleExpand).toHaveBeenCalledOnce();
+  });
+
+  it("hands a prefilled form its fields at the click, and only then", () => {
+    const prefilled = {
+      ...answer,
+      artifacts: [
+        {
+          type: "navigation" as const,
+          title: "New product",
+          path: "/dashboard/products/new",
+          label: "Open the product form",
+          prefill: {
+            kind: "product" as const,
+            fields: { name: "Almond shake" },
+          },
+        },
+      ],
+    };
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [prefilled],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    const link = screen.getByRole("link", { name: /Open the product form/i });
+
+    expect(link).toHaveAttribute(
+      "href",
+      "/dashboard/products/new?prefill=mink",
+    );
+    expect(window.sessionStorage.length).toBe(0);
+
+    fireEvent.click(link);
+
+    expect(window.sessionStorage.length).toBe(1);
+  });
+
+  it("asks for no spotlight on a new-tab click, which leaves this page where it is", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [answer],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    fireEvent.click(screen.getByRole("link", { name: /Open Products/i }), {
+      metaKey: true,
+    });
+
+    expect(baseChatState.showSpotlight).not.toHaveBeenCalled();
+    expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ New chat and messages with attachments", () => {
+  it("starts a new chat from the header, but not while Mink is answering", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [{ id: "user-1", role: "user", text: "Earlier message" }],
+    } as unknown as ReturnType<typeof useChat>);
+    const view = render(createElement(DashboardChat, { variant: "overlay" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(baseChatState.startNewChat).toHaveBeenCalledOnce();
+
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [{ id: "user-1", role: "user", text: "Earlier message" }],
+      isReplying: true,
+    } as unknown as ReturnType<typeof useChat>);
+    view.rerender(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.getByRole("button", { name: "New chat" })).toBeDisabled();
+  });
+
+  it("shows a sent photo in the message at once while Mink looks at it", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          text: "Is this in stock?",
+          pendingAttachments: [
+            { name: "shoe.jpg", kind: "image", previewUrl: "blob:shoe" },
+            { name: "sizes.pdf", kind: "document", previewUrl: null },
+          ],
+        },
+      ],
+      isReplying: true,
+      statusText: "Looking at your photo…",
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(screen.getByText("Is this in stock?")).toBeVisible();
+    expect(screen.getByRole("img", { name: "shoe.jpg" })).toHaveAttribute(
+      "src",
+      "blob:shoe",
+    );
+    expect(screen.getByText("sizes.pdf")).toBeVisible();
+    expect(screen.getByText("Looking at your photo…")).toBeVisible();
+  });
+
+  it("keeps showing this tab's copy of the photo once the message is finished", () => {
+    const url =
+      "https://storage.googleapis.com/storemink-media/stores/s1/media/shoe.webp";
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          text: addSavedMinkMediaReference("Is this in stock?", {
+            filename: "shoe.jpg",
+            url,
+          }),
+          localPreviews: { [`url:${url}`]: "blob:shoe" },
+        },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(screen.getByRole("img", { name: "shoe.jpg" })).toHaveAttribute(
+      "src",
+      "blob:shoe",
+    );
+  });
+
+  it("offers no Retry for a failure Retry cannot fix", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      error: {
+        code: "attachment_failed",
+        message: "Busy. Attach the file again to send it.",
+        retryable: false,
+      },
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Attach the file again to send it.",
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 });

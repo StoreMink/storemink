@@ -15,6 +15,7 @@ import {
   startMinkToolCall,
 } from "@/lib/mink/persistence";
 import { minkReadToolRegistry } from "@/lib/mink/tools/read-tools";
+import { applyMinkToolRoute, routeMinkTools } from "@/lib/mink/tool-routing";
 import { createVertexMinkSession } from "@/lib/mink/vertex-client";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { rateLimit } from "@/lib/rate-limit";
@@ -30,6 +31,11 @@ import { MEMORY_LIMIT } from "@/lib/mink/memory-policy";
 import { suggestMinkMemory } from "@/lib/mink/memory-suggestion";
 import { readMinkBoundedJson } from "@/lib/mink/bounded-json";
 import { MINK_MESSAGE_MAX_CHARS } from "@/lib/mink/input-policy";
+import {
+  createSpokenAnswerSplitter,
+  splitSpokenAnswer,
+  type SpokenAnswerPart,
+} from "@/lib/mink/spoken-answer";
 
 export const runtime = "nodejs";
 
@@ -98,10 +104,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: affordable.error }, { status: 402 });
     }
 
-    const declarations = minkReadToolRegistry.declarationsFor(actor);
+    const permitted = minkReadToolRegistry.declarationsFor(actor);
     // Fresh owner-only context before any credit/run reservation. No cache and no silent fallback on a failed read.
     const memoryReference = await loadMinkMemoryReference(actor);
-    const thinkingLevel = selectMinkThinkingLevel(message, declarations);
+    const thinkingLevel = selectMinkThinkingLevel(message, permitted);
     const started = await startMinkRun({
       actor,
       conversationId,
@@ -109,6 +115,26 @@ export async function POST(request: Request) {
       model: config.model,
       thinkingLevel,
     });
+    // ★ ROUTED AFTER THE RUN STARTS, because a follow-up ("make it shorter")
+    // is routed by the question it follows, and the stored conversation is
+    // read inside startMinkRun. The run row's model is provisional until the
+    // run ends: completeMinkRun and failMinkRun record the one that answered.
+    const route = config.toolRouting
+      ? routeMinkTools({
+          message,
+          currentPath: actor.currentPath,
+          selectedResource: actor.selectedResource,
+          history: started.history,
+          answerMedium: actor.answerMedium,
+        })
+      : null;
+    const routed = applyMinkToolRoute(permitted, route);
+    // The lite model only where a narrowed run can still escape to the main
+    // model with every tool (`request_more_tools`).
+    const initialModel =
+      config.liteRouting && route?.light && routed.narrowed
+        ? config.liteModel
+        : config.model;
     const runActor = { ...actor, runId: started.runId };
     const abortController = new AbortController();
     const abortFromRequest = () => abortController.abort();
@@ -119,9 +145,9 @@ export async function POST(request: Request) {
       });
 
     let progress: MinkRunProgress = EMPTY_PROGRESS;
-    let session;
+    let session: ReturnType<typeof createVertexMinkSession>;
     try {
-      session = createVertexMinkSession(config, runActor, declarations, {
+      session = createVertexMinkSession(config, runActor, routed.declarations, {
         history: started.history,
         abortSignal: abortController.signal,
         thinkingLevel,
@@ -130,6 +156,9 @@ export async function POST(request: Request) {
           pageContext.screen,
           pageContext.currentPath,
         ),
+        model: initialModel,
+        route: routed.narrowed ? route : null,
+        ...(routed.narrowed ? { allDeclarations: permitted } : {}),
       });
     } catch (error) {
       await failMinkRun({
@@ -139,7 +168,7 @@ export async function POST(request: Request) {
         errorCode:
           error instanceof MinkAgentError ? error.code : "session_setup_failed",
         latencyMs: 0,
-        model: config.model,
+        model: initialModel,
         pricingLocation: config.location,
         progress,
         usageStatus: "unavailable",
@@ -149,6 +178,12 @@ export async function POST(request: Request) {
     }
     const encoder = new TextEncoder();
     const startedAt = Date.now();
+    // ★ One splitter per run. On a voice turn the reply opens with a
+    // <spoken> block: those words stream out as `spoken` events the moment
+    // they arrive and are read aloud, the close of the block is `spoken_end`,
+    // and only the written answer after it streams as `delta` and is kept.
+    // A written turn carries no tags and passes through unchanged.
+    const splitter = createSpokenAnswerSplitter();
     let consumerCancelled = false;
     let timedOut = false;
     const timeoutId = setTimeout(() => {
@@ -165,6 +200,14 @@ export async function POST(request: Request) {
               `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
             ),
           );
+        };
+
+        const forward = (parts: SpokenAnswerPart[]) => {
+          for (const part of parts) {
+            if (part.kind === "spoken") send("spoken", { text: part.text });
+            else if (part.kind === "spoken_end") send("spoken_end", {});
+            else send("delta", { text: part.text });
+          }
         };
 
         send("status", {
@@ -185,11 +228,24 @@ export async function POST(request: Request) {
             },
             async onEvent(event) {
               if (event.type === "text_delta") {
-                send("delta", { text: event.text });
+                forward(splitter.push(event.text));
                 return;
               }
               if (event.type === "text_reset") {
+                splitter.reset();
                 send("delta_reset", {});
+                return;
+              }
+              if (event.type === "tools_restarted") {
+                // Content-free: the model's stated reason may quote the
+                // merchant, so only the route and the cost of the miss.
+                logInfo("mink.run: tools restarted", {
+                  requestId,
+                  storeId: actor.storeId,
+                  toolGroups: route?.groups.join(",") ?? "",
+                  abandonedModel: event.abandonedModel,
+                  abandonedTokens: event.usage.totalTokens,
+                });
                 return;
               }
               if (event.type === "tool_call") {
@@ -221,10 +277,26 @@ export async function POST(request: Request) {
               }
             },
           });
+          // A tail the splitter held back in case it began a tag (a closing
+          // "</spo" cut off by the output limit) is still part of the reply:
+          // without this the stream never carried it, and the spoken words
+          // streamed fell short of the message's own.
+          forward(splitter.finish());
+          // The persisted answer, the history replay and the screen all get
+          // the written half; the spoken block was for the ear only. A reply
+          // that is only a spoken block is shown as written (spoken-answer.ts);
+          // one with no words at all (an empty block) fails like any other
+          // empty reply instead of tripping the empty-message CHECK.
+          const { written, spoken } = splitSpokenAnswer(result.text);
+          if (!written)
+            throw new MinkAgentError(
+              "empty_model_response",
+              "Mink AI returned an empty response.",
+            );
           const { draftCredits } = await completeMinkRun({
             actor,
             started,
-            result,
+            result: { ...result, text: written },
             latencyMs: Date.now() - startedAt,
             pricingLocation: config.location,
           });
@@ -244,7 +316,8 @@ export async function POST(request: Request) {
           });
           send("message", {
             role: "assistant",
-            text: result.text,
+            text: written,
+            spoken,
             runId: started.runId,
             artifacts: result.artifacts,
           });
@@ -287,11 +360,23 @@ export async function POST(request: Request) {
             requestId,
             storeId: actor.storeId,
             adminId: actor.adminId,
+            medium: actor.answerMedium ?? "written",
             model: result.model,
             steps: result.steps,
             toolCalls: result.toolCalls,
             retryCount: result.retryCount,
             totalTokens: result.usage.totalTokens,
+            toolRoute: route?.mode ?? "off",
+            toolGroups: route?.groups.join(",") ?? "",
+            declaredTools: routed.declarations.length,
+            permittedTools: permitted.length,
+            ...(result.restart
+              ? {
+                  restarted: true,
+                  abandonedModel: result.restart.abandonedModel,
+                  abandonedTokens: result.restart.usage.totalTokens,
+                }
+              : {}),
             ms: Date.now() - startedAt,
           });
         } catch (error) {
@@ -318,7 +403,7 @@ export async function POST(request: Request) {
             status: cancelled ? "cancelled" : "failed",
             errorCode,
             latencyMs: Date.now() - startedAt,
-            model: config.model,
+            model: session.model ?? initialModel,
             pricingLocation: config.location,
             progress: failedProgress,
             usageStatus: failureUsageStatus({
@@ -338,7 +423,8 @@ export async function POST(request: Request) {
             requestId,
             storeId: actor.storeId,
             adminId: actor.adminId,
-            model: config.model,
+            model: session.model ?? initialModel,
+            toolRoute: route?.mode ?? "off",
             ms: Date.now() - startedAt,
           };
           if (cancelled) logInfo("mink.run: cancelled", logContext);

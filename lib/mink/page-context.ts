@@ -7,6 +7,8 @@ export interface MinkPageContextInput {
   currentPath?: unknown;
   selectedResource?: unknown;
   screen?: unknown;
+  /** True when the message came from the hands-free voice chat. */
+  voice?: unknown;
 }
 
 /** What the merchant can see, bounded on the server before anything reads it. */
@@ -25,6 +27,13 @@ export interface MinkPageContext {
   currentPath: string | null;
   selectedResource: MinkSelectedResource | null;
   screen: MinkScreenContext | null;
+  /**
+   * The merchant spoke this message and will hear the answer. It changes how
+   * Mink phrases the reply (a short spoken block before the written answer),
+   * never what it may read or do: style, not authority, like the rest of the
+   * browser context.
+   */
+  voice: boolean;
 }
 
 const SCREEN_LIMITS = {
@@ -173,5 +182,6 @@ export function normalizeMinkPageContext(
     currentPath,
     selectedResource,
     screen: normalizeMinkScreenContext(input?.screen),
+    voice: input?.voice === true,
   };
 }

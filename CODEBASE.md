@@ -344,8 +344,9 @@ links off the dashboard leave the chat as it is; the desktop side panel stays
 open beside the page. `open_dashboard_page` (`tools/navigation-tools.ts`,
 dashboard:view, a closed destination map re-checked against the viewer's
 sections, product by id or SKU, order by reference) emits a `navigation`
-artifact the panel opens itself for a LIVE message (never restored
-history), closing the chat under 640px; `new_product` carries a prefill
+artifact shown as a link card that opens only when the merchant clicks it
+(until 2026-10-19 the panel opened it by itself; see "Mink chats like
+ChatGPT" below); `new_product` carries a prefill
 through `lib/mink/product-prefill.ts` (localStorage, read once by the
 product editor on `?prefill=mink`), and the product-create card's "Open in
 product form" uses the same hand-off.
@@ -544,24 +545,128 @@ editors (`offers/offer-form.tsx`, `categories/categories-management-view`
   `{{reply_language}}` placeholder are gone; a tab opened before the change
   that still sends `replyLanguage` is ignored by `normalizeMinkPageContext`.
   Prompt versions `read-beta-v32` / `draft-action-beta-v53`. Help: `0227`.
-  ★ VOICE CHAT (`app/dashboard/mink-voice-mode.ts`, `lib/mink/speech-text.ts`,
-  the composer). A "Talk with Mink" toggle (`aria-pressed`) beside the mic
-  runs a hands-free loop: the existing dictation (the recorder plus
-  `/api/mink/voice`) listens, the transcript is sent through the composer's
-  own submit path (so limits and attachments apply, and a refused send leaves
-  the words in the box), the newest assistant answer is read aloud, and the
-  end of speech re-arms the mic. ★ READ ALOUD BY A MODEL WHEN THE OPERATOR
-  SAYS SO (2026-10-18): see "Global Mink voice provider"; otherwise, and for
-  anything a model could not play, `window.speechSynthesis`. The hook
-  is a state machine (idle, listening, sending, waiting, speaking) and only
-  ever speaks a reply to something sent while the mode was on: restored
-  history, an error and an answer that predates the toggle stay silent. A
-  speak token makes cancellation quiet (`speechSynthesis.cancel()` fires the
-  cancelled utterance's end handler, which would otherwise re-arm the mic at
-  the wrong moment). It stops on toggle, unmount, the chat closing, the tab
-  going hidden, a chat error, a refused send, a transcription or mic failure
-  and three empty transcripts in a row, with a short notice for the
-  merchant-facing ones; Escape and a "Stop voice chat" button end it too.
+  ★★ VOICE CHAT IS A SPOKEN CONVERSATION (2026-10-18, owner: "it should feel
+  we are speaking to human"). `app/dashboard/mink-voice-mode.ts` runs the
+  loop from `ChatProvider`, not the composer: the composer is keyed on the
+  conversation and remounts when a new conversation gets its id or the panel
+  swaps with the full view, and a loop inside it died mid-sentence on every
+  such remount. `useMinkVoice()` hands it to the composer's "Talk with Mink"
+  toggle and to `app/dashboard/mink-voice-view.tsx`, the full-screen view
+  that replaces the thread while voice chat is on (status, a large waveform,
+  "You said", the sentence Mink is saying, Stop while replying, End; the
+  composer stays mounted but `hidden`, so staged uploads survive, and a
+  spoken turn takes them along: the composer registers with `ChatProvider`
+  (`registerComposer`), which routes each transcript through its
+  `submitMessage` whenever a draft or attachments are staged, so the draft
+  and the files go with the spoken words and the uploads are not deleted by
+  the composer's remount for the new conversation; nothing staged means the
+  transcript is sent on its own).
+  ★ MINK SPEAKS WHILE IT IS STILL WRITING. A voice send carries
+  `context.voice: true`; the actor gets `answerMedium: "spoken"` and the
+  prompt gains `{{answer_medium}}` plus `{{spoken_answer_rules}}` (the marked
+  `MINK_SPOKEN_RULES` block of `docs/mink-ai-system-prompt.md`, rendered only
+  on a voice turn): the reply opens with `<spoken>…</spoken>`, one to three
+  conversational sentences in the merchant's language (no brackets, lists,
+  paths or SKUs; "rupees" and "per cent" said, not written), then the
+  ordinary written answer. `lib/mink/spoken-answer.ts` splits the two on the
+  stream route: spoken fragments go out as `spoken` events as they arrive,
+  `spoken_end` closes the block, written text keeps `delta`, and only the
+  written text is persisted and shown (`message.spoken` rides along). The
+  browser (`lib/mink/speech-stream.ts`) cuts the spoken text into sentences
+  that have provably ended (a long opener is cut at a clause after 140
+  characters), and `app/dashboard/mink-speech-session.ts` plays each piece on
+  ONE `MinkSpeechPlayhead`, fetched one piece ahead and scheduled exactly
+  where the piece before ends, so the first words play a second or two after
+  Mink starts answering and the loop is back to listening while the written
+  tail and its cards are still arriving. A reply with no spoken block is read
+  from the written answer, as before. The block ends at `spoken_end` or when
+  the answer lands, never because written text came first; an empty block
+  leaves the written answer to be read; a block withdrawn after it closed (a
+  sentence before a tool call) REOPENS the turn (`reopen()` on the session,
+  a fresh segmenter) for the block with the answer. ★ What the run withdraws
+  and the merchant has not yet heard is not heard: `dropPending()` drops the
+  queued pieces and the one being fetched, and cuts from the playhead
+  (`MinkSpeechPlayhead.cutFrom`) any audio scheduled to start later; the
+  sentence already playing finishes. ★ The caption and "Speaking…" follow the
+  audio clock: `schedule()` returns when a chunk starts and the session
+  announces a piece at that moment, not when its audio is queued, which with
+  a piece fetched ahead was a whole sentence early. The stream route flushes
+  the splitter when the run ends (`finish()`), so a tail held back in case it
+  began a tag still reaches the browser, and a closing tag the output limit
+  cut short (`</spo`) ends the block instead of being read aloud or shown;
+  the segmenter's `close(final)` compares the streamed text with the final
+  split ignoring whitespace (the split collapses it), so a last sentence that
+  arrived only with the answer is still spoken. A reply that is only a
+  spoken block is stored and shown as its written answer; one with no words
+  at all fails as `empty_model_response` instead of tripping the empty-message
+  CHECK.
+  ★★ THE MICROPHONE IS OPEN FOR THE WHOLE CHAT (2026-10-19):
+  `createMinkVoiceCapture` (`lib/mink/voice-turn.ts`) opens one stream with
+  `openMinkMicrophone` on the first turn and records every later turn on it,
+  so the browser's echo canceller keeps what it has learned about the
+  speaker. Reopened every turn, it started from nothing at the moment Mink's
+  voice was likeliest to reach the microphone. Audio between turns is
+  dropped; a microphone that could not open is tried again next turn, one
+  whose device went away (the track's `ended`) is opened again, and stopping
+  voice chat closes it, including one whose permission arrives late.
+  Dictation still opens a microphone per recording (`startMinkRecording`).
+  Within a turn (the recorder's `voice` option) echo cancellation is
+  requested, the ring
+  keeps 400 ms of pre-roll before the voiced run that armed the gate (up to
+  `MINK_SPEECH_LEAD_MAX_MS`, 2 s, so an interruption keeps its first word),
+  the 30 s cap counts the audio KEPT, lead-in included (it counted from
+  speech start, so a long utterance overflowed `encodeMinkWav`, which threw
+  inside `stop` and left the loop deaf), the idle clock pauses while Mink
+  plays, and a stricter gate (`MINK_BARGE_IN_GATE`: louder and longer,
+  swapped in place) applies from send until the answer has played, so a
+  cough does not cancel a reply.
+  ★★ LOUDNESS HOLDS MINK'S VOICE; THE TRANSCRIPT DECIDES (2026-10-19).
+  Speech over Mink's VOICE (after a 300 ms grace) PAUSES it where it is: the
+  model voice through `AudioContext.suspend()` (`MinkSpeechPlayhead.pause`,
+  so the scheduled audio and the caption clock wait together), the browser
+  voice by cancelling the sentence and saying it again from its start on
+  resume (`speechSynthesis.pause()` is unreliable). A transcript with words
+  ends the voice for good, and the written answer, its cards and drafts
+  still land; one with none (a cough, a door, Mink's own voice through the
+  speaker) resumes it where it paused, however many times. Before this, a
+  sound loud enough to pass the barge-in gate stopped the rest of the
+  answer's audio before any transcript existed. Speech while Mink is
+  THINKING about a plain spoken question cancels that reply (not charged)
+  and carries its words into the next transcript, which is sent with
+  `replaceUnanswered` so the combined question replaces the unanswered half
+  in the thread (only answered turns are in the model's history); a burst
+  that turns out to hold no words asks the cancelled question again. A typed
+  question, or one that went out with a draft or attachments, is never
+  cancelled by speech; its answer's voice is held like any other, and words
+  spoken over it end that voice and wait for the reply. A transcript that lands
+  while a reply is still closing is parked and sent once `isReplying` falls;
+  `send` returns whether it took the message (a promise when it went through
+  the composer), so nothing is lost to `run`'s silent early return.
+  ★ An echo (`isEchoTranscript`) is judged only for speech that began while
+  Mink was talking, against what Mink said in THIS answer, and a word or two
+  counts when every one is Mink's; a reply after Mink finished is never an
+  echo, whatever words it reuses. An echo confirmed once switches talking
+  over Mink off for the rest of the chat, with one notice saying to use
+  headphones (`MINK_ECHO_NOTICE`), and the pause that echo caused is given
+  back, so Mink never cuts itself off (the first echo of every chat used to
+  end that answer's audio). Words are split keeping combining marks
+  (`\p{M}`), so Indic replies are not cut into single consonants. A sound
+  with no words comes back from `/api/mink/voice` as `{text: ""}` (logged
+  `mink.voice.empty`), never a 503: voice chat treats it as nothing heard
+  and dictation says no speech was recognised. A request that never reached
+  the server is a transcription failure, not "the microphone could not
+  start". Only a turn
+  the loop opened is spoken: restored history, an answer that predates the
+  toggle and a conversation loaded while listening stay silent; a typed send
+  while voice chat is on gets a spoken answer too. It stops on End, Escape,
+  toggle, unmount, the chat closing, the tab going hidden, a chat error, a
+  refused send, a failed microphone or transcription and three empty
+  transcripts in a row, with a short notice for the merchant-facing ones
+  (in the view, or above the composer once off); turning voice chat on again
+  clears the notice the last session left. Prompt versions
+  `read-beta-v33` / `draft-action-beta-v54`; Help: `0228`. ⚠ Not run in a
+  browser: verified by the suites (hook, session, segmenter, splitter,
+  recorder, routes) and the system-prompt render.
   `speakableMinkText` turns Markdown into speech (tables as "label: value"
   lines, code blocks and dashboard paths dropped, cut at a sentence boundary
   under 1,500 characters) and `speechLangFor` picks the utterance language
@@ -1807,6 +1912,201 @@ says write nothing), and a reconciler for runs left with a NULL
 they owe nothing, and `discardFailedMinkRunDrafts` already compensates any
 proposal credits they reserved.
 
+### Mink chats like ChatGPT: which chat, page links, instant attachments (2026-10-19)
+
+Three things the owner found odd when testing, each fixed the way ChatGPT,
+Claude and Shopify's Sidekick behave. Help: `20261019_0230` edits eight
+sentences of the Mink guide in place.
+
+★★ WHICH CHAT A MESSAGE GOES INTO (`lib/mink/chat-session.ts`, pure apart
+from the storage it is handed). Every dashboard load used to reopen the
+actor's NEWEST conversation in every tab however old, so a question asked
+from Home landed in last week's thread, and deleting the open chat opened
+the next one. Now: a new tab starts a new chat (recent ones stay in
+History); the same tab continues its chat across pages, reloads and closing
+the panel until it has had no message for `MINK_CHAT_RESUME_MS` (2 hours),
+after which the next open starts a new one (`resumeOrStartFresh`, which
+`ChatProvider.toggleChat` calls on open); a question from Home or an Ask
+Mink button (`startExpandedChat`) starts a new chat, except while a reply
+is running, when the question waits in the box rather than stopping that
+answer; choosing a chat in History continues it; deleting the open chat
+leaves an empty one; the header gains **New chat** (disabled while
+replying, hidden in voice chat). The tab is remembered in sessionStorage
+(`storemink:mink-active-chat` = `{id, lastActivityAt}`), which a reload
+keeps and a new tab does not; every storage call fails quiet.
+`useMinkAi` records activity (`touchActivity`) when a run starts, when the
+server names the conversation and when the answer lands, and a reload's
+restore keeps the stored time rather than "now".
+★★ A MESSAGE THE MERCHANT SENDS NEVER DISAPPEARS: `sendSerial` is bumped by
+every send (and by `reset`), and a history load that began before it is
+dropped when it lands; before, a reload's restore could replace a question
+typed during the load. ★ `reset` detaches the run's AbortController before
+stopping it, which is how a send still reading its files tells "replaced"
+(abandon the message) from "stopped" (give it back).
+
+★★ A PAGE MINK FINDS OPENS ONLY WHEN CLICKED. `dashboard-chat.tsx`
+navigated as soon as an answer with a `navigation` artifact arrived, and on
+a phone that also closed the chat. The effect is gone; `NavigationArtifact`
+(mink-artifacts.tsx) is a real `MinkLink` (`minkNavigationHref`: the
+prefilled form's `?prefill=mink` path or the page), so the surface's
+capture-phase rule collapses the full view or closes the phone panel exactly
+as for any link in an answer, and a new-tab click works. Its click writes the
+prefill to session storage before the client navigation and, on a plain
+click only, asks `ChatProvider` for the spotlight. The prompt rule and the
+tool description say it is a link card: never claim a page or form is open,
+name the button, and answer a request to SEE data ("show me today's
+orders") with the read tools rather than a link. Prompt versions
+`read-beta-v35` / `draft-action-beta-v56`, registries `read-beta-v27` /
+`draft-beta-v44`.
+
+★★ ENTER MOVES A MESSAGE WITH ATTACHMENTS INTO THE CHAT AT ONCE
+(`MinkPreparedSend` in mink-ai.ts). The composer kept the photo under a
+second spinner while every file was uploaded and read, so the photo looked
+like it was uploading again. Now the composer's `onSubmitPrepared`
+(`handOver`) clears the box and hands over `{draft, attachments, prepare,
+restore, discard}`; `run` shows the message with `pendingAttachments` (this
+tab's object URL for a photo) and a status such as "Looking at your photo…"
+(`minkReadingStatus`), then awaits `prepare` on the run's own stop signal
+(never the composer's `generation`, because the composer remounts when the
+panel and full view swap). Success swaps the bubble to the finished text
+(file references and all) with `localPreviews`, so the same picture stays on
+screen; the hook owns those URLs and revokes them with the thread. A failed
+read removes the bubble and `restore` puts the words and files back in the
+box with the reason; Stop does the same without an error; New chat or
+leaving the dashboard `discard`s. If the composer that sent it has closed,
+`restore` returns false: the words go back, the files are released, and the
+chat says why with `retryable: false`, which hides Retry. The upload begun
+when a photo was picked is the one used (no second upload), each step's
+result is kept on its record so a retry redoes only what failed, Retry after
+a failed answer resends the finished message without reading again, and a
+photo or file may be sent without words. `prepareMinkAttachments` (module
+level in the composer) is shared with the voice path, which still prepares
+out of sight before it delivers. Tests: `lib/mink/chat-session.test.ts`,
+`mink-ai.test.ts` (lifecycle, the load race, the hand-over), the composer,
+`dashboard-chat.test.ts` (link cards, New chat, the bubble) and
+`chat-context.test.tsx`. ⚠ Not run in a browser; verified by the suites,
+the typecheck and the local apply of 0230.
+
+### Mink tool routing: each run carries only the tools it needs (2026-10-19)
+
+**★★ EVERY MODEL STEP RE-SENT THE WHOLE PROMPT AND EVERY TOOL.** For an owner
+that was 55,447 characters of system prompt plus 71,234 of tool declarations
+(60 tools), about 25,000 to 27,000 tokens a step on the local ledger, so "How
+much did I sell today?" paid for the Website Builder, the image generator and
+six background workflows on every step. Three changes, all internal:
+
+- **★ `lib/mink/tool-routing.ts` picks the tool GROUPS a message needs** (pure,
+  no server imports): its wording (English word patterns plus Hinglish and
+  Devanagari substrings, over the merchant's words only; attachment payloads
+  after the composer's markers are data and never read), the record open in
+  the dashboard (a product brings the catalogue reads, an order the order
+  reads), the page when the message points at it ("this", "here"), and the
+  question a follow-up continues ("make it shorter", "and yesterday?", a bare
+  "yes", which also carries that question's change intent). Proposal tools
+  come only when the message asks for a change (change verbs, Hinglish "bana
+  do" and similar); "how do I…" is a question unless it also asks. A message
+  with no subject ("do it", "what can you do?") keeps EVERY permitted tool:
+  `mode: "all"` is the fallback, never an error. It only narrows what the
+  registry's permission filter already allowed. `tool-routing.test.ts` fails
+  when a registered tool has no group, and checks every eval-corpus case's
+  expected tools are routed.
+- **★★ A MISS IS RECOVERABLE, AND NEVER BILLED.** A narrowed run also declares
+  `request_more_tools`. When the model calls it, the orchestrator swaps the
+  session for one with every permitted tool on the main model
+  (`restartWithAllTools`, once per run) and asks the merchant's message again
+  from the stored conversation; calls in the same turn are dropped unrun and
+  the per-run memo is cleared. ⚠ It is REFUSED (answered in place) once the
+  attempt has run a tool that is not safe to run twice: only `repeatSafe`
+  reads and `restartSafe` tools (`open_dashboard_page`, whose artifact the
+  panel acts on only from the final message) may have run first. ★ The
+  abandoned attempt's tokens go in `MinkRunResult.restart` and the
+  `mink.run: tools restarted` log line, never in `usage`, so a routing miss
+  is StoreMink's cost and not the merchant's credits. ⚠ It is therefore also
+  missing from the ledger's cost estimate; the log line carries it.
+- **★ PROMPT RULES FOLLOW THEIR TOOLS** (`[[when: ...]]` tags,
+  docs/mink-ai-system-prompt.md §3a; the spoken-rules mechanism generalised).
+  A tagged rule renders only when one of its tools is declared, a `prefix*`
+  matches, or a `#group` (`#attachments`, `#composer`) is routed; an unrouted
+  run counts every group present, so it reads exactly the old prompt for the
+  tools it has. A misplaced tag, a malformed entry or an unknown group fails
+  closed at parse; `system-prompt.test.ts` checks every tagged tool against
+  the registry. ⚠ A side effect for limited roles even with routing off: a
+  rule for a tool the role cannot use is no longer sent.
+
+Measured on the budget test's owner (characters per step, prompt plus
+declarations): every tool 126,681; a help question 19,074; a sales question
+15,537; a stock question 15,355; an orders question 11,585; smalltalk 10,642;
+"create a banner for my homepage for the diwali offer" 56,300. A live smoke
+run's first step was 3,325 prompt tokens against ~25,000 before.
+**`lib/mink/prompt-budget.test.ts` is the budget**: the whole set, the untagged
+core (9,000), each routed example and every single declaration (6,000) have a
+ceiling, so growth is a decision in the diff rather than drift.
+
+**★ THE LITE TIER (`MINK_LITE_ROUTING`, OFF by default).** A light route
+(narrow, read-only, no attachment, not a voice turn, no boundary-probing
+phrasing, only the plain read groups) may start on `MINK_LITE_MODEL`
+(`gemini-3.5-flash-lite`, GA at `global` in both projects; anything but a
+Flash-Lite id falls back to it). It always has the escape hatch, which
+restarts on the main model. `estimateMinkCost` prices it at Google's list
+rate ($0.30 / $2.50 per million, global only). Routing itself is ON by
+default (`MINK_TOOL_ROUTING`, opt-out). `lib/mink/live-eval.local.test.ts`
+(`MINK_LIVE_EVAL=1`, local database only, paid) runs the eval corpus with
+routing off, on, and on with the lite model, scores tool choice with
+`scripts/mink-eval-core.mjs`, has the main model compare each answer with the
+unrouted one, and writes a report. A run that hears nothing from the provider
+for 25 s is abandoned and asked again (six attempts), and so is an HTTP 429 or
+503; both are counted per model. A lite-mode case whose route is not light is
+the routed configuration, so its routed run is reused. The judge runs six at
+a time with a 25 s deadline per call, and every finished run is appended to
+`<out>.progress.jsonl`.
+
+**★ MEASURED, 2026-10-19** (local echoss store, storemink-staging Vertex, 82
+of the 88 cases; summary without answers in
+`evals/mink/routing-live-2026-10-19.json`). 78 cases routed narrow, 4 fell
+back to every tool, 37 were light. Routing cut the median first-step prompt
+from 24,826 to 3,332 tokens and the median prompt per run from 49,971 to
+7,192; the estimated cost per answered run went from $0.0261 (every tool) to
+$0.0070 (routed), and $0.0028 on the lite model (the main model on the same
+light routes: $0.0058). No `request_more_tools` restart fired in 65 narrowed
+runs and no routed run missed an expected tool. Where both answered, the
+judge rated 9 of 9 routed answers the same as the unrouted ones; of 16 lite
+answers, 10 the same, 1 better, 4 worse but acceptable (fewer SKUs,
+thresholds and links, denser wording) and 1 unacceptable (it gave up on
+"Main Store" where the main model found "Main"). Lite answered "How do I
+upload a photo?" without searching the Help Centre, in both runs. Tool
+choice: lite 33 of 37; the main model 22 of 29 unrouted and 20 of 28 routed,
+whose failures are the same over-calling in both (starting a workflow a case
+expects refused), not missing tools.
+⚠ **The samples are small because the main model kept failing.**
+gemini-3.7-flash on storemink-staging (served only at `global`; every
+regional endpoint answers 404) stalled 295 of 424 attempts in the main pass
+and answered none of 300 in a retry pass (173 stalls, 127 HTTP 429
+RESOURCE_EXHAUSTED). The lite model answered all 37 runs (p50 3.6 s, p90
+4.5 s, against 11.1 s and 29.2 s). A one-word prompt with no tools stalled
+the same way, sequential or concurrent, so it is Google's shared capacity,
+not the request (the project's own quota is 10M input tokens a minute).
+Production's last 30 days: 94 runs ok and 2 timed out at exactly 180 s, the
+same signature; median 8.3 s.
+So `MINK_LITE_ROUTING` stays off; turning it on is the owner's call. It is
+cheaper, faster and was the only model answering today, but measurably less
+thorough. ⚠ Known lite gaps: Help questions answered ungrounded (the `help`
+group is in `LIGHT_GROUPS`), and a location name it cannot resolve ends the
+answer instead of being retried. ⚠ Not built: a time-to-first-chunk watchdog
+with one retry in `vertex-client.ts` (the WhatsApp Mink path has one), which
+would turn a 180 s stall into a retry after about 25 s.
+
+The session (`createVertexMinkSession`) takes `model`, `route` and
+`allDeclarations`; the stream route routes AFTER `startMinkRun` (a follow-up
+needs the stored conversation), so `mink_runs.model` is provisional until
+`completeMinkRun` / `failMinkRun`, which now record the model that answered.
+The run log gains `toolRoute`, `toolGroups`, `declaredTools`,
+`permittedTools` and, after a restart, `abandonedModel` / `abandonedTokens`.
+Prompt versions `read-beta-v34` / `draft-action-beta-v55`, registries
+`read-beta-v26` / `draft-beta-v43`. Cloud Build passes `_MINK_TOOL_ROUTING`
+("true"), `_MINK_LITE_MODEL` and `_MINK_LITE_ROUTING` ("false").
+No merchant-visible change, no Help Centre update: the same answers and
+cards, from fewer tokens.
+
 ### Mink marginal metering — the merchant pays for their own work (2026-09-23)
 
 **★★ THE 1-CREDIT BAND WAS UNREACHABLE FOR ANY RUN THAT TOUCHED A TOOL, AND A
@@ -1857,7 +2157,8 @@ the MERCHANT is charged; StoreMink still pays for every re-sent prefix, and
 `cached_tokens` exists to measure how much of it a provider cache is already
 serving. Treat the tool declaration set as a budget: a new tool raises our cost
 on every existing merchant's every question, permanently — it simply no longer
-raises THEIRS.
+raises THEIRS. (Since 2026-10-19 a run carries only its routed tools and their
+rules, and `prompt-budget.test.ts` holds the sizes: see "Mink tool routing".)
 
 Migration `20260923_0126_mink_marginal_metering` adds `base_prompt_tokens`
 (NOT NULL DEFAULT 0, CHECK `0 ≤ base ≤ input_tokens`). **No Help Centre update:
@@ -2133,9 +2434,10 @@ Selected images appear as compact square removable previews inside the composer;
 clicking one opens a full-size viewer. Documents use compact file cards. There
 is no separate attachment approval/review panel. When the role holds
 `media:manage`, each image begins its ordinary Media Library upload as soon as
-it is selected; removal cleans up the staged asset, and Send waits for any
-in-flight upload rather than starting it. Pressing Send is the explicit
-processing action. PNG/JPEG/WebP/PDF bytes go
+it is selected; removal cleans up the staged asset, and Send hands the message
+to the chat at once, where the reading waits for any in-flight upload rather
+than starting another (see "Mink chats like ChatGPT"). Pressing Send is the
+explicit processing action. PNG/JPEG/WebP/PDF bytes go
 only to the isolated, bounded Vertex reader; .txt/.md imports are decoded
 locally. A sent image is also normalised through the ordinary Media action when
 the admin holds `media:manage`, so the exact preview survives conversation
@@ -2158,10 +2460,15 @@ only voice chat, which has no button to press, still ends a turn after 1.2
 seconds of silence. The 30-second cap still finishes and transcribes, and a
 recording with no speech in it (Done pressed without speaking, or the cap
 reached in silence) is reported as none, so the composer says "No speech was
-recorded" without a transcription call or an input-quota slot. Voice chat
-shows the same waveform with its status and End in the same row. The temporary recording is
+recorded" without a transcription call or a voice-quota slot. ★ Every voiced
+burst counts toward that judgement in dictation, so a message spoken in short
+phrases with pauses between them is transcribed: the 300 ms decay that
+resets a voiced run applies only to voice chat's gate before it arms, and in
+dictation it used to discard each phrase, so a paused dictation was reported
+as no speech. Voice chat
+has its own full-screen view (above). The temporary recording is
 sent to `POST /api/mink/voice`; the route authenticates the current store,
-applies the shared input quotas, validates the real WAV bytes and reads the
+applies the voice quotas (`reserveMinkVoice`, below), validates the real WAV bytes and reads the
 platform-wide voice provider before making one transcription request. The
 composer inserts the single final transcript once, after processing, so cumulative interim
 browser results cannot repeat phrases. Text typed before recording is preserved,
@@ -2280,6 +2587,16 @@ can exhaust them, and multiplying them would multiply the worst-case provider
 bill per store — they are a real tightening in MESSAGE terms (30 files an hour
 is now six five-file sends), which is a spend decision to revisit on evidence
 rather than a defect.
+★★ TRANSCRIPTION HAS ITS OWN BUCKETS (`reserveMinkVoice`, dictation and voice
+chat alike): 20/owner/minute, 300/store/hour, 1,000/store/day,
+5,000/global/hour and a one-hour replay key, refused as `voice_rate_limit`
+with "Voice has reached its limit for now. Try again a little later, or type
+your message." It used to spend the file buckets above, one slot per
+recording, so a few minutes of voice chat used up the store's 30 attachments
+for the hour, and then voice and attachments were both refused for everyone
+on the store. ⚠ The voice numbers are a spend cap on the transcription
+provider (billed per second of audio, at most 30 seconds a clip), chosen
+rather than measured: revisit them on real use.
 There are at most two concurrent local processing requests. Bounded body reads
 honour abort/deadline. `input-provider.ts` counts tokens then extracts once with
 the configured Vertex model/location, no tools/memory/history/URL fetching.
@@ -2327,8 +2644,9 @@ storefront screenshot request sends either a general visual reading or, for an
 explicit style-match request, validated palette/font/radius values; normal
 Builder reads and private proposal approvals still apply. Provider retention
 still applies. Audio
-attachment, video, Excel workbooks, live voice conversation and long-document
-ingestion remain out of scope.
+attachment, video, Excel workbooks and long-document ingestion remain out of
+scope; a spoken conversation is voice chat (see "Mink Sidekick parity, second
+pass").
 Migration `20260909_0090_mink_phase_8e_inputs.sql` adds published Help guidance;
 `20260914_0112_mink_global_voice_provider.sql` supersedes live browser
 recognition with one final server transcript;
@@ -3416,7 +3734,8 @@ sentence, 4.2 s for 154 characters and 8.4 s for 567, while Gemini's
 whatever the length (a 276-character answer through the shipped module: first
 audio 1.2 s, 15.4 s of speech, all of it in 4.1 s). So
 `lib/mink/speech-synthesis.ts` `streamMinkSpeech` is ONE streamed Gemini call
-per answer (one even voice across it), yielding raw 16-bit mono PCM as each SSE
+per request (one even voice across it; voice chat sends one request per piece of
+an answer, a sentence or two, fetched one piece ahead), yielding raw 16-bit mono PCM as each SSE
 event lands (`audio/l16; rate=24000`; a WAV part is read with `parseWav`, which
 walks the chunks rather than assuming a 44-byte header and accepts an
 extensible header whose sub-format is PCM). Bulbul keeps Sarvam's documented
@@ -3431,11 +3750,20 @@ before the route commits to a 200; a sample-rate change mid-answer throws, and
 an early stop closes the provider call. No SDK: REST with ADC (one cached
 GoogleAuth client, shared with transcription, below) and `SARVAM_API_KEY`;
 optional `MINK_TTS_GEMINI_MODEL` (same family only) and
-`MINK_TTS_GEMINI_VOICE`. `POST /api/mink/speech` takes the whole answer
-(≤2,000 characters; the voice chat sends ≤1,500) and streams the PCM back
+`MINK_TTS_GEMINI_VOICE`. `POST /api/mink/speech` takes ONE piece of an
+answer (`MINK_SPEECH_MAX_CHARS` = `MINK_SPEECH_PIECE_MAX`, 600 characters,
+the most the voice chat's segmenter and fallback split ever hand it; it was
+2,000 while the rate limits rose fourfold, which quadrupled the free
+read-aloud ceiling) and streams the PCM back
 (`application/octet-stream`, `X-Mink-Audio: pcm16le;rate=…`): same-origin,
-Mink enabled, 20 a minute per admin and 300 an hour per store (one request per
-answer now, not per sentence), no credits (like dictation), text never logged.
+Mink enabled, 60 requests a minute per admin and 1,200 an hour per store
+(since the spoken conversation, a request per sentence or two, one fetched
+ahead of the piece playing), ★★ and a CHARACTER budget at the free ceiling it
+had before that change: 40,000 characters a minute per admin and 600,000 an
+hour per store, spent with `rateLimit`'s `cost` option (2026-10-19; the
+request counts alone allowed 36,000 a minute and 720,000 an hour at 600
+characters a piece). Every limit is checked before the provider is called;
+no credits (like dictation), text never logged.
 It answers 204 `X-Mink-Speech: off` when no model is on and `unsupported` for a
 language the model has no voice for, and 503 when the provider fails before any
 audio; `GET` says whether a model is on and is asked once as voice chat starts,
@@ -3449,9 +3777,10 @@ runs only while the consumer drains, so a connection that stays open but stops
 reading never reaches it, and the ceiling used to abort the provider call while
 leaving the slot counted until the socket closed; an abort listener now
 releases it, returns the iterator and errors the stream. `mink.speech.completed` logs bytes, time to
-first audio and total time. The browser (`mink-speech-player.ts`) makes one
-request per answer and schedules each chunk on the Web Audio clock the moment
-it lands (a 0.25 s lead, 0.1 s after the network fell behind, an odd byte
+first audio and total time. The browser (`mink-speech-player.ts`, split into
+`fetchMinkSpeech` and `MinkSpeechPlayhead`; `mink-speech-session.ts` composes
+them sentence by sentence for the spoken conversation) schedules each chunk on
+the Web Audio clock the moment it lands (a 0.25 s lead, 0.1 s after the network fell behind, an odd byte
 carried to the next chunk, a 15 s stall limit once audio has started, and a
 20 s first-audio watchdog, `MINK_FIRST_AUDIO_MS`, because the browser voice had
 one and this path relied on the server's ceiling), through ONE `AudioContext`
@@ -4231,7 +4560,12 @@ wholesip/
 │   │   ├── mink-artifact-parser.ts # Restores every bounded card type, including private
 │   │   │                      # proposal review cards, from live SSE and saved history.
 │   │   ├── chat-context.tsx   # Shares the same Mink thread between Home, drawer and
-│   │   │                      # expanded view; receives the private server-side flag.
+│   │   │                      # expanded view; receives the private server-side flag;
+│   │   │                      # runs the voice loop and exposes it as useMinkVoice().
+│   │   ├── mink-voice-mode.ts # ★ The spoken conversation's loop: mic open all turn,
+│   │   │                      # barge-in, parked sends, one speech session per reply;
+│   │   │                      # mink-speech-session.ts plays its sentences on one
+│   │   │                      # playhead; mink-voice-view.tsx is the full-screen view.
 │   │   ├── dashboard-chat.tsx # Mink panel/full-view renderer: Codex-style history sidebar
 │   │   │                      # with confirmed deletion, persisted drag/keyboard width,
 │   │   │                      # Help-matched robot identity and auto-growing composer;
@@ -4824,7 +5158,9 @@ wholesip/
 │       │                      # transient retry + a hard run timeout, records partial/
 │       │                      # unavailable usage honestly, records
 │       │                      # redacted tool/token telemetry, and emits typed status/
-│       │                      # tool/message/usage/done events to the dashboard client.
+│       │                      # tool/message/usage/done events to the dashboard client;
+│       │                      # a voice turn's <spoken> block goes out as `spoken` /
+│       │                      # `spoken_end` events and stays out of the stored text.
 │       ├── mink/conversations/ # ★ No-store, rate-limited recent-history API: list the
 │       │   └── [conversationId]/ # actor/store's last ten; load or same-origin delete one.
 │       ├── mink/media/discard/ # ★ Same-origin, actor-resolved `keepalive` transport
@@ -5635,6 +5971,12 @@ wholesip/
 │   ├── media/image-hosts.ts   # client-safe canOptimizeImage(): may next/image optimise
 │   │                          # this URL? Mirrors next.config.ts remotePatterns (a test
 │   │                          # reads that file); any other host renders `unoptimized`
+│   ├── mink/spoken-answer.ts  # pure: splits a voice reply's <spoken> block from the
+│   │                          # written answer, fragment by fragment, on the stream route
+│   ├── mink/speech-stream.ts  # pure: sentence segmenter for streamed spoken text + the
+│   │                          # echo check
+│   ├── mink/voice-turn.ts     # client-safe: one voice turn, mic to transcript (shares
+│   │                          # transcription with dictation)
 │   ├── mink/                  # ★ Dashboard agent foundation (docs/mink-ai-dashboard-plan.md):
 │   │                          # default-on global + fail-closed invited-store access;
 │   │                          # system-prompt.ts, image-prompt.ts and whatsapp-prompt.ts
@@ -5644,6 +5986,13 @@ wholesip/
 │   │                          # route and selected product/order construction; bounded
 │   │                          # orchestrator; official Google Gen AI SDK Vertex client;
 │   │                          # abort-aware one-retry transport + hard run/tool timeouts;
+│   │                          # tool-routing.ts picks the tool groups a message needs
+│   │                          # (wording, page, open record, the question it follows),
+│   │                          # declares request_more_tools for a narrowed run and marks
+│   │                          # light routes for the lite model; system-prompt.ts renders a
+│   │                          # `[[when: ...]]`-tagged rule only with its tools;
+│   │                          # prompt-budget.test.ts caps their size per step and
+│   │                          # live-eval.local.test.ts (opt-in, paid) compares answers;
 │   │                          # permission-filtered/rechecked store/profile, catalogue,
 │   │                          # product, recognized-sales, low-stock, order/current-order
 │   │                          # and hybrid Help read tools. Quantitative tools return rich
@@ -5767,7 +6116,7 @@ wholesip/
 │   │                          # No model tool can publish, schedule, send or execute a live mutation;
 │   │                          # Phase 7D publication remains an authenticated human-only action.
 │   │                          # `evals/mink/read-alpha.json` + `npm run mink:eval` are the
-│   │                          # 81-case live tool/safety/latency gate.
+│   │                          # 88-case live tool/safety/latency gate.
 │   ├── theme-studio/          # ★ OPERATOR-ONLY AI Theme Studio Phase 0 contracts
 │   │                          # (docs/mink-ai-theme-studio-phase0.md; no routes or provider
 │   │                          # runtime yet). contracts.ts owns the bounded ThemeIntent and
@@ -5993,6 +6342,11 @@ wholesip/
 │   │                          # inclusive/exclusive tax math, tested), invoice-data.ts
 │   │                          # (server-only invoice loaders: by-store + own-order)
 │   ├── pricing.ts / slug.ts / sanitize.ts / rate-limit.ts / og-image.ts
+│   │                          # rate-limit.ts: rateLimit(key, {max, windowSeconds,
+│   │                          # cost?}), a Postgres fixed window that fails open.
+│   │                          # `cost` spends that many units in one call
+│   │                          # (check_rate_limit_cost, 0229); a key is counted
+│   │                          # or weighted, never both
 │   ├── blog-taxonomy.ts   # fetchBlogTaxonomy(): per-store blog categories/tags reader
 │   ├── blog-reactions.ts / phone-labels.ts / use-otp-throttle.ts
 │   ├── site.ts / utils.ts     # Canonical platform/help/themes origins + cn() etc.
@@ -6505,7 +6859,12 @@ wholesip/
 │                              # dictation sentences for the Done button. 0226 adds
 │                              # mink_voice_settings.speech_enabled/speech_provider
 │                              # (read-aloud model); 0227 edits the Mink guide's
-│                              # reply-language sentence. Next free: 0228.
+│                              # reply-language sentence; 0228 replaces the last
+│                              # sentence of its dictation paragraph with Talk with
+│                              # Mink, the spoken conversation. 0229 adds
+│                              # check_rate_limit_cost, the weighted limiter behind
+│                              # the read-aloud character budget (service role
+│                              # only). Next free: 0230.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -11998,7 +12357,8 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
      `20260920_0119_retire_mink_conversation_cap_verify` immutably retires
      0036's obsolete physical-row-count query without deleting that evidence;
      the newer visible-list contract remains the product guarantee. The UI
-     restores the newest thread after refresh, exposes all ten in a dedicated
+     continues the tab's own recent chat after a refresh (see "Mink chats
+     like ChatGPT"), exposes all ten in a dedicated
      responsive sidebar, allows confirmed same-origin deletion, renders
      supported Markdown without raw HTML, remembers a bounded drag/keyboard
      panel width, and grows the multiline composer to a scrollable cap. The
@@ -12597,7 +12957,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
      retries, tool names, tokens and known shadow cost but never selects or
      renders prompts, answers, tool arguments/results, provider state or
      reasoning. `evals/mink/read-alpha.json` and `npm run mink:eval` provide the
-     81-case live tool-choice/security/latency gate. The complementary
+     88-case live tool-choice/security/latency gate. The complementary
      `docs/mink-ai-test-prompts.md` catalogue covers phase-wise manual prompts
      plus UX, permission, tenancy, credit, approval, conflict, idempotency and
      rollback acceptance scenarios. The original migration
@@ -19721,7 +20081,10 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   (`gemini-3.1-flash-image`) and **`MINK_IMAGE_LOCATION`** (`global`; still an
   independent override from the chat location), plus reliability controls
   **`MINK_MAX_MODEL_RETRIES`** (1, bounded 0–2) and
-  **`MINK_RUN_TIMEOUT_SECONDS`** (180, bounded 15–300). The dashboard layout reads the private
+  **`MINK_RUN_TIMEOUT_SECONDS`** (180, bounded 15–300). Tool routing reads
+  **`MINK_TOOL_ROUTING`** (on unless "false"/"0"), **`MINK_LITE_MODEL`** (default
+  `gemini-3.5-flash-lite`; anything but a Flash-Lite id falls back to it) and
+  **`MINK_LITE_ROUTING`** (off unless "true"/"1"); see "Mink tool routing". The dashboard layout reads the private
   flag server-side: enabled sessions use the SSE client and durable alpha
   records; disabled sessions keep the canned placeholder. Reported or partial
   token usage receives a versioned provider-cost estimate; unavailable usage

@@ -4,17 +4,17 @@ import {
   Boxes,
   ChartNoAxesCombined,
   CircleHelp,
-  ExternalLink,
   MapPin,
   PackageSearch,
   PanelsTopLeft,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   MINK_PREFILL_LABELS,
   minkPrefillPath,
   storeMinkPrefill,
 } from "@/lib/mink/form-prefill";
+import { useChat } from "./chat-context";
 import type { MinkArtifact } from "@/lib/mink/types";
 import { MinkProductImportCard } from "./mink-product-import-card";
 import { MinkProposalCard } from "./mink-proposal-card";
@@ -169,33 +169,47 @@ export function MinkArtifacts({
   );
 }
 
-/**
- * Open a page Mink was asked for, with the chat staying open beside it.
- *
- * ★ A BUTTON THAT NAVIGATES CLIENT-SIDE, so the answer this card sits in is
- * still on screen when the merchant looks back; the panel also opens it on
- * its own when the artifact arrives live (DashboardChat). A product prefill
- * is written to session storage immediately before the navigation, where the
- * new-product form reads and clears it on its first render.
- */
-export function openMinkNavigation(
+/** Where a navigation card goes: the prefilled form, or the page itself. */
+export function minkNavigationHref(
   artifact: Extract<MinkArtifact, { type: "navigation" }>,
-  push: (path: string) => void,
 ) {
-  if (artifact.prefill) {
-    storeMinkPrefill(artifact.prefill);
-    push(minkPrefillPath(artifact.prefill.kind));
-    return;
-  }
-  push(safeHref(artifact.path) ? artifact.path : "/dashboard");
+  if (artifact.prefill) return minkPrefillPath(artifact.prefill.kind);
+  return safeHref(artifact.path) ? artifact.path : "/dashboard";
 }
 
+function isPlainClick(event: ReactMouseEvent) {
+  return (
+    event.button === 0 &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey
+  );
+}
+
+/**
+ * A page Mink found for the merchant, opened only when they click it.
+ *
+ * ★★ IT NEVER OPENS BY ITSELF. The panel used to navigate the moment the
+ * answer arrived, and on a phone that also closed the chat, so asking "where
+ * do I add a product?" swept the merchant off the conversation mid-read.
+ * ChatGPT, Claude and Sidekick all put the link in the answer and leave the
+ * tap to the person. It is a real dashboard link (MinkLink), so the chat
+ * surface's capture-phase rule collapses the full view or closes the phone
+ * panel exactly as it does for any other link in an answer, and a new-tab
+ * click works as one.
+ *
+ * ★ A prefill is written to session storage as the click happens, before the
+ * client navigation, where the form reads and clears it on first render; the
+ * spotlight is asked for only on a plain click, since a new tab leaves this
+ * page where the control is not.
+ */
 function NavigationArtifact({
   artifact,
 }: {
   artifact: Extract<MinkArtifact, { type: "navigation" }>;
 }) {
-  const router = useRouter();
+  const { showSpotlight } = useChat();
   return (
     <section className="overflow-hidden rounded-2xl border border-[#ded8f4] bg-[#fcfbff] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       <ArtifactHeader
@@ -205,21 +219,22 @@ function NavigationArtifact({
       <div className="flex flex-wrap items-center justify-between gap-2 p-3">
         <p className="text-xs leading-5 text-[#29272d]">
           {artifact.prefill
-            ? `${capitalise(MINK_PREFILL_LABELS[artifact.prefill.kind])} opens with ${describePrefill(artifact.prefill.fields)} filled in. Review it and save when you are happy.`
+            ? `Opens ${MINK_PREFILL_LABELS[artifact.prefill.kind]} with ${describePrefill(artifact.prefill.fields)} filled in, for you to review and save.`
             : artifact.highlight
-              ? `${artifact.highlight.label} is pointed out on the page. ${artifact.highlight.hint ?? ""}`.trim()
-              : "This chat stays open while you look."}
+              ? `Opens the page and points out ${artifact.highlight.label}.`
+              : "Opens the page. This chat is here when you come back."}
         </p>
-        <button
-          type="button"
-          onClick={() =>
-            openMinkNavigation(artifact, (path) => router.push(path))
-          }
+        <MinkLink
+          href={minkNavigationHref(artifact)}
+          onClick={(event) => {
+            if (artifact.prefill) storeMinkPrefill(artifact.prefill);
+            if (isPlainClick(event)) showSpotlight(artifact.highlight ?? null);
+          }}
           className="inline-flex items-center gap-1 rounded-full bg-[#6d4dff] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#5b3fd0]"
         >
           {artifact.label}
-          <ExternalLink className="h-3 w-3" aria-hidden="true" />
-        </button>
+          <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+        </MinkLink>
       </div>
     </section>
   );
@@ -253,10 +268,6 @@ const PREFILL_FIELD_WORDS: Record<string, string> = {
   manualMaxDays: "delivery days",
   handlingDays: "handling time",
 };
-
-function capitalise(text: string) {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
 
 function describePrefill(fields: object) {
   const parts: string[] = [];

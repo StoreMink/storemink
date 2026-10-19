@@ -23,8 +23,8 @@ import type { MinkActorContext, MinkArtifact } from "../types";
 import type { MinkTool } from "./registry";
 
 /**
- * `open_dashboard_page`: take the merchant to a dashboard page, optionally
- * with the new-product form filled in.
+ * `open_dashboard_page`: a link to a dashboard page in Mink's answer,
+ * optionally to a form filled in from the conversation.
  *
  * ★★ A CLOSED LIST OF DESTINATIONS, NEVER A PATH FROM THE MODEL. Every entry
  * names the permission section that page is gated on, checked here against
@@ -34,11 +34,11 @@ import type { MinkTool } from "./registry";
  * identifier inside the trusted store; an unknown one is an error, never a
  * guessed path.
  *
- * ★ IT CHANGES NOTHING. The result is an artifact the panel turns into a
- * client-side navigation while the chat stays open (Sidekick's "fills the
- * form, you approve" pattern): a prefilled product form is still saved by
- * the merchant, through the ordinary product action, with every field
- * validated as if they had typed it.
+ * ★ IT CHANGES NOTHING, AND IT NAVIGATES NOTHING. The result is a link card
+ * the merchant clicks (the page never opens by itself, which on a phone used
+ * to sweep them out of the chat mid-answer); a prefilled form is still saved
+ * by the merchant, through the ordinary action, with every field validated as
+ * if they had typed it (Sidekick's "fills the form, you approve" pattern).
  */
 const DESTINATIONS = {
   home: {
@@ -298,7 +298,7 @@ export const openDashboardPage: MinkTool = {
   declaration: {
     name: "open_dashboard_page",
     description:
-      "Open a dashboard page for the merchant, keeping this chat open beside it. Use it when they ask to go to, open, show or take them to a page (for example 'open my orders', 'take me to shipping settings'), to open one exact product or order they named, to start a form already filled in from this conversation (new_product, new_offer, new_category, new_blog or shipping_settings with prefill), or, when they ask where a control is or how to find it ('where do I change the delivery rate'), with highlight set to the matching target so the page opens and that control is pointed out. Each destination needs the merchant's own permission for that page; a page they cannot open is refused. Never use it instead of answering a question, and never claim the page or a form was changed: it only opens the page, and the merchant reviews and saves any prefilled form themselves.",
+      "Put a link to a dashboard page in your answer; the page opens only when the merchant clicks it. Use it when they ask to go to, open or take them to a page (for example 'open my orders', 'take me to shipping settings'), to link one exact product or order they named, to start a form already filled in from this conversation (new_product, new_offer, new_category, new_blog or shipping_settings with prefill), or, when they ask where a control is or how to find it ('where do I change the delivery rate'), with highlight set to the matching target so that control is pointed out once they open the page. Each destination needs the merchant's own permission for that page; a page they cannot open is refused. Never use it instead of answering a question, and never claim the page is open or that a form was changed: it only links the page, and the merchant reviews and saves any prefilled form themselves.",
     parametersJsonSchema: {
       type: "object",
       properties: {

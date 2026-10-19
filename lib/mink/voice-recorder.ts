@@ -11,14 +11,361 @@ export const MINK_SPEECH_RMS_THRESHOLD = 0.012;
 export const MINK_MIN_SPEECH_MS = 180;
 export const MINK_END_SILENCE_MS = 1_200;
 
+/**
+ * What counts as the merchant speaking: the loudness floor, how long it must
+ * hold, and whether Mink is playing audio meanwhile (which pauses the idle
+ * clock, since the mic is open to be interrupted, not to time out).
+ */
+export type MinkSpeechGate = { rms: number; minMs: number; playing: boolean };
+/** Today's floor: ordinary talking in a quiet room. */
+export const MINK_SPEECH_GATE: MinkSpeechGate = {
+  rms: MINK_SPEECH_RMS_THRESHOLD,
+  minMs: MINK_MIN_SPEECH_MS,
+  playing: false,
+};
+/**
+ * ★ The floor while Mink is talking or thinking: louder and longer, because
+ * speaker bleed survives echo cancellation on a laptop and a cough during
+ * generation must not cancel a reply. The voice loop swaps the gate in place,
+ * so the recorder reads the new floor without restarting.
+ */
+export const MINK_BARGE_IN_GATE: MinkSpeechGate = {
+  rms: 0.035,
+  minMs: 350,
+  playing: true,
+};
+/** Audio kept from before speech started, so the first syllable is not lost. */
+export const MINK_PRE_ROLL_MS = 400;
+/**
+ * The most audio kept from before the recorder armed. ★ The gate arms only
+ * once its floor has held for `minMs` of voiced audio, with gaps of up to
+ * `MINK_VOICED_DECAY_MS` between bursts, so speech can have begun well over
+ * the pre-roll before it arms (350 ms of voice for a barge-in, plus the
+ * gaps): what is kept reaches back to the start of that voiced run and the
+ * pre-roll before it, and never further than this.
+ */
+export const MINK_SPEECH_LEAD_MAX_MS = 2_000;
+/**
+ * In voice chat, a silent stretch this long before arming forgets sporadic
+ * bursts, so a door and a cough a minute apart do not add up to a barge-in.
+ * ★ Dictation counts every burst, as it always has: a merchant dictating in
+ * short phrases with pauses between them has spoken, and resetting the count
+ * at each pause reported their recording as "No speech was recorded".
+ */
+export const MINK_VOICED_DECAY_MS = 300;
+/** The absolute stop for a microphone left open in voice chat. */
+export const MINK_VOICE_MAX_OPEN_MS = 5 * 60_000;
+
+export type MinkVoiceRecordingOptions = {
+  gate: { current: MinkSpeechGate };
+  /** Speech was heard; false means "not now" and the recorder keeps listening. */
+  onSpeechStart: () => boolean;
+};
+
+export type MinkRecordingOptions = {
+  endOnSilence?: boolean;
+  onLevel?: (level: number) => void;
+  voice?: MinkVoiceRecordingOptions;
+};
+
+/** An open microphone stream, recorded on any number of times. */
+export type MinkMicrophone = {
+  /**
+   * Records once on the open stream, with `startMinkRecording`'s contract:
+   * `done` receives the clip (null when no speech was heard), an abort
+   * discards it, and the returned function finishes it. One recording at a
+   * time.
+   */
+  record(
+    signal: AbortSignal,
+    done: (file: File | null) => void,
+    progress: (seconds: number) => void,
+    options?: MinkRecordingOptions,
+  ): () => void;
+  /**
+   * Releases the stream. A recording in progress ends with what it has, as
+   * it does when the device goes away.
+   */
+  close(): void;
+  readonly closed: boolean;
+};
+
+type Recording = {
+  feed(chunk: Float32Array): void;
+  /** Finish with what has been heard, as Done or the cap would. */
+  end(): void;
+  /** Finish without a clip and without calling `done`. */
+  discard(): void;
+};
+
 function chunkRms(chunk: Float32Array): number {
   if (chunk.length === 0) return 0;
   let energy = 0;
   for (const sample of chunk) energy += sample * sample;
   return Math.sqrt(energy / chunk.length);
 }
+
 /**
- * Browser-only microphone lifecycle. Tracks close on every success/error/cancel path.
+ * Opens the microphone: one stream, one 16 kHz context and the recorder
+ * worklet, released by `close()`.
+ *
+ * ★★ VOICE CHAT KEEPS ONE OPEN FOR THE WHOLE CHAT (`openMinkMicrophone`).
+ * The browser's echo canceller learns the room and the speaker from the
+ * stream it runs on, and a stream reopened every turn began that learning
+ * again each time: Mink's own voice was most likely to reach the microphone
+ * at exactly the moment the merchant might interrupt. Between recordings the
+ * worklet's audio is dropped, so nothing is kept that nobody asked for.
+ * ★ A TRACK THAT ENDS (the device unplugged, the permission withdrawn)
+ * closes the microphone, and a recording in progress ends with what it has.
+ */
+async function openMicrophone(
+  signal: AbortSignal | undefined,
+  oneShot: boolean,
+): Promise<MinkMicrophone> {
+  if (
+    !window.isSecureContext ||
+    !navigator.mediaDevices?.getUserMedia ||
+    !window.AudioContext
+  )
+    throw new Error(
+      "Speech-to-text needs HTTPS and a browser with microphone and AudioWorklet support. You can type your message instead.",
+    );
+  let context: AudioContext | undefined;
+  let stream: MediaStream | undefined;
+  let node: AudioWorkletNode | undefined;
+  let closed = false;
+  let active: Recording | null = null;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    const recording = active;
+    active = null;
+    if (node) {
+      node.port.onmessage = null;
+      node.port.close();
+      node.disconnect();
+    }
+    stream?.getTracks().forEach((track) => track.stop());
+    if (context && context.state !== "closed")
+      void context.close().catch(() => {});
+    recording?.end();
+  };
+  try {
+    signal?.throwIfAborted();
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+      video: false,
+    });
+    if (signal?.aborted) throw new Error("Recording cancelled.");
+    context = new AudioContext({ sampleRate: MINK_AUDIO_RATE });
+    if (context.sampleRate !== MINK_AUDIO_RATE || !context.audioWorklet)
+      throw new Error(
+        "This browser cannot record the supported audio format. Type your message instead.",
+      );
+    // ★ The version query defeats a cached copy of the worklet that still
+    // carried its own 30-second cap; every cap is enforced here now.
+    await context.audioWorklet.addModule("/mink-audio-recorder.js?v=2");
+    signal?.throwIfAborted();
+    node = new AudioWorkletNode(context, "mink-audio-recorder");
+    node.port.onmessage = (event: MessageEvent<Float32Array>) => {
+      if (closed) return;
+      const chunk = event.data;
+      if (!(chunk instanceof Float32Array)) {
+        // A worklet that sends anything else is broken: the recording is
+        // discarded, as it always was.
+        active?.discard();
+        return;
+      }
+      active?.feed(chunk);
+    };
+    const mute = context.createGain();
+    mute.gain.value = 0;
+    context
+      .createMediaStreamSource(stream)
+      .connect(node)
+      .connect(mute)
+      .connect(context.destination);
+    await context.resume();
+    signal?.throwIfAborted();
+  } catch (error) {
+    close();
+    throw error;
+  }
+  for (const track of stream.getTracks())
+    if (typeof track.addEventListener === "function")
+      track.addEventListener("ended", close, { once: true });
+
+  return {
+    get closed() {
+      return closed;
+    },
+    close,
+    record(signal, done, progress, options = {}) {
+      if (closed) throw new Error("The microphone is closed.");
+      if (active) throw new Error("The microphone is already recording.");
+      signal.throwIfAborted();
+      const endOnSilence = options.endOnSilence ?? true;
+      const voice = options.voice;
+      let finished = false;
+      /** Samples received, for timing; never trimmed. */
+      let received = 0;
+      /** Samples held in `chunks`; the pre-roll ring trims it. */
+      let kept = 0;
+      let voicedSamples = 0;
+      /** Where the voiced run now building towards the floor began; null when none is. */
+      let runStart: number | null = null;
+      let lastSpeechSample = 0;
+      let armed = false;
+      let idleSamples = 0;
+      let chunks: Float32Array[] = [];
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let openTimer: ReturnType<typeof setTimeout> | undefined;
+      const capSamples = MINK_AUDIO_RATE * MINK_AUDIO_SECONDS;
+      const preRollSamples = (MINK_AUDIO_RATE * MINK_PRE_ROLL_MS) / 1_000;
+      const leadMaxSamples =
+        (MINK_AUDIO_RATE * MINK_SPEECH_LEAD_MAX_MS) / 1_000;
+      const decaySamples = (MINK_AUDIO_RATE * MINK_VOICED_DECAY_MS) / 1_000;
+      const silenceSamples = (MINK_AUDIO_RATE * MINK_END_SILENCE_MS) / 1_000;
+      const stop = (keep = false) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        clearTimeout(openTimer);
+        signal.removeEventListener("abort", cancel);
+        if (active === recording) active = null;
+        // A one-off recording releases the microphone before it hands over
+        // the clip, as dictation always has.
+        if (oneShot) close();
+        const heard = kept > 0 && armed;
+        if (keep && heard) {
+          const samples = new Float32Array(kept);
+          let offset = 0;
+          chunks.forEach((chunk) => {
+            samples.set(chunk, offset);
+            offset += chunk.length;
+          });
+          // Never more than the cap (the oldest lead-in goes first), and never a
+          // throw out of `stop`: the caller is waiting on `done` either way.
+          let file: File | null = null;
+          try {
+            file = new File(
+              [encodeMinkWav(samples.subarray(Math.max(0, kept - capSamples)))],
+              "voice-note.wav",
+              { type: "audio/wav" },
+            );
+          } catch {
+            file = null;
+          }
+          done(file);
+        }
+        if (keep && !heard) done(null);
+        chunks = [];
+      };
+      const cancel = () => stop(false);
+      const feed = (chunk: Float32Array) => {
+        if (finished) return;
+        const gate = voice?.gate.current ?? MINK_SPEECH_GATE;
+        // The cap is on the audio kept, which is what is encoded and sent: the
+        // whole of a dictation, and in voice chat the utterance with its
+        // lead-in once speech has started (the ring bounds it before that).
+        // The chunk that crosses it is kept up to the cap.
+        let samples = chunk;
+        let hitCap = false;
+        if (!voice || armed) {
+          const room = capSamples - kept;
+          if (samples.length >= room) {
+            samples = samples.subarray(0, Math.max(0, room));
+            hitCap = true;
+          }
+        }
+        if (samples.length) {
+          chunks.push(samples);
+          received += samples.length;
+          kept += samples.length;
+        }
+        const rms = chunkRms(chunk);
+        if (rms >= gate.rms) {
+          if (voicedSamples === 0) runStart = received - samples.length;
+          voicedSamples += samples.length;
+          lastSpeechSample = received;
+        } else if (
+          voice &&
+          !armed &&
+          received - lastSpeechSample >= decaySamples
+        ) {
+          voicedSamples = 0;
+          runStart = null;
+        }
+        if (!armed && voicedSamples >= (MINK_AUDIO_RATE * gate.minMs) / 1_000) {
+          if (!voice || voice.onSpeechStart()) {
+            armed = true;
+            if (voice) {
+              clearTimeout(timer);
+              timer = setTimeout(() => stop(true), MINK_AUDIO_SECONDS * 1_000);
+            }
+          } else {
+            voicedSamples = 0;
+            runStart = null;
+          }
+        }
+        if (voice && !armed) {
+          // ★ Keep the pre-roll before the voiced run in progress, not just the
+          // newest pre-roll: a barge-in arms 350 ms of voice (plus its gaps)
+          // after it began, which is longer than the pre-roll, so trimming to
+          // the newest 400 ms cut the first word off every interruption.
+          const keepFrom = Math.max(
+            received - leadMaxSamples,
+            (runStart ?? received) - preRollSamples,
+          );
+          while (
+            chunks.length > 1 &&
+            received - kept + chunks[0].length <= keepFrom
+          )
+            kept -= chunks.shift()!.length;
+          if (!gate.playing) idleSamples += samples.length;
+        }
+        options.onLevel?.(rms);
+        progress(Math.floor(received / MINK_AUDIO_RATE));
+        if (
+          hitCap ||
+          (!voice && received >= capSamples) ||
+          (voice && !armed && idleSamples >= capSamples) ||
+          (endOnSilence &&
+            armed &&
+            received - lastSpeechSample >= silenceSamples)
+        )
+          stop(true);
+      };
+      const recording: Recording = {
+        feed,
+        end: () => stop(true),
+        discard: cancel,
+      };
+      active = recording;
+      signal.addEventListener("abort", cancel, { once: true });
+      if (voice)
+        openTimer = setTimeout(() => stop(true), MINK_VOICE_MAX_OPEN_MS);
+      else timer = setTimeout(() => stop(true), MINK_AUDIO_SECONDS * 1_000);
+      return () => stop(true);
+    },
+  };
+}
+
+/** Opens a microphone to record on many times (voice chat); see `openMicrophone`. */
+export function openMinkMicrophone(
+  signal?: AbortSignal,
+): Promise<MinkMicrophone> {
+  return openMicrophone(signal, false);
+}
+
+/**
+ * Browser-only microphone lifecycle for one recording: the microphone is
+ * opened for it and released when it ends, on every success/error/cancel
+ * path.
  *
  * ★ A PAUSE ENDS VOICE CHAT, NOT DICTATION. The hands-free loop has no button
  * to press, so it needs the silence detector; dictation is finished with the
@@ -35,6 +382,29 @@ function chunkRms(chunk: Float32Array): number {
  * so `done(null)` reaches the composer's existing "No speech was recorded"
  * path and voice chat's empty-transcript path without a round trip.
  *
+ * ★ IN VOICE CHAT THE MICROPHONE STAYS OPEN FOR THE WHOLE TURN (`options.voice`).
+ * While nobody has spoken, only the newest `MINK_PRE_ROLL_MS` of audio is kept
+ * (reaching back to the start of a voiced run in progress, up to
+ * `MINK_SPEECH_LEAD_MAX_MS`), so the clip sent for transcription is the
+ * utterance with a little lead-in, never a minute of echo-cancelled room; the
+ * idle clock that ends a silent recording does not advance while the gate
+ * says Mink is playing, so listening through a long answer cannot time the mic
+ * out. `onSpeechStart` fires once when the gate's floor is reached and may
+ * answer false (a barge-in inside the grace window), after which the recorder
+ * disarms and keeps listening.
+ *
+ * ★★ THE 30-SECOND CAP COUNTS THE AUDIO KEPT, LEAD-IN INCLUDED. It counted
+ * from the moment speech started, so a long utterance kept 30 seconds plus its
+ * lead-in, more than `encodeMinkWav` accepts: the encoder threw inside `stop`,
+ * `done` never ran, and voice chat waited for a transcript that could never
+ * come, deaf until it was switched off. The cap is now on what is sent, and a
+ * recording that still cannot be encoded is reported as none.
+ *
+ * ★ ECHO CANCELLATION IS REQUESTED, NOT ASSUMED. The browser default is
+ * whatever the device does; in voice chat the speaker is playing Mink's own
+ * voice into the mic, and the barge-in floor is the second layer, not the
+ * first.
+ *
  * `onLevel` receives each chunk's loudness (RMS, 0 to 1) for the live
  * waveform. It runs about 125 times a second, so it must not set React state.
  */
@@ -42,117 +412,13 @@ export async function startMinkRecording(
   signal: AbortSignal,
   done: (file: File | null) => void,
   progress: (seconds: number) => void,
-  options: { endOnSilence?: boolean; onLevel?: (level: number) => void } = {},
+  options: MinkRecordingOptions = {},
 ) {
-  const endOnSilence = options.endOnSilence ?? true;
-  if (
-    !window.isSecureContext ||
-    !navigator.mediaDevices?.getUserMedia ||
-    !window.AudioContext
-  )
-    throw new Error(
-      "Speech-to-text needs HTTPS and a browser with microphone and AudioWorklet support. You can type your message instead.",
-    );
-  let context: AudioContext | undefined;
-  let stream: MediaStream | undefined;
-  let node: AudioWorkletNode | undefined;
-  let finished = false;
-  let total = 0;
-  let voicedSamples = 0;
-  let lastSpeechSample = 0;
-  let chunks: Float32Array[] = [];
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const spoken = () =>
-    voicedSamples >= (MINK_AUDIO_RATE * MINK_MIN_SPEECH_MS) / 1_000;
-  const stop = (keep = false) => {
-    if (finished) return;
-    finished = true;
-    clearTimeout(timer);
-    signal.removeEventListener("abort", cancel);
-    if (node) {
-      node.port.onmessage = null;
-      node.port.close();
-      node.disconnect();
-    }
-    stream?.getTracks().forEach((track) => track.stop());
-    if (context && context.state !== "closed")
-      void context.close().catch(() => {});
-    const heard = total > 0 && spoken();
-    if (keep && heard) {
-      const samples = new Float32Array(total);
-      let offset = 0;
-      chunks.forEach((chunk) => {
-        samples.set(chunk, offset);
-        offset += chunk.length;
-      });
-      done(
-        new File([encodeMinkWav(samples)], "voice-note.wav", {
-          type: "audio/wav",
-        }),
-      );
-    }
-    if (keep && !heard) done(null);
-    chunks = [];
-  };
-  const cancel = () => stop(false);
-  signal.addEventListener("abort", cancel, { once: true });
+  const microphone = await openMicrophone(signal, true);
   try {
-    signal.throwIfAborted();
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1 },
-      video: false,
-    });
-    if (signal.aborted) {
-      stream.getTracks().forEach((track) => track.stop());
-      throw new Error("Recording cancelled.");
-    }
-    context = new AudioContext({ sampleRate: MINK_AUDIO_RATE });
-    if (context.sampleRate !== MINK_AUDIO_RATE || !context.audioWorklet)
-      throw new Error(
-        "This browser cannot record the supported audio format. Type your message instead.",
-      );
-    await context.audioWorklet.addModule("/mink-audio-recorder.js");
-    signal.throwIfAborted();
-    node = new AudioWorkletNode(context, "mink-audio-recorder");
-    node.port.onmessage = (event: MessageEvent<Float32Array>) => {
-      if (finished) return;
-      const chunk = event.data;
-      if (
-        !(chunk instanceof Float32Array) ||
-        total + chunk.length > MINK_AUDIO_RATE * MINK_AUDIO_SECONDS
-      ) {
-        stop(false);
-        return;
-      }
-      chunks.push(chunk);
-      total += chunk.length;
-      const rms = chunkRms(chunk);
-      if (rms >= MINK_SPEECH_RMS_THRESHOLD) {
-        voicedSamples += chunk.length;
-        lastSpeechSample = total;
-      }
-      options.onLevel?.(rms);
-      progress(Math.floor(total / MINK_AUDIO_RATE));
-      const silenceSamples = (MINK_AUDIO_RATE * MINK_END_SILENCE_MS) / 1_000;
-      if (
-        total >= MINK_AUDIO_RATE * MINK_AUDIO_SECONDS ||
-        (endOnSilence && spoken() && total - lastSpeechSample >= silenceSamples)
-      )
-        stop(true);
-    };
-    const mute = context.createGain();
-    mute.gain.value = 0;
-    context
-      .createMediaStreamSource(stream)
-      .connect(node)
-      .connect(mute)
-      .connect(context.destination);
-    await context.resume();
-    signal.throwIfAborted();
-    timer = setTimeout(() => stop(true), MINK_AUDIO_SECONDS * 1_000);
-    return () => stop(true);
+    return microphone.record(signal, done, progress, options);
   } catch (error) {
-    stop(false);
+    microphone.close();
     throw error;
   }
 }
