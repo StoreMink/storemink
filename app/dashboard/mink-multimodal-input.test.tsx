@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import { useState } from "react";
 import type { MinkVoiceComposer } from "./chat-context";
+import type { MinkPreparedSend } from "./mink-ai";
 import {
   MinkMultimodalInput,
   shouldReadMinkImageAsStorefrontDesign,
@@ -96,10 +97,12 @@ function LiveComposer({
   initial = "",
   canSaveMedia = false,
   onSubmit,
+  onSubmitPrepared,
 }: {
   initial?: string;
   canSaveMedia?: boolean;
   onSubmit?: (message: string) => void;
+  onSubmitPrepared?: (prepared: MinkPreparedSend) => boolean;
   /** Changing it re-renders the composer, which is how a mocked reply lands. */
   tick?: number;
 }) {
@@ -111,6 +114,15 @@ function LiveComposer({
       disabled={false}
       canSaveMedia={canSaveMedia}
       onSubmit={onSubmit}
+      onSubmitPrepared={
+        onSubmitPrepared &&
+        ((prepared) => {
+          // As the chat does: a message it takes leaves the box.
+          const taken = onSubmitPrepared(prepared);
+          if (taken) setValue("");
+          return taken;
+        })
+      }
     >
       {({ attach, attachment, voice, submit, recorder }) => (
         <div>
@@ -779,4 +791,205 @@ it("uploads an intact CSV privately without calling the visual reader", async ()
   expect(submit.mock.calls[0][0]).toContain("Private product CSV attachment");
   expect(submit.mock.calls[0][0]).not.toContain("Whole Milk");
   expect(media.upload).not.toHaveBeenCalled();
+});
+
+describe("★★ Enter hands a message with attachments to the chat at once", () => {
+  function handOff() {
+    const sent: MinkPreparedSend[] = [];
+    const onSubmitPrepared = vi.fn((prepared: MinkPreparedSend) => {
+      sent.push(prepared);
+      return true;
+    });
+    return { sent, onSubmitPrepared };
+  }
+
+  it("clears the box and hands over the photo before anything is uploaded or read", async () => {
+    let finishUpload!: () => void;
+    media.upload.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = () =>
+            resolve({
+              asset: { id: "asset-1", url: SAVED_URL, filename: "echos.png" },
+            });
+        }),
+    );
+    const { sent, onSubmitPrepared } = handOff();
+    render(
+      <LiveComposer
+        initial="Is this in stock?"
+        canSaveMedia
+        onSubmit={vi.fn()}
+        onSubmitPrepared={onSubmitPrepared}
+      />,
+    );
+    await stageImage();
+    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSubmitPrepared).toHaveBeenCalledOnce();
+    expect(sent[0]).toMatchObject({
+      draft: "Is this in stock?",
+      attachments: [
+        { name: "echos.png", kind: "image", previewUrl: "blob:local" },
+      ],
+    });
+    // Nothing is left in the box, and nothing has been read yet.
+    expect(screen.queryByRole("button", { name: "View echos.png" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const setStatus = vi.fn();
+    const reading = sent[0]!.prepare({
+      signal: new AbortController().signal,
+      setStatus,
+    });
+    finishUpload();
+    const finished = await reading;
+
+    expect(finished.message).toContain("Is this in stock?");
+    expect(finished.message).toContain(SAVED_URL);
+    expect(finished.message).toContain(
+      "Visible product and storefront details",
+    );
+    expect(finished.previews).toEqual({ [`url:${SAVED_URL}`]: "blob:local" });
+    expect(setStatus).toHaveBeenCalledWith("Looking at your photo…");
+    // ★ The upload begun when the photo was picked is the one used: no second.
+    expect(media.upload).toHaveBeenCalledOnce();
+    // ★ The chat shows that picture now, so it is not revoked here.
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("puts the words and the photo back, with the reason, when reading fails, and keeps the upload", async () => {
+    const { sent, onSubmitPrepared } = handOff();
+    render(
+      <LiveComposer
+        initial="Is this in stock?"
+        canSaveMedia
+        onSubmit={vi.fn()}
+        onSubmitPrepared={onSubmitPrepared}
+      />,
+    );
+    await stageImage();
+    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(screen.getByLabelText("Message")).toHaveValue("");
+
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ error: "Busy" }),
+    });
+    await expect(
+      sent[0]!.prepare({
+        signal: new AbortController().signal,
+        setStatus: vi.fn(),
+      }),
+    ).rejects.toThrow("Busy");
+
+    let kept = false;
+    act(() => {
+      kept = sent[0]!.restore({ code: "attachment_failed", message: "Busy" });
+    });
+
+    expect(kept).toBe(true);
+    expect(
+      await screen.findByRole("button", { name: "View echos.png" }),
+    ).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("Busy");
+    expect(screen.getByLabelText("Message")).toHaveValue("Is this in stock?");
+
+    // Sending again reuses the saved copy: one upload in all.
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(onSubmitPrepared).toHaveBeenCalledTimes(2);
+    await sent[1]!.prepare({
+      signal: new AbortController().signal,
+      setStatus: vi.fn(),
+    });
+    expect(media.upload).toHaveBeenCalledOnce();
+  });
+
+  it("sends a photo on its own, with no words", async () => {
+    const { sent, onSubmitPrepared } = handOff();
+    render(
+      <LiveComposer onSubmit={vi.fn()} onSubmitPrepared={onSubmitPrepared} />,
+    );
+    await stageImage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSubmitPrepared).toHaveBeenCalledOnce();
+    expect(sent[0]?.draft).toBe("");
+  });
+
+  it("keeps everything in the box when the chat cannot take it", async () => {
+    const onSubmitPrepared = vi.fn(() => false);
+    render(
+      <LiveComposer
+        initial="Is this in stock?"
+        onSubmit={vi.fn()}
+        onSubmitPrepared={onSubmitPrepared}
+      />,
+    );
+    await stageImage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSubmitPrepared).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("button", { name: "View echos.png" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Message")).toHaveValue("Is this in stock?");
+  });
+
+  it("lets the files go but keeps the words when the box that sent them has closed", async () => {
+    const { sent, onSubmitPrepared } = handOff();
+    const onAdd = vi.fn();
+    function ChatBox() {
+      const [value, setValue] = useState("Is this in stock?");
+      return (
+        <MinkMultimodalInput
+          message={value}
+          onAdd={(next) => {
+            onAdd(next);
+            setValue(next);
+          }}
+          disabled={false}
+          canSaveMedia
+          onSubmit={vi.fn()}
+          onSubmitPrepared={(prepared) => {
+            const taken = onSubmitPrepared(prepared);
+            if (taken) setValue("");
+            return taken;
+          }}
+        >
+          {({ attach, attachment, submit }) => (
+            <div>
+              {attachment}
+              {attach}
+              <button type="button" onClick={() => void submit()}>
+                Send message
+              </button>
+            </div>
+          )}
+        </MinkMultimodalInput>
+      );
+    }
+    const view = render(<ChatBox />);
+    await stageImage();
+    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await sent[0]!
+      .prepare({ signal: new AbortController().signal, setStatus: vi.fn() })
+      .catch(() => undefined);
+    view.unmount();
+    // ★ Handed over, so leaving did not delete the upload the message uses.
+    expect(media.remove).not.toHaveBeenCalled();
+
+    const kept = sent[0]!.restore({ code: "attachment_failed", message: "x" });
+
+    expect(kept).toBe(false);
+    expect(onAdd).toHaveBeenCalledWith("Is this in stock?");
+    await waitFor(() => expect(media.remove).toHaveBeenCalledWith("asset-1"));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:local");
+  });
 });

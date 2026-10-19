@@ -41,6 +41,35 @@ vi.mock("./chat-context", () => ({
   useChat: vi.fn(),
   useMinkVoice: vi.fn(() => voiceChat.value),
 }));
+// A plain anchor stands in for next/link, so a click can be observed without
+// an app router: it runs the link's own onClick and stops the browser there.
+vi.mock("next/link", async () => {
+  const { createElement: h } = await import("react");
+  return {
+    default: ({
+      href,
+      onClick,
+      children,
+      ...rest
+    }: {
+      href: string;
+      onClick?: (event: { preventDefault(): void }) => void;
+      children?: unknown;
+    }) =>
+      h(
+        "a",
+        {
+          ...rest,
+          href,
+          onClick: (event: { preventDefault(): void }) => {
+            onClick?.(event);
+            event.preventDefault();
+          },
+        },
+        children as never,
+      ),
+  };
+});
 const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: vi.fn(() => ({ push: routerPush })),
@@ -67,9 +96,12 @@ const baseChatState = {
   feedbackSubmittingRunId: null,
   minkCredits: null,
   send: vi.fn(),
+  sendPrepared: vi.fn(() => true),
   cancel: vi.fn(),
   retry: vi.fn(),
   reset: vi.fn(),
+  startNewChat: vi.fn(),
+  showSpotlight: vi.fn(),
   loadConversation: vi.fn(),
   deleteConversation: vi.fn(),
   submitFeedback: vi.fn(),
@@ -985,5 +1017,205 @@ describe("★★ a followed link leaves the full view", () => {
     fireEvent.click(screen.getByRole("link", { name: "ORD101010726" }));
     expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
     expect(baseChatState.closeChat).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ a page Mink finds opens only when the merchant clicks it", () => {
+  const answer = {
+    id: 7,
+    role: "assistant" as const,
+    text: "Use **New product** on the Products page.",
+    artifacts: [
+      {
+        type: "navigation" as const,
+        title: "Products",
+        path: "/dashboard/products",
+        label: "Open Products",
+        highlight: { target: "add_product" as const, label: "New product" },
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("does not navigate, close or collapse the chat when the answer arrives", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: 6, role: "user", text: "Where do I add a product?" },
+        answer,
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(
+      screen.getByRole("link", { name: /Open Products/i }),
+    ).toHaveAttribute("href", "/dashboard/products");
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(baseChatState.closeChat).not.toHaveBeenCalled();
+    expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
+    expect(baseChatState.showSpotlight).not.toHaveBeenCalled();
+  });
+
+  it("opens the page, points out the control and steps the chat aside on a click", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [answer],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    fireEvent.click(screen.getByRole("link", { name: /Open Products/i }));
+
+    expect(baseChatState.showSpotlight).toHaveBeenCalledWith(
+      answer.artifacts[0]!.highlight,
+    );
+    // The full view collapses so the page behind it can be seen.
+    expect(baseChatState.toggleExpand).toHaveBeenCalledOnce();
+  });
+
+  it("hands a prefilled form its fields at the click, and only then", () => {
+    const prefilled = {
+      ...answer,
+      artifacts: [
+        {
+          type: "navigation" as const,
+          title: "New product",
+          path: "/dashboard/products/new",
+          label: "Open the product form",
+          prefill: {
+            kind: "product" as const,
+            fields: { name: "Almond shake" },
+          },
+        },
+      ],
+    };
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [prefilled],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    const link = screen.getByRole("link", { name: /Open the product form/i });
+
+    expect(link).toHaveAttribute(
+      "href",
+      "/dashboard/products/new?prefill=mink",
+    );
+    expect(window.sessionStorage.length).toBe(0);
+
+    fireEvent.click(link);
+
+    expect(window.sessionStorage.length).toBe(1);
+  });
+
+  it("asks for no spotlight on a new-tab click, which leaves this page where it is", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [answer],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    fireEvent.click(screen.getByRole("link", { name: /Open Products/i }), {
+      metaKey: true,
+    });
+
+    expect(baseChatState.showSpotlight).not.toHaveBeenCalled();
+    expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ New chat and messages with attachments", () => {
+  it("starts a new chat from the header, but not while Mink is answering", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [{ id: "user-1", role: "user", text: "Earlier message" }],
+    } as unknown as ReturnType<typeof useChat>);
+    const view = render(createElement(DashboardChat, { variant: "overlay" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(baseChatState.startNewChat).toHaveBeenCalledOnce();
+
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [{ id: "user-1", role: "user", text: "Earlier message" }],
+      isReplying: true,
+    } as unknown as ReturnType<typeof useChat>);
+    view.rerender(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.getByRole("button", { name: "New chat" })).toBeDisabled();
+  });
+
+  it("shows a sent photo in the message at once while Mink looks at it", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          text: "Is this in stock?",
+          pendingAttachments: [
+            { name: "shoe.jpg", kind: "image", previewUrl: "blob:shoe" },
+            { name: "sizes.pdf", kind: "document", previewUrl: null },
+          ],
+        },
+      ],
+      isReplying: true,
+      statusText: "Looking at your photo…",
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(screen.getByText("Is this in stock?")).toBeVisible();
+    expect(screen.getByRole("img", { name: "shoe.jpg" })).toHaveAttribute(
+      "src",
+      "blob:shoe",
+    );
+    expect(screen.getByText("sizes.pdf")).toBeVisible();
+    expect(screen.getByText("Looking at your photo…")).toBeVisible();
+  });
+
+  it("keeps showing this tab's copy of the photo once the message is finished", () => {
+    const url =
+      "https://storage.googleapis.com/storemink-media/stores/s1/media/shoe.webp";
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          text: addSavedMinkMediaReference("Is this in stock?", {
+            filename: "shoe.jpg",
+            url,
+          }),
+          localPreviews: { [`url:${url}`]: "blob:shoe" },
+        },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(screen.getByRole("img", { name: "shoe.jpg" })).toHaveAttribute(
+      "src",
+      "blob:shoe",
+    );
+  });
+
+  it("offers no Retry for a failure Retry cannot fix", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      error: {
+        code: "attachment_failed",
+        message: "Busy. Attach the file again to send it.",
+        retryable: false,
+      },
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Attach the file again to send it.",
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 });

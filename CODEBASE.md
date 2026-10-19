@@ -344,8 +344,9 @@ links off the dashboard leave the chat as it is; the desktop side panel stays
 open beside the page. `open_dashboard_page` (`tools/navigation-tools.ts`,
 dashboard:view, a closed destination map re-checked against the viewer's
 sections, product by id or SKU, order by reference) emits a `navigation`
-artifact the panel opens itself for a LIVE message (never restored
-history), closing the chat under 640px; `new_product` carries a prefill
+artifact shown as a link card that opens only when the merchant clicks it
+(until 2026-10-19 the panel opened it by itself; see "Mink chats like
+ChatGPT" below); `new_product` carries a prefill
 through `lib/mink/product-prefill.ts` (localStorage, read once by the
 product editor on `?prefill=mink`), and the product-create card's "Open in
 product form" uses the same hand-off.
@@ -1911,6 +1912,81 @@ says write nothing), and a reconciler for runs left with a NULL
 they owe nothing, and `discardFailedMinkRunDrafts` already compensates any
 proposal credits they reserved.
 
+### Mink chats like ChatGPT: which chat, page links, instant attachments (2026-10-19)
+
+Three things the owner found odd when testing, each fixed the way ChatGPT,
+Claude and Shopify's Sidekick behave. Help: `20261019_0230` edits eight
+sentences of the Mink guide in place.
+
+★★ WHICH CHAT A MESSAGE GOES INTO (`lib/mink/chat-session.ts`, pure apart
+from the storage it is handed). Every dashboard load used to reopen the
+actor's NEWEST conversation in every tab however old, so a question asked
+from Home landed in last week's thread, and deleting the open chat opened
+the next one. Now: a new tab starts a new chat (recent ones stay in
+History); the same tab continues its chat across pages, reloads and closing
+the panel until it has had no message for `MINK_CHAT_RESUME_MS` (2 hours),
+after which the next open starts a new one (`resumeOrStartFresh`, which
+`ChatProvider.toggleChat` calls on open); a question from Home or an Ask
+Mink button (`startExpandedChat`) starts a new chat, except while a reply
+is running, when the question waits in the box rather than stopping that
+answer; choosing a chat in History continues it; deleting the open chat
+leaves an empty one; the header gains **New chat** (disabled while
+replying, hidden in voice chat). The tab is remembered in sessionStorage
+(`storemink:mink-active-chat` = `{id, lastActivityAt}`), which a reload
+keeps and a new tab does not; every storage call fails quiet.
+`useMinkAi` records activity (`touchActivity`) when a run starts, when the
+server names the conversation and when the answer lands, and a reload's
+restore keeps the stored time rather than "now".
+★★ A MESSAGE THE MERCHANT SENDS NEVER DISAPPEARS: `sendSerial` is bumped by
+every send (and by `reset`), and a history load that began before it is
+dropped when it lands; before, a reload's restore could replace a question
+typed during the load. ★ `reset` detaches the run's AbortController before
+stopping it, which is how a send still reading its files tells "replaced"
+(abandon the message) from "stopped" (give it back).
+
+★★ A PAGE MINK FINDS OPENS ONLY WHEN CLICKED. `dashboard-chat.tsx`
+navigated as soon as an answer with a `navigation` artifact arrived, and on
+a phone that also closed the chat. The effect is gone; `NavigationArtifact`
+(mink-artifacts.tsx) is a real `MinkLink` (`minkNavigationHref`: the
+prefilled form's `?prefill=mink` path or the page), so the surface's
+capture-phase rule collapses the full view or closes the phone panel exactly
+as for any link in an answer, and a new-tab click works. Its click writes the
+prefill to session storage before the client navigation and, on a plain
+click only, asks `ChatProvider` for the spotlight. The prompt rule and the
+tool description say it is a link card: never claim a page or form is open,
+name the button, and answer a request to SEE data ("show me today's
+orders") with the read tools rather than a link. Prompt versions
+`read-beta-v35` / `draft-action-beta-v56`, registries `read-beta-v27` /
+`draft-beta-v44`.
+
+★★ ENTER MOVES A MESSAGE WITH ATTACHMENTS INTO THE CHAT AT ONCE
+(`MinkPreparedSend` in mink-ai.ts). The composer kept the photo under a
+second spinner while every file was uploaded and read, so the photo looked
+like it was uploading again. Now the composer's `onSubmitPrepared`
+(`handOver`) clears the box and hands over `{draft, attachments, prepare,
+restore, discard}`; `run` shows the message with `pendingAttachments` (this
+tab's object URL for a photo) and a status such as "Looking at your photo…"
+(`minkReadingStatus`), then awaits `prepare` on the run's own stop signal
+(never the composer's `generation`, because the composer remounts when the
+panel and full view swap). Success swaps the bubble to the finished text
+(file references and all) with `localPreviews`, so the same picture stays on
+screen; the hook owns those URLs and revokes them with the thread. A failed
+read removes the bubble and `restore` puts the words and files back in the
+box with the reason; Stop does the same without an error; New chat or
+leaving the dashboard `discard`s. If the composer that sent it has closed,
+`restore` returns false: the words go back, the files are released, and the
+chat says why with `retryable: false`, which hides Retry. The upload begun
+when a photo was picked is the one used (no second upload), each step's
+result is kept on its record so a retry redoes only what failed, Retry after
+a failed answer resends the finished message without reading again, and a
+photo or file may be sent without words. `prepareMinkAttachments` (module
+level in the composer) is shared with the voice path, which still prepares
+out of sight before it delivers. Tests: `lib/mink/chat-session.test.ts`,
+`mink-ai.test.ts` (lifecycle, the load race, the hand-over), the composer,
+`dashboard-chat.test.ts` (link cards, New chat, the bubble) and
+`chat-context.test.tsx`. ⚠ Not run in a browser; verified by the suites,
+the typecheck and the local apply of 0230.
+
 ### Mink tool routing: each run carries only the tools it needs (2026-10-19)
 
 **★★ EVERY MODEL STEP RE-SENT THE WHOLE PROMPT AND EVERY TOOL.** For an owner
@@ -2358,9 +2434,10 @@ Selected images appear as compact square removable previews inside the composer;
 clicking one opens a full-size viewer. Documents use compact file cards. There
 is no separate attachment approval/review panel. When the role holds
 `media:manage`, each image begins its ordinary Media Library upload as soon as
-it is selected; removal cleans up the staged asset, and Send waits for any
-in-flight upload rather than starting it. Pressing Send is the explicit
-processing action. PNG/JPEG/WebP/PDF bytes go
+it is selected; removal cleans up the staged asset, and Send hands the message
+to the chat at once, where the reading waits for any in-flight upload rather
+than starting another (see "Mink chats like ChatGPT"). Pressing Send is the
+explicit processing action. PNG/JPEG/WebP/PDF bytes go
 only to the isolated, bounded Vertex reader; .txt/.md imports are decoded
 locally. A sent image is also normalised through the ordinary Media action when
 the admin holds `media:manage`, so the exact preview survives conversation
@@ -12280,7 +12357,8 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
      `20260920_0119_retire_mink_conversation_cap_verify` immutably retires
      0036's obsolete physical-row-count query without deleting that evidence;
      the newer visible-list contract remains the product guarantee. The UI
-     restores the newest thread after refresh, exposes all ten in a dedicated
+     continues the tab's own recent chat after a refresh (see "Mink chats
+     like ChatGPT"), exposes all ten in a dedicated
      responsive sidebar, allows confirmed same-origin deletion, renders
      supported Markdown without raw HTML, remembers a bounded drag/keyboard
      panel width, and grows the multiline composer to a scrollable cap. The

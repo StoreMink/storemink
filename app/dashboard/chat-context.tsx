@@ -15,6 +15,7 @@ import {
   type MinkConversationSummary,
   type MinkMemoryPrompt,
   type MinkMessage,
+  type MinkPreparedSend,
   type MinkRunStep,
   type MinkUiError,
 } from "./mink-ai";
@@ -39,7 +40,8 @@ interface ChatContextType {
   toggleChat: () => void;
   closeChat: () => void;
   toggleExpand: () => void;
-  // Home "Ask anything…" box → open the chat in full view AND send the message.
+  // Home "Ask anything…" box → open the chat in full view AND send the
+  // message, in a new chat (see lib/mink/chat-session).
   startExpandedChat: (message: string) => void;
   // The shared Mink AI conversation (one thread across the Home box + panel).
   messages: MinkMessage[];
@@ -60,7 +62,7 @@ interface ChatContextType {
   spokenEnded: boolean;
   /** The tools the current run has called, in order. */
   steps: MinkRunStep[];
-  error: { code: string; message: string } | null;
+  error: MinkUiError | null;
   feedbackSubmittingRunId: string | null;
   /** A control Mink is pointing at on the current page, until dismissed. */
   spotlight: MinkHighlight | null;
@@ -72,9 +74,16 @@ interface ChatContextType {
   minkCredits: MinkCreditSummary | null;
   /** `voice` marks a transcript from voice chat; a typed send leaves it unset. */
   send: (raw?: string, options?: { voice?: boolean }) => void;
+  /**
+   * A typed message with attachments: it shows in the chat at once and Mink
+   * reads the files as its first step. False when it could not be taken.
+   */
+  sendPrepared: (prepared: MinkPreparedSend) => boolean;
   cancel: () => void;
   retry: () => void;
   reset: () => void;
+  /** Leaves the open chat for a new, empty one; History keeps it. */
+  startNewChat: () => void;
   loadConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<MinkUiError | null>;
   submitFeedback: (input: {
@@ -243,6 +252,16 @@ export function ChatProvider({
     },
     [minkSend, noteSend],
   );
+  const minkSendPrepared = mink.sendPrepared;
+  const sendPrepared = useCallback(
+    (prepared: MinkPreparedSend) => {
+      if (!minkSendPrepared(prepared)) return false;
+      noteSend();
+      return true;
+    },
+    [minkSendPrepared, noteSend],
+  );
+  const { isReplying, setInput, startNewChat, resumeOrStartFresh } = mink;
 
   const refreshMinkCredits = useCallback(async () => {
     if (!minkEnabled) return;
@@ -262,20 +281,34 @@ export function ChatProvider({
     return () => window.clearTimeout(timer);
   }, [mink.isReplying, refreshMinkCredits]);
 
-  const toggleChat = useCallback(() => setIsChatOpen((prev) => !prev), []);
+  // ★ Opening Mink continues the chat it was showing, unless that chat has
+  // gone quiet for hours, when a new one starts (ChatGPT, Claude, Sidekick).
+  const toggleChat = useCallback(() => {
+    if (!isChatOpen) resumeOrStartFresh();
+    setIsChatOpen(!isChatOpen);
+  }, [isChatOpen, resumeOrStartFresh]);
   const closeChat = useCallback(() => {
     setIsChatOpen(false);
     setIsExpanded(false);
   }, []);
   const toggleExpand = useCallback(() => setIsExpanded((prev) => !prev), []);
 
+  // ★ A question from Home or an "Ask Mink" button is a new topic, so it
+  // starts a new chat rather than landing in whatever thread was open last.
+  // While Mink is still answering, the question waits in the box instead:
+  // starting a new chat then would stop that answer.
   const startExpandedChat = useCallback(
     (message: string) => {
       setIsChatOpen(true);
       setIsExpanded(true);
+      if (isReplying) {
+        setInput(message);
+        return;
+      }
+      startNewChat();
       send(message);
     },
-    [send],
+    [isReplying, setInput, startNewChat, send],
   );
 
   const value = useMemo(
@@ -293,6 +326,7 @@ export function ChatProvider({
       startExpandedChat,
       ...mink,
       send,
+      sendPrepared,
     }),
     [
       isChatOpen,
@@ -308,6 +342,7 @@ export function ChatProvider({
       startExpandedChat,
       mink,
       send,
+      sendPrepared,
     ],
   );
 
@@ -362,9 +397,11 @@ export function useChat() {
       dismissMemorySuggestion: () => {},
       minkCredits: null,
       send: () => {},
+      sendPrepared: () => false,
       cancel: () => {},
       retry: () => {},
       reset: () => {},
+      startNewChat: () => {},
       loadConversation: async () => {},
       deleteConversation: async () => ({
         code: "mink_unavailable",
