@@ -233,6 +233,7 @@ export function ChatProvider({
     error: mink.error,
     spokenText: mink.spokenText,
     spokenEnded: mink.spokenEnded,
+    spokenKept: mink.spokenKept,
     send: voiceSend,
     cancel: mink.cancel,
     langFallback:

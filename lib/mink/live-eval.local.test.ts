@@ -204,6 +204,13 @@ describe.skipIf(!LIVE)("★ Mink live routing eval", () => {
           ...config,
           toolRouting: mode !== "baseline",
           liteRouting: mode === "lite",
+          // ★ The eval measures each configured model: a fallback answering
+          // for a stalled one would score the wrong model, and the session's
+          // own stall deadlines would hide the stalls this harness counts.
+          // Stalls are detected and retried here instead (`stallMs`).
+          fallbackModel: null,
+          firstChunkTimeoutMs: 120_000,
+          streamIdleTimeoutMs: 120_000,
         };
         const runActor: MinkActorContext = {
           ...actor,

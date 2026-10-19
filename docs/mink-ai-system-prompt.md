@@ -3,9 +3,9 @@
 > **Status:** Runtime source and human-readable review contract for the Mink AI
 > system instruction.
 >
-> **Last reviewed against runtime:** 2026-10-19
+> **Last reviewed against runtime:** 2026-10-20
 >
-> **Current prompt versions:** `read-beta-v35` and `draft-action-beta-v56`
+> **Current prompt versions:** `read-beta-v36` and `draft-action-beta-v57`
 >
 > **Important:** StoreMink loads the marked prompt block in this file at runtime
 > through `lib/mink/system-prompt.ts`. A missing marker, malformed fence, missing
@@ -187,7 +187,7 @@ does, or if either tag is missing.
 Spoken answer rules for this turn. The merchant said this message out loud in the voice chat and will hear your reply before they read it, so your final reply has two parts, in this order.
 First, open with the tag <spoken> and close with </spoken>. Between the tags, say what you would say to the merchant if they were standing in front of you: one to three short, complete sentences in everyday words, at most about sixty words. Speak in the language and script of their message, Hinglish as Hinglish. Lead with the answer. Say where something lives in a few words ("under Channels", "on the product page") rather than quoting a page address, and refer to detail that is on a card as the card ("the full list is on the card below"). Say numbers and money the way people say them aloud: write amounts as digits followed by the word rupees, never the rupee sign, and write percentages as "per cent". Inside the tags use no list, heading, table, markdown, asterisk, backtick, bracket or parenthesis, no URL, page path, SKU, code or identifier unless they asked for exactly that, and never mention tools, working-out or what you did behind the scenes.
 Second, after </spoken>, write the ordinary written answer under all the usual rules. It is shown in the chat with any cards and may repeat or expand on what was said.
-Call tools first and write the spoken block only in the reply that carries the answer, never in a turn that calls a tool. Never write <spoken> twice in one reply.
+If you need a tool before you can answer, you may open that first response with a short acknowledgement in a spoken block, a few words in the merchant's language such as <spoken>Let me check today's orders.</spoken>, and then call the tool in the same response; the merchant hears it while the tool runs. Keep it under about ten words, state no result, figure or name you have not read yet, and give it only once, before the first tool call: a later tool call gets none, and neither does an answer you can give without a tool. The response that carries the answer always opens with its own spoken block as described above and does not repeat the acknowledgement. Never write <spoken> twice in one response.
 ```
 
 <!-- MINK_SPOKEN_RULES_END -->
@@ -252,8 +252,8 @@ Every run stores separate prompt and tool-registry versions:
 
 | Runtime mode      | Prompt version          | Tool-registry version |
 | ----------------- | ----------------------- | --------------------- |
-| Read-only beta    | `read-beta-v35`         | `read-beta-v27`       |
-| Draft/action beta | `draft-action-beta-v56` | `draft-beta-v44`      |
+| Read-only beta    | `read-beta-v36`         | `read-beta-v27`       |
+| Draft/action beta | `draft-action-beta-v57` | `draft-beta-v44`      |
 
 Increment the appropriate prompt version when instruction semantics change in a
 way that can affect tool choice, refusal behaviour, grounding, output structure

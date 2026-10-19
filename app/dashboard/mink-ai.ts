@@ -170,6 +170,12 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
   // shown or kept.
   const [spokenText, setSpokenText] = useState("");
   const [spokenEnded, setSpokenEnded] = useState(false);
+  // ★ What this reply has already said and KEPT: a short acknowledgement
+  // ("Let me check today's orders.") spoken before a tool call. `spokenText`
+  // is only the block now streaming; the voice loop reads this to finish the
+  // acknowledgement it may not have seen whole, and to keep playing it rather
+  // than withdrawing it when the tool call resets the text.
+  const [spokenKept, setSpokenKept] = useState("");
   const [steps, setSteps] = useState<MinkRunStep[]>([]);
   const stepsRef = useRef<MinkRunStep[]>([]);
   const [error, setError] = useState<MinkUiError | null>(null);
@@ -425,6 +431,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
       setStreamingText("");
       setSpokenText("");
       setSpokenEnded(false);
+      setSpokenKept("");
       stepsRef.current = [];
       setSteps([]);
       setMemoryPrompt(null);
@@ -598,6 +605,18 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
           } else if (event === "spoken_end") {
             setSpokenEnded(true);
           } else if (event === "delta_reset") {
+            // The turn's text is withdrawn: a retry, or working-out before a
+            // tool call. A voice turn's finished acknowledgement survives the
+            // second (`keepSpoken`, with the words the server split out): it
+            // moves to `spokenKept`, and the next block starts empty.
+            const said =
+              data.keepSpoken === true && typeof data.spoken === "string"
+                ? data.spoken.trim()
+                : "";
+            if (said)
+              setSpokenKept((previous) =>
+                previous ? `${previous} ${said}` : said,
+              );
             setStreamingText("");
             setSpokenText("");
             setSpokenEnded(false);
@@ -626,6 +645,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
             setStreamingText("");
             setSpokenText("");
             setSpokenEnded(false);
+            setSpokenKept("");
           } else if (event === "memory_suggestion") {
             const suggestion = readMinkMemorySuggestion(data);
             if (suggestion) setMemoryPrompt({ suggestion, status: "offered" });
@@ -660,6 +680,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
           setStreamingText("");
           setSpokenText("");
           setSpokenEnded(false);
+          setSpokenKept("");
           setSteps([]);
           setReplying(false);
         }
@@ -732,6 +753,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     setStreamingText("");
     setSpokenText("");
     setSpokenEnded(false);
+    setSpokenKept("");
     stepsRef.current = [];
     setSteps([]);
     setMemoryPrompt(null);
@@ -860,6 +882,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     streamingText,
     spokenText,
     spokenEnded,
+    spokenKept,
     steps,
     error,
     feedbackSubmittingRunId,

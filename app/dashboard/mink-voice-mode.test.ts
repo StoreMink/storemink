@@ -784,7 +784,7 @@ describe("useMinkVoiceMode", () => {
   });
 
   describe("★ spoken blocks that end oddly", () => {
-    it("a sentence spoken before a tool call does not silence the answer after it", async () => {
+    it("a withdrawn sentence (a retried turn) does not silence the answer after it", async () => {
       const h = makeHarness();
       await act(async () => h.result.current.toggle());
       await say(h, "How many orders?");
@@ -803,7 +803,7 @@ describe("useMinkVoiceMode", () => {
       act(() => session.events.onStart());
       act(() => session.events.onIdle("done"));
       expect(h.result.current.state).toBe("listening");
-      // The tool call withdraws it; the answer comes in a block of its own.
+      // A retry withdraws it; the answer comes in a block of its own.
       h.rerender({
         ...h.input,
         isReplying: true,
@@ -881,6 +881,150 @@ describe("useMinkVoiceMode", () => {
         "Sales are up this week.",
         "en-IN",
       );
+    });
+  });
+
+  describe("★★ an acknowledgement before a tool call", () => {
+    it("plays while the tools run, shows Thinking after it, then plays the answer after it", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "How many orders?");
+      const session = h.speech.last();
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "Let me check your orders.",
+        spokenEnded: true,
+      });
+      expect(session.enqueue).toHaveBeenCalledWith(
+        "Let me check your orders.",
+        "en-IN",
+      );
+      // The run keeps it: nothing is withdrawn or cut.
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "",
+        spokenEnded: false,
+        spokenKept: "Let me check your orders.",
+      });
+      expect(session.dropPending).not.toHaveBeenCalled();
+      expect(session.reopen).not.toHaveBeenCalled();
+      act(() => session.events.onStart());
+      expect(h.result.current.state).toBe("speaking");
+      act(() => session.events.onIdle("done"));
+      // Played out, and the answer is still being worked out.
+      expect(h.result.current.state).toBe("waiting");
+      expect(h.mic.last().input.gate.current).toBe(MINK_BARGE_IN_GATE);
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "You have twelve orders today.",
+        spokenEnded: true,
+        spokenKept: "Let me check your orders.",
+      });
+      expect(session.reopen).toHaveBeenCalledOnce();
+      expect(session.enqueue).toHaveBeenLastCalledWith(
+        "You have twelve orders today.",
+        "en-IN",
+      );
+      // Spoken once each: the acknowledgement is never said again.
+      expect(
+        session.enqueue.mock.calls.filter(
+          ([text]) => text === "Let me check your orders.",
+        ),
+      ).toHaveLength(1);
+      h.rerender({
+        ...h.input,
+        messages: [
+          ...h.input.messages,
+          user("u1", "How many orders?"),
+          assistant("a1", "**12** today.", "You have twelve orders today."),
+        ],
+        isReplying: false,
+        spokenText: "",
+        spokenEnded: false,
+        spokenKept: "",
+      });
+      expect(session.enqueue).toHaveBeenCalledTimes(2);
+      act(() => session.events.onIdle("done"));
+      expect(h.result.current.state).toBe("listening");
+    });
+
+    it("says an acknowledgement whose close it never saw (the events arrived together)", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "How many orders?");
+      const session = h.speech.last();
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "",
+        spokenEnded: false,
+        spokenKept: "Let me check your orders.",
+      });
+      expect(session.enqueue).toHaveBeenCalledWith(
+        "Let me check your orders.",
+        "en-IN",
+      );
+      expect(session.end).toHaveBeenCalledOnce();
+      expect(session.dropPending).not.toHaveBeenCalled();
+    });
+
+    it("reads the written answer when the answer after it carried no spoken block", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "Sales?");
+      const session = h.speech.last();
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenKept: "Let me check.",
+      });
+      act(() => session.events.onStart());
+      act(() => session.events.onIdle("done"));
+      expect(h.result.current.state).toBe("waiting");
+      h.rerender({
+        ...h.input,
+        messages: [
+          ...h.input.messages,
+          user("u1", "Sales?"),
+          assistant("a1", "Sales are **up** this week."),
+        ],
+        isReplying: false,
+        spokenKept: "",
+      });
+      expect(session.reopen).toHaveBeenCalledOnce();
+      expect(session.enqueue).toHaveBeenLastCalledWith(
+        "Sales are up this week.",
+        "en-IN",
+      );
+      expect(session.end).toHaveBeenCalledTimes(2);
+    });
+
+    it("goes back to Thinking when the acknowledgement had already played before the run kept it", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "How many orders?");
+      const session = h.speech.last();
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "Let me check your orders.",
+        spokenEnded: true,
+      });
+      act(() => session.events.onStart());
+      act(() => session.events.onIdle("done"));
+      expect(h.result.current.state).toBe("listening");
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "",
+        spokenEnded: false,
+        spokenKept: "Let me check your orders.",
+      });
+      expect(h.result.current.state).toBe("waiting");
+      expect(h.mic.last().input.gate.current).toBe(MINK_BARGE_IN_GATE);
     });
   });
 

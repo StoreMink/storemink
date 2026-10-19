@@ -73,7 +73,7 @@ export async function runMinkAgent(input: {
     },
     onReset: () => {
       streamed = 0;
-      void onEvent?.({ type: "text_reset" });
+      void onEvent?.({ type: "text_reset", reason: "retry" });
     },
   };
   let turn = await session.sendUserMessage(message, streamOptions);
@@ -87,7 +87,17 @@ export async function runMinkAgent(input: {
   while (turn.functionCalls.length > 0) {
     if (streamed > 0) {
       streamed = 0;
-      await onEvent?.({ type: "text_reset" });
+      // ★ A turn asking for more tools is asked again from the start below,
+      // so even a voice acknowledgement in it is withdrawn ("restart"): the
+      // repeated turn says it again. Any other tool call keeps it.
+      await onEvent?.({
+        type: "text_reset",
+        reason: turn.functionCalls.some(
+          (call) => call.name === REQUEST_MORE_TOOLS,
+        )
+          ? "restart"
+          : "tool_call",
+      });
     }
     // ★★ A NARROWED RUN THAT ASKS FOR MORE TOOLS STARTS AGAIN, IT IS NOT
     // TOPPED UP. Adding declarations mid-chat would re-send the whole prompt

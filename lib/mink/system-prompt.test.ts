@@ -244,7 +244,12 @@ describe("Mink system prompt document", () => {
     expect(prompt).toContain(
       "open with the tag <spoken> and close with </spoken>",
     );
-    expect(prompt).toContain("never in a turn that calls a tool");
+    // ★ A short acknowledgement may open the turn that calls a tool (played
+    // while the tool runs); the answer still comes in its own block.
+    expect(prompt).toContain(
+      "you may open that first response with a short acknowledgement",
+    );
+    expect(prompt).toContain("does not repeat the acknowledgement");
     expect(prompt).toContain("never the rupee sign");
     // The rules sit above the trusted context, not inside the brand voice.
     expect(prompt.indexOf("<spoken>")).toBeLessThan(

@@ -1,0 +1,297 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+type Call = {
+  location: string;
+  model: string;
+  message: unknown;
+  config: { abortSignal?: AbortSignal; systemInstruction?: unknown };
+};
+
+const h = vi.hoisted(() => ({
+  create: vi.fn(),
+  /** What each send does, in order; the last one repeats. */
+  plan: [] as Array<(call: Call) => Promise<AsyncIterable<unknown>>>,
+  calls: [] as Call[],
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+}));
+
+vi.mock("@google/genai", () => ({
+  ThinkingLevel: { HIGH: "HIGH", LOW: "LOW" },
+  GoogleGenAI: class {
+    location: string;
+    chats: { create: (params: unknown) => unknown };
+    constructor(options: { location: string }) {
+      this.location = options.location;
+      this.chats = { create: (params) => h.create(this.location, params) };
+    }
+  },
+}));
+vi.mock("@/lib/observability/logger", () => ({
+  logInfo: vi.fn(),
+  logWarn: h.logWarn,
+  logError: h.logError,
+}));
+
+import { createVertexMinkSession } from "./vertex-client";
+import { resetMinkModelHealth } from "./provider-health";
+import type { MinkConfig } from "./config";
+import type { MinkActorContext } from "./types";
+
+const actor: MinkActorContext = {
+  storeId: "store",
+  adminId: "owner",
+  email: null,
+  effectivePlan: "pro",
+  roleSlug: "superadmin",
+  permissions: {},
+  isSuperadmin: true,
+  locationIds: null,
+  analyticsTimeZone: "Asia/Kolkata",
+  currency: "INR",
+  defaultLowStockThreshold: 5,
+  requestId: "request",
+};
+const config = {
+  projectId: "project",
+  model: "gemini-3.7-flash",
+  location: "global",
+  maxOutputTokens: 100,
+  maxModelRetries: 2,
+  firstChunkTimeoutMs: 20_000,
+  streamIdleTimeoutMs: 20_000,
+  fallbackModel: "gemini-3.5-flash",
+  fallbackLocation: "asia-south1",
+} as MinkConfig;
+
+function stream(...texts: string[]): AsyncIterable<unknown> {
+  return (async function* () {
+    for (const text of texts)
+      yield { candidates: [{ content: { parts: [{ text }] } }] };
+  })();
+}
+const answer =
+  (...texts: string[]) =>
+  async () =>
+    stream(...texts);
+/** Never opens: the provider sent nothing at all. */
+const silent = () => new Promise<never>(() => {});
+/** Opens, says something, then goes quiet. */
+const goesQuiet = (text: string) => async () =>
+  (async function* () {
+    yield { candidates: [{ content: { parts: [{ text }] } }] };
+    await new Promise(() => {});
+  })();
+const status = (code: number) => async () => {
+  throw Object.assign(new Error(`status ${code}`), { status: code });
+};
+
+beforeEach(() => {
+  resetMinkModelHealth();
+  h.plan = [];
+  h.calls = [];
+  h.create.mockImplementation(
+    (location: string, params: { model: string; history?: unknown[] }) => ({
+      sendMessageStream: (call: {
+        message: unknown;
+        config: Call["config"];
+      }) => {
+        const record = {
+          location,
+          model: params.model,
+          message: call.message,
+          config: call.config,
+        };
+        h.calls.push(record);
+        const step = h.plan.length > 1 ? h.plan.shift()! : h.plan[0];
+        return step(record);
+      },
+      getHistory: (curated?: boolean) => {
+        expect(curated).toBe(true);
+        return params.history ?? [];
+      },
+    }),
+  );
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+const session = (
+  options: Partial<Parameters<typeof createVertexMinkSession>[3]> = {},
+  overrides: Partial<MinkActorContext> = {},
+) =>
+  createVertexMinkSession(config, { ...actor, ...overrides }, [], {
+    history: [{ role: "user", text: "earlier" }],
+    ...options,
+  });
+
+describe("★★ a stalled turn", () => {
+  it("is abandoned at its first-chunk deadline and asked again on the fallback, from the same history", async () => {
+    vi.useFakeTimers();
+    h.plan = [silent, answer("Twelve orders.")];
+    const mink = session();
+    const turn = mink.sendUserMessage("How many orders today?");
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(h.calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(turn).resolves.toMatchObject({
+      text: "Twelve orders.",
+      retryCount: 1,
+    });
+    expect(h.calls.map((call) => `${call.location}/${call.model}`)).toEqual([
+      "global/gemini-3.7-flash",
+      "asia-south1/gemini-3.5-flash",
+    ]);
+    // A new chat at the fallback's location, from the history the main chat
+    // had: the stalled attempt added nothing to it.
+    expect(h.create).toHaveBeenCalledTimes(2);
+    expect(h.create.mock.calls[1][0]).toBe("asia-south1");
+    expect(h.create.mock.calls[1][1]).toMatchObject({
+      model: "gemini-3.5-flash",
+      history: [{ role: "user", parts: [{ text: "earlier" }] }],
+    });
+    expect(mink.model).toBe("gemini-3.5-flash");
+    expect(mink.location).toBe("asia-south1");
+    // The abandoned request was told to stop.
+    expect(h.calls[0].config.abortSignal?.aborted).toBe(true);
+    expect(h.logWarn).toHaveBeenCalledWith(
+      "mink.model: attempt failed",
+      expect.objectContaining({
+        model: "gemini-3.7-flash",
+        stall: "first_chunk",
+      }),
+    );
+  });
+
+  it("withdraws what streamed before a stream went quiet, then retries", async () => {
+    vi.useFakeTimers();
+    h.plan = [goesQuiet("Half "), answer("A whole answer.")];
+    const deltas: string[] = [];
+    const resets = vi.fn();
+    const turn = session().sendUserMessage("Hi", {
+      onDelta: (text) => deltas.push(text),
+      onReset: resets,
+    });
+    await vi.advanceTimersByTimeAsync(20_000);
+    await expect(turn).resolves.toMatchObject({ text: "A whole answer." });
+    expect(deltas).toEqual(["Half ", "A whole answer."]);
+    expect(resets).toHaveBeenCalledOnce();
+  });
+
+  it("stays on the fallback for the rest of the run once it has answered", async () => {
+    h.plan = [status(429), answer("ok")];
+    const mink = session();
+    await mink.sendUserMessage("first");
+    await mink.sendToolResponses([{ id: "1", name: "tool", response: {} }]);
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.7-flash",
+      "gemini-3.5-flash",
+      "gemini-3.5-flash",
+    ]);
+    // No third chat: the second turn went to the chat that answered.
+    expect(h.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives a voice turn at most 12 s, and a HIGH-thinking turn four times the deadline", async () => {
+    vi.useFakeTimers();
+    h.plan = [silent, answer("ok")];
+    const voice = session({}, { answerMedium: "spoken" }).sendUserMessage("Hi");
+    await vi.advanceTimersByTimeAsync(12_000);
+    await expect(voice).resolves.toMatchObject({ retryCount: 1 });
+
+    resetMinkModelHealth();
+    h.calls = [];
+    h.plan = [silent, answer("ok")];
+    const deep = session({ thinkingLevel: "high" }).sendUserMessage("Code");
+    await vi.advanceTimersByTimeAsync(79_999);
+    expect(h.calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(deep).resolves.toMatchObject({ retryCount: 1 });
+  });
+
+  it("is not retried when the run itself was stopped", async () => {
+    h.plan = [silent];
+    const controller = new AbortController();
+    const turn = session({ abortSignal: controller.signal }).sendUserMessage(
+      "Hi",
+    );
+    await Promise.resolve();
+    controller.abort();
+    await expect(turn).rejects.toMatchObject({ name: "AbortError" });
+    expect(h.calls).toHaveLength(1);
+  });
+});
+
+describe("★ the fallback", () => {
+  it("is dropped when it refuses outright, and the turn goes back to the main model", async () => {
+    h.plan = [status(429), status(404), answer("ok")];
+    const mink = session();
+    await expect(mink.sendUserMessage("Hi")).resolves.toMatchObject({
+      text: "ok",
+      retryCount: 2,
+    });
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.7-flash",
+      "gemini-3.5-flash",
+      "gemini-3.7-flash",
+    ]);
+    expect(h.logError).toHaveBeenCalledWith(
+      "mink.model: fallback refused",
+      expect.anything(),
+      expect.objectContaining({ model: "gemini-3.5-flash", status: 404 }),
+    );
+    // Never offered again in this session: a later failure retries the main model.
+    h.calls = [];
+    h.plan = [status(503), answer("ok")];
+    await mink.sendToolResponses([{ id: "1", name: "tool", response: {} }]);
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.7-flash",
+      "gemini-3.7-flash",
+    ]);
+  });
+
+  it("is not used at all when switched off", async () => {
+    h.plan = [status(429), answer("ok")];
+    const mink = createVertexMinkSession(
+      { ...config, fallbackModel: null },
+      actor,
+      [],
+      { history: [] },
+    );
+    await mink.sendUserMessage("Hi");
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.7-flash",
+      "gemini-3.7-flash",
+    ]);
+  });
+
+  it("★ is where a new run starts while the main model is cooling down on this instance", async () => {
+    vi.useFakeTimers();
+    h.plan = [status(429), answer("ok")];
+    await session().sendUserMessage("Hi");
+
+    h.calls = [];
+    const next = session();
+    expect(next.model).toBe("gemini-3.5-flash");
+    await next.sendUserMessage("Hi again");
+    expect(h.calls.map((call) => call.model)).toEqual(["gemini-3.5-flash"]);
+
+    // A minute later the main model is tried first again.
+    await vi.advanceTimersByTimeAsync(60_001);
+    expect(session().model).toBe("gemini-3.7-flash");
+  });
+
+  it("sends each attempt with the full chat config and its own abort signal", async () => {
+    h.plan = [answer("ok")];
+    const controller = new AbortController();
+    await session({ abortSignal: controller.signal }).sendUserMessage("Hi");
+    const sent = h.calls[0].config;
+    expect(sent.systemInstruction).toEqual(expect.any(String));
+    expect(sent.abortSignal).toBeInstanceOf(AbortSignal);
+    // Linked to the run, never the run's own signal (each attempt can be
+    // abandoned without stopping the run).
+    expect(sent.abortSignal).not.toBe(controller.signal);
+  });
+});

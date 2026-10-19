@@ -582,8 +582,10 @@ editors (`offers/offer-form.tsx`, `categories/categories-management-view`
   from the written answer, as before. The block ends at `spoken_end` or when
   the answer lands, never because written text came first; an empty block
   leaves the written answer to be read; a block withdrawn after it closed (a
-  sentence before a tool call) REOPENS the turn (`reopen()` on the session,
-  a fresh segmenter) for the block with the answer. ★ What the run withdraws
+  retried turn) REOPENS the turn (`reopen()` on the session, a fresh
+  segmenter) for the block with the answer, while a closed block before a
+  tool call is KEPT as an acknowledgement and played while the tool runs
+  (since 2026-10-20; see "Mink keeps answering when its model is busy"). ★ What the run withdraws
   and the merchant has not yet heard is not heard: `dropPending()` drops the
   queued pieces and the one being fetched, and cuts from the playhead
   (`MinkSpeechPlayhead.cutFrom`) any audio scheduled to start later; the
@@ -1912,6 +1914,102 @@ says write nothing), and a reconciler for runs left with a NULL
 they owe nothing, and `discardFailedMinkRunDrafts` already compensates any
 proposal credits they reserved.
 
+### Mink keeps answering when its model is busy, and speaks sooner (2026-10-20)
+
+The owner's report: "sometimes error shows up saying mink ai is currently
+unavailable", and voice chat "takes long time to answer". Both shared a cause:
+gemini-3.7-flash is served only at `global`, where Google's shared capacity
+answers 429 RESOURCE_EXHAUSTED or stalls for minutes at a time (production
+failed 6 of 11 runs between 18:03 and 18:08 UTC on 2026-10-19; the live eval
+saw 295 stalls in 424 attempts), and the client had one retry on the same pool
+250 ms later and no deadline short of the run's 180 s.
+
+★★ A STALL IS ABANDONED, AND THE RETRY GOES TO ANOTHER POOL
+(`vertex-client.ts`, `retry.ts`). Every provider attempt has its own abort
+signal (linked to the run's) and a watchdog: no first chunk within
+`MINK_FIRST_CHUNK_SECONDS` (20; a voice turn at most 12 s; a HIGH-thinking turn
+four times as long, since it reasons before it writes) or a stream quiet for
+`MINK_STREAM_IDLE_SECONDS` (20) is a `MinkStallError`, retried like a 503. Each
+await also races the watchdog, so an attempt ends at its deadline even if the
+SDK ignores the abort. `withMinkFailover` sends the first retry at once to the
+fallback, `MINK_FALLBACK_MODEL` (`gemini-3.5-flash`) at `MINK_FALLBACK_LOCATION`
+(`asia-south1`): another region is another capacity pool, and it answered the
+same tool flow two to three times faster when probed on storemink-staging
+(2026-10-19). Retries alternate main, fallback, main (`MINK_MAX_MODEL_RETRIES`
+now 2, bounded 0 to 3); only a same-pool retry waits (250 ms, 500 ms, 1 s).
+★ Every retry opens a NEW chat from `chat.getHistory(true)` on the next model.
+The SDK records a turn only after its last chunk, so that history is exactly
+what it was before the failed attempt, and the SDK queues a chat's sends behind
+the previous one, so a chat whose request ignored its abort could block for
+ever. A model switch mid-run works: 3.5 Flash answered a tool result whose call
+(with its thought signature) 3.7 had made. Each send passes the full chat
+config with the attempt's own signal, because `sendMessageStream`'s config
+replaces the chat's.
+★ A run stays on the model that answered (sticky) and goes back to the main
+model only if the fallback fails too; `restartWithAllTools` widens onto the
+fallback when the main model has already failed in the run.
+★ A fallback that refuses outright (404 or 403: a wrong id, or not enabled at
+that location) is dropped for the session and logged as `mink.model: fallback
+refused` (logError); the turn returns to the main model, so a misconfigured
+fallback never fails a run the main model could answer, and when the refusal
+used the last retry the error reported is the main model's.
+★ `lib/mink/provider-health.ts` remembers for 60 s, per process, that a model
+failed (each failure is a `mink.model: attempt failed` logWarn with the model,
+location, status or stall phase); a run created meanwhile starts on the
+fallback, and one answer clears the mark. Per process deliberately: instances
+share nothing, and a shared store would add a database round trip to every run
+to save one stall per instance per window.
+★ `session.location` says where the answering model runs; the run is priced
+there (`pricingLocation`) and the run log carries `location`. ⚠
+`estimateMinkCost` knows no 3.5 Flash price, so a run the fallback answered has
+no cost estimate (null, "Unknown" on the operator console) rather than a
+borrowed one; credits are band-based and unaffected. ⚠ That gemini-3.5-flash
+is served at asia-south1 was verified on storemink-staging only; on production
+a refusal would show as `mink.model: fallback refused` and cost nothing else.
+The live eval switches the fallback off and keeps its own stall detection, so
+it still measures each configured model.
+
+★★ A SPOKEN "LET ME CHECK" PLAYS WHILE THE TOOLS RUN. On a voice turn the first
+audio used to come from the block with the answer, after every tool call:
+measured about 6 s after the stream started. The spoken rules
+(`MINK_SPOKEN_RULES`) now let the first response that calls a tool open with a
+short acknowledgement block (`<spoken>Let me check today's orders.</spoken>`:
+a few words, no result, once, before the first tool call); the answer still
+comes in its own block.
+
+- `text_reset` carries a reason: `retry` (a provider attempt failed half
+  way), `restart` (`request_more_tools`), `tool_call`.
+- The stream route keeps a turn's spoken block when the reset is `tool_call`
+  and the block closed: it sends `delta_reset {keepSpoken: true, spoken}` and
+  the browser withdraws only the written text. A retry, a restart or an
+  unclosed block withdraws it as before (the repeated turn says it again). The
+  run log counts `spokenAcks`.
+- `useMinkAi` moves it to `spokenKept` (acknowledgements joined);
+  `spokenText` is only the block now streaming.
+- The voice loop (`keepBlock`) finishes the acknowledgement from the server's
+  text (React may batch `spoken_end` and the reset into one render, so the
+  close may never have been seen), never withdraws it, ends the session so it
+  idles, and shows "Thinking…" under the barge-in gate until the answer's block
+  arrives; it then reopens the session (`resumeTurn`) and the answer plays
+  after the acknowledgement. An answer with no spoken block is read from its
+  written text, as before, because the answer gets a fresh segmenter.
+  Prompt versions `read-beta-v36` / `draft-action-beta-v57`. Tests: `retry`,
+  `vertex-failover` (fake timers: first-chunk and idle stalls, sticky fallback,
+  refused fallback, the per-process memo, the voice and HIGH deadlines, a run
+  abort), `config`, `orchestrator`, the stream route, `mink-ai`,
+  `mink-voice-mode` and `system-prompt`; twelve deliberate breakages of the new
+  rules each failed a test. Checked live on storemink-staging through
+  `createVertexMinkSession` (2026-10-20, two runs each: a voice question with
+  the real routed prompt and a stubbed tool result): the main model answered in
+  7.9 and 13.7 s and acknowledged once (at 5.4 s, after its thinking); a run
+  started on the fallback answered in 3.6 and 4.8 s and acknowledged once (at
+  2.2 s; the other run wrote its acknowledgement without tags, which is
+  withdrawn like any working-out). So the acknowledgement helps most on a fast
+  model: 3.7 Flash thinks before it writes anything. ⚠ Not run in a browser,
+  and a forced mid-turn failover was not reproduced live (the model switch
+  itself was probed on 2026-10-19). No merchant-visible change in what anyone
+  does, so no Help Centre update.
+
 ### Mink chats like ChatGPT: which chat, page links, instant attachments (2026-10-19)
 
 Three things the owner found odd when testing, each fixed the way ChatGPT,
@@ -2091,9 +2189,9 @@ So `MINK_LITE_ROUTING` stays off; turning it on is the owner's call. It is
 cheaper, faster and was the only model answering today, but measurably less
 thorough. ⚠ Known lite gaps: Help questions answered ungrounded (the `help`
 group is in `LIGHT_GROUPS`), and a location name it cannot resolve ends the
-answer instead of being retried. ⚠ Not built: a time-to-first-chunk watchdog
-with one retry in `vertex-client.ts` (the WhatsApp Mink path has one), which
-would turn a 180 s stall into a retry after about 25 s.
+answer instead of being retried. The time-to-first-chunk watchdog this
+called for is built, with a fallback model (2026-10-20; see "Mink keeps
+answering when its model is busy").
 
 The session (`createVertexMinkSession`) takes `model`, `route` and
 `allDeclarations`; the stream route routes AFTER `startMinkRun` (a follow-up
@@ -5154,8 +5252,9 @@ wholesip/
 │       │                      # validates browser Origin against x-forwarded-host/host
 │       │                      # (never the proxy's internal request.url host),
 │       │                      # creates a durable run, replays only successful prior
-│       │                      # turns, runs bounded Gemini 3.7 tool turns with one
-│       │                      # transient retry + a hard run timeout, records partial/
+│       │                      # turns, runs bounded Gemini 3.7 tool turns with stall
+│       │                      # deadlines, failover to a fallback model in another
+│       │                      # region + a hard run timeout, records partial/
 │       │                      # unavailable usage honestly, records
 │       │                      # redacted tool/token telemetry, and emits typed status/
 │       │                      # tool/message/usage/done events to the dashboard client;
@@ -5985,7 +6084,9 @@ wholesip/
 │   │                          # and docs/mink-ai-whatsapp-prompt.md; trusted actor,
 │   │                          # route and selected product/order construction; bounded
 │   │                          # orchestrator; official Google Gen AI SDK Vertex client;
-│   │                          # abort-aware one-retry transport + hard run/tool timeouts;
+│   │                          # abort-aware failover transport (per-attempt stall
+│   │                          # watchdog, fallback model, provider-health.ts memo)
+│   │                          # + hard run/tool timeouts;
 │   │                          # tool-routing.ts picks the tool groups a message needs
 │   │                          # (wording, page, open record, the question it follows),
 │   │                          # declares request_more_tools for a narrowed run and marks
@@ -12249,9 +12350,10 @@ Home, the side panel and expanded view connect to
 derives host store/admin/RBAC/effective plan out of band, rejects foreign
 origins, rate-limits by store + actor and never accepts a tenant or
 permission map from the browser/model. The current Vertex-only Gemini 3.7
-loop has bounded steps/tool calls/parallel reads, one bounded retry for
-transient 408/429/5xx/network failures, per-tool timeouts and a hard run
-timeout. `docs/mink-ai-system-prompt.md` is the executable marked system-prompt
+loop has bounded steps/tool calls/parallel reads, two retries for transient
+408/429/5xx/network failures and stalls (the first on a fallback model in
+another region), per-attempt first-chunk and idle deadlines, per-tool timeouts
+and a hard run timeout. `docs/mink-ai-system-prompt.md` is the executable marked system-prompt
 template; `lib/mink/system-prompt.ts` reads and validates its markers, fence and
 required placeholders before injecting only trusted actor/tool context.
 `docs/mink-ai-image-prompt.md` is likewise the executable marked prompt for the
@@ -12333,8 +12435,10 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
 
      Cloud Build declares the entire Mink runtime configuration because its
      deploy uses authoritative `--set-env-vars`: model `gemini-3.7-flash`,
-     Vertex location `global`, 8 steps, 16 tool calls, 4 parallel reads,
-     2048 output tokens, 1 transient retry and a 120-second hard timeout. The
+     Vertex location `global`, 12 steps, 16 tool calls, 4 parallel reads,
+     2048 output tokens, 2 retries (the first on the fallback
+     `gemini-3.5-flash` at `asia-south1`), 20-second first-chunk and idle
+     deadlines and a 180-second hard timeout. The
      build-file global switch defaults true. Legacy invitation substitutions
      have no effect on current eligibility; `_MINK_AI_ENABLED=false` remains
      the explicit platform emergency shutdown.
@@ -20080,8 +20184,12 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   **`MINK_MAX_OUTPUT_TOKENS`** (2048), **`MINK_IMAGE_MODEL`**
   (`gemini-3.1-flash-image`) and **`MINK_IMAGE_LOCATION`** (`global`; still an
   independent override from the chat location), plus reliability controls
-  **`MINK_MAX_MODEL_RETRIES`** (1, bounded 0–2) and
-  **`MINK_RUN_TIMEOUT_SECONDS`** (180, bounded 15–300). Tool routing reads
+  **`MINK_MAX_MODEL_RETRIES`** (2, bounded 0–3), **`MINK_RUN_TIMEOUT_SECONDS`**
+  (180, bounded 15–300), **`MINK_FIRST_CHUNK_SECONDS`** and
+  **`MINK_STREAM_IDLE_SECONDS`** (20 each, bounded 5–120), and the fallback
+  **`MINK_FALLBACK_MODEL`** (`gemini-3.5-flash`; "off" or empty disables it,
+  and anything but a Gemini id reads as off) at **`MINK_FALLBACK_LOCATION`**
+  (`asia-south1`); see "Mink keeps answering when its model is busy". Tool routing reads
   **`MINK_TOOL_ROUTING`** (on unless "false"/"0"), **`MINK_LITE_MODEL`** (default
   `gemini-3.5-flash-lite`; anything but a Flash-Lite id falls back to it) and
   **`MINK_LITE_ROUTING`** (off unless "true"/"1"); see "Mink tool routing". The dashboard layout reads the private

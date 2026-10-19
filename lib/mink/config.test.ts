@@ -55,9 +55,33 @@ describe("getMinkConfig", () => {
       maxToolCalls: 16,
       maxParallelReadTools: 4,
       maxOutputTokens: 2_048,
-      maxModelRetries: 1,
+      maxModelRetries: 2,
       runTimeoutMs: 180_000,
+      firstChunkTimeoutMs: 20_000,
+      streamIdleTimeoutMs: 20_000,
+      fallbackModel: "gemini-3.5-flash",
+      fallbackLocation: "asia-south1",
     });
+  });
+
+  // ★ The fallback is a different capacity pool, on unless switched off; a
+  // value that is not a Gemini id is read as off, never trusted.
+  it.each([
+    ["gemini-3.8-flash", "gemini-3.8-flash"],
+    [" Gemini-3.5-Flash ", "gemini-3.5-flash"],
+    ["off", null],
+    ["none", null],
+    ["", null],
+    ["false", null],
+    ["claude", null],
+    ["gemini 3.5", null],
+  ] as const)("reads MINK_FALLBACK_MODEL=%j as %j", (value, expected) => {
+    process.env.MINK_FALLBACK_MODEL = value;
+    expect(getMinkConfig().fallbackModel).toBe(expected);
+  });
+  it("takes the fallback's location from MINK_FALLBACK_LOCATION", () => {
+    process.env.MINK_FALLBACK_LOCATION = " us-central1 ";
+    expect(getMinkConfig().fallbackLocation).toBe("us-central1");
   });
 
   // ★ Routing is on by default (a narrowed run can always ask for the rest);
@@ -126,14 +150,18 @@ describe("getMinkConfig", () => {
     process.env.MINK_MAX_OUTPUT_TOKENS = "12.5";
     process.env.MINK_MAX_MODEL_RETRIES = "9";
     process.env.MINK_RUN_TIMEOUT_SECONDS = "5";
+    process.env.MINK_FIRST_CHUNK_SECONDS = "1";
+    process.env.MINK_STREAM_IDLE_SECONDS = "600";
 
     expect(getMinkConfig()).toMatchObject({
       maxSteps: 12,
       maxToolCalls: 16,
       maxParallelReadTools: 4,
       maxOutputTokens: 2_048,
-      maxModelRetries: 1,
+      maxModelRetries: 2,
       runTimeoutMs: 180_000,
+      firstChunkTimeoutMs: 20_000,
+      streamIdleTimeoutMs: 20_000,
     });
   });
 });

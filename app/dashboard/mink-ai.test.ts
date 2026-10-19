@@ -469,6 +469,109 @@ describe("★★ useMinkAi streaming", () => {
     expect(answer?.spoken).toBe("You have twelve orders today.");
   });
 
+  it("★★ keeps a voice turn's acknowledgement across a tool call, and clears it with the answer", async () => {
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: status\ndata: {"conversationId":"11111111-1111-4111-8111-111111111111"}\n\n' +
+              'event: spoken\ndata: {"text":"Let me check."}\n\n' +
+              "event: spoken_end\ndata: {}\n\n" +
+              'event: delta\ndata: {"text":"Checking"}\n\n' +
+              'event: delta_reset\ndata: {"keepSpoken":true,"spoken":"Let me check."}\n\n' +
+              'event: tool\ndata: {"state":"running","name":"get_orders_today","sequence":1}\n\n' +
+              'event: spoken\ndata: {"text":"Twelve "}\n\n',
+          ),
+        );
+        await gate;
+        controller.enqueue(
+          encoder.encode(
+            'event: message\ndata: {"role":"assistant","text":"12.","spoken":"Twelve orders.","artifacts":[]}\n\n' +
+              "event: done\ndata: {}\n\n",
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/mink/conversations") {
+          return Response.json({ conversations: [] });
+        }
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }),
+    );
+
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+    act(() => result.current.send("How many orders today?", { voice: true }));
+
+    // The acknowledgement moved to `spokenKept`; the block now streaming is
+    // the answer's, and only the written working-out was withdrawn.
+    await waitFor(() => expect(result.current.spokenText).toBe("Twelve "));
+    expect(result.current.spokenKept).toBe("Let me check.");
+    expect(result.current.spokenEnded).toBe(false);
+    expect(result.current.streamingText).toBe("");
+
+    act(() => release?.());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.spokenKept).toBe("");
+    expect(result.current.spokenText).toBe("");
+  });
+
+  it("withdraws the whole spoken block on a plain reset, keeping earlier acknowledgements", async () => {
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: status\ndata: {"conversationId":"11111111-1111-4111-8111-111111111111"}\n\n' +
+              'event: delta_reset\ndata: {"keepSpoken":true,"spoken":"Let me check."}\n\n' +
+              'event: spoken\ndata: {"text":"Half an"}\n\n' +
+              "event: delta_reset\ndata: {}\n\n",
+          ),
+        );
+        await gate;
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/mink/conversations") {
+          return Response.json({ conversations: [] });
+        }
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }),
+    );
+
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+    act(() => result.current.send("How many orders today?", { voice: true }));
+    await waitFor(() =>
+      expect(result.current.spokenKept).toBe("Let me check."),
+    );
+    await waitFor(() => expect(result.current.spokenText).toBe(""));
+    act(() => release?.());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+  });
+
   it("★ a spoken question asked again with more words replaces the unanswered half", async () => {
     const encoder = new TextEncoder();
     let streams = 0;
