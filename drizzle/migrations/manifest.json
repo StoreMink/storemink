@@ -8478,6 +8478,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261020_0231_mink_draft_language_help",
+      "description": "The Mink guide says what Mink writes for the store (products, blog posts, page text, offers, emails, social posts) is in English so customers across India can read it, whatever language the merchant chats in, and that asking for another language gets one reminder and then that language",
+      "file": "sql/20261020_0231_mink_draft_language_help.sql",
+      "transaction": true,
+      "requires": ["20261019_0230_mink_chat_continuity_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says drafts are in English unless the merchant asks for another language",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%is in English so customers across India can read it%' and body like '%ask for another language and Mink reminds you of that%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

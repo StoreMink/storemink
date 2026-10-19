@@ -630,6 +630,25 @@ export function routeMinkTools(input: MinkToolRouteInput): MinkToolRoute {
   const attached = hasAttachment(input.message);
   const reasons: string[] = [];
 
+  // ★★ THE VOCABULARY BELOW READS ENGLISH, HINGLISH AND DEVANAGARI, AND
+  // NOTHING ELSE. A message written mostly in another script cannot be
+  // judged by it: "draft a new product for my almond shake" in Punjabi
+  // matched only its "MRP" and was sent catalogue reads with no way to draft,
+  // so the run had to ask for more tools and start again. Such a message
+  // keeps every permitted tool, the fallback for a message the router cannot
+  // place.
+  if (unreadScript(text)) {
+    const groups = topicalGroups(text);
+    if (attached) groups.add("attachments");
+    return {
+      mode: "all",
+      groups: sortGroups(groups),
+      wantsChange: changeRequested(text),
+      light: false,
+      reasons: ["unread_script"],
+    };
+  }
+
   if (SMALLTALK.test(text.trim()) && !BARE_OK.test(text.trim()) && !attached) {
     return {
       mode: "narrow",
@@ -770,6 +789,21 @@ export function applyMinkToolRoute(
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * True when most of the letters are in a script other than Latin or
+ * Devanagari: Punjabi in Gurmukhi, Gujarati, Bengali, Odia, Tamil, Telugu,
+ * Kannada, Malayalam, Urdu and anything else the vocabulary has no words for.
+ */
+function unreadScript(text: string): boolean {
+  let read = 0;
+  let unread = 0;
+  for (const letter of text.match(/\p{L}/gu) ?? []) {
+    if (/\p{Script=Latin}|\p{Script=Devanagari}/u.test(letter)) read += 1;
+    else unread += 1;
+  }
+  return unread > read;
+}
 
 function topicalGroups(text: string): Set<MinkToolGroup> {
   const groups = new Set<MinkToolGroup>();

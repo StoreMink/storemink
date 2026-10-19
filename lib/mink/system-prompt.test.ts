@@ -476,6 +476,60 @@ describe("★★ rule tags: a rule renders only with its tools", () => {
   });
 });
 
+describe("★★ drafts are written in English, whatever language the chat is in", () => {
+  // The owner's rule (2026-10-20): a merchant may talk to Mink in Punjabi or
+  // Hindi, but what Mink writes for the store reaches customers across India.
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const RULE =
+    "Write everything you draft for the store or its customers in English, whatever language the merchant uses with you";
+  const render = (...names: string[]) =>
+    renderMinkSystemInstruction(actor, names.map(declaration));
+
+  it("tells a run that can draft to write in English while it keeps talking in the merchant's language", () => {
+    const prompt = render("propose_product_create");
+    expect(prompt).toContain(RULE);
+    expect(prompt).toContain(
+      "Keep talking to the merchant in their own language",
+    );
+    expect(prompt).toContain(
+      "Answer in the language and script of the merchant's latest message",
+    );
+    expect(prompt).toContain(
+      "The brand voice sets the tone, never the language.",
+    );
+  });
+
+  it("★ reminds the merchant once, then writes in the language they asked for", () => {
+    expect(render("propose_blog_draft")).toContain(
+      "remind them once, in one short sentence, that English helps their store reach customers across India, then do what they asked",
+    );
+  });
+
+  it("covers generated image alt text, and forms Mink fills in from the chat", () => {
+    expect(render("generate_storefront_image")).toContain(RULE);
+    expect(render("open_dashboard_page")).toContain(
+      "its text in English unless they ask for another language",
+    );
+  });
+
+  it("stays out of a run that cannot draft anything", () => {
+    expect(render("get_sales_summary", "search_products")).not.toContain(RULE);
+  });
+});
+
 function declaration(name: string): MinkToolDeclaration {
   return { name, description: `${name} description`, parametersJsonSchema: {} };
 }

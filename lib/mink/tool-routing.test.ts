@@ -231,6 +231,31 @@ describe("routeMinkTools", () => {
     expect(toolsForRoute(hinglish)?.has("propose_coupon_create")).toBe(true);
   });
 
+  it("★★ keeps every tool for a message in a script it cannot read", () => {
+    for (const message of [
+      // Punjabi: "Draft a new product for my almond shake. Price 149, MRP 199."
+      "ਮੇਰੇ ਬਦਾਮ ਸ਼ੇਕ ਲਈ ਇੱਕ ਨਵਾਂ ਉਤਪਾਦ ਡਰਾਫਟ ਕਰੋ। ਕੀਮਤ 149 ਰੁਪਏ, MRP 199 ਰੁਪਏ।",
+      // Gujarati: "Write a blog about my store."
+      "મારા સ્ટોર વિશે એક બ્લોગ લખો",
+      // Tamil: "How many orders came today?"
+      "இன்று எத்தனை ஆர்டர்கள் வந்தன?",
+      // Urdu: "Make a new offer."
+      "ایک نیا آفر بنائیں",
+    ]) {
+      const routed = route(message);
+      expect(routed.mode, message).toBe("all");
+      expect(routed.reasons).toEqual(["unread_script"]);
+      expect(routed.light).toBe(false);
+      expect(toolsForRoute(routed)).toBeNull();
+    }
+  });
+
+  it("still narrows English that quotes a name in another script", () => {
+    const routed = route("Add a new product called ਬਦਾਮ ਸ਼ੇਕ for 149 rupees");
+    expect(routed.mode).toBe("narrow");
+    expect(toolsForRoute(routed)?.has("propose_product_create")).toBe(true);
+  });
+
   it("★ keeps the lite model away from changes, attachments, voice and probes", () => {
     expect(route("Show low stock items").light).toBe(true);
     expect(route("Restock the almond shake by 20 units").light).toBe(false);

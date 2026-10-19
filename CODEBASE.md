@@ -1914,6 +1914,60 @@ says write nothing), and a reconciler for runs left with a NULL
 they owe nothing, and `discardFailedMinkRunDrafts` already compensates any
 proposal credits they reserved.
 
+### Mink drafts in English, whatever language the chat is in (2026-10-20)
+
+Owner's rule: a merchant may talk to Mink in Punjabi, Hindi or any other
+language, and Mink answers in it, but what Mink drafts for the store or its
+customers is in English, so customers across India can read it. When the
+merchant asks for another language, or gives their own words in it to use,
+Mink reminds them once, in one short sentence, that English helps the store
+reach customers across India, then does what they asked. ★ THE MERCHANT'S
+CHOICE WINS AFTER THE REMINDER: the request said "remind", not "refuse", and a
+store's wording is the merchant's; refusing would be a one-line prompt change.
+★ ONE PROMPT RULE IS THE WHOLE LEVER: every drafted word (product, blog, page
+section, offer, email, social post, category, image alt text) arrives as the
+main model's tool arguments, and no draft tool calls a model of its own. The
+rule sits after the reply-language rule in `docs/mink-ai-system-prompt.md`,
+tagged `[[when: propose_*, generate_storefront_image]]` so read-only runs do
+not carry it. It names what counts, asks for a few words the first time an
+English draft is handed over in a conversation held in another language, says
+the brand voice sets the tone and never the language, and forbids translating
+the merchant's exact words, product or brand names, or existing store content
+unless asked. The `open_dashboard_page` rule gained a short clause instead
+(a prefilled form's text is in English unless they ask): with the full rule,
+the help-question route, which carries navigation, went past its 20,000
+character budget.
+★★ AND THE ROUTER COULD NOT READ PUNJABI. `routeMinkTools` reads English,
+Hinglish and Devanagari only, so "draft a new product for my almond shake"
+in Gurmukhi matched nothing but its "MRP" and was sent catalogue reads with
+no drafting tool; the run had to ask for more tools and start again.
+`unreadScript` (tool-routing.ts) now sends a message whose letters are mostly
+neither Latin nor Devanagari (Gurmukhi, Gujarati, Bengali, Odia, Tamil,
+Telugu, Kannada, Malayalam, Urdu and the rest) every permitted tool, reason
+`unread_script`, the fallback for a message the router cannot place. Such a
+message pays for every tool's declarations; getting the right tools first
+time is worth it. English quoting a name in another script still narrows.
+Prompt versions `read-beta-v37` / `draft-action-beta-v58` (the prefill
+clause reaches read-only runs too); registries unchanged. Help: `0231`
+replaces the Mink guide's one language sentence in place.
+Checked live on storemink-staging (2026-10-20) through
+`createVertexMinkSession` with the real prompt, tools and routing and stubbed
+tool results: a Punjabi request for a new product drafted it in English
+("Almond Shake (250ml)") and said so in Punjabi; "no, write it in Punjabi"
+got a one-sentence reminder and a Punjabi draft; a Hindi blog request got an
+English title, excerpt, body and cover alt text with a Hindi reply; a
+Hinglish Instagram request got English Instagram, Facebook and WhatsApp copy;
+an English chat asking for a Hindi product got the reminder and a Hindi
+draft. Tests: `system-prompt` (the rule renders with a drafting tool, not
+without one; the reminder; alt text and prefilled forms) and `tool-routing`
+(Punjabi, Gujarati, Tamil and Urdu keep every tool; English with a Punjabi
+name still narrows); the router guard fails its test when removed.
+⚠ FOUND DURING THE LIVE CHECK, NOT FIXED HERE: once, the fallback model
+(`gemini-3.5-flash` at asia-south1, "Mink keeps answering when its model is
+busy") wrote its reasoning into the visible answer as ordinary text
+("thought\nNow I need to reply to the user in Hinglish..."), not as a
+thought part, so `consumeMinkStream`'s thought filter cannot drop it.
+
 ### Mink names a new chat, like ChatGPT (2026-10-20)
 
 The owner's report: a new chat appeared in History as the merchant's whole
