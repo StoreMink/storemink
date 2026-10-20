@@ -46,6 +46,7 @@ export const MINK_STOREFRONT_ACTION_TOOLS = [
   "apply_storefront_layout",
   "apply_storefront_design",
   "manage_website_builder",
+  "apply_storefront_personalization",
 ] as const;
 
 /**
@@ -161,6 +162,7 @@ export const MINK_ACTION_TOOL_LABELS: Record<MinkActionTool, string> = {
   apply_storefront_layout: "Website Builder draft layout saves",
   apply_storefront_design: "Website Builder draft design saves",
   manage_website_builder: "Website Builder controls and publication",
+  apply_storefront_personalization: "Personalised storefront saves",
   generate_media_image: "AI image generation",
 };
 

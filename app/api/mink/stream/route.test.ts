@@ -19,6 +19,8 @@ const holder = vi.hoisted(() => ({
   liteRouting: false,
   declarations: [] as Array<{ name: string }>,
   createSession: vi.fn(() => ({})),
+  name: vi.fn(async (): Promise<string | null> => null),
+  after: vi.fn(),
 }));
 
 vi.mock("@/lib/mink/config", () => ({
@@ -59,10 +61,20 @@ vi.mock("@/lib/mink/persistence", () => ({
 vi.mock("@/lib/mink/tools/read-tools", () => ({
   minkReadToolRegistry: {
     declarationsFor: vi.fn(() => holder.declarations),
+    runBudgetMs: vi.fn((name: string) =>
+      name === "propose_storefront_personalization" ? 260_000 : undefined,
+    ),
   },
 }));
 vi.mock("@/lib/mink/vertex-client", () => ({
   createVertexMinkSession: holder.createSession,
+}));
+vi.mock("@/lib/mink/conversation-namer", () => ({
+  nameMinkConversation: holder.name,
+}));
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: holder.after,
 }));
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: vi.fn(async () => ({ allowed: holder.rateAllowed })),
@@ -273,7 +285,7 @@ describe("POST /api/mink/stream", () => {
         onEvent?: (event: Record<string, unknown>) => Promise<void> | void;
       }) => {
         await input.onEvent?.({ type: "text_delta", text: "You have " });
-        await input.onEvent?.({ type: "text_reset" });
+        await input.onEvent?.({ type: "text_reset", reason: "retry" });
         await input.onEvent?.({ type: "text_delta", text: "12 products." });
         return {
           text: "12 products.",
@@ -394,6 +406,170 @@ describe("POST /api/mink/stream", () => {
       expect.objectContaining({
         pageContext: expect.objectContaining({ voice: true }),
       }),
+    );
+  });
+
+  function voiceActor() {
+    holder.actor.mockResolvedValue({
+      storeId: "store-1",
+      adminId: "admin-1",
+      email: "owner@example.com",
+      roleSlug: "superadmin",
+      permissions: {},
+      isSuperadmin: true,
+      effectivePlan: "pro",
+      locationIds: null,
+      analyticsTimeZone: "Asia/Kolkata",
+      currency: "INR",
+      defaultLowStockThreshold: 5,
+      answerMedium: "spoken",
+      requestId: "request-1",
+    });
+  }
+
+  function eventsOf(body: string) {
+    return body
+      .split("\n\n")
+      .filter((block) => block.startsWith("event: "))
+      .map((block) => ({
+        event: block.slice(7, block.indexOf("\n")),
+        data: JSON.parse(block.slice(block.indexOf("data: ") + 6)),
+      }));
+  }
+
+  const done = (text: string) => ({
+    text,
+    model: "gemini-3.7-flash",
+    steps: 2,
+    toolCalls: 1,
+    retryCount: 0,
+    usage: {
+      promptTokens: 10,
+      outputTokens: 2,
+      thoughtTokens: 0,
+      totalTokens: 12,
+    },
+    artifacts: [],
+  });
+
+  it("★★ keeps a voice turn's finished acknowledgement across a tool call, withdrawing only the written text", async () => {
+    voiceActor();
+    holder.run.mockImplementation(
+      async (input: {
+        onEvent?: (event: Record<string, unknown>) => Promise<void> | void;
+      }) => {
+        await input.onEvent?.({
+          type: "text_delta",
+          text: "<spoken>Let me check today's\norders.</spoken> One moment",
+        });
+        await input.onEvent?.({ type: "text_reset", reason: "tool_call" });
+        await input.onEvent?.({
+          type: "tool_call",
+          sequence: 1,
+          call: { id: "1", name: "get_orders_today", args: {} },
+        });
+        await input.onEvent?.({
+          type: "tool_result",
+          sequence: 1,
+          name: "get_orders_today",
+          ok: true,
+        });
+        await input.onEvent?.({
+          type: "text_delta",
+          text: "<spoken>You got twelve orders today.</spoken>\n\n**12** today.",
+        });
+        return done(
+          "<spoken>You got twelve orders today.</spoken>\n\n**12** today.",
+        );
+      },
+    );
+    const body = await (
+      await POST(
+        request({
+          message: "How many orders today?",
+          context: { currentPath: "/dashboard", voice: true },
+        }),
+      )
+    ).text();
+    const events = eventsOf(body);
+    expect(events.map((item) => item.event)).toEqual([
+      "status",
+      "spoken",
+      "spoken_end",
+      "delta",
+      "delta_reset",
+      "tool",
+      "tool",
+      "spoken",
+      "spoken_end",
+      "delta",
+      "message",
+      "usage",
+      "done",
+    ]);
+    // The browser keeps the acknowledgement, in the words the server split.
+    expect(events[4].data).toEqual({
+      keepSpoken: true,
+      spoken: "Let me check today's orders.",
+    });
+    // The message carries the answer's own block: the acknowledgement was
+    // said already and is neither stored nor said twice.
+    expect(events[10].data).toMatchObject({
+      text: "**12** today.",
+      spoken: "You got twelve orders today.",
+    });
+  });
+
+  it("withdraws an acknowledgement on a retry or a restart, and a block the turn never closed", async () => {
+    voiceActor();
+    holder.run.mockImplementation(
+      async (input: {
+        onEvent?: (event: Record<string, unknown>) => Promise<void> | void;
+      }) => {
+        await input.onEvent?.({
+          type: "text_delta",
+          text: "<spoken>Let me check.</spoken>",
+        });
+        await input.onEvent?.({ type: "text_reset", reason: "retry" });
+        await input.onEvent?.({
+          type: "text_delta",
+          text: "<spoken>Let me check.</spoken>",
+        });
+        await input.onEvent?.({ type: "text_reset", reason: "restart" });
+        await input.onEvent?.({
+          type: "text_delta",
+          text: "<spoken>Let me ch",
+        });
+        await input.onEvent?.({ type: "text_reset", reason: "tool_call" });
+        await input.onEvent?.({
+          type: "text_delta",
+          text: "<spoken>Twelve.</spoken>\n\n12.",
+        });
+        return done("<spoken>Twelve.</spoken>\n\n12.");
+      },
+    );
+    const body = await (
+      await POST(
+        request({
+          message: "How many orders today?",
+          context: { currentPath: "/dashboard", voice: true },
+        }),
+      )
+    ).text();
+    const resets = eventsOf(body).filter(
+      (item) => item.event === "delta_reset",
+    );
+    expect(resets.map((item) => item.data)).toEqual([{}, {}, {}]);
+  });
+
+  it("prices the run at the location of the model that answered", async () => {
+    holder.createSession.mockReturnValueOnce({
+      model: "gemini-3.5-flash",
+      location: "asia-south1",
+    });
+    await (await POST(request({ message: "How many products?" }))).text();
+    expect(holder.completeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ pricingLocation: "asia-south1" }),
     );
   });
 
@@ -682,6 +858,59 @@ describe("POST /api/mink/stream", () => {
     );
     expect(body).toContain("Mink AI took too long to finish");
   });
+
+  /** A run that starts one tool, then takes 30 ms against a 5 ms deadline. */
+  function slowToolRun(name: string) {
+    holder.runTimeoutMs = 5;
+    holder.run.mockImplementationOnce(
+      async (input: {
+        onEvent?: (event: Record<string, unknown>) => Promise<void> | void;
+      }) => {
+        // The run's abort signal is the one the session was created with.
+        const call = holder.createSession.mock.calls.at(-1) as
+          | unknown[]
+          | undefined;
+        const options = call?.[3] as { abortSignal?: AbortSignal } | undefined;
+        await input.onEvent?.({
+          type: "tool_call",
+          sequence: 1,
+          call: { id: "1", name, args: {} },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        if (options?.abortSignal?.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
+        await input.onEvent?.({
+          type: "tool_result",
+          sequence: 1,
+          name,
+          ok: true,
+        });
+        return done("Your personalised storefront is ready.");
+      },
+    );
+  }
+
+  it("★★ stretches the run deadline while a long personalisation tool runs", async () => {
+    slowToolRun("propose_storefront_personalization");
+    const body = await (
+      await POST(request({ message: "Personalise my storefront" }))
+    ).text();
+    expect(holder.failRun).not.toHaveBeenCalled();
+    expect(holder.completeRun).toHaveBeenCalled();
+    expect(body).toContain("Your personalised storefront is ready.");
+  });
+
+  it("keeps the ordinary deadline for every other tool", async () => {
+    slowToolRun("get_sales_summary");
+    const body = await (
+      await POST(request({ message: "Sales today?" }))
+    ).text();
+    expect(holder.failRun).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", errorCode: "run_timeout" }),
+    );
+    expect(body).toContain("Mink AI took too long to finish");
+  });
 });
 
 describe("★★ tool routing", () => {
@@ -778,6 +1007,100 @@ describe("★★ tool routing", () => {
     expect(holder.failRun).toHaveBeenCalledWith(
       expect.objectContaining({ model: "gemini-3.7-flash" }),
     );
+  });
+});
+
+describe("★★ a new chat's title", () => {
+  const CHAT = "11111111-1111-4111-8111-111111111111";
+  const created = () =>
+    holder.startRun.mockResolvedValueOnce({
+      conversationId: CHAT,
+      runId: "22222222-2222-4222-8222-222222222222",
+      history: [],
+      createdTitle: "How many orders did I get today?",
+    });
+
+  it("is asked of the namer the moment the run creates the chat, and streams to the browser", async () => {
+    created();
+    holder.name.mockResolvedValueOnce("Today's order count");
+
+    const body = await (
+      await POST(request({ message: "How many orders did I get today?" }))
+    ).text();
+
+    expect(holder.name).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ liteModel: "gemini-3.5-flash-lite" }),
+        actor: expect.objectContaining({ storeId: "store-1" }),
+        conversationId: CHAT,
+        provisionalTitle: "How many orders did I get today?",
+        message: "How many orders did I get today?",
+      }),
+    );
+    expect(body).toContain(
+      `event: title\ndata: {"conversationId":"${CHAT}","title":"Today's order count"}`,
+    );
+    // After the chat is named in the status event, before the stream ends.
+    expect(body.indexOf("event: title")).toBeGreaterThan(
+      body.indexOf("event: status"),
+    );
+    expect(body.indexOf("event: title")).toBeLessThan(
+      body.indexOf("event: done"),
+    );
+  });
+
+  it("★ is kept alive past the end of the stream, so a late title is still saved", async () => {
+    created();
+    holder.name.mockResolvedValueOnce("Today's order count");
+
+    await (await POST(request({ message: "Orders today?" }))).text();
+
+    expect(holder.after).toHaveBeenCalledOnce();
+    const task = holder.after.mock.calls[0][0] as () => Promise<unknown>;
+    await expect(task()).resolves.toBe("Today's order count");
+  });
+
+  it("is never asked for a chat the run continued", async () => {
+    const body = await (
+      await POST(request({ message: "And yesterday?" }))
+    ).text();
+
+    expect(holder.name).not.toHaveBeenCalled();
+    expect(holder.after).not.toHaveBeenCalled();
+    expect(body).not.toContain("event: title");
+  });
+
+  it("sends nothing when the chat keeps its provisional title", async () => {
+    created();
+    holder.name.mockResolvedValueOnce(null);
+
+    const body = await (
+      await POST(request({ message: "Orders today?" }))
+    ).text();
+
+    expect(body).not.toContain("event: title");
+    expect(body).toContain("event: done");
+  });
+
+  it("★ a title that lands after the stream closed is not written to the closed stream", async () => {
+    created();
+    let resolveTitle!: (title: string | null) => void;
+    holder.name.mockReturnValueOnce(
+      new Promise<string | null>((resolve) => {
+        resolveTitle = resolve;
+      }),
+    );
+
+    const body = await (
+      await POST(request({ message: "Orders today?" }))
+    ).text();
+    // Resolving now would throw inside the stream if the guard were missing,
+    // which fails the run as an unhandled rejection.
+    resolveTitle("Today's order count");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(body).not.toContain("event: title");
+    expect(body).toContain("event: done");
   });
 });
 

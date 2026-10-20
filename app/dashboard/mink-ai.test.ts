@@ -469,6 +469,109 @@ describe("★★ useMinkAi streaming", () => {
     expect(answer?.spoken).toBe("You have twelve orders today.");
   });
 
+  it("★★ keeps a voice turn's acknowledgement across a tool call, and clears it with the answer", async () => {
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: status\ndata: {"conversationId":"11111111-1111-4111-8111-111111111111"}\n\n' +
+              'event: spoken\ndata: {"text":"Let me check."}\n\n' +
+              "event: spoken_end\ndata: {}\n\n" +
+              'event: delta\ndata: {"text":"Checking"}\n\n' +
+              'event: delta_reset\ndata: {"keepSpoken":true,"spoken":"Let me check."}\n\n' +
+              'event: tool\ndata: {"state":"running","name":"get_orders_today","sequence":1}\n\n' +
+              'event: spoken\ndata: {"text":"Twelve "}\n\n',
+          ),
+        );
+        await gate;
+        controller.enqueue(
+          encoder.encode(
+            'event: message\ndata: {"role":"assistant","text":"12.","spoken":"Twelve orders.","artifacts":[]}\n\n' +
+              "event: done\ndata: {}\n\n",
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/mink/conversations") {
+          return Response.json({ conversations: [] });
+        }
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }),
+    );
+
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+    act(() => result.current.send("How many orders today?", { voice: true }));
+
+    // The acknowledgement moved to `spokenKept`; the block now streaming is
+    // the answer's, and only the written working-out was withdrawn.
+    await waitFor(() => expect(result.current.spokenText).toBe("Twelve "));
+    expect(result.current.spokenKept).toBe("Let me check.");
+    expect(result.current.spokenEnded).toBe(false);
+    expect(result.current.streamingText).toBe("");
+
+    act(() => release?.());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.spokenKept).toBe("");
+    expect(result.current.spokenText).toBe("");
+  });
+
+  it("withdraws the whole spoken block on a plain reset, keeping earlier acknowledgements", async () => {
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: status\ndata: {"conversationId":"11111111-1111-4111-8111-111111111111"}\n\n' +
+              'event: delta_reset\ndata: {"keepSpoken":true,"spoken":"Let me check."}\n\n' +
+              'event: spoken\ndata: {"text":"Half an"}\n\n' +
+              "event: delta_reset\ndata: {}\n\n",
+          ),
+        );
+        await gate;
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/mink/conversations") {
+          return Response.json({ conversations: [] });
+        }
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }),
+    );
+
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+    act(() => result.current.send("How many orders today?", { voice: true }));
+    await waitFor(() =>
+      expect(result.current.spokenKept).toBe("Let me check."),
+    );
+    await waitFor(() => expect(result.current.spokenText).toBe(""));
+    act(() => release?.());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+  });
+
   it("★ a spoken question asked again with more words replaces the unanswered half", async () => {
     const encoder = new TextEncoder();
     let streams = 0;
@@ -807,5 +910,248 @@ describe("★★ useMinkAi: a message with attachments goes into the chat at onc
     expect(minkReadingStatus([image, document])).toBe(
       "Reading your attachments…",
     );
+  });
+});
+
+describe("★★ useMinkAi: a new chat's title, like ChatGPT's", () => {
+  afterEach(() => {
+    window.sessionStorage.clear();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const STATUS = `event: status\ndata: {"conversationId":"${CHAT_ID}"}\n\n`;
+  const ANSWER =
+    'event: message\ndata: {"role":"assistant","text":"Twelve orders.","artifacts":[]}\n\n' +
+    "event: done\ndata: {}\n\n";
+  const TITLE = `event: title\ndata: {"conversationId":"${CHAT_ID}","title":"Today's order count"}\n\n`;
+  const isList = ([input]: [RequestInfo | URL, RequestInit?]) =>
+    String(input) === "/api/mink/conversations";
+  const eventStream = (body: ReadableStream<Uint8Array>) =>
+    new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  function streamOf(text: string) {
+    const encoder = new TextEncoder();
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(text));
+        controller.close();
+      },
+    });
+  }
+  const titles = (items: Array<{ id: string; title: string }>) =>
+    items.map((item) => [item.id, item.title]);
+
+  it("lists a new chat at once as New chat, and gives it its title when the title arrives", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(encoder.encode(STATUS));
+        await gate;
+        controller.enqueue(encoder.encode(TITLE + ANSWER));
+        controller.close();
+      },
+    });
+    let listed = 0;
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== "/api/mink/conversations") return eventStream(body);
+      listed += 1;
+      return Response.json({
+        conversations:
+          listed === 1
+            ? [summary(OTHER_ID, "Older chat")]
+            : [
+                summary(CHAT_ID, "Today's order count"),
+                summary(OTHER_ID, "Older chat"),
+              ],
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+
+    act(() => {
+      result.current.send("How many orders did I get today?");
+    });
+    await waitFor(() =>
+      expect(result.current.activeConversationId).toBe(CHAT_ID),
+    );
+    expect(result.current.activeConversationTitle).toBe("New chat");
+    expect(titles(result.current.conversations)).toEqual([
+      [CHAT_ID, "New chat"],
+      [OTHER_ID, "Older chat"],
+    ]);
+
+    act(() => release());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.activeConversationTitle).toBe("Today's order count");
+    expect(titles(result.current.conversations)).toEqual([
+      [CHAT_ID, "Today's order count"],
+      [OTHER_ID, "Older chat"],
+    ]);
+  });
+
+  it("★ keeps calling it New chat until its title is saved, then asks History once more", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const lists = [
+      [summary(OTHER_ID, "Older chat")],
+      // Straight after the answer the title is not saved yet: the stored
+      // excerpt must not flash in the sidebar.
+      [
+        summary(CHAT_ID, "How many orders did I get today?"),
+        summary(OTHER_ID, "Older chat"),
+      ],
+      [
+        summary(CHAT_ID, "Today's order count"),
+        summary(OTHER_ID, "Older chat"),
+      ],
+    ];
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== "/api/mink/conversations")
+        return eventStream(streamOf(STATUS + ANSWER));
+      return Response.json({
+        conversations: lists.length > 1 ? lists.shift() : lists[0],
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const calls = fetch.mock.calls as unknown as Array<
+      [RequestInfo | URL, RequestInit?]
+    >;
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+
+    act(() => {
+      result.current.send("How many orders did I get today?");
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    await waitFor(() => expect(calls.filter(isList)).toHaveLength(2));
+    expect(titles(result.current.conversations)).toEqual([
+      [CHAT_ID, "New chat"],
+      [OTHER_ID, "Older chat"],
+    ]);
+    expect(result.current.activeConversationTitle).toBe("New chat");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_000);
+    });
+    await waitFor(() =>
+      expect(result.current.activeConversationTitle).toBe(
+        "Today's order count",
+      ),
+    );
+    expect(titles(result.current.conversations)).toEqual([
+      [CHAT_ID, "Today's order count"],
+      [OTHER_ID, "Older chat"],
+    ]);
+    expect(calls.filter(isList)).toHaveLength(3);
+  });
+
+  it("asks History no more once the title came with the answer", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== "/api/mink/conversations")
+        return eventStream(streamOf(STATUS + TITLE + ANSWER));
+      return Response.json({ conversations: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const calls = fetch.mock.calls as unknown as Array<
+      [RequestInfo | URL, RequestInit?]
+    >;
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(calls.filter(isList)).toHaveLength(1));
+
+    act(() => {
+      result.current.send("How many orders did I get today?");
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    // Mount, and the one refresh after the answer: no late retry.
+    expect(calls.filter(isList)).toHaveLength(2);
+  });
+
+  it("drops the oldest from a full History, as the server did when it created the chat", async () => {
+    const full = Array.from({ length: 10 }, (_, index) =>
+      summary(
+        `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, "0")}`,
+        `Chat ${index}`,
+      ),
+    );
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(encoder.encode(STATUS));
+        await gate;
+        controller.enqueue(encoder.encode(ANSWER));
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input) === "/api/mink/conversations"
+          ? Response.json({ conversations: full })
+          : eventStream(body),
+      ),
+    );
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(10));
+
+    act(() => {
+      result.current.send("Hi");
+    });
+    await waitFor(() =>
+      expect(result.current.conversations[0]?.id).toBe(CHAT_ID),
+    );
+    expect(result.current.conversations).toHaveLength(10);
+    expect(result.current.conversations.at(-1)?.title).toBe("Chat 8");
+    act(() => release());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+  });
+
+  it("leaves a chat it continued as it was", async () => {
+    rememberChat(CHAT_ID, 5);
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/mink/stream")
+        return eventStream(streamOf(STATUS + ANSWER));
+      if (url === "/api/mink/conversations")
+        return Response.json({
+          conversations: [summary(CHAT_ID, "Published products")],
+        });
+      return Response.json({
+        conversation: {
+          id: CHAT_ID,
+          title: "Published products",
+          messages: [{ id: "m-1", role: "user", text: "How many?" }],
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() =>
+      expect(result.current.activeConversationTitle).toBe("Published products"),
+    );
+
+    act(() => {
+      result.current.send("And yesterday?");
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.activeConversationTitle).toBe("Published products");
+    expect(titles(result.current.conversations)).toEqual([
+      [CHAT_ID, "Published products"],
+    ]);
   });
 });

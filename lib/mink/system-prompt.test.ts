@@ -244,7 +244,12 @@ describe("Mink system prompt document", () => {
     expect(prompt).toContain(
       "open with the tag <spoken> and close with </spoken>",
     );
-    expect(prompt).toContain("never in a turn that calls a tool");
+    // ★ A short acknowledgement may open the turn that calls a tool (played
+    // while the tool runs); the answer still comes in its own block.
+    expect(prompt).toContain(
+      "you may open that first response with a short acknowledgement",
+    );
+    expect(prompt).toContain("does not repeat the acknowledgement");
     expect(prompt).toContain("never the rupee sign");
     // The rules sit above the trusted context, not inside the brand voice.
     expect(prompt.indexOf("<spoken>")).toBeLessThan(
@@ -468,6 +473,117 @@ describe("★★ rule tags: a rule renders only with its tools", () => {
         ),
       ),
     ).toThrow(/must open a rule line/);
+  });
+});
+
+describe("★★ drafts are written in English, whatever language the chat is in", () => {
+  // The owner's rule (2026-10-20): a merchant may talk to Mink in Punjabi or
+  // Hindi, but what Mink writes for the store reaches customers across India.
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const RULE =
+    "Write everything you draft for the store or its customers in English, whatever language the merchant uses with you";
+  const render = (...names: string[]) =>
+    renderMinkSystemInstruction(actor, names.map(declaration));
+
+  it("tells a run that can draft to write in English while it keeps talking in the merchant's language", () => {
+    const prompt = render("propose_product_create");
+    expect(prompt).toContain(RULE);
+    expect(prompt).toContain(
+      "Keep talking to the merchant in their own language",
+    );
+    expect(prompt).toContain(
+      "Answer in the language and script of the merchant's latest message",
+    );
+    expect(prompt).toContain(
+      "The brand voice sets the tone, never the language.",
+    );
+  });
+
+  it("★ reminds the merchant once, then writes in the language they asked for", () => {
+    expect(render("propose_blog_draft")).toContain(
+      "remind them once, in one short sentence, that English helps their store reach customers across India, then do what they asked",
+    );
+  });
+
+  it("covers generated image alt text, and forms Mink fills in from the chat", () => {
+    expect(render("generate_storefront_image")).toContain(RULE);
+    expect(render("open_dashboard_page")).toContain(
+      "its text in English unless they ask for another language",
+    );
+  });
+
+  it("stays out of a run that cannot draft anything", () => {
+    expect(render("get_sales_summary", "search_products")).not.toContain(RULE);
+  });
+});
+
+describe("★★ a storefront personalisation is an interview, and never assumes", () => {
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const render = (...names: string[]) =>
+    renderMinkSystemInstruction(actor, names.map(declaration));
+  const RULE = "call get_storefront_personalization_context first";
+
+  it("reads the store, asks at most five questions at once, then proposes once", () => {
+    const prompt = render(
+      "get_storefront_personalization_context",
+      "propose_storefront_personalization",
+    );
+    expect(prompt).toContain(RULE);
+    expect(prompt).toContain("at most five short questions");
+    expect(prompt).toContain("call propose_storefront_personalization once");
+  });
+
+  it("★ asks before any category change and invents no claims", () => {
+    const prompt = render("propose_storefront_personalization");
+    expect(prompt).toContain(
+      "set merchant_confirmed only for the changes they said yes to",
+    );
+    expect(prompt).toContain("never assume one");
+    expect(prompt).toContain("never invent an award, a rating, a review");
+  });
+
+  it("★ keeps an edited page, the homepage too, out without a yes, and the merchant's own sections in their words", () => {
+    const prompt = render("propose_storefront_personalization");
+    expect(prompt).toContain(
+      "A page they edited themselves, the homepage too, stays out unless they agree",
+    );
+    expect(prompt).toContain("sections they wrote keep their words");
+  });
+
+  it("offers the rest of the photos only after the card was applied", () => {
+    expect(render("propose_storefront_personalization")).toContain(
+      "once they have applied it, with photos_only true",
+    );
+  });
+
+  it("stays out of a run without the personalisation tools", () => {
+    expect(render("propose_storefront_layout")).not.toContain(RULE);
   });
 });
 

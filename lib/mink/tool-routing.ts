@@ -50,6 +50,7 @@ export const MINK_TOOL_GROUPS = [
   "shipping",
   "blogs",
   "builder",
+  "personalize",
   "storefront_code",
   "media",
   "csv",
@@ -180,6 +181,17 @@ export const MINK_TOOL_GROUP_TOOLS: Record<MinkToolGroup, GroupTools> = {
       "search_products",
       "search_storefront_categories",
       "list_current_offers",
+    ],
+  },
+  // ★ THE PROPOSAL RIDES WITH THE READ. A personalisation is an interview:
+  //   the message that finishes it is the merchant's answers ("we sell
+  //   handmade candles in Pune, warm and calm"), which carries no change
+  //   word, so a proposal held back for `wantsChange` would be missing on
+  //   exactly the turn it is needed.
+  personalize: {
+    read: [
+      "get_storefront_personalization_context",
+      "propose_storefront_personalization",
     ],
   },
   // ★ The code proposal is sent even for a question, because "explain how a
@@ -385,6 +397,22 @@ const TOPICS: Partial<Record<MinkToolGroup, Vocabulary>> = {
       "website|web site|my site|storefront|store front|online store|shop front|homepage|home page|landing page|about (?:us )?page|contact page|faq page|policy page|pages|page (?:layout|design|sections?|seo|title)|sections?|header|footer|menus?|navigation|nav|navbar|nav bar|themes?|template|layouts?|hero|banners?|carousel|slider|slideshow|gallery|testimonials?|announcement bar|builder|publish (?:the |my )?(?:site|website|store|storefront|page|homepage|home page|changes|header|footer|menu|draft)|unpublish\\w*|go live|is (?:it|this|my (?:site|store|page)) live|logo|branding|colou?rs?|fonts?|typeface|typography|palette|look and feel|looks? like|design|redesign|appearance|aesthetic|broken links?|menu links?|polic(?:y|ies)",
     ),
     phrases: ["वेबसाइट", "होमपेज"],
+  },
+  // ★ Whole-store wording only: "customise the header" is a Builder edit,
+  //   "customise my store" is this.
+  personalize: {
+    words: words(
+      "personali[sz](?:e|es|ed|ing|ation|ations)|customi[sz](?:e|es|ed|ing) (?:my |our |the |this )?(?:whole |entire |online )?(?:store|shop|site|website|storefront|store front)|make (?:my |our |the |this )?(?:store|shop|site|website|storefront) (?:look |feel )?(?:like (?:mine|my own|my brand|my business|my shop)|mine|my own|more (?:me|personal|unique)|personal|unique)|(?:generic|default|sample) (?:theme|photos?|pictures?|images?|banners?|content|text)|theme(?:'s)? (?:photos?|pictures?|images?|banners?|sample (?:text|content))|replace (?:all )?(?:the )?(?:theme(?:'s)? )?(?:photos?|pictures?|images?|banners?) (?:with|for) (?:my|our)|(?:fit|suit|match) (?:my|our) (?:business|brand|products?|shop|store)|rebrand(?:ing)?|tailor(?:ed)? (?:to|for) (?:my|our)",
+    ),
+    phrases: [
+      "hisaab se",
+      "hisab se",
+      "personalise karo",
+      "personalize karo",
+      "पर्सनलाइज",
+      "पर्सनलाइज़",
+      "हिसाब से",
+    ],
   },
   storefront_code: {
     words: words(
@@ -630,6 +658,25 @@ export function routeMinkTools(input: MinkToolRouteInput): MinkToolRoute {
   const attached = hasAttachment(input.message);
   const reasons: string[] = [];
 
+  // ★★ THE VOCABULARY BELOW READS ENGLISH, HINGLISH AND DEVANAGARI, AND
+  // NOTHING ELSE. A message written mostly in another script cannot be
+  // judged by it: "draft a new product for my almond shake" in Punjabi
+  // matched only its "MRP" and was sent catalogue reads with no way to draft,
+  // so the run had to ask for more tools and start again. Such a message
+  // keeps every permitted tool, the fallback for a message the router cannot
+  // place.
+  if (unreadScript(text)) {
+    const groups = topicalGroups(text);
+    if (attached) groups.add("attachments");
+    return {
+      mode: "all",
+      groups: sortGroups(groups),
+      wantsChange: changeRequested(text),
+      light: false,
+      reasons: ["unread_script"],
+    };
+  }
+
   if (SMALLTALK.test(text.trim()) && !BARE_OK.test(text.trim()) && !attached) {
     return {
       mode: "narrow",
@@ -664,6 +711,14 @@ export function routeMinkTools(input: MinkToolRouteInput): MinkToolRoute {
       if (groups.size > before) reasons.push("history");
       if (changeRequested(previousText)) wantsChange = true;
     }
+  }
+
+  // ★ An interview keeps its tools. A personalisation is several answers
+  //   long and the answers rarely repeat the word that started it, so a
+  //   recent message that asked for one keeps the group for the turns after.
+  if (!groups.has("personalize") && recentlyAskedToPersonalize(input.history)) {
+    groups.add("personalize");
+    reasons.push("interview");
   }
 
   // A record open in the dashboard is what most questions asked from it are
@@ -771,6 +826,21 @@ export function applyMinkToolRoute(
 
 // ---------------------------------------------------------------------------
 
+/**
+ * True when most of the letters are in a script other than Latin or
+ * Devanagari: Punjabi in Gurmukhi, Gujarati, Bengali, Odia, Tamil, Telugu,
+ * Kannada, Malayalam, Urdu and anything else the vocabulary has no words for.
+ */
+function unreadScript(text: string): boolean {
+  let read = 0;
+  let unread = 0;
+  for (const letter of text.match(/\p{L}/gu) ?? []) {
+    if (/\p{Script=Latin}|\p{Script=Devanagari}/u.test(letter)) read += 1;
+    else unread += 1;
+  }
+  return unread > read;
+}
+
 function topicalGroups(text: string): Set<MinkToolGroup> {
   const groups = new Set<MinkToolGroup>();
   for (const group of MINK_TOOL_GROUPS) {
@@ -833,6 +903,30 @@ function lastUserMessage(
     if (history[index].role === "user") return history[index].text;
   }
   return null;
+}
+
+/** How many recent merchant messages keep a personalisation interview going. */
+const INTERVIEW_TURNS = 3;
+
+function recentlyAskedToPersonalize(
+  history: MinkToolRouteInput["history"],
+): boolean {
+  if (!history) return false;
+  const vocabulary = TOPICS.personalize!;
+  let seen = 0;
+  for (let index = history.length - 1; index >= 0; index--) {
+    if (history[index].role !== "user") continue;
+    const text = visibleText(history[index].text);
+    if (
+      vocabulary.words?.test(text) ||
+      hasPhrase(text, vocabulary.phrases ?? [])
+    ) {
+      return true;
+    }
+    seen += 1;
+    if (seen >= INTERVIEW_TURNS) return false;
+  }
+  return false;
 }
 
 function pageGroup(path: string | null | undefined): MinkToolGroup | null {

@@ -9,6 +9,7 @@ import {
   minkRuns,
 } from "@/drizzle/schema";
 import { withService } from "@/lib/db/client";
+import { MINK_CONVERSATION_LIMIT } from "./chat-session";
 import { MinkRequestError } from "./errors";
 import type {
   MinkActorContext,
@@ -18,7 +19,9 @@ import type {
 } from "./types";
 
 export const MINK_HISTORY_MESSAGE_LIMIT = 50;
-export const MINK_CONVERSATION_LIMIT = 10;
+// Kept in the client-safe chat-session module so the History sidebar can
+// mirror the pruning a new chat causes.
+export { MINK_CONVERSATION_LIMIT };
 
 export interface MinkStoredMessage {
   role: "user" | "assistant";

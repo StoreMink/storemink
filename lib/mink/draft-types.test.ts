@@ -45,6 +45,9 @@ describe("Mink draft contracts", () => {
       // while this one prices a provider call billed per IMAGE. ⚠ Provisional
       // and unmeasured against a real bill.
       media_image: 3,
+      // ★ A FLOOR, NOT THE BILL: a personalisation is charged for every page
+      // and photo it made (the expectedCredits override, up to 200).
+      storefront_personalization: 3,
     });
   });
 

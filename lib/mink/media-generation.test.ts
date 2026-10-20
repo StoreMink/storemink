@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generateContent = vi.fn();
 const constructed: Record<string, unknown>[] = [];
@@ -300,5 +300,98 @@ describe("asking Gemini for one storefront image", () => {
       location: "global",
       httpOptions: { retryOptions: { attempts: 1 } },
     });
+  });
+});
+
+describe("drawing for a storefront slot", () => {
+  it.each(["4:5", "1:1", "4:3"] as const)(
+    "★★ a %s slot gets its own frame and is told to be a photograph with no words",
+    async (slotAspectRatio) => {
+      // The first 4:5 guidance described the slot as "beside a block of
+      // text", and the image model drew one: a panel of invented words beside
+      // the photo (staging, 2026-10-20). The storefront sets its own words.
+      generateContent.mockResolvedValue(imageResponse());
+      await generateMinkMediaImage(config as never, {
+        ...request,
+        slotAspectRatio,
+      });
+      const call = generateContent.mock.calls[0][0];
+      const instruction: string = call.contents[0].parts[0].text;
+      expect(call.config.imageConfig.aspectRatio).toBe(slotAspectRatio);
+      expect(instruction).toContain(
+        "It is a single photograph and nothing else",
+      );
+      expect(instruction).not.toMatch(/block of text/i);
+    },
+  );
+
+  it("keeps the purpose's own frame when no slot is named", async () => {
+    generateContent.mockResolvedValue(imageResponse());
+    await generateMinkMediaImage(config as never, request);
+    const call = generateContent.mock.calls[0][0];
+    expect(call.config.imageConfig.aspectRatio).toBe("21:9");
+    expect(call.contents[0].parts[0].text).not.toContain(
+      "It is a single photograph and nothing else",
+    );
+  });
+});
+
+describe("a rate-limited image request", () => {
+  const rateLimited = Object.assign(new Error("RESOURCE_EXHAUSTED"), {
+    status: 429,
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("★★ is asked again only when the caller allows it", async () => {
+    // A 429 is refused before the model runs, so asking again is never a
+    // second bill. The personalisation run allows it; a chat image does not.
+    generateContent
+      .mockRejectedValueOnce(rateLimited)
+      .mockResolvedValueOnce(imageResponse());
+    const pending = generateMinkMediaImage(config as never, request, [], {
+      rateLimitRetries: 1,
+    });
+    await vi.advanceTimersByTimeAsync(7_000);
+    const image = await pending;
+    expect(image.bytes.toString()).toBe("hello");
+    expect(generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails at once without a retry allowance", async () => {
+    generateContent.mockRejectedValue(rateLimited);
+    await expect(
+      generateMinkMediaImage(config as never, request),
+    ).rejects.toBeInstanceOf(MinkRequestError);
+    expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ never retries a failure that may have been billed", async () => {
+    // A timeout or a 5xx may have produced an image nobody received.
+    generateContent.mockRejectedValue(
+      Object.assign(new Error("Internal"), { status: 500 }),
+    );
+    await expect(
+      generateMinkMediaImage(config as never, request, [], {
+        rateLimitRetries: 3,
+      }),
+    ).rejects.toBeInstanceOf(MinkRequestError);
+    expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps the retries at three, whatever the caller asks for", async () => {
+    generateContent.mockRejectedValue(rateLimited);
+    const pending = generateMinkMediaImage(config as never, request, [], {
+      rateLimitRetries: 10,
+    });
+    const settled = pending.catch((error) => error);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await settled).toBeInstanceOf(MinkRequestError);
+    expect(generateContent).toHaveBeenCalledTimes(4);
   });
 });

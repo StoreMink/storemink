@@ -755,6 +755,17 @@ describe("★★ panel chrome density", () => {
     expect(screen.queryByText("Mink AI", { selector: "header *" })).toBeNull();
   });
 
+  // ★ ChatGPT and Claude call a chat "New chat" until its title arrives.
+  it("calls a chat with no title yet New chat", () => {
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(
+      screen.getByText("New chat", { selector: "header *" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("New conversation", { selector: "header *" }),
+    ).toBeNull();
+  });
+
   // ★★ Alignment already says who is speaking, so stamping every answer with
   //    the name is repetition down the length of a thread.
   it("does not label each answer with the assistant name", () => {

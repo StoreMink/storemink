@@ -131,7 +131,9 @@ describe("a routed Vertex session", () => {
     );
     // Sending now goes to the widened chat.
     await session.sendUserMessage("again");
-    expect(h.send).toHaveBeenLastCalledWith({ message: "again" });
+    expect(h.send).toHaveBeenLastCalledWith(
+      expect.objectContaining({ message: "again" }),
+    );
     expect(h.create).toHaveBeenCalledTimes(2);
     // Once only.
     expect(session.restartWithAllTools?.()).toBe(false);

@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { getMinkActorContext } from "@/lib/mink/actor-context";
 import { getMinkConfig } from "@/lib/mink/config";
+import { nameMinkConversation } from "@/lib/mink/conversation-namer";
 import { MinkAgentError, MinkRequestError } from "@/lib/mink/errors";
 import { runMinkAgent } from "@/lib/mink/orchestrator";
 import {
@@ -115,6 +116,20 @@ export async function POST(request: Request) {
       model: config.model,
       thinkingLevel,
     });
+    // ★ A CHAT THIS RUN CREATED IS NAMED BY A MODEL, alongside the answer and
+    // never in its way (conversation-namer.ts): started now so it is under way
+    // before the answer's own setup, and kept alive past the end of the stream
+    // by after(). It never rejects.
+    const naming = started.createdTitle
+      ? nameMinkConversation({
+          config,
+          actor,
+          conversationId: started.conversationId,
+          provisionalTitle: started.createdTitle,
+          message,
+        })
+      : null;
+    if (naming) after(() => naming);
     // ★ ROUTED AFTER THE RUN STARTS, because a follow-up ("make it shorter")
     // is routed by the question it follows, and the stored conversation is
     // read inside startMinkRun. The run row's model is provisional until the
@@ -185,16 +200,30 @@ export async function POST(request: Request) {
     // A written turn carries no tags and passes through unchanged.
     const splitter = createSpokenAnswerSplitter();
     let consumerCancelled = false;
+    // Set as the stream closes: the chat's title can arrive after that.
+    let streamClosed = false;
     let timedOut = false;
-    const timeoutId = setTimeout(() => {
+    const onRunTimeout = () => {
       timedOut = true;
       abortController.abort();
-    }, config.runTimeoutMs);
+    };
+    let runDeadlineAt = Date.now() + config.runTimeoutMs;
+    let timeoutId = setTimeout(onRunTimeout, config.runTimeoutMs);
+    // ★ A TOOL THAT DOES A LONG PIECE OF WORK STRETCHES THE RUN, never
+    //   shortens it: the personalisation writes a whole site and draws its
+    //   photos inside one call, which the ordinary deadline would cut off.
+    const extendRunDeadline = (budgetMs: number) => {
+      const next = Date.now() + budgetMs;
+      if (next <= runDeadlineAt) return;
+      runDeadlineAt = next;
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(onRunTimeout, budgetMs);
+    };
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         const send = (event: string, data: Record<string, unknown>) => {
-          if (consumerCancelled) return;
+          if (consumerCancelled || streamClosed) return;
           controller.enqueue(
             encoder.encode(
               `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
@@ -202,11 +231,20 @@ export async function POST(request: Request) {
           );
         };
 
+        // What the current model turn has said so far, and whether its spoken
+        // block closed: decides whether a reset keeps it (see `text_reset`).
+        let turnSpoken = "";
+        let turnSpokenClosed = false;
+        let spokenAcks = 0;
         const forward = (parts: SpokenAnswerPart[]) => {
           for (const part of parts) {
-            if (part.kind === "spoken") send("spoken", { text: part.text });
-            else if (part.kind === "spoken_end") send("spoken_end", {});
-            else send("delta", { text: part.text });
+            if (part.kind === "spoken") {
+              turnSpoken += part.text;
+              send("spoken", { text: part.text });
+            } else if (part.kind === "spoken_end") {
+              turnSpokenClosed = true;
+              send("spoken_end", {});
+            } else send("delta", { text: part.text });
           }
         };
 
@@ -215,6 +253,13 @@ export async function POST(request: Request) {
           requestId,
           conversationId: started.conversationId,
           runId: started.runId,
+        });
+        // The title the moment the namer has it, while the stream is open
+        // (usually long before the answer). One that lands after the stream
+        // closes is still saved; the chat reads it from the list instead.
+        void naming?.then((title) => {
+          if (title)
+            send("title", { conversationId: started.conversationId, title });
         });
         try {
           const result = await runMinkAgent({
@@ -232,8 +277,29 @@ export async function POST(request: Request) {
                 return;
               }
               if (event.type === "text_reset") {
+                // ★★ A CLOSED SPOKEN BLOCK BEFORE A TOOL CALL IS KEPT. On a
+                // voice turn Mink may open the turn that calls a tool with a
+                // short acknowledgement ("Let me check today's orders.") so the
+                // merchant hears something while the tool runs, instead of six
+                // silent seconds. The browser keeps it (`keepSpoken`) and drops
+                // only the written text; the answer comes in its own block. A
+                // RETRY withdraws everything, the acknowledgement too, because
+                // the retried turn says it again; so does a block the turn never
+                // closed, which is not a finished sentence.
+                const keep =
+                  event.reason === "tool_call" &&
+                  turnSpokenClosed &&
+                  turnSpoken.trim().length > 0;
                 splitter.reset();
-                send("delta_reset", {});
+                if (keep) {
+                  spokenAcks += 1;
+                  send("delta_reset", {
+                    keepSpoken: true,
+                    spoken: turnSpoken.replace(/\s+/g, " ").trim(),
+                  });
+                } else send("delta_reset", {});
+                turnSpoken = "";
+                turnSpokenClosed = false;
                 return;
               }
               if (event.type === "tools_restarted") {
@@ -249,6 +315,10 @@ export async function POST(request: Request) {
                 return;
               }
               if (event.type === "tool_call") {
+                const budget = minkReadToolRegistry.runBudgetMs(
+                  event.call.name,
+                );
+                if (budget) extendRunDeadline(budget);
                 await startMinkToolCall({
                   actor,
                   started,
@@ -298,7 +368,8 @@ export async function POST(request: Request) {
             started,
             result: { ...result, text: written },
             latencyMs: Date.now() - startedAt,
-            pricingLocation: config.location,
+            // Where the answering model ran: the fallback lives elsewhere.
+            pricingLocation: session.location ?? config.location,
           });
           // AFTER the run row commits and in its own transaction, so a billing
           // failure can never roll back a reply the merchant is about to read.
@@ -362,6 +433,8 @@ export async function POST(request: Request) {
             adminId: actor.adminId,
             medium: actor.answerMedium ?? "written",
             model: result.model,
+            location: session.location ?? config.location,
+            ...(spokenAcks ? { spokenAcks } : {}),
             steps: result.steps,
             toolCalls: result.toolCalls,
             retryCount: result.retryCount,
@@ -404,7 +477,7 @@ export async function POST(request: Request) {
             errorCode,
             latencyMs: Date.now() - startedAt,
             model: session.model ?? initialModel,
-            pricingLocation: config.location,
+            pricingLocation: session.location ?? config.location,
             progress: failedProgress,
             usageStatus: failureUsageStatus({
               error,
@@ -424,6 +497,7 @@ export async function POST(request: Request) {
             storeId: actor.storeId,
             adminId: actor.adminId,
             model: session.model ?? initialModel,
+            location: session.location ?? config.location,
             toolRoute: route?.mode ?? "off",
             ms: Date.now() - startedAt,
           };
@@ -448,6 +522,7 @@ export async function POST(request: Request) {
         } finally {
           clearTimeout(timeoutId);
           request.signal.removeEventListener("abort", abortFromRequest);
+          streamClosed = true;
           if (!consumerCancelled) controller.close();
         }
       },

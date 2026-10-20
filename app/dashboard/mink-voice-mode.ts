@@ -54,9 +54,15 @@ export { speechWatchdogMs } from "./mink-speech-session";
  * loop is back to listening while the written answer and its cards are still
  * arriving in the chat. The block ends at its own close tag or when the
  * answer lands, never because written text appeared first. A block the run
- * withdrew after it closed (a sentence before a tool call) reopens the turn
- * for the block that carries the answer; an empty block leaves the written
- * answer to be read.
+ * withdrew after it closed (a retry) reopens the turn for the block that
+ * carries the answer; an empty block leaves the written answer to be read.
+ * ★★ A SHORT ACKNOWLEDGEMENT PLAYS WHILE THE TOOLS RUN. When Mink needs a
+ * tool it may first say "Let me check today's orders." in the same turn; the
+ * run keeps that block (`spokenKept`) instead of withdrawing it, so the
+ * merchant hears Mink within a couple of seconds instead of after the tools.
+ * The turn then waits ("Thinking…") for the block with the answer and plays
+ * it after the acknowledgement; if that answer has no spoken block, its
+ * written text is read, exactly as for a reply with no block at all.
  * ★ THE MICROPHONE IS OPEN FOR THE WHOLE CHAT: one stream from the first turn
  * to the last, so the browser's echo canceller keeps what it has learned
  * about the speaker. The recorder is re-armed the instant a transcript is
@@ -200,6 +206,11 @@ export type MinkVoiceModeInput = {
   /** The spoken block has closed; the written answer follows. */
   spokenEnded: boolean;
   /**
+   * Acknowledgements the reply has already said and kept (a short sentence
+   * before a tool call), joined; grows within a reply, empty between them.
+   */
+  spokenKept?: string;
+  /**
    * Send a transcript as a voice turn. False when the chat refused it (a
    * reply is still running, or the text is empty). A promise when it went
    * through the composer with a staged draft or attachments, which resolves
@@ -236,6 +247,15 @@ export type MinkVoiceMode = {
   noteSend: () => void;
 };
 
+/**
+ * Whether the answer's spoken block (the server's split, whitespace collapsed)
+ * carries on from what streamed: the same block, not another one.
+ */
+function continuesSpoken(final: string, streamed: string): boolean {
+  const flat = (text: string) => text.replace(/\s+/g, " ").trim();
+  return flat(final).startsWith(flat(streamed));
+}
+
 type Turn = {
   session: MinkSpeechSession;
   /** Replaced when the turn reopens or its block turns out to be empty. */
@@ -246,6 +266,13 @@ type Turn = {
   finalised: boolean;
   /** The session has played everything it was given. */
   idle: boolean;
+  /** How much of `spokenKept` this turn has already taken in. */
+  kept: number;
+  /**
+   * An acknowledgement played and the block with the answer has not started:
+   * the session was ended so it can idle, and is reopened for the answer.
+   */
+  awaiting: boolean;
 };
 
 type Live = {
@@ -490,9 +517,17 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   };
 
   const enqueue = (turn: Turn, pieces: string[]) => {
+    if (pieces.length && turn.awaiting) resumeTurn(turn);
     const fallback = latest.current.langFallback ?? DEFAULT_SPEECH_LANG;
     for (const piece of pieces)
       turn.session.enqueue(piece, speechLangFor(piece, fallback));
+  };
+
+  /** The answer after an acknowledgement has something to say: take pieces again. */
+  const resumeTurn = (turn: Turn) => {
+    turn.awaiting = false;
+    turn.idle = false;
+    turn.session.reopen();
   };
 
   /** Opens the speech session for the reply that was just sent. */
@@ -513,6 +548,8 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
       closed: false,
       finalised: false,
       idle: false,
+      kept: 0,
+      awaiting: false,
       session: null as unknown as MinkSpeechSession,
     };
     turn.session = createSession({
@@ -535,6 +572,15 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
         onIdle: () => {
           if (l.turn !== turn) return;
           turn.idle = true;
+          if (turn.awaiting && !turn.finalised) {
+            // The acknowledgement has played and the answer is still being
+            // worked out: Mink is thinking, not finished. Speech now is
+            // speech over a reply in progress, under the barge-in gate.
+            l.gate.current = MINK_BARGE_IN_GATE;
+            if (l.state === "speaking") setPhase("waiting");
+            arm();
+            return;
+          }
           l.gate.current = MINK_SPEECH_GATE;
           if (turn.finalised) l.turn = null;
           if (l.serverSpeech === "off") releaseAudio();
@@ -841,18 +887,55 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     turn.session.end();
   };
 
+  /**
+   * The run kept the block as an acknowledgement (a tool call follows it):
+   * it plays to its end, nothing is withdrawn, and the turn waits for the
+   * block with the answer. ★ `said` is the server's own text for the block,
+   * because the events around a tool call can reach this loop in one render
+   * and its close may never have been seen here.
+   */
+  const keepBlock = (turn: Turn, said: string) => {
+    if (!turn.closed) enqueue(turn, turn.segmenter.close(said));
+    const spoke = turn.segmenter.spoke;
+    turn.segmenter = createMinkSpeechSegmenter();
+    turn.closed = false;
+    if (!spoke) return;
+    turn.awaiting = true;
+    turn.session.end();
+    // Already played out before the run said it was keeping it: Mink is
+    // still thinking, unless the merchant has started talking.
+    if (
+      turn.idle &&
+      l.state === "listening" &&
+      !l.speechStarted &&
+      !l.pendingSend
+    ) {
+      l.gate.current = MINK_BARGE_IN_GATE;
+      setPhase("waiting");
+    }
+  };
+
   /** The chat stream moved: feed the open turn, or notice that it ended. */
   const onChat = (input: {
     messages: MinkMessage[];
     isReplying: boolean;
     spokenText: string;
     spokenEnded: boolean;
+    spokenKept?: string;
   }) => {
     if (!l.enabled) return;
     const { messages, isReplying, spokenText, spokenEnded } = input;
+    const spokenKept = input.spokenKept ?? "";
     if (isReplying) l.replyPending = false;
     const turn = l.turn;
     if (turn && !turn.finalised) {
+      // (0) An acknowledgement was kept: it is said, and the next block is
+      // the answer. First, because the answer may have landed in the same
+      // render, and it must play after the acknowledgement.
+      if (spokenKept.length > turn.kept) {
+        keepBlock(turn, spokenKept.slice(turn.kept).trim());
+        turn.kept = spokenKept.length;
+      }
       const last = messages[messages.length - 1];
       const id = last ? String(last.id) : null;
       if (
@@ -867,6 +950,23 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
         l.spokenIds.add(id);
         turn.finalised = true;
         l.replyPending = false;
+        // After an acknowledgement the session is open again for whatever
+        // the answer says, even nothing: ending it then still idles the turn.
+        if (turn.awaiting) resumeTurn(turn);
+        // ★ The block the turn closed on is not this answer's: it was an
+        // acknowledgement whose keep (`spokenKept`) arrived in the same render
+        // as the answer, which clears it, so case (0) never saw it. It plays
+        // on, and the answer's own block is read after it; without this the
+        // turn stayed closed and the answer was never said.
+        if (
+          turn.closed &&
+          last.spoken &&
+          !continuesSpoken(last.spoken, turn.segmenter.seen)
+        ) {
+          turn.segmenter = createMinkSpeechSegmenter();
+          turn.closed = false;
+          resumeTurn(turn);
+        }
         if (!turn.closed) {
           turn.closed = true;
           let tail = turn.segmenter.close(last.spoken ?? undefined);
@@ -964,10 +1064,10 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
   // it the way a subscription callback would, so the loop's phase moves in
   // step with spoken text arriving, an answer landing or a send failing.
   const { messages, isReplying, isChatOpen, error } = input;
-  const { spokenText, spokenEnded } = input;
+  const { spokenText, spokenEnded, spokenKept } = input;
   useEffect(() => {
-    loop.onChat({ messages, isReplying, spokenText, spokenEnded });
-  }, [loop, messages, isReplying, spokenText, spokenEnded]);
+    loop.onChat({ messages, isReplying, spokenText, spokenEnded, spokenKept });
+  }, [loop, messages, isReplying, spokenText, spokenEnded, spokenKept]);
 
   useEffect(() => {
     if (!isChatOpen) loop.stop("chat_closed");

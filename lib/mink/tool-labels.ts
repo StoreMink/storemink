@@ -69,6 +69,10 @@ export const MINK_TOOL_LABELS: Record<
     label: "the storefront design",
   },
   get_storefront_page_context: { verb: "read", label: "the page" },
+  get_storefront_personalization_context: {
+    verb: "read",
+    label: "your storefront",
+  },
   get_storefront_section_context: { verb: "read", label: "the page section" },
   get_website_builder_context: { verb: "read", label: "Website Builder" },
   inspect_product_csv: { verb: "read", label: "the product CSV" },
@@ -111,6 +115,10 @@ export const MINK_TOOL_LABELS: Record<
   propose_storefront_custom_code: { verb: "prepare", label: "custom code" },
   propose_storefront_design: { verb: "prepare", label: "a design change" },
   propose_storefront_layout: { verb: "prepare", label: "a page layout" },
+  propose_storefront_personalization: {
+    verb: "prepare",
+    label: "your personalised storefront",
+  },
   propose_website_builder_change: {
     verb: "prepare",
     label: "a Website Builder change",

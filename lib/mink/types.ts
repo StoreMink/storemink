@@ -307,6 +307,49 @@ export type MinkArtifact =
       creditSource: MinkDraftCreditSource;
     }
   | {
+      /**
+       * One proposal that personalises the whole storefront: every page's
+       * text, new photos, the look, the header and footer copy, confirmed
+       * category changes and the theme's sample products.
+       * ★ A SUMMARY, NOT THE PLAN. The stored plan holds whole section lists
+       *   (it can run to hundreds of kilobytes) and lives on the draft row;
+       *   this artifact rides in the conversation, so it carries only what
+       *   the review card shows.
+       */
+      type: "storefront_personalization_proposal";
+      draftId: string;
+      title: string;
+      explanation: string;
+      planDigest: string;
+      pages: Array<{
+        slug: string;
+        title: string;
+        textChanges: number;
+        photoChanges: number;
+        hidden: Array<{ type: string; reason: string }>;
+      }>;
+      /** The new photos, each already in the store's Media Library. */
+      photos: Array<{ url: string; alt: string; where: string }>;
+      design: MinkStorefrontDesignSummary | null;
+      chrome: Array<{ label: string; before: string; after: string }>;
+      categories: Array<{
+        action: "update" | "create" | "hide";
+        name: string;
+        previousName: string | null;
+        description: string | null;
+        photoUrl: string | null;
+      }>;
+      products: Array<{ name: string }>;
+      /** What could not be done this time, and why, in the merchant's words. */
+      skipped: Array<{ label: string; reason: string }>;
+      /** What changes on the live store the moment it is applied. */
+      live: string[];
+      status: "private_preview";
+      expectedCredits: number;
+      chargedCredits: number;
+      creditSource: MinkDraftCreditSource;
+    }
+  | {
       type: "storefront_design_proposal";
       draftId: string;
       title: string;
@@ -563,9 +606,12 @@ export interface MinkModelSession {
   ): Promise<MinkModelTurn>;
   /**
    * The model answering right now: the lite model until a restart, the main
-   * model after one. Absent means the configured model.
+   * model after one, the fallback once the main model has failed in this run.
+   * Absent means the configured model.
    */
   readonly model?: string;
+  /** The Vertex location of `model`. Absent means the configured location. */
+  readonly location?: string;
   /**
    * Swap a narrowed session for one with every permitted tool, on the main
    * model, keeping the stored conversation. False when there is nothing to
@@ -576,7 +622,14 @@ export interface MinkModelSession {
 
 export type MinkRunEvent =
   | { type: "text_delta"; text: string }
-  | { type: "text_reset" }
+  /**
+   * Text already streamed is withdrawn. `retry`: the provider call failed half
+   * way and the turn is being asked again. `restart`: the turn asked for more
+   * tools and the run starts again with all of them. `tool_call`: the turn
+   * ended in a function call, so what it wrote was working-out (a voice
+   * turn's spoken acknowledgement survives this one; see the stream route).
+   */
+  | { type: "text_reset"; reason: "retry" | "restart" | "tool_call" }
   | { type: "tool_call"; sequence: number; call: MinkToolCall }
   | {
       type: "tool_result";

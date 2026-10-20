@@ -8478,6 +8478,105 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261020_0231_mink_draft_language_help",
+      "description": "The Mink guide says what Mink writes for the store (products, blog posts, page text, offers, emails, social posts) is in English so customers across India can read it, whatever language the merchant chats in, and that asking for another language gets one reminder and then that language",
+      "file": "sql/20261020_0231_mink_draft_language_help.sql",
+      "transaction": true,
+      "requires": ["20261019_0230_mink_chat_continuity_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says drafts are in English unless the merchant asks for another language",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%is in English so customers across India can read it%' and body like '%ask for another language and Mink reminds you of that%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261020_0232_mink_storefront_personalization",
+      "description": "Mink AI storefront personalisation: apply_storefront_personalization in the three tool allowlists and the zero-version list, storefront in both resource-type allowlists, NULL-safe approval/audit/draft target checks, the storefront_personalization draft kind, a per-kind 200-credit ceiling on both credit ledgers and consume_mink_draft_credits, the tool provisioned for every store, and the website guide's design sentence extended in place",
+      "file": "sql/20261020_0232_mink_storefront_personalization.sql",
+      "transaction": true,
+      "requires": ["20261020_0231_mink_draft_language_help"],
+      "verify": {
+        "constraints": [
+          "mink_action_approvals_storefront_personalization_target_check",
+          "mink_action_audit_storefront_personalization_target_check",
+          "mink_drafts_storefront_personalization_target_check"
+        ],
+        "queries": [
+          {
+            "name": "the three tool allowlists admit the personalisation action",
+            "sql": "select count(*)::text from pg_constraint where conname in ('mink_action_tool_access_name_check','mink_action_approvals_tool_check','mink_action_audit_tool_check') and pg_get_constraintdef(oid) like '%apply_storefront_personalization%'",
+            "equals": "3"
+          },
+          {
+            "name": "an immutable personalisation may be approved at version 0",
+            "sql": "select count(*)::text from pg_constraint where conname = 'mink_action_approvals_draft_version_check' and pg_get_constraintdef(oid) like '%apply_storefront_personalization%'",
+            "equals": "1"
+          },
+          {
+            "name": "both resource-type checks admit storefront",
+            "sql": "select count(*)::text from pg_constraint where conname in ('mink_action_approvals_resource_type_check','mink_action_audit_resource_type_check') and pg_get_constraintdef(oid) like '%''storefront''::text%'",
+            "equals": "2"
+          },
+          {
+            "name": "the draft kind check admits storefront_personalization",
+            "sql": "select count(*)::text from pg_constraint where conname = 'mink_drafts_kind_check' and pg_get_constraintdef(oid) like '%storefront_personalization%'",
+            "equals": "1"
+          },
+          {
+            "name": "both credit ledgers bound a personalisation at 200 and everything else at 20",
+            "sql": "select count(*)::text from pg_constraint where conname in ('mink_drafts_credit_check','mink_draft_credit_usage_counts_check') and pg_get_constraintdef(oid) like '%storefront_personalization%' and pg_get_constraintdef(oid) like '%200%' and pg_get_constraintdef(oid) like '%20%'",
+            "equals": "2"
+          },
+          {
+            "name": "the credit function knows the per-kind ceiling",
+            "sql": "select count(*)::text from pg_proc where proname = 'consume_mink_draft_credits' and pg_get_functiondef(oid) like '%storefront_personalization%'",
+            "equals": "1"
+          },
+          {
+            "name": "provisioning grants the personalisation action",
+            "sql": "select count(*)::text from pg_proc where proname = 'enable_store_mink_access' and pg_get_functiondef(oid) like '%''apply_storefront_personalization''%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every store has the personalisation action",
+            "sql": "select count(*)::text from stores s left join mink_action_tool_access a on a.store_id=s.id and a.tool_name='apply_storefront_personalization' where a.store_id is null or not a.enabled",
+            "equals": "0"
+          },
+          {
+            "name": "the website guide explains personalising a storefront",
+            "sql": "select count(*)::text from help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%ask Mink to <strong>personalise my storefront</strong>%' and body like '%ask Mink to make the rest of the photos.%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261020_0233_mink_personalization_edited_pages_help",
+      "description": "The Mink website guide says a storefront personalisation leaves a page the merchant changed (the homepage included) as it is unless they ask Mink to include it, and that text they wrote themselves always stays as they wrote it",
+      "file": "sql/20261020_0233_mink_personalization_edited_pages_help.sql",
+      "transaction": true,
+      "requires": ["20261020_0232_mink_storefront_personalization"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says an edited page is left alone unless the merchant asks",
+            "sql": "select count(*)::text from help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%unless you ask Mink to include it%' and body like '%text you wrote yourself always stays as you wrote it%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

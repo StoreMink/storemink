@@ -13,8 +13,36 @@ export interface MinkConfig {
   maxToolCalls: number;
   maxParallelReadTools: number;
   maxOutputTokens: number;
+  /**
+   * Further provider attempts after the first, per model turn. A retry goes to
+   * the fallback model when there is one (see `fallbackModel`).
+   */
   maxModelRetries: number;
   runTimeoutMs: number;
+  /**
+   * How long a model turn may take to produce its first chunk before the
+   * attempt is abandoned as a stall and asked again (`vertex-client.ts`). A
+   * HIGH-thinking turn waits four times as long, because its reasoning comes
+   * before any output; a voice turn waits at most 12 s.
+   */
+  firstChunkTimeoutMs: number;
+  /** How long a turn that has started streaming may go quiet before it is a stall. */
+  streamIdleTimeoutMs: number;
+  /**
+   * The model a turn is retried on when the main one is unavailable: a 429,
+   * a 5xx, a dropped connection or a stall. Null switches the fallback off
+   * (`MINK_FALLBACK_MODEL` "off" or empty).
+   *
+   * ★ IT IS A DIFFERENT CAPACITY POOL, WHICH IS THE POINT. gemini-3.7-flash is
+   * served only at `global`, where Google's shared capacity refused or stalled
+   * most of a 300-attempt pass on 2026-10-19 (`mink-tool-routing.md`), and a
+   * retry on the same pool usually meets the same wall. Gemini 3.5 Flash at
+   * asia-south1 answered the same tool flow, was two to three times faster,
+   * and accepted a conversation whose tool call 3.7 had made (probed on
+   * storemink-staging, 2026-10-19).
+   */
+  fallbackModel: string | null;
+  fallbackLocation: string;
   /**
    * Whether a conversation actually spends the merchant's Mink credits.
    *
@@ -99,6 +127,22 @@ function optOut(value: string | undefined): boolean {
   return normalized !== "false" && normalized !== "0";
 }
 
+/**
+ * The fallback model: a Gemini id, or null when switched off. Anything that is
+ * not a plain Gemini model id is read as off rather than trusted, because a
+ * typo here would otherwise send every retry to a model that does not exist.
+ */
+const GEMINI_MODEL = /^gemini-[0-9a-z.-]+$/;
+const DEFAULT_FALLBACK_MODEL = "gemini-3.5-flash";
+
+function fallbackModel(value: string | undefined): string | null {
+  if (value === undefined) return DEFAULT_FALLBACK_MODEL;
+  const model = value.trim().toLowerCase();
+  if (!model || model === "off" || model === "none" || model === "false")
+    return null;
+  return GEMINI_MODEL.test(model) ? model : null;
+}
+
 function boundedInt(
   value: string | undefined,
   fallback: number,
@@ -147,13 +191,22 @@ export function getMinkConfig(): MinkConfig {
       256,
       8_192,
     ),
-    // One retry is enough to absorb a transient 429/5xx without hiding a
-    // persistent outage behind a long backoff chain.
     // On unless explicitly switched off — see MinkConfig.chargeCredits.
     chargeCredits: optOut(process.env.MINK_CHARGE_CREDITS),
-    maxModelRetries: boundedInt(process.env.MINK_MAX_MODEL_RETRIES, 1, 0, 2),
+    // ★ TWO RETRIES, AND THE FIRST GOES TO ANOTHER POOL. One retry on the same
+    // model was the policy until 2026-10-20, and against a capacity window it
+    // spent its one chance 250 ms later on the same exhausted pool: production
+    // failed 6 of 11 runs in five minutes on 2026-10-19. Main, fallback, main.
+    maxModelRetries: boundedInt(process.env.MINK_MAX_MODEL_RETRIES, 2, 0, 3),
     runTimeoutMs:
       boundedInt(process.env.MINK_RUN_TIMEOUT_SECONDS, 180, 15, 300) * 1_000,
+    firstChunkTimeoutMs:
+      boundedInt(process.env.MINK_FIRST_CHUNK_SECONDS, 20, 5, 120) * 1_000,
+    streamIdleTimeoutMs:
+      boundedInt(process.env.MINK_STREAM_IDLE_SECONDS, 20, 5, 120) * 1_000,
+    fallbackModel: fallbackModel(process.env.MINK_FALLBACK_MODEL),
+    fallbackLocation:
+      process.env.MINK_FALLBACK_LOCATION?.trim() || "asia-south1",
     toolRouting: optOut(process.env.MINK_TOOL_ROUTING),
     liteModel: liteModel(process.env.MINK_LITE_MODEL),
     liteRouting: optIn(process.env.MINK_LITE_ROUTING),

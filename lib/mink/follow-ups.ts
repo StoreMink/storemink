@@ -84,6 +84,10 @@ export function suggestMinkFollowUps(input: {
         add("Try a different style");
         add("Put this on my homepage");
         break;
+      case "storefront_personalization_proposal":
+        add("Explain exactly what this will change");
+        add("What should I check before publishing?");
+        break;
       case "navigation":
       case "workflow":
       case "product_import":
