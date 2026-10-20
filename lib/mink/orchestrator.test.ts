@@ -55,6 +55,7 @@ function config(overrides: Partial<MinkConfig> = {}): MinkConfig {
     streamIdleTimeoutMs: 20_000,
     fallbackModel: "gemini-3.5-flash",
     fallbackLocation: "asia-south1",
+    voiceStartsOnFallback: true,
     toolRouting: true,
     liteModel: "gemini-3.5-flash-lite",
     liteRouting: false,

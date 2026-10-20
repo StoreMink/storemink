@@ -44,6 +44,22 @@ export interface MinkConfig {
   fallbackModel: string | null;
   fallbackLocation: string;
   /**
+   * Whether a voice chat turn starts on the fallback model (gemini-3.5-flash
+   * at asia-south1) rather than the main one, with the main model as its own
+   * failover. ON unless `MINK_VOICE_ON_FALLBACK` is "false" or "0".
+   *
+   * ★ OWNER'S DECISION (2026-10-20), for speed: measured on storemink-staging
+   * with the real routed prompt (a personalise request, one tool call), the
+   * answer to a spoken question started 15 to 18 s after it was sent on
+   * gemini-3.7-flash at global and 6 to 10 s on 3.5 Flash in Mumbai; the
+   * spoken "let me check" came at 5 to 9 s against 1.5 to 5.5 s. Typed chat
+   * stays on the main model. ⚠ Per third-party price trackers (Google's page
+   * does not list it) 3.5 Flash costs about twice 3.7 Flash's 2026 rate per
+   * token, and `estimateMinkCost` has no price for it, so a voice run's cost
+   * estimate is unknown (credits are band-based and unaffected).
+   */
+  voiceStartsOnFallback: boolean;
+  /**
    * Whether a conversation actually spends the merchant's Mink credits.
    *
    * ★★ ON BY DEFAULT since 2026-09-21 (owner's decision). It shipped OPT-IN so
@@ -207,6 +223,7 @@ export function getMinkConfig(): MinkConfig {
     fallbackModel: fallbackModel(process.env.MINK_FALLBACK_MODEL),
     fallbackLocation:
       process.env.MINK_FALLBACK_LOCATION?.trim() || "asia-south1",
+    voiceStartsOnFallback: optOut(process.env.MINK_VOICE_ON_FALLBACK),
     toolRouting: optOut(process.env.MINK_TOOL_ROUTING),
     liteModel: liteModel(process.env.MINK_LITE_MODEL),
     liteRouting: optIn(process.env.MINK_LITE_ROUTING),

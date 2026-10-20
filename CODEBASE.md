@@ -551,9 +551,11 @@ editors (`offers/offer-form.tsx`, `categories/categories-management-view`
   conversation and remounts when a new conversation gets its id or the panel
   swaps with the full view, and a loop inside it died mid-sentence on every
   such remount. `useMinkVoice()` hands it to the composer's "Talk with Mink"
-  toggle and to `app/dashboard/mink-voice-view.tsx`, the full-screen view
-  that replaces the thread while voice chat is on (status, a large waveform,
-  "You said", the sentence Mink is saying, Stop while replying, End; the
+  toggle and to `MinkVoiceBar` (`app/dashboard/mink-voice-view.tsx`), which
+  takes the composer's place while voice chat is on (status, the sentence
+  Mink is saying, a waveform once the chat is wide enough, Stop while
+  replying, End; the thread stays on screen above it, see "Voice chat lives
+  inside the chat" below; the
   composer stays mounted but `hidden`, so staged uploads survive, and a
   spoken turn takes them along: the composer registers with `ChatProvider`
   (`registerComposer`), which routes each transcript through its
@@ -1914,6 +1916,60 @@ says write nothing), and a reconciler for runs left with a NULL
 they owe nothing, and `discardFailedMinkRunDrafts` already compensates any
 proposal credits they reserved.
 
+### Voice chat lives inside the chat, and starts on 3.5 Flash in Mumbai (2026-10-20)
+
+The owner tested storefront personalisation by voice on production: Mink said
+"check the review card once it appears", but the full-screen voice view hid
+the thread, so the card (and its Apply button) could not be reached without
+ending voice chat; and voice "still feels very slow". Owner's decisions, both
+asked with measurements:
+★★ VOICE CHAT LIVES INSIDE THE CHAT (ChatGPT's default since late 2025). The
+thread stays on screen while the merchant talks: their transcripts as
+messages, every written answer, every card. `MinkVoiceBar`
+(`app/dashboard/mink-voice-view.tsx`) takes the composer's place: the status
+(`minkVoiceStatus`), one caption line (`minkVoiceCaption`: what Mink is saying
+now, since the spoken block is not in the written answer, or the words heard
+while they wait to be sent), a waveform, Stop while a reply runs, End (focus
+lands on it; Escape inside the bar ends voice chat), and the loop's notice.
+It is sized by a container query, not the window: the side panel can be
+380px wide on a large screen, so the waveform and the Stop label appear only
+from `@md` of the bar's own width. Touch screens get 44px buttons. The
+composer stays mounted and `hidden`, as before (staged uploads survive); the
+history sidebar and New chat stay hidden while voice chat is on. Gone: the
+full-screen view and the thread-scroll repair it needed when voice ended
+(`voiceHidThreadRef`). The Help guide already said the written answer and
+cards appear in the chat, which is now true while talking, so no Help edit.
+★★ VOICE TURNS START ON THE FALLBACK TARGET, gemini-3.5-flash at
+asia-south1, with the main model (gemini-3.7-flash at global) as their
+failover (`config.voiceStartsOnFallback`, `MINK_VOICE_ON_FALLBACK`, on unless
+"false"/"0"; `_MINK_VOICE_ON_FALLBACK` in cloudbuild.yaml). Typed chat is
+unchanged. Measured on storemink-staging with the real routed prompt for a
+spoken personalise request (one tool call, the context result as the tool
+response): the answer started 15 to 18 s after the question on 3.7 global
+and 6 to 10 s on 3.5 Mumbai; the spoken "let me check" came at 5 to 9 s
+against 1.5 to 5.5 s. 3.5 with MINIMAL thinking answered in 3 to 8 s but
+skipped the acknowledgement (not chosen); 3.7 Flash refuses MINIMAL (400).
+Through `createVertexMinkSession` a spoken "How many orders today?" started
+on gemini-3.5-flash@asia-south1 and finished, tool included, in 8.6 s cold
+and 2.5 s warm. A fallback this instance watched fail (or refuse) in the last
+minute is not where a voice turn starts: a refusal (404/403) is now also
+remembered in `provider-health.ts`, because 3.5 at asia-south1 was verified on
+staging only and every voice turn would otherwise pay a production refusal
+first (watch for `mink.model: fallback refused`). ⚠ COST: Google's pricing
+page does not list 3.5 Flash; third-party trackers give $1.50 / $9.00 per
+million input/output tokens against 3.7 Flash's $0.75 / $3.75 until the end
+of 2026, so a voice turn costs StoreMink roughly twice as much per token
+(3.5 thinks less, which narrows it). `estimateMinkCost` has no 3.5 price, so
+voice runs show an unknown cost estimate; credits are band-based and
+unaffected. Also measured: Saaras v4 transcribed the test question in 0.5 to
+0.9 s and heard "Eco Store"; Chirp 3 at `us` took 4 to 8 s and heard "echo
+store" (the platform's speech-to-text choice is on the Mink runs console
+page). Tests: `mink-voice-view`, `dashboard-chat` (the thread and a card stay
+usable during voice), `vertex-failover` (voice starts on the fallback, fails
+over to the main model, skips a fallback that just failed or refused, and
+stays on the main model when switched off) and `config`. ⚠ Not run in a
+browser end to end (the bar was checked rendered at 360, 420 and 900px).
+
 ### Mink personalises the storefront from an interview (2026-10-20)
 
 The owner's request: a theme chosen at signup is generic, so Mink asks the
@@ -2874,7 +2930,7 @@ phrases with pauses between them is transcribed: the 300 ms decay that
 resets a voiced run applies only to voice chat's gate before it arms, and in
 dictation it used to discard each phrase, so a paused dictation was reported
 as no speech. Voice chat
-has its own full-screen view (above). The temporary recording is
+has its own bar in place of the composer (above). The temporary recording is
 sent to `POST /api/mink/voice`; the route authenticates the current store,
 applies the voice quotas (`reserveMinkVoice`, below), validates the real WAV bytes and reads the
 platform-wide voice provider before making one transcription request. The
@@ -4973,7 +5029,8 @@ wholesip/
 │   │   ├── mink-voice-mode.ts # ★ The spoken conversation's loop: mic open all turn,
 │   │   │                      # barge-in, parked sends, one speech session per reply;
 │   │   │                      # mink-speech-session.ts plays its sentences on one
-│   │   │                      # playhead; mink-voice-view.tsx is the full-screen view.
+│   │   │                      # playhead; mink-voice-view.tsx is its bar (MinkVoiceBar),
+│   │   │                      # docked under the thread while voice chat is on.
 │   │   ├── dashboard-chat.tsx # Mink panel/full-view renderer: Codex-style history sidebar
 │   │   │                      # with confirmed deletion, persisted drag/keyboard width,
 │   │   │                      # Help-matched robot identity and auto-growing composer;
@@ -20515,7 +20572,8 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   **`MINK_STREAM_IDLE_SECONDS`** (20 each, bounded 5–120), and the fallback
   **`MINK_FALLBACK_MODEL`** (`gemini-3.5-flash`; "off" or empty disables it,
   and anything but a Gemini id reads as off) at **`MINK_FALLBACK_LOCATION`**
-  (`asia-south1`); see "Mink keeps answering when its model is busy". Tool routing reads
+  (`asia-south1`), where voice chat turns start unless
+  **`MINK_VOICE_ON_FALLBACK`** is "false"/"0"; see "Mink keeps answering when its model is busy". Tool routing reads
   **`MINK_TOOL_ROUTING`** (on unless "false"/"0"), **`MINK_LITE_MODEL`** (default
   `gemini-3.5-flash-lite`; anything but a Flash-Lite id falls back to it) and
   **`MINK_LITE_ROUTING`** (off unless "true"/"1"); see "Mink tool routing". The dashboard layout reads the private

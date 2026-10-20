@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MinkVoiceView, minkVoiceStatus } from "./mink-voice-view";
+import {
+  MinkVoiceBar,
+  minkVoiceCaption,
+  minkVoiceStatus,
+} from "./mink-voice-view";
 import type { MinkVoiceMode } from "./mink-voice-mode";
 
 function voice(overrides: Partial<MinkVoiceMode> = {}): MinkVoiceMode {
@@ -46,26 +50,50 @@ describe("minkVoiceStatus", () => {
   });
 });
 
-describe("MinkVoiceView", () => {
-  it("shows the status, the captions and End, with focus on End", () => {
+describe("minkVoiceCaption", () => {
+  it("captions what Mink is saying, or the words waiting to be sent", () => {
+    expect(
+      minkVoiceCaption({
+        state: "speaking",
+        heard: "How many orders?",
+        said: "Twelve today.",
+      }),
+    ).toEqual({ who: "Mink", text: "Twelve today." });
+    expect(
+      minkVoiceCaption({
+        state: "sending",
+        heard: "And yesterday?",
+        said: "Twelve today.",
+      }),
+    ).toEqual({ who: "You", text: "And yesterday?" });
+    // Listening or thinking: the thread already shows both sides.
+    expect(
+      minkVoiceCaption({
+        state: "listening",
+        heard: "How many orders?",
+        said: "Twelve today.",
+      }),
+    ).toBeNull();
+    expect(
+      minkVoiceCaption({ state: "waiting", heard: "How many?", said: null }),
+    ).toBeNull();
+  });
+});
+
+describe("MinkVoiceBar", () => {
+  it("shows the status, Mink's words and End, with focus on End", () => {
     const v = voice({
       state: "speaking",
       heard: "How many orders today?",
       said: "You have twelve orders today.",
     });
-    render(
-      <MinkVoiceView voice={v} isReplying={false} onStopReply={vi.fn()} />,
-    );
-    expect(
-      screen.getByRole("region", { name: "Voice chat with Mink" }),
-    ).toBeInTheDocument();
+    render(<MinkVoiceBar voice={v} isReplying={false} onStopReply={vi.fn()} />);
+    const bar = screen.getByRole("region", { name: "Voice chat with Mink" });
+    expect(bar).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Speaking…");
-    expect(screen.getByText("You said")).toBeInTheDocument();
-    expect(screen.getByText("How many orders today?")).toBeInTheDocument();
-    expect(screen.getByText("Mink")).toBeInTheDocument();
-    expect(
-      screen.getByText("You have twelve orders today."),
-    ).toBeInTheDocument();
+    expect(bar).toHaveTextContent("Mink: You have twelve orders today.");
+    // What was heard is a message in the thread by now, not repeated here.
+    expect(bar).not.toHaveTextContent("How many orders today?");
     const end = screen.getByRole("button", { name: "Stop voice chat" });
     expect(end).toHaveFocus();
     expect(screen.queryByRole("button", { name: "Stop Mink AI" })).toBeNull();
@@ -73,21 +101,22 @@ describe("MinkVoiceView", () => {
     expect(v.toggle).toHaveBeenCalledOnce();
   });
 
-  it("omits empty captions, offers Stop only while Mink is replying, and ends on Escape", () => {
+  it("offers Stop only while Mink is replying, and ends on Escape", () => {
     const v = voice();
     const stop = vi.fn();
-    render(<MinkVoiceView voice={v} isReplying onStopReply={stop} />);
-    expect(screen.queryByText("You said")).toBeNull();
-    expect(screen.queryByText("Mink")).toBeNull();
+    render(<MinkVoiceBar voice={v} isReplying onStopReply={stop} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Listening…");
     fireEvent.click(screen.getByRole("button", { name: "Stop Mink AI" }));
     expect(stop).toHaveBeenCalledOnce();
-    fireEvent.keyDown(screen.getByTestId("mink-voice-view"), { key: "Escape" });
+    fireEvent.keyDown(screen.getByTestId("mink-voice-bar"), {
+      key: "Escape",
+    });
     expect(v.toggle).toHaveBeenCalledOnce();
   });
 
   it("renders a notice as an alert", () => {
     render(
-      <MinkVoiceView
+      <MinkVoiceBar
         voice={voice({
           notice: "The rest of that answer could not be read aloud.",
         })}

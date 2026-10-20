@@ -334,6 +334,71 @@ describe("★ the fallback", () => {
     expect(session().model).toBe("gemini-3.7-flash");
   });
 
+  it("★★ is where a voice turn starts, and the main model is its failover", async () => {
+    // Owner's decision (2026-10-20): 3.5 Flash in Mumbai answered a spoken
+    // question in about half the time 3.7 Flash at global took.
+    const voiceConfig = { ...config, voiceStartsOnFallback: true };
+    const voice = () =>
+      createVertexMinkSession(
+        voiceConfig,
+        { ...actor, answerMedium: "spoken" },
+        [],
+        { history: [] },
+      );
+    expect(voice().model).toBe("gemini-3.5-flash");
+    expect(voice().location).toBe("asia-south1");
+    // A typed turn still starts on the main model.
+    expect(
+      createVertexMinkSession(voiceConfig, actor, [], { history: [] }).model,
+    ).toBe("gemini-3.7-flash");
+
+    h.plan = [status(429), answer("ok")];
+    await expect(voice().sendUserMessage("Hi")).resolves.toMatchObject({
+      text: "ok",
+      retryCount: 1,
+    });
+    expect(h.calls.map((call) => `${call.model}@${call.location}`)).toEqual([
+      "gemini-3.5-flash@asia-south1",
+      "gemini-3.7-flash@global",
+    ]);
+    // The fallback this instance just watched fail is not where the next
+    // voice turn starts.
+    expect(voice().model).toBe("gemini-3.7-flash");
+  });
+
+  it("★ stops starting voice turns on a fallback that refused outright", async () => {
+    // Verified at asia-south1 on staging only: if production refuses it, each
+    // voice turn must not pay that refusal before reaching the main model.
+    const voiceConfig = { ...config, voiceStartsOnFallback: true };
+    const voice = () =>
+      createVertexMinkSession(
+        voiceConfig,
+        { ...actor, answerMedium: "spoken" },
+        [],
+        { history: [] },
+      );
+    h.plan = [status(404), answer("ok")];
+    await expect(voice().sendUserMessage("Hi")).resolves.toMatchObject({
+      text: "ok",
+    });
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.5-flash",
+      "gemini-3.7-flash",
+    ]);
+    expect(voice().model).toBe("gemini-3.7-flash");
+  });
+
+  it("leaves voice turns on the main model when switched off", () => {
+    expect(
+      createVertexMinkSession(
+        { ...config, voiceStartsOnFallback: false },
+        { ...actor, answerMedium: "spoken" },
+        [],
+        { history: [] },
+      ).model,
+    ).toBe("gemini-3.7-flash");
+  });
+
   it("sends each attempt with the full chat config and its own abort signal", async () => {
     h.plan = [answer("ok")];
     const controller = new AbortController();

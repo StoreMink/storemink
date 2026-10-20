@@ -137,33 +137,54 @@ beforeEach(() => {
   );
   voiceChat.value.enabled = false;
   voiceChat.value.notice = null;
+  voiceChat.value.said = null;
+  voiceChat.value.heard = null;
+  voiceChat.value.state = "idle";
 });
 
-describe("★★ voice chat takes over the chat surface", () => {
-  it("shows the voice view in place of the thread and keeps the composer mounted but hidden", () => {
+describe("★★ voice chat happens inside the chat", () => {
+  it("keeps the thread and its cards on screen, with the voice bar in the composer's place", () => {
+    // Owner's decision (2026-10-20): Mink said "check the review card" while
+    // a full-screen voice view hid the thread, so there was nothing to check.
     voiceChat.value.enabled = true;
     voiceChat.value.state = "speaking";
-    voiceChat.value.heard = "How many orders today?";
+    voiceChat.value.said = "Your storefront card is ready.";
     vi.mocked(useChat).mockReturnValue({
       ...baseChatState,
       messages: [
-        { id: "u1", role: "user", text: "How many orders today?" },
-        { id: "a1", role: "assistant", text: "You have **12 orders** today." },
+        { id: "u1", role: "user", text: "Personalise my storefront" },
+        {
+          id: "a1",
+          role: "assistant",
+          text: "Your card is ready: review it and apply.",
+          artifacts: [
+            {
+              type: "navigation" as const,
+              title: "Website Builder",
+              path: "/dashboard/builder",
+              label: "Open Website Builder",
+            },
+          ],
+        },
       ],
       isReplying: true,
     } as unknown as ReturnType<typeof useChat>);
     render(createElement(DashboardChat, { variant: "overlay" }));
+    // The conversation and its card stay usable while Mink talks.
+    expect(screen.getByTestId("mink-message-scroller")).toBeInTheDocument();
+    expect(screen.getByText("Personalise my storefront")).toBeInTheDocument();
     expect(
-      screen.getByRole("region", { name: "Voice chat with Mink" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("How many orders today?")).toBeInTheDocument();
-    expect(screen.queryByTestId("mink-message-scroller")).toBeNull();
+      screen.getByRole("link", { name: /Open Website Builder/i }),
+    ).toHaveAttribute("href", "/dashboard/builder");
+    const bar = screen.getByRole("region", { name: "Voice chat with Mink" });
+    expect(bar).toHaveTextContent("Speaking…");
+    expect(bar).toHaveTextContent("Your storefront card is ready.");
     // No way into the history while talking.
     expect(
       screen.queryByRole("button", { name: /conversation sidebar/i }),
     ).toBeNull();
     // The composer survives (its draft and staged uploads with it) but is
-    // out of the way; the voice view's own buttons are the only controls.
+    // out of the way; the bar's buttons are the voice controls.
     const composer = screen.getByLabelText("Mink AI composer");
     expect(composer.closest("[hidden]")).not.toBeNull();
     expect(
@@ -173,51 +194,25 @@ describe("★★ voice chat takes over the chat surface", () => {
     expect(voiceChat.value.toggle).toHaveBeenCalledOnce();
   });
 
-  it("★ opens the thread at the newest message when voice chat ends", async () => {
-    const scrollTops = new WeakMap<HTMLElement, number>();
-    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-      configurable: true,
-      get: () => 1600,
-    });
-    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
-      configurable: true,
-      get(this: HTMLElement) {
-        return scrollTops.get(this) ?? 0;
-      },
-      set(this: HTMLElement, value: number) {
-        scrollTops.set(this, value);
-      },
-    });
-    try {
-      // The answers landed while the voice view hid the thread.
-      const state = {
-        ...baseChatState,
-        messages: [
-          { id: "u1", role: "user", text: "How many orders today?" },
-          { id: "a1", role: "assistant", text: "Twelve orders today." },
-          { id: "u2", role: "user", text: "And yesterday?" },
-          { id: "a2", role: "assistant", text: "Nine yesterday." },
-        ],
-      } as unknown as ReturnType<typeof useChat>;
-      vi.mocked(useChat).mockReturnValue(state);
-      voiceChat.value.enabled = true;
-      const view = render(createElement(DashboardChat, { variant: "overlay" }));
-      expect(screen.queryByTestId("mink-message-scroller")).toBeNull();
-      // End: nothing about the chat changed except voice chat being off.
-      voiceChat.value.enabled = false;
-      view.rerender(createElement(DashboardChat, { variant: "overlay" }));
-      const scroller = screen.getByTestId("mink-message-scroller");
-      await waitFor(() => expect(scroller.scrollTop).toBe(1600));
-    } finally {
-      delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
-      delete (HTMLElement.prototype as { scrollTop?: number }).scrollTop;
-    }
+  it("shows the composer again, and no voice bar, once voice chat is off", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: "u1", role: "user", text: "How many orders today?" },
+        { id: "a1", role: "assistant", text: "Twelve orders today." },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.queryByTestId("mink-voice-bar")).toBeNull();
+    expect(
+      screen.getByLabelText("Mink AI composer").closest("[hidden]"),
+    ).toBeNull();
   });
 
   it("shows the loop's notice above the composer once voice chat is off", () => {
     voiceChat.value.notice = "Voice chat turned off: nothing was heard.";
     render(createElement(DashboardChat, { variant: "overlay" }));
-    expect(screen.queryByTestId("mink-voice-view")).toBeNull();
+    expect(screen.queryByTestId("mink-voice-bar")).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Voice chat turned off: nothing was heard.",
     );

@@ -84,6 +84,19 @@ describe("getMinkConfig", () => {
     expect(getMinkConfig().fallbackLocation).toBe("us-central1");
   });
 
+  // ★ Voice turns start on the fallback (owner's decision, 2026-10-20); an
+  // explicit false is the way back to the main model.
+  it("starts voice turns on the fallback unless switched off", () => {
+    delete process.env.MINK_VOICE_ON_FALLBACK;
+    expect(getMinkConfig().voiceStartsOnFallback).toBe(true);
+    for (const value of ["false", "0", " FALSE "]) {
+      process.env.MINK_VOICE_ON_FALLBACK = value;
+      expect(getMinkConfig().voiceStartsOnFallback).toBe(false);
+    }
+    process.env.MINK_VOICE_ON_FALLBACK = "true";
+    expect(getMinkConfig().voiceStartsOnFallback).toBe(true);
+  });
+
   // ★ Routing is on by default (a narrowed run can always ask for the rest);
   // the lite model is off by default, because it changes who answers.
   it("routes tools by default and keeps the lite model off", () => {

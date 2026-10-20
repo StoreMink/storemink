@@ -151,11 +151,18 @@ export function createVertexMinkSession(
       : null;
   // ★ A model this instance has just watched fail is not tried first: the
   // run starts on the fallback and pays nothing for the main model's window.
+  // ★★ A VOICE TURN STARTS ON THE FALLBACK (owner's decision, 2026-10-20):
+  // 3.5 Flash in Mumbai answered a spoken question in about half the time
+  // 3.7 Flash at global took (config.voiceStartsOnFallback). The main model
+  // is its failover, by the same rules, and a fallback this instance has just
+  // watched fail is not where a voice turn starts either.
   const startingFallback = fallbackFor(primary);
+  const voiceFirst =
+    actor.answerMedium === "spoken" && config.voiceStartsOnFallback === true;
   let current: MinkProviderTarget =
     startingFallback &&
-    !minkModelLooksAvailable(primary) &&
-    minkModelLooksAvailable(startingFallback)
+    minkModelLooksAvailable(startingFallback) &&
+    (voiceFirst || !minkModelLooksAvailable(primary))
       ? startingFallback
       : primary;
   const openChat = (target: MinkProviderTarget, history: Content[]): Chat =>
@@ -298,8 +305,11 @@ export function createVertexMinkSession(
           } else if (onFallback) {
             // A fallback that refuses outright is a configuration fault
             // (wrong id, not enabled at that location): say so loudly, and
-            // stop offering it for the rest of this session.
+            // stop offering it for the rest of this session. ★ Remembered on
+            // the instance too, because voice turns START on the fallback:
+            // without it every voice turn would pay this refusal first.
             fallbackUsable = false;
+            markMinkModelUnavailable(target);
             logError("mink.model: fallback refused", error, context);
           }
         },

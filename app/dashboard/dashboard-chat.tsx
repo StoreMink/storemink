@@ -53,7 +53,7 @@ import {
 } from "./mink-ai";
 import { MinkMark } from "./mink-mark";
 import { MinkMultimodalInput } from "./mink-multimodal-input";
-import { MinkVoiceView } from "./mink-voice-view";
+import { MinkVoiceBar } from "./mink-voice-view";
 import { MinkArtifacts } from "./mink-artifacts";
 import { MinkFeedbackControls } from "./mink-feedback";
 import { readMinkCsvReference } from "@/lib/mink/csv-input";
@@ -241,16 +241,15 @@ export function DashboardChat({
     saveMemorySuggestion,
     dismissMemorySuggestion,
   } = useChat();
-  // The spoken conversation, run by ChatProvider; while it is on this surface
-  // shows the voice view in place of the thread and keeps the composer
-  // mounted but hidden (unmounting it would discard staged attachments).
+  // The spoken conversation, run by ChatProvider. While it is on, the thread
+  // stays on screen (cards included) and the voice bar takes the composer's
+  // place; the composer stays mounted but hidden (unmounting it would discard
+  // staged attachments).
   const voiceChat = useMinkVoice();
   const isOverlay = variant === "overlay";
   const pathname = usePathname();
   const scrollRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
-  /** The thread was swapped out for the voice view and has not come back yet. */
-  const voiceHidThreadRef = useRef(false);
   const latestUserMessageIdRef = useRef<number | string | null>(null);
   const anchoredUserMessageIdRef = useRef<number | string | null>(null);
   const autoAnchorSubmissionRef = useRef(true);
@@ -349,25 +348,8 @@ export function DashboardChat({
   }, [isOverlay, panelWidth]);
 
   useEffect(() => {
-    if (voiceChat.enabled) {
-      voiceHidThreadRef.current = true;
-      return;
-    }
     const scroller = scrollRef.current;
     if (!scroller) return;
-    if (voiceHidThreadRef.current) {
-      // ★ The voice view unmounted the thread, and it remounts at its top.
-      // Nothing else re-runs this effect when voice chat ends (the answers
-      // landed while it was hidden), so the merchant came back to their
-      // oldest message with no way to tell the newest were below. Open it at
-      // the latest message, as a restored conversation opens.
-      voiceHidThreadRef.current = false;
-      followLatestRef.current = true;
-      anchoredUserMessageIdRef.current = null;
-      latestUserMessageIdRef.current = latestMinkUserMessageId(messages);
-      if (turnAnchorSpaceRef.current)
-        turnAnchorSpaceRef.current.style.minHeight = "0px";
-    }
     const latestUserId = latestMinkUserMessageId(messages);
     const receivedNewUserMessage =
       latestUserId !== null && latestUserId !== latestUserMessageIdRef.current;
@@ -423,7 +405,7 @@ export function DashboardChat({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, isReplying, error, statusText, voiceChat.enabled]);
+  }, [messages, isReplying, error, statusText]);
 
   useEffect(() => {
     const composer = composerRef.current;
@@ -729,13 +711,7 @@ export function DashboardChat({
         )}
 
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
-          {voiceChat.enabled ? (
-            <MinkVoiceView
-              voice={voiceChat}
-              isReplying={isReplying}
-              onStopReply={cancel}
-            />
-          ) : !hasThread ? (
+          {!hasThread ? (
             <div className="flex min-h-0 flex-1 touch-pan-y flex-col items-center justify-center overflow-y-auto overscroll-contain p-6 text-center">
               <div className="mb-4">
                 <MinkMark size="lg" />
@@ -938,6 +914,14 @@ export function DashboardChat({
             </div>
           )}
 
+          {voiceChat.enabled ? (
+            <MinkVoiceBar
+              voice={voiceChat}
+              isReplying={isReplying}
+              onStopReply={cancel}
+              columnClass={columnClass}
+            />
+          ) : null}
           <div
             hidden={voiceChat.enabled}
             className="shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4"
