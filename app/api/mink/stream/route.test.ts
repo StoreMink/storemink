@@ -61,6 +61,9 @@ vi.mock("@/lib/mink/persistence", () => ({
 vi.mock("@/lib/mink/tools/read-tools", () => ({
   minkReadToolRegistry: {
     declarationsFor: vi.fn(() => holder.declarations),
+    runBudgetMs: vi.fn((name: string) =>
+      name === "propose_storefront_personalization" ? 260_000 : undefined,
+    ),
   },
 }));
 vi.mock("@/lib/mink/vertex-client", () => ({
@@ -850,6 +853,59 @@ describe("POST /api/mink/stream", () => {
     const response = await POST(request({ message: "Slow question" }));
     const body = await response.text();
 
+    expect(holder.failRun).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", errorCode: "run_timeout" }),
+    );
+    expect(body).toContain("Mink AI took too long to finish");
+  });
+
+  /** A run that starts one tool, then takes 30 ms against a 5 ms deadline. */
+  function slowToolRun(name: string) {
+    holder.runTimeoutMs = 5;
+    holder.run.mockImplementationOnce(
+      async (input: {
+        onEvent?: (event: Record<string, unknown>) => Promise<void> | void;
+      }) => {
+        // The run's abort signal is the one the session was created with.
+        const call = holder.createSession.mock.calls.at(-1) as
+          | unknown[]
+          | undefined;
+        const options = call?.[3] as { abortSignal?: AbortSignal } | undefined;
+        await input.onEvent?.({
+          type: "tool_call",
+          sequence: 1,
+          call: { id: "1", name, args: {} },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        if (options?.abortSignal?.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
+        await input.onEvent?.({
+          type: "tool_result",
+          sequence: 1,
+          name,
+          ok: true,
+        });
+        return done("Your personalised storefront is ready.");
+      },
+    );
+  }
+
+  it("★★ stretches the run deadline while a long personalisation tool runs", async () => {
+    slowToolRun("propose_storefront_personalization");
+    const body = await (
+      await POST(request({ message: "Personalise my storefront" }))
+    ).text();
+    expect(holder.failRun).not.toHaveBeenCalled();
+    expect(holder.completeRun).toHaveBeenCalled();
+    expect(body).toContain("Your personalised storefront is ready.");
+  });
+
+  it("keeps the ordinary deadline for every other tool", async () => {
+    slowToolRun("get_sales_summary");
+    const body = await (
+      await POST(request({ message: "Sales today?" }))
+    ).text();
     expect(holder.failRun).toHaveBeenCalledWith(
       expect.objectContaining({ status: "failed", errorCode: "run_timeout" }),
     );

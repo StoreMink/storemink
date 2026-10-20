@@ -159,7 +159,17 @@ export interface MinkMediaGenerationRequest {
   alt: string;
   /** Only for purpose `product`; read from the store, never from the caller. */
   productPhotoShape?: MinkProductPhotoShape;
+  /**
+   * The exact frame of the storefront slot the picture is for, when a
+   * storefront personalisation draws it. ★ SET BY THE SERVER from the
+   * section's own ratio setting, never by the model: the request validator
+   * does not accept the key, so a tool argument cannot reach it.
+   */
+  slotAspectRatio?: MinkSlotAspectRatio;
 }
+
+/** The frames a storefront slot renders in (lib/media/image-specs.ts). */
+export type MinkSlotAspectRatio = "21:9" | "4:5" | "1:1" | "4:3";
 
 export function validateMinkMediaGenerationRequest(
   input: unknown,
@@ -251,7 +261,9 @@ export function validateMinkMediaGenerationRequest(
 export function aspectRatioFor(
   purpose: MinkMediaPurpose,
   productPhotoShape?: MinkProductPhotoShape,
+  slotAspectRatio?: MinkSlotAspectRatio,
 ): string {
+  if (slotAspectRatio && purpose !== "product") return slotAspectRatio;
   if (purpose === "product" && productPhotoShape === "square") return "1:1";
   return MINK_MEDIA_PURPOSE_SPECS[purpose].aspectRatio;
 }

@@ -265,7 +265,7 @@ export function MinkStorefrontDesignProposalCard({
   );
 }
 
-function PaletteChanges({
+export function PaletteChanges({
   palette,
 }: {
   palette: MinkStorefrontDesignSummary["palette"];
@@ -305,7 +305,7 @@ function PaletteChanges({
   );
 }
 
-function TypeChanges({
+export function TypeChanges({
   fonts,
   shape,
 }: {

@@ -196,6 +196,17 @@ export const MINK_SKILLS: readonly MinkSkill[] = [
     action: "manage",
   },
   {
+    id: "personalise-store",
+    slash: "personalise",
+    label: "Personalise my storefront",
+    description: "Make the theme's words, photos and look yours",
+    prompt:
+      "Personalise my storefront for my business. Ask me what you need to know first, then replace the theme's sample text and photos with ones that fit my shop.",
+    section: "builder",
+    action: "manage",
+    starterOn: ["/dashboard/storefront", "/dashboard/builder"],
+  },
+  {
     id: "homepage-review",
     slash: "homepage",
     label: "Homepage review",

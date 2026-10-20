@@ -77,6 +77,20 @@ const DRAFT_PERMISSION: Record<
   // ★ MEDIA, NOT BUILDER. The artefact is a Media Library row; putting it on a
   // page is a separate 9B layout proposal with its own Builder gate.
   media_image: { section: "media", action: "manage" },
+  // ★ BUILDER: the bundle's home is the Website Builder draft. Its other
+  //   parts (photos, categories, sample products) re-check their own
+  //   sections when the proposal is made and again at approval.
+  storefront_personalization: { section: "builder", action: "manage" },
+};
+
+/**
+ * The most one proposal of a kind may charge. ★ A PERSONALISATION IS A
+ * BUNDLE of pages, photos and the look at today's prices, so its total can
+ * pass the 20 every single-artefact proposal is held to; the database
+ * allows that kind (and only that kind) up to the same ceiling.
+ */
+const MAX_DRAFT_CREDITS: Partial<Record<MinkDraftKind, number>> = {
+  storefront_personalization: 200,
 };
 
 export interface MinkDraftState {
@@ -118,7 +132,8 @@ export async function createMinkDraftProposal(input: {
   /**
    * A price other than the kind's own, for a kind whose cost depends on what
    * it makes (a product photo costs more than campaign art). Bounded by the
-   * charge function (1 to 20); never set from model input.
+   * charge function (1 to 20, or the kind's own ceiling in
+   * `MAX_DRAFT_CREDITS`); never set from model input.
    */
   expectedCredits?: number;
 }): Promise<MinkArtifact> {
@@ -151,7 +166,7 @@ export async function createMinkDraftProposal(input: {
   if (
     !Number.isInteger(expectedCredits) ||
     expectedCredits < 0 ||
-    expectedCredits > 20
+    expectedCredits > (MAX_DRAFT_CREDITS[kind] ?? 20)
   ) {
     throw new Error("Mink draft credit weight is out of range");
   }
@@ -458,7 +473,8 @@ function assertEditableDraft(kind: MinkDraftKind): void {
   if (
     kind === "storefront_layout" ||
     kind === "storefront_design" ||
-    kind === "website_builder"
+    kind === "website_builder" ||
+    kind === "storefront_personalization"
   ) {
     throw new MinkRequestError(
       "mink_storefront_proposal_immutable",

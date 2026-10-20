@@ -373,6 +373,7 @@ const PRODUCED_ARTIFACTS: ReadonlySet<MinkArtifact["type"]> = new Set([
   "storefront_layout_proposal",
   "storefront_design_proposal",
   "media_image_proposal",
+  "storefront_personalization_proposal",
   "workflow",
   "clarification",
   "navigation",

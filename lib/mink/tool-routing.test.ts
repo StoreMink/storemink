@@ -291,6 +291,57 @@ describe("routeMinkTools", () => {
       ),
     ).toBe(false);
   });
+
+  it.each([
+    "Personalise my storefront for my business",
+    "Can you personalize the store for me?",
+    "Customise my whole website so it fits my business",
+    "The theme photos are generic, replace them with ones for my brand",
+    "Make my store look like my own",
+    "meri website ko mere business ke hisaab se banao",
+  ])(
+    "★ sends a storefront personalisation request its two tools: %s",
+    (message) => {
+      const names = tools(message);
+      expect(names.has("get_storefront_personalization_context")).toBe(true);
+      expect(names.has("propose_storefront_personalization")).toBe(true);
+    },
+  );
+
+  it("does not take a single Builder edit for a personalisation", () => {
+    expect(
+      tools("Customise the header colour").has(
+        "propose_storefront_personalization",
+      ),
+    ).toBe(false);
+  });
+
+  it("★★ keeps the personalisation tools for the interview's answers", () => {
+    const history = [
+      { role: "user", text: "Personalise my storefront" },
+      {
+        role: "assistant",
+        text: "What do you sell, and how should the store look?",
+      },
+    ];
+    const answer =
+      "We sell handmade soy candles in Pune, warm and calm, earthy colours";
+    const names = tools(answer, { history });
+    expect(names.has("propose_storefront_personalization")).toBe(true);
+    expect(route(answer, { history }).reasons).toContain("interview");
+    // Three ordinary messages later the interview is over.
+    const later = [
+      ...history,
+      { role: "user", text: "How much did I sell today?" },
+      { role: "user", text: "Which orders are pending?" },
+      { role: "user", text: "Show me low stock" },
+    ];
+    expect(
+      tools("What about yesterday's sales?", { history: later }).has(
+        "propose_storefront_personalization",
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("applyMinkToolRoute", () => {

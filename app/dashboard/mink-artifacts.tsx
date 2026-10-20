@@ -22,6 +22,7 @@ import { MinkStorefrontCodeProposalCard } from "./mink-storefront-code-proposal-
 import { MinkStorefrontDesignProposalCard } from "./mink-storefront-design-proposal-card";
 import { MinkMediaProposalCard } from "./mink-media-proposal-card";
 import { MinkStorefrontLayoutProposalCard } from "./mink-storefront-layout-proposal-card";
+import { MinkStorefrontPersonalizationCard } from "./mink-storefront-personalization-card";
 import { MinkWorkflowCard } from "./mink-workflow-card";
 import { MinkBuilderProposalCard } from "./mink-builder-proposal-card";
 import { MinkLink } from "./mink-link";
@@ -129,6 +130,14 @@ export function MinkArtifacts({
         if (artifact.type === "storefront_layout_proposal") {
           return (
             <MinkStorefrontLayoutProposalCard
+              key={`${artifact.type}-${artifact.draftId}`}
+              proposal={artifact}
+            />
+          );
+        }
+        if (artifact.type === "storefront_personalization_proposal") {
+          return (
+            <MinkStorefrontPersonalizationCard
               key={`${artifact.type}-${artifact.draftId}`}
               proposal={artifact}
             />

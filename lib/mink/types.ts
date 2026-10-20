@@ -307,6 +307,49 @@ export type MinkArtifact =
       creditSource: MinkDraftCreditSource;
     }
   | {
+      /**
+       * One proposal that personalises the whole storefront: every page's
+       * text, new photos, the look, the header and footer copy, confirmed
+       * category changes and the theme's sample products.
+       * ★ A SUMMARY, NOT THE PLAN. The stored plan holds whole section lists
+       *   (it can run to hundreds of kilobytes) and lives on the draft row;
+       *   this artifact rides in the conversation, so it carries only what
+       *   the review card shows.
+       */
+      type: "storefront_personalization_proposal";
+      draftId: string;
+      title: string;
+      explanation: string;
+      planDigest: string;
+      pages: Array<{
+        slug: string;
+        title: string;
+        textChanges: number;
+        photoChanges: number;
+        hidden: Array<{ type: string; reason: string }>;
+      }>;
+      /** The new photos, each already in the store's Media Library. */
+      photos: Array<{ url: string; alt: string; where: string }>;
+      design: MinkStorefrontDesignSummary | null;
+      chrome: Array<{ label: string; before: string; after: string }>;
+      categories: Array<{
+        action: "update" | "create" | "hide";
+        name: string;
+        previousName: string | null;
+        description: string | null;
+        photoUrl: string | null;
+      }>;
+      products: Array<{ name: string }>;
+      /** What could not be done this time, and why, in the merchant's words. */
+      skipped: Array<{ label: string; reason: string }>;
+      /** What changes on the live store the moment it is applied. */
+      live: string[];
+      status: "private_preview";
+      expectedCredits: number;
+      chargedCredits: number;
+      creditSource: MinkDraftCreditSource;
+    }
+  | {
       type: "storefront_design_proposal";
       draftId: string;
       title: string;

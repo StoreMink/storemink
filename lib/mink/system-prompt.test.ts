@@ -530,6 +530,55 @@ describe("★★ drafts are written in English, whatever language the chat is in
   });
 });
 
+describe("★★ a storefront personalisation is an interview, and never assumes", () => {
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const render = (...names: string[]) =>
+    renderMinkSystemInstruction(actor, names.map(declaration));
+  const RULE = "call get_storefront_personalization_context first";
+
+  it("reads the store, asks at most five questions at once, then proposes once", () => {
+    const prompt = render(
+      "get_storefront_personalization_context",
+      "propose_storefront_personalization",
+    );
+    expect(prompt).toContain(RULE);
+    expect(prompt).toContain("at most five short questions");
+    expect(prompt).toContain("call propose_storefront_personalization once");
+  });
+
+  it("★ asks before any category change and invents no claims", () => {
+    const prompt = render("propose_storefront_personalization");
+    expect(prompt).toContain(
+      "set merchant_confirmed only for the changes they said yes to",
+    );
+    expect(prompt).toContain("never assume one");
+    expect(prompt).toContain("never invent an award, a rating, a review");
+  });
+
+  it("offers the rest of the photos only after the card was applied", () => {
+    expect(render("propose_storefront_personalization")).toContain(
+      "once they have applied it, with photos_only true",
+    );
+  });
+
+  it("stays out of a run without the personalisation tools", () => {
+    expect(render("propose_storefront_layout")).not.toContain(RULE);
+  });
+});
+
 function declaration(name: string): MinkToolDeclaration {
   return { name, description: `${name} description`, parametersJsonSchema: {} };
 }

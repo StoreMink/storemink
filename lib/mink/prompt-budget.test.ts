@@ -67,9 +67,13 @@ describe("★★ Mink prompt and tool budget (characters per model step)", () =>
   it("an owner with every tool", () => {
     const full = measure(null);
     // 2026-10-19: prompt 55,447, tools 71,234 (60 declarations).
-    expect(full.prompt).toBeLessThanOrEqual(57_500);
-    expect(full.tools).toBeLessThanOrEqual(74_000);
-    expect(full.total).toBeLessThanOrEqual(131_000);
+    // 2026-10-20: raised for storefront personalisation, two tools (5,851
+    // characters of declarations) and one interview rule (1,532). Paid only
+    // by a run routed to them or one that falls back to every tool, which is
+    // why it is worth it: measured prompt 58,276, tools 75,722.
+    expect(full.prompt).toBeLessThanOrEqual(59_000);
+    expect(full.tools).toBeLessThanOrEqual(76_500);
+    expect(full.total).toBeLessThanOrEqual(135_000);
   });
 
   it("the rules every run carries, with no tool at all", () => {
@@ -102,5 +106,12 @@ describe("★★ Mink prompt and tool budget (characters per model step)", () =>
     const routed = measure(message);
     expect(routed.total).toBeLessThanOrEqual(budget);
     expect(routed.total / measure(null).total).toBeLessThan(0.2);
+  });
+
+  it("a storefront personalisation interview carries its tools, not every tool", () => {
+    // 2026-10-20: 30,241 (the Builder reads come along with "storefront").
+    const routed = measure("Personalise my storefront for my business");
+    expect(routed.total).toBeLessThanOrEqual(32_000);
+    expect(routed.total / measure(null).total).toBeLessThan(0.25);
   });
 });

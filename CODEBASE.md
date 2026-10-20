@@ -1914,6 +1914,124 @@ says write nothing), and a reconciler for runs left with a NULL
 they owe nothing, and `discardFailedMinkRunDrafts` already compensates any
 proposal credits they reserved.
 
+### Mink personalises the storefront from an interview (2026-10-20)
+
+The owner's request: a theme chosen at signup is generic, so Mink asks the
+merchant about their shop and then makes the WHOLE site theirs, replacing the
+theme's sample words and photos and taking its sample products off the shop.
+Owner's decisions: each page and photo is charged at today's price, the most
+visible photos go first and Mink says when the balance ran out (never quoting
+credits); one review card; and categories change only after the merchant
+agrees to each change, never on Mink's assumption. Migration
+`20261020_0232_mink_storefront_personalization`; tests listed below.
+★★ THE INTERVIEW IS A PROMPT RULE, THE WORK IS ONE TOOL CALL. Two tools
+(`lib/mink/tools/storefront-personalization-tools.ts`, drafting + Builder
+manage): `get_storefront_personalization_context` (Builder view, a
+repeat-safe read: pages, chrome, brand, categories, sample products, delivery
+facts, photo slots, never a credit figure) and
+`propose_storefront_personalization`. The tagged rule in
+`docs/mink-ai-system-prompt.md` has Mink read the context, ask at most five
+short questions in ONE message (what they sell, the look, their story and
+facts, what to avoid, whether to unpublish samples), raise categories only
+when the context shows them and set `merchant_confirmed` per change the
+merchant said yes to, then call the proposal once with their answers as the
+brief. Routing: the `personalize` group (`lib/mink/tool-routing.ts`; English
+words incl. "make my store look like mine", Hinglish "hisaab se /
+personalise karo", Devanagari) stays declared for `INTERVIEW_TURNS` (3)
+merchant messages after the ask (reason `interview`), so the answers reach a
+run that still has the tools. Starter chip `personalise-store` on the
+Storefront and Builder pages.
+★★ EVERYTHING THAT CAN BE REFUSED IS REFUSED BEFORE A PAID CALL
+(`lib/mink/storefront-personalization-proposals.ts`): request shape, design
+contrast, categories, permissions, the `apply_storefront_personalization`
+gate and credits; rate limits (one per admin per two minutes, six per store
+per day; photos 36 per store per day and the platform's 200-an-hour image
+ceiling, through `check_rate_limit_cost`, failing closed). Then ONE
+structured writer call (`storefront-personalization-writer.ts`: the main
+model, the fallback model on failure; the brief, page text and facts fenced
+as data, quotes and angle brackets defused) rewrites every text field the
+section table allows and writes one scene per photo slot; claims the brief
+does not support are replaced, never invented.
+★ THE SECTION TABLE DECIDES WHAT IS TOUCHED
+(`PERSONALIZATION_SECTION_SPECS` in `storefront-personalization-contract.ts`):
+copy is rewritten field by field within the section's own limits;
+testimonials, comparison, image hotspots, before/after, logo strip and
+countdown are SAMPLE CONTENT and are switched off, never rewritten (a
+rewritten quote is an invented review); custom code is never touched; the
+four policy pages (`MINK_PERSONALIZATION_SKIPPED_SLUGS`) are never written. A
+page the merchant edited themselves is written only when named
+(`eligiblePages`).
+★★ ONLY THE THEME'S OWN PICTURES ARE REPLACED (`isThemePhotoUrl`: a
+`/themes/` path or a `theme-releases/` object in our bucket); a merchant's
+upload and a picture Mink made are kept. Photos are drawn at PROPOSAL time
+(9E's rule: approve a picture you have seen), three at a time, each in its
+slot's frame (`PERSONALIZATION_PHOTO_ASPECT`: wide 21:9, portrait 4:5, square
+1:1, landscape 4:3, passed as `slotAspectRatio`), with up to two free retries
+on a 429 (`rateLimitRetries`), and saved to Media (`mink_generated`) as they
+come back. At most 12 photos and 8 pages a card, the most visible first
+(`planPersonalizationBudget`); a photo the service refused is not charged
+and its slot keeps the theme's picture. ★ "Make the rest" is the same tool
+with `photos_only: true`: new photos for the remaining theme pictures on
+every writable page, nothing else (design, categories and unpublishing are
+refused with it), offered only after the first card is applied.
+★ THE CHARGE IS FOR WHAT WAS MADE, AT TODAY'S PRICES
+(`MINK_PERSONALIZATION_PRICES`, read from the draft table: a page = a layout
+proposal, a photo = a generated image, the look = a design proposal, the
+header/footer/store description = a Website Builder change, a category = a
+category proposal; unpublishing samples is free). One charge, up to
+`MINK_PERSONALIZATION_MAX_CREDITS` (200): the draft and credit ledgers allow
+this kind up to 200 where every other proposal stays within 20 (per-kind
+CHECKs and `consume_mink_draft_credits`, 0232). Work is bought in order of
+visibility (homepage words, the look, header and footer, confirmed
+categories, homepage photos, then each other page's words and its photos)
+and whatever the balance cannot cover is left out and listed under "Not done
+this time"; an unlimited plan stops only at the 12-photo ceiling.
+★★ ONE CARD, ONE CLICK, ONE TRANSACTION
+(`app/dashboard/mink-storefront-personalization-card.tsx`,
+`/api/mink/drafts/[draftId]/personalization-action`,
+`storefront-personalization-actions.ts`). Apply = a five-minute approval bound
+to the plan digest, then execute, in one click (the Builder card's pattern).
+Execute locks every target `FOR UPDATE` (pages, chrome, store settings,
+categories, products), compares each to the digest approved, writes, and
+inserts one audit row; a conflict or expiry writes nothing and records the
+outcome. Pages go to `store_pages.sections` (the Builder DRAFT); header,
+footer and design to `store_chrome.draft`. ★ Live at once, and listed on the
+card BEFORE the button: category names, descriptions and photos; the theme's
+sample products ("… (Sample)") set to draft; the store tagline and footer
+description. Category conflicts compare CONTENT, not just `updated_at`
+(`categoryCheckpoint`), because the timestamp trigger cannot show a change
+made inside one transaction. "Publish these pages" then calls the merchant's
+own `publishPage` per page and `publishChrome`. Execution expires the
+`storefront:categories`, `storefront:products` and `stores` tags at once.
+★ A LONG TOOL GETS A LONGER RUN: `MinkTool.runBudgetMs` (260 s here, at most
+`MAX_RUN_BUDGET_MS`, 300 s) lets the stream route stretch the run deadline
+when that tool is called (`extendRunDeadline`); the proposal itself must
+finish within 170 s.
+★★ AND THE SLOT GUIDANCE NOW SAYS "A PHOTOGRAPH, NO WORDS"
+(`compositionGuidance` in `media-generation.ts`). The first 4:5 line
+described the slot as "beside a block of text", and on staging the image
+model drew one: a panel of invented words beside the photo. Every slot frame
+now repeats that it is a single photograph with no text, panels or layout
+(`media-generation.test.ts` pins it for 4:5, 1:1 and 4:3).
+0232 adds the tool to the three tool vocabularies and the draft-version
+exception, resource type `storefront` to both resource lists, NULL-safe
+target checks on the approval, audit and draft rows, the draft kind, the
+per-kind credit ceiling, provisions the tool for every store, and extends the
+Mink Website Builder guide's design sentence in place. Prompt versions
+`read-beta-v37` / `draft-action-beta-v59`, registries `read-beta-v27` /
+`draft-beta-v45`. Tests: `storefront-personalization-{contract,writer,
+proposals,context}.test.ts`, `tools/storefront-personalization-tools.test.ts`,
+the card, the action route, the stream route's deadline tests,
+`tool-routing`, `prompt-budget`, `media-generation`, and the opt-in
+rollback-only `storefront-personalization.local.test.ts`
+(`MINK_PERSONALIZATION_LOCAL_TEST=1`, local DB on 5544: real approval,
+conflict and audit). Checked live on storemink-staging (2026-10-20): the
+writer kept to the merchant's facts, replaced unsupported claims, wrote no
+long dashes, 13.2 s. ⚠ The 4:5 photo-only guidance is NOT yet re-checked
+live: the redraw failed on expired local credentials (`invalid_rapt`). ⚠ Not
+run in a browser. ⚠ Applying an older card after a newer one was applied
+is refused as a conflict, by design.
+
 ### Mink drafts in English, whatever language the chat is in (2026-10-20)
 
 Owner's rule: a merchant may talk to Mink in Punjabi, Hindi or any other
@@ -7088,7 +7206,11 @@ wholesip/
 │                              # Mink, the spoken conversation. 0229 adds
 │                              # check_rate_limit_cost, the weighted limiter behind
 │                              # the read-aloud character budget (service role
-│                              # only). Next free: 0230.
+│                              # only). 0230 adds the chat-continuity Help edits;
+│                              # 0231 replaces the Mink guide's language sentence
+│                              # (drafts in English); 0232 is Mink storefront
+│                              # personalisation (tool, draft kind, per-kind
+│                              # 200-credit ceiling, Help). Next free: 0233.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

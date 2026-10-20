@@ -71,6 +71,15 @@ export interface MinkTool {
    * ⚠ OPT-IN for `repeatSafe`'s reason: the default must be "not safe".
    */
   restartSafe?: boolean;
+  /**
+   * How long the run may still take once this tool has started: the stream
+   * route pushes the run's deadline out to at least this far ahead, never
+   * pulls it in. For a tool that does a long piece of work of its own (the
+   * storefront personalisation writes a whole site and draws its photos), so
+   * the ordinary run deadline does not cut it off half way. Bounded at five
+   * minutes by `MAX_RUN_BUDGET_MS`.
+   */
+  runBudgetMs?: number;
   available?: (actor: MinkActorContext) => boolean;
   artifact?: (output: Record<string, unknown>) => MinkArtifact | undefined;
   execute: (
@@ -78,6 +87,9 @@ export interface MinkTool {
     args: Record<string, unknown>,
   ) => Promise<Record<string, unknown>>;
 }
+
+/** The longest a tool may stretch its run, so a mistake cannot hold a request open. */
+export const MAX_RUN_BUDGET_MS = 300_000;
 
 export class MinkToolRegistry {
   private readonly tools: Map<string, MinkTool>;
@@ -104,6 +116,13 @@ export class MinkToolRegistry {
     const tool = this.tools.get(name);
     if (!tool) return true;
     return tool.repeatSafe === true || tool.restartSafe === true;
+  }
+
+  /** See `MinkTool.runBudgetMs`; undefined for an ordinary tool. */
+  runBudgetMs(name: string): number | undefined {
+    const budget = this.tools.get(name)?.runBudgetMs;
+    if (!budget || !Number.isFinite(budget) || budget <= 0) return undefined;
+    return Math.min(budget, MAX_RUN_BUDGET_MS);
   }
 
   /** Deterministic success copy for an explicitly safe last-turn finalizer. */

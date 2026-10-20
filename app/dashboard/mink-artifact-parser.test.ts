@@ -383,4 +383,87 @@ describe("navigation artifacts", () => {
       ]),
     ).toEqual([]);
   });
+  it("★ restores a storefront personalisation card, and only one that is ours", () => {
+    const photoUrl =
+      "https://storage.googleapis.com/storemink-media/stores/11111111-1111-4111-8111-111111111111/mink-generated/22222222-2222-4222-8222-222222222222.jpg";
+    const valid = {
+      type: "storefront_personalization_proposal",
+      draftId: "33333333-3333-4333-8333-333333333333",
+      title: "Personalised storefront",
+      explanation: "Makes the store about candles.",
+      planDigest: "a".repeat(64),
+      pages: [
+        {
+          slug: "home",
+          title: "Home",
+          textChanges: 7,
+          photoChanges: 1,
+          hidden: [{ type: "testimonials", reason: "Sample customer quotes." }],
+        },
+      ],
+      photos: [
+        { url: photoUrl, alt: "Amber candles", where: "Home: banner photo" },
+      ],
+      design: null,
+      chrome: [
+        {
+          label: "Store tagline",
+          before: "",
+          after: "Candles for slow evenings",
+        },
+      ],
+      categories: [
+        {
+          action: "update",
+          name: "Pillar candles",
+          previousName: "Fruit",
+          description: null,
+          photoUrl,
+        },
+      ],
+      products: [{ name: "Apples (Sample)" }],
+      skipped: [
+        { label: "2 more photos", reason: "Ask Mink to make the rest next." },
+      ],
+      live: ["Theme sample products taken off the shop"],
+      status: "private_preview",
+      // ★ A whole site may cost more than any other proposal's 20.
+      expectedCredits: 47,
+      chargedCredits: 47,
+      creditSource: "mixed",
+    };
+    expect(readMinkArtifacts([valid])).toEqual([valid]);
+
+    expect(
+      readMinkArtifacts([
+        // A picture from anywhere but our own generated folder.
+        {
+          ...valid,
+          photos: [
+            {
+              url: "https://tracker.example/pixel.gif",
+              alt: "x",
+              where: "Home",
+            },
+          ],
+        },
+        {
+          ...valid,
+          categories: [
+            { ...valid.categories[0], photoUrl: "/themes/basket/x.webp" },
+          ],
+        },
+        { ...valid, photos: Array.from({ length: 13 }, () => valid.photos[0]) },
+        { ...valid, planDigest: "short" },
+        { ...valid, chargedCredits: 201 },
+        { ...valid, expectedCredits: 0 },
+        { ...valid, live: Array.from({ length: 6 }, () => "x") },
+        {
+          ...valid,
+          categories: [{ ...valid.categories[0], action: "delete" }],
+        },
+        { ...valid, status: "applied" },
+      ]),
+    ).toEqual([]);
+  });
 });

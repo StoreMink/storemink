@@ -203,10 +203,22 @@ export async function POST(request: Request) {
     // Set as the stream closes: the chat's title can arrive after that.
     let streamClosed = false;
     let timedOut = false;
-    const timeoutId = setTimeout(() => {
+    const onRunTimeout = () => {
       timedOut = true;
       abortController.abort();
-    }, config.runTimeoutMs);
+    };
+    let runDeadlineAt = Date.now() + config.runTimeoutMs;
+    let timeoutId = setTimeout(onRunTimeout, config.runTimeoutMs);
+    // ★ A TOOL THAT DOES A LONG PIECE OF WORK STRETCHES THE RUN, never
+    //   shortens it: the personalisation writes a whole site and draws its
+    //   photos inside one call, which the ordinary deadline would cut off.
+    const extendRunDeadline = (budgetMs: number) => {
+      const next = Date.now() + budgetMs;
+      if (next <= runDeadlineAt) return;
+      runDeadlineAt = next;
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(onRunTimeout, budgetMs);
+    };
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -303,6 +315,10 @@ export async function POST(request: Request) {
                 return;
               }
               if (event.type === "tool_call") {
+                const budget = minkReadToolRegistry.runBudgetMs(
+                  event.call.name,
+                );
+                if (budget) extendRunDeadline(budget);
                 await startMinkToolCall({
                   actor,
                   started,

@@ -43,6 +43,7 @@ import { minkStorefrontDesignTools } from "./storefront-design-tools";
 import { minkBuilderTools } from "./builder-tools";
 import { minkMediaTools } from "./media-tools";
 import { minkStorefrontLayoutTools } from "./storefront-layout-tools";
+import { minkStorefrontPersonalizationTools } from "./storefront-personalization-tools";
 import { openDashboardPage } from "./navigation-tools";
 import { queryAnalytics } from "./analytics-tools";
 import { getMarketingChannels, getShippingSettings } from "./commerce-tools";
@@ -1987,4 +1988,7 @@ export const minkReadToolRegistry = new MinkToolRegistry([
   ...minkStorefrontDesignTools,
   ...minkBuilderTools,
   ...minkMediaTools,
+  // The context read inside is marked repeat-safe itself; the proposal draws
+  // paid photos and is not.
+  ...minkStorefrontPersonalizationTools,
 ]);
