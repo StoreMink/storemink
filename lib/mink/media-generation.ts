@@ -7,8 +7,6 @@ import {
   Modality,
   ProminentPeople,
 } from "@google/genai";
-import { sql } from "drizzle-orm";
-import { withService } from "@/lib/db/client";
 import { logError } from "@/lib/observability/logger";
 import type { MinkConfig } from "./config";
 import { MinkRequestError, MinkToolInputError } from "./errors";
@@ -25,6 +23,7 @@ import {
   PRODUCT_SCENE_RULES,
 } from "./product-photo-rules";
 import type { MinkMediaReferenceImage } from "./media-reference-images";
+import { claimSpendLimits, MINK_IMAGE_GLOBAL_LIMIT } from "./spend-limits";
 import type { MinkActorContext } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -95,34 +94,34 @@ export interface MinkGeneratedImage {
  * ★ IT IS CHECKED LAST, exactly as `reserveMinkInput` does it, so a caller
  *   already over quota cannot create unbounded per-run rows by supplying fresh
  *   run ids.
+ * ★ ALL OR NOTHING (`claimSpendLimits`): a refusal by any one limit takes
+ *   nothing from the others, so being refused never spends an allowance.
  */
 export async function reserveMinkImageGeneration(
   actor: MinkActorContext,
   runId: string,
 ): Promise<void> {
-  const limits: [string, number, number][] = [
-    [`mink-image-owner:${actor.storeId}:${actor.adminId}`, 3, 60],
-    [`mink-image-store:${actor.storeId}`, 10, 3600],
-    [`mink-image-day:${actor.storeId}`, 25, 86400],
-    ["mink-image-global", 200, 3600],
-    [`mink-image-run:${actor.storeId}:${runId}`, 2, 3600],
-  ];
-  for (const [key, max, seconds] of limits) {
-    const allowed = await withService(async (db) => {
-      const result = await db.execute(
-        sql`select check_rate_limit(p_key => ${key}, p_max => ${max}, p_window_seconds => ${seconds}) as allowed`,
-      );
-      return (
-        (result.rows[0] as { allowed?: boolean } | undefined)?.allowed === true
-      );
-    });
-    if (!allowed) {
-      throw new MinkRequestError(
-        "image_rate_limit",
-        "That is as many images as can be created right now. Ask again in a moment, or in a new chat.",
-        429,
-      );
-    }
+  const claim = await claimSpendLimits([
+    {
+      key: `mink-image-owner:${actor.storeId}:${actor.adminId}`,
+      max: 3,
+      windowSeconds: 60,
+    },
+    { key: `mink-image-store:${actor.storeId}`, max: 10, windowSeconds: 3600 },
+    { key: `mink-image-day:${actor.storeId}`, max: 25, windowSeconds: 86400 },
+    MINK_IMAGE_GLOBAL_LIMIT,
+    {
+      key: `mink-image-run:${actor.storeId}:${runId}`,
+      max: 2,
+      windowSeconds: 3600,
+    },
+  ]);
+  if (!claim.ok) {
+    throw new MinkRequestError(
+      "image_rate_limit",
+      "That is as many images as can be created right now. Ask again in a moment, or in a new chat.",
+      429,
+    );
   }
 }
 

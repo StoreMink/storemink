@@ -145,6 +145,7 @@ describe("the page inventory", () => {
       "Home",
       homeSections(),
       newRefCounter(),
+      "all",
     );
     expect(
       inventory.texts.map((text) => [text.sectionId, text.path.join(".")]),
@@ -174,12 +175,38 @@ describe("the page inventory", () => {
     ]);
   });
 
+  it("★★ leaves the merchant's own sections' words alone and keeps their quotes on", () => {
+    // Only the hero is still the theme's: the tiles and the testimonials are
+    // the merchant's (real quotes they added), so nothing there is rewritten
+    // or switched off. The theme photo inside their tiles is still offered,
+    // since that picture was never theirs.
+    const inventory = buildPageInventory(
+      "home",
+      "Home",
+      homeSections(),
+      newRefCounter(),
+      new Set(["hero"]),
+    );
+    expect(new Set(inventory.texts.map((text) => text.sectionId))).toEqual(
+      new Set(["hero"]),
+    );
+    expect(inventory.hidden).toEqual([]);
+    expect(inventory.lists).toEqual([]);
+    expect(
+      inventory.photos.map((entry) => [entry.sectionId, entry.path.join(".")]),
+    ).toEqual([
+      ["hero", "image_url"],
+      ["tiles", "tiles.0.image_url"],
+    ]);
+  });
+
   it("leaves switched-off sections and custom code out entirely", () => {
     const inventory = buildPageInventory(
       "home",
       "Home",
       homeSections(),
       newRefCounter(),
+      "all",
     );
     const ids = new Set([
       ...inventory.texts.map((text) => text.sectionId),
@@ -191,7 +218,13 @@ describe("the page inventory", () => {
 
   it("numbers refs across pages with one shared counter", () => {
     const counter = newRefCounter();
-    const home = buildPageInventory("home", "Home", homeSections(), counter);
+    const home = buildPageInventory(
+      "home",
+      "Home",
+      homeSections(),
+      counter,
+      "all",
+    );
     const about = buildPageInventory(
       "about",
       "About",
@@ -202,6 +235,7 @@ describe("the page inventory", () => {
         }),
       ],
       counter,
+      "all",
     );
     const refs = [...home.texts, ...about.texts].map((text) => text.ref);
     expect(new Set(refs).size).toBe(refs.length);
@@ -220,6 +254,7 @@ describe("the page inventory", () => {
         }),
       ],
       newRefCounter(),
+      "all",
     );
     expect(inventory.photos[0].shape).toBe("portrait");
   });
@@ -282,6 +317,50 @@ describe("the budget", () => {
       "photo:p3",
     ]);
     expect(plan.unaffordable).toEqual([]);
+  });
+
+  it("★★ draws a category's photo only when the category itself is bought, without taking a photo place", () => {
+    // At today's prices a category (1 credit) always fits before a photo (3)
+    // does, so the rule is tested directly: a photo whose category is not
+    // bought is left out, and the photo places go to the next ones.
+    const plan = planPersonalizationBudget({
+      remaining: null,
+      pages: ["home"],
+      design: false,
+      chrome: false,
+      categoryCount: 0,
+      categorySlugs: [],
+      photos: [
+        { ...photo("pc", "home", 2, 0), categorySlug: "candles" },
+        photo("p1", "home", 0, 1),
+        photo("p2", "home", 2, 2),
+      ],
+      maxPhotos: 2,
+    });
+    const refs = plan.included.flatMap((item) =>
+      item.kind === "photo" ? [item.ref] : [],
+    );
+    expect(refs).toEqual(["p1", "p2"]);
+    expect(plan.withoutCategory).toEqual(["pc"]);
+    expect(plan.overPhotoLimit).toEqual([]);
+  });
+
+  it("draws the category's photo when the category is bought", () => {
+    const plan = planPersonalizationBudget({
+      remaining: null,
+      pages: ["home"],
+      design: false,
+      chrome: false,
+      categoryCount: 1,
+      categorySlugs: ["candles"],
+      photos: [{ ...photo("pc", "home", 2, 0), categorySlug: "candles" }],
+    });
+    expect(plan.included.map((item) => item.kind)).toEqual([
+      "page",
+      "category",
+      "photo",
+    ]);
+    expect(plan.withoutCategory).toEqual([]);
   });
 
   it("★ skips what does not fit and keeps going, so cheaper items still land", () => {
@@ -354,6 +433,7 @@ describe("applying the writer's answer", () => {
       "Home",
       sections,
       newRefCounter(),
+      "all",
     );
     const byPath = new Map(
       inventory.texts.map((text) => [
@@ -405,6 +485,21 @@ describe("applying the writer's answer", () => {
     expect(result.photoChanges).toBe(1);
   });
 
+  it("★ says which section each change landed in, so a reverted one is not counted", () => {
+    const { result } = apply(
+      {
+        "hero:heading": "Hand-poured candles from Pune",
+        "tiles:heading": "Shop the candles",
+        "tiles:tiles.0.title": "Pillars",
+      },
+      { "hero:image_url": MINK_PHOTO },
+    );
+    expect(result.textChangesBySection).toEqual({ hero: 1, tiles: 2 });
+    expect(result.photosApplied).toEqual([
+      { ref: expect.any(String), sectionId: "hero" },
+    ]);
+  });
+
   it("switches the sample quotes off and lists them as hidden", () => {
     const { result } = apply({});
     const quotes = result.sections.find((entry) => entry.id === "quotes")!;
@@ -438,6 +533,7 @@ describe("applying the writer's answer", () => {
       "Home",
       sections,
       newRefCounter(),
+      "all",
     );
     (sections[0].config as unknown as Record<string, unknown>).heading =
       "My own words";

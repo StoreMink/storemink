@@ -121,6 +121,11 @@ describe("the storefront personalisation tools", () => {
       liveAtOnceWhenApplied: ["Theme sample products taken off the shop"],
     });
     expect(JSON.stringify(output.summary)).not.toMatch(/credit|47/i);
+    // ★★ The card (with its charge) reaches the panel, never the model.
+    const forModel = proposeTool.modelOutput!(output);
+    expect(forModel).not.toHaveProperty("proposal");
+    expect(forModel).toHaveProperty("summary");
+    expect(JSON.stringify(forModel)).not.toMatch(/credit|47/i);
     expect(output.authority).toEqual({
       canPreview: true,
       canSaveBuilderDraft: false,

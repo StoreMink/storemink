@@ -101,7 +101,44 @@ vi.mock("./storefront-personalization-writer", () => ({
   ),
 }));
 
+// ★ A personalisation rewrites only the theme's own sections, found by
+//   comparing a page with what the store's theme installs. The fixture store
+//   is pinned to a theme whose homepage is exactly these two sections, and its
+//   homepage row is that install, as a real store's is.
+const FIXTURE_HOME = [
+  {
+    type: "hero",
+    enabled: true,
+    config: {
+      variant: "banner",
+      heading: "Fresh produce, delivered",
+      subheading: "From farm to door",
+      cta_label: "Shop now",
+      cta_href: "/shop",
+      image_url: "/themes/basket/hero.webp",
+      height: "large",
+    },
+  },
+  {
+    type: "testimonials",
+    enabled: true,
+    config: {
+      heading: "Loved by thousands",
+      items: [{ quote: "Best grocer in town", name: "Asha", role: "" }],
+    },
+  },
+];
+const theme = vi.hoisted(() => ({ definition: null as unknown }));
+vi.mock("@/lib/themes/runtime-registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/themes/runtime-registry")>()),
+  resolveInstalledThemeDefinitionWithDb: vi.fn(async () => theme.definition),
+}));
+
+import { THEME_DEFINITIONS } from "@/lib/themes";
+import { prepareSections } from "@/lib/themes/apply";
+import type { ThemeDefinition } from "@/lib/themes/types";
 import { createMinkStorefrontPersonalizationProposal } from "./storefront-personalization-proposals";
+import { writePersonalizationCopy } from "./storefront-personalization-writer";
 import {
   executeMinkStorefrontPersonalizationAction,
   getLatestMinkStorefrontPersonalizationAction,
@@ -126,6 +163,18 @@ describe.skipIf(!enabled)(
         user: process.env.USER,
         types: postgresStringTimestampTypes,
       });
+      const basket = THEME_DEFINITIONS.find((entry) => entry.id === "basket")!;
+      theme.definition = {
+        ...basket,
+        preset: {
+          ...basket.preset,
+          pages: basket.preset.pages.map((page) =>
+            page.slug === ""
+              ? { ...page, sections: FIXTURE_HOME as never }
+              : page,
+          ),
+        },
+      } satisfies ThemeDefinition;
       await client.connect();
       await client.query("BEGIN");
       service.client = client;
@@ -183,7 +232,10 @@ describe.skipIf(!enabled)(
         [
           storeId,
           `personalize-${storeId}`,
-          { brand: { name: "Lumen", tagline: "Fresh groceries" } },
+          {
+            template: "basket",
+            brand: { name: "Lumen", tagline: "Fresh groceries" },
+          },
         ],
       );
       const conversationId = crypto.randomUUID();
@@ -196,38 +248,22 @@ describe.skipIf(!enabled)(
         [actor.runId, storeId, conversationId, actor.adminId, actor.requestId],
       );
       homeId = crypto.randomUUID();
+      const installed = prepareSections(
+        theme.definition as ThemeDefinition,
+        "",
+      );
+      if ("error" in installed) throw new Error(installed.error);
       await client.query(
         "insert into store_pages(id,store_id,slug,title,status,sections,published_sections) values($1,$2,'','Home','published',$3,$3)",
         [
           homeId,
           storeId,
-          JSON.stringify([
-            {
-              id: "hero",
-              type: "hero",
-              enabled: true,
-              config: {
-                variant: "banner",
-                heading: "Fresh produce, delivered",
-                subheading: "From farm to door",
-                cta_label: "Shop now",
-                cta_href: "/shop",
-                image_url: "/themes/basket/hero.webp",
-                height: "large",
-              },
-            },
-            {
-              id: "quotes",
-              type: "testimonials",
-              enabled: true,
-              config: {
-                heading: "Loved by thousands",
-                items: [
-                  { quote: "Best grocer in town", name: "Asha", role: "" },
-                ],
-              },
-            },
-          ]),
+          JSON.stringify(
+            installed.sections.map((section, index) => ({
+              ...section,
+              id: ["hero", "quotes"][index],
+            })),
+          ),
         ],
       );
       const chrome = structuredClone(DEFAULT_CHROME);
@@ -411,6 +447,73 @@ describe.skipIf(!enabled)(
         proposal.draftId,
       );
       expect(latest?.auditId).toBe(result.auditId);
+    }, 60_000);
+
+    it("★★ writes the footer over the store's own menus when it has no header and footer row yet", async () => {
+      // A store whose links still live in store_menus shows those links, so
+      // the first header and footer draft starts from them: never from the
+      // platform's stock links, which would replace the merchant's menu.
+      await client.query("delete from store_chrome where store_id=$1", [
+        actor.storeId,
+      ]);
+      await client.query(
+        "insert into store_menus(store_id,header,footer_groups,footer_legal) values($1,$2,$3,$4)",
+        [
+          actor.storeId,
+          JSON.stringify([{ label: "Candles", href: "/collections/fruit" }]),
+          JSON.stringify([
+            {
+              title: "Help",
+              links: [{ label: "Contact us", href: "/enquiries" }],
+            },
+          ]),
+          JSON.stringify([{ label: "Privacy", href: "/privacy-policy" }]),
+        ],
+      );
+      const writer = vi.mocked(writePersonalizationCopy);
+      const base = writer.getMockImplementation()!;
+      writer.mockImplementationOnce(async (input) => {
+        const copy = await base(input);
+        return {
+          ...copy,
+          chrome: { ...copy.chrome, newsletterHeading: "Candle notes" },
+        };
+      });
+
+      const proposal = await propose();
+      const approval = await previewMinkStorefrontPersonalizationAction({
+        actor,
+        draftId: proposal.draftId,
+        expectedDraftVersion: 0,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      expect(approval.chromeChanged).toBe(true);
+      const result = await executeMinkStorefrontPersonalizationAction({
+        actor,
+        draftId: proposal.draftId,
+        approvalId: approval.id,
+      });
+      expect(result.approval.status).toBe("executed");
+
+      const chrome = await row<{
+        draft: {
+          header: { links: Array<{ label: string; href: string }> };
+          footer: {
+            groups: Array<{ title: string }>;
+            newsletter: { heading: string };
+          };
+        };
+      }>("select draft from store_chrome where store_id=$1", [actor.storeId]);
+      expect(chrome.draft.header.links).toEqual([
+        expect.objectContaining({
+          label: "Candles",
+          href: "/collections/fruit",
+        }),
+      ]);
+      expect(chrome.draft.footer.groups.map((group) => group.title)).toEqual([
+        "Help",
+      ]);
+      expect(chrome.draft.footer.newsletter.heading).toBe("Candle notes");
     }, 60_000);
 
     it("★★ refuses the whole plan and records a conflict when one part moved after the preview", async () => {

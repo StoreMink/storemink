@@ -1,7 +1,7 @@
 import "server-only";
 
 import {
-  GoogleGenAI,
+  type GoogleGenAI,
   ThinkingLevel,
   type Chat,
   type Content,
@@ -24,6 +24,8 @@ import type {
 import type { MinkStoredMessage } from "./persistence";
 import {
   abortError,
+  leakedReasoningAt,
+  MinkLeakedReasoningError,
   MinkRetryError,
   MinkStallError,
   sameMinkTarget,
@@ -38,6 +40,7 @@ import {
 import { renderMinkSystemInstruction } from "./system-prompt";
 import type { MinkThinkingLevel } from "./thinking";
 import type { MinkToolRoute } from "./tool-routing";
+import { minkVertexClient } from "./vertex-clients";
 import { logError, logWarn } from "@/lib/observability/logger";
 
 /** A voice turn's first chunk never waits longer than this: the merchant is listening. */
@@ -75,25 +78,12 @@ export function createVertexMinkSession(
     );
   }
 
-  // One client per Vertex location, made when first needed: the fallback
-  // usually lives in another region, and most runs never touch it.
-  const clients = new Map<string, GoogleGenAI>();
-  const clientFor = (location: string): GoogleGenAI => {
-    let client = clients.get(location);
-    if (!client) {
-      client = new GoogleGenAI({
-        enterprise: true,
-        project,
-        location,
-        apiVersion: "v1",
-        // Retry in StoreMink so the exact count is available in run telemetry.
-        // The SDK is restricted to one attempt to avoid multiplying both policies.
-        httpOptions: { retryOptions: { attempts: 1 } },
-      });
-      clients.set(location, client);
-    }
-    return client;
-  };
+  // One client per project and Vertex location for the life of the process
+  // (vertex-clients.ts), made when first needed: the fallback usually lives
+  // in another region, and most runs never touch it. Shared across runs, so
+  // a run does not fetch a fresh access token of its own.
+  const clientFor = (location: string): GoogleGenAI =>
+    minkVertexClient(project, location);
 
   const chatConfig = (
     tools: MinkToolDeclaration[],
@@ -134,6 +124,11 @@ export function createVertexMinkSession(
         : configuredFirstChunkMs;
   const idleMs =
     config.streamIdleTimeoutMs > 0 ? config.streamIdleTimeoutMs : 20_000;
+  /** A first-chunk stall under a deadline shorter than a written chat's. */
+  const shortenedStall = (error: unknown) =>
+    error instanceof MinkStallError &&
+    error.phase === "first_chunk" &&
+    error.waitedMs < configuredFirstChunkMs;
 
   const fallbackTarget: MinkProviderTarget | null = config.fallbackModel
     ? {
@@ -286,9 +281,19 @@ export function createVertexMinkSession(
             retry: retryCount,
             status: providerStatus(error) ?? undefined,
             stall: error instanceof MinkStallError ? error.phase : undefined,
+            leakedReasoning:
+              error instanceof MinkLeakedReasoningError ? true : undefined,
           };
-          if (kind === "retryable") {
-            markMinkModelUnavailable(target);
+          if (kind === "history") {
+            // The main model would not read the fallback's turns: neither
+            // model is down, so neither is marked.
+            logWarn("mink.model: history refused", context);
+          } else if (kind === "retryable") {
+            // ★ A STALL ONLY THE VOICE DEADLINE CALLED is not evidence the
+            //   model is down: voice waits at most 12 s for a first chunk,
+            //   where a written chat waits 20, and marking the model would
+            //   send every run on this instance to the fallback for a minute.
+            if (!shortenedStall(error)) markMinkModelUnavailable(target);
             logWarn("mink.model: attempt failed", context);
           } else if (onFallback) {
             // A fallback that refuses outright is a configuration fault
@@ -469,6 +474,11 @@ export async function consumeMinkStream(
   onDelta?: (text: string) => void,
 ): Promise<MinkModelTurn> {
   let text = "";
+  // ★ The opening is held back until it cannot be leaked reasoning
+  //   (`leakedReasoningAt`): a reply whose first line is just "thought" is
+  //   thrown away and asked again before a word of it reaches the merchant.
+  //   Almost every answer is released on its first character.
+  let released = false;
   const functionCalls: MinkToolCall[] = [];
   let usage: MinkUsage = {
     promptTokens: 0,
@@ -484,7 +494,16 @@ export async function consumeMinkStream(
       if (part.thought) continue;
       if (typeof part.text === "string" && part.text.length > 0) {
         text += part.text;
-        onDelta?.(part.text);
+        if (released) {
+          onDelta?.(part.text);
+        } else {
+          const leaked = leakedReasoningAt(text);
+          if (leaked === true) throw new MinkLeakedReasoningError();
+          if (leaked === false) {
+            released = true;
+            onDelta?.(text);
+          }
+        }
       }
       const call = part.functionCall;
       if (call?.name) {
@@ -497,6 +516,8 @@ export async function consumeMinkStream(
     }
     if (chunk.usageMetadata) usage = toUsage(chunk);
   }
+  // A whole reply short enough to stay undecided ("th") is an answer.
+  if (!released && text) onDelta?.(text);
   return { text: text.trim(), functionCalls, usage, retryCount: 0 };
 }
 

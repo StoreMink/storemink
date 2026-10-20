@@ -208,6 +208,28 @@ describe("generateMinkConversationTitle", () => {
     });
   });
 
+  it('★ asks again when the reply opens with the model\'s reasoning, rather than titling the chat "thought"', async () => {
+    h.plan = [
+      reply("thought\nThe merchant asks about orders.\nDaily order count"),
+      reply("Daily order count"),
+    ];
+    await expect(
+      generateMinkConversationTitle({ config, message: "Orders today?" }),
+    ).resolves.toMatchObject({ title: "Daily order count", attempts: 2 });
+  });
+
+  it("keeps the provisional title when both replies leak their reasoning", async () => {
+    h.plan = [reply("thought\nworking it out")];
+    await expect(
+      generateMinkConversationTitle({ config, message: "Orders today?" }),
+    ).resolves.toMatchObject({
+      title: null,
+      outcome: "failed",
+      attempts: 2,
+      reason: "leaked_reasoning",
+    });
+  });
+
   it("asks once more when the provider was busy", async () => {
     h.plan = [status(429), reply("Today's order count")];
     await expect(

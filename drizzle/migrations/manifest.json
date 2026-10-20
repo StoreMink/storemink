@@ -8560,6 +8560,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261020_0233_mink_personalization_edited_pages_help",
+      "description": "The Mink website guide says a storefront personalisation leaves a page the merchant changed (the homepage included) as it is unless they ask Mink to include it, and that text they wrote themselves always stays as they wrote it",
+      "file": "sql/20261020_0233_mink_personalization_edited_pages_help.sql",
+      "transaction": true,
+      "requires": ["20261020_0232_mink_storefront_personalization"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says an edited page is left alone unless the merchant asks",
+            "sql": "select count(*)::text from help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%unless you ask Mink to include it%' and body like '%text you wrote yourself always stays as you wrote it%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

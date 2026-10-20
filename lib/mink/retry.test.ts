@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   isRetryableProviderError,
+  leakedReasoningAt,
+  MinkLeakedReasoningError,
   MinkRetryError,
   MinkStallError,
   withMinkFailover,
@@ -230,6 +232,85 @@ describe("★★ withMinkFailover with a fallback", () => {
     ).rejects.toMatchObject({ originalError: mainError, retryCount: 1 });
   });
 
+  it("★★ returns to the fallback when the main model refuses the conversation the fallback wrote", async () => {
+    // The fallback answered the last turn, so the history carries its
+    // thought signatures; a 400 from the main model on that history is the
+    // history, not the request, and the fallback can still answer.
+    const badRequest = Object.assign(new Error("bad request"), {
+      status: 400,
+    });
+    const attempt = answering()
+      .mockRejectedValueOnce(Object.assign(new Error("down"), { status: 503 }))
+      .mockRejectedValueOnce(badRequest);
+    const onFailure = vi.fn();
+
+    const result = await withMinkFailover({
+      attempt,
+      primary: MAIN,
+      fallback: FALLBACK,
+      start: FALLBACK,
+      maxRetries: 2,
+      baseDelayMs: 0,
+      onFailure,
+    });
+
+    expect(result).toMatchObject({ target: FALLBACK, retryCount: 2 });
+    expect(attempt.mock.calls.map(([target]) => target)).toEqual([
+      FALLBACK,
+      MAIN,
+      FALLBACK,
+    ]);
+    expect(onFailure.mock.calls.map(([event]) => event.kind)).toEqual([
+      "retryable",
+      "history",
+    ]);
+  });
+
+  it("keeps the turn on the fallback once the main model has refused its history", async () => {
+    const attempt = answering()
+      .mockRejectedValueOnce(busy())
+      .mockRejectedValueOnce(Object.assign(new Error("bad"), { status: 400 }))
+      .mockRejectedValueOnce(busy());
+
+    const result = await withMinkFailover({
+      attempt,
+      primary: MAIN,
+      fallback: FALLBACK,
+      start: FALLBACK,
+      maxRetries: 3,
+      baseDelayMs: 0,
+    });
+
+    expect(attempt.mock.calls.map(([target]) => target)).toEqual([
+      FALLBACK,
+      MAIN,
+      FALLBACK,
+      FALLBACK,
+    ]);
+    expect(result.target).toEqual(FALLBACK);
+  });
+
+  it("a 400 on a conversation the main model wrote is still the end of the turn", async () => {
+    const badRequest = Object.assign(new Error("bad request"), {
+      status: 400,
+    });
+    const attempt = answering().mockRejectedValueOnce(badRequest);
+    const onFailure = vi.fn();
+
+    await expect(
+      withMinkFailover({
+        attempt,
+        primary: MAIN,
+        fallback: FALLBACK,
+        maxRetries: 2,
+        baseDelayMs: 0,
+        onFailure,
+      }),
+    ).rejects.toMatchObject({ originalError: badRequest, retryCount: 0 });
+    expect(attempt).toHaveBeenCalledTimes(1);
+    expect(onFailure.mock.calls[0][0].kind).toBe("fatal");
+  });
+
   it("gives up after the retry budget with the last error", async () => {
     const last = Object.assign(new Error("down"), { status: 503 });
     const attempt = answering()
@@ -258,11 +339,46 @@ describe("isRetryableProviderError", () => {
     [Object.assign(new Error("x"), { status: 503 }), true],
     [new TypeError("fetch failed"), true],
     [new MinkStallError("idle", 20_000), true],
+    [new MinkLeakedReasoningError(), true],
     [Object.assign(new Error("x"), { status: 400 }), false],
     [Object.assign(new Error("x"), { status: 403 }), false],
     [Object.assign(new Error("x"), { status: 404 }), false],
     [new Error("invalid_grant"), false],
   ])("%o → %s", (error, expected) => {
     expect(isRetryableProviderError(error)).toBe(expected);
+  });
+});
+
+describe("★★ leakedReasoningAt", () => {
+  it.each([
+    ["thought\nNow I need to reply in Hinglish.", true],
+    ["thought\r\nThe merchant asked", true],
+    ["  thought  \nworking", true],
+    ["thought\n", true],
+  ])("%j is leaked reasoning", (text, expected) => {
+    expect(leakedReasoningAt(text)).toBe(expected);
+  });
+
+  it.each([
+    ["", undefined],
+    ["   ", undefined],
+    ["t", undefined],
+    ["thou", undefined],
+    ["thought", undefined],
+    ["thought  ", undefined],
+  ])("%j cannot be judged yet", (text, expected) => {
+    expect(leakedReasoningAt(text)).toBe(expected);
+  });
+
+  it.each([
+    ["Thanks! You had twelve orders.", false],
+    ["The store sold ₹4,200 today.", false],
+    ["Thought about it: twelve orders.", false],
+    ["thoughtful packaging sells well", false],
+    ["thought it through: twelve orders", false],
+    ["Twelve orders.", false],
+    ["आज 12 ऑर्डर आए।", false],
+  ])("%j is an ordinary answer", (text, expected) => {
+    expect(leakedReasoningAt(text)).toBe(expected);
   });
 });

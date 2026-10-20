@@ -12,16 +12,21 @@ import {
 } from "@/drizzle/schema";
 import { EMPTY_DESIGN_OVERRIDES } from "@/lib/chrome/design";
 import {
-  DEFAULT_CHROME,
+  normalizeChrome,
   sanitizeChromeForSave,
   type StoreChrome,
 } from "@/lib/chrome/types";
 import { withService, type Db } from "@/lib/db/client";
+import {
+  normalizePickupPayment,
+  paymentOptionsFor,
+} from "@/lib/fulfilment/payment-policy";
 import { resolveStoreSettings } from "@/lib/settings/registry";
 import {
   validateSections,
   type PageSectionItem,
 } from "@/lib/sections/registry";
+import { prepareSections } from "@/lib/themes/apply";
 import { FONT_PAIRINGS } from "@/lib/themes/fonts";
 import { readThemeSelection } from "@/lib/themes/meta";
 import { resolveInstalledThemeDefinitionWithDb } from "@/lib/themes/runtime-registry";
@@ -29,7 +34,7 @@ import {
   homepageEditedSinceSeed,
   SEED_WINDOW_MS,
 } from "@/lib/themes/switch-rules";
-import type { ThemeDesign } from "@/lib/themes/types";
+import type { ThemeDefinition, ThemeDesign } from "@/lib/themes/types";
 import { getMinkConfig } from "./config";
 import { imageCreditHeadroom, type ImageCreditHeadroom } from "./image-credits";
 import { MinkToolInputError } from "./errors";
@@ -84,6 +89,11 @@ export interface PersonalizationTargetPage {
   sectionsDigest: string;
   /** Saved by someone since the theme wrote it. */
   edited: boolean;
+  /**
+   * Sections still exactly as the installed theme made them: the only ones
+   * whose words a personalisation rewrites or switches off.
+   */
+  themeSectionIds: string[];
   /** Why this page is never personalised, or null. */
   skipped: "policy" | "invalid" | null;
 }
@@ -161,7 +171,7 @@ export async function readPersonalizationTarget(
     );
 
     const [pages, chrome, categoryRows, sampleRows, facts] = await Promise.all([
-      readPages(db, actor.storeId, settings),
+      readPages(db, actor.storeId, settings, definition),
       readChrome(db, actor.storeId),
       can(actor.permissions, "categories", "view", actor.isSuperadmin)
         ? readCategories(db, actor.storeId, sampleCategorySlugs)
@@ -197,6 +207,7 @@ async function readPages(
   db: Db,
   storeId: string,
   settings: Record<string, unknown>,
+  definition: ThemeDefinition | null,
 ): Promise<PersonalizationTargetPage[]> {
   const rows = await db
     .select({
@@ -233,6 +244,7 @@ async function readPages(
       sections,
       sectionsDigest: digestMinkStorefrontSections(sections),
       edited,
+      themeSectionIds: themeSectionIdsFor(definition, slug, sections),
       skipped: MINK_PERSONALIZATION_SKIPPED_SLUGS.has(slug)
         ? "policy"
         : "error" in validated
@@ -247,6 +259,45 @@ async function readPages(
   );
 }
 
+/**
+ * The ids of a page's sections that are still exactly as the installed theme
+ * made them.
+ *
+ * ★ BY CONTENT, NOT BY ID: an install gives every section a fresh id
+ *   (`prepareSections`), so a section is the theme's when its type and
+ *   settings equal one in the theme's own copy of that page. The theme's copy
+ *   is round-tripped through JSON and the same draft validation the stored
+ *   page went through, so the two are compared in one form.
+ * ★ NOTHING IS THE THEME'S WHEN THE THEME CANNOT BE READ, and a section from
+ *   a theme the store has since switched away from is the merchant's: a
+ *   section that cannot be proven to be sample content keeps its words.
+ */
+export function themeSectionIdsFor(
+  definition: ThemeDefinition | null,
+  slug: string,
+  sections: readonly PageSectionItem[],
+): string[] {
+  if (!definition || !sections.length) return [];
+  const prepared = prepareSections(definition, slug === "home" ? "" : slug);
+  if ("error" in prepared) return [];
+  const normalized = validateSections(
+    JSON.parse(JSON.stringify(prepared.sections)),
+    { mode: "draft" },
+  );
+  if ("error" in normalized) return [];
+  const theme = new Set(normalized.sections.map(sectionContentDigest));
+  return sections
+    .filter((section) => theme.has(sectionContentDigest(section)))
+    .map((section) => section.id);
+}
+
+function sectionContentDigest(section: PageSectionItem): string {
+  return digestMinkStorefrontValue({
+    type: section.type,
+    config: section.config,
+  });
+}
+
 async function readChrome(
   db: Db,
   storeId: string,
@@ -257,7 +308,9 @@ async function readChrome(
     .where(eq(storeChrome.storeId, storeId))
     .limit(1);
   const row = rows[0];
-  const value = row ? sanitizeChromeForSave(row.draft) : DEFAULT_CHROME;
+  const value = row
+    ? sanitizeChromeForSave(row.draft)
+    : await readMenusAsChrome(db, storeId);
   const design = value.design ?? EMPTY_DESIGN_OVERRIDES;
   return {
     rowExists: Boolean(row),
@@ -266,6 +319,47 @@ async function readChrome(
     designDigest: digestMinkStorefrontDesign(design),
     textDigest: chromeTextDigest(value),
   };
+}
+
+/**
+ * The header and footer a store with no `store_chrome` row really shows: its
+ * old `store_menus` links (lib/chrome/queries.ts), with every other setting
+ * at its default.
+ *
+ * ★★ THE FIRST DRAFT STARTS FROM THESE, NEVER FROM DEFAULT_CHROME. A theme
+ *   install seeds `store_menus`, not `store_chrome`, so for most new stores
+ *   this is the navigation; a draft built from the defaults would replace the
+ *   theme's menu with StoreMink's stock links the moment the merchant
+ *   published it (the Builder's own `builder-actions.ts` rule).
+ *   `forUpdate` locks the row for an approval that is about to write.
+ */
+export async function readMenusAsChrome(
+  db: Db,
+  storeId: string,
+  options: { forUpdate?: boolean } = {},
+): Promise<StoreChrome> {
+  const rows = await db.execute(sql`
+    select header, footer_groups, footer_legal
+    from public.store_menus
+    where store_id = ${storeId}::uuid
+    ${sql.raw(options.forUpdate ? "for update" : "")}
+  `);
+  const legacy = rows.rows[0] as
+    | { header: unknown; footer_groups: unknown; footer_legal: unknown }
+    | undefined;
+  return sanitizeChromeForSave(
+    normalizeChrome(
+      legacy
+        ? {
+            header: { links: legacy.header },
+            footer: {
+              groups: legacy.footer_groups,
+              legal: legacy.footer_legal,
+            },
+          }
+        : null,
+    ),
+  );
 }
 
 /** The chrome copy a personalisation may replace, as one digest. */
@@ -399,9 +493,15 @@ async function readFacts(
       : null,
     pickup: resolved["fulfilment.offerPickup"] === true,
     onlinePayments: online,
-    // Cash on delivery is how every StoreMink store takes an order without a
-    // connected gateway, so it is on unless a prepaid-only policy says not.
-    cashOnDelivery: true,
+    // ★ CHECKOUT'S OWN RULE (lib/fulfilment/payment-policy.ts), asked for a
+    //   delivery: the writer may state cash on delivery only when checkout
+    //   offers it. Every delivery offers it today; a switch added to that
+    //   rule reaches this fact with no change here.
+    cashOnDelivery: paymentOptionsFor({
+      fulfilment: "delivery",
+      onlineAvailable: online,
+      policy: normalizePickupPayment(resolved["fulfilment.pickupPayment"]),
+    }).offline,
   };
 }
 
@@ -448,13 +548,17 @@ export function eligiblePages(
   if (requested) {
     // ★ A page the merchant has edited is only written when named, which is
     //   what the interview asks about: their own words are not theme text.
+    //   Even then only the theme's own sections change (`themeSectionIds`).
     const named = new Set(requested);
     return writable
       .filter((page) => named.has(page.slug))
       .slice(0, MINK_PERSONALIZATION_MAX_PAGES);
   }
+  // ★ THE HOMEPAGE TOO: an edited homepage waits for the merchant's yes like
+  //   any edited page (the prompt's own rule), rather than being written
+  //   because it matters most.
   return writable
-    .filter((page) => page.slug === "home" || !page.edited)
+    .filter((page) => !page.edited)
     .slice(0, MINK_PERSONALIZATION_MAX_PAGES);
 }
 
@@ -470,6 +574,7 @@ export function summarizePersonalizationTarget(target: PersonalizationTarget) {
         page.title,
         page.sections,
         counter,
+        new Set(page.themeSectionIds),
       ),
     }));
   const defaultPages = eligiblePages(target, null).map((page) => page.slug);
@@ -500,6 +605,11 @@ export function summarizePersonalizationTarget(target: PersonalizationTarget) {
       live: page.status === "published",
       editedByMerchant: page.edited,
       includedByDefault: defaultPages.includes(page.slug),
+      // Sections the merchant wrote or changed: they keep their words.
+      merchantSections: page.sections.filter(
+        (section) =>
+          section.enabled && !page.themeSectionIds.includes(section.id),
+      ).length,
       textFields: inventory.texts.length + inventory.lists.length,
       themePhotos: inventory.photos.length,
       sampleSectionsToHide: inventory.hidden.map((hiddenSection) => ({

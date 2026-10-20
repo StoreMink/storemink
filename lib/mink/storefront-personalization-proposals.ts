@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { can } from "@/app/dashboard/lib/permissions";
 import { mediaAssets, minkActionToolAccess } from "@/drizzle/schema";
 import { EMPTY_DESIGN_OVERRIDES } from "@/lib/chrome/design";
@@ -26,6 +26,12 @@ import {
 } from "./media-generation-contract";
 import { generateMinkMediaImage } from "./media-generation";
 import { minkPrefillBodyToHtml } from "./prefill-html";
+import {
+  claimSpendLimits,
+  MINK_IMAGE_GLOBAL_LIMIT,
+  releaseSpendLimits,
+  type SpendLimit,
+} from "./spend-limits";
 import { digestMinkStorefrontValue } from "./storefront-code-contract";
 import {
   digestMinkStorefrontDesign,
@@ -71,6 +77,7 @@ import {
   type PersonalizationTarget,
 } from "./storefront-personalization-context";
 import { writePersonalizationCopy } from "./storefront-personalization-writer";
+import { MAX_RUN_BUDGET_MS } from "./tools/registry";
 import type { MinkActorContext, MinkArtifact } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -152,7 +159,9 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
   }
   if (!pages.length) {
     throw new MinkToolInputError(
-      "There is no page to personalise. Every page is a policy or has a Builder draft that needs fixing first.",
+      target.pages.some((page) => page.skipped === null)
+        ? "Every page has been edited by the merchant, so none is personalised without their yes. Ask which pages to include (only the theme's own sections there change), then pass their slugs in pages."
+        : "There is no page to personalise. Every page is a policy or has a Builder draft that needs fixing first.",
     );
   }
 
@@ -171,7 +180,13 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
   for (const page of pages) {
     inventories.set(
       page.slug,
-      buildPageInventory(page.slug, page.title, page.sections, counter),
+      buildPageInventory(
+        page.slug,
+        page.title,
+        page.sections,
+        counter,
+        new Set(page.themeSectionIds),
+      ),
     );
   }
   const categoryPhotos: PersonalizationPhotoRef[] = categoryPlan.flatMap(
@@ -238,6 +253,7 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
     design: design !== null,
     chrome: chromeChanges,
     categoryCount: categoryPlan.length,
+    categorySlugs: categoryPlan.map((change) => change.slug),
     photos: photoCandidates,
     photosOnly: request.photosOnly,
   });
@@ -258,7 +274,7 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
         : "This store doesn't have enough Mink credits left to personalise the storefront. Buy Mink credits or upgrade under Plans & Billing.",
     );
   }
-  let photos = photoCandidates
+  const photos = photoCandidates
     .filter((photo) => includedPhotoRefs.has(photo.ref))
     .sort(comparePhotos);
   const designIncluded = budget.included.some((item) => item.kind === "design");
@@ -273,23 +289,23 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
   );
   describeBudgetGaps(budget, pages, categoryPlan, notes);
 
-  // ---- The spend ceiling, claimed before any paid call --------------------
-  await reservePersonalization(actor);
-  if (photos.length) {
-    const reserved = await reservePhotos(actor, photos.length);
-    if (!reserved) {
-      notes.push({
-        label: "New photos",
-        reason:
-          "Today's limit for new photos is reached, so the theme's photos stay. Ask again tomorrow for new ones.",
-      });
-      photos = [];
-    }
+  // ---- The attempt, claimed before any paid call -------------------------
+  const attempt = attemptLimits(actor);
+  const claim = await claimSpendLimits([attempt.running, attempt.daily]);
+  if (!claim.ok) {
+    throw new MinkRequestError(
+      "personalization_rate_limit",
+      claim.refusedKey === attempt.running.key
+        ? "Mink is already personalising this storefront. Wait for that card to appear, then ask again if you still need to."
+        : "This store has had six personalised storefront cards today. Ask again tomorrow, or change single things in Website Builder.",
+      429,
+    );
   }
 
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), PROPOSAL_DEADLINE_MS);
   const created: Array<{ path: string }> = [];
+  let proposalSaved = false;
   try {
     // ---- The writer -------------------------------------------------------
     // ★ A page whose words were not bought still has its photos described:
@@ -346,19 +362,41 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
     });
 
     // ---- The photos -------------------------------------------------------
-    const drawn = new Map<string, { url: string; alt: string }>();
-    const photoWhere = new Map<string, string>();
-    await runPool(photos, PHOTO_CONCURRENCY, async (photo) => {
-      const brief = copy.photos.get(photo.ref);
-      if (!brief) {
+    // ★ CLAIMED NOW, AFTER THE WRITER, and only for photos it described: a
+    //   writer that failed used to spend the day's photo allowance on
+    //   pictures nobody drew. All or none (spend-limits.ts).
+    let toDraw = photos.filter((photo) => {
+      if (copy.photos.has(photo.ref)) return true;
+      notes.push({
+        label: photo.label,
+        reason:
+          "No photo description came back, so it keeps the theme's picture.",
+      });
+      return false;
+    });
+    if (toDraw.length) {
+      const photoClaim = await claimSpendLimits(
+        photoLimits(actor, toDraw.length),
+      );
+      if (!photoClaim.ok) {
+        if (request.photosOnly) {
+          throw new MinkToolInputError(
+            "Today's limit for new photos is reached. Ask again tomorrow for new ones.",
+          );
+        }
         notes.push({
-          label: photo.label,
+          label: "New photos",
           reason:
-            "No photo description came back, so it keeps the theme's picture.",
+            "Today's limit for new photos is reached, so the theme's photos stay. Ask again tomorrow for new ones.",
         });
-        return;
+        toDraw = [];
       }
-      if (deadline.signal.aborted) return;
+    }
+    const drawn = new Map<string, { url: string; alt: string; path: string }>();
+    const photoWhere = new Map<string, string>();
+    await runPool(toDraw, PHOTO_CONCURRENCY, async (photo) => {
+      const brief = copy.photos.get(photo.ref);
+      if (!brief || deadline.signal.aborted) return;
       try {
         const image = await generateMinkMediaImage(
           getMinkConfig(),
@@ -389,7 +427,7 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
             source: "mink_generated",
           }),
         );
-        drawn.set(photo.ref, { url, alt: brief.alt });
+        drawn.set(photo.ref, { url, alt: brief.alt, path });
         photoWhere.set(photo.ref, photoLabel(photo, target));
       } catch (error) {
         if (
@@ -414,6 +452,11 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
     });
 
     // ---- Apply to each page and re-validate --------------------------------
+    // ★★ COUNTED AFTER VALIDATION. A section `validatePage` puts back to the
+    //   theme's version takes its new words and its new photo with it, so
+    //   only changes in the sections that survive are counted, charged and
+    //   shown; a photo that went with a reverted section is used nowhere.
+    const usedPhotoRefs = new Set<string>();
     const storedPages: PersonalizationStoredPage[] = [];
     let pagesCharged = 0;
     for (const page of pages) {
@@ -442,7 +485,14 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
       const hiddenIds = new Set(
         applied.hiddenSectionIds.filter((id) => validated.changed.has(id)),
       );
-      const textChanges = validated.changed.size ? applied.textChanges : 0;
+      const textChanges = [...validated.changed].reduce(
+        (sum, id) => sum + (applied.textChangesBySection[id] ?? 0),
+        0,
+      );
+      const photosKept = applied.photosApplied.filter((photo) =>
+        validated.changed.has(photo.sectionId),
+      );
+      for (const photo of photosKept) usedPhotoRefs.add(photo.ref);
       if (copyIncluded && (textChanges > 0 || hiddenIds.size > 0))
         pagesCharged += 1;
       storedPages.push({
@@ -454,7 +504,7 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
         sections: validated.sections,
         proposedDigest: digestMinkStorefrontSections(validated.sections),
         textChanges,
-        photoChanges: applied.photoChanges,
+        photoChanges: photosKept.length,
         hidden: [...hiddenIds].map((sectionId) => {
           const section = page.sections.find((entry) => entry.id === sectionId);
           const reason =
@@ -506,6 +556,7 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
           ? (drawn.get(photoRef.ref)?.url ?? null)
           : null;
         if (change.action === "hide") return change.stored;
+        if (photoRef && imageUrl) usedPhotoRefs.add(photoRef.ref);
         const description =
           change.description ??
           copy.categoryDescriptions.get(`c${index}`) ??
@@ -523,16 +574,7 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
     );
 
     // ---- The charge: what was actually made -------------------------------
-    const photosMade =
-      storedPages.reduce((sum, page) => sum + page.photoChanges, 0) +
-      storedCategories.filter(
-        (change) =>
-          change.action !== "hide" &&
-          categoryPhotos.some(
-            (photo) =>
-              photo.categorySlug === change.slug && drawn.has(photo.ref),
-          ),
-      ).length;
+    const photosMade = usedPhotoRefs.size;
     const credits = {
       pages: pagesCharged * MINK_PERSONALIZATION_PRICES.page,
       photos: photosMade * MINK_PERSONALIZATION_PRICES.photo,
@@ -565,14 +607,11 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
 
     const photosForCard = photos.flatMap((photo) => {
       const made = drawn.get(photo.ref);
-      if (!made) return [];
-      const path =
-        created.find((entry) => made.url.endsWith(`/${entry.path}`))?.path ??
-        "";
+      if (!made || !usedPhotoRefs.has(photo.ref)) return [];
       return [
         {
           url: made.url,
-          path,
+          path: made.path,
           alt: made.alt,
           where: photoWhere.get(photo.ref) ?? photo.label,
         },
@@ -625,6 +664,13 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
     if (stored.type !== "proposal") {
       throw new Error("Personalisation persistence returned no proposal");
     }
+    proposalSaved = true;
+    // ★ A picture drawn for a section that was then put back is in no card:
+    //   it was never charged, and it is removed rather than left in Media.
+    const unused = [...drawn.entries()]
+      .filter(([ref]) => !usedPhotoRefs.has(ref))
+      .map(([, made]) => ({ path: made.path }));
+    if (unused.length) await discardPhotos(actor.storeId, unused);
     logInfo("mink.personalization: proposed", {
       requestId: actor.requestId,
       storeId: actor.storeId,
@@ -641,10 +687,18 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
   } catch (error) {
     // ★ Pictures that belong to no proposal are removed. A picture that made
     //   it into a stored proposal is the merchant's (and stays in Media).
-    if (created.length) await discardPhotos(actor.storeId, created);
+    if (created.length && !proposalSaved) {
+      await discardPhotos(actor.storeId, created);
+    }
     throw error;
   } finally {
     clearTimeout(timer);
+    // ★ The running claim is always given back, so a retry is never refused
+    //   as though a card existed; the day's count only when this attempt
+    //   ends without one (nothing was charged).
+    await releaseSpendLimits(
+      proposalSaved ? [attempt.running] : [attempt.running, attempt.daily],
+    );
   }
 }
 
@@ -736,9 +790,18 @@ function planCategories(
   for (const change of request.categories) {
     if (change.action === "create") {
       const slug = change.slug ?? categorySlugFromName(change.name);
-      if (!slug || taken.has(slug)) {
+      if (!slug) {
+        // ★ A NAME WITH NO LATIN LETTERS MAKES NO ADDRESS ("मिठाई"): say so,
+        //   rather than calling it taken, which sent the model to update a
+        //   category that does not exist.
         issues.push(
-          `A category with the address "${slug || change.name}" already exists: update that one, or choose another name.`,
+          `A web address cannot be made from the name "${change.name}". Pass a slug for it in lowercase English letters, numbers and hyphens, such as "sweets".`,
+        );
+        continue;
+      }
+      if (taken.has(slug)) {
+        issues.push(
+          `A category with the address "${slug}" already exists: update that one, or choose another name.`,
         );
         continue;
       }
@@ -1010,58 +1073,44 @@ async function assertToolEnabled(storeId: string, toolName: string) {
 
 /**
  * ★ A PERSONALISATION IS A SPEND EVENT IN ITS OWN RIGHT: up to twelve paid
- *   pictures and a long writer call. One per admin every two minutes (a
- *   double-sent message, a retried turn) and a handful per store a day.
+ *   pictures and a long writer call.
+ * ★★ ONE AT A TIME PER ADMIN, AS A RUNNING CLAIM, NOT A COOL-DOWN. A
+ *   double-sent message or a retried turn is refused while the first attempt
+ *   runs; the claim is given back when it ends, whatever the outcome, so a
+ *   retry after a failure is never told to "review that card" when there is
+ *   none. Its window (the longest a run may last) only matters if a process
+ *   dies holding it. And at most six cards per store a day: the day's count is
+ *   given back for an attempt that ends without a card.
  */
-async function reservePersonalization(actor: MinkActorContext) {
-  const limits: Array<[string, number, number]> = [
-    [`mink-personalize-owner:${actor.storeId}:${actor.adminId}`, 1, 120],
-    [`mink-personalize-store:${actor.storeId}`, 6, 86_400],
-  ];
-  for (const [key, max, seconds] of limits) {
-    if (!(await checkRateLimit(key, max, seconds, 1))) {
-      throw new MinkRequestError(
-        "personalization_rate_limit",
-        "The storefront was personalised a moment ago. Review that card, or ask again in a little while.",
-        429,
-      );
-    }
-  }
+function attemptLimits(actor: MinkActorContext): {
+  running: SpendLimit;
+  daily: SpendLimit;
+} {
+  return {
+    running: {
+      key: `mink-personalize-running:${actor.storeId}:${actor.adminId}`,
+      max: 1,
+      windowSeconds: Math.ceil(MAX_RUN_BUDGET_MS / 1_000),
+    },
+    daily: {
+      key: `mink-personalize-store:${actor.storeId}`,
+      max: 6,
+      windowSeconds: 86_400,
+    },
+  };
 }
 
-/** Photos are counted against the store's day and the platform's hour. */
-async function reservePhotos(actor: MinkActorContext, count: number) {
-  const limits: Array<[string, number, number]> = [
-    [`mink-personalize-images:${actor.storeId}`, 36, 86_400],
-    ["mink-image-global", 200, 3_600],
+/** Photos count against the store's day and the platform's hour, together. */
+function photoLimits(actor: MinkActorContext, count: number): SpendLimit[] {
+  return [
+    {
+      key: `mink-personalize-images:${actor.storeId}`,
+      max: 36,
+      windowSeconds: 86_400,
+      cost: count,
+    },
+    { ...MINK_IMAGE_GLOBAL_LIMIT, cost: count },
   ];
-  for (const [key, max, seconds] of limits) {
-    if (!(await checkRateLimit(key, max, seconds, count))) return false;
-  }
-  return true;
-}
-
-async function checkRateLimit(
-  key: string,
-  max: number,
-  seconds: number,
-  cost: number,
-): Promise<boolean> {
-  // ★ FAILS CLOSED, like the single-image ceiling: a database error throws,
-  //   and nothing paid is attempted.
-  return withService(async (db) => {
-    const result =
-      cost === 1
-        ? await db.execute(
-            sql`select check_rate_limit(p_key => ${key}, p_max => ${max}, p_window_seconds => ${seconds}) as allowed`,
-          )
-        : await db.execute(
-            sql`select check_rate_limit_cost(p_key => ${key}, p_max => ${max}, p_window_seconds => ${seconds}, p_cost => ${cost}) as allowed`,
-          );
-    return (
-      (result.rows[0] as { allowed?: boolean } | undefined)?.allowed === true
-    );
-  });
 }
 
 function toArtifact(

@@ -24,6 +24,10 @@ const holder = vi.hoisted(() => ({
   createDraft: vi.fn(),
   owned: vi.fn(),
   uuid: 0,
+  claim: vi.fn(),
+  release: vi.fn(),
+  /** A section id whose changed version fails publish validation. */
+  failSection: null as string | null,
 }));
 
 vi.mock("@/lib/db/client", () => ({
@@ -89,6 +93,39 @@ vi.mock("./storefront-media-read", () => ({
 vi.mock("./storefront-personalization-writer", () => ({
   writePersonalizationCopy: holder.writer,
 }));
+vi.mock("./spend-limits", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./spend-limits")>()),
+  claimSpendLimits: holder.claim,
+  releaseSpendLimits: holder.release,
+}));
+vi.mock("@/lib/sections/registry", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/sections/registry")>();
+  return {
+    ...real,
+    // ★ One section's NEW version fails the publish bar, the way a rewrite
+    //   that broke a section's rules does; its original passes.
+    validateSections: vi.fn(
+      (sections: unknown, options?: { mode?: string }) => {
+        if (options?.mode === "publish" && holder.failSection) {
+          const list = sections as PageSectionItem[];
+          const index = list.findIndex(
+            (entry) => entry.id === holder.failSection,
+          );
+          const original = holder.target.pages
+            .flatMap((entry) => entry.sections)
+            .find((entry) => entry.id === holder.failSection);
+          if (index >= 0 && list[index] !== original) {
+            return { error: `Section ${index + 1}: the heading is too long.` };
+          }
+        }
+        return real.validateSections(
+          sections as Parameters<typeof real.validateSections>[0],
+          options as Parameters<typeof real.validateSections>[1],
+        );
+      },
+    ),
+  };
+});
 vi.mock("./storefront-personalization-context", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("./storefront-personalization-context")
@@ -129,6 +166,8 @@ function page(
     sections,
     sectionsDigest: "d".repeat(64),
     edited: false,
+    // Fixtures are the theme's own pages unless a test says otherwise.
+    themeSectionIds: sections.map((section) => section.id),
     skipped: null,
     ...extra,
   };
@@ -278,6 +317,11 @@ beforeEach(() => {
   holder.target = target();
   holder.toolEnabled = true;
   holder.rateAllowed = [];
+  holder.failSection = null;
+  holder.claim.mockReset();
+  holder.claim.mockResolvedValue({ ok: true });
+  holder.release.mockReset();
+  holder.release.mockResolvedValue(undefined);
   holder.inserted = [];
   holder.deleted = 0;
   holder.uuid = 0;
@@ -444,8 +488,11 @@ describe("a storefront personalisation proposal", () => {
   });
 
   it("keeps the theme's photos and charges nothing for them when the day's photo limit is reached", async () => {
-    // personalisation owner + store limits pass, the photo limit does not.
-    holder.rateAllowed = [true, true, false];
+    // The attempt is claimed, the photos are not.
+    holder.claim.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({
+      ok: false,
+      refusedKey: `mink-personalize-images:${STORE}`,
+    });
     await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
     const { plan } = storedPlan();
     expect(plan.photos).toEqual([]);
@@ -453,14 +500,120 @@ describe("a storefront personalisation proposal", () => {
     expect(holder.generate).not.toHaveBeenCalled();
   });
 
-  it("refuses a second personalisation inside the owner's two minutes", async () => {
-    holder.rateAllowed = [false];
+  it("★★ claims the photos after the writer, only for the ones it described, together with the platform's hour", async () => {
+    holder.writer.mockImplementation(
+      async (input: PersonalizationWriterInput) => {
+        const answer = fakeWriter(input);
+        // One scene does not come back.
+        answer.photos.delete(input.photos[1].ref);
+        return answer;
+      },
+    );
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    expect(holder.claim).toHaveBeenCalledTimes(2);
+    const photoClaim = holder.claim.mock.calls[1][0] as Array<{
+      key: string;
+      cost?: number;
+    }>;
+    expect(photoClaim).toEqual([
+      expect.objectContaining({
+        key: `mink-personalize-images:${STORE}`,
+        cost: 1,
+      }),
+      expect.objectContaining({ key: "mink-image-global", cost: 1 }),
+    ]);
+    // ★ The writer ran before the photos were claimed.
+    expect(holder.writer.mock.invocationCallOrder[0]).toBeLessThan(
+      holder.claim.mock.invocationCallOrder[1],
+    );
+    expect(holder.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ refuses a second personalisation while the first is still running, and says so", async () => {
+    holder.claim.mockResolvedValueOnce({
+      ok: false,
+      refusedKey: `mink-personalize-running:${STORE}:owner`,
+    });
     await expect(
       createMinkStorefrontPersonalizationProposal({ actor, args: args() }),
     ).rejects.toMatchObject({
       code: "personalization_rate_limit",
       status: 429,
+      message: expect.stringMatching(/already personalising/),
     });
+    expect(holder.writer).not.toHaveBeenCalled();
+    // Nothing was claimed, so nothing is given back.
+    expect(holder.release).not.toHaveBeenCalled();
+  });
+
+  it("names the day's limit when that is what refused", async () => {
+    holder.claim.mockResolvedValueOnce({
+      ok: false,
+      refusedKey: `mink-personalize-store:${STORE}`,
+    });
+    await expect(
+      createMinkStorefrontPersonalizationProposal({ actor, args: args() }),
+    ).rejects.toThrow(/six personalised storefront cards today/);
+  });
+
+  it("★★ a failed attempt gives back its claims, so a retry is not refused", async () => {
+    holder.writer.mockRejectedValueOnce(new Error("writer busy"));
+    await expect(
+      createMinkStorefrontPersonalizationProposal({ actor, args: args() }),
+    ).rejects.toThrow(/writer busy/);
+    expect(holder.release).toHaveBeenCalledWith([
+      expect.objectContaining({
+        key: `mink-personalize-running:${STORE}:owner`,
+      }),
+      expect.objectContaining({ key: `mink-personalize-store:${STORE}` }),
+    ]);
+    // ★ No photo was claimed before the writer failed.
+    expect(holder.claim).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ a card that was made keeps the day's count and gives back only the running claim", async () => {
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    expect(holder.release).toHaveBeenCalledWith([
+      expect.objectContaining({
+        key: `mink-personalize-running:${STORE}:owner`,
+      }),
+    ]);
+  });
+
+  it("★★ a photo in a section put back to the theme's version is neither charged, listed nor kept", async () => {
+    // About keeps one surviving change (its intro), so the page is stored
+    // while the section holding the new photo goes back to the theme's.
+    const about = holder.target.pages.find((entry) => entry.slug === "about")!;
+    about.sections = [
+      {
+        id: "intro",
+        type: "rich_text",
+        enabled: true,
+        config: { html: "<p>We pick fruit daily.</p>" } as never,
+      },
+      ...about.sections,
+    ];
+    about.themeSectionIds = about.sections.map((entry) => entry.id);
+    holder.failSection = "story";
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    const { plan } = storedPlan();
+    const stored = plan.pages.find(
+      (entry: { slug: string }) => entry.slug === "about",
+    );
+    // Only the intro's rewrite counts: the story's went back with it.
+    expect(stored.textChanges).toBe(1);
+    expect(stored.photoChanges).toBe(0);
+    expect(
+      stored.sections.find((entry: { id: string }) => entry.id === "story")
+        .config.image_url,
+    ).toBe("/themes/basket/story.webp");
+    expect(plan.photos).toHaveLength(1);
+    expect(plan.credits.photos).toBe(3);
+    // Its picture was drawn, never used, and is removed from Media.
+    expect(holder.generate).toHaveBeenCalledTimes(2);
+    expect(holder.deletePaths).toHaveBeenCalledWith([
+      expect.stringMatching(/^stores\/.+\/mink-generated\//),
+    ]);
   });
 
   it("★ a photo the image service refused keeps the theme's picture and is not charged", async () => {
@@ -519,6 +672,20 @@ describe("a storefront personalisation proposal", () => {
       true,
     );
     expect(writerInput.photos).toHaveLength(2);
+  });
+
+  it("★ asks for an English address when a new category's name has none", async () => {
+    await expect(
+      createMinkStorefrontPersonalizationProposal({
+        actor,
+        args: args({
+          categories: [
+            { action: "create", name: "मिठाई", merchant_confirmed: true },
+          ],
+        }),
+      }),
+    ).rejects.toThrow(/cannot be made from the name "मिठाई"/);
+    expect(holder.writer).not.toHaveBeenCalled();
   });
 
   it("says there is nothing left when a photos-only pass finds no theme photos", async () => {

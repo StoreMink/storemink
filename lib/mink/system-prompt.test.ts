@@ -568,6 +568,14 @@ describe("★★ a storefront personalisation is an interview, and never assumes
     expect(prompt).toContain("never invent an award, a rating, a review");
   });
 
+  it("★ keeps an edited page, the homepage too, out without a yes, and the merchant's own sections in their words", () => {
+    const prompt = render("propose_storefront_personalization");
+    expect(prompt).toContain(
+      "A page they edited themselves, the homepage too, stays out unless they agree",
+    );
+    expect(prompt).toContain("sections they wrote keep their words");
+  });
+
   it("offers the rest of the photos only after the card was applied", () => {
     expect(render("propose_storefront_personalization")).toContain(
       "once they have applied it, with photos_only true",

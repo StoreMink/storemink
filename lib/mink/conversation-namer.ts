@@ -18,7 +18,7 @@ import "server-only";
 // carries the token counts so the spend stays visible.
 // ---------------------------------------------------------------------------
 
-import { FinishReason, GoogleGenAI, ThinkingLevel } from "@google/genai";
+import { FinishReason, ThinkingLevel } from "@google/genai";
 import type { MinkConfig } from "./config";
 import {
   MINK_TITLE_INSTRUCTION,
@@ -27,8 +27,14 @@ import {
   normalizeMinkConversationTitle,
 } from "./conversation-title";
 import { renameMinkConversation } from "./persistence";
-import { isRetryableProviderError, MinkStallError } from "./retry";
+import {
+  isRetryableProviderError,
+  leakedReasoningAt,
+  MinkLeakedReasoningError,
+  MinkStallError,
+} from "./retry";
 import type { MinkActorContext } from "./types";
+import { minkVertexClient } from "./vertex-clients";
 import { logInfo, logWarn } from "@/lib/observability/logger";
 
 /** One attempt never takes longer than this. */
@@ -57,26 +63,6 @@ export interface MinkGeneratedTitle {
   usage?: { promptTokens: number; outputTokens: number; thoughtTokens: number };
 }
 
-// One client per project and location for the life of the process: each
-// keeps its own cached access token.
-const clients = new Map<string, GoogleGenAI>();
-function clientFor(project: string, location: string): GoogleGenAI {
-  const key = `${project}:${location}`;
-  let client = clients.get(key);
-  if (!client) {
-    client = new GoogleGenAI({
-      enterprise: true,
-      project,
-      location,
-      apiVersion: "v1",
-      // The retry below is ours, so the SDK makes exactly one attempt.
-      httpOptions: { retryOptions: { attempts: 1 } },
-    });
-    clients.set(key, client);
-  }
-  return client;
-}
-
 /** The title a model gives the chat that starts with `message`. Never throws. */
 export async function generateMinkConversationTitle(input: {
   config: TitleConfig;
@@ -87,7 +73,9 @@ export async function generateMinkConversationTitle(input: {
   // the model would only be guessing at files it cannot see.
   if (!titleInput.words || !input.config.projectId)
     return { title: null, outcome: "skipped", attempts: 0 };
-  const ai = clientFor(input.config.projectId, input.config.location);
+  // One shared client per project and location (vertex-clients.ts): each
+  // keeps its own cached access token, and the retry below is ours.
+  const ai = minkVertexClient(input.config.projectId, input.config.location);
   const prompt = minkTitlePrompt(titleInput);
 
   let attempts = 0;
@@ -114,9 +102,14 @@ export async function generateMinkConversationTitle(input: {
         outputTokens: response.usageMetadata?.candidatesTokenCount ?? 0,
         thoughtTokens: response.usageMetadata?.thoughtsTokenCount ?? 0,
       };
-      // A reply cut off or blocked is not a title, however it reads.
+      // A reply cut off or blocked is not a title, however it reads, and
+      // nor is one that opens with the model's own reasoning (its first line
+      // would otherwise become the title "thought"): that one is asked again.
       const finished =
         response.candidates?.[0]?.finishReason === FinishReason.STOP;
+      if (finished && leakedReasoningAt(response.text ?? "") === true) {
+        throw new MinkLeakedReasoningError();
+      }
       const title = finished
         ? normalizeMinkConversationTitle(response.text)
         : null;
@@ -240,6 +233,7 @@ function delay(ms: number): Promise<void> {
 
 function failureReason(error: unknown): string {
   if (error instanceof MinkStallError) return "stall";
+  if (error instanceof MinkLeakedReasoningError) return "leaked_reasoning";
   const status =
     error && typeof error === "object"
       ? (error as { status?: unknown }).status

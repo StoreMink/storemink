@@ -111,7 +111,7 @@ const proposeStorefrontPersonalization: MinkTool = {
           maxItems: MINK_PERSONALIZATION_MAX_PAGES,
           items: { type: "string", maxLength: 60 },
           description:
-            "Page slugs, or null for the default set (the homepage and every page the merchant has not edited). Name an edited page only after they agreed.",
+            "Page slugs, or null for the default set (every page the merchant has not edited, the homepage included). Name an edited page only after they agreed; on it, only the sections still as the theme wrote them change.",
         },
         design: {
           type: ["object", "null"],
@@ -217,13 +217,21 @@ const proposeStorefrontPersonalization: MinkTool = {
       ? proposal
       : undefined;
   },
+  // ★ THE MODEL GETS THE SUMMARY, NEVER THE CARD: the card carries the
+  //   charge, every photo URL and the whole plan, and the function response
+  //   is re-sent on every later step. Keeping it out is what makes "never a
+  //   credit figure" true, rather than a request the prompt makes.
+  modelOutput(output) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { proposal, ...forModel } = output;
+    return forModel;
+  },
   async execute(actor, args) {
     const proposal = await createMinkStorefrontPersonalizationProposal({
       actor,
       args,
     });
-    // ★ THE MODEL GETS A SUMMARY, NEVER THE PLAN OR A CREDIT FIGURE: what
-    //   changed, what was left out and why, and what is live at once.
+    // What changed, what was left out and why, and what is live at once.
     return {
       proposal,
       summary: {

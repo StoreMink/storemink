@@ -185,6 +185,40 @@ describe("per-actor declarations", () => {
 //    one with "could not finish right now". That is the difference between
 //    the model rephrasing actionable advice and it retrying the same failing
 //    input until the run's tool budget is gone.
+describe("what the model is sent", () => {
+  it("★★ sends a tool's narrowed output to the model, while its card still gets the whole output", async () => {
+    const card = {
+      type: "metric",
+      title: "A card",
+      value: "47 credits",
+    } as never;
+    const registry = new MinkToolRegistry([
+      tool({
+        execute: vi.fn(async () => ({ card, summary: { pages: 2 } })),
+        artifact: (output) => output.card as never,
+        modelOutput: (output) => ({ summary: output.summary }),
+      }),
+    ]);
+    const response = await registry.execute(
+      actor({ permissions: { products: ["view"] } }),
+      { id: "call-1", name: "read_products", args: {} },
+    );
+    expect(response.response).toEqual({ output: { summary: { pages: 2 } } });
+    expect(response.artifact).toBe(card);
+  });
+
+  it("sends the whole output when a tool names no narrowing", async () => {
+    const registry = new MinkToolRegistry([tool()]);
+    const response = await registry.execute(
+      actor({ permissions: { products: ["view"] } }),
+      { id: "call-1", name: "read_products", args: {} },
+    );
+    expect(response.response).toEqual({
+      output: { storeIdUsed: "store-1" },
+    });
+  });
+});
+
 describe("tool failure messages", () => {
   it("forwards a MinkRequestError's own message", async () => {
     const registry = new MinkToolRegistry([

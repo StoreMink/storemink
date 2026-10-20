@@ -247,6 +247,15 @@ export type MinkVoiceMode = {
   noteSend: () => void;
 };
 
+/**
+ * Whether the answer's spoken block (the server's split, whitespace collapsed)
+ * carries on from what streamed: the same block, not another one.
+ */
+function continuesSpoken(final: string, streamed: string): boolean {
+  const flat = (text: string) => text.replace(/\s+/g, " ").trim();
+  return flat(final).startsWith(flat(streamed));
+}
+
 type Turn = {
   session: MinkSpeechSession;
   /** Replaced when the turn reopens or its block turns out to be empty. */
@@ -944,6 +953,20 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
         // After an acknowledgement the session is open again for whatever
         // the answer says, even nothing: ending it then still idles the turn.
         if (turn.awaiting) resumeTurn(turn);
+        // ★ The block the turn closed on is not this answer's: it was an
+        // acknowledgement whose keep (`spokenKept`) arrived in the same render
+        // as the answer, which clears it, so case (0) never saw it. It plays
+        // on, and the answer's own block is read after it; without this the
+        // turn stayed closed and the answer was never said.
+        if (
+          turn.closed &&
+          last.spoken &&
+          !continuesSpoken(last.spoken, turn.segmenter.seen)
+        ) {
+          turn.segmenter = createMinkSpeechSegmenter();
+          turn.closed = false;
+          resumeTurn(turn);
+        }
         if (!turn.closed) {
           turn.closed = true;
           let tail = turn.segmenter.close(last.spoken ?? undefined);

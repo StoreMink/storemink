@@ -631,12 +631,22 @@ export function newRefCounter(): PersonalizationRefCounter {
  * Every field the writer may rewrite on one page, every photo slot, and the
  * sections that will be hidden. Disabled sections are left out: a shopper
  * does not see them, and rewriting them would charge for nothing visible.
+ *
+ * ★★ ONLY THE THEME'S OWN SECTIONS ARE REWRITTEN OR SWITCHED OFF.
+ *   `themeSectionIds` names the sections still exactly as the installed theme
+ *   made them (the context compares each with the theme, by content). A
+ *   section the merchant wrote or changed keeps its words and stays on: a
+ *   testimonial they added is a real customer's, and a countdown they set is
+ *   a real sale. Its theme photos are still offered, since those were never
+ *   the merchant's. `"all"` treats every section as the theme's (tests of a
+ *   section's own handling).
  */
 export function buildPageInventory(
   pageSlug: string,
   title: string,
   sections: readonly PageSectionItem[],
   counter: PersonalizationRefCounter,
+  themeSectionIds: ReadonlySet<string> | "all",
 ): PersonalizationPageInventory {
   const inventory: PersonalizationPageInventory = {
     pageSlug,
@@ -650,17 +660,23 @@ export function buildPageInventory(
     if (!section.enabled) continue;
     const spec = PERSONALIZATION_SECTION_SPECS[section.type];
     if (!spec || spec.handling === "keep") continue;
+    const fromTheme =
+      themeSectionIds === "all" || themeSectionIds.has(section.id);
     if (spec.handling === "hide") {
-      inventory.hidden.push({
-        pageSlug,
-        sectionId: section.id,
-        type: section.type,
-        reason: spec.hideReason ?? "Sample content from the theme.",
-      });
+      if (fromTheme) {
+        inventory.hidden.push({
+          pageSlug,
+          sectionId: section.id,
+          type: section.type,
+          reason: spec.hideReason ?? "Sample content from the theme.",
+        });
+      }
       continue;
     }
     const config = asRecord(section.config);
-    collectFields(inventory, counter, section, config, spec.fields ?? [], []);
+    if (fromTheme) {
+      collectFields(inventory, counter, section, config, spec.fields ?? [], []);
+    }
     collectPhotos(inventory, counter, section, config, spec.photos ?? [], []);
     for (const list of spec.lists ?? []) {
       const items = Array.isArray(config[list.key]) ? config[list.key] : [];
@@ -672,17 +688,19 @@ export function buildPageInventory(
           __parentRatio: config.media_ratio ?? config.image_ratio,
         };
         const prefix = [list.key, index];
-        collectFields(
-          inventory,
-          counter,
-          section,
-          item,
-          list.fields.map((field) => ({
-            ...field,
-            label: `${list.itemLabel} ${index + 1} ${field.label.toLowerCase()}`,
-          })),
-          prefix,
-        );
+        if (fromTheme) {
+          collectFields(
+            inventory,
+            counter,
+            section,
+            item,
+            list.fields.map((field) => ({
+              ...field,
+              label: `${list.itemLabel} ${index + 1} ${field.label.toLowerCase()}`,
+            })),
+            prefix,
+          );
+        }
         collectPhotos(
           inventory,
           counter,
@@ -696,7 +714,7 @@ export function buildPageInventory(
         );
       });
     }
-    if (spec.replaced) {
+    if (spec.replaced && fromTheme) {
       const raw = config[spec.replaced.key];
       const current =
         spec.replaced.kind === "ticker"
@@ -831,6 +849,8 @@ export interface PersonalizationBudgetPlan {
   unaffordable: PersonalizationBudgetItem[];
   /** Photos left out because one proposal draws at most this many. */
   overPhotoLimit: string[];
+  /** Category photos left out because their category itself was. */
+  withoutCategory: string[];
   credits: number;
 }
 
@@ -844,6 +864,11 @@ export interface PersonalizationBudgetPlan {
  *   page's third picture the last. An item that does not fit is skipped and
  *   the cheaper ones after it still get their chance.
  *
+ * ★ A CATEGORY'S PHOTO GOES WITH THE CATEGORY: categories are bought before
+ *   any photo, and a photo whose category did not fit is left out without
+ *   taking one of the photo places (it would be drawn and paid for, then
+ *   never used). `categorySlugs` names each category by its index.
+ *
  * `remaining` is the store's credits (null for an unmetered plan).
  */
 export function planPersonalizationBudget(input: {
@@ -852,6 +877,8 @@ export function planPersonalizationBudget(input: {
   design: boolean;
   chrome: boolean;
   categoryCount: number;
+  /** Each planned category's slug, by index; matches a photo's `categorySlug`. */
+  categorySlugs?: readonly string[];
   photos: readonly PersonalizationPhotoRef[];
   maxPhotos?: number;
   /** Buy photos alone, most visible first: nothing else is written. */
@@ -906,12 +933,26 @@ export function planPersonalizationBudget(input: {
     }
   }
 
+  const categoryOfPhoto = new Map(
+    input.photos.flatMap((photo) =>
+      photo.categorySlug ? [[photo.ref, photo.categorySlug] as const] : [],
+    ),
+  );
+  const includedCategories = new Set<string>();
   const included: PersonalizationBudgetItem[] = [];
   const unaffordable: PersonalizationBudgetItem[] = [];
   const overPhotoLimit: string[] = [];
+  const withoutCategory: string[] = [];
   let credits = 0;
   let photos = 0;
   for (const item of queue) {
+    if (item.kind === "photo") {
+      const category = categoryOfPhoto.get(item.ref);
+      if (category !== undefined && !includedCategories.has(category)) {
+        withoutCategory.push(item.ref);
+        continue;
+      }
+    }
     if (item.kind === "photo" && photos >= maxPhotos) {
       overPhotoLimit.push(item.ref);
       continue;
@@ -923,8 +964,12 @@ export function planPersonalizationBudget(input: {
     included.push(item);
     credits += item.credits;
     if (item.kind === "photo") photos += 1;
+    if (item.kind === "category") {
+      const slug = input.categorySlugs?.[item.index];
+      if (slug !== undefined) includedCategories.add(slug);
+    }
   }
-  return { included, unaffordable, overPhotoLimit, credits };
+  return { included, unaffordable, overPhotoLimit, withoutCategory, credits };
 }
 
 /** Most visible first: the homepage, then prominence, then page order. */
@@ -965,6 +1010,13 @@ export interface PersonalizationPageResult {
   hiddenSectionIds: string[];
   textChanges: number;
   photoChanges: number;
+  /**
+   * Where each change landed. ★ The caller counts (and charges) only the
+   * changes in sections that survive validation: a section put back to the
+   * theme's version takes its new words and its new photo with it.
+   */
+  textChangesBySection: Record<string, number>;
+  photosApplied: Array<{ ref: string; sectionId: string }>;
 }
 
 /**
@@ -988,6 +1040,13 @@ export function applyPersonalizationToPage(input: {
   const hiddenIds: string[] = [];
   let textChanges = 0;
   let photoChanges = 0;
+  const textChangesBySection: Record<string, number> = {};
+  const photosApplied: Array<{ ref: string; sectionId: string }> = [];
+  const countText = (sectionId: string, count: number) => {
+    textChanges += count;
+    textChangesBySection[sectionId] =
+      (textChangesBySection[sectionId] ?? 0) + count;
+  };
 
   for (const ref of input.inventory.texts) {
     const value = input.texts.get(ref.ref);
@@ -998,7 +1057,7 @@ export function applyPersonalizationToPage(input: {
     if (!next.trim() && !ref.optional) continue;
     if (writeAt(asRecord(section.config), ref.path, next, ref.current)) {
       changed.add(section.id);
-      textChanges += 1;
+      countText(section.id, 1);
     }
   }
 
@@ -1021,7 +1080,7 @@ export function applyPersonalizationToPage(input: {
     }
     config[ref.key] = listValue(ref, config[ref.key], items);
     changed.add(section.id);
-    textChanges += items.length;
+    countText(section.id, items.length);
   }
 
   for (const ref of input.inventory.photos) {
@@ -1035,6 +1094,7 @@ export function applyPersonalizationToPage(input: {
     for (const clear of ref.clears) deleteAt(config, clear);
     changed.add(section.id);
     photoChanges += 1;
+    photosApplied.push({ ref: ref.ref, sectionId: section.id });
   }
 
   for (const hiddenSection of input.inventory.hidden) {
@@ -1051,6 +1111,8 @@ export function applyPersonalizationToPage(input: {
     hiddenSectionIds: hiddenIds,
     textChanges,
     photoChanges,
+    textChangesBySection,
+    photosApplied,
   };
 }
 

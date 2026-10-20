@@ -1944,9 +1944,11 @@ Storefront and Builder pages.
 ★★ EVERYTHING THAT CAN BE REFUSED IS REFUSED BEFORE A PAID CALL
 (`lib/mink/storefront-personalization-proposals.ts`): request shape, design
 contrast, categories, permissions, the `apply_storefront_personalization`
-gate and credits; rate limits (one per admin per two minutes, six per store
-per day; photos 36 per store per day and the platform's 200-an-hour image
-ceiling, through `check_rate_limit_cost`, failing closed). Then ONE
+gate and credits; spend limits (one personalisation at a time per admin and
+six per store per day, claimed together before the writer; photos 36 per
+store per day and the platform's 200-an-hour image ceiling, claimed after
+the writer for the photos it described; all through `lib/mink/spend-limits.ts`,
+failing closed). Then ONE
 structured writer call (`storefront-personalization-writer.ts`: the main
 model, the fallback model on failure; the brief, page text and facts fenced
 as data, quotes and angle brackets defused) rewrites every text field the
@@ -1959,8 +1961,9 @@ testimonials, comparison, image hotspots, before/after, logo strip and
 countdown are SAMPLE CONTENT and are switched off, never rewritten (a
 rewritten quote is an invented review); custom code is never touched; the
 four policy pages (`MINK_PERSONALIZATION_SKIPPED_SLUGS`) are never written. A
-page the merchant edited themselves is written only when named
-(`eligiblePages`).
+page the merchant edited themselves, the homepage included, is written only
+when named (`eligiblePages`), and on any page only the theme's own sections
+change (review fixes, below).
 ★★ ONLY THE THEME'S OWN PICTURES ARE REPLACED (`isThemePhotoUrl`: a
 `/themes/` path or a `theme-releases/` object in our bucket); a merchant's
 upload and a picture Mink made are kept. Photos are drawn at PROPOSAL time
@@ -2013,14 +2016,56 @@ described the slot as "beside a block of text", and on staging the image
 model drew one: a panel of invented words beside the photo. Every slot frame
 now repeats that it is a single photograph with no text, panels or layout
 (`media-generation.test.ts` pins it for 4:5, 1:1 and 4:3).
+★★ PR #290 REVIEW FIXES (2026-10-20). ★★ ONLY THE THEME'S OWN SECTIONS
+ARE REWRITTEN. A theme install gives every section a fresh id
+(`prepareSections`), so a section is the theme's only while its
+`{type, config}` still matches what the store's theme installs on that page
+(`themeSectionIdsFor`, by content digest; none when the theme cannot be
+read). `buildPageInventory` rewrites text, hides sample sections and fills
+lists only in those; a section the merchant wrote keeps their words (the
+interview summary counts them as `merchantSections`), while a theme picture
+inside it is still replaced. An edited homepage waits for a yes like any
+edited page; it used to be written regardless, against the prompt's own rule.
+★★ A SPEND CLAIM IS ALL OR NOTHING (`claimSpendLimits` /
+`releaseSpendLimits`). `check_rate_limit` adds before it compares, so limits
+checked one by one let a refusal by the platform's hour still spend the
+store's day; a claim's limits now run in one transaction that rolls back on
+the first refusal, and a database error fails closed.
+`reserveMinkImageGeneration` claims its image ceilings the same way, and
+`MINK_IMAGE_GLOBAL_LIMIT` is the one platform hour both share. A
+personalisation claims its running slot (one per admin, held for the run
+budget) and the store's day before the writer, and photos only after it,
+for the photos it described (`photoLimits`), so a writer failure spends no
+photo allowance. A failed attempt gives both back; a saved card keeps the
+day's count and returns the running slot. ★ WHAT A REVERTED SECTION MADE IS
+NEITHER CHARGED NOR KEPT: `validatePage` puts a failing section back to the
+theme's version, so the page's text count (`textChangesBySection`) and its
+photos (`photosApplied`) come from the sections that survived, and a drawn
+photo nobody used is removed from Media once the card is saved (every drawn
+photo when it cannot be saved). ★ A category photo is drawn only when its
+category made the budget (`withoutCategory`); a new category whose name
+gives no web address asks for an English slug; the cash-on-delivery fact
+comes from the checkout's own rule (`paymentOptionsFor`). ★★ A STORE WITH NO
+HEADER AND FOOTER ROW KEEPS ITS MENUS: the storefront shows `store_menus`
+links until a `store_chrome` row exists, so the context reads them
+(`readMenusAsChrome`) and execution locks them `FOR UPDATE` and writes the
+first chrome draft from them, never from the platform's stock links. ★ THE
+MODEL DOES NOT READ THE CARD BACK: `MinkTool.modelOutput` narrows what a
+tool's response sends to the model, and the proposal tool drops its
+`proposal` (the card still gets the whole output). Help: `0233` adds one
+sentence inside the 0232 paragraph (an edited page is left alone unless the
+merchant asks; text they wrote stays as they wrote it). The local
+integration fixture is pinned to a theme install and covers the
+legacy-menus case.
 0232 adds the tool to the three tool vocabularies and the draft-version
 exception, resource type `storefront` to both resource lists, NULL-safe
 target checks on the approval, audit and draft rows, the draft kind, the
 per-kind credit ceiling, provisions the tool for every store, and extends the
 Mink Website Builder guide's design sentence in place. Prompt versions
-`read-beta-v37` / `draft-action-beta-v59`, registries `read-beta-v27` /
-`draft-beta-v45`. Tests: `storefront-personalization-{contract,writer,
+`read-beta-v37` / `draft-action-beta-v60`, registries `read-beta-v27` /
+`draft-beta-v46`. Tests: `storefront-personalization-{contract,writer,
 proposals,context}.test.ts`, `tools/storefront-personalization-tools.test.ts`,
+`spend-limits`,
 the card, the action route, the stream route's deadline tests,
 `tool-routing`, `prompt-budget`, `media-generation`, and the opt-in
 rollback-only `storefront-personalization.local.test.ts`
@@ -2080,11 +2125,12 @@ draft. Tests: `system-prompt` (the rule renders with a drafting tool, not
 without one; the reminder; alt text and prefilled forms) and `tool-routing`
 (Punjabi, Gujarati, Tamil and Urdu keep every tool; English with a Punjabi
 name still narrows); the router guard fails its test when removed.
-⚠ FOUND DURING THE LIVE CHECK, NOT FIXED HERE: once, the fallback model
-(`gemini-3.5-flash` at asia-south1, "Mink keeps answering when its model is
-busy") wrote its reasoning into the visible answer as ordinary text
+★ FOUND DURING THE LIVE CHECK: once, the fallback model (`gemini-3.5-flash`
+at asia-south1) wrote its reasoning into the visible answer as ordinary text
 ("thought\nNow I need to reply to the user in Hinglish..."), not as a
-thought part, so `consumeMinkStream`'s thought filter cannot drop it.
+thought part, so `consumeMinkStream`'s thought filter could not drop it.
+Fixed 2026-10-20: a reply that opens that way is withheld and asked again
+(see "Mink keeps answering when its model is busy").
 
 ### Mink names a new chat, like ChatGPT (2026-10-20)
 
@@ -2195,6 +2241,34 @@ location, status or stall phase); a run created meanwhile starts on the
 fallback, and one answer clears the mark. Per process deliberately: instances
 share nothing, and a shared store would add a database round trip to every run
 to save one stall per instance per window.
+★★ A STALL ONLY THE VOICE DEADLINE CALLED MARKS NOTHING (PR #290 review). A
+voice turn gives up at 12 s where a written chat waits 20, and a healthy main
+model can take 13 s to a first chunk on a large tool result; marking it down
+then sent every run on the instance to the fallback for a minute. Only a
+first-chunk stall that waited the full configured deadline (or any other
+retryable failure) is remembered.
+★★ A CONVERSATION THE FALLBACK WROTE GOES BACK TO THE FALLBACK. Once the
+fallback has answered with its own thought signatures, a 400 from the main
+model on that history is about the history, not the request:
+`withMinkFailover` reports it as `kind: "history"` (logWarn
+`mink.model: history refused`, nothing marked) and keeps the turn on the
+fallback, where a 400 on the main model's own conversation is still final.
+★★ LEAKED REASONING IS WITHHELD AND ASKED AGAIN. `consumeMinkStream` holds a
+reply's opening until `leakedReasoningAt` (retry.ts) can decide: a first line
+that is just a lowercase "thought" throws `MinkLeakedReasoningError`, which is
+retryable, so the turn is asked again on the other model and not a word of it
+reaches the merchant; anything else is released from its first character. The
+chat namer applies the same check (reason `leaked_reasoning`).
+★ ONE VERTEX CLIENT MODULE (`lib/mink/vertex-clients.ts`): the session, the
+storefront writer and the namer share `minkVertexClient(project, location)`,
+one cached client per project and location with the SDK's own retries off.
+★ The orchestrator's `text_reset` says `restart` only when the restart really
+happens; a `request_more_tools` answered in place (the run already restarted,
+or a tool with side effects ran) is a `tool_call`, so a voice acknowledgement
+in that turn is kept. And when the keep and the answer reach the browser in
+one render (the message clears `spokenKept`), the voice loop still reads the
+answer after the acknowledgement: a closed block the answer's own spoken text
+does not continue (`continuesSpoken`) is treated as kept.
 ★ `session.location` says where the answering model runs; the run is priced
 there (`pricingLocation`) and the run log carries `location`. ⚠
 `estimateMinkCost` knows no 3.5 Flash price, so a run the fallback answered has
@@ -6317,6 +6391,11 @@ wholesip/
 │   │                          # echo check
 │   ├── mink/voice-turn.ts     # client-safe: one voice turn, mic to transcript (shares
 │   │                          # transcription with dictation)
+│   ├── mink/spend-limits.ts   # server-only: claimSpendLimits (every limit counts a paid
+│   │                          # call, or none: one transaction, fails closed) and the
+│   │                          # best-effort releaseSpendLimits; MINK_IMAGE_GLOBAL_LIMIT
+│   ├── mink/vertex-clients.ts # server-only: the one Mink Vertex client per project and
+│   │                          # location (session, storefront writer, chat namer)
 │   ├── mink/                  # ★ Dashboard agent foundation (docs/mink-ai-dashboard-plan.md):
 │   │                          # default-on global + fail-closed invited-store access;
 │   │                          # system-prompt.ts, image-prompt.ts and whatsapp-prompt.ts
@@ -7210,7 +7289,9 @@ wholesip/
 │                              # 0231 replaces the Mink guide's language sentence
 │                              # (drafts in English); 0232 is Mink storefront
 │                              # personalisation (tool, draft kind, per-kind
-│                              # 200-credit ceiling, Help). Next free: 0233.
+│                              # 200-credit ceiling, Help); 0233 adds the
+│                              # edited-pages sentence to its Help paragraph.
+│                              # Next free: 0234.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth

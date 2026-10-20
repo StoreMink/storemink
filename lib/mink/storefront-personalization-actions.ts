@@ -14,11 +14,7 @@ import {
   stores,
 } from "@/drizzle/schema";
 import { EMPTY_DESIGN_OVERRIDES } from "@/lib/chrome/design";
-import {
-  DEFAULT_CHROME,
-  sanitizeChromeForSave,
-  type StoreChrome,
-} from "@/lib/chrome/types";
+import { sanitizeChromeForSave, type StoreChrome } from "@/lib/chrome/types";
 import { withService, type Db } from "@/lib/db/client";
 import {
   validateSections,
@@ -42,7 +38,10 @@ import {
   MINK_PERSONALIZATION_SCHEMA_VERSION,
   type PersonalizationStoredPlan,
 } from "./storefront-personalization-contract";
-import { chromeTextDigest } from "./storefront-personalization-context";
+import {
+  chromeTextDigest,
+  readMenusAsChrome,
+} from "./storefront-personalization-context";
 import type {
   MinkStorefrontPersonalizationActionApproval,
   MinkStorefrontPersonalizationActionResult,
@@ -409,9 +408,14 @@ async function lockTargets(
       for update
     `);
     const row = rows.rows[0] as { draft: unknown } | undefined;
+    // ★ With no row yet, the store's own menus are the starting point, as in
+    //   the context read: DEFAULT_CHROME here would publish StoreMink's stock
+    //   links over the theme's navigation.
     chrome = {
       exists: Boolean(row),
-      value: row ? sanitizeChromeForSave(row.draft) : DEFAULT_CHROME,
+      value: row
+        ? sanitizeChromeForSave(row.draft)
+        : await readMenusAsChrome(db, actor.storeId, { forUpdate: true }),
     };
   }
 

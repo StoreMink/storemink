@@ -211,6 +211,26 @@ describe("★★ a stalled turn", () => {
     await expect(deep).resolves.toMatchObject({ retryCount: 1 });
   });
 
+  it("★★ a stall only the voice deadline called does not send every run on the instance to the fallback", async () => {
+    // A healthy main model can take 13 s to a first chunk on a large tool
+    // result; voice gives up at 12, a written chat waits 20.
+    vi.useFakeTimers();
+    h.plan = [silent, answer("ok")];
+    const voice = session({}, { answerMedium: "spoken" }).sendUserMessage("Hi");
+    await vi.advanceTimersByTimeAsync(12_000);
+    await expect(voice).resolves.toMatchObject({ retryCount: 1 });
+    expect(session().model).toBe("gemini-3.7-flash");
+  });
+
+  it("a written chat's stall still does", async () => {
+    vi.useFakeTimers();
+    h.plan = [silent, answer("ok")];
+    const turn = session().sendUserMessage("Hi");
+    await vi.advanceTimersByTimeAsync(20_000);
+    await expect(turn).resolves.toMatchObject({ retryCount: 1 });
+    expect(session().model).toBe("gemini-3.5-flash");
+  });
+
   it("is not retried when the run itself was stopped", async () => {
     h.plan = [silent];
     const controller = new AbortController();
@@ -250,6 +270,37 @@ describe("★ the fallback", () => {
       "gemini-3.7-flash",
       "gemini-3.7-flash",
     ]);
+  });
+
+  it("★★ takes the turn back when the main model refuses a conversation the fallback has been answering", async () => {
+    // The run moved to the fallback, which then made calls with its own
+    // thought signatures; a 400 from the main model on that history is not
+    // a verdict on the request, so the fallback that wrote it is asked again.
+    h.plan = [status(429), answer("first")];
+    const mink = session();
+    await mink.sendUserMessage("Hi");
+    h.calls = [];
+    h.plan = [status(503), status(400), answer("second")];
+    await expect(
+      mink.sendToolResponses([{ id: "1", name: "tool", response: {} }]),
+    ).resolves.toMatchObject({ text: "second", retryCount: 2 });
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.5-flash",
+      "gemini-3.7-flash",
+      "gemini-3.5-flash",
+    ]);
+    expect(h.logWarn).toHaveBeenCalledWith(
+      "mink.model: history refused",
+      expect.objectContaining({ model: "gemini-3.7-flash", status: 400 }),
+    );
+  });
+
+  it("a 400 on the main model's own conversation is still the end of the turn", async () => {
+    h.plan = [status(400)];
+    await expect(session().sendUserMessage("Hi")).rejects.toMatchObject({
+      code: "provider_request_rejected",
+    });
+    expect(h.calls).toHaveLength(1);
   });
 
   it("is not used at all when switched off", async () => {
@@ -293,5 +344,47 @@ describe("★ the fallback", () => {
     // Linked to the run, never the run's own signal (each attempt can be
     // abandoned without stopping the run).
     expect(sent.abortSignal).not.toBe(controller.signal);
+  });
+});
+
+describe("★★ a reply that opens with the model's own reasoning", () => {
+  it("is never shown, and is asked again on the other model", async () => {
+    // Seen on the fallback (2026-10-19): "thought" on a line of its own, its
+    // working, a draft of the answer, then the answer, all as plain text.
+    h.plan = [
+      answer(
+        "thou",
+        "ght\nNow I need to reply to the user in Hinglish.\n\n",
+        "Aapka draft ready hai.",
+      ),
+      answer("Twelve orders."),
+    ];
+    const deltas: string[] = [];
+    const resets = vi.fn();
+    await expect(
+      session().sendUserMessage("Hi", {
+        onDelta: (text) => deltas.push(text),
+        onReset: resets,
+      }),
+    ).resolves.toMatchObject({ text: "Twelve orders.", retryCount: 1 });
+    expect(deltas).toEqual(["Twelve orders."]);
+    expect(resets).not.toHaveBeenCalled();
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.7-flash",
+      "gemini-3.5-flash",
+    ]);
+    expect(h.logWarn).toHaveBeenCalledWith(
+      "mink.model: attempt failed",
+      expect.objectContaining({ leakedReasoning: true }),
+    );
+  });
+
+  it("an ordinary answer is released from its first character", async () => {
+    h.plan = [answer("Thanks! ", "You had twelve orders.")];
+    const deltas: string[] = [];
+    await session().sendUserMessage("Hi", {
+      onDelta: (text) => deltas.push(text),
+    });
+    expect(deltas).toEqual(["Thanks! ", "You had twelve orders."]);
   });
 });

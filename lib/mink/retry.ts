@@ -32,6 +32,43 @@ export class MinkStallError extends Error {
   }
 }
 
+/**
+ * A reply that opened with the model's own reasoning, written as ordinary
+ * text: a first line reading just "thought", then its working, then a draft
+ * of the answer and the answer again. Retried like a 503, so the merchant
+ * never sees it.
+ *
+ * ★ SEEN ON THE FALLBACK (gemini-3.5-flash, storemink-staging, 2026-10-19):
+ *   the reasoning arrived as plain text parts, not as `thought` parts, so the
+ *   stream's thought filter could not drop it.
+ */
+export class MinkLeakedReasoningError extends Error {
+  constructor() {
+    super("The model wrote its reasoning into the answer.");
+    this.name = "MinkLeakedReasoningError";
+  }
+}
+
+/**
+ * Whether streamed text opens with leaked reasoning, or could still turn out
+ * to: `undefined` while the text so far is only a prefix of the marker.
+ * ★ Lowercase "thought" alone on the first line: no answer starts that way,
+ *   and "The …" or "Thanks" rule it out from the first character.
+ */
+export function leakedReasoningAt(text: string): boolean | undefined {
+  const start = text.trimStart();
+  const marker = "thought";
+  if (start.length <= marker.length) {
+    return marker.startsWith(start) ? undefined : false;
+  }
+  if (!start.startsWith(marker)) return false;
+  const rest = start.slice(marker.length);
+  const line = /^[ \t]*(\r?\n)?/.exec(rest);
+  if (line?.[1]) return true;
+  // Spaces after the word but no line break yet: keep waiting.
+  return /^[ \t]*$/.test(rest) ? undefined : false;
+}
+
 /** One model at one Vertex location: the thing a turn is sent to. */
 export type MinkProviderTarget = { model: string; location: string };
 
@@ -49,8 +86,11 @@ export type MinkFailoverEvent = {
    * `retryable` (429, 5xx, a dropped connection, a stall) is tried again;
    * `fatal` is not, except on the fallback, which is then dropped for the
    * rest of the session and the turn goes back to the main model.
+   * `history`: the main model refused (400) a conversation the fallback had
+   * been answering, so the turn goes back to the fallback; neither model is
+   * at fault, so neither is marked down.
    */
-  kind: "retryable" | "fatal";
+  kind: "retryable" | "fatal" | "history";
   /** Retries spent so far, this attempt included. */
   retryCount: number;
 };
@@ -72,6 +112,12 @@ export type MinkFailoverEvent = {
  * must never turn a transient main-model failure into a failed run: the
  * fallback is reported (`onFailure`, kind `fatal`) and the turn returns to the
  * main model. A fatal answer from the main model ends the turn, as before.
+ * ★★ A CONVERSATION THE FALLBACK WROTE MAY NOT READ ON THE MAIN MODEL.
+ * Only one direction was ever probed (3.5 Flash answering a call 3.7 made); a
+ * run that has been answering on the fallback carries the fallback's own
+ * function calls and thought signatures, and a 400 from the main model on
+ * that history is not a verdict on the request. The turn goes back to the
+ * fallback, which wrote it, and stays there for the rest of this turn.
  * ★ AN ABORTED RUN IS NEVER RETRIED: its own error goes back unwrapped, which
  * is what the stream route reads as cancelled or timed out.
  */
@@ -99,6 +145,11 @@ export async function withMinkFailover<T>(input: {
     input.start && fallback && sameMinkTarget(input.start, fallback)
       ? fallback
       : input.primary;
+  // The history this turn is sent with was written by the model that
+  // answered the last turn: `start`, when that is the fallback.
+  const historyOnFallback =
+    fallback !== null && sameMinkTarget(target, fallback);
+  let mainRefusesHistory = false;
   let retryCount = 0;
   let sameTargetRetries = 0;
   let mainError: unknown;
@@ -110,12 +161,22 @@ export async function withMinkFailover<T>(input: {
     } catch (error) {
       if (input.signal?.aborted) throw error;
       const onFallback = fallback !== null && sameMinkTarget(target, fallback);
-      const kind = isRetryableProviderError(error) ? "retryable" : "fatal";
+      const refusedHistory =
+        !onFallback &&
+        fallback !== null &&
+        historyOnFallback &&
+        providerStatus(error) === 400;
+      const kind = refusedHistory
+        ? "history"
+        : isRetryableProviderError(error)
+          ? "retryable"
+          : "fatal";
       input.onFailure?.({ target, error, kind, retryCount });
       if (!onFallback) {
         mainError = error;
         mainFailed = true;
       }
+      if (kind === "history") mainRefusesHistory = true;
       if (kind === "fatal" && !onFallback) {
         throw new MinkRetryError(error, retryCount);
       }
@@ -132,6 +193,8 @@ export async function withMinkFailover<T>(input: {
       if (kind === "fatal") {
         fallback = null;
         next = input.primary;
+      } else if (mainRefusesHistory && fallback) {
+        next = fallback;
       } else {
         next = fallback && !onFallback ? fallback : input.primary;
       }
@@ -149,6 +212,7 @@ export async function withMinkFailover<T>(input: {
 
 export function isRetryableProviderError(error: unknown): boolean {
   if (error instanceof MinkStallError) return true;
+  if (error instanceof MinkLeakedReasoningError) return true;
   const status = providerStatus(error);
   if (status !== null) {
     return status === 408 || status === 429 || status >= 500;

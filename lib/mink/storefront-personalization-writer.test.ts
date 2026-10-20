@@ -82,7 +82,13 @@ const sections: PageSectionItem[] = [
 function input(
   overrides: Partial<PersonalizationWriterInput> = {},
 ): PersonalizationWriterInput {
-  const page = buildPageInventory("home", "Home", sections, newRefCounter());
+  const page = buildPageInventory(
+    "home",
+    "Home",
+    sections,
+    newRefCounter(),
+    "all",
+  );
   return {
     config: {
       projectId: "project",

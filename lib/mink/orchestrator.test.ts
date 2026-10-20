@@ -966,6 +966,52 @@ describe("★★ request_more_tools", () => {
     expect(resets).toEqual([{ type: "text_reset", reason: "restart" }]);
   });
 
+  it("★ keeps the acknowledgement when the request for more tools is answered in place, not restarted", async () => {
+    // A proposal already ran, so the request is refused and the run carries
+    // on: nothing will say the acknowledgement again, so it must not be
+    // withdrawn as a restart.
+    const { registry: tools } = toolsRegistry();
+    const { session, restartWithAllTools } = widening({
+      narrow: [
+        turn({
+          functionCalls: [{ id: "a", name: "propose_social_posts", args: {} }],
+        }),
+        turn({
+          functionCalls: [
+            { id: "b", name: "request_more_tools", args: { reason: "x" } },
+          ],
+        }),
+        turn({ text: "Your posts are ready." }),
+      ],
+      widened: [],
+    });
+    const send = session.sendToolResponses as ReturnType<typeof vi.fn>;
+    send.mockImplementationOnce(async (_responses, options) => {
+      options?.onDelta?.("<spoken>Let me check that.</spoken>");
+      return turn({
+        functionCalls: [
+          { id: "b", name: "request_more_tools", args: { reason: "x" } },
+        ],
+      });
+    });
+    const onEvent = vi.fn();
+
+    await runMinkAgent({
+      actor: ACTOR,
+      message: "go",
+      config: config(),
+      registry: tools,
+      session,
+      onEvent,
+    });
+
+    expect(restartWithAllTools).not.toHaveBeenCalled();
+    const resets = onEvent.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.type === "text_reset");
+    expect(resets).toEqual([{ type: "text_reset", reason: "tool_call" }]);
+  });
+
   it("starts again with every tool on the main model, metering only the new attempt", async () => {
     const { registry: tools, execute } = toolsRegistry();
     const { session, restartWithAllTools } = widening({

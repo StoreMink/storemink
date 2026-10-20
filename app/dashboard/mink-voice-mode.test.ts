@@ -971,6 +971,75 @@ describe("useMinkVoiceMode", () => {
       expect(session.dropPending).not.toHaveBeenCalled();
     });
 
+    it("★★ says the answer when its keep and the answer arrived in one render", async () => {
+      // A fast tool: the acknowledgement closed, then the reset that keeps it
+      // and the final message came in one network read. The message clears
+      // `spokenKept`, so the loop never sees the keep; the closed block is
+      // the acknowledgement, not the answer, and the answer must still play.
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "How many orders?");
+      const session = h.speech.last();
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "Let me check your orders.",
+        spokenEnded: true,
+      });
+      expect(session.end).toHaveBeenCalledOnce();
+      h.rerender({
+        ...h.input,
+        messages: [
+          ...h.input.messages,
+          user("u1", "How many orders?"),
+          assistant("a1", "**12** today.", "You have twelve orders today."),
+        ],
+        isReplying: false,
+        spokenText: "",
+        spokenEnded: false,
+        spokenKept: "",
+      });
+      expect(session.dropPending).not.toHaveBeenCalled();
+      expect(session.reopen).toHaveBeenCalledOnce();
+      expect(session.enqueue).toHaveBeenLastCalledWith(
+        "You have twelve orders today.",
+        "en-IN",
+      );
+      expect(
+        session.enqueue.mock.calls.filter(
+          ([text]) => text === "Let me check your orders.",
+        ),
+      ).toHaveLength(1);
+      expect(session.end).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not say the answer's own block twice when it landed with its whitespace collapsed", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "How many orders?");
+      const session = h.speech.last();
+      h.rerender({
+        ...h.input,
+        isReplying: true,
+        spokenText: "You have twelve\norders today.",
+        spokenEnded: true,
+      });
+      const said = session.enqueue.mock.calls.length;
+      h.rerender({
+        ...h.input,
+        messages: [
+          ...h.input.messages,
+          user("u1", "How many orders?"),
+          assistant("a1", "**12** today.", "You have twelve orders today."),
+        ],
+        isReplying: false,
+        spokenText: "",
+        spokenEnded: false,
+      });
+      expect(session.enqueue).toHaveBeenCalledTimes(said);
+      expect(session.reopen).not.toHaveBeenCalled();
+    });
+
     it("reads the written answer when the answer after it carried no spoken block", async () => {
       const h = makeHarness();
       await act(async () => h.result.current.toggle());

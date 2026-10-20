@@ -85,18 +85,26 @@ export async function runMinkAgent(input: {
   onProgress?.({ steps, toolCalls, retryCount, usage: { ...usage } });
 
   while (turn.functionCalls.length > 0) {
+    // ★ Whether this turn restarts is settled BEFORE its text is reset: a
+    //   request for more tools that cannot be honoured (the run has already
+    //   restarted once, or has run a tool that must not run twice) is
+    //   answered in place and the run carries on, so its acknowledgement is
+    //   kept like any tool call's, never withdrawn as a "restart" that does
+    //   not happen. The model is read first: a restart swaps it.
+    const abandonedModel = session.model ?? config.model;
+    const restarting =
+      !restart &&
+      !sideEffects &&
+      turn.functionCalls.some((call) => call.name === REQUEST_MORE_TOOLS) &&
+      session.restartWithAllTools?.() === true;
     if (streamed > 0) {
       streamed = 0;
-      // ★ A turn asking for more tools is asked again from the start below,
-      // so even a voice acknowledgement in it is withdrawn ("restart"): the
-      // repeated turn says it again. Any other tool call keeps it.
+      // ★ A turn that restarts is asked again from the start below, so even
+      // a voice acknowledgement in it is withdrawn ("restart"): the repeated
+      // turn says it again. Any other tool call keeps it.
       await onEvent?.({
         type: "text_reset",
-        reason: turn.functionCalls.some(
-          (call) => call.name === REQUEST_MORE_TOOLS,
-        )
-          ? "restart"
-          : "tool_call",
+        reason: restarting ? "restart" : "tool_call",
       });
     }
     // ★★ A NARROWED RUN THAT ASKS FOR MORE TOOLS STARTS AGAIN, IT IS NOT
@@ -108,36 +116,29 @@ export async function runMinkAgent(input: {
     // already made are made again, which is why only restart-safe tools may
     // have run first. The abandoned usage is reported apart (`restart`) so a
     // routing miss is never metered to the merchant.
-    if (
-      !restart &&
-      !sideEffects &&
-      turn.functionCalls.some((call) => call.name === REQUEST_MORE_TOOLS)
-    ) {
-      const abandonedModel = session.model ?? config.model;
-      if (session.restartWithAllTools?.()) {
-        restart = {
-          abandonedModel,
-          usage: { ...usage },
-          steps,
-          toolCalls,
-        };
-        await onEvent?.({
-          type: "tools_restarted",
-          abandonedModel,
-          usage: { ...usage },
-        });
-        steps = 1;
-        toolCalls = 0;
-        artifacts.splice(0);
-        // The memo would answer the new attempt's first reads with "you
-        // already requested this", which from its side it never did.
-        memo.clear();
-        turn = await session.sendUserMessage(message, streamOptions);
-        usage = { ...turn.usage };
-        retryCount += turn.retryCount;
-        onProgress?.({ steps, toolCalls, retryCount, usage: { ...usage } });
-        continue;
-      }
+    if (restarting) {
+      restart = {
+        abandonedModel,
+        usage: { ...usage },
+        steps,
+        toolCalls,
+      };
+      await onEvent?.({
+        type: "tools_restarted",
+        abandonedModel,
+        usage: { ...usage },
+      });
+      steps = 1;
+      toolCalls = 0;
+      artifacts.splice(0);
+      // The memo would answer the new attempt's first reads with "you
+      // already requested this", which from its side it never did.
+      memo.clear();
+      turn = await session.sendUserMessage(message, streamOptions);
+      usage = { ...turn.usage };
+      retryCount += turn.retryCount;
+      onProgress?.({ steps, toolCalls, retryCount, usage: { ...usage } });
+      continue;
     }
     // A refused request is answered in place, never run through the
     // registry, never recorded in the tool ledger and never counted.

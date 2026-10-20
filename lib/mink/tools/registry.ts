@@ -82,6 +82,14 @@ export interface MinkTool {
   runBudgetMs?: number;
   available?: (actor: MinkActorContext) => boolean;
   artifact?: (output: Record<string, unknown>) => MinkArtifact | undefined;
+  /**
+   * What the MODEL is sent, when that is less than the whole output. The
+   * output still reaches `artifact` whole; only the function response the
+   * model reads (and re-sends on every later step) is narrowed. ★ For a tool
+   * whose card carries figures the model must not quote, such as a charge,
+   * keeping them out of its context is the boundary, not the prompt.
+   */
+  modelOutput?: (output: Record<string, unknown>) => Record<string, unknown>;
   execute: (
     actor: MinkActorContext,
     args: Record<string, unknown>,
@@ -163,7 +171,9 @@ export class MinkToolRegistry {
       return {
         id: call.id,
         name: call.name,
-        response: { output },
+        response: {
+          output: tool.modelOutput ? tool.modelOutput(output) : output,
+        },
         ...(artifact ? { artifact } : {}),
       };
     } catch (error) {
