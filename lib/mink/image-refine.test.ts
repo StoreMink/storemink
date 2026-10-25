@@ -340,6 +340,9 @@ describe("refineStoreImage", () => {
 
 // ★★ B10 and B3 (2026-10-23): one 60 s try used to be all Refine had, and a
 //    refusal still spent the store's hourly and daily image allowance.
+// ★ These tests wait on real sharp work (see `until`), which a 2-core CI runner
+//   with coverage does far more slowly than a laptop: 20 s each, set at the
+//   end of this block, not the default 5.
 describe("★★ Refine asks again, and a refusal spends no allowance", () => {
   const rateLimited = Object.assign(new Error("RESOURCE_EXHAUSTED"), {
     status: 429,
@@ -355,9 +358,24 @@ describe("★★ Refine asks again, and a refusal spends no allowance", () => {
     vi.restoreAllMocks();
   });
 
-  /** Let real I/O (sharp) run until `condition` holds. */
-  async function until(condition: () => boolean) {
-    for (let i = 0; i < 2_000 && !condition(); i += 1) {
+  /**
+   * Let real I/O (the sharp import and its image work) run until `condition`
+   * holds.
+   * ★★ Bounded by REAL time, and it FAILS when the time runs out. It used to
+   *    stop quietly after 2,000 event-loop turns: on CI (2-core runner,
+   *    coverage, 25 Oct 2026) sharp needed more turns than that, so a test
+   *    went on to wind the fake clock before the first call was even sent. The
+   *    retry wait was then scheduled after the clock had moved (a timeout), or
+   *    Stop landed before the call (`sent` undefined), and the unfinished work
+   *    leaked into the next test. `performance.now()` is not on the faked list
+   *    above, so it is the real clock.
+   */
+  async function until(condition: () => boolean, limitMs = 10_000) {
+    const started = performance.now();
+    while (!condition()) {
+      if (performance.now() - started > limitMs) {
+        throw new Error(`until(): still not true after ${limitMs} ms`);
+      }
       await new Promise((resolve) => setImmediate(resolve));
     }
   }
@@ -576,4 +594,4 @@ describe("★★ Refine asks again, and a refusal spends no allowance", () => {
     // The photo came back, so it may have been billed: it stays spent.
     expect(state.giveBack).not.toHaveBeenCalled();
   });
-});
+}, 20_000);
