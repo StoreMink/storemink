@@ -196,6 +196,60 @@ describe("Refine with Mink AI", () => {
     fireEvent.click(screen.getByText(/Refine with Mink AI/));
     expect(await screen.findByText("Not enough Mink credits.")).toBeTruthy();
   });
+
+  // ★ Leaving the editor inside the app (a link, a closed dialog, a removed
+  //   gallery slot) must end the request the way closing the tab does: the
+  //   route stops the model on the request's signal and charges nothing.
+  it("★ stops the refine when the editor goes away mid-request", async () => {
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((_input, init) => {
+        if (init?.signal) signals.push(init.signal);
+        return new Promise<Response>(() => {});
+      }),
+    );
+    const { unmount } = render(
+      <ImageRefineProvider available>
+        <ImageUpload
+          spec="product"
+          defaultImage={original}
+          onUploadSuccess={() => {}}
+        />
+      </ImageRefineProvider>,
+    );
+    fireEvent.click(screen.getByText(/Refine with Mink AI/));
+    expect(await screen.findByRole("status")).toBeTruthy();
+    expect(signals).toHaveLength(1);
+    expect(signals[0].aborted).toBe(false);
+    unmount();
+    expect(signals[0].aborted).toBe(true);
+  });
+
+  it("leaves a refine that already finished alone when the editor goes away", async () => {
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (_input, init) => {
+        if (init?.signal) signals.push(init.signal);
+        return new Response(JSON.stringify({ url: refinedUrl }));
+      }),
+    );
+    const { unmount } = render(
+      <ImageRefineProvider available>
+        <ImageUpload
+          spec="product"
+          defaultImage={original}
+          onUploadSuccess={() => {}}
+        />
+      </ImageRefineProvider>,
+    );
+    fireEvent.click(screen.getByText(/Refine with Mink AI/));
+    expect(await screen.findByAltText("Refined with Mink AI")).toBeTruthy();
+    unmount();
+    expect(signals).toHaveLength(1);
+    expect(signals[0].aborted).toBe(false);
+  });
 });
 
 describe("Change background", () => {

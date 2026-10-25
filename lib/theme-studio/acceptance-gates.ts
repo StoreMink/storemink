@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  THEME_IMAGE_RULES,
   collectThemeImageUrls,
   validateThemeCatalogMeta,
   validateThemeHomepage,
@@ -12,6 +13,7 @@ import {
   validateStudioDesign,
 } from "@/lib/themes/validation";
 import type { ThemeDefinition } from "@/lib/themes/types";
+import { logWarn } from "@/lib/observability/logger";
 import { PLACEHOLDER_LICENSE_NOTE, THEME_ASSET_PREFIX } from "./compiler";
 import {
   canonicalJson,
@@ -25,31 +27,49 @@ import {
   type ChromeState,
   type ChromeStateSkip,
 } from "./chrome-states";
+import {
+  SEVERITY_RULES_VERSION,
+  findingSeverity,
+  isPlatformFinding,
+  isSeriousFinding,
+  stricterSeverity,
+  type FindingSeverity,
+} from "./finding-severity";
+import { slotTargetSize } from "./slot-images-core";
 
 // ---------------------------------------------------------------------------
 // Theme Studio automated acceptance: the gates, as pure functions.
 //
-// A generated version must clear these before it can be presented for human
-// approval. The orchestration (reading rows, building the preview, fetching
-// rendered pages, recording evidence) lives in acceptance.ts; everything that
-// DECIDES lives here, so every rule is unit-tested without a database or a
-// browser.
+// A generated version must clear these before it can be published. The
+// orchestration (reading rows, building the preview, fetching rendered
+// pages, recording evidence) lives in acceptance.ts; everything that DECIDES
+// lives here and in finding-severity.ts, so every rule is unit-tested without
+// a database or a browser.
 //
-// ★ A GATE IS REQUIRED OR ADVISORY, NEVER "PASS WITH A WARNING". The plan is
-// explicit that failure keeps a version out of review rather than publishing
-// with a note. The only gate that can be advisory is performance: it is
-// required once THEME_STUDIO_PERFORMANCE_REQUIRED is true (plan Phase 1
-// item 4), judged from the automatic capture's frozen timings at phone390
-// and desktop1440, and advisory until a live batch has shown those numbers.
+// ★ A RUN PASSES WHEN NO SERIOUS FINDING IS LEFT; WARNINGS NEVER STOP IT
+// ("Fix it, then allow Publish", owner, 24 Oct 2026). Every finding is given
+// its severity when it is measured (gate(), finding-severity.ts). Broken
+// pages, text below the AA line, broken links, security, and anything that
+// could not be checked or that nobody classified are serious and fail the
+// run; smaller things are warnings, kept with the run and shown, that the
+// operator may publish past. A gate's STATUS still reports every finding
+// exactly as measured (a required gate with any finding is "fail"), so the
+// exemplar check and the evidence screens keep failing on everything they
+// failed on before: the severity rule applies only where the outcome is
+// decided, acceptanceOutcome here and automaticQaDecision in
+// automatic-qa-policy.ts. Performance is the one advisory gate (its findings
+// warnings) until THEME_STUDIO_PERFORMANCE_REQUIRED makes it required, and
+// its findings serious, judged from the automatic capture's frozen timings
+// at phone390 and desktop1440.
 //
-// ★ SECURITY FAILURES BLOCK; QUALITY FAILURES DO NOT. A version that carries
-// a script or an off-site asset is not something to iterate on, so the
-// project moves to `blocked`. A version with a thin catalogue or a contrast
-// problem stays `ready` and is fixed by a revision.
+// ★ SECURITY FAILURES BLOCK THE PROJECT; QUALITY FAILURES DO NOT. A version
+// that carries a script or an off-site asset is not something to iterate on,
+// so the project moves to `blocked`. A version with a thin catalogue or a
+// contrast problem stays `ready` and is fixed by a revision.
 //
 // ★ EVIDENCE IS DERIVED FROM RAW MEASUREMENTS HERE, NEVER FROM A CLIENT'S
-// VERDICT. The operator's browser reports what it measured — overflow in
-// pixels, axe violations with impact, broken images — and the thresholds are
+// VERDICT. The operator's browser reports what it measured (overflow in
+// pixels, axe violations with impact, broken images) and the thresholds are
 // applied on the server. A client that says "passed" is ignored.
 // ---------------------------------------------------------------------------
 
@@ -82,6 +102,20 @@ export interface GateFinding {
   message: string;
   where?: string;
   contrast?: { target: string; ratio: number; required: number }[];
+  /** browser.accessibility: the axe impact (null when axe gave none this
+   * code recognises) and how many elements the rule failed on. */
+  impact?: AxeImpact | null;
+  nodes?: number;
+  /** browser.clipped_text: the pixels of text the box hides. */
+  clipped?: { x: number; y: number };
+  /** The selectors the browser named (axe examples, the clipped element,
+   * the overflow offenders), so a finding is labelled without parsing its
+   * message. */
+  targets?: string[];
+  /** "serious" stops Publish; "minor" is a warning (finding-severity.ts).
+   * Set by gate() as the finding is measured. Absent on findings stored
+   * before severity-v1, which count as serious (isSeriousFinding). */
+  severity?: FindingSeverity;
 }
 
 export interface GateResult {
@@ -89,6 +123,9 @@ export interface GateResult {
   label: string;
   required: boolean;
   status: GateStatus;
+  /** The severity rules the findings were measured under
+   * (SEVERITY_RULES_VERSION); absent on results from before them. */
+  severityRules?: string;
   findings: GateFinding[];
   metrics?: Record<string, number | string | null>;
 }
@@ -114,9 +151,18 @@ export const GATE_LABELS: Record<GateId, string> = {
   "browser.performance": "Performance",
 };
 
-/** Findings per gate are capped: a reviewer needs the pattern, not 400 rows. */
-const MAX_FINDINGS = 40;
+/** Findings per gate are capped: a reviewer needs the pattern, not 400 rows.
+ * Serious findings are kept first, so the cap can never hide one. */
+export const MAX_GATE_FINDINGS = 40;
 
+/**
+ * One measured gate. Every finding is given its severity here, as it is
+ * measured: by its rule (finding-severity.ts), raised but never lowered by a
+ * severity the measuring step set itself; an advisory gate cannot stop a
+ * run, so everything it holds is a warning. Serious findings are ordered
+ * first, then the list is capped. The STATUS is unchanged by severity: a
+ * required gate with any finding fails, as the exemplar check expects.
+ */
 export function gate(
   id: GateId,
   findings: GateFinding[],
@@ -130,14 +176,91 @@ export function gate(
   const status =
     options.status ??
     (findings.length === 0 ? "pass" : required ? "fail" : "advisory");
+  const measured = findings.map(
+    (finding): GateFinding => ({
+      ...finding,
+      severity: required
+        ? stricterSeverity(finding.severity, findingSeverity(id, finding))
+        : "minor",
+    }),
+  );
+  const ordered = [
+    ...measured.filter((finding) => finding.severity === "serious"),
+    ...measured.filter((finding) => finding.severity !== "serious"),
+  ];
+  logPlatformFindings(id, ordered);
   return {
     id,
     label: GATE_LABELS[id],
     required,
     status,
-    findings: findings.slice(0, MAX_FINDINGS),
+    severityRules: SEVERITY_RULES_VERSION,
+    findings: ordered.slice(0, MAX_GATE_FINDINGS),
     ...(options.metrics ? { metrics: options.metrics } : {}),
   };
+}
+
+/**
+ * One content-free line per finding code in StoreMink's own storefront code
+ * (finding-severity.ts isPlatformFinding), counted before the cap, so an
+ * alert can watch for them: the gate, the code, the finding's severity and
+ * how many. Never a selector, a path or a message, which can carry a store's
+ * content. The field is `findingSeverity`, never `severity`: Cloud Logging
+ * reads a top-level `severity` as the log level (observability/logger.ts).
+ */
+function logPlatformFindings(
+  gateId: GateId,
+  findings: readonly GateFinding[],
+): void {
+  const counts = new Map<
+    string,
+    { code: string; findingSeverity: FindingSeverity; count: number }
+  >();
+  for (const finding of findings) {
+    if (!isPlatformFinding(gateId, finding)) continue;
+    const findingSeverity = finding.severity ?? "serious";
+    const key = `${finding.code}|${findingSeverity}`;
+    const entry = counts.get(key) ?? {
+      code: finding.code,
+      findingSeverity,
+      count: 0,
+    };
+    entry.count += 1;
+    counts.set(key, entry);
+  }
+  for (const entry of counts.values()) {
+    logWarn("theme_studio.platform_finding", { gate: gateId, ...entry });
+  }
+}
+
+/**
+ * Whether a gate stops a run. A required gate that was not passed stops it
+ * when it holds a serious finding, or nothing that says why it was not
+ * passed: a skipped check, a failure with no findings and any status this
+ * code does not know are never a pass. A required gate whose findings are
+ * all warnings does not stop it; an advisory gate never does. A passed gate
+ * is trusted as measured.
+ */
+export function gateBlocks(
+  g: Pick<GateResult, "required" | "status" | "findings">,
+): boolean {
+  if (!g.required || g.status === "pass") return false;
+  if (g.status !== "fail" && g.status !== "advisory") return true;
+  return (
+    !Array.isArray(g.findings) ||
+    g.findings.length === 0 ||
+    g.findings.some(isSeriousFinding)
+  );
+}
+
+/** The warnings a run carries: every finding of each gate that does not
+ * stop it, as measured. A run that passes is published with these. */
+export function acceptanceWarnings(
+  gates: readonly GateResult[],
+): { id: GateId; label: string; findings: GateFinding[] }[] {
+  return gates
+    .filter((g) => !gateBlocks(g) && g.findings.length > 0)
+    .map((g) => ({ id: g.id, label: g.label, findings: g.findings }));
 }
 
 function skipped(id: GateId, reason: string): GateResult {
@@ -173,7 +296,7 @@ export interface AcceptanceAssetRow {
 /**
  * The content address of every asset a package renders: each declared asset
  * paired with the stored row that backs it. Rows are immutable, so this moves
- * only when the package points at different bytes — which is exactly when
+ * only when the package points at different bytes, which is exactly when
  * earlier evidence stops describing what would be shown.
  */
 export function acceptanceAssetsDigest(
@@ -270,7 +393,7 @@ function isSafeHref(href: string): boolean {
 /**
  * Plan §7.2 item 9: no scripts, event handlers, external asset URLs, unknown
  * CSS values or unregistered capabilities reached the package. Deliberately
- * independent of the compiler that should already have refused all of this —
+ * independent of the compiler that should already have refused all of this:
  * a gate that trusts the thing it checks is not a gate.
  */
 export function securityFindings(pkg: ThemePackageV2): GateFinding[] {
@@ -345,6 +468,29 @@ export function securityFindings(pkg: ThemePackageV2): GateFinding[] {
 
 /** Media types a storefront asset may be stored as. */
 const STOREFRONT_MEDIA_TYPES = new Set(["image/webp", "image/avif"]);
+
+/**
+ * validateThemeImage's messages (lib/themes/validation.ts), split by what
+ * they mean, since one shared `size` code made a byte budget block like a
+ * broken picture: a wrong format, a picture below the storefront minimum
+ * and a preview that is too short or not 4:3 are serious; a picture over its
+ * byte budget is a warning (finding-severity.ts). A message none of these
+ * recognises keeps the old `size` code, which is serious.
+ */
+const IMAGE_RULE_CODES: readonly (readonly [RegExp, string])[] = [
+  [/must be WebP or AVIF/, "wrong_format"],
+  [/the preview must be at least \d+px tall/, "preview_too_small"],
+  [/the preview must be at most \d+ KiB/, "preview_over_budget"],
+  [/the preview must be 4:3/, "preview_shape"],
+  [/must be at least \d+px wide/, "too_small"],
+  [/must be at most \d+ KiB/, "over_budget"],
+];
+
+/** The code for one validateThemeImage message, read after its label. */
+export function imageRuleCode(message: string): string {
+  return IMAGE_RULE_CODES.find(([rule]) => rule.test(message))?.[1] ?? "size";
+}
+
 /** Asset purposes whose bytes may render on a storefront. Reference images are
  * the operator's inspiration and are never licensed for publication. */
 const RENDERABLE_PURPOSES = new Set(["placeholder", "image"]);
@@ -419,7 +565,32 @@ export function assetIntegrityFindings(
         },
         { preview: asset.path === pkg.definition.catalog.previewImage },
       )) {
-        findings.push({ code: "size", message, where });
+        findings.push({
+          code: imageRuleCode(
+            message.startsWith(asset.id)
+              ? message.slice(asset.id.length)
+              : message,
+          ),
+          message,
+          where,
+        });
+      }
+      // A picture smaller than its slot is made for (a draw that came back
+      // at a smaller size, or one shrunk to fit its byte budget) can look
+      // soft on a large screen: a warning. Below the storefront minimum it
+      // is `too_small` above, which is serious. image-vertex.ts only logs
+      // the small draw; this reads the stored width.
+      const target = slotTargetSize(asset);
+      if (
+        target &&
+        row.width >= THEME_IMAGE_RULES.minWidth &&
+        row.width + 1 < target.width
+      ) {
+        findings.push({
+          code: "below_target",
+          message: `The stored picture is ${row.width}px wide, narrower than the ${target.width}px its slot is made for, so it can look soft on large screens.`,
+          where,
+        });
       }
     }
     if (!referenced.has(asset.path) && asset.kind !== "reference") {
@@ -451,7 +622,7 @@ export function assetProvenanceFindings(pkg: ThemePackageV2): GateFinding[] {
       code: "placeholder",
       message: catalog
         ? `${missing.length} catalog image slot(s) await browser capture. Open Images and capture the preview, desktop and mobile screenshots before running acceptance again. These are pictures of the finished storefront, not AI artwork.`
-        : `${missing.length} artwork slot(s) are still StoreMink placeholders. Open Images to generate or replace them with operator-owned or licensed imagery before this version can be reviewed.`,
+        : `${missing.length} artwork slot(s) are still StoreMink placeholders. Open Images to generate or replace them with operator-owned or licensed imagery before this version can be published.`,
       where: missing
         .map((a) => a.id)
         .slice(0, 12)
@@ -517,6 +688,7 @@ export function evaluatePackageGates(
   }
   const pkg = parsed.value;
   const theme: ThemeDefinition = pkg.definition;
+  const integrity = assetIntegrityFindings(pkg, rows);
   return {
     pkg,
     gates: [
@@ -541,7 +713,16 @@ export function evaluatePackageGates(
       ),
       gate("package.design", fromThemeFindings(validateStudioDesign(theme))),
       gate("package.security", securityFindings(pkg)),
-      gate("assets.integrity", assetIntegrityFindings(pkg, rows)),
+      gate("assets.integrity", integrity, {
+        // A picture narrower than its slot (new in severity-v1) is listed as
+        // a warning without failing the gate, as a lower-impact axe rule is,
+        // so the gate fails on exactly what it failed on before: the bundled
+        // exemplar pictures are 800 to 1000px wide and the exemplar check
+        // passes them.
+        status: integrity.some((f) => f.code !== "below_target")
+          ? "fail"
+          : "pass",
+      }),
       gate("assets.provenance", assetProvenanceFindings(pkg)),
     ],
   };
@@ -801,8 +982,6 @@ export const AXE_IMPACTS = [
   "critical",
 ] as const;
 export type AxeImpact = (typeof AXE_IMPACTS)[number];
-/** axe violations at these impacts fail the gate; lower ones are listed. */
-const BLOCKING_IMPACTS = new Set<AxeImpact>(["serious", "critical"]);
 
 export interface BrowserSample {
   viewport: AcceptanceViewport;
@@ -813,6 +992,11 @@ export interface BrowserSample {
   overflowPx: number;
   overflowOffenders: string[];
   clippedText: { target: string; clippedX: number; clippedY: number }[];
+  /** How many clipped elements the probe found before it cut its list to
+   * the largest (studio-acceptance-probe.tsx clippedText). Absent on
+   * evidence from a probe that listed them in page order and stopped at its
+   * limit, whose full list may leave a larger clip out. */
+  clippedTextFound?: number;
   smallTapTargets: { target: string; width: number; height: number }[];
   imageCropIssues: { target: string; retainedFraction: number }[];
   brokenImages: number;
@@ -849,6 +1033,7 @@ export interface BrowserStateSample {
   reason?: ChromeStateSkip;
   violations: BrowserSample["violations"];
   clippedText: BrowserSample["clippedText"];
+  clippedTextFound?: number;
   smallTapTargets: BrowserSample["smallTapTargets"];
   contrastUnresolved: { target: string; reason: string }[];
 }
@@ -953,6 +1138,7 @@ export function parseBrowserEvidence(
           .filter((o): o is string => o !== null)
       : [];
     const clippedText = parseClippedText(s.clippedText);
+    const clippedTextFound = finiteNumber(s.clippedTextFound, 0, 100_000);
     const smallTapTargets = parseSmallTapTargets(s.smallTapTargets);
     // Both are absent on evidence from a probe older than the one that
     // reports them; a present value must parse, and the gates decide what an
@@ -984,6 +1170,7 @@ export function parseBrowserEvidence(
       overflowPx,
       overflowOffenders: offenders,
       clippedText,
+      ...(clippedTextFound !== null ? { clippedTextFound } : {}),
       smallTapTargets,
       imageCropIssues,
       brokenImages,
@@ -1054,19 +1241,33 @@ function parseViolations(
   return { ok: true, value: violations };
 }
 
+/** How many clipped elements the probe lists on a page and in one opened
+ * chrome state (studio-acceptance-probe.tsx). The server keeps at most the
+ * page's number, the largest clips first. */
+export const PROBE_CLIPPED_TEXT_LIMITS = { page: 40, state: 20 } as const;
+
+function clipSize(item: { clippedX: number; clippedY: number }): number {
+  return Math.max(item.clippedX, item.clippedY);
+}
+
+/** The clipped elements a sample or a state reports, the largest clip first
+ * before the list is cut, so the cut can never drop a serious clip behind
+ * smaller ones (a stable sort: equal clips keep their page order). */
 function parseClippedText(raw: unknown): BrowserSample["clippedText"] {
-  return Array.isArray(raw)
-    ? raw.slice(0, 40).flatMap((item) => {
-        if (!item || typeof item !== "object") return [];
-        const value = item as Record<string, unknown>;
-        const target = str(value.target, 120);
-        const clippedX = finiteNumber(value.clippedX, 0, 100_000);
-        const clippedY = finiteNumber(value.clippedY, 0, 100_000);
-        return target && clippedX !== null && clippedY !== null
-          ? [{ target, clippedX, clippedY }]
-          : [];
-      })
-    : [];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const value = item as Record<string, unknown>;
+      const target = str(value.target, 120);
+      const clippedX = finiteNumber(value.clippedX, 0, 100_000);
+      const clippedY = finiteNumber(value.clippedY, 0, 100_000);
+      return target && clippedX !== null && clippedY !== null
+        ? [{ target, clippedX, clippedY }]
+        : [];
+    })
+    .sort((a, b) => clipSize(b) - clipSize(a))
+    .slice(0, PROBE_CLIPPED_TEXT_LIMITS.page);
 }
 
 function parseSmallTapTargets(raw: unknown): BrowserSample["smallTapTargets"] {
@@ -1128,12 +1329,14 @@ function parseStates(
     }
     const violations = parseViolations(value.violations, index);
     if (!violations.ok) return violations;
+    const clippedTextFound = finiteNumber(value.clippedTextFound, 0, 100_000);
     states.push({
       state,
       measured: value.measured,
       ...(reason ? { reason } : {}),
       violations: violations.value,
       clippedText: parseClippedText(value.clippedText),
+      ...(clippedTextFound !== null ? { clippedTextFound } : {}),
       smallTapTargets: parseSmallTapTargets(value.smallTapTargets),
       contrastUnresolved: parseUnresolved(value.contrastUnresolved),
     });
@@ -1143,8 +1346,8 @@ function parseStates(
 
 /**
  * Plan thresholds (docs/theme-studio-shopify-grade-plan.md, Phase 1 item 4):
- * LCP ≤ 3.0 s — relaxed from the 2.5 s "good" line because the preview is
- * not CDN-fronted — and CLS under 0.1, judged at the two widths below. The
+ * LCP ≤ 3.0 s (relaxed from the 2.5 s "good" line because the preview is
+ * not CDN-fronted) and CLS under 0.1, judged at the two widths below. The
  * other three widths are measured and reported in the metrics, never failed.
  */
 export const PERFORMANCE_THRESHOLDS = { lcpMs: 3000, cls: 0.1 } as const;
@@ -1157,24 +1360,54 @@ interface AuditSinks {
   clippedText: GateFinding[];
   tapTargets: GateFinding[];
   accessibility: GateFinding[];
-  minorA11y: GateFinding[];
 }
 
-/** The findings a page and an opened chrome state share — clipped text,
- * small targets and axe violations — pushed to their gates under `where`.
- * Returns how many violations were blocking. */
+/** The findings a page and an opened chrome state share (clipped text,
+ * small targets and axe violations), pushed to their gates under `where`.
+ * `clipLimit` is how many clipped elements the probe lists there
+ * (PROBE_CLIPPED_TEXT_LIMITS). Returns how many violations were serious
+ * (finding-severity.ts): colour contrast below the AA line whatever its
+ * impact, and every other rule at a serious, critical or unknown impact. */
 function pushAuditFindings(
   audit: Pick<
     BrowserStateSample,
-    "violations" | "clippedText" | "smallTapTargets"
+    "violations" | "clippedText" | "clippedTextFound" | "smallTapTargets"
   >,
   where: string,
   sinks: AuditSinks,
+  clipLimit: number,
 ): number {
-  for (const item of audit.clippedText) {
-    sinks.clippedText.push({
+  const clipped: GateFinding[] = audit.clippedText.map((item) => {
+    const x = Math.round(item.clippedX);
+    const y = Math.round(item.clippedY);
+    return {
       code: "clipped_text",
-      message: `Text is clipped by ${Math.round(item.clippedX)}px horizontally and ${Math.round(item.clippedY)}px vertically (${item.target}).`,
+      message: `Text is clipped by ${x}px horizontally and ${y}px vertically (${item.target}).`,
+      where,
+      clipped: { x, y },
+      targets: [item.target],
+    };
+  });
+  sinks.clippedText.push(...clipped);
+  // A clip of a pixel or two is a warning, so a list cut at its limit must
+  // hold the largest clips, or a heading cut in half could hide behind a
+  // grid of slightly clipped titles. A probe that says how many it found
+  // lists the largest first; an older one listed them in page order and
+  // stopped at its limit. Its full list with no serious clip in it is a clip
+  // nobody measured: "we could not check it", never a pass, and a check on
+  // today's probe measures them all.
+  if (
+    (audit.clippedTextFound === undefined ||
+      audit.clippedTextFound < audit.clippedText.length) &&
+    audit.clippedText.length >= clipLimit &&
+    !clipped.some(
+      (finding) =>
+        findingSeverity("browser.clipped_text", finding) === "serious",
+    )
+  ) {
+    sinks.clippedText.push({
+      code: "unmeasured",
+      message: `Text is clipped in at least ${audit.clippedText.length} places, and the list stopped there, so a larger clip may not have been measured.`,
       where,
     });
   }
@@ -1185,33 +1418,39 @@ function pushAuditFindings(
       where,
     });
   }
-  let blocking = 0;
+  let serious = 0;
   for (const violation of audit.violations) {
-    const entry = {
+    const targets = violation.examples?.length
+      ? violation.examples.map((example) => example.target)
+      : violation.target
+        ? [violation.target]
+        : [];
+    const entry: GateFinding = {
       code: violation.id,
       message: `${violation.help || violation.id} (${violation.nodes} element${violation.nodes === 1 ? "" : "s"}, ${violation.impact ?? "unrated"})${
         violation.examples?.length
-          ? ` — examples: ${violation.examples.map((example) => `${example.target}${example.summary ? `: ${example.summary}` : ""}`).join(" | ")}`
+          ? `; examples: ${violation.examples.map((example) => `${example.target}${example.summary ? `: ${example.summary}` : ""}`).join(" | ")}`
           : violation.target
-            ? ` — first: ${violation.target}`
+            ? `; first: ${violation.target}`
             : ""
       }`,
       where,
+      impact: violation.impact,
+      nodes: violation.nodes,
+      ...(targets.length ? { targets } : {}),
       ...(violation.contrast?.length ? { contrast: violation.contrast } : {}),
     };
-    if (violation.impact && BLOCKING_IMPACTS.has(violation.impact)) {
-      sinks.accessibility.push(entry);
-      blocking += 1;
-    } else {
-      sinks.minorA11y.push(entry);
+    sinks.accessibility.push(entry);
+    if (findingSeverity("browser.accessibility", entry) === "serious") {
+      serious += 1;
     }
   }
-  return blocking;
+  return serious;
 }
 
 /**
  * The chrome states the probe opened on the home page. They are hidden on
- * load, so the page audit never sees them — the roastery's 1.37:1 delivery
+ * load, so the page audit never sees them: the roastery's 1.37:1 delivery
  * trigger (benchmark 2026-10-04) lived in the open phone menu. A state the
  * probe could not open or close is a COVERAGE failure, like a page it could
  * not measure; what it found inside goes to the same gates as the page, with
@@ -1263,16 +1502,21 @@ function stateFindings(
     }
     if (!state.measured) continue;
     measured += 1;
-    blocking += pushAuditFindings(state, stateWhere, sinks);
+    blocking += pushAuditFindings(
+      state,
+      stateWhere,
+      sinks,
+      PROBE_CLIPPED_TEXT_LIMITS.state,
+    );
   }
   return { measured, blocking };
 }
 
 /**
- * Plan §7.2 items 5–7 as far as a browser can measure them: every surface at
- * every viewport, no horizontal overflow, no serious or critical axe
- * violation, no broken image. The expected surfaces come from the SERVER's
- * record of the run, so a report that silently skips a page fails coverage.
+ * Plan §7.2 items 5 to 7 as far as a browser can measure them: every surface
+ * at every viewport, no horizontal overflow, no serious axe violation, no
+ * broken image. The expected surfaces come from the SERVER's record of the
+ * run, so a report that silently skips a page fails coverage.
  */
 export function evaluateBrowserGates(
   evidence: BrowserEvidence,
@@ -1322,7 +1566,6 @@ export function evaluateBrowserGates(
   const tapTargets: GateFinding[] = [];
   const imageCrops: GateFinding[] = [];
   const accessibility: GateFinding[] = [];
-  const minorA11y: GateFinding[] = [];
   const media: GateFinding[] = [];
   const performance: GateFinding[] = [];
   let worstLcp: number | null = null;
@@ -1333,7 +1576,6 @@ export function evaluateBrowserGates(
     clippedText,
     tapTargets,
     accessibility,
-    minorA11y,
   };
 
   for (const sample of measured) {
@@ -1343,9 +1585,17 @@ export function evaluateBrowserGates(
         code: "horizontal_overflow",
         message: `The page is ${Math.round(sample.overflowPx)}px wider than the viewport${sample.overflowOffenders.length ? ` (${sample.overflowOffenders.join(", ")})` : ""}.`,
         where,
+        ...(sample.overflowOffenders.length
+          ? { targets: [...sample.overflowOffenders] }
+          : {}),
       });
     }
-    blockingViolations += pushAuditFindings(sample, where, sinks);
+    blockingViolations += pushAuditFindings(
+      sample,
+      where,
+      sinks,
+      PROBE_CLIPPED_TEXT_LIMITS.page,
+    );
     for (const item of sample.imageCropIssues) {
       imageCrops.push({
         code: "extreme_crop",
@@ -1396,17 +1646,16 @@ export function evaluateBrowserGates(
     }
   }
 
+  // Lower-impact violations are listed, as warnings, without failing the
+  // gate; a serious one fails it. gate() puts the serious ones first.
   const accessibilityGate = gate("browser.accessibility", accessibility, {
+    status: blockingViolations > 0 ? "fail" : "pass",
     metrics: {
       blockingViolations,
-      otherViolations: minorA11y.length,
+      otherViolations: accessibility.length - blockingViolations,
     },
   });
-  // Lower-impact violations are shown to the reviewer without failing.
-  accessibilityGate.findings = [...accessibility, ...minorA11y].slice(
-    0,
-    MAX_FINDINGS,
-  );
+  const performanceRequired = options.performanceRequired ?? false;
 
   return [
     gate("browser.coverage", coverage, {
@@ -1422,14 +1671,26 @@ export function evaluateBrowserGates(
     gate("browser.image_crops", imageCrops),
     accessibilityGate,
     gate("browser.media", media),
-    gate("browser.performance", performance, {
-      required: options.performanceRequired ?? false,
-      metrics: {
-        worstLcpMs: worstLcp,
-        worstCls,
-        judgedAt: PERFORMANCE_VIEWPORTS.join(", "),
+    // Speed is a warning while the gate is advisory. A deployment that makes
+    // it required wants slowness to stop a run, so its findings are measured
+    // as serious; "unmeasured" is serious either way.
+    gate(
+      "browser.performance",
+      performanceRequired
+        ? performance.map((finding) => ({
+            ...finding,
+            severity: "serious" as const,
+          }))
+        : performance,
+      {
+        required: performanceRequired,
+        metrics: {
+          worstLcpMs: worstLcp,
+          worstCls,
+          judgedAt: PERFORMANCE_VIEWPORTS.join(", "),
+        },
       },
-    }),
+    ),
   ];
 }
 
@@ -1437,15 +1698,16 @@ export function evaluateBrowserGates(
 
 export type AcceptanceOutcome = "pass" | "fail" | "blocked";
 
-/** Security failure blocks; any other required non-pass fails. A skipped
- * required gate is a failure too: "we could not check" is never a pass. */
+/** A failed security gate blocks the project. Otherwise a run passes when no
+ * gate stops it (gateBlocks): no serious finding is left, and every required
+ * check ran, since a skipped one is never a pass. Warnings ride along. */
 export function acceptanceOutcome(
   gates: readonly GateResult[],
 ): AcceptanceOutcome {
   if (gates.some((g) => g.id === "package.security" && g.status === "fail")) {
     return "blocked";
   }
-  return gates.some((g) => g.required && g.status !== "pass") ? "fail" : "pass";
+  return gates.some(gateBlocks) ? "fail" : "pass";
 }
 
 export interface AcceptanceReport {
@@ -1454,6 +1716,9 @@ export interface AcceptanceReport {
   /** The surfaces the browser stage must measure, fixed by the server. */
   surfaces?: AcceptanceSurface[];
   userAgent?: string;
+  /** The severity rules the report was judged under, when the writer
+   * recorded them (SEVERITY_RULES_VERSION); each gate also carries its own. */
+  severityRules?: string;
 }
 
 /** Read a stored report back leniently for display: anything unexpected is
@@ -1484,6 +1749,9 @@ export function readAcceptanceReport(value: unknown): AcceptanceReport {
     ...(surfaces ? { surfaces } : {}),
     ...(typeof input.userAgent === "string"
       ? { userAgent: input.userAgent }
+      : {}),
+    ...(typeof input.severityRules === "string"
+      ? { severityRules: input.severityRules }
       : {}),
   };
 }

@@ -528,9 +528,19 @@ describe("★★ drafts are written in English, whatever language the chat is in
   it("stays out of a run that cannot draft anything", () => {
     expect(render("get_sales_summary", "search_products")).not.toContain(RULE);
   });
+
+  it("★★ goes with a storefront redesign, which drafts a whole store (chat-5)", () => {
+    // A redesign run carries no propose_* tool, yet it drafts every page,
+    // menu and product description the shop shows.
+    expect(
+      render("get_storefront_revamp_context", "start_storefront_revamp"),
+    ).toContain(RULE);
+    expect(render("refine_storefront_revamp")).toContain(RULE);
+    expect(render("get_storefront_revamp_context")).not.toContain(RULE);
+  });
 });
 
-describe("★★ a storefront personalisation is an interview, and never assumes", () => {
+describe("★★ a storefront redesign asks little, starts once and names the card's buttons", () => {
   const actor = {
     effectivePlan: "pro",
     roleSlug: "owner",
@@ -547,43 +557,92 @@ describe("★★ a storefront personalisation is an interview, and never assumes
   >;
   const render = (...names: string[]) =>
     renderMinkSystemInstruction(actor, names.map(declaration));
-  const RULE = "call get_storefront_personalization_context first";
+  const RULE = "call get_storefront_revamp_context first";
+  const TOOLS = [
+    "get_storefront_revamp_context",
+    "start_storefront_revamp",
+    "refine_storefront_revamp",
+  ];
 
-  it("reads the store, asks at most five questions at once, then proposes once", () => {
+  it.each(TOOLS)("renders the rule with %s alone", (name) => {
+    expect(render(name)).toContain(RULE);
+  });
+
+  it("stays out of a run without the redesign tools", () => {
     const prompt = render(
-      "get_storefront_personalization_context",
-      "propose_storefront_personalization",
+      "propose_storefront_layout",
+      "get_storefront_page_context",
     );
-    expect(prompt).toContain(RULE);
-    expect(prompt).toContain("at most five short questions");
-    expect(prompt).toContain("call propose_storefront_personalization once");
+    expect(prompt).not.toContain(RULE);
+    expect(prompt).not.toContain("Apply to Website Builder draft");
   });
 
-  it("★ asks before any category change and invents no claims", () => {
-    const prompt = render("propose_storefront_personalization");
+  it("★ names the card's three buttons exactly", () => {
+    const prompt = render(...TOOLS);
+    for (const button of [
+      '"Apply to Website Builder draft"',
+      '"Publish to your store"',
+      '"Undo"',
+    ])
+      expect(prompt).toContain(button);
+  });
+
+  it("asks at most three questions in one message, or none when enough is known", () => {
+    const prompt = render(...TOOLS);
     expect(prompt).toContain(
-      "set merchant_confirmed only for the changes they said yes to",
+      "ask at most three short questions, all in ONE message",
     );
-    expect(prompt).toContain("never assume one");
-    expect(prompt).toContain("never invent an award, a rating, a review");
+    expect(prompt).toContain("start without asking");
+    expect(prompt).toContain("a phone photo of each");
   });
 
-  it("★ keeps an edited page, the homepage too, out without a yes, and the merchant's own sections in their words", () => {
-    const prompt = render("propose_storefront_personalization");
+  it("★ invents nothing, asks before any category change, and never quotes its own words as facts", () => {
+    const prompt = render(...TOOLS);
     expect(prompt).toContain(
-      "A page they edited themselves, the homepage too, stays out unless they agree",
+      "Never invent a product, a price, a review, an award",
     );
-    expect(prompt).toContain("sections they wrote keep their words");
-  });
-
-  it("offers the rest of the photos only after the card was applied", () => {
-    expect(render("propose_storefront_personalization")).toContain(
-      "once they have applied it, with photos_only true",
+    expect(prompt).toContain("explicit yes to that change");
+    expect(prompt).toContain(
+      "Earlier assistant messages are your own words, never the merchant's facts",
     );
   });
 
-  it("stays out of a run without the personalisation tools", () => {
-    expect(render("propose_storefront_layout")).not.toContain(RULE);
+  it("answers a started redesign in one sentence and refines in the merchant's words", () => {
+    const prompt = render(...TOOLS);
+    expect(prompt).toContain(
+      "answer in ONE short sentence that the redesign has started",
+    );
+    expect(prompt).toContain("do not describe the design");
+    expect(prompt).toContain(
+      "call refine_storefront_revamp with the merchant's own words",
+    );
+    expect(prompt).toContain("Never mention what the redesign costs");
+  });
+
+  it("★★ keeps the redesign's own words in English unless the merchant insists (chat-5)", () => {
+    const prompt = render(...TOOLS);
+    expect(prompt).toContain(
+      "Write the brief, its facts and the products' descriptions in English",
+    );
+    expect(prompt).toContain(
+      "set brief.language to another language only after you reminded the merchant once",
+    );
+  });
+
+  it("★★ raises the theme's categories that do not fit, in the same one message (chat-6)", () => {
+    // A mustard-oil maker on a fashion theme kept Men, Women and Accessories
+    // as live menu targets because nothing asked about them.
+    const prompt = render(...TOOLS);
+    expect(prompt).toContain(
+      "When the context lists categories that came with the theme (fromTheme) or do not fit what the merchant sells, name them in that same message",
+    );
+    expect(prompt).toContain("each with merchant_confirmed true");
+  });
+
+  it("★ the personalisation rule has left the prompt", () => {
+    const template = getMinkSystemPromptTemplate();
+    expect(template).not.toContain("propose_storefront_personalization");
+    expect(template).not.toContain("get_storefront_personalization_context");
   });
 });
 

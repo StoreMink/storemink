@@ -66,6 +66,24 @@ describe("Mink skills", () => {
     expect(minkStarterSkills([], "/dashboard")).toEqual([]);
   });
 
+  it("starts the storefront revamp from its chip, for builder managers only", () => {
+    const chip = MINK_SKILLS.find((skill) => skill.id === "personalise-store");
+    expect(chip?.prompt).toBe("Customise my store for my business");
+    expect(chip?.section).toBe("builder");
+    expect(chip?.action).toBe("manage");
+    expect(
+      minkStarterSkills(MINK_SKILLS, "/dashboard/storefront").map(
+        (skill) => skill.id,
+      ),
+    ).toContain("personalise-store");
+    const viewers = minkSkillsFor((_section, action) => action === "view");
+    expect(viewers.map((skill) => skill.id)).not.toContain("personalise-store");
+    const builders = minkSkillsFor(
+      (section, action) => section === "builder" && action === "manage",
+    );
+    expect(builders.map((skill) => skill.id)).toContain("personalise-store");
+  });
+
   it("has unique slashes and no em dash anywhere", () => {
     const slashes = MINK_SKILLS.map((skill) => skill.slash);
     expect(new Set(slashes).size).toBe(slashes.length);

@@ -10,9 +10,34 @@ import {
 } from "../media-generation-contract";
 import { createMinkMediaImageProposal } from "../media-image-proposals";
 import type { MinkActorContext, MinkArtifact } from "../types";
-import type { MinkTool } from "./registry";
+import { TOOL_COMMIT_GRACE_MS, type MinkTool } from "./registry";
 
 const available = (actor: MinkActorContext) => actor.draftingEnabled === true;
+
+/**
+ * ★★ THE IMAGE TOOL'S DEADLINE, AND THE CHAIN STOPS AT IT (B6, B10,
+ *    2026-10-23). It was 50 s around a 45 s drawing, so a picture that came
+ *    back at 46 s was stored and charged while the chat said it took too
+ *    long. Now a 429 is asked again twice (`MINK_CHAT_IMAGE_RETRY`), and
+ *    rather than stretch this to cover the longest chain (three 45 s tries
+ *    and two waits, nearly three minutes of a merchant watching), the chain
+ *    reads this deadline: each try's clock is cut to what is left, no try
+ *    starts without room to finish, and the last write goes through the
+ *    registry's `commit`. Two quick refusals and a full try (about 80 s) still
+ *    fit. ★ The draw must end `POST_DRAW_RESERVE_MS` before it, so the upload,
+ *    the Media row and the draft fit too (media-image-proposals.ts).
+ */
+export const MEDIA_TOOL_TIMEOUT_MS = 100_000;
+
+/**
+ * ★ THE RUN WAITS FOR IT: the stream route pushes the run's deadline
+ *   (MINK_RUN_TIMEOUT_SECONDS, 180 by default) out to at least this far ahead
+ *   when the tool starts, so the run can never be cut off while a picture is
+ *   being drawn, and the model still has a minute to answer after it, even
+ *   when the charged write ran into the registry's commit grace.
+ */
+const MEDIA_TOOL_RUN_BUDGET_MS =
+  MEDIA_TOOL_TIMEOUT_MS + TOOL_COMMIT_GRACE_MS + 60_000;
 
 /**
  * ★★ THE ASPECT RATIO IS NOT A PARAMETER, AND THAT IS THE POINT OF `purpose`.
@@ -77,21 +102,22 @@ const generateStorefrontImage: MinkTool = {
   //   placing it is a separate layout proposal with its own Builder gate.
   permission: { section: "media", action: "manage" },
   available,
-  // Generous against the read tools' own budgets: image generation routinely takes ten
-  // seconds or more, and a timeout here would abandon an image the merchant
-  // has already been charged for.
-  timeoutMs: 50_000,
+  timeoutMs: MEDIA_TOOL_TIMEOUT_MS,
+  runBudgetMs: MEDIA_TOOL_RUN_BUDGET_MS,
   artifact(output) {
     const proposal = output.proposal as MinkArtifact | undefined;
     return proposal?.type === "media_image_proposal" ? proposal : undefined;
   },
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const proposal = await createMinkMediaImageProposal({
       actor,
       purpose: args.purpose,
       prompt: args.prompt,
       referenceImageUrls: args.reference_image_urls,
       alt: args.alt,
+      // ★ The deadline and the stop: the provider call is aborted when it
+      //   fires, and nothing is stored, saved or charged after it.
+      context,
     });
     return {
       proposal,

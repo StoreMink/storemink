@@ -52,6 +52,13 @@ describe("consumeMinkSse", () => {
 const CHAT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_ID = "22222222-2222-4222-8222-222222222222";
 const ACTIVE_KEY = "storemink:mink-active-chat";
+/** A storefront redesign's card, as an answer carries it. */
+const REVAMP_CARD = {
+  type: "storefront_revamp",
+  revampId: "44444444-4444-4444-8444-444444444444",
+  kind: "full",
+  status: "running",
+};
 
 function summary(id: string, title: string) {
   return {
@@ -1153,5 +1160,565 @@ describe("★★ useMinkAi: a new chat's title, like ChatGPT's", () => {
     expect(titles(result.current.conversations)).toEqual([
       [CHAT_ID, "Published products"],
     ]);
+  });
+});
+
+describe("★★ useMinkAi: a dashboard address that names a chat (B20)", () => {
+  const THEIRS = "33333333-3333-4333-8333-333333333333";
+
+  /** History as `historyFetch`, but THEIRS is not found for this viewer. */
+  function addressFetch(missing: Response = notFound()) {
+    const history = historyFetch();
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === `/api/mink/conversations/${THEIRS}`)
+        return missing.clone();
+      return history(input, init);
+    });
+  }
+  function notFound() {
+    return Response.json(
+      {
+        error: "That conversation was not found.",
+        code: "conversation_not_found",
+      },
+      { status: 404 },
+    );
+  }
+  const detailCalls = (fetch: ReturnType<typeof addressFetch>, id: string) =>
+    fetch.mock.calls.filter(
+      ([input]) => String(input) === `/api/mink/conversations/${id}`,
+    ).length;
+
+  afterEach(() => {
+    window.sessionStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("opens the viewer's own chat as choosing it in History does", async () => {
+    const fetch = addressFetch();
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(2));
+
+    await act(async () => {
+      await result.current.openConversationFromAddress(OTHER_ID);
+    });
+
+    expect(result.current.activeConversationId).toBe(OTHER_ID);
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.error).toBeNull();
+    expect(
+      JSON.parse(window.sessionStorage.getItem(ACTIVE_KEY) ?? "{}").id,
+    ).toBe(OTHER_ID);
+  });
+
+  it("★★ a chat the server does not find for this viewer leaves a new chat, with no error", async () => {
+    rememberChat(CHAT_ID, 5);
+    const fetch = addressFetch();
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() =>
+      expect(result.current.activeConversationId).toBe(CHAT_ID),
+    );
+
+    await act(async () => {
+      await result.current.openConversationFromAddress(THEIRS);
+    });
+
+    // ★ Never someone else's, and never the chat it was on before either.
+    expect(result.current.activeConversationId).toBeNull();
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.error).toBeNull();
+    expect(result.current.conversations).toHaveLength(2);
+    expect(window.sessionStorage.getItem(ACTIVE_KEY)).toBeNull();
+    expect(detailCalls(fetch, THEIRS)).toBe(1);
+  });
+
+  it("a malformed id is answered by the server as missing too", async () => {
+    const fetch = addressFetch(
+      Response.json(
+        { error: "Invalid Mink AI conversation." },
+        { status: 400 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(2));
+    await act(async () => {
+      await result.current.openConversationFromAddress(THEIRS);
+    });
+    expect(result.current.activeConversationId).toBeNull();
+    expect(result.current.error).toBeNull();
+  });
+
+  it("an address that names no chat leaves a new chat without asking", async () => {
+    rememberChat(CHAT_ID, 5);
+    const fetch = addressFetch();
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() =>
+      expect(result.current.activeConversationId).toBe(CHAT_ID),
+    );
+    const calls = fetch.mock.calls.length;
+
+    await act(async () => {
+      await result.current.openConversationFromAddress(null);
+    });
+
+    expect(result.current.activeConversationId).toBeNull();
+    expect(result.current.messages).toEqual([]);
+    expect(fetch.mock.calls.length).toBe(calls);
+  });
+
+  it("★★ the chat already open is loaded again, its draft kept, so a card saved since shows (B4)", async () => {
+    rememberChat(CHAT_ID, 5);
+    const history = addressFetch();
+    let saved = false;
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (saved && String(input) === `/api/mink/conversations/${CHAT_ID}`) {
+          // The card a stopped reply kept, saved after this tab last read it.
+          return Response.json({
+            conversation: {
+              id: CHAT_ID,
+              title: "Published products",
+              messages: [
+                { id: "m-1", role: "user", text: "Redesign my store" },
+                {
+                  id: "m-2",
+                  role: "assistant",
+                  text: "Your storefront redesign is ready. You can review it here.",
+                  runId: "run-1",
+                  artifacts: [REVAMP_CARD],
+                },
+              ],
+            },
+          });
+        }
+        return history(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() =>
+      expect(result.current.activeConversationId).toBe(CHAT_ID),
+    );
+    expect(detailCalls(fetch, CHAT_ID)).toBe(1);
+    act(() => result.current.setInput("Make the colours warmer"));
+    saved = true;
+
+    await act(async () => {
+      await result.current.openConversationFromAddress(CHAT_ID);
+    });
+
+    expect(detailCalls(fetch, CHAT_ID)).toBe(2);
+    expect(result.current.activeConversationId).toBe(CHAT_ID);
+    expect(result.current.messages.at(-1)?.artifacts).toEqual([REVAMP_CARD]);
+    // ★ What the merchant was typing stays in the box.
+    expect(result.current.input).toBe("Make the colours warmer");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("★ any other failure is shown, and the thread stays where it was", async () => {
+    rememberChat(CHAT_ID, 5);
+    const fetch = addressFetch(
+      Response.json(
+        { error: "Mink AI couldn't load that conversation." },
+        { status: 503 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() =>
+      expect(result.current.activeConversationId).toBe(CHAT_ID),
+    );
+
+    await act(async () => {
+      await result.current.openConversationFromAddress(THEIRS);
+    });
+
+    expect(result.current.error?.message).toBe(
+      "Mink AI couldn't load that conversation.",
+    );
+    expect(result.current.activeConversationId).toBe(CHAT_ID);
+  });
+
+  it("★ never replaces a reply that is running, and does nothing while Mink is off", async () => {
+    let release: (() => void) | undefined;
+    const history = addressFetch();
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === "/api/mink/stream")
+          return new Promise<Response>((resolve) => {
+            release = () => resolve(new Response(null, { status: 503 }));
+          });
+        return history(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(2));
+    act(() => result.current.send("How are sales?"));
+    await waitFor(() => expect(result.current.isReplying).toBe(true));
+
+    await act(async () => {
+      await result.current.openConversationFromAddress(OTHER_ID);
+    });
+
+    expect(detailCalls(history, OTHER_ID)).toBe(0);
+    expect(result.current.messages[0]?.text).toBe("How are sales?");
+    // Nor does an address that names no chat start a new one under it.
+    await act(async () => {
+      await result.current.openConversationFromAddress(null);
+    });
+    expect(result.current.isReplying).toBe(true);
+    expect(result.current.messages[0]?.text).toBe("How are sales?");
+    act(() => release?.());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+
+    const off = addressFetch();
+    vi.stubGlobal("fetch", off);
+    const disabled = renderHook(() => useMinkAi({ enabled: false }));
+    await act(async () => {
+      await disabled.result.current.openConversationFromAddress(OTHER_ID);
+    });
+    expect(off).not.toHaveBeenCalled();
+  });
+
+  it("★★ counts every open from the address before its chat loads, so the chat view meets it at its newest message", async () => {
+    rememberChat(CHAT_ID, 5);
+    const history = addressFetch();
+    let hold = true;
+    let release: (() => void) | undefined;
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (hold && String(input) === `/api/mink/conversations/${OTHER_ID}`) {
+          hold = false;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return history(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() =>
+      expect(result.current.activeConversationId).toBe(CHAT_ID),
+    );
+    expect(result.current.addressOpens).toBe(0);
+
+    // ★ Counted before the chat loads, as History's choice resets the view
+    // before it loads.
+    let opened: Promise<void> | undefined;
+    act(() => {
+      opened = result.current.openConversationFromAddress(OTHER_ID);
+    });
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(true));
+    expect(result.current.addressOpens).toBe(1);
+    expect(result.current.activeConversationId).toBe(CHAT_ID);
+    await act(async () => {
+      release?.();
+      await opened;
+    });
+    expect(result.current.activeConversationId).toBe(OTHER_ID);
+
+    // ★★ The chat already open, loaded again: counted, its draft kept.
+    act(() => result.current.setInput("Make the colours warmer"));
+    await act(async () => {
+      await result.current.openConversationFromAddress(OTHER_ID);
+    });
+    expect(result.current.addressOpens).toBe(2);
+    expect(result.current.activeConversationId).toBe(OTHER_ID);
+    expect(result.current.input).toBe("Make the colours warmer");
+
+    // A chat that is not the viewer's, and an address naming none, leave a
+    // new chat, which the view meets as History's New chat does.
+    await act(async () => {
+      await result.current.openConversationFromAddress(THEIRS);
+    });
+    await act(async () => {
+      await result.current.openConversationFromAddress(null);
+    });
+    expect(result.current.addressOpens).toBe(4);
+    expect(result.current.activeConversationId).toBeNull();
+  });
+
+  it("★ counts nothing while a reply is running or Mink is off, so a running reply keeps its place", async () => {
+    let release: (() => void) | undefined;
+    const history = addressFetch();
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === "/api/mink/stream")
+          return new Promise<Response>((resolve) => {
+            release = () => resolve(new Response(null, { status: 503 }));
+          });
+        return history(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(2));
+    act(() => result.current.send("How are sales?"));
+    await waitFor(() => expect(result.current.isReplying).toBe(true));
+
+    await act(async () => {
+      await result.current.openConversationFromAddress(OTHER_ID);
+    });
+    await act(async () => {
+      await result.current.openConversationFromAddress(null);
+    });
+    expect(result.current.addressOpens).toBe(0);
+    act(() => release?.());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+
+    vi.stubGlobal("fetch", addressFetch());
+    const disabled = renderHook(() => useMinkAi({ enabled: false }));
+    await act(async () => {
+      await disabled.result.current.openConversationFromAddress(OTHER_ID);
+    });
+    expect(disabled.result.current.addressOpens).toBe(0);
+  });
+});
+
+describe("★★ useMinkAi: a reply stopped after it started a redesign keeps its card in the chat (B4)", () => {
+  afterEach(() => {
+    window.sessionStorage.clear();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const RUN_ID = "55555555-5555-4555-8555-555555555555";
+  const encoder = new TextEncoder();
+  const keptMessage = {
+    id: "kept-1",
+    role: "assistant",
+    text: "Your storefront redesign is being made. You can follow it here.",
+    runId: RUN_ID,
+    artifacts: [REVAMP_CARD],
+  };
+
+  /**
+   * The first reply calls `tool` and then waits until the merchant stops
+   * it; any later reply answers at once. The chat, as the server has it,
+   * holds the kept card once `saved()` says so.
+   */
+  function stoppedReplyFetch(options: { tool?: string; saved: () => boolean }) {
+    let streams = 0;
+    const tool = options.tool ?? "start_storefront_revamp";
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/mink/conversations") {
+        return Response.json({ conversations: [summary(CHAT_ID, "Redesign")] });
+      }
+      if (url === "/api/mink/stream") {
+        streams += 1;
+        const first = streams === 1;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            if (!first) {
+              controller.enqueue(
+                encoder.encode(
+                  'event: message\ndata: {"role":"assistant","text":"Twelve orders.","artifacts":[]}\n\n' +
+                    "event: done\ndata: {}\n\n",
+                ),
+              );
+              controller.close();
+              return;
+            }
+            controller.enqueue(
+              encoder.encode(
+                `event: status\ndata: {"conversationId":"${CHAT_ID}","runId":"${RUN_ID}"}\n\n` +
+                  `event: tool\ndata: {"state":"running","name":"${tool}","sequence":1}\n\n` +
+                  `event: tool\ndata: {"state":"completed","name":"${tool}","sequence":1}\n\n`,
+              ),
+            );
+            init?.signal?.addEventListener("abort", () =>
+              controller.error(new DOMException("Aborted", "AbortError")),
+            );
+          },
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      if (init?.method === "DELETE") {
+        return Response.json({ conversations: [] });
+      }
+      return Response.json({
+        conversation: {
+          id: CHAT_ID,
+          title: "Redesign",
+          messages: [
+            // An earlier run's card this tab never showed: not this stop's.
+            {
+              id: "old-1",
+              role: "assistant",
+              text: "Your storefront redesign is ready. You can review it here.",
+              runId: "66666666-6666-4666-8666-666666666666",
+              artifacts: [
+                {
+                  ...REVAMP_CARD,
+                  revampId: "77777777-7777-4777-8777-777777777777",
+                  status: "ready",
+                },
+              ],
+            },
+            { id: "m-1", role: "user", text: "Redesign my store" },
+            ...(options.saved() ? [keptMessage] : []),
+          ],
+        },
+      });
+    });
+  }
+  /** The chat's reads (a delete names the same address). */
+  const detailCalls = (fetch: ReturnType<typeof stoppedReplyFetch>) =>
+    fetch.mock.calls.filter(
+      ([input, init]) =>
+        String(input) === `/api/mink/conversations/${CHAT_ID}` &&
+        init?.method !== "DELETE",
+    ).length;
+
+  async function stopAfterTool(fetch: ReturnType<typeof stoppedReplyFetch>) {
+    vi.stubGlobal("fetch", fetch);
+    const hook = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() =>
+      expect(hook.result.current.conversations).toHaveLength(1),
+    );
+    act(() => {
+      hook.result.current.send("Redesign my store");
+    });
+    await waitFor(() =>
+      expect(
+        hook.result.current.steps.some((step) => step.state === "completed"),
+      ).toBe(true),
+    );
+    act(() => hook.result.current.cancel());
+    await waitFor(() => expect(hook.result.current.isReplying).toBe(false));
+    return hook;
+  }
+
+  it("★★ asks for the chat again until the card is saved, and shows it after the question", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let saved = false;
+    const fetch = stoppedReplyFetch({ saved: () => saved });
+    const { result } = await stopAfterTool(fetch);
+    // The stop sent nothing more: no card yet, and no error either.
+    expect(result.current.messages.map((m) => m.text)).toEqual([
+      "Redesign my store",
+    ]);
+    expect(result.current.error).toBeNull();
+
+    // Asked once before the server recorded the stop: nothing changes.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    await waitFor(() => expect(detailCalls(fetch)).toBe(1));
+    expect(result.current.messages).toHaveLength(1);
+
+    saved = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_000);
+    });
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+    expect(result.current.messages[0]?.text).toBe("Redesign my store");
+    expect(result.current.messages[1]).toMatchObject({
+      role: "assistant",
+      runId: RUN_ID,
+      artifacts: [REVAMP_CARD],
+    });
+    // Found: never asked again, and never shown twice.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150_000);
+    });
+    expect(detailCalls(fetch)).toBe(2);
+    expect(result.current.messages).toHaveLength(2);
+  });
+
+  it("★ puts the card after the question it answers, even when the merchant asked something since", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let saved = false;
+    const fetch = stoppedReplyFetch({ saved: () => saved });
+    const { result } = await stopAfterTool(fetch);
+    act(() => {
+      result.current.send("How many orders today?");
+    });
+    await waitFor(() => expect(result.current.messages).toHaveLength(3));
+    saved = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    await waitFor(() => expect(result.current.messages).toHaveLength(4));
+    expect(result.current.messages.map((m) => m.text)).toEqual([
+      "Redesign my store",
+      keptMessage.text,
+      "How many orders today?",
+      "Twelve orders.",
+    ]);
+  });
+
+  it("★ never shows the card twice when the chat was opened again meanwhile", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetch = stoppedReplyFetch({ saved: () => true });
+    const { result } = await stopAfterTool(fetch);
+    // Chosen again in History before the first ask: the card comes with it.
+    await act(async () => {
+      await result.current.loadConversation(CHAT_ID);
+    });
+    expect(result.current.messages.map((m) => m.id)).toEqual([
+      "old-1",
+      "m-1",
+      "kept-1",
+    ]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    await waitFor(() => expect(detailCalls(fetch)).toBe(2));
+    expect(result.current.messages.map((m) => m.id)).toEqual([
+      "old-1",
+      "m-1",
+      "kept-1",
+    ]);
+  });
+
+  it("asks nothing after a stop that started no redesign, or once the chat is left", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Reading the store's context starts nothing.
+    const read = stoppedReplyFetch({
+      tool: "get_storefront_revamp_context",
+      saved: () => true,
+    });
+    const first = await stopAfterTool(read);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150_000);
+    });
+    expect(detailCalls(read)).toBe(0);
+    expect(first.result.current.messages).toHaveLength(1);
+    first.unmount();
+    // A new tab: it restores no chat of its own.
+    window.sessionStorage.clear();
+
+    const left = stoppedReplyFetch({ saved: () => true });
+    const second = await stopAfterTool(left);
+    act(() => second.result.current.startNewChat());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150_000);
+    });
+    expect(detailCalls(left)).toBe(0);
+    expect(second.result.current.messages).toEqual([]);
+    second.unmount();
+    window.sessionStorage.clear();
+
+    // Deleting the chat leaves it too.
+    const deleted = stoppedReplyFetch({ saved: () => true });
+    const third = await stopAfterTool(deleted);
+    await act(async () => {
+      await third.result.current.deleteConversation(CHAT_ID);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150_000);
+    });
+    expect(detailCalls(deleted)).toBe(0);
   });
 });

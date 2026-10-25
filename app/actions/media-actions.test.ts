@@ -13,6 +13,15 @@ vi.mock("@/lib/media/product-images", () => ({
   productImageUsage: vi.fn(async () => new Map()),
   listProductImages: vi.fn(async () => ({ items: [], total: 0 })),
 }));
+vi.mock("@/lib/media/image-usage", () => ({
+  storefrontImageUsage: vi.fn(async () => ({
+    redesignInProgress: false,
+    redesignCard: false,
+    pages: [],
+    categories: [],
+    headerFooter: false,
+  })),
+}));
 vi.mock("@/lib/media/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/media/library")>()),
   listLibraryAssets: vi.fn(async () => ({ assets: [], total: 0 })),
@@ -57,6 +66,7 @@ import {
   productImageUsage,
 } from "@/lib/media/product-images";
 import { listLibraryAssets } from "@/lib/media/library";
+import { storefrontImageUsage } from "@/lib/media/image-usage";
 import { gcsUploadObject, gcsDeletePaths } from "@/lib/storage/gcs";
 import { mediaAssets } from "@/drizzle/schema";
 
@@ -202,6 +212,57 @@ describe("media-actions", () => {
       expect(res.error).toMatch(/Couldn't check/);
       expect(dbHolder.current.calls.delete).toHaveLength(0);
       expect(vi.mocked(gcsDeletePaths)).not.toHaveBeenCalled();
+    });
+
+    // ★★ A storefront redesign's photos are in the Library and no product
+    //    uses them: deleting one broke the card's preview and made its Apply
+    //    refuse for ever, or took the picture off a live page.
+    it("refuses an image a page, the header or a redesign still uses", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [[{ path: "stores/x/media/f.webp", url: "u" }]],
+      });
+      vi.mocked(storefrontImageUsage).mockResolvedValueOnce({
+        redesignInProgress: false,
+        redesignCard: false,
+        pages: ["Home"],
+        categories: [],
+        headerFooter: true,
+      });
+      const res = await deleteMediaAsset("m1");
+      expect(res.error).toBe(
+        "The Home page uses this image. Change the photo on that page in the Website Builder first.",
+      );
+      expect(storefrontImageUsage).toHaveBeenCalledWith(STORE, {
+        path: "stores/x/media/f.webp",
+        url: "u",
+      });
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+      expect(vi.mocked(gcsDeletePaths)).not.toHaveBeenCalled();
+    });
+
+    it("refuses to delete when it cannot tell whether the store still uses the image", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [[{ path: "stores/x/media/f.webp", url: "u" }]],
+      });
+      vi.mocked(storefrontImageUsage).mockRejectedValueOnce(
+        new Error("db down"),
+      );
+      const res = await deleteMediaAsset("m1");
+      expect(res.error).toMatch(/Couldn't check whether your store/);
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+      expect(vi.mocked(gcsDeletePaths)).not.toHaveBeenCalled();
+    });
+
+    it("names the products first and asks nothing more", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [[{ path: "stores/x/media/f.webp", url: "u" }]],
+      });
+      vi.mocked(productImageUsage).mockResolvedValueOnce(
+        new Map([["u", [{ id: "p1", name: "Almond shake" }]]]),
+      );
+      const res = await deleteMediaAsset("m1");
+      expect(res.error).toMatch(/Almond shake uses this image/);
+      expect(storefrontImageUsage).not.toHaveBeenCalled();
     });
   });
 

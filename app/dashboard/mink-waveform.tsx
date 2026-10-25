@@ -25,8 +25,8 @@ export function formatMinkClock(seconds: number) {
 
 /**
  * The live microphone waveform, ChatGPT-style: newest bar on the right,
- * older ones drifting left. `size` picks the composer's slim strip or the
- * voice view's stage.
+ * older ones drifting left. `size` picks the slim strip (the composer and the
+ * voice bar) or the large stage.
  *
  * ★ IT NEVER RE-RENDERS. The recorder reports a level about 125 times a
  * second, far too often for React state, so the composer keeps a decaying peak

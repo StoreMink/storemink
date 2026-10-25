@@ -18,6 +18,16 @@
 // ★ EACH SHOT IS A FRESH BROWSER CONTEXT at its own size, scale and device,
 // with reduced motion, so a carousel is on its first slide and nothing is
 // mid-animation, and every scroll-revealed section is shown.
+//
+// ★ WHEN ITS CAPTURES ARE DONE IT WAKES THE DESIGN REVIEW (TS-3A, plan
+// optimisation 2). A finish that left a design review queued says so
+// (`designReview: "waiting"`), and the job then calls the review route with
+// the same bearer secret, waiting for its answer, so the review starts at
+// once instead of at the next minute tick and its paid work stays inside
+// that request on the web service. It does the same when it stops with
+// captures possibly left (its capture limit or its time budget): that route
+// also starts the job again when a capture is waiting. The minute schedules
+// stay as the safety net.
 
 import { pathToFileURL } from "node:url";
 
@@ -35,14 +45,34 @@ export const FINISH_TIMEOUT_MS = 270_000;
 /** The job's task timeout is 600s; keep 30s for claims and shutdown. */
 export const DEFAULT_BUDGET_MS = 570_000;
 /** Most QA browser contexts measured at once. Each holds full-page renders,
- * and the job runs with 2 GiB; callers may ask for fewer, never more. */
-export const MAX_QA_CONTEXTS = 2;
+ * and the job runs with 2 GiB; callers may ask for fewer, never more. Three
+ * since TS-3A (plan optimisation 6): with two the job peaked at 24% of its
+ * 2 GiB, measured on 4 Oct; the first production theme measures three. */
+export const MAX_QA_CONTEXTS = 3;
+/** Longest the job waits for the design-review route it wakes: that route's
+ * own limit (app/api/internal/theme-studio/qa/route.ts maxDuration). */
+export const WAKE_TIMEOUT_MS = 300_000;
+/** Less time than this left in the budget, and the job leaves the review to
+ * the minute schedule instead of cutting a review off mid-call. */
+export const MIN_WAKE_MS = 60_000;
+/** Kept back from the budget for the job's own shutdown. */
+const SHUTDOWN_MARGIN_MS = 10_000;
 
 export class CaptureError extends Error {
-  constructor(code) {
+  /** `surface`: the preview page a status error came from, when known. */
+  constructor(code, surface) {
     super(code);
     this.code = code;
+    this.surface = surface;
   }
+}
+
+/** The preview page a reported error came from, or undefined. The web app
+ * uses it only to tell an error that repeats from one that may not. */
+export function errorSurface(error) {
+  return error instanceof CaptureError && typeof error.surface === "string"
+    ? error.surface
+    : undefined;
 }
 
 /** A closed error code the web app accepts, from anything that was thrown. */
@@ -85,7 +115,12 @@ export async function takeShots(browser, claim, { settleMs = 400 } = {}) {
         timeout: 60_000,
       });
       const status = response ? response.status() : 0;
-      if (status !== 200) throw new CaptureError(`preview_status_${status}`);
+      // Every catalogue shot photographs the home page.
+      if (status !== 200)
+        throw new CaptureError(
+          `preview_status_${status}`,
+          shot.path === "/" ? "home" : undefined,
+        );
       // Readiness below waits for the actual fonts/images. Analytics and
       // background requests must not add a 15-second network-idle wait.
       // Next's development badge is not part of the storefront (it never
@@ -168,7 +203,7 @@ export async function takeQaScreenshots(
           const status = response ? response.status() : 0;
           const expected = preview.surface === "not_found" ? 404 : 200;
           if (status !== expected)
-            throw new CaptureError(`preview_status_${status}`);
+            throw new CaptureError(`preview_status_${status}`, preview.surface);
           const navigationMs = Date.now() - navigationStarted;
           // Initial server HTML from the first viewport, reused on this claim
           // only. A redirect or an oversized page keeps the fresh-fetch path.
@@ -343,6 +378,9 @@ export async function runCaptureJob({
   };
   const results = [];
   let browser = null;
+  // A finish left a design review queued; the claim said nothing is left.
+  let reviewWaiting = false;
+  let drained = false;
   try {
     while (
       results.length < maxCaptures &&
@@ -352,7 +390,10 @@ export async function runCaptureJob({
         new URL("/api/internal/theme-studio/captures/claim", appOrigin),
         { method: "POST", headers, signal: AbortSignal.timeout(60_000) },
       );
-      if (response.status === 204) break;
+      if (response.status === 204) {
+        drained = true;
+        break;
+      }
       if (!response.ok) {
         throw new Error(`claim failed with HTTP ${response.status}`);
       }
@@ -404,7 +445,12 @@ export async function runCaptureJob({
           }),
         ]);
       } catch (error) {
-        body = { leaseToken: claim.leaseToken, error: errorCode(error) };
+        const surface = errorSurface(error);
+        body = {
+          leaseToken: claim.leaseToken,
+          error: errorCode(error),
+          ...(surface ? { failedSurface: surface } : {}),
+        };
         log.warn?.(`capture ${claim.captureId}: ${body.error}`);
         // Do not reuse a crashed or timed-out Chromium for the retry.
         await browser?.close().catch(() => {});
@@ -435,6 +481,7 @@ export async function runCaptureJob({
         http: finished.status,
         ...outcome,
       });
+      if (outcome.designReview === "waiting") reviewWaiting = true;
       log.info?.(
         `capture ${claim.captureId}: ${outcome.status ?? finished.status}`,
       );
@@ -442,7 +489,49 @@ export async function runCaptureJob({
   } finally {
     await browser?.close();
   }
+  // Stopped by its limit or its budget, captures may be left: the review
+  // route starts the job again when one is waiting.
+  if (reviewWaiting || (!drained && results.length > 0)) {
+    await wakeReviews({
+      appOrigin,
+      headers,
+      fetchImpl,
+      log,
+      timeLeftMs: budgetMs - (now() - started) - SHUTDOWN_MARGIN_MS,
+    });
+  }
   return results;
+}
+
+/**
+ * Wake the design-review route and wait for its answer, bounded by the
+ * route's own limit and the job's budget. Its paid work runs inside that
+ * request on the web service, never here. Never throws: a review it could
+ * not wake is left to the minute schedule. Answers the HTTP status, or null.
+ */
+export async function wakeReviews({
+  appOrigin,
+  headers,
+  fetchImpl = fetch,
+  log = console,
+  timeLeftMs,
+}) {
+  const timeoutMs = Math.min(WAKE_TIMEOUT_MS, timeLeftMs);
+  if (!(timeoutMs >= MIN_WAKE_MS)) {
+    log.info?.("design review wake skipped: too little time left");
+    return null;
+  }
+  try {
+    const response = await fetchImpl(
+      new URL("/api/internal/theme-studio/qa", appOrigin),
+      { method: "POST", headers, signal: AbortSignal.timeout(timeoutMs) },
+    );
+    log.info?.(`design review wake: HTTP ${response.status}`);
+    return response.status;
+  } catch (error) {
+    log.warn?.(`design review wake failed: ${errorCode(error)}`);
+    return null;
+  }
 }
 
 async function main() {

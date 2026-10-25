@@ -55,9 +55,11 @@ describe("Theme Studio project input", () => {
   });
 
   it("refuses malformed, demo-namespaced and oversized ids", () => {
-    expect(refused({ themeId: "ab" })).toMatch(/3–80/);
-    expect(refused({ themeId: "has space" })).toMatch(/3–80/);
+    expect(refused({ themeId: "ab" })).toMatch(/3 to 80 lowercase/);
+    expect(refused({ themeId: "has space" })).toMatch(/3 to 80 lowercase/);
     expect(refused({ themeId: "demo-anything" })).toMatch(/demo-/);
+    // Product text never uses an en dash or an em dash (TS-1D).
+    expect(refused({ themeId: "ab" })).not.toMatch(/[\u2013\u2014]/);
   });
 
   it("refuses unknown vocabulary rather than silently dropping it", () => {

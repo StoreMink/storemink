@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { after } from "next/server";
 import { can } from "@/app/dashboard/lib/permissions";
 import {
   categories,
@@ -16,6 +17,9 @@ import {
 import { EMPTY_DESIGN_OVERRIDES } from "@/lib/chrome/design";
 import { sanitizeChromeForSave, type StoreChrome } from "@/lib/chrome/types";
 import { withService, type Db } from "@/lib/db/client";
+import { emitEvent } from "@/lib/notifications/record";
+import { logWarn } from "@/lib/observability/logger";
+import { notifyStoreContentPublished } from "@/lib/seo/store-indexing";
 import {
   validateSections,
   type PageSectionItem,
@@ -48,6 +52,25 @@ import type {
   MinkStorefrontPersonalizationActionValues,
 } from "./storefront-personalization-action-types";
 import type { MinkActorContext } from "./types";
+import { isRevampPlan, type RevampStoredPlan } from "./revamp/contract";
+import {
+  assertRevampPartAuthority,
+  lockRevampJob,
+  lockRevampTargets,
+  readRevampStoredPlan,
+  recordRevampApplied,
+  rerunRevampGuards,
+  revampAuditDetail,
+  revampCapIssue,
+  revampConflictDetail,
+  revampCurrentValues,
+  revampExpectedValues,
+  revampProductCapConflict,
+  revampProposedValues,
+  revampTargetConflict,
+  writeRevamp,
+  type RevampJobLock,
+} from "./revamp/apply-v2";
 
 // ---------------------------------------------------------------------------
 // Applying one approved personalisation.
@@ -73,6 +96,14 @@ import type { MinkActorContext } from "./types";
 // ★ CUSTOM CODE AND IMAGE OWNERSHIP ARE RE-CHECKED UNDER THE SAME LOCKS,
 //   exactly as 9B's write path does: the digest proves a page has not moved,
 //   so the only thing that can have changed is the Media Library.
+//
+// ★★ A REVAMP IS PLAN VERSION 2 ON THE SAME APPROVAL. The storefront
+//    revamp's card is a personalisation draft whose plan carries
+//    `schemaVersion: 2` (revamp/contract.ts). The approval, audit,
+//    idempotency, expiry and draft lock below are shared; which rows are
+//    locked, what they are compared with, the guards and the writes come
+//    from revamp/apply-v2.ts. A version 1 plan takes exactly the path it
+//    always took.
 // ---------------------------------------------------------------------------
 
 const APPROVAL_TTL_MS = 5 * 60 * 1_000;
@@ -82,11 +113,24 @@ const NONE = "none";
 
 type ApprovalRow = typeof minkActionApprovals.$inferSelect;
 
-interface PersonalizationDraft {
+interface DraftBase {
   id: string;
   currentVersion: number;
-  plan: PersonalizationStoredPlan;
   planDigest: string;
+}
+
+interface V1Draft extends DraftBase {
+  plan: PersonalizationStoredPlan;
+}
+
+interface V2Draft extends DraftBase {
+  plan: RevampStoredPlan;
+}
+
+type PersonalizationDraft = V1Draft | V2Draft;
+
+function isRevampDraft(draft: PersonalizationDraft): draft is V2Draft {
+  return isRevampPlan(draft.plan);
 }
 
 /** Read the latest completed apply, for a restored conversation card. */
@@ -138,6 +182,28 @@ export async function previewMinkStorefrontPersonalizationAction(input: {
       throw draftConflict();
     }
     await assertToolEnabled(db, input.actor.storeId);
+    if (isRevampDraft(draft)) {
+      assertRevampPartAuthority(input.actor, draft.plan);
+      // ★ The same locks the write will take, as for version 1: the job
+      //   first (a redesign already applied or undone is refused here), then
+      //   every target.
+      await lockRevampJob(db, input.actor, {
+        revampId: draft.plan.revampId,
+        draftId: draft.id,
+      });
+      const targets = await lockRevampTargets(db, input.actor, draft.plan);
+      const capIssue = revampCapIssue(draft.plan, targets);
+      return createApproval(db, {
+        actor: input.actor,
+        draft,
+        before: revampCurrentValues(draft.planDigest, draft.plan, targets),
+        after: revampProposedValues(draft.planDigest, draft.plan),
+        expected: revampExpectedValues(draft.planDigest, draft.plan),
+        mismatch: revampTargetConflict,
+        blocked: capIssue ? revampProductCapConflict(capIssue) : null,
+        idempotencyKey: input.idempotencyKey,
+      });
+    }
     assertPartAuthority(input.actor, draft.plan);
     // ★ The preview takes the same locks the write will: the transaction is
     //   short and writes nothing, and one read path cannot drift from the other.
@@ -149,6 +215,9 @@ export async function previewMinkStorefrontPersonalizationAction(input: {
       draft,
       before,
       after,
+      expected: expectedValues(draft),
+      mismatch: targetConflict,
+      blocked: null,
       idempotencyKey: input.idempotencyKey,
     });
   });
@@ -181,6 +250,8 @@ export async function executeMinkStorefrontPersonalizationAction(input: {
           auditId: audit.id,
           repeated: true,
         },
+        // A replay created nothing, so it announces nothing.
+        created: [] as Array<{ id: string; name: string; slug: string }>,
       };
     }
     if (approval.status !== "pending") {
@@ -219,7 +290,11 @@ export async function executeMinkStorefrontPersonalizationAction(input: {
       );
       return { error: draftConflict() };
     }
-    assertPartAuthority(input.actor, draft.plan);
+    if (isRevampDraft(draft)) {
+      assertRevampPartAuthority(input.actor, draft.plan);
+    } else {
+      assertPartAuthority(input.actor, draft.plan);
+    }
 
     const approvedBefore = valuesFromJson(approval.beforeJson);
     const approvedAfter = valuesFromJson(approval.afterJson);
@@ -231,7 +306,7 @@ export async function executeMinkStorefrontPersonalizationAction(input: {
     }
     if (
       draft.currentVersion !== approval.draftVersion ||
-      hashMinkActionPayload(proposedValues(draft)) !==
+      hashMinkActionPayload(proposedFor(draft)) !==
         hashMinkActionPayload(approvedAfter)
     ) {
       await finalizeWithoutWrite(
@@ -243,30 +318,48 @@ export async function executeMinkStorefrontPersonalizationAction(input: {
       return { error: draftConflict() };
     }
 
-    // ★★ LOCK EVERYTHING, THEN COMPARE, THEN WRITE.
-    const locked = await lockTargets(db, input.actor, draft.plan);
-    const now = currentValues(draft, locked);
-    if (hashMinkActionPayload(now) !== hashMinkActionPayload(approvedBefore)) {
-      await finalizeWithoutWrite(
+    let writtenAt: string;
+    let created: Array<{ id: string; name: string; slug: string }> = [];
+    if (isRevampDraft(draft)) {
+      writtenAt = new Date().toISOString();
+      const applied = await executeRevamp(
         db,
+        input.actor,
         approval,
-        "conflicted",
-        "Part of the storefront changed after the approval preview.",
+        draft,
+        approvedBefore,
+        writtenAt,
       );
-      return { error: targetConflict() };
-    }
-    const guardIssue = await rerunGuards(db, input.actor, draft.plan, locked);
-    if (guardIssue) {
-      await finalizeWithoutWrite(db, approval, "conflicted", guardIssue);
-      return { error: targetConflict() };
-    }
+      if ("error" in applied) return { error: applied.error };
+      created = applied.created;
+    } else {
+      // ★★ LOCK EVERYTHING, THEN COMPARE, THEN WRITE.
+      const locked = await lockTargets(db, input.actor, draft.plan);
+      const now = currentValues(draft, locked);
+      if (
+        hashMinkActionPayload(now) !== hashMinkActionPayload(approvedBefore)
+      ) {
+        await finalizeWithoutWrite(
+          db,
+          approval,
+          "conflicted",
+          "Part of the storefront changed after the approval preview.",
+        );
+        return { error: targetConflict() };
+      }
+      const guardIssue = await rerunGuards(db, input.actor, draft.plan, locked);
+      if (guardIssue) {
+        await finalizeWithoutWrite(db, approval, "conflicted", guardIssue);
+        return { error: targetConflict() };
+      }
 
-    const writtenAt = new Date().toISOString();
-    await writePages(db, input.actor, draft.plan);
-    await writeChrome(db, input.actor, draft.plan, locked.chrome, writtenAt);
-    await writeBrand(db, input.actor, draft.plan, locked.storeSettings);
-    await writeCategories(db, input.actor, draft.plan, writtenAt);
-    await writeProducts(db, input.actor, draft.plan);
+      writtenAt = new Date().toISOString();
+      await writePages(db, input.actor, draft.plan);
+      await writeChrome(db, input.actor, draft.plan, locked.chrome, writtenAt);
+      await writeBrand(db, input.actor, draft.plan, locked.storeSettings);
+      await writeCategories(db, input.actor, draft.plan, writtenAt);
+      await writeProducts(db, input.actor, draft.plan);
+    }
 
     const finalized = await db
       .update(minkActionApprovals)
@@ -312,7 +405,9 @@ export async function executeMinkStorefrontPersonalizationAction(input: {
       productVersionAfter: null,
       requestHash: approval.requestHash,
       toolVersion: TOOL_VERSION,
-      detail: auditDetail(draft.plan),
+      detail: isRevampDraft(draft)
+        ? revampAuditDetail(draft.plan)
+        : auditDetail(draft.plan),
     });
 
     return {
@@ -331,10 +426,131 @@ export async function executeMinkStorefrontPersonalizationAction(input: {
         auditId,
         repeated: false,
       },
+      created,
     };
   });
   if ("error" in outcome) throw outcome.error;
+  // ★ A revamp's new products are announced only once they committed: an
+  //   event raised inside the transaction would survive its rollback.
+  for (const product of outcome.created) {
+    emitEvent({
+      type: "product.created",
+      storeId: input.actor.storeId,
+      actor: {
+        type: "admin",
+        id: input.actor.adminId,
+        label: input.actor.email,
+      },
+      subject: { type: "product", id: product.id, label: product.name },
+      payload: { status: "published" },
+    });
+  }
+  // ★ And offered to search engines, as the product editor offers a product it
+  //   publishes: the same hook, after the response, never a failure the
+  //   merchant sees (it submits nothing for a store that has not opened).
+  if (outcome.created.length) {
+    const storeId = input.actor.storeId;
+    const paths = [
+      ...outcome.created.map((product) => `/shop/${product.slug}`),
+      "/shop",
+      "/",
+    ];
+    try {
+      after(() => notifyStoreContentPublished({ storeId, paths }));
+    } catch (error) {
+      logWarn("mink.personalization_action: search engine notice skipped", {
+        storeId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   return outcome.result;
+}
+
+/** A version 1 or version 2 plan's proposed values. */
+function proposedFor(
+  draft: PersonalizationDraft,
+): MinkStorefrontPersonalizationActionValues {
+  return isRevampDraft(draft)
+    ? revampProposedValues(draft.planDigest, draft.plan)
+    : proposedValues(draft);
+}
+
+/**
+ * A revamp's half of execute: lock every target, compare it with what was
+ * approved, run the guards, and only then write and record the snapshot on
+ * the revamp's job, all inside the caller's transaction. A conflict writes
+ * nothing and finalises the approval without a write.
+ */
+async function executeRevamp(
+  db: Db,
+  actor: MinkActorContext,
+  approval: ApprovalRow,
+  draft: V2Draft,
+  approvedBefore: MinkStorefrontPersonalizationActionValues,
+  writtenAt: string,
+): Promise<
+  | { error: MinkRequestError }
+  | { created: Array<{ id: string; name: string; slug: string }> }
+> {
+  const plan = draft.plan;
+  // ★ The job before any store row (Publish and Undo take that order). A
+  //   redesign applied or undone since this approval was made is refused,
+  //   and the approval is finalised so it cannot be tried again.
+  let job: RevampJobLock;
+  try {
+    job = await lockRevampJob(db, actor, {
+      revampId: plan.revampId,
+      draftId: draft.id,
+    });
+  } catch (error) {
+    if (!(error instanceof MinkRequestError)) throw error;
+    await finalizeWithoutWrite(db, approval, "conflicted", error.message);
+    return { error };
+  }
+  const locked = await lockRevampTargets(db, actor, plan);
+  const now = revampCurrentValues(draft.planDigest, plan, locked);
+  if (hashMinkActionPayload(now) !== hashMinkActionPayload(approvedBefore)) {
+    await finalizeWithoutWrite(
+      db,
+      approval,
+      "conflicted",
+      revampConflictDetail(approvedBefore, now),
+    );
+    return { error: revampTargetConflict() };
+  }
+  const capIssue = revampCapIssue(plan, locked);
+  if (capIssue) {
+    await finalizeWithoutWrite(
+      db,
+      approval,
+      "conflicted",
+      "The redesign's new products would pass the plan's product limit.",
+    );
+    return { error: revampProductCapConflict(capIssue) };
+  }
+  const guardIssue = await rerunRevampGuards(db, actor, plan, locked);
+  if (guardIssue) {
+    await finalizeWithoutWrite(db, approval, "conflicted", guardIssue);
+    return { error: revampTargetConflict() };
+  }
+  const snapshot = await writeRevamp(db, actor, plan, locked, writtenAt);
+  await recordRevampApplied(db, actor, {
+    revampId: plan.revampId,
+    draftId: draft.id,
+    snapshot,
+    job,
+  });
+  const names = new Map(
+    plan.products.create.map((product) => [product.slug, product.name.trim()]),
+  );
+  return {
+    created: snapshot.products.created.map((product) => ({
+      id: product.id,
+      name: names.get(product.slug) ?? product.slug,
+      slug: product.slug,
+    })),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +741,7 @@ async function lockTargets(
 
 /** The store as it is now, in the approval's vocabulary. */
 function currentValues(
-  draft: PersonalizationDraft,
+  draft: V1Draft,
   targets: LockedTargets,
 ): MinkStorefrontPersonalizationActionValues {
   const plan = draft.plan;
@@ -600,7 +816,7 @@ function currentValues(
  * refuses a store that already moved, before any approval exists.
  */
 function expectedValues(
-  draft: PersonalizationDraft,
+  draft: V1Draft,
 ): MinkStorefrontPersonalizationActionValues {
   const plan = draft.plan;
   return {
@@ -655,7 +871,7 @@ function expectedValues(
 
 /** What the store will hold once the plan is written. */
 function proposedValues(
-  draft: PersonalizationDraft,
+  draft: V1Draft,
 ): MinkStorefrontPersonalizationActionValues {
   const plan = draft.plan;
   return {
@@ -825,13 +1041,26 @@ async function writeChrome(
     },
   };
   const sanitized = sanitizeChromeForSave(next);
-  await db
+  if (locked.exists) {
+    // The row was locked FOR UPDATE, so this always updates it.
+    await db
+      .insert(storeChrome)
+      .values({ storeId: actor.storeId, draft: sanitized, updatedAt: now })
+      .onConflictDoUpdate({
+        target: storeChrome.storeId,
+        set: { draft: sanitized, updatedAt: now },
+      });
+    return;
+  }
+  // ★★ With no row there was nothing to lock, so the Builder's autosave can
+  //    insert the store's first chrome draft meanwhile; updating that row
+  //    would lose the edit. A row found now rolls the whole apply back.
+  const inserted = await db
     .insert(storeChrome)
     .values({ storeId: actor.storeId, draft: sanitized, updatedAt: now })
-    .onConflictDoUpdate({
-      target: storeChrome.storeId,
-      set: { draft: sanitized, updatedAt: now },
-    });
+    .onConflictDoNothing()
+    .returning({ storeId: storeChrome.storeId });
+  if (!inserted.length) throw targetConflict();
 }
 
 async function writeBrand(
@@ -938,6 +1167,12 @@ async function createApproval(
     draft: PersonalizationDraft;
     before: MinkStorefrontPersonalizationActionValues;
     after: MinkStorefrontPersonalizationActionValues;
+    /** What the proposal was made against, in the same vocabulary. */
+    expected: MinkStorefrontPersonalizationActionValues;
+    /** The refusal when the store already moved (each plan version words its own). */
+    mismatch: () => MinkRequestError;
+    /** A refusal the digests cannot express (a revamp's product cap), or null. */
+    blocked: MinkRequestError | null;
     idempotencyKey: string;
   },
 ): Promise<MinkStorefrontPersonalizationActionApproval> {
@@ -945,10 +1180,11 @@ async function createApproval(
   //   current state must match what the proposal was made against.
   if (
     hashMinkActionPayload(input.before) !==
-    hashMinkActionPayload(expectedValues(input.draft))
+    hashMinkActionPayload(input.expected)
   ) {
-    throw targetConflict();
+    throw input.mismatch();
   }
+  if (input.blocked) throw input.blocked;
   const id = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + APPROVAL_TTL_MS).toISOString();
   const hash = hashMinkActionPayload({
@@ -1042,17 +1278,17 @@ async function readDraft(
       "storefront_personalization",
       draft.content,
     );
-    const plan = readStoredPlan(content.plan_json);
+    const plan = readAnyStoredPlan(content.plan_json);
     const planDigest = digestMinkStorefrontValue(plan);
     if (planDigest !== content.plan_digest) {
       throw new Error("The saved personalisation does not match its digest.");
     }
-    return {
+    const base = {
       id: draft.id,
       currentVersion: draft.currentVersion,
-      plan,
       planDigest,
     };
+    return isRevampPlan(plan) ? { ...base, plan } : { ...base, plan };
   } catch (error) {
     throw new MinkRequestError(
       "mink_personalization_draft_invalid",
@@ -1060,6 +1296,23 @@ async function readDraft(
       400,
     );
   }
+}
+
+/**
+ * ★ THE SCHEMA VERSION IS READ FIRST: version 2 is a revamp's plan, read and
+ * validated by revamp/apply-v2.ts; anything else is read exactly as version 1
+ * always was, its errors included.
+ */
+function readAnyStoredPlan(
+  raw: string | undefined,
+): PersonalizationStoredPlan | RevampStoredPlan {
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(raw ?? "");
+  } catch {
+    parsed = null;
+  }
+  return isRevampPlan(parsed) ? readRevampStoredPlan(raw) : readStoredPlan(raw);
 }
 
 /**
@@ -1097,8 +1350,15 @@ export function readStoredPlan(
 
 function toApproval(
   row: ApprovalRow,
-  plan: PersonalizationStoredPlan,
+  plan: PersonalizationStoredPlan | RevampStoredPlan,
 ): MinkStorefrontPersonalizationActionApproval {
+  // ★ A page a revamp creates has no id until Apply writes it; its card
+  //   publishes from the revamp's own snapshot, never from this list.
+  const pages: ReadonlyArray<{
+    pageId: string | null;
+    slug: string;
+    title: string;
+  }> = plan.pages;
   return {
     id: row.id,
     toolName: TOOL_NAME,
@@ -1114,8 +1374,8 @@ function toApproval(
     },
     before: valuesFromJson(row.beforeJson),
     after: valuesFromJson(row.afterJson),
-    pages: plan.pages.map((page) => ({
-      id: page.pageId,
+    pages: pages.map((page) => ({
+      id: page.pageId ?? "",
       slug: page.slug,
       title: page.title,
     })),
@@ -1259,6 +1519,18 @@ function assertPartAuthority(
     throw new MinkRequestError(
       "mink_personalization_access_denied",
       "This personalisation unpublishes products, which needs Products manage permission.",
+      403,
+    );
+  }
+  // ★ The tagline and footer description go live at Apply, and everywhere
+  //   else only saveStoreBranding saves them, behind Branding manage.
+  if (
+    plan.brand &&
+    !can(actor.permissions, "branding", "manage", actor.isSuperadmin)
+  ) {
+    throw new MinkRequestError(
+      "mink_personalization_access_denied",
+      "This personalisation changes your store's tagline or footer description, which needs Branding manage permission.",
       403,
     );
   }

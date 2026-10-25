@@ -292,42 +292,117 @@ describe("routeMinkTools", () => {
     ).toBe(false);
   });
 
+  const REVAMP_CONTEXT = "get_storefront_revamp_context";
+  const REVAMP_START = "start_storefront_revamp";
+  const REVAMP_REFINE = "refine_storefront_revamp";
+  const READY = { hasReady: true, hasActive: false };
+
   it.each([
+    "customise my store",
+    "Customise my store for my business",
+    "redesign my website for my mustard oil business",
     "Personalise my storefront for my business",
-    "Can you personalize the store for me?",
-    "Customise my whole website so it fits my business",
+    "Can you revamp my online store?",
+    "Build my store for my candle business",
+    "Make my website for my business",
     "The theme photos are generic, replace them with ones for my brand",
-    "Make my store look like my own",
-    "meri website ko mere business ke hisaab se banao",
+    "meri website ko mere business ke hisaab se bana do",
+    "store customise karo",
+    "website bana do mere business ke liye",
+    "मेरी वेबसाइट को मेरे बिज़नेस के हिसाब से बना दो",
+    "मेरा स्टोर कस्टमाइज़ करो",
   ])(
-    "★ sends a storefront personalisation request its two tools: %s",
+    "★ a redesign request gets the context read and the start: %s",
     (message) => {
       const names = tools(message);
-      expect(names.has("get_storefront_personalization_context")).toBe(true);
-      expect(names.has("propose_storefront_personalization")).toBe(true);
+      expect(names.has(REVAMP_CONTEXT)).toBe(true);
+      expect(names.has(REVAMP_START)).toBe(true);
+      expect(names.has(REVAMP_REFINE)).toBe(false);
+      expect(route(message).stateTools).toEqual([REVAMP_START]);
     },
   );
 
-  it("does not take a single Builder edit for a personalisation", () => {
-    expect(
-      tools("Customise the header colour").has(
-        "propose_storefront_personalization",
-      ),
-    ).toBe(false);
+  it.each([
+    "city ke hisaab se orders dikhao",
+    "product ke hisab se sales batao",
+    "शहर के हिसाब से ऑर्डर दिखाओ",
+    "personalise the header colour",
+    "add a new product called Personalised Name Mug at 499",
+  ])(
+    "★ keeps the redesign out of a message that only shares a word with one: %s (chat-7)",
+    (message) => {
+      const names = tools(message);
+      expect(route(message).groups).not.toContain("revamp");
+      expect(names.has(REVAMP_START)).toBe(false);
+      expect(names.has(REVAMP_CONTEXT)).toBe(false);
+    },
+  );
+
+  it("★ opens no redesign interview from an unrelated message (chat-7)", () => {
+    const history = [
+      { role: "user", text: "city ke hisaab se orders dikhao" },
+      { role: "assistant", text: "Here are your orders by city." },
+    ];
+    const message = "diwali ke liye 10% coupon banao";
+    expect(route(message, { history }).reasons).not.toContain("interview");
+    expect(route(message, { history }).stateTools).toBeUndefined();
+    expect(tools(message, { history }).has(REVAMP_START)).toBe(false);
   });
 
-  it("★★ keeps the personalisation tools for the interview's answers", () => {
+  it.each([
+    "dukaan ke liye website mere business ke hisaab se bana do",
+    "mere brand ke hisaab se store set karo",
+    "मेरे बिज़नेस के हिसाब से मेरा स्टोर बना दो",
+    "I want personalisation of my whole store",
+  ])(
+    "★ still reads a whole-store redesign in these words: %s (chat-7)",
+    (message) => {
+      expect(route(message).groups).toContain("revamp");
+    },
+  );
+
+  it("does not take a single Builder edit for a redesign", () => {
+    for (const message of [
+      "Customise the header colour",
+      "Redesign the homepage hero",
+    ]) {
+      const names = tools(message);
+      expect(names.has(REVAMP_CONTEXT), message).toBe(false);
+      expect(names.has(REVAMP_START), message).toBe(false);
+    }
+  });
+
+  it("★ leaves the Builder's proposal tools off a whole-store redesign unless the message asks for more", () => {
+    expect(
+      route("redesign my website for my mustard oil business").groups,
+    ).not.toContain("builder");
+    expect(
+      route("Personalise my storefront for my business").groups,
+    ).not.toContain("builder");
+    expect(
+      route("Redesign my website and change the header logo").groups,
+    ).toEqual(expect.arrayContaining(["builder", "revamp"]));
+  });
+
+  it("answers a how-to about redesigning with the context read alone", () => {
+    const names = tools("How do I customise my store?");
+    expect(names.has(REVAMP_CONTEXT)).toBe(true);
+    expect(names.has(REVAMP_START)).toBe(false);
+  });
+
+  it("★★ keeps the start for the interview's answers, then lets the window close", () => {
     const history = [
-      { role: "user", text: "Personalise my storefront" },
+      { role: "user", text: "Customise my store" },
       {
         role: "assistant",
-        text: "What do you sell, and how should the store look?",
+        text: "What do you sell, who buys it, and how should the store feel?",
       },
     ];
     const answer =
-      "We sell handmade soy candles in Pune, warm and calm, earthy colours";
+      "We sell cold-pressed mustard oil in Jaipur to home cooks, warm and earthy";
     const names = tools(answer, { history });
-    expect(names.has("propose_storefront_personalization")).toBe(true);
+    expect(names.has(REVAMP_CONTEXT)).toBe(true);
+    expect(names.has(REVAMP_START)).toBe(true);
     expect(route(answer, { history }).reasons).toContain("interview");
     // Three ordinary messages later the interview is over.
     const later = [
@@ -336,11 +411,86 @@ describe("routeMinkTools", () => {
       { role: "user", text: "Which orders are pending?" },
       { role: "user", text: "Show me low stock" },
     ];
-    expect(
-      tools("What about yesterday's sales?", { history: later }).has(
-        "propose_storefront_personalization",
-      ),
-    ).toBe(false);
+    const after = tools("What about yesterday's sales?", { history: later });
+    expect(after.has(REVAMP_START)).toBe(false);
+    expect(after.has(REVAMP_CONTEXT)).toBe(false);
+  });
+
+  it("★★ never starts a second redesign over a ready one, and refines it instead", () => {
+    const names = tools("Customise my store for my business", {
+      revamp: READY,
+    });
+    expect(names.has(REVAMP_CONTEXT)).toBe(true);
+    expect(names.has(REVAMP_START)).toBe(false);
+    expect(names.has(REVAMP_REFINE)).toBe(true);
+    // Not even inside the interview window.
+    const history = [{ role: "user", text: "Customise my store" }];
+    const answer = tools("We sell candles in Pune", { history, revamp: READY });
+    expect(answer.has(REVAMP_START)).toBe(false);
+    expect(answer.has(REVAMP_REFINE)).toBe(true);
+  });
+
+  it.each([
+    "make it warmer",
+    "redo the opening photo",
+    "Make the colours softer",
+  ])(
+    "★ a follow-up on a finished redesign is offered the refinement: %s",
+    (message) => {
+      const names = tools(message, { revamp: READY });
+      expect(names.has(REVAMP_REFINE)).toBe(true);
+      expect(names.has(REVAMP_START)).toBe(false);
+      expect(route(message, { revamp: READY }).reasons).toContain(
+        "revamp_state",
+      );
+    },
+  );
+
+  it.each(["Add my products", "Add my products: lavender candle 200g 499"])(
+    "★★ brings the refinement to the chip that adds products once the interview window has closed: %s (chat-3)",
+    (message) => {
+      // Two refinement chips later, none of the last three merchant turns has
+      // a redesign word, so only the ready redesign can bring the group.
+      const history = [
+        { role: "user", text: "Customise my store for my business" },
+        { role: "assistant", text: "What do you sell?" },
+        { role: "user", text: "We sell soy candles in Pune, warm look" },
+        { role: "assistant", text: "The redesign has started." },
+        { role: "user", text: "Make the colours warmer" },
+        { role: "assistant", text: "The changes have started." },
+        { role: "user", text: "Redo the opening photo" },
+      ];
+      const names = tools(message, { history, revamp: READY });
+      expect(names.has(REVAMP_CONTEXT)).toBe(true);
+      expect(names.has(REVAMP_REFINE)).toBe(true);
+      expect(names.has(REVAMP_START)).toBe(false);
+      expect(route(message, { history, revamp: READY }).reasons).toContain(
+        "revamp_state",
+      );
+    },
+  );
+
+  it("leaves the redesign tools out of a catalogue question that changes nothing (chat-3)", () => {
+    const names = tools("How many candles do I have in stock?", {
+      revamp: READY,
+    });
+    expect(names.has(REVAMP_CONTEXT)).toBe(false);
+    expect(names.has(REVAMP_REFINE)).toBe(false);
+  });
+
+  it("leaves the redesign tools out of an unrelated question, finished redesign or not", () => {
+    const names = tools("How much did I sell today?", { revamp: READY });
+    expect(names.has(REVAMP_CONTEXT)).toBe(false);
+    expect(names.has(REVAMP_REFINE)).toBe(false);
+  });
+
+  it("offers neither a start nor a refinement while a redesign is still building", () => {
+    const names = tools("Customise my store", {
+      revamp: { hasReady: false, hasActive: true },
+    });
+    expect(names.has(REVAMP_CONTEXT)).toBe(true);
+    expect(names.has(REVAMP_START)).toBe(false);
+    expect(names.has(REVAMP_REFINE)).toBe(false);
   });
 });
 
@@ -412,7 +562,11 @@ describe("tool groups", () => {
   it("names only tools the registry has", () => {
     for (const group of MINK_TOOL_GROUPS) {
       const def = MINK_TOOL_GROUP_TOOLS[group];
-      for (const name of [...def.read, ...(def.change ?? [])])
+      for (const name of [
+        ...def.read,
+        ...(def.change ?? []),
+        ...(def.stateful ?? []),
+      ])
         expect(registered, `${group} names ${name}`).toContain(name);
     }
   });
@@ -422,6 +576,7 @@ describe("tool groups", () => {
       MINK_TOOL_GROUPS.flatMap((group) => [
         ...MINK_TOOL_GROUP_TOOLS[group].read,
         ...(MINK_TOOL_GROUP_TOOLS[group].change ?? []),
+        ...(MINK_TOOL_GROUP_TOOLS[group].stateful ?? []),
       ]),
     );
     for (const name of registered)

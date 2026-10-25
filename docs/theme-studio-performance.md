@@ -154,7 +154,10 @@ changing cron frequency alone would not address this workload.
   receives complete semantic JSON, supported settings, capability gaps and
   explicit contact-sheet page ordering. Advisory performance timing alone is
   not a reason to regenerate a theme. Required gates, score thresholds,
-  rejection rules and human publication approval remain unchanged.
+  rejection rules and human publication approval remain unchanged. (Since
+  then the human approval became one superadmin's Publish, 3 Oct 2026, and
+  since 24 Oct 2026 only serious findings stop a theme; the rest are
+  warnings: `docs/theme-acceptance.md` §5.)
 - Shared editorial product pages use a larger portrait gallery, a wider title
   column and bounded title sizing. Default commerce newsletter copy inherits
   the theme's homepage voice; merchant copy and switches retain precedence.
@@ -204,7 +207,9 @@ CSS with synthetic source images, all five QA widths, stacked height presets,
 eight dot controls and focus visibility without network/provider/database work.
 This fixture does not prove the full Aurelle storefront passes every gate.
 After deploying the renderer fixes, use **Images → Retry automatic QA** on the
-existing theme to obtain fresh build-bound evidence. Initial artwork latency
+existing theme to obtain fresh build-bound evidence (since TS-2, 25 Oct 2026,
+**Check again** on the theme page, which measures again without buying a
+repair; the Images page and that button are gone). Initial artwork latency
 and provider quotas remain separate limits; these corrections do not establish
 a guaranteed theme completion time.
 

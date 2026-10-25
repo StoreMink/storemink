@@ -317,12 +317,40 @@ describe("public help actions", () => {
       expect.objectContaining({
         temperature: 0,
         responseMimeType: "application/json",
+        // ★ JSON Schema through responseJsonSchema, the shape lib/mink sends.
+        responseJsonSchema: expect.objectContaining({
+          type: "object",
+          required: ["queries", "slugs"],
+          additionalProperties: false,
+        }),
       }),
+    );
+    expect(vi.mocked(callGemini).mock.calls[0][2]).not.toHaveProperty(
+      "responseSchema",
     );
     expect(rateLimit).toHaveBeenCalledWith("help:ai-search:203.0.113.10", {
       max: 30,
       windowSeconds: 3600,
     });
+  });
+
+  // ★ The Help assistant's one budget for a turn reaches the model call; a
+  //   public caller cannot send an AbortSignal, so anything else is ignored.
+  it("hands the caller's signal to the model call, and ignores anything else", async () => {
+    vi.mocked(getHelpSearchCatalog).mockResolvedValue(SEARCH_CATALOGUE as any);
+    vi.mocked(callGemini).mockResolvedValue({
+      text: JSON.stringify({ queries: [], slugs: [] }),
+    });
+    const budget = new AbortController();
+    await searchPublishedHelpWithAi("मेरा अपना domain कैसे जोड़ें?", {
+      signal: budget.signal,
+    });
+    expect(vi.mocked(callGemini).mock.calls[0][2]?.signal).toBe(budget.signal);
+    vi.mocked(callGemini).mockClear();
+    await searchPublishedHelpWithAi("मेरा अपना domain कैसे जोड़ें?", {
+      signal: { aborted: true } as unknown as AbortSignal,
+    });
+    expect(vi.mocked(callGemini).mock.calls[0][2]).not.toHaveProperty("signal");
   });
 
   it("keeps exact document-title search deterministic", async () => {
@@ -883,7 +911,14 @@ describe("help AI command", () => {
     expect(callGemini).toHaveBeenCalledWith(
       expect.stringContaining("OUTPUT CONTRACT"),
       expect.stringContaining('Instruction: "Write the guide"'),
-      expect.objectContaining({ responseMimeType: "application/json" }),
+      expect.objectContaining({
+        responseMimeType: "application/json",
+        responseJsonSchema: expect.objectContaining({
+          type: "object",
+          required: ["action"],
+          additionalProperties: false,
+        }),
+      }),
     );
   });
 

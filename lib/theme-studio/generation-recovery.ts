@@ -15,6 +15,49 @@ export function generationRecoveryDelayMs(
   return Math.round(step * (0.75 + 0.25 * Math.min(1, Math.max(0, random()))));
 }
 
+/**
+ * ★★ A TEXT CALL GOOGLE COULD NOT SERVE IS WAITED OUT, NOT THE END OF THE RUN
+ * (TS-3B). Only a 429 used to wait; an `UNAVAILABLE` (5xx after the SDK's own
+ * fast retries) or a timed-out call failed the theme at once, and 3.9% of 3.8
+ * Flash calls were refused in production (robustness audit). So:
+ *   ★ `provider_unavailable` waits twice and `provider_timeout` once, each
+ *     wait counted from the run's own `run_queued` events (reason = the code),
+ *     so no column is needed and the count survives every reclaim;
+ *   ★ the wait is short (about 2, then 4 minutes, jittered to 75 to 100%):
+ *     these are outages, not the quota a 429 waits out over 5 to 20 minutes;
+ *   ★ the run is requeued with `retry_not_before`, so a wait never spends a
+ *     crash attempt, and its saved answers replay (resumableGenerationClient):
+ *     a stage that already answered is never paid for twice; only the call
+ *     that failed is sent again.
+ * Every other failure (a rejected request, credentials, a refusal) still ends
+ * the run: waiting cannot change those answers.
+ */
+export const PROVIDER_FAILURE_WAITS = {
+  provider_unavailable: 2,
+  provider_timeout: 1,
+} as const;
+
+export type WaitedProviderFailure = keyof typeof PROVIDER_FAILURE_WAITS;
+
+export function isWaitedProviderFailure(
+  code: string,
+): code is WaitedProviderFailure {
+  return Object.prototype.hasOwnProperty.call(PROVIDER_FAILURE_WAITS, code);
+}
+
+/** The wait before the next try after `waits` earlier waits for the same
+ * failure, or null when that failure has had all its waits. */
+export function providerFailureDelayMs(
+  code: string,
+  waits: number,
+  random: () => number = Math.random,
+): number | null {
+  if (!isWaitedProviderFailure(code)) return null;
+  if (waits >= PROVIDER_FAILURE_WAITS[code]) return null;
+  const step = 2 * 60_000 * 2 ** Math.max(0, waits);
+  return Math.round(step * (0.75 + 0.25 * Math.min(1, Math.max(0, random()))));
+}
+
 export type SavedModelResponse = Exclude<StructuredResult, { kind: "error" }>;
 
 export interface GenerationResponseStore {

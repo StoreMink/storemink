@@ -57,6 +57,13 @@ export function createVertexMinkSession(
     abortSignal?: AbortSignal;
     thinkingLevel?: MinkThinkingLevel;
     memoryReference?: string;
+    /**
+     * This conversation's storefront redesigns and their state, as a separate
+     * untrusted part (the stream route writes it). The card, not the chat
+     * text, holds the state, so without it a follow-up cannot tell whether
+     * the redesign is still building, ready, applied or published.
+     */
+    revampReference?: string;
     /** The merchant's current screen, as a separate untrusted part (page-context.ts). */
     screenReference?: string;
     /** The model the run starts on (the lite model for a light route). */
@@ -151,11 +158,18 @@ export function createVertexMinkSession(
       : null;
   // ★ A model this instance has just watched fail is not tried first: the
   // run starts on the fallback and pays nothing for the main model's window.
+  // ★★ A VOICE TURN STARTS ON THE FALLBACK (owner's decision, 2026-10-20):
+  // 3.5 Flash in Mumbai answered a spoken question in about half the time
+  // 3.7 Flash at global took (config.voiceStartsOnFallback). The main model
+  // is its failover, by the same rules, and a fallback this instance has just
+  // watched fail is not where a voice turn starts either.
   const startingFallback = fallbackFor(primary);
+  const voiceFirst =
+    actor.answerMedium === "spoken" && config.voiceStartsOnFallback === true;
   let current: MinkProviderTarget =
     startingFallback &&
-    !minkModelLooksAvailable(primary) &&
-    minkModelLooksAvailable(startingFallback)
+    minkModelLooksAvailable(startingFallback) &&
+    (voiceFirst || !minkModelLooksAvailable(primary))
       ? startingFallback
       : primary;
   const openChat = (target: MinkProviderTarget, history: Content[]): Chat =>
@@ -200,8 +214,13 @@ export function createVertexMinkSession(
     },
     async sendUserMessage(message, stream) {
       // Reference parts come BEFORE the message and never inside the system
-      // instruction: memories first (durable), then the screen (this turn).
-      const references = [options.memoryReference, options.screenReference]
+      // instruction: memories first (durable), then this conversation's
+      // redesigns, then the screen (this turn).
+      const references = [
+        options.memoryReference,
+        options.revampReference,
+        options.screenReference,
+      ]
         .filter((text): text is string => Boolean(text))
         .map((text) => ({ text }));
       return send(
@@ -285,21 +304,49 @@ export function createVertexMinkSession(
               error instanceof MinkLeakedReasoningError ? true : undefined,
           };
           if (kind === "history") {
-            // The main model would not read the fallback's turns: neither
-            // model is down, so neither is marked.
+            // One model would not read the other's turns: neither model is
+            // down, so neither is marked.
             logWarn("mink.model: history refused", context);
+          } else if (kind === "rejected") {
+            // ★ The fallback answered a 4xx that is not a 404 or 403 (a 400
+            //   on a conversation it wrote itself, say): a verdict on this
+            //   request, not a misconfigured or busy model. The turn goes back
+            //   to the main model; nothing is marked, and the fallback stays
+            //   on offer for later turns (voice turns start there).
+            logWarn("mink.model: fallback rejected the request", context);
           } else if (kind === "retryable") {
             // ★ A STALL ONLY THE VOICE DEADLINE CALLED is not evidence the
             //   model is down: voice waits at most 12 s for a first chunk,
             //   where a written chat waits 20, and marking the model would
             //   send every run on this instance to the fallback for a minute.
-            if (!shortenedStall(error)) markMinkModelUnavailable(target);
+            // ★ NOR IS LEAKED REASONING: the model answered, it only opened
+            //   with its working. Asked again on the other model like a 503,
+            //   but marking it would start every voice turn on this instance
+            //   on the slower main model for a minute over one reply.
+            if (
+              !shortenedStall(error) &&
+              !(error instanceof MinkLeakedReasoningError)
+            ) {
+              markMinkModelUnavailable(target);
+            }
             logWarn("mink.model: attempt failed", context);
+          } else if (kind === "refused") {
+            // ★★ The MAIN model refused outright (404 or 403: retired, a
+            // wrong id, not enabled at its location); the turn goes to the
+            // fallback when there is one. Remembered on the instance like any other
+            // failure, so for the next minute a new run starts on the
+            // fallback instead of paying the refusal first; loud, because it
+            // is a configuration fault, not a busy pool.
+            markMinkModelUnavailable(target);
+            logError("mink.model: main refused", error, context);
           } else if (onFallback) {
             // A fallback that refuses outright is a configuration fault
             // (wrong id, not enabled at that location): say so loudly, and
-            // stop offering it for the rest of this session.
+            // stop offering it for the rest of this session. ★ Remembered on
+            // the instance too, because voice turns START on the fallback:
+            // without it every voice turn would pay this refusal first.
             fallbackUsable = false;
+            markMinkModelUnavailable(target);
             logError("mink.model: fallback refused", error, context);
           }
         },

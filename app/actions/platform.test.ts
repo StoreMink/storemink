@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { makeDbMock, sqlParamValues } from "./_test-helpers";
+import { makeDbMock, sqlParamValues, sqlText } from "./_test-helpers";
 
 vi.mock("next/cache", () => ({
   revalidateTag: vi.fn(),
@@ -76,6 +76,7 @@ import { cleanupDetachedDomain } from "@/lib/domains/cleanup";
 import { removeAuthorizedHosts } from "@/lib/auth/authorized-domains";
 import { ROOT_DOMAIN } from "@/lib/store/host";
 import { stores } from "@/drizzle/schema";
+import { withService } from "@/lib/db/client";
 import { revalidateTag } from "next/cache";
 
 const OPERATOR_EMAIL = "op@storemink.com";
@@ -578,6 +579,42 @@ describe("deleteStore", () => {
     const res = await deleteStore("s1");
     expect(res.warning).toMatch(/Identity Platform is not configured/i);
     expect(deleteAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("★★ gives the cascade its own 5-minute statement limit, inside the delete's transaction", async () => {
+    // Every pool cuts a statement at 30 s; the one DELETE that removes a
+    // whole store measured 13.9 s locally for a 200k-order store, so it sets
+    // its own bound with SET LOCAL, which ends with its transaction.
+    setup([
+      viewer(),
+      [{ id: "s1", settings: {}, custom_domain: null }],
+      [],
+      [],
+      [],
+      ...Array.from({ length: 15 }, () => []),
+    ]);
+
+    expect(await deleteStore("s1")).toEqual({ success: true });
+
+    const db = dbHolder.current.db;
+    const statements = dbHolder.current.calls.execute.map((query: unknown) =>
+      sqlText(query),
+    );
+    expect(statements).toEqual([
+      "set local statement_timeout = '5min'",
+      "set constraints all deferred",
+    ]);
+    const [limitAt, deferAt] = vi.mocked(db.execute).mock.invocationCallOrder;
+    const deleteAt = vi.mocked(db.delete).mock.invocationCallOrder[0]!;
+    expect(vi.mocked(db.delete).mock.calls[0][0]).toBe(stores);
+    // ★ The same transaction as the DELETE: set after that withService call
+    //   began (the scan is an earlier one), and before the cascade runs.
+    const opened = vi
+      .mocked(withService)
+      .mock.invocationCallOrder.filter((order) => order < deleteAt);
+    expect(limitAt).toBeGreaterThan(Math.max(...opened));
+    expect(limitAt).toBeLessThan(deferAt!);
+    expect(deferAt).toBeLessThan(deleteAt);
   });
 });
 

@@ -1,12 +1,21 @@
 import type { ThemePackageV2 } from "./contracts";
+import {
+  isBlocking,
+  THEME_IMAGE_PROBLEMS,
+  type ThemeImageProblem,
+} from "./image-review";
 import { describeSlots } from "./slot-images-core";
 import type { QaRepair } from "./qa-diagnosis";
+import type { ReviewFinding } from "./scorecard";
 
 export interface QaImageIssue {
   slotId: string;
   sha256: string;
   review: "flagged" | "unreviewed";
   note: string;
+  /** For a flagged photo, the problems its photo check named. Absent on
+   * rows recorded before problems were kept. */
+  problems?: string[];
 }
 export interface QaImageAssessment {
   slotId: string;
@@ -22,6 +31,7 @@ export function qaImageIssues(
     sha256: string | null;
     review: string;
     note?: string | null;
+    problems?: unknown;
   }[],
 ): QaImageIssue[] {
   const reviews = new Map<string, (typeof history)[number]>();
@@ -40,17 +50,21 @@ export function qaImageIssues(
     if (!sha256) return [];
     const review = reviews.get(sha256);
     if (review?.review === "passed") return [];
+    const flagged = review?.review === "flagged";
+    const recorded: unknown = review?.problems;
+    const problems =
+      flagged && Array.isArray(recorded)
+        ? recorded.filter((p): p is string => typeof p === "string")
+        : [];
     return [
       {
         slotId: slot.id,
         sha256,
-        review:
-          review?.review === "flagged"
-            ? ("flagged" as const)
-            : ("unreviewed" as const),
+        review: flagged ? ("flagged" as const) : ("unreviewed" as const),
         note: (
           review?.note || "No completed per-image review for these bytes."
         ).slice(0, 800),
+        ...(problems.length ? { problems } : {}),
       },
     ];
   });
@@ -81,4 +95,46 @@ export function imageAssessmentsComplete(
           )))
     );
   });
+}
+
+const KNOWN_PROBLEMS: ReadonlySet<string> = new Set(THEME_IMAGE_PROBLEMS);
+
+/** A problem on the photo check's hard list, or one it does not know: what
+ * nobody classified counts as serious. */
+function hardProblem(problem: string): boolean {
+  return (
+    !KNOWN_PROBLEMS.has(problem) || isBlocking([problem as ThemeImageProblem])
+  );
+}
+
+/**
+ * What each unresolved photo does to Publish.
+ *
+ * ★ The design review judges art direction, not the photo check's list of
+ * hard problems (lettering or a logo, a person where none is allowed, a
+ * malformed object, the wrong or several products). So its approval never
+ * clears a photo whose own check has not passed on these exact bytes, nor one
+ * the check flagged with a hard problem: both stay serious until the photo
+ * check itself passes on the bytes (a redraw is checked as it is drawn). Its
+ * approval clears only a photo flagged for small things (off style, staging,
+ * crop); one it does not approve is a warning with a redraw.
+ */
+export function imageIssueFindings(
+  issues: readonly QaImageIssue[],
+  assessments: readonly QaImageAssessment[] = [],
+): { serious: ReviewFinding[]; warnings: ReviewFinding[] } {
+  const serious: ReviewFinding[] = [];
+  const warnings: ReviewFinding[] = [];
+  for (const issue of issues) {
+    if (issue.review === "unreviewed") {
+      serious.push({ code: "image_unchecked", slotId: issue.slotId });
+    } else if ((issue.problems ?? []).some(hardProblem)) {
+      serious.push({ code: "image_hard_problem", slotId: issue.slotId });
+    } else if (
+      !assessments.some((a) => a.slotId === issue.slotId && a.approved)
+    ) {
+      warnings.push({ code: "image_redraw", slotId: issue.slotId });
+    }
+  }
+  return { serious, warnings };
 }

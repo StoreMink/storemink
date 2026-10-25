@@ -771,8 +771,24 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   // (migration 20261007_0172). Deferring moves those checks to COMMIT, after
   // every cascade has run; everywhere else the constraints keep their
   // immediate behaviour, because only this transaction asks.
+  //
+  // ★★ AND WITH ITS OWN STATEMENT LIMIT, 5 MINUTES, NOT THE POOL'S 30 S
+  // (lib/db/client.ts). This one DELETE is every row the store owns. Measured
+  // on storemink_local (2026-10-24, rolled back): a store with 200,305
+  // orders, 400,516 order lines, 211,438 storefront events and 20,025
+  // customers took 13.9 s with storefront_events.order_id indexed, so on the
+  // shared-core production database a large store would pass 30 s and could
+  // never be purged. SET LOCAL ends with this transaction, so no other
+  // statement gets the longer limit, and a runaway still stops well inside
+  // Cloud Run's 20-minute request. (The checks deferred to COMMIT are not
+  // timed by Postgres at all; they took 71 ms here.)
+  // ⚠ That index does not exist yet: each order then costs one full scan of
+  // storefront_events (16.8 ms per order at 211k events, measured), so a
+  // store with tens of thousands of orders can pass even 5 minutes, and the
+  // operator sees "Could not delete the store" with nothing deleted.
   try {
     await withService(async (db) => {
+      await db.execute(sql`set local statement_timeout = '5min'`);
       await db.execute(sql`set constraints all deferred`);
       await db.delete(stores).where(eq(stores.id, storeId));
     });

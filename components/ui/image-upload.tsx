@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { uploadImage } from "@/lib/storage/uploads";
 import {
   UploadCloud,
@@ -76,6 +76,14 @@ export function ImageUpload({
   const [refined, setRefined] = useState<RefineResult | null>(null);
   const [editingBackground, setEditingBackground] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // ★ A refine still running when this editor goes away (an in-app link,
+  //   a dialog closing, a gallery slot removed) is stopped. The route stops
+  //   the model on the request's own signal, and a refine stopped there
+  //   stores and charges nothing; leaving inside the app used to keep the
+  //   request open, so the photo was still made and charged for somebody
+  //   who had gone. Closing the tab already ended it.
+  const refineAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => refineAbortRef.current?.abort(), []);
   const refineAvailable = useImageRefineAvailable();
   const backgroundAvailable = useImageBackgroundAvailable();
   const slot = spec ? IMAGE_SPECS[spec] : null;
@@ -147,6 +155,8 @@ export function ImageUpload({
 
   const handleRefine = async () => {
     if (!previewUrl || !spec || refining) return;
+    const stop = new AbortController();
+    refineAbortRef.current = stop;
     setRefining(true);
     setError(null);
     try {
@@ -154,20 +164,25 @@ export function ImageUpload({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: previewUrl, spec }),
+        signal: stop.signal,
       });
       const body = (await res.json().catch(() => ({}))) as {
         url?: string;
         error?: string;
       };
+      // Nobody is here to read an answer that lands after the stop.
+      if (stop.signal.aborted) return;
       if (!res.ok || !body.url) {
         setError(body.error ?? "Refining failed. Nothing was charged.");
         return;
       }
       setRefined({ url: body.url });
     } catch {
+      if (stop.signal.aborted) return;
       setError("Refining failed. Check your connection and try again.");
     } finally {
-      setRefining(false);
+      if (refineAbortRef.current === stop) refineAbortRef.current = null;
+      if (!stop.signal.aborted) setRefining(false);
     }
   };
 

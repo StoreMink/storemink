@@ -141,6 +141,12 @@ so the live value is the `_MIN_INSTANCES` substitution on the Cloud Build trigge
 next deploy. Both were changed together; see the cost note in
 [`gcp-ci-cd.md`](gcp-ci-cd.md).
 
+⚠ **Memory is the opposite case: `storemink-web-prod` runs with 2 GiB since
+2026-10-23** (the `--memory=1Gi` above is the original value). `cloudbuild.yaml`
+passes no `--memory`, so the `gcloud run services update --memory=2Gi` made that
+day is kept by every later deploy; see "Production memory" in
+[`gcp-ci-cd.md`](gcp-ci-cd.md).
+
 ### 7. Smoke-test BEFORE DNS (the Host-header trick)
 
 `proxy.ts` routes by Host, and a raw `*.run.app` host is treated as an unknown

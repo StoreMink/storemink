@@ -56,16 +56,16 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 
 ## 2. Tech stack
 
-| Layer     | Tech                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Framework | Next.js 16 (App Router; dev uses Webpack on ≤12 GB RAM, Turbopack above) — **breaking-changes version; read `node_modules/next/dist/docs/` before writing code** (see AGENTS.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| UI        | React 19, Tailwind CSS v4, shadcn/ui (`components/ui/`), Base UI, lucide-react, sonner (toasts), recharts (charts), TipTap (rich-text editor), CodeMirror 6 (`@uiw/react-codemirror` — website-builder code editor, lazy-loaded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Backend   | Supabase (Postgres + Auth + Storage + RLS), server actions in `app/actions/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Email     | Resend (`lib/email/`), authenticated `/api/cron/send-emails` queue heartbeat (Cloud Scheduler every minute after Phase 5E rollout; `vercel.json` is non-production documentation)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| AI        | Gemini (`lib/ai/gemini.ts`); per-store brand voice (`lib/ai/brand-voice.ts` + `store_brand_profiles`) with plan-capped usage metering (`lib/ai/quota.ts`); task prompts in `brand/tasks/`. The dashboard Mink drawer has a default-on Vertex/Gemini 3.7 agent available to every store in `lib/mink/` + `app/api/mink/`: its marked runtime system prompt is `docs/mink-ai-system-prompt.md`, validated and rendered by `lib/mink/system-prompt.ts`; its storefront image-provider prompt is `docs/mink-ai-image-prompt.md`, validated and rendered by `lib/mink/image-prompt.ts`. Phase 2 streams permission/location-aware store, catalogue, sales, order, inventory and Help reads; vague multi-location catalogue-stock questions now produce permission-safe multiple-choice clarification instead of silently using a combined total, while explicit comparison returns shelf-level counts. Phase 3 adds private proposals. Phase 4A adds independently gated product description/SEO actions; 4B adds unpublished, untracked draft-product creation; 4C adds disabled/hidden coupon create/update; and 4D adds customer-group metadata create/update. Phase 5A adds an independently gated, human-approved adjustment for one exact tracked SKU at one exact active accessible location; Phase 5B adds a separate 5-credit, maximum-20-line bulk inventory proposal and atomic approval; Phase 5C adds a separate one-credit, one-order, one-forward-step online-delivery status proposal/approval for pending → processing → shipped → delivered; Phase 5D adds a separate immediate/scheduled publication approval for one exact saved blog proposal plus a bounded conflict-safe worker; Phase 5E adds independently gated coupon-email audience selection, exact non-PII preview, final confirmation and immediate/scheduled queueing; Phase 5F adds an independently gated 1–20 exact-SKU bulk price proposal, one-unit basket impact review and atomic conflict-safe execution. Phase 6A adds a durable leased workflow runtime and an idempotent, read-only weekly trading report with persisted steps/events, safe cancellation, token-free waiting and background completion notification. Phase 6B adds a bounded, read-only 7/30/90-day revenue-decline investigation across exact channels, locations and leading products; Phase 6C adds a private exact-SKU product-launch readiness package covering catalogue, media, SEO, valid pricing, scoped inventory and shipping without live changes; Phase 6D adds a bounded location-aware slow-inventory workflow and a private, margin-guarded promotion recommendation that cannot create or activate an offer; Phase 6E adds a bounded PII-minimized delayed-pickup review, staff-confirmed preparation-delay copy and duplicate-safe handoff to the existing one-time reminder sweep. Phase 7A adds permission-gated current-store Website Builder page/section/design readers and strict code validation; Phase 7B adds one immutable 5-credit exact-section proposal with an isolated desktop/mobile preview; Phase 7C adds a separate default-off, human-only five-minute exact-diff approval that transactionally saves only that reviewed replacement to the private Builder draft with idempotency, conflict checks and audit. Every live action uses exact short-lived human approval, tenant/permission/tool/version rechecks, idempotent transactional execution and append-only outcomes; Phase 4 supports checkpointed safe rollback, while inventory, order-status, blog-publication, campaign, price and Builder corrections use fresh/manual domain workflows. Gemini receives checkpoint/proposal tools but no live execute tool; its durable workflow tools queue deterministic internal read work only. Transfers, cancellation/refunds/payment/shipment changes, pickup/POS lifecycle mutations, model-side product/bulk publication (human-approved CSV imports use the ordinary importer), arbitrary customer contact/group membership, unbounded catalogue repricing and arbitrary repository coding remain unavailable; Phase 7D adds separately gated human publication checks, approval and exact rollback after a completed Phase 7C save. The complete Website Builder tools add exact navigation/header/footer, appearance, page lifecycle/SEO, section creation/removal and checked publication proposals; authenticated humans approve each change. Mink cannot access shell/repository or deploy. Operators control every gate and inspect redacted metrics at `/dashboard/mink`; the live harness is `npm run mink:eval`, and the phase-wise manual catalogue is `docs/mink-ai-test-prompts.md`. An explicit global disable or missing invite retains the canned coming-soon response. Architecture and phased rollout are tracked in `docs/mink-ai-dashboard-plan.md`. |
-| Testing   | Vitest + Testing Library + jsdom, coverage via v8 (`coverage/` is generated output — never edit)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Browsers  | **`browserslist` in package.json is the stated floor: Chrome/Edge 111, Firefox 128, Safari/iOS 16.4.** Not a preference — Tailwind v4 depends on `@property` and `color-mix()` and does not work below it, so this records a constraint a dependency already imposed rather than inventing one. Two authored CSS features sit BELOW that floor and so are always available: `:has()` (Chrome 105+/Safari 15.4+/Firefox 121+) and container queries (Chrome 105+/Safari 16+/Firefox 110+), both used by the dashboard table compaction, which is nonetheless wrapped in `@supports selector(:has(+ *)) and (container-type: inline-size)` so the dependency is stated where it is used and stays graceful if the floor is ever lowered. **⚠ There is NO cross-browser test infrastructure** — vitest runs in jsdom, which renders nothing. Chrome is the only browser this has been exercised in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| Deploy    | **Google Cloud Run** via branch-specific Cloud Build triggers (`dev` → `storemink-web-dev`, `main` → `storemink-web-prod`; Dockerfile + `cloudbuild.yaml`). ⚠ The STAGING DEPLOYMENT was removed 2026-09-08 — no `staging` branch, no `storemink-web` service, no `staging.storemink.com`; **dev is the only pre-production environment**. The `storemink_staging` DATABASE remains and is dev's, so `db:migrate:staging` and `db:drift:staging` still target a live database despite the name. The Cloud Build deploy owns the complete runtime environment; Mink's model and limit settings are declared as substitutions. The global runtime defaults enabled, and the operator's per-store Mink AI switch is the fail-closed merchant boundary. ⚠ `_MINK_BETA_REQUIRE_INVITE` is RETIRED but still declared (empty) and read by a shim at the top of `build-push`: this file sets no `substitution_option: ALLOW_LOOSE`, so a trigger that still supplies the key would fail every build against a template that no longer mentions it — i.e. production would stop deploying until somebody remembered a manual step. The shim keeps the merge safe and warns in the build log; delete it and the default once all three triggers have had `--remove-substitutions` applied (**docs/gcp-ci-cd.md**). CI on GitHub Actions (`.github/workflows/ci.yml`) runs the same eight checks as **FOUR PARALLEL JOBS** — `checks` (lint, typecheck, **db:lint**, **help:lint**, prettier), `test`, `shuffle` and `build`. ⚠ They are deliberately independent: nothing here needs another's output, so a `needs:` between them would only restore the 26.7-minute sequential run this split removed (measured on run 34834617499, where the two test invocations alone were 669s + 591s of 1603s). A `concurrency` group cancels a superseded run, because two pushes 22 seconds apart used to produce two complete runs and only the newer one's answer is ever read; it is safe because this workflow DEPLOYS NOTHING — Cloud Build owns that. `npm run typecheck` runs `next typegen` before `tsc --noEmit` because the Next-managed `next-env.d.ts` is deliberately gitignored and a clean checkout otherwise has no static-image or route declarations. The TypeScript process runs with an explicit 4 GiB V8 heap limit, avoiding the approximately 2 GiB default that exhausts memory on the full project on an 8 GiB Mac; type checking remains strict and includes tests. **`npm run build` gets the same explicit 4 GiB heap, through `NODE_OPTIONS`**: Next 16.3 type-checks by spawning `tsc` as a separate process (`experimental.useTypeScriptCli` defaults on) that inherits the parent's ENVIRONMENT but not its command-line flags, so `node --max-old-space-size=4096 next build` does not reach it (measured: the child still died at ~2 GiB). From 2026-10-07 the default limit ran out of memory in CI's Build job ("Failed to type check") while the separate typecheck job, already on 4 GiB, passed. The script, not the workflow, carries it so the Docker build Cloud Build runs for deploys gets it too, and it appends any `NODE_OPTIONS` already set rather than replacing it. **★★ DATABASE DDL IS NO LONGER A MANUAL GATE (2026-09-09): `cloudbuild.yaml` applies it, in the pipeline, before the deploy** — `build-push` → `tip-check` → `migrate` → `deploy`, with a failed migration stopping the deploy. No developer needs the production superuser credential, and the schema can no longer be behind the code. `npm run db:migrate:prod apply` still works and is now the emergency path only. Full contract, authoring rules and troubleshooting: **`docs/migrations.md`** (read it before writing a migration); the recovery tools stay in `drizzle/manual/README.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Layer     | Tech                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Framework | Next.js 16 (App Router; dev uses Webpack on ≤12 GB RAM, Turbopack above) — **breaking-changes version; read `node_modules/next/dist/docs/` before writing code** (see AGENTS.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| UI        | React 19, Tailwind CSS v4, shadcn/ui (`components/ui/`), Base UI, lucide-react, sonner (toasts), recharts (charts), TipTap (rich-text editor), CodeMirror 6 (`@uiw/react-codemirror` — website-builder code editor, lazy-loaded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Backend   | Supabase (Postgres + Auth + Storage + RLS), server actions in `app/actions/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Email     | Resend (`lib/email/`), authenticated `/api/cron/send-emails` queue heartbeat (Cloud Scheduler every minute after Phase 5E rollout; `vercel.json` is non-production documentation)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| AI        | Gemini (`lib/ai/gemini.ts`: Generate with AI asks `gemini-3.5-flash-lite`, then `gemini-3.5-flash` once, 30 s per attempt; it is rate-limited per store and per admin before a credit is taken, long fields are cut, and a request that fails gives its Mink credit back through `refundAiQuota` (`lib/ai/credited-copy.ts`)); per-store brand voice (`lib/ai/brand-voice.ts` + `store_brand_profiles`) with plan-capped usage metering (`lib/ai/quota.ts`); task prompts in `brand/tasks/`. The dashboard Mink drawer has a default-on Vertex/Gemini 3.7 agent available to every store in `lib/mink/` + `app/api/mink/`: its marked runtime system prompt is `docs/mink-ai-system-prompt.md`, validated and rendered by `lib/mink/system-prompt.ts`; its storefront image-provider prompt is `docs/mink-ai-image-prompt.md`, validated and rendered by `lib/mink/image-prompt.ts`. Phase 2 streams permission/location-aware store, catalogue, sales, order, inventory and Help reads; vague multi-location catalogue-stock questions now produce permission-safe multiple-choice clarification instead of silently using a combined total, while explicit comparison returns shelf-level counts. Phase 3 adds private proposals. Phase 4A adds independently gated product description/SEO actions; 4B adds unpublished, untracked draft-product creation; 4C adds disabled/hidden coupon create/update; and 4D adds customer-group metadata create/update. Phase 5A adds an independently gated, human-approved adjustment for one exact tracked SKU at one exact active accessible location; Phase 5B adds a separate 5-credit, maximum-20-line bulk inventory proposal and atomic approval; Phase 5C adds a separate one-credit, one-order, one-forward-step online-delivery status proposal/approval for pending → processing → shipped → delivered; Phase 5D adds a separate immediate/scheduled publication approval for one exact saved blog proposal plus a bounded conflict-safe worker; Phase 5E adds independently gated coupon-email audience selection, exact non-PII preview, final confirmation and immediate/scheduled queueing; Phase 5F adds an independently gated 1–20 exact-SKU bulk price proposal, one-unit basket impact review and atomic conflict-safe execution. Phase 6A adds a durable leased workflow runtime and an idempotent, read-only weekly trading report with persisted steps/events, safe cancellation, token-free waiting and background completion notification. Phase 6B adds a bounded, read-only 7/30/90-day revenue-decline investigation across exact channels, locations and leading products; Phase 6C adds a private exact-SKU product-launch readiness package covering catalogue, media, SEO, valid pricing, scoped inventory and shipping without live changes; Phase 6D adds a bounded location-aware slow-inventory workflow and a private, margin-guarded promotion recommendation that cannot create or activate an offer; Phase 6E adds a bounded PII-minimized delayed-pickup review, staff-confirmed preparation-delay copy and duplicate-safe handoff to the existing one-time reminder sweep. Phase 7A adds permission-gated current-store Website Builder page/section/design readers and strict code validation; Phase 7B adds one immutable 5-credit exact-section proposal with an isolated desktop/mobile preview; Phase 7C adds a separate default-off, human-only five-minute exact-diff approval that transactionally saves only that reviewed replacement to the private Builder draft with idempotency, conflict checks and audit. Every live action uses exact short-lived human approval, tenant/permission/tool/version rechecks, idempotent transactional execution and append-only outcomes; Phase 4 supports checkpointed safe rollback, while inventory, order-status, blog-publication, campaign, price and Builder corrections use fresh/manual domain workflows. Gemini receives checkpoint/proposal tools but no live execute tool; its durable workflow tools queue deterministic internal read work only. Transfers, cancellation/refunds/payment/shipment changes, pickup/POS lifecycle mutations, model-side product/bulk publication (human-approved CSV imports use the ordinary importer), arbitrary customer contact/group membership, unbounded catalogue repricing and arbitrary repository coding remain unavailable; Phase 7D adds separately gated human publication checks, approval and exact rollback after a completed Phase 7C save. The complete Website Builder tools add exact navigation/header/footer, appearance, page lifecycle/SEO, section creation/removal and checked publication proposals; authenticated humans approve each change. Mink cannot access shell/repository or deploy. Operators control every gate and inspect redacted metrics at `/dashboard/mink`; the live harness is `npm run mink:eval`, and the phase-wise manual catalogue is `docs/mink-ai-test-prompts.md`. An explicit global disable or missing invite retains the canned coming-soon response. Architecture and phased rollout are tracked in `docs/mink-ai-dashboard-plan.md`. |
+| Testing   | Vitest + Testing Library + jsdom, coverage via v8 (`coverage/` is generated output — never edit)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Browsers  | **`browserslist` in package.json is the stated floor: Chrome/Edge 111, Firefox 128, Safari/iOS 16.4.** Not a preference — Tailwind v4 depends on `@property` and `color-mix()` and does not work below it, so this records a constraint a dependency already imposed rather than inventing one. Two authored CSS features sit BELOW that floor and so are always available: `:has()` (Chrome 105+/Safari 15.4+/Firefox 121+) and container queries (Chrome 105+/Safari 16+/Firefox 110+), both used by the dashboard table compaction, which is nonetheless wrapped in `@supports selector(:has(+ *)) and (container-type: inline-size)` so the dependency is stated where it is used and stays graceful if the floor is ever lowered. **⚠ There is NO cross-browser test infrastructure** — vitest runs in jsdom, which renders nothing. Chrome is the only browser this has been exercised in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Deploy    | **Google Cloud Run** via branch-specific Cloud Build triggers (`dev` → `storemink-web-dev`, `main` → `storemink-web-prod`; Dockerfile + `cloudbuild.yaml`). ⚠ The STAGING DEPLOYMENT was removed 2026-09-08 — no `staging` branch, no `storemink-web` service, no `staging.storemink.com`; **dev is the only pre-production environment**. The `storemink_staging` DATABASE remains and is dev's, so `db:migrate:staging` and `db:drift:staging` still target a live database despite the name. The Cloud Build deploy owns the complete runtime environment; Mink's model and limit settings are declared as substitutions. The global runtime defaults enabled, and the operator's per-store Mink AI switch is the fail-closed merchant boundary. ⚠ `_MINK_BETA_REQUIRE_INVITE` is RETIRED but still declared (empty) and read by a shim at the top of `build-push`: this file sets no `substitution_option: ALLOW_LOOSE`, so a trigger that still supplies the key would fail every build against a template that no longer mentions it — i.e. production would stop deploying until somebody remembered a manual step. The shim keeps the merge safe and warns in the build log; delete it and the default once all three triggers have had `--remove-substitutions` applied (**docs/gcp-ci-cd.md**). ★ MEMORY IS NOT A SUBSTITUTION: `storemink-web-prod` has run with 2 GiB (still 1 vCPU) since revision `storemink-web-prod-00151-b9r` (2026-10-23, owner-approved, set once with `gcloud run services update --memory=2Gi`, after "Memory limit of 1024 MiB exceeded" on 12 and 16 Oct during `/_next/image` and upload bursts). The deploy step passes no `--memory`, so every later deploy keeps it; adding one there would also set dev, which shares the step and stays at 512 MiB. Production alerts, uptime checks and their email channel: **`docs/monitoring.md`** (created by `scripts/prod-monitoring.py`). CI on GitHub Actions (`.github/workflows/ci.yml`) runs the same eight checks as **FOUR PARALLEL JOBS** — `checks` (lint, typecheck, **db:lint**, **help:lint**, prettier), `test`, `shuffle` and `build`. Beside them a fifth job, `renderer` ("Native theme layout regression"), runs `scripts/theme-studio-renderer-check.mjs` and then `scripts/theme-studio-contrast-check.mjs` in offline Chromium (TS-1G, 2026-10-24); the contrast step runs even when the layout step fails, so one push reports both. ⚠ They are deliberately independent: nothing here needs another's output, so a `needs:` between them would only restore the 26.7-minute sequential run this split removed (measured on run 34834617499, where the two test invocations alone were 669s + 591s of 1603s). A `concurrency` group cancels a superseded run, because two pushes 22 seconds apart used to produce two complete runs and only the newer one's answer is ever read; it is safe because this workflow DEPLOYS NOTHING — Cloud Build owns that. `npm run typecheck` runs `next typegen` before `tsc --noEmit` because the Next-managed `next-env.d.ts` is deliberately gitignored and a clean checkout otherwise has no static-image or route declarations. The TypeScript process runs with an explicit 4 GiB V8 heap limit, avoiding the approximately 2 GiB default that exhausts memory on the full project on an 8 GiB Mac; type checking remains strict and includes tests. **`npm run build` gets the same explicit 4 GiB heap, through `NODE_OPTIONS`**: Next 16.3 type-checks by spawning `tsc` as a separate process (`experimental.useTypeScriptCli` defaults on) that inherits the parent's ENVIRONMENT but not its command-line flags, so `node --max-old-space-size=4096 next build` does not reach it (measured: the child still died at ~2 GiB). From 2026-10-07 the default limit ran out of memory in CI's Build job ("Failed to type check") while the separate typecheck job, already on 4 GiB, passed. The script, not the workflow, carries it so the Docker build Cloud Build runs for deploys gets it too, and it appends any `NODE_OPTIONS` already set rather than replacing it. **★★ DATABASE DDL IS NO LONGER A MANUAL GATE (2026-09-09): `cloudbuild.yaml` applies it, in the pipeline, before the deploy** — `build-push` → `tip-check` → `migrate` → `deploy`, with a failed migration stopping the deploy. No developer needs the production superuser credential, and the schema can no longer be behind the code. `npm run db:migrate:prod apply` still works and is now the emergency path only. Full contract, authoring rules and troubleshooting: **`docs/migrations.md`** (read it before writing a migration); the recovery tools stay in `drizzle/manual/README.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 > **Mink Phase 7D map update (2026-09-05):** With drafting plus Builder
 > Manage, Mink may create one 5-credit immutable private generated-code
@@ -312,7 +312,115 @@ tokens (about ₹9) and read as photographs, not composites. Tests:
 chat card, `skills` and `image-upload` (which pins that the editor offers
 no scene). ⚠ Not run in a browser. ⚠ The per-store image ceiling
 (`reserveMinkImageGeneration`: 10 an hour, 25 a day) can be reached by a
-merchant shooting a whole catalogue in one day.
+merchant shooting a whole catalogue in one day (a draw Google refused or
+never received gives its place back since 2026-10-23: the next section).
+
+### Mink image calls: free retries, refusals that spend nothing, tools that stop at their deadline (2026-10-23)
+
+Robustness audit B3, B6 (the tool and media side), B10 and B25 (the image
+part), wave 1, with its review fixes (2026-10-24). Built and verified by
+unit and mutation tests and the whole-tree typecheck; not yet run against
+live Vertex. Wave 2 (2026-10-24) wired the run's own signal to every tool
+and the storefront redesign's tools to `commit` (B6, below), and gave
+storefront personalisation's photos the same give-back (B3).
+★★ A TOOL'S DEADLINE NOW STOPS ITS WORK (B6). `MinkToolRegistry.execute`
+(`lib/mink/tools/registry.ts`) used to race the tool against a timer and
+walk away, so a picture still being drawn after the chat said the tool took
+too long was stored, saved and charged anyway. Every tool's
+`execute(actor, args, context)` now receives a `MinkToolContext`: `signal`
+(fires at the tool's timeout, or when the run's own signal, passed as
+`execute(actor, call, { signal })`, fires), `deadlineAt`, and
+`commit(write)`, the gate for a tool's last write. After the time is up
+`commit` refuses with `MinkToolTimeoutError` and the write never runs; a
+write already under way, or one that just completed, holds the timeout for
+up to `TOOL_COMMIT_GRACE_MS` (60 s), so what the merchant was charged for is
+what the chat shows. ★★ 60 S, NOT 15 (the review): a commit is several
+transactions (the image tool's Media row, the credit reads, the charged
+draft), and since B27 each may wait 5 s for a connection and hold a statement
+30 s on a lock, so a 15 s grace let a charge land after the chat had called
+the tool timed out. A write that outlives even the minute is logged
+(`mink.tool: write outlived its grace`, logError, with the request, store,
+admin and tool ids) so an operator can give the charge back. ★ The timeout is reported BEFORE the signal fires, or a
+tool that rejects on its signal wins the race as `tool_failed`. A run that
+has already stopped never starts a tool. Tools that ignore the context
+behave as before.
+★★ THE IMAGE CHAIN STOPS AT THE TOOL'S DEADLINE. `generate_storefront_image`
+has 100 s (`MEDIA_TOOL_TIMEOUT_MS`, was 50 s) and `runBudgetMs` 220 s (the
+timeout, the 60 s commit grace and a minute; `MEDIA_TOOL_RUN_BUDGET_MS`, under
+`MAX_RUN_BUDGET_MS` 300 s), so the run (`MINK_RUN_TIMEOUT_SECONDS`, 180 by
+default, stretched by `extendRunDeadline`) outlasts it, grace included, and the
+model still has a minute after it.
+`createMinkMediaImageProposal` passes the tool's signal, and its `deadlineAt`
+less `POST_DRAW_RESERVE_MS` (10 s, for the upload, the Media row and the
+draft), to `requestMinkImage`, which cuts each try's clock to the time left,
+never starts a try with less than `MIN_IMAGE_ATTEMPT_MS` (25 s; a 2K picture
+takes 17 to 20 s) and never waits a wait that would leave less. Two quick
+refusals and a full try (about 80 s) fit. A picture drawn after the stop is
+not stored (`MinkToolTimeoutError`); a stop during the upload removes the
+stored object; the Media row and the charged draft are one `commit`. Called
+outside a tool, the proposal gives itself the same 100 s.
+★★ A 429 IS ASKED AGAIN, NOTHING ELSE IS (B10). `requestMinkImage`
+(`media-generation.ts`) is the one loop chat images and Refine share, on the
+shared `minkVertexClient` (B25; both built a new `GoogleGenAI` per call).
+Vertex answers 429 before the model runs, so asking again is never a second
+bill: two more tries after a jittered 5 to 15 s wait, at the same model and
+location (never another region), each try on its own clock
+(`MINK_CHAT_IMAGE_RETRY`: 45 s a try; `REFINE_RETRY`: 60 s) where one clock
+used to cover the whole call, refusals and waits included. A timeout or a 5xx
+after the request was sent may have drawn and billed a picture nobody
+received, so that is still one paid attempt, never retried. `abortable`
+(theme-studio) ends a try at once even while the SDK is still
+authenticating, and the stop also aborts the request in flight. Other
+callers keep their own policy: storefront personalisation the whole-call
+45 s clock with 4 to 6 s waits, the revamp's product photos a single 75 s
+attempt.
+★★ A PICTURE GOOGLE NEVER DREW GIVES ITS ALLOWANCE BACK (B3).
+`reserveMinkImageGeneration` returns an allowance whose `giveBack()`
+releases the store's hour, the store's day and the platform's hour, once,
+and only when `isUnbilledImageFailure` says nothing was billed: every try
+that was sent answered 429 (`MinkImageRateLimitedError`), or nothing was
+sent (`MinkImageNotSentError`: no project, an unusable prompt document, a
+stop or a deadline before the send). Never for a timeout or a 5xx after
+sending, a filtered answer or a picture that came back. The per-minute and
+per-run caps stay spent, because they also stop a loop of refusals. The
+release lands only in the window that counted the claim (`claimedAt`, see
+"A SPEND CLAIM IS ALL OR NOTHING" under storefront personalisation). Error
+codes, words and statuses are unchanged, so callers that do not check keep
+their behaviour. Storefront personalisation's photos follow the same rule
+since 2026-10-24 with their own claim (`photoLimits`), given back once after
+the photo pool (see "A PHOTO GOOGLE NEVER DREW GIVES ITS SHARE BACK" under
+storefront personalisation).
+★ REFINE (`lib/mink/image-refine.ts`, `POST /api/mink/image-refine`) uses the
+same loop and the same allowance: `maxDuration` 180, `REFINE_DEADLINE_MS`
+150 s, a stop that fires when the merchant leaves (`request.signal`), the
+model's answer due 15 s before the deadline (`REFINE_POST_RESERVE_MS`), and
+`refine_stopped` (504, "Refining took too long. Nothing was charged; try
+again.") when the stop fires after the model answered: nothing is stored or
+charged, and a copy already uploaded is deleted. ★ LEAVING INSIDE THE APP IS
+LEAVING TOO (the review): `ImageUpload` keeps the Refine request's
+`AbortController` and aborts it when the editor unmounts (an in-app link, a
+dialog closing, a gallery slot removed), so the request ends the way closing
+the tab ends it; an answer that lands after that is ignored. Before, an
+in-app move kept the request open and the photo was made and charged for
+somebody who had gone. ⚠ Change background's editor (`background-editor.tsx`)
+does not abort its request on unmount yet.
+★ THE RUN'S STOP REACHES ITS TOOLS (wave 2, 2026-10-24): `runMinkAgent`
+takes `abortSignal` and calls `registry.execute(actor, call, { signal })`,
+and the stream route hands it its run controller, which fires at the run
+deadline and when the merchant leaves. So a stopped run stops its tools'
+paid work at once, and a tool not yet started never starts. The storefront
+revamp's start and refine tools queue their job through `commit` (see the
+storefront revamp section); `orchestrator.test.ts` and the stream route's
+test check that the run deadline and a client disconnect reach a real
+registry tool's `context.signal`. ⚠ Not run against live Vertex: the request
+shapes are the verified 9E ones. Tests:
+`media-generation`, `media-image-proposals`, `tools/registry`,
+`tools/media-tools` (the real registry, tool, proposal and generation over a
+mocked SDK), `image-refine`, `spend-limits`,
+`app/api/mink/image-refine/route` and `components/ui/image-upload` (the
+unmount stop). No merchant step changes, so no Help
+Centre update: the published Refine wording ("taken only when a refined
+photo comes back") still holds.
 
 ### Mink Sidekick parity: streaming, navigation, skills, charts, memories, categories (2026-10-17)
 
@@ -551,9 +659,11 @@ editors (`offers/offer-form.tsx`, `categories/categories-management-view`
   conversation and remounts when a new conversation gets its id or the panel
   swaps with the full view, and a loop inside it died mid-sentence on every
   such remount. `useMinkVoice()` hands it to the composer's "Talk with Mink"
-  toggle and to `app/dashboard/mink-voice-view.tsx`, the full-screen view
-  that replaces the thread while voice chat is on (status, a large waveform,
-  "You said", the sentence Mink is saying, Stop while replying, End; the
+  toggle and to `MinkVoiceBar` (`app/dashboard/mink-voice-view.tsx`), which
+  takes the composer's place while voice chat is on (status, the sentence
+  Mink is saying, a waveform once the chat is wide enough, Stop while
+  replying, End; the thread stays on screen above it, see "Voice chat lives
+  inside the chat" below; the
   composer stays mounted but `hidden`, so staged uploads survive, and a
   spoken turn takes them along: the composer registers with `ChatProvider`
   (`registerComposer`), which routes each transcript through its
@@ -768,6 +878,23 @@ storage, a deleted file breaks a storefront). Another STORE's reference never
 counts.
 ★ `deleteMediaAsset` REFUSES an image a product uses, naming the products, and
 refuses when it cannot tell; the Library's delete dialog says so first.
+★★ SINCE 2026-10-22 IT ALSO REFUSES ONE A PAGE (Builder draft or live), THE
+HEADER OR FOOTER (draft or live), A CATEGORY OR A STOREFRONT REDESIGN STILL
+USES, naming the place (`lib/media/image-usage.ts`, one store-scoped query;
+`imageInUseMessage` in library-types.ts). Applying a redesign files 20 or so
+photos in the Library as "Made by Mink AI" that no product uses (until then
+they are hidden, `mink_prepared`), so deleting one took the picture off a live
+page, and while they were listed before Apply it broke the card's preview and
+made its Apply refuse for ever. A redesign holds its photos only while it can
+still write them (being made, a card nobody applied in a chat that still lists
+it, the parent a refinement being made may carry from); once applied, they are
+protected where they are shown, so a photo replaced everywhere can go. Pages,
+chrome and a redesign's request, plan and result are searched as text, which
+fails toward keeping. Tests: `media-actions.test.ts`, `library-types.test.ts`
+and the rollback-only `media-actions.local.test.ts`
+(`MEDIA_LIBRARY_LOCAL_TEST=1` or `MINK_REVAMP_LOCAL_TEST=1`). ⚠ The dialog
+still warns up front only about products; blog covers, the logo and other
+pending Mink proposals are not checked.
 ★ EVERY ADD-IMAGE CONTROL IN THE PRODUCT EDITOR ASKS WHERE THE PHOTO COMES
 FROM (`components/ui/image-source-menu.tsx`): **Upload from computer** opens
 the file dialog (inside the click, so the browser allows it), **Choose from
@@ -1113,9 +1240,13 @@ PDP's PIN check, extracted so the action and Mink quote identically),
 running offers from `readMinkCurrentOffers` (since the review fixes
 `readMinkShopperOffers`, only what a shopper can see; its actor narrowed to
 `Pick<"storeId"|"effectivePlan">`), the published policies as text, the
-hours, the last six messages), and makes ONE Vertex call
-(`mink-model.ts`: no tools, no session, `responseJsonSchema`, LOW thinking,
-25 s per attempt, one more attempt only after a stall) with the system
+hours, the last six messages), and answers with ONE structured Vertex call,
+no tool loop (`mink-model.ts`: no tools, no session, `responseJsonSchema`, LOW
+thinking, 25 s per attempt; a 429, a 5xx, a dropped connection or a stall gets
+one more attempt on the main model, then gemini-3.5-flash at the Mink
+fallback location once, then a hand-over; a 403 or 404 from the main model
+goes straight to the fallback; any other 4xx hands over at once: below) with
+the system
 instruction from
 `docs/mink-ai-whatsapp-prompt.md` (`lib/mink/whatsapp-prompt.ts`, the
 image-prompt loader's shape; one-pass render, traced into standalone and
@@ -1171,14 +1302,52 @@ stall is the provider not answering, not a slow generation.
 `callMinkWhatsAppModelWithRetry` gives each attempt its own 25 s and asks
 again only when the attempt's own signal fired (`isModelStall` reads the
 signal, not the error's name, because the SDK surfaces the abort as a plain
-"This operation was aborted"); a refusal, a 4xx or unreadable JSON is final.
-Nothing is charged for a stall, so the retry spends tokens, never a credit,
-and `whatsapp_mink_answers` is unchanged. The eval reports `attempts` per
-case and `stalledOnce` in its summary.
+"This operation was aborted"); a 4xx other than 429 or unreadable JSON is
+final. Nothing is charged for a stall, so the retry spends tokens, never a
+credit, and `whatsapp_mink_answers` is unchanged. The eval reports
+`attempts`, the answering `model` and `retries` (stalls, busy) per case, and
+`stalls`, `busyRetries` and `fallbackAnswers` in its summary.
+★★ AND A BUSY MODEL IS ASKED AGAIN, THEN ANOTHER POOL (robustness audit B11,
+2026-10-23). A 429 used to hand the customer to a person at once.
+`callMinkWhatsAppModelWithRetry` now gives a 429, a 5xx, a dropped
+connection or a stall one more attempt on the main model
+(`MINK_WHATSAPP_MODEL_ATTEMPTS` 2; after a 1 s pause,
+`MINK_WHATSAPP_RETRY_DELAY_MS`, unless it stalled), then asks
+`config.fallbackModel` (gemini-3.5-flash) at `config.fallbackLocation`
+(asia-south1) once (skipped when it is off or the same as the main model),
+then throws, which hands over. ★★ A MAIN MODEL THAT REFUSES OUTRIGHT (403 or
+404: retired, a wrong id, not enabled at its location) IS NOT ASKED AGAIN AND
+THE FALLBACK IS (review of B11, 2026-10-24), as the dashboard chat (B9), the
+attachment reader (B12) and Generate with AI (B2) already do; it used to hand
+every customer to a person while the fallback stood ready. Logged loudly
+(`whatsapp mink: main refused`, logError), because it is a configuration
+fault, not a busy pool; with no fallback the refusal is thrown as it came,
+and a fallback that is busy too does not replace it as the failure reported.
+Any other 4xx that is not 429 (400, 401, 422), a safety block and unreadable
+JSON stay final. A fallback that refuses outright is logged
+(`whatsapp mink: fallback refused`, logError) and the main model's failure
+is thrown. Each failed attempt logs `whatsapp mink: model attempt failed`
+(model, location, attempt, status, stalled, ms; never the facts or the
+message). The answers ledger's `model` names the model that answered. The
+credit is still taken only after a parsed answer, just before the send, so
+retries spend tokens, never a credit; a customer waits at most three 25 s
+budgets (about 75 s, up from 50). The call uses the shared
+`minkVertexClient` (B25). `scripts/mink-whatsapp-eval.ts` grades through
+this function with the fallback off (`evalModelOptions` in
+`scripts/mink-whatsapp-eval-core.ts`, tested; the script itself runs and
+loads `.env` when imported), so the grade is the configured model's alone
+and an answer from any other model fails its case.
+`lib/whatsapp/mink-answer.ts` logs a recovered answer as `whatsapp mink:
+answered after a retry` (attempts, the model that answered). A 429 or 5xx
+still there after every attempt reaches its catch as the provider's error
+and is logged `whatsapp mink: model busy` (logWarn, status only) with reason
+`busy`, never as an error; a stall stays `timeout`, and a 400, a TypeError
+or a later step's 5xx stays `error` (only the model call can be busy).
 ★ Evals: `evals/mink/whatsapp.json` (21 cases; gate cases name their
 reason, answer cases their outcome and words) through
 `scripts/mink-whatsapp-eval.ts` (`npm run mink:whatsapp-eval`, offline;
-`-- --live --yes` sends the exact live request). Help: `20261014_0203`
+`-- --live --yes` sends the exact live request; its testable part is
+`scripts/mink-whatsapp-eval-core.ts`). Help: `20261014_0203`
 adds an Answers from Mink AI section to the automatic-replies guide and one
 sentence on the draft card to the inbox guide. Stories WA-8.x. ⚠ Not built:
 reading a photo the customer sent, per-location stock in the sheet, a
@@ -1863,7 +2032,12 @@ caps without charging is a pure cost increase. `lib/ai/quota.ts` reads the flag
 in ONE place, so the quota gate, the dashboard's "X of Y used", the
 affordability check and settlement can never quote different numbers — the
 `docs/cron-jobs.md` lesson that a step which must be remembered per surface is
-one that gets forgotten.
+one that gets forgotten. ★ The two kinds of spend fail differently, and both
+fail free: a Mink chat run that fails owes nothing (it meters zero, band 0),
+while Generate with AI takes its credit
+BEFORE the model is asked and, since 2026-10-23, gives it back on every way
+out that does not deliver (`refundAiQuota`, convention §16; robustness audit
+B1).
 
 **Migration 0100** adds `credit_source` / `plan_credits` / `balance_credits` to
 `mink_usage_ledger` and `consume_mink_run_credits`. It spends from `ai_usage`
@@ -1912,9 +2086,756 @@ written yet — nothing a merchant does has changed, so the gate in AGENTS.md
 says write nothing), and a reconciler for runs left with a NULL
 `credit_source`. Failed and cancelled runs are deliberately left unsettled:
 they owe nothing, and `discardFailedMinkRunDrafts` already compensates any
-proposal credits they reserved.
+proposal credits they reserved, except a storefront redesign's card, which
+a failed run keeps (B4, storefront revamp section).
+
+### Voice chat lives inside the chat, and starts on 3.5 Flash in Mumbai (2026-10-20)
+
+The owner tested storefront personalisation by voice on production: Mink said
+"check the review card once it appears", but the full-screen voice view hid
+the thread, so the card (and its Apply button) could not be reached without
+ending voice chat; and voice "still feels very slow". Owner's decisions, both
+asked with measurements:
+★★ VOICE CHAT LIVES INSIDE THE CHAT (ChatGPT's default since late 2025). The
+thread stays on screen while the merchant talks: their transcripts as
+messages, every written answer, every card. `MinkVoiceBar`
+(`app/dashboard/mink-voice-view.tsx`) takes the composer's place: the status
+(`minkVoiceStatus`), one caption line (`minkVoiceCaption`: what Mink is saying
+now, since the spoken block is not in the written answer, or the words heard
+while they wait to be sent), a waveform, Stop while a reply runs, End (focus
+lands on it; Escape inside the bar ends voice chat), and the loop's notice.
+It is sized by a container query, not the window: the side panel can be
+380px wide on a large screen, so the waveform and the Stop label appear only
+from `@md` of the bar's own width. Touch screens get 44px buttons. The
+composer stays mounted and `hidden`, as before (staged uploads survive); the
+history sidebar and New chat stay hidden while voice chat is on. Gone: the
+full-screen view and the thread-scroll repair it needed when voice ended
+(`voiceHidThreadRef`). The Help guide already said the written answer and
+cards appear in the chat, which is now true while talking, so no Help edit.
+★★ VOICE TURNS START ON THE FALLBACK TARGET, gemini-3.5-flash at
+asia-south1, with the main model (gemini-3.7-flash at global) as their
+failover (`config.voiceStartsOnFallback`, `MINK_VOICE_ON_FALLBACK`, on unless
+"false"/"0"; `_MINK_VOICE_ON_FALLBACK` in cloudbuild.yaml). Typed chat is
+unchanged. Measured on storemink-staging with the real routed prompt for a
+spoken personalise request (one tool call, the context result as the tool
+response): the answer started 15 to 18 s after the question on 3.7 global
+and 6 to 10 s on 3.5 Mumbai; the spoken "let me check" came at 5 to 9 s
+against 1.5 to 5.5 s. 3.5 with MINIMAL thinking answered in 3 to 8 s but
+skipped the acknowledgement (not chosen); 3.7 Flash refuses MINIMAL (400).
+Through `createVertexMinkSession` a spoken "How many orders today?" started
+on gemini-3.5-flash@asia-south1 and finished, tool included, in 8.6 s cold
+and 2.5 s warm. A fallback this instance watched fail (or refuse) in the last
+minute is not where a voice turn starts: a refusal (404/403) is now also
+remembered in `provider-health.ts`, because 3.5 at asia-south1 was verified on
+staging only and every voice turn would otherwise pay a production refusal
+first (watch for `mink.model: fallback refused`). ⚠ COST: Google's pricing
+page does not list 3.5 Flash; third-party trackers give $1.50 / $9.00 per
+million input/output tokens against 3.7 Flash's $0.75 / $3.75 until the end
+of 2026, so a voice turn costs StoreMink roughly twice as much per token
+(3.5 thinks less, which narrows it). Since 2026-10-23 `estimateMinkCost`
+prices 3.5 Flash ($1.65 / $9.90 per million tokens at asia-south1, where voice
+turns run; robustness audit B24), so voice runs carry a cost estimate; credits
+are band-based and unaffected. Also measured: Saaras v4 transcribed the test question in 0.5 to
+0.9 s and heard "Eco Store"; Chirp 3 at `us` took 4 to 8 s and heard "echo
+store" (the platform's speech-to-text choice is on the Mink runs console
+page). Tests: `mink-voice-view`, `dashboard-chat` (the thread and a card stay
+usable during voice), `vertex-failover` (voice starts on the fallback, fails
+over to the main model, skips a fallback that just failed or refused, and
+stays on the main model when switched off) and `config`. ⚠ Not run in a
+browser end to end (the bar was checked rendered at 360, 420 and 900px).
+
+### Mink storefront revamp: the whole storefront redesigned as a background job (2026-10-21)
+
+"Customise my store for my business" (or the `personalise-store` chip)
+redesigns what shoppers see in a background job and ends in ONE review card
+in the chat. Build contract: `docs/mink-storefront-revamp.md` (when it and the
+code disagree, fix one in the same change). Migrations
+`20261021_0234_mink_storefront_revamp` (both tables, the free card's credit
+check) and `20261021_0235_mink_storefront_revamp_help` (replaces the Mink
+Website Builder guide's personalisation paragraph in place, the Media
+guide's two sentences on what the Library lists and what cannot be deleted,
+and the general Mink guide's Media Library sentence, which now says a
+redesign's photos are listed once it is applied).
+★★ THE OWNER'S DECISIONS (2026-10-20/21), each held in code: one design at
+once, no direction to pick; products only from the merchant; a store's first
+full revamp is free, later ones and refinements are charged once for what
+they make and still show at today's prices (`REVAMP_PRICES`, contract.ts, at
+most 200), never for what a refinement carries or for a failure, never shown
+as a figure; a category changes only where the merchant said yes; English,
+no long dash; Apply, Publish and Undo are human clicks. `ownership.ts` names
+each section and photo theme, mink or merchant (in doubt, the merchant's):
+the first two are replaced, a merchant's is kept by id, and the policy pages
+(`REVAMP_SKIPPED_SLUGS`), custom code and the installed theme are never
+written.
+★ THE CHAT. Three drafting tools (`lib/mink/tools/storefront-revamp-tools.ts`,
+results sent to the model without the card): `get_storefront_revamp_context`
+(Builder view), `start_storefront_revamp` and `refine_storefront_revamp`
+(Builder manage; photos named by the parent plan's ids or "opening", an
+unknown id refused with the valid ones); `request.ts` (pure) names every
+argument issue at once. Refusals, in the order a merchant can act: no theme
+yet, Categories or Products manage missing for what was asked, a photo the
+store does not own (never fetched), the product cap, a ready unapplied card
+in the chat (unless `replace_earlier`), ten refinements of one revamp, six
+starts a day (given back when no job comes of it, and once by a redesign that
+fails, to the window that counted it: `revampStartLimit` in `jobs.ts`,
+robustness audit B5), a paid budget below `revampFixedCreditCeiling`, a job
+already active (or an earlier one still stopping: "try again in a minute").
+The `revamp` group
+(`lib/mink/tool-routing.ts`) comes on wording that asks to redesign the
+store, for `INTERVIEW_TURNS` (3) merchant messages after one that did, and,
+while the chat holds a ready or building redesign, for a follow-up, a pages
+or photos message or a catalogue change; a ready card brings refine, not
+start, and one being built neither. Each turn of such a chat carries a
+flags-only reference to its revamps (status, applied, published, undone),
+never their text. Prompt
+versions `read-beta-v38` / `draft-action-beta-v61`, registries
+`read-beta-v28` / `draft-beta-v47`.
+★★ THE JOB is a `mink_revamps` row (`jobs.ts`, service-only).
+`createRevampJob` takes a per-store advisory lock and decides ONE ACTIVE JOB
+PER STORE (`mink_revamps_one_active_idx` is the backstop) and THE FREE FIRST
+REVAMP: free while no other free full revamp is queued, running, ready or
+superseded, so a failed or stopped one gives it back
+(`FREE_HOLDING_STATUSES`; `mink_revamps_free_check` lets only a full revamp
+be free). ★ `mink_revamps_ready_check` (a ready revamp has its draft) is why
+History refuses to delete a chat holding a live revamp
+(`MINK_LIVE_REVAMP_STATUSES`, 409 `conversation_has_redesign`).
+`mink_revamp_images` holds one row per stored photo, unique per (revamp,
+role, slot), so a resumed run reuses every paid photo.
+★★ THE RUNNER (`runner.ts`) runs in `/api/internal/mink/revamps/run`
+(CRON_SECRET bearer, maxDuration 1200, 503 claiming nothing while Mink AI is
+off), one job per process (`REVAMP_RUNS_PER_PROCESS`), since it shares the
+public web service. A claim is one conditional UPDATE (a new lease token, 5
+minutes renewed every 60 s) and every write is fenced on that token.
+★★ A CLAIM IS NOT AN ATTEMPT (robustness audit B8): `attempts` counts a
+step's real failures, and four in a row fail the job. A wait on Google (a
+transient `model_unavailable` or `photos_unavailable`, or any
+`RevampRetryLaterError` such as the platform's photo hour) is parked with
+`counted: false`. A deadline hand-over counts only when it caught a step
+that calls no model still running; `REVAMP_GOOGLE_BOUND_STEPS` (plan,
+compile, photos, products) count nothing. A claim whose process died with
+nothing handed back counts nothing (`result.interruptions`, for the logs).
+The count restarts at 0 when the step changes or when a deadline hand-over
+stored new photos. What ends a job that never finishes is
+`REVAMP_RUN_CEILING_MS` (4 hours from `result.firstClaimedAt`, which the
+claim writes once and every save keeps): past it the claim refuses the job,
+no kick or sweep picks it up, and the status read or the sweep fails it as
+`out_of_attempts` with detail `run_ceiling` (a card already made still ends
+ready). ★ A failed redesign gives the store's day's start back once
+(`settling` in `jobs.ts`, B5), after the transaction that failed it commits,
+to the window that counted it (`claimedAt` = the job's creation time); a job
+someone asked to stop keeps its start, as a cancelled one does. Authority is
+rebuilt at every claim (`actor.ts`). At 18 minutes it drains (no new paid
+call; a photo draw, or a check of a shoot photo, still waiting for its turn
+stops waiting, the shared capacity's `admission` signal) and hands over to the next invocation once
+the calls in flight end, at most 90 s later; a transient failure parks the lease; a closed
+`step-error.ts` code fails the job (every closed code, when it is used and
+the sentence the card shows for it: `docs/mink-storefront-revamp.md`
+section 4.3). Paid calls are counted as they return
+(`onUsage`); the steps are ports (`ports.ts`, bound in `deps.ts`). ★ A card
+already made and paid for ends ready whoever settles the job
+(`finishMadeCard`), so a charge never loses its card; a chat run that fails
+or is stopped never cancels or refunds the redesign it started (B4, below).
+★ NOTHING SCHEDULES IT ON DEV (owner's rule): `trigger.ts` kicks the run
+route after the insert, at a hand-over and from the card's poll for a
+stalled job (once per 30 s, `last_kick_at`); only production schedules the
+per-minute `/api/cron/mink-workflows` and its `sweepStalledRevamps(5)` (and
+`closeStaleMinkRuns`, B7 below).
+★ THE STEPS, each saved before the next. `snapshot.ts` reads the Builder
+draft and the store once. `site-planner.ts` makes one HIGH-thinking
+`gemini-3.8-flash` plan through Theme Studio's `gemini-vertex.ts` on the
+planner's own scope of the shared provider capacity
+(`REVAMP_PLANNER_CAPACITY_SCOPE`, plans and repairs alike, so a 97 to 244 s
+planning call never holds a permit the photo checks need), a second call
+only after a transient failure (`fake-plan.ts` is the free offline plan).
+`site-schema.ts` (prompt
+`mink-revamp-site-v5`) prints every section example complete, with nothing to
+copy (DISTINCT BY DEFAULT, below), and asks for a
+photo-led homepage opening on a 2 to 3 slide carousel, with the store's saved
+brand voice as fenced data for tone (`<brand_voice>`, cut to 3,000
+characters; `actor.ts` reads the saved guide only, never the theme-built
+stand-in, and a read error is retried like any database error rather than
+read as no voice; robustness audit B17) and the
+playbook's industry scored over the merchant's words (`revampIndustryGuess`:
+product and category names count three times, the business line twice, the
+rest once, phrases before single words; B15; beauty's oils are phrases, "face
+oil", "hair treatment oil", "beard oil", "argan oil", and a bare "oil" is
+food's only when no word reads as beauty or wellness, `INDUSTRY_TERMS`
+`weak`, so an oil-led skincare or grooming shop is not read as food). Every
+shot names its goods (B16, below). `site-compiler.ts` is strict for up to two
+repair calls (`REVAMP_PHOTO_FLOOR`: 3 homepage photos, 8 shots) and lenient to
+finish, also when a repair call fails; it mends only the palette colour that
+fails (`repairRevampPalette`, B18: the contrast rules unrelaxed, the theme's
+colours kept only when no repair passes, the card naming which) and sends a
+menu link labelled Home to `/` (`isHomeLabel`, B19) unless it goes to the
+store's own category, product or page called Home (`homeNamedLinks`: a
+lifestyle shop's Home category keeps its link; a theme sample never counts);
+`copy-checks.ts` holds English, the claims list (FSSAI's conditional words)
+and dashes.
+★★ DISTINCT BY DEFAULT (prompt v5; robustness audit, section 5, steps 1 to 3,
+2026-10-24). The audit found 62 of 70 layout choices (89%) equal to the one
+value the v4 examples printed, a near-white page in 4 of 4 known designs and
+one homepage skeleton in 6 of 6.
+`revampPromptExample(type, { seed, language })` prints every closed setting
+(`REVAMP_SECTION_CHOICES`, `site-compiler.ts`: a subset of what the validator
+keeps and of Theme Studio's `VISIBLE_SECTION_CHOICES`) as "choose one: ...",
+its options listed from a place seeded per store and redesign
+(`revampSeededOrder`), every word field as an instruction ("write in English:
+..."), every link as "choose one: a path listed in link_targets, or leave it
+empty" and every photo field as a shot, and leaves out what the compiler sets
+(`REVAMP_COMPILER_SET_FIELDS`: a band's source and ids, the trust bar's and
+the ticker's text colour). The playbook offers the industry's homepage
+structures (`revampPlaybookText`: Theme Studio's variety form, discovery,
+catalogue-first and story-first, after the opening, only types a redesign may
+add, in a seeded order; the photo-carousel opening stays every store's), only
+those at least a third apart (`REVAMP_STRUCTURE_MIN_DISTANCE`, Theme Studio's
+own sequence distance read through `fingerprintDistance`,
+`revampSectionSequenceDistance`), so food, hardware, wholesale and services,
+whose discovery and catalogue-first (or story-first) differed by one section,
+get two; and never the playbook's `defaults` ("soft corners", "quick-add
+emphasis"), one value per trade every store would copy (review fixes,
+2026-10-25). Each
+direction names its palettes, cream is explained in Theme Studio's own words
+(`REVAMP_CREAM_SENTENCE`) and a page colour the merchant asked for comes first
+(keep it, choose a direction whose palettes allow it), and `<earlier_designs>` carries this store's own
+earlier redesigns as fenced data (`RevampSiteInput.earlierDesigns`, cut to
+`REVAMP_EARLIER_DESIGNS_MAX`, 4,000 characters; a blank one prints nothing, so
+the prompt is the same byte for byte). The answer names its version
+(`promptVersion` in `REVAMP_SITE_SCHEMA`, read by
+`revampAnswerPromptVersion`); an answer that names none was planned under v4
+and compiles exactly as before. For a v5 answer (`Ctx.v5`) the compiler picks
+whatever the answer left out for the store with
+`revampSeededPick(seed, options)` (seed
+`revampDesignSeed(storeId, revampId)`): a section setting (a story alternates
+sides, a row with a photo is an image row, a trust bar icon follows its
+words), the direction (among those the page colour fits, the industry's
+first), the opening's height, button, text colour and side, the header's one
+link, the newsletter lines and a newsletter section's button and thank-you
+line (`REVAMP_NEUTRAL_COPY`: lines that pass the claim checks with no
+evidence and promise no frequency of email), and a search description's
+close. The default art direction names no light: a photo look varied across
+stores is step 9 (photo style choices), held for the owner, so the light list
+lives in the offline planner alone (`FAKE_PLAN_LIGHTS`). Text on a plain background follows that background
+(`revampTextThemeFor`: the trust bar, the ticker, a hero not over its photo, a
+split carousel's slides, a plain tile or banner, against its own background
+colour when it has one). An example's instruction copied into the answer is
+asked for again in a strict compile and cleared in the lenient one, never
+published (`isRevampExampleInstruction`); its issue names the field and the
+instruction's own opening words (`revampExampleInstructionPrefix`), never what
+follows them, since the runner logs issue sentences. ★ PALETTE HONESTY: the page colour
+is fitted to the chosen direction (`fitRevampPageToDirection`, by Theme
+Studio's `paletteFamilyIssues`: a tinted-neutral page is never near-white, a
+colour-field page is coloured itself): moved toward the store's accent in 5%
+steps, the least that fits (at most 60%), never across light and dark, with
+text the move leaves unreadable mended by B18's rules; else the theme's page
+when that fits; else the palette as it was. It is silent, needs no model call,
+and never applies where B18 kept the theme's page. ★★ ONLY A PAGE COLOUR MINK
+CHOSE (review fix, 2026-10-25): never in a refinement, and never when the
+merchant's words name a page colour (`revampMerchantNamesPage`: a page or
+background word beside a colour in any part of the brief or instruction, or a
+page-like colour such as white, off-white, cream, light or dark in the look,
+what to avoid or a refinement's instruction; never "white space", never the
+facts' "white bread"). Their page stays as the answer painted it, under the
+direction the answer chose, which only steers the photographs' mood, the redo
+memory and the check's preferences. The fake planner picks
+every choice the same way (direction, a palette of the direction's own page
+family, fonts, corners, appearance, one of the three structures, section
+settings), so dry runs vary by store and by redesign. ⚠ `revampImageMood` (the
+shoot's mood words and palette direction, picked for the store) is HELD, not
+wired, until the owner approves step 9 (photo style choices): `photos.ts`
+(`revampImageDirection`) sends every store of one direction that direction's
+name as its mood and no palette direction, and is not to call it before then.
+⚠ Two tests hold Theme Studio on purpose,
+`site-schema.test.ts` (its Stage A variety prompt carries
+`REVAMP_CREAM_SENTENCE`) and `site-compiler.test.ts` (`REVAMP_SECTION_CHOICES`
+within `VISIBLE_SECTION_CHOICES`), so a Theme Studio change to either fails
+here first. The prompt is about 7,800 characters (about 2,000 input tokens)
+longer per plan or repair call.
+★★ A REDO IS DISTINCT FROM THIS STORE'S EARLIER REDESIGNS (robustness audit
+section 5 step 6, 2026-10-24). `distinctness.ts` (pure) measures a plan over
+the store's current theme with Theme Studio's own `themeFingerprint`
+(`revampFingerprint`: the plan's colours, fonts and corners, and the header,
+card, product page and footer as `resolveStorefrontAppearance` shows them, so
+a card chosen on Basket counts; the homepage the plan writes; buttons,
+headings, page width, grid and motion stay the theme's). ★ The bar for two
+designs on one theme is `revampDistinctnessBar`: Theme Studio's
+`DISTINCTNESS_THRESHOLD` (0.35) times the share of the fingerprint the theme
+leaves to a plan, the shares read from `fingerprintDistance` itself. All four
+bundled themes fix 18 of 104 points (17.3%), so the bar is 0.289 (the audit's
+pairs, re-measured by `distinctness-calibration.test.ts`: crumb runs 2 and 3,
+0.166, below it; crumb against neem, 0.452, above). The audit's 27% on Basket
+counted the card as fixed because its mapping kept the theme's legacy grocery
+shorthand; the storefront shows the plan's card. `earlierDesignsSummary` gives
+the planner up to five earlier redesigns of this store
+(`REVAMP_EARLIER_PLANS_MAX`), newest first, one line each (about 340
+characters) of closed words only (direction, pairing key, palette family and
+page band, corners, homepage skeleton with its bands, image sides, opening,
+card, header, footer), never the store's words, names, links or photos.
+`makeDistinct` takes a full redesign closer than the bar to any of them. It
+changes only what the merchant's words do not name (`revampRequestedChoices`),
+each choice once, in this order, only for a strict gain, picked with
+`revampSeededPick`: band rhythm (the plan's own bands, as many quiet and
+strong ones, readable in its colours, under the compiler's band rules), image
+sides (only when they repeat a redesign it is too close to), the opening's
+height (large or screen), the card style (only a card the plan chose, never
+grocery) and the font pairing (only in a plan with a look of its own). The
+merchant's sections never change, a refinement is never changed, and a
+redesign of named pages keeps the store-wide card and fonts. It never fails a
+redesign: one that cannot clear the bar keeps its best plan (`too-close`), a
+check that throws keeps the plan (`error`), and its report is numbers and
+closed words only. About 2 ms for a ten-section homepage against five
+redesigns (measured); the work is the same on a 38-section page, and the tests
+count it (fingerprints and applied designs, `distinctness.test.ts`) rather than
+time it, so they hold with coverage on. Asked-for choices are found by English
+word-matching; ★★ words that ask to keep or reuse the design ("keep the same
+layout", "same homepage structure as before", "I liked the last design",
+"don't change the layout", "pehle jaisa", and the avoid field's "changing the
+layout"; never "didn't like the last design") and any letter outside the Latin
+script count as asking for every choice, so nothing is changed (review fix,
+2026-10-25). ⚠ A Latin-script ask in another language can still be missed;
+the fingerprint cannot see image sides, so that step adds variety a shopper
+sees without moving the distance.
+★★ THE REDO MEMORY IN THE JOB (robustness audit section 5, step 6, wired
+2026-10-24). For a full redesign the runner reads this store's own earlier
+redesigns once per invocation: `readEarlierRevampPlans` (`jobs.ts`) selects
+`plan -> 'plan'` alone, with the store id in the predicate, never the job
+asking, only a card the merchant saw (status ready or superseded) whose plan
+is compiled, newest first, at most `REVAMP_EARLIER_PLANS_MAX` (5). The plan
+call and every repair get their summary (`earlierDesignsSummary`) as
+`earlierDesigns`,
+and the plan, compile, finalise and repair calls get the redesign's id
+(`revampId`, which seeds `revampDesignSeed`, so a redo of the same store picks
+its own choices; `site-planner.ts` takes it from the step's context when a
+caller leaves it out). Once the plan is compiled, before the budget fit (so
+the uncut copy kept for a re-fit is the moved plan) and before any photograph,
+`makeDistinct` measures it over the store's current theme (the snapshot's
+theme id and version through `resolveInstalledThemeDefinition`). ★★ THE PLAN
+SHOPPERS SEE IS THE ONE RECORDED (review fix, 2026-10-25): the budget fit can
+drop what the check counted on (a balance below the design drops the colours,
+fonts and corners) while the earlier plans are the fitted ones their cards
+showed, so the fitted plan is checked again (`makeDistinctAfterFit`): what is
+still too close is changed by the same rules, nothing that costs a credit is
+added back, and the record's distances and verdict are the fitted plan's, each
+choice listed once from the planner's value to the shown one. A plan fitted
+again to a fallen balance before the photographs (`fitToBalance`) is checked
+again the same way and its record saved with it. Its report is
+saved as `result.distinctness` in the same fenced write as the compiled plan
+and carried by every later save (`RevampDistinctnessRecord`: status, passed,
+bar, the distances before and after, the choices changed and kept; numbers and
+closed words only, read back whole or not at all), and one log line,
+`mink.revamp.distinctness`, carries the redesign id, status, passed, bar,
+before, after and the number of changes. ★★ It never fails or delays a
+redesign: earlier redesigns that cannot be read (logged; the planner then gets
+no summary) and a theme the registry cannot serve record `skipped` with the
+reason `earlier_unreadable` or `theme_unavailable`, a check that throws
+records `error`, and the plan goes on as compiled. ★ A refinement reads no
+memory, its planner never sees `<earlier_designs>` whoever passed it, and it
+is never checked; a compile step resumed with a compiled plan is not checked
+again. `RevampRunnerJobs` takes `earlierPlans` and `theme` as optional side
+effects; a caller that leaves them out (production,
+`scripts/revamp-live-check.ts`) gets the production reads (`memoryDefaults`).
+⚠ `ports.ts` does not declare `revampId` and `earlierDesigns` on the plan,
+repair, compile and finalize inputs yet: the runner passes them through its
+own `RevampPlannerInput`. Tests: `runner.test.ts` (the redo memory block),
+`jobs.test.ts`, `site-planner.test.ts`, `jobs.local.test.ts` (another store's
+plan is never read) and `redo-memory.local.test.ts` (the real chain on
+`storemink_local`: an identical redo is moved past the bar before any
+photograph, and another store's identical design is never read).
+`photos.ts` draws one shoot through Theme Studio's pipeline
+(`gemini-nano-banana-2.1` at 2K with MEDIUM thinking since 25 Oct 2026,
+`gemini-3-pro-image` before; anchor first, reviewed, two redraws; a
+refinement adopts its parent's photos, `adoptRevampImage`).
+★★ REAL GOODS OR NO GOODS (owner, 2026-10-23, robustness audit B16). A
+redesign's banner, content and category photographs show the merchant's
+REAL products or none. Every shot has `goods` "merchant", with one or two
+`productKeys` from `revampGoodsCatalogue` (`site-compiler.ts`: a request
+product's key, "p1", or `shop:<slug>` for a product the store already
+sells; only products with a photo of their own that the store owns, never
+one under another store's prefix, and one the photos step can read: the
+snapshot lists those by the bucket's own rule, `photos.readable`, objects
+under this store's prefix, so a catalogue imported with outside links is
+never told photo=yes; a snapshot read before the list falls back to the
+address naming this store's folder), or "none" (a setting, materials,
+ingredients or props, no products). The compiler drops a key that names no
+such product, keeps a category shot to its category's products, keeps at
+most two (`REVAMP_SHOT_MAX_PRODUCT_KEYS`) and turns goods with no key left
+into "none", a strict compile asking the model to fix it; ★ a shot that
+lost products has its words written again (`revampShotSubjectFor`: exactly
+the products it shows, or the store's setting with no products in the
+picture), since the model's may name them, and a shot with no products has
+nobody in it (`people` "none"); a carried photograph keeps its words.
+`revampShotGoods` (`contract.ts`) reads a shot compiled before v5 as "none".
+`resolveShotGoods` (`photos.ts`) finds each key through the same catalogue
+(the runner hands the photos step the job's request, so "p1" resolves) and
+reads the photo through `readStoreOwnedImageBytes(url, storeId)` (this
+store's objects only). It sends the photo, a WebP of at most 1536 px, as a
+reference with role `product`, labelled `PRODUCT:` (`image-provider.ts`,
+`image-vertex.ts`), after the anchor and within the three-reference limit.
+A shot whose product photo cannot be found or read shows no products (or
+only those read), logged without names, keys or URLs, and is described by
+`revampShotSubjectFor` too, its brief, check and alt text alike. Rule 2 of
+the image prompt is the `{{goods}}` placeholder (`goodsRule`): Theme Studio
+renders exactly the old fictional-goods sentence (`THEME_STUDIO_GOODS_RULE`,
+pinned with every Theme Studio request and the review texts by
+`lib/theme-studio/image-prompt.golden.json`); a redesign shot renders the
+merchant-goods rule or `NO_GOODS_RULE`, and with no goods its people rule
+is `NO_GOODS_PEOPLE_RULE` (nobody in the picture, and the place, tools and
+materials where a person was asked for; `peopleRule(people, goods)`, Theme
+Studio's rules byte for byte without goods). The anchor's lead carries `goods: "none"` and follows the opening
+shot's art direction, never its goods: a merchant opening shot gives the
+anchor the store's setting as its subject (`noGoodsAnchorLead`). The photo
+check is told the shot's goods (`ThemeImageReviewInput.goods`,
+`themeImageGoodsReviewText`): a no-goods shot showing a packaged product, or
+a merchant shot showing a different, extra or invented product, is
+`wrong_subject`; label artwork on the merchant's own product is not
+`text_or_logo`. ★★ The anchor's check is unchanged because the anchor is a
+hidden reference that never stands in for a page photo: a failed shot takes
+a crop of a photo the shoot kept for a page, drawn under its own goods rule
+and checked as a page photo unless that check could not be had
+(`fallbackSources`), and with nothing kept to crop from the step fails: a
+wait (`photos_unavailable`) while a shot can still be drawn, and for good
+when every shot left is a parked photo a check blocked, as `photos_failed`
+(2026-10-24), whose card sentence says the new photographs did not pass
+Mink AI's own checks rather than blaming a busy photo service
+(`nothingToCropFrom`; it used to crop the anchor, which could show invented
+goods or a logo its check lets through). An anchor that cannot be drawn
+stops the step too (`anchorFailureError`): a wait (`photos_unavailable`)
+only for an outage, and for good as `model_refused` when the image model
+declined it after every redraw, `photos_failed` when it failed its check
+after every redraw, and `internal` for any other failure (2026-10-25).
+⚠ Not yet seen live: whether the image
+model keeps a real product's shape and label from a PRODUCT reference, and
+whether it keeps a label's real lettering under the shared output rule "No
+text of any kind in the pixels" (Theme Studio's bytes, so it stays), which
+the merchant-goods rule names as its one exception.
+★★ A PHOTO SMALLER THAN ITS FRAME IS DRAWN AGAIN ONCE (robustness audit
+B14). When a shot's photo comes back narrower than its frame and its check
+found nothing blocking, the engine is handed one size retake (cause
+`too_small`, `REVAMP_TOO_SMALL_CAUSE`, kept on the photo outcome's
+`redraws`) inside the existing redraw budget and charge rules. If the redraw
+is small too, the larger checked picture is kept. A photo still smaller than
+its frame is stored with the `smaller-than-frame` problem
+(`REVAMP_SMALL_PROBLEM`) and becomes a `failed` outcome
+(`REVAMP_SMALL_PHOTO_REASON`): listed under Not done this time and never
+charged, also on a later invocation and for a parked or flagged photo. With
+no reviewer there is no size retake; a small photo is still listed.
+★ A photo whose review was
+unavailable is PARKED as `<shot>~review` and asked again after about 15, 30
+and 60 s (`REVAMP_REVIEW_RETRY_DELAYS_MS`), during the shoot as well as
+after it, inside about four minutes from its first ask
+(`REVAMP_PHOTO_CHECK_BUDGET_MS`), counted across hand-overs: its tries,
+first ask and verdict live on the job row (`result.photoReviews`, written
+fenced by `recordRevampPhotoReviews`), so a later invocation never asks
+again for a known verdict and never restarts the clock. Each check goes to
+Google's US endpoint first and once to global when the US refuses (a 429, a
+5xx, an outright 403 or 404) or its try times out. Each try runs on its own
+75 s clock and on its location's shared capacity row (TS-3D,
+`gemini-vertex.ts` `capacityAt`). There is never a third try and no 429
+wait inside the call (the re-asks above are the photo's own); other stages
+keep their one whole-call clock. A check the US answers is priced at 1.1
+times global (`gemini-api-list-2026-09-us-1.1x`); the merchant's credits
+come from itemised charges, so nothing costs a merchant more. ★★ When
+the budget runs out the shot takes a crop of an already-checked photo of
+the same shoot that fits its frame (`REVAMP_CHECKED_CROP_MAX_LOSS`, never
+the anchor or another crop), else the photo is shown unchecked and the card
+says so under Not done this time (owner's decision 2, 2026-10-23); both
+are `failed` outcomes, so neither is charged. ★ A photo let in unchecked is
+adopted WITH its marker: `adoptRevampImage` takes `problems` and writes them
+on the new row, so the `unchecked` problem (`REVAMP_UNCHECKED_PROBLEM`)
+keeps it unchecked (and uncharged) on a later invocation; only when the
+adopt fails is it stored again with the marker. ★ The phone crop is cut from
+the picture as drawn, sharper than a cut of the stored copy (which only a
+resumed run uses). `photo-hold.ts` keeps the allowance a step
+claimed (120 a store a day, 400 a platform hour) so a dead runner's undrawn
+photos are given back. `image-store.ts` stores each photo once, ★ hidden
+(`mink_prepared`) until Apply reveals the ones its card shows, since a
+stopped revamp charges nothing. `products.ts` makes a studio photo of each
+new product from the merchant's own, reviewed against it (theirs kept when
+it fails). ★ Each draw takes a turn on its image model's shared provider
+capacity (`sharedProviderCapacity`, so it is start-paced like the shoot:
+one attempt on its own 75 s clock, a 429 shared with the others on the
+model, nothing sent once the drain began, and a draw still waiting for its
+turn then stops waiting rather than take a paced start from the others),
+and a 429 is asked again five
+times, each after at most 15 s, the pacer spacing the tries. Since 25 Oct
+2026 a studio photo is drawn by the shoot's own model,
+`gemini-nano-banana-2.1` (2K, MINIMAL thinking), so it queues on the same
+paced row as the redesign's photos and Theme Studio's. Its check gets the
+photos' clocks and route (the US first, then global, TS-3D): 75 s per try,
+re-asks after about 15, 30 and 60 s and a four-minute budget per invocation
+(`PRODUCT_PHOTO_CHECK_BUDGET_MS`), after which the merchant's own photo is
+kept and the card says so.
+★★ No check is started once the deadline drain has begun: the studio
+reviewer's capacity at both locations is drain-aware
+(`revampDrainingCapacity`; a turn still waiting is never sent and comes back
+cancelled, unbilled) and so is any 429 wait (`revampDrainingSleep`; a check
+sent to the US first has none). A studio photo drawn as the drain began is
+left for the next invocation (not stored; its draw stays spent), and a
+check already sent finishes.
+`assemble.ts` prices
+the plan (carried work free), fits a paid one to its budget before any photo
+is drawn, and builds plan version 2 with every target's digest
+(`digests.ts`). `checks.ts` fixes what it can and reports up to nine checks.
+`card.ts` writes a `storefront_personalization` draft whose id is the
+revamp's, free (credit source 'free', which 0234 widened
+`mink_drafts_credit_check` to allow) or charged once. A ready card supersedes
+the chat's other ready, unapplied ones, and `mink.revamp_ready`
+(`ready-notice.ts`) tells a requester who left, linking to the chat that
+holds the card (`/dashboard?chat=<conversation id>`, `revampReadyUrl`;
+`REVAMP_READY_URL`, plain `/dashboard`, when the revamp has no chat;
+robustness audit B20).
+★★ THE CARD. `review.ts` (pure) builds the review;
+`app/dashboard/mink-revamp-card.tsx` polls `GET /api/mink/revamps/[revampId]`
+every 3 s on a visible tab (requester only, same-origin, no-store), shows
+progress with Stop, then lists what goes live at Apply before **Apply to
+Website Builder draft**, **Publish to your store** and **Undo**.
+`app/dashboard/mink-revamp-preview.tsx` is a modal before/after at 390 and
+1280 px on the storefront's own renderer (`?preview=1&review=1`).
+★★ APPLY is `/api/mink/drafts/[draftId]/personalization-action` →
+`storefront-personalization-actions.ts` → `apply-v2.ts` for a version 2
+plan, rechecking Categories, Products and Branding manage for their parts.
+One transaction locks the job (refusing one applied, undone or being
+refined, or one whose earlier version was applied or undone since) and every
+target, compares each with the approved digests (a conflict writes nothing),
+writes page sections and the header and footer to the private Builder draft,
+and changes live at once the tagline and footer description, categories,
+samples and new products; `apply_snapshot` (`lifecycle-types.ts`) records
+it. PUBLISH and UNDO are `POST /api/mink/revamps/[revampId]` (`publish`,
+`undo`; Stop is `cancel`), idempotent (`publish.ts`): Publish puts each page
+and the chrome live, a title or search text field by field, keeping and
+naming what the merchant changed; Undo needs what Apply needed, is refused
+(409) while a newer version of the redesign is applied, so the newest is
+undone first, and restores only what still matches.
+★★ A CHAT RUN THAT FAILS OR IS STOPPED KEEPS THE REDESIGN IT STARTED
+(robustness audit B4, 2026-10-24). A redesign takes 40 to 70 minutes and the
+run that starts it minutes, so a stalled last turn, a barge-in, Stop or a
+closed tab used to cancel the redesign, a finished card included, and refund
+it. `failMinkRun` (`persistence.ts`) never cancels, asks to stop or refunds
+a redesign. It locks the run `FOR UPDATE`, so a card step's draft insert
+waits for it. It discards and refunds the run's other unseen proposals as
+before, but never a redesign's card draft (`cardDraftIds`: the draft whose
+id is the redesign's, or the redesign's `draft_id`). Beside a card, the
+other proposals go through a holder run that
+`discard_failed_mink_run_drafts` discards, in a savepoint (as `app_service`
+it needs DELETE on `mink_runs` and UPDATE of `run_id` on
+`mink_draft_credit_usage`, which migration `20261024_0240` grants); if that
+is refused, they are kept and logged `mink.run: unseen proposals kept
+beside a redesign card`. When the call closed the run, it saves one assistant
+message with the same `storefront_revamp` artifact the success path saves,
+under a plain line ("Your storefront redesign is being made. You can follow
+it here." or "Your storefront redesign is ready. You can review it here."),
+marked `interrupted: true` (`MINK_KEPT_ANSWER_MARKER`) and dated just after
+the run's own messages. History (`getMinkConversation`) shows a failed or
+stopped run only when it carries that marker. The model's replay stays
+succeeded-only; it learns of the redesign from the flags-only reference.
+The stream route sends the saved card as a `message` before its `error`. A
+run that succeeded is refused (`Mink failed-run record scope rejected`).
+The merchant stops a redesign from its card, which gives the free one back
+as before. ★ Stop pressed in the same tab (or a reply cut off) means the tab
+stopped reading before the card was sent, so `useMinkAi` (`awaitKeptCard`),
+when that reply called the start or refine tool and no answer came, asks for
+the chat again after 1.5, 4, 10, 30 and 70 s (`KEPT_CARD_CHECK_DELAYS_MS`; the
+record can wait a minute for a tool's write) until a card saved under that
+run is there, and adds it after the question it answers, once; the checks
+end when the chat is left. Opening the ready notification loads the chat
+again even when it is the one open (B20 below).
+★★ A STOPPED RUN NEVER STARTS ONE (B6). The start and refine tools take the
+registry's context. `queueRevamp` refuses before claiming the day's start
+when the run has stopped, inserts the job through `context.commit`, and
+kicks the runner only after the commit returns. A job whose insert outlived
+the commit grace is withdrawn (`cancelRevamp`, start given back); if the
+withdrawal fails it logs `mink.revamp: late start not withdrawn` and keeps
+the start spent.
+★★ A RUN A DEAD SERVER LEFT RUNNING IS CLOSED (B7). `staleMinkRunCondition`
+(`conversation-history.ts`) calls a run dead when it is still running
+`MINK_STALE_RUN_MS` (the longest run budget plus ten minutes, 15 minutes)
+after it started and after its latest tool call started.
+`closeStaleMinkRuns` closes such runs through `failMinkRun` as failed
+(`run_abandoned`), at most `MINK_STALE_RUN_SWEEP_LIMIT` (20) a pass, oldest
+first. ★ The sweep asks every store at once, so it reads the partial index
+`mink_runs_running_idx` (`(started_at, id) where status = 'running'`,
+migration `20261024_0240`), in its own order, rather than every run ever
+recorded; the one-chat close keeps `mink_runs_status_idx`. It runs from the
+per-minute `/api/cron/mink-workflows` (isolated,
+`staleRuns` in its answer) and from the History delete of that one chat
+(dev has no scheduler). So a chat a dead run blocked can be deleted again,
+or is refused for its live redesign. ⚠ Drizzle writes a select list's
+columns without their table, so a correlated subquery in a select list must
+name the outer table by hand (`${table}.column`) or be a separate read; the
+first card check compared `mink_revamps` with itself. Tests:
+`persistence-revamp`, `conversation-history`, `tools/storefront-revamp-tools`,
+`orchestrator`, the stream and cron routes, `app/dashboard/mink-ai` (the
+tab's kept-card fetch and the open chat loaded again), and the opt-in
+`persistence.local`, which runs the code as `app_service`.
+★★ JSON-LD IS ESCAPED, because a revamp's copy reaches structured data:
+`serializeJsonLd` (`lib/seo/json-ld.ts`) escapes `<`, `>`, `&` and the line
+separators, so no value can end its script and run markup on the store's
+origin (`lib/seo/json-ld-coverage.test.ts`). ★ ENVIRONMENT:
+`MINK_REVAMP_PROVIDER` (`provider.ts`), "fake" for free offline clients,
+anything else Vertex; `cloudbuild.yaml` never sets it (section 7).
+Tests: a suite beside 26 of the 31 modules (and
+`distinctness-calibration.test.ts`), `codebase-map.test.ts` (fails
+when this map stops naming a module, table, route or variable),
+`tools/storefront-revamp-tools.test.ts`, both routes' `route.test.ts`,
+`mink-revamp-card.test.tsx`, `mink-revamp-preview.test.tsx`,
+`persistence-revamp.test.ts`, and the opt-in runs against `storemink_local`
+(`MINK_REVAMP_LOCAL_TEST=1`: `jobs.local`, `apply.local`, `apply-v2.local`,
+`refinement-apply.local`, `e2e.local`, `persistence.local`,
+`redo-memory.local`).
+`npm run revamp:live-check` (`scripts/revamp-live-check.ts`, shops in
+`scripts/revamp-live-fixtures.ts`; its runner loop is
+`scripts/revamp-live-check-core.ts`, tested: a parked lease's wait names the
+step's failures in a row, and a job past its 4-hour ceiling is settled by
+the card's status read, as `out_of_attempts` with detail `run_ceiling`)
+drives four made-up shops on this machine,
+offline unless `--live --yes`, never against production. The first live run
+(kesar-ghani, 2026-10-21) was ready in 721.5 s, 9 of 9 checks, about $1.46,
+free (plan 118.6 s, compile 278.7 s with repairs, photos 298.4 s for 5 shots,
+products 25.1 s); it and a second run of all four (2026-10-22, one failed in
+compile) gave the photo floor, prompt v4, the failed-repair finish, the
+drawn-picture phone crop and the photo reviews.
+⚠ Never exercised in a browser by a person. ⚠ The run after the last fixes
+(2026-10-23, real models) did two of the four shops at once: crumb-and-co was
+ready in 2,907.9 s and neem-ritual in 4,304.6 s, both free, 8 of 9 checks
+(every photo came back at 1K, so the opening photograph got no phone crop),
+most of it in the photos step; kesar-ghani and tara-jewels were not run.
+★ THE 1K PHOTOS WERE A DRAFT OUR PARSER KEPT (found 2026-10-23): since
+about 22 Oct `gemini-3-pro-image` answers with a 1K "thought" image ahead
+of the 2K picture (a paid staging probe: 1584x672, then 3168x1344), and the
+readers kept the first inline part; Nano Banana 2.1 sends one before every
+picture (25 Oct 2026). `image-vertex.ts`, `media-generation.ts` and
+`image-refine.ts` now keep the last image part that is not a thought, never
+a draft, so Theme Studio's photos, which share the parser, get their 2K back
+too (production was not checked); `scripts/marketing-photos.mjs` does the
+same since 25 Oct 2026. Not yet seen on a live run.
+⚠ The runner shares the public web service, guarded only by its
+one-per-process gate. ⚠ The hard stop can cut a slower model call.
+⚠ On 2026-10-23, 0234, 0235 and Theme Studio's 0236 were applied to
+`storemink_local` only.
+⚠ SPEED, MEASURED ON THAT RUN (Cloud Monitoring on storemink-staging): about
+three quarters of each redesign was waiting, not model work. Google's
+shared pay-as-you-go pool refused about half of the image requests and a
+third of the photo checks with no project quota hit, one 429 paused every
+shop and dropped the model to one request at a time, and a photo check's
+tries restarted at every hand-over (one photo waited 52 minutes).
+★★ PHASE 0 OF THE SPEED PLAN (2026-10-23; diagnosis, the owner's decisions
+and what is left in `docs/mink-revamp-speed.md`): image models are
+start-paced across the platform (Theme Studio's shared capacity, migration
+`20261023_0236_theme_studio_provider_pacing`), a 429 holds the others back
+15 s at most, the planner has its own capacity scope, a photo check has a
+clock per try and a four-minute budget that survives hand-overs, and the
+product draws are paced too. ★ Its corrections the same day (robustness
+audit P0-1 and P0-3): image starts are spaced between 10 and 45 s (owner:
+"Change to 10 to 45 s"; first built as 25 to 90 s) and each move of that
+gap is logged (`theme_studio.provider_pace`); every refused or failed photo
+and check logs Google's own answer and the quota it names; and every photo
+answer logs its image parts and size, warning when it is under the size
+asked for (`theme_studio.image_below_requested_size`). `usage.calls` counts
+each model's 429s and timeouts, summed across hand-overs, and why each
+photo was drawn again is kept on the photo outcomes (`redraws`) and in
+`result.products.redraws`; `npm run revamp:live-check -- --report` prints
+them. `npm run revamp:priority-test` (`scripts/revamp-priority-test.ts`)
+is the Priority PayGo test on storemink-staging the owner approved (152
+calls a pass, a spacing ladder of photos first, Nano Banana 2.1 since 25 Oct
+2026), a dry run unless
+`--live --yes`, not yet run live. Expected, an estimate until a live run:
+about 16 to 18 minutes for a crumb-like shop, 30 to 34 for a neem-like one;
+the robustness audit's calibrated simulation puts it at about 34 and 50
+(also an estimate; it calls the first one about twice too optimistic). No
+merchant step changes, so no Help Centre update: the card's own words say
+when a photo could not be checked in time.
+★★ ROBUSTNESS AUDIT, WAVE 2 (2026-10-24; the audit is
+`revamp-handoff/tasks/mink-robustness-plan.md` outside the repo): B4, B5, B6
+(the run's signal and the redesign tools), B7, B8, B14 to B20, each above.
+Built and verified by unit, local-Postgres (fakes) and mutation tests; not
+run against live models, in a browser or deployed. Help:
+`20261024_0239_mink_storefront_revamp_robustness_help` replaces three
+sentences of 0235's text in place (a stopped reply keeps the redesign and
+its card, Stop on the card stops it; the photographs show the merchant's own
+products or none; the ready notification opens the chat) and the general
+Mink guide's draft troubleshooting sentence (a failed or stopped reply
+discards its unseen proposals and gives their credits back, except a
+storefront redesign it started), applied to `storemink_local` only. ⚠ Open: the Priority test's copied photo-check
+request (`scripts/revamp-priority-test.ts`) carries no GOODS block, which a
+redesign check now sends (its drift test compares against a no-goods
+render). ★ THE RELEASE FOLLOW-UPS (2026-10-24, working tree) closed the rest
+of what was open here, each above. Migration `20261024_0240` grants
+`app_service` the holder run's DELETE on `mink_runs` and UPDATE of `run_id`
+alone on `mink_draft_credit_usage`; until then only
+`drizzle/manual/0000_compat_setup.sql`'s default privileges gave them, and a
+refusal kept those proposals, charged, and logged them. It also adds the
+dead-run sweep's partial index `mink_runs_running_idx` on
+`(started_at, id) where status = 'running'` (on 200,083 runs locally: 15.7
+ms and 12,656 buffers before, 0.09 ms and 131 buffers after); it is applied
+to `storemink_local` only. `scripts/revamp-live-check.ts` names a parked
+job's count as failures in a row and settles a job past its ceiling with
+the card's status read; a shoot that can never finish fails as
+`photos_failed`; and a chat opened from the address opens at its newest
+message ("Mink chats like ChatGPT"). ★ Their review fixes (2026-10-25):
+each permanent photo failure carries the code whose sentence is true for it
+(`anchorFailureError`: an anchor the image model declined after every
+redraw is `model_refused`, one that failed its check after every redraw
+`photos_failed`, any other anchor failure `internal`; media storage or the
+image model not set up, in `photos.ts` and `products.ts`, `internal`), so
+`photos_unavailable` is only ever a wait and no job ends with it; a chat
+shown in a new scroller starts at its newest message too; and 0240 also
+indexes `whatsapp_mink_answers (conversation_id)` (section 32).
+★★ DESIGN-UNIQUENESS WAVE (2026-10-24; robustness audit section 5, steps 1 to
+3, 6 and 10; working tree, not committed, run live or deployed). Steps 1 to 3
+and 6 are above (DISTINCT BY DEFAULT, A REDO IS DISTINCT FROM THIS STORE'S
+EARLIER REDESIGNS, THE REDO MEMORY IN THE JOB); with wave 2's industry scoring
+(B15), colour repair (B18), brand voice (B17) and real goods (B16), steps 1 to
+6 are all built. Step 10, the measurement: `scripts/revamp-uniqueness-test.ts`
+(tested; run as
+`npx tsx --tsconfig tsconfig.scripts.json scripts/revamp-uniqueness-test.ts`)
+plans three bakeries and three skincare shops (two of them
+`scripts/revamp-live-fixtures.ts`'s crumb-and-co and neem-ritual) on one
+bundled theme (`--theme`, default basket), a first redesign and a redo each:
+12 planning calls, text only, no database. It prints section 5's targets for
+v5 with the check: every same-trade pair at least the same-theme bar apart
+(`revampDistinctnessBar`, 0.289 on every bundled theme), every redo at least
+the bar from its first redesign after the check, under half of the closed
+section settings equal to the value the v4 prompt printed, and pages not all
+near-white. Beside them it prints the audit's v4 measurement and a modelled
+v4: each first answer read again with no prompt version and every printed
+setting at its printed value, since the v4 prompt no longer exists. A dry run
+by default on the offline planner ($0; it refuses to plan unless the provider
+is the fake). `--live --budget-usd=<n>` plans with `gemini-3.8-flash` in
+storemink-staging only (it refuses another project, a production quota project
+and `GOOGLE_VERTEX_BASE_URL`), with at most $2. It never starts a call while
+what was spent plus that call's ceiling (the prompt at three characters a
+token plus 98,304 output and thinking tokens) would pass the budget, counts a
+failed call at its ceiling, and stops at once on a planner that is not set up;
+about $1.15 expected. ⚠ The live run needs the owner's approval and has not
+been run. The dry run met every target on all four bundled themes (settings
+equal to the v4 default: 42% to 49%, against about 43% by chance alone), but
+with the offline planner's seeded picks, so it says nothing yet about the
+model. ⚠ Not in this wave, each waiting for the owner's OK: memory across
+stores (step 7; a redesign reads only its own store's earlier redesigns), an
+optional correction call (step 8) and photo style choices (step 9: the mood
+words `revampImageMood` picks and a light picked per store are held for it,
+not wired). REVIEW FIXES (2026-10-25, each above): a page colour the merchant
+named is never moved, nor one in a refinement; asking to keep the design
+keeps every choice, and so does a script the word lists cannot read; the
+record is the fitted plan's; the playbook prints no lone default and only
+structures that differ; a copied instruction's issue quotes no store words;
+no fallback newsletter line promises how often mail comes; and the check's
+tests count its work instead of timing it. ⚠ Open:
+whether `gemini-3.8-flash` follows "choose one" and the instructions, and how
+often it copies an instruction (each copy costs a repair call), is for the
+paid run; `ports.ts` lacks the two
+inputs; `package.json` has no `revamp:uniqueness-test` script yet; and the
+memory counts every card the merchant saw (ready, applied or not, and
+superseded), so applied designs only would be one predicate in
+`readEarlierRevampPlans`. No merchant step, button or charge changes and no
+guide says a redo repeats a design, so no Help Centre update.
 
 ### Mink personalises the storefront from an interview (2026-10-20)
+
+⚠ New requests now get the storefront revamp (the section above), while a
+personalisation card already made keeps working for its draft: its tools left
+the model's registry (`lib/mink/tools/read-tools.ts`), and its card
+(`mink-storefront-personalization-card.tsx`), its Apply route and a version 1
+plan's path are unchanged.
 
 The owner's request: a theme chosen at signup is generic, so Mink asks the
 merchant about their shop and then makes the WHOLE site theirs, replacing the
@@ -1935,12 +2856,10 @@ short questions in ONE message (what they sell, the look, their story and
 facts, what to avoid, whether to unpublish samples), raise categories only
 when the context shows them and set `merchant_confirmed` per change the
 merchant said yes to, then call the proposal once with their answers as the
-brief. Routing: the `personalize` group (`lib/mink/tool-routing.ts`; English
-words incl. "make my store look like mine", Hinglish "hisaab se /
-personalise karo", Devanagari) stays declared for `INTERVIEW_TURNS` (3)
-merchant messages after the ask (reason `interview`), so the answers reach a
-run that still has the tools. Starter chip `personalise-store` on the
-Storefront and Builder pages.
+brief. Routing was its own `personalize` group, kept declared for
+`INTERVIEW_TURNS` (3) merchant messages after the ask; the revamp's `revamp`
+group replaced it on 2026-10-21, and the `personalise-store` starter chip on
+the Storefront and Builder pages now starts a revamp.
 ★★ EVERYTHING THAT CAN BE REFUSED IS REFUSED BEFORE A PAID CALL
 (`lib/mink/storefront-personalization-proposals.ts`): request shape, design
 contrast, categories, permissions, the `apply_storefront_personalization`
@@ -2030,14 +2949,31 @@ edited page; it used to be written regardless, against the prompt's own rule.
 `releaseSpendLimits`). `check_rate_limit` adds before it compares, so limits
 checked one by one let a refusal by the platform's hour still spend the
 store's day; a claim's limits now run in one transaction that rolls back on
-the first refusal, and a database error fails closed.
+the first refusal, and a database error fails closed. ★ A claim also
+returns `claimedAt`, the database's own `now()` for the claim's
+transaction, and `releaseSpendLimits(limits, { claimedAt })` takes one off
+only a window that started at or before it (`window_start <= claimedAt`), so
+a give-back that lands after the window reset never takes from the new
+window, which never counted it (2026-10-23, for chat images and Refine,
+and 2026-10-24 for personalisation's photo give-back; without `claimedAt`
+the release is unchanged, which is what personalisation's running slot and
+day still pass).
 `reserveMinkImageGeneration` claims its image ceilings the same way, and
 `MINK_IMAGE_GLOBAL_LIMIT` is the one platform hour both share. A
 personalisation claims its running slot (one per admin, held for the run
 budget) and the store's day before the writer, and photos only after it,
 for the photos it described (`photoLimits`), so a writer failure spends no
 photo allowance. A failed attempt gives both back; a saved card keeps the
-day's count and returns the running slot. ★ WHAT A REVERTED SECTION MADE IS
+day's count and returns the running slot. ★★ A PHOTO GOOGLE NEVER DREW
+GIVES ITS SHARE BACK (robustness audit B3, 2026-10-24): a photo whose every
+try answered 429 or that was never sent (`isUnbilledImageFailure`), or whose
+turn came after the proposal's 170 s ran out, gives back one unit of the
+store's photo day (`mink-personalize-images`, 36) and of
+`MINK_IMAGE_GLOBAL_LIMIT`, in one `releaseSpendLimits` call after the photo
+pool, with the photo claim's own `claimedAt`. A timeout or 5xx after
+sending, a filtered answer and a picture that came back (even one whose
+upload then failed) keep theirs. The retry policy and the card's notes are
+unchanged. ★ WHAT A REVERTED SECTION MADE IS
 NEITHER CHARGED NOR KEPT: `validatePage` puts a failing section back to the
 theme's version, so the page's text count (`textChangesBySection`) and its
 photos (`photosApplied`) come from the sections that survived, and a drawn
@@ -2234,7 +3170,27 @@ fallback when the main model has already failed in the run.
 that location) is dropped for the session and logged as `mink.model: fallback
 refused` (logError); the turn returns to the main model, so a misconfigured
 fallback never fails a run the main model could answer, and when the refusal
-used the last retry the error reported is the main model's.
+used the last retry the error reported is the main model's. ★★ ONLY A 404 OR
+403 DROPS THE FALLBACK (review of B9, 2026-10-24). Any other non-retryable
+answer from it (a 400, a 401) is a verdict on one request, not on the model:
+`withMinkFailover` reports it as kind `rejected` (logWarn `mink.model:
+fallback rejected the request`, nothing marked down), the turn goes back to
+the main model and stays there, and the fallback stays on offer for later
+turns. Read as a refusal, one request the fallback would not take benched it
+for every run on the instance, voice turns included.
+★★ A MAIN MODEL THAT REFUSES OUTRIGHT GOES TO THE FALLBACK, ONCE (robustness
+audit B9, 2026-10-23). A 404 or 403 from the main model (retired, a wrong id,
+not enabled at its location) used to end the turn, so one bad model id took
+every chat down. `withMinkFailover` reports it as kind `refused`; the
+fallback gets one attempt, with no backoff, and the main model is not asked
+again in that turn; when that attempt fails too, the turn ends on the main
+model's refusal. The refusal is remembered in `provider-health.ts` for 60 s
+like any other failure, so new runs on the instance start on the fallback,
+and is logged as `mink.model: main refused` (logError, with model, location
+and status). A voice turn that started on the fallback goes back to it the
+same way (fallback busy, main refuses, fallback). A 404 or 403 on the
+fallback is unchanged (above); with no fallback configured, or no retries
+left, the refusal still ends the turn.
 ★ `lib/mink/provider-health.ts` remembers for 60 s, per process, that a model
 failed (each failure is a `mink.model: attempt failed` logWarn with the model,
 location, status or stall phase); a run created meanwhile starts on the
@@ -2247,21 +3203,36 @@ model can take 13 s to a first chunk on a large tool result; marking it down
 then sent every run on the instance to the fallback for a minute. Only a
 first-chunk stall that waited the full configured deadline (or any other
 retryable failure) is remembered.
-★★ A CONVERSATION THE FALLBACK WROTE GOES BACK TO THE FALLBACK. Once the
-fallback has answered with its own thought signatures, a 400 from the main
-model on that history is about the history, not the request:
-`withMinkFailover` reports it as `kind: "history"` (logWarn
+★★ A CONVERSATION ONE MODEL WROTE GOES BACK TO THAT MODEL, IN BOTH
+DIRECTIONS. Once the fallback has answered with its own thought signatures, a
+400 from the main model on that history is about the history, not the
+request: `withMinkFailover` reports it as `kind: "history"` (logWarn
 `mink.model: history refused`, nothing marked) and keeps the turn on the
 fallback, where a 400 on the main model's own conversation is still final.
+Since the review (2026-10-24) the reverse holds too: a 400 from the fallback
+on a conversation the main model wrote is `history` and the turn goes back to
+the main model; a 400 from the fallback on its own conversation is
+`rejected` (above). When the last retry ends on the fallback, the error
+reported is the main model's own, since the fallback's says nothing about
+why the turn failed.
 ★★ LEAKED REASONING IS WITHHELD AND ASKED AGAIN. `consumeMinkStream` holds a
 reply's opening until `leakedReasoningAt` (retry.ts) can decide: a first line
-that is just a lowercase "thought" throws `MinkLeakedReasoningError`, which is
-retryable, so the turn is asked again on the other model and not a word of it
-reaches the merchant; anything else is released from its first character. The
-chat namer applies the same check (reason `leaked_reasoning`).
+that is only "thought" or "thinking", in any case, with or without a trailing
+colon, throws `MinkLeakedReasoningError` (robustness audit B21, 2026-10-23; a
+real sentence on that line, such as "Thought you might like these", or the
+plural "Thoughts:" is released as an answer), which is retryable, so the turn is asked again on the other model and not a word of it
+reaches the merchant; anything else is released from its first character. ★ It
+marks nothing in `provider-health.ts` (review of B21, 2026-10-24): a model that
+wrote its working-out as text is answering, not down, and marking it sent
+every run on the instance (voice turns included) to the other model for a
+minute. The chat namer applies the same check (reason `leaked_reasoning`).
 ★ ONE VERTEX CLIENT MODULE (`lib/mink/vertex-clients.ts`): the session, the
-storefront writer and the namer share `minkVertexClient(project, location)`,
-one cached client per project and location with the SDK's own retries off.
+storefront writer, the namer, image generation and Refine, customer-facing
+Mink on WhatsApp (`lib/whatsapp/mink-model.ts`) and the attachment reader
+(`lib/mink/input-provider.ts`) share `minkVertexClient(project, location)`,
+one cached client per project and location with the SDK's own retries off
+(the last four since 2026-10-23, robustness audit B25 and B12; they built a
+new `GoogleGenAI` per call).
 ★ The orchestrator's `text_reset` says `restart` only when the restart really
 happens; a `request_more_tools` answered in place (the run already restarted,
 or a tool with side effects ran) is a `tool_call`, so a voice acknowledgement
@@ -2270,10 +3241,17 @@ one render (the message clears `spokenKept`), the voice loop still reads the
 answer after the acknowledgement: a closed block the answer's own spoken text
 does not continue (`continuesSpoken`) is treated as kept.
 ★ `session.location` says where the answering model runs; the run is priced
-there (`pricingLocation`) and the run log carries `location`. ⚠
-`estimateMinkCost` knows no 3.5 Flash price, so a run the fallback answered has
-no cost estimate (null, "Unknown" on the operator console) rather than a
-borrowed one; credits are band-based and unaffected. ⚠ That gemini-3.5-flash
+there (`pricingLocation`) and the run log carries `location`.
+`estimateMinkCost` prices gemini-3.5-flash at $1.50 / $9.00 per million
+input / output tokens at `global` and $1.65 / $9.90 elsewhere (Google's +10%
+non-global rate, the uplift `cost.ts` already applies to 3.7 Flash; Mink calls
+3.5 Flash at asia-south1), pricing versions
+`gemini-3.5-flash-global-2026-list-c0.25` /
+`gemini-3.5-flash-regional-2026-list-c0.25` (robustness audit B24,
+2026-10-23). Rows written before then keep a null estimate and version
+("Unknown" on the operator console); credits are band-based and unaffected.
+⚠ The audit quoted $1.50 / $9.00 for 3.5 Flash; whether the +10% applies at
+asia-south1 is an owner call (two numbers in `estimateFlash35Cost`). ⚠ That gemini-3.5-flash
 is served at asia-south1 was verified on storemink-staging only; on production
 a refusal would show as `mink.model: fallback refused` and cost nothing else.
 The live eval switches the fallback off and keeps its own stall detection, so
@@ -2337,8 +3315,34 @@ after which the next open starts a new one (`resumeOrStartFresh`, which
 `ChatProvider.toggleChat` calls on open); a question from Home or an Ask
 Mink button (`startExpandedChat`) starts a new chat, except while a reply
 is running, when the question waits in the box rather than stopping that
-answer; choosing a chat in History continues it; deleting the open chat
-leaves an empty one; the header gains **New chat** (disabled while
+answer; choosing a chat in History continues it; a dashboard address that
+names a chat (`/dashboard?chat=<id>`, `MINK_CHAT_PARAM`, built by
+`minkChatHref` and read by `readMinkChatParam` in `lib/mink/chat-session.ts`;
+robustness audit B20, 2026-10-24, used by the redesign-ready notice) opens it
+in the full view the way History does: `ChatProvider` reads it once
+(`MinkChatAddress`, in its own Suspense) and removes it from the address with
+`history.replaceState`, and `useMinkAi.openConversationFromAddress` loads it
+through the viewer-scoped history API. An id that is not the viewer's (404
+or 400) opens a new chat with no error; the chat already open is loaded
+again with its draft kept (a redesign card may have been saved since this
+tab read it), and a reply that is running is never replaced; ★ each open
+from the address is counted (`addressOpens` on `ChatContextType`, bumped by
+`openConversationFromAddress` before the load and never while a reply
+runs), and the chat view meets it as it meets a chat chosen in History
+(`followNewestMessage` in `dashboard-chat.tsx`: follow the newest message,
+drop the turn anchor, hide the jump button), so the chat opens at its
+newest message and follows new output, the chat already open and loaded
+again included, its draft kept (2026-10-24; before, a full view last left
+scrolled up opened that chat at its top); ★ a chat already in memory shown
+in a new scroller opens at its newest message too (2026-10-25): the panel
+opened again, or the switch between the side panel and the full view (each
+its own `DashboardChat` instance and scroller), used to start at the oldest
+message, because the scroll effect ran only when the chat changed. A new
+scroller element now calls `followNewestMessage` first (`isChatOpen` and
+`isExpanded` are in that effect's dependencies for the mount alone); a reply
+still running is anchored at the top again, its tail room on the new
+element. Deleting the open chat leaves an empty one; the header gains
+**New chat** (disabled while
 replying, hidden in voice chat). The tab is remembered in sessionStorage
 (`storemink:mink-active-chat` = `{id, lastActivityAt}`), which a reload
 keeps and a new tab does not; every storage call fails quiet.
@@ -2390,9 +3394,11 @@ a failed answer resends the finished message without reading again, and a
 photo or file may be sent without words. `prepareMinkAttachments` (module
 level in the composer) is shared with the voice path, which still prepares
 out of sight before it delivers. Tests: `lib/mink/chat-session.test.ts`,
-`mink-ai.test.ts` (lifecycle, the load race, the hand-over), the composer,
-`dashboard-chat.test.ts` (link cards, New chat, the bubble) and
-`chat-context.test.tsx`. ⚠ Not run in a browser; verified by the suites,
+`mink-ai.test.ts` (lifecycle, the load race, the hand-over, the
+address-open count), the composer, `dashboard-chat.test.ts` (link cards,
+New chat, the bubble, a chat opened from the address or shown in a new
+scroller at its newest message, the turn anchor kept for a running reply)
+and `chat-context.test.tsx`. ⚠ Not run in a browser; verified by the suites,
 the typecheck and the local apply of 0230.
 
 ### Mink tool routing: each run carries only the tools it needs (2026-10-19)
@@ -2623,12 +3629,16 @@ one pool and one currency; merchant-facing UI consistently calls it **Mink
 credits** while legacy database identifiers retain their existing names.
 
 ★★ THE UNIT IS `weightedMinkUnits` = `input + 5 × (output + thought)`, AND THE
-5 IS NOT A TUNING CHOICE. Every rate variant in `cost.ts` — global and
-regional, 2026 intro and 2027 standard — has an output:input ratio of exactly
-5, so one weighted unit is EXACTLY proportional to money without importing a
-rate, a region or a date. `metering.test.ts` pins that against `cost.ts` itself
-across all four variants, so a future price change that breaks the
-proportionality fails there rather than silently skewing every band.
+5 IS NOT A TUNING CHOICE. Every gemini-3.7-flash rate variant in `cost.ts`
+(global and regional, 2026 intro and 2027 standard) has an output:input ratio
+of exactly 5, so for a 3.7 Flash run one weighted unit is EXACTLY proportional
+to money without importing a rate, a region or a date. `metering.test.ts` pins
+that against `cost.ts` itself across all four variants, so a future price
+change that breaks the proportionality fails there rather than silently
+skewing every band. ⚠ It holds for 3.7 Flash only: the lite model's ratio is
+8.3 and gemini-3.5-flash's (priced since 2026-10-23, the fallback and voice
+model) is 6, so a band is exactly proportional to money only for 3.7 Flash
+runs, and `metering.test.ts` pins only 3.7.
 ★★ IT IGNORES THE CACHE, deliberately: a merchant asking the same question
 twice must not be charged differently because our cache was cold. The cache
 saving accrues to StoreMink as margin — the right way round, since it rewards
@@ -2721,7 +3731,15 @@ retouch CAN alter small details, which the widget and the Help guide both say.
 prominent people stay blocked and the prompt forbids adding anyone. ★ Gates are
 image generation's: Mink enabled, Media manage, the store's
 `generate_media_image` switch, and `reserveMinkImageGeneration`'s spend ceiling
-(keyed on the refinement id). ★ It costs `IMAGE_REFINE_CREDITS` (2; was 3 at launch, owner repriced it the same day, Help corrected by 0166). A store
+(keyed on the refinement id). A refusal Google never billed (every try 429, an
+unreadable source, a stop before the send) gives that allowance back. ★ A 429
+is asked again twice, 5 to 15 s apart, each try on its own 60 s clock
+(`REFINE_RETRY`, 2026-10-23). The route gives the whole refine 150 s
+(`REFINE_DEADLINE_MS`, inside `maxDuration` 180) and a stop that fires when
+the merchant leaves; the model must answer 15 s before that deadline
+(`REFINE_POST_RESERVE_MS`). A refine stopped after the model answered stores
+and charges nothing (`refine_stopped`, 504: "Refining took too long. Nothing
+was charged; try again."). ★ It costs `IMAGE_REFINE_CREDITS` (2; was 3 at launch, owner repriced it the same day, Help corrected by 0166). A store
 that cannot pay is refused BEFORE the paid provider call. Credits are taken
 only after an image exists and is stored, by `consume_mink_refine_credits`:
 plan allowance, then top-ups, all-or-nothing, idempotent per refinement id. A
@@ -2874,7 +3892,7 @@ phrases with pauses between them is transcribed: the 300 ms decay that
 resets a voiced run applies only to voice chat's gate before it arms, and in
 dictation it used to discard each phrase, so a paused dictation was reported
 as no speech. Voice chat
-has its own full-screen view (above). The temporary recording is
+has its own bar in place of the composer (above). The temporary recording is
 sent to `POST /api/mink/voice`; the route authenticates the current store,
 applies the voice quotas (`reserveMinkVoice`, below), validates the real WAV bytes and reads the
 platform-wide voice provider before making one transcription request. The
@@ -3006,8 +4024,9 @@ on the store. ⚠ The voice numbers are a spend cap on the transcription
 provider (billed per second of audio, at most 30 seconds a clip), chosen
 rather than measured: revisit them on real use.
 There are at most two concurrent local processing requests. Bounded body reads
-honour abort/deadline. `input-provider.ts` counts tokens then extracts once with
-the configured Vertex model/location, no tools/memory/history/URL fetching.
+honour abort/deadline. `input-provider.ts` counts tokens then extracts with
+the configured Vertex model/location (asked again, then the Mink fallback,
+when busy: below), no tools/memory/history/URL fetching.
 8192 counted input tokens, at most 2048 output tokens, a caller-bounded result
 of up to 3000 output characters per file (reduced when several files share a
 message), and a 45-second deadline. Incomplete and safety-blocked output is
@@ -3036,7 +4055,25 @@ rejected as MAX_TOKENS. It provisions at 1.5x the budget (a floor on headroom,
 not an estimate of any tokenizer) under the unchanged 2048 ceiling, so it can
 only ever raise the allowance a budget used to get. ⚠ The same helper bounds the
 design branch in the route, which was doing a bare `.slice`.
-No automatic retry or model fallback. Beta extraction deducts no credits;
+★★ A BUSY READER IS ASKED AGAIN, THEN THE MINK FALLBACK (robustness audit
+B12, 2026-10-23; `readWithFailover`): a 429, a 5xx or a dropped connection
+gets one more attempt on the main model after 250 ms
+(`MINK_READER_MAIN_ATTEMPTS` 2), then `gemini-3.5-flash` at the Mink
+fallback location once, with LOW thinking (the configuration the dashboard
+chat sends it); a main model that answers 404 or 403 goes straight to the
+fallback. All attempts share the route's one 45 s deadline
+(`INPUT_DEADLINE_MS`, passed as `deadlineAt`), and no retry or fallback
+starts with under 5 s left (`MINK_READER_ATTEMPT_MIN_MS`). A
+`MinkRequestError` (the token ceiling, an unreadable or safety-blocked
+reading) and a stopped request are final, never retried. A final failure is
+a `MinkReaderUnavailableError` (attempts, model, location, status) and is
+logged as `mink.input.failed` with logError and a content-free reason (never
+the provider's own words); input verdicts (a `MinkRequestError` under 500)
+and a merchant who closed the tab stay at info. The completed log names the
+model that read it. ⚠ That 3.5 Flash at asia-south1 reads inline PDFs and WAV
+is proven only from the request shape (the SDK passes `inlineData`
+unchanged), not by a live call; if it refuses, the reader fails as it did
+before. Beta extraction deducts no credits;
 content-free logs report modality and provider tokens/unknown failure usage,
 not filenames/bytes/transcripts. Audio is not priced using the text estimator.
 Limits are consumed on failure/cancellation too. Provider billing still applies.
@@ -3772,7 +4809,17 @@ one charged, immutable private proposal that IS an image.
   limiting — 3/owner/minute, 10/store/hour, 25/store/day, 200/global/hour and
   **2 per RUN**, all claimed BEFORE the provider call and before the credit
   charge, because charging and then refusing bills a merchant for a picture
-  they never received. ★ The per-run cap is 2 rather than 1 because one turn
+  they never received. ★★ AND A PICTURE GOOGLE NEVER DREW GIVES IT BACK (B3,
+  2026-10-23). `reserveMinkImageGeneration` returns an allowance whose
+  `giveBack()` releases the store's hour, the store's day and the platform's
+  hour, once, and only when `isUnbilledImageFailure` says nothing was billed:
+  every try answered 429 (`MinkImageRateLimitedError`) or no request was sent
+  (`MinkImageNotSentError`: no project, an unusable prompt document, a stop
+  or a deadline before the send). Never for a timeout or a 5xx after sending,
+  a filtered answer, or a picture that came back. The per-minute and per-run
+  caps stay spent, because they stop a loop of refusals too. The release
+  lands only in the window that counted the claim (`claimedAt`). See "Mink
+  image calls" near the top of this file. ★ The per-run cap is 2 rather than 1 because one turn
   legitimately wants a hero AND a gallery tile; unbounded is worse the other
   way, since a model that has decided a page needs six pictures makes six calls
   in one turn and the merchant asked for none of the other five.
@@ -3819,9 +4866,13 @@ one charged, immutable private proposal that IS an image.
   `imagen-4.0-generate-001`; Google deprecated that endpoint in March and named
   June 30 as the migration deadline. The provider now uses
   Gemini image generation through `generateContent`, requests the required
-  `TEXT` + `IMAGE` modalities, and persists only the first inline image part.
+  `TEXT` + `IMAGE` modalities, and persists only the final image part: the
+  last inline image that is not a thought (2026-10-23; `gemini-3-pro-image`
+  sends a 1K thought draft first, and keeping the first part kept it; Nano
+  Banana 2.1 sends one before every picture, 25 Oct 2026).
   The one-candidate limit, aspect ratio, people block, harm filters, JPEG output,
-  timeout and no-retry billing rule remain enforced in code.
+  timeout and the one-paid-attempt rule (only a 429, which bills nothing, is
+  asked again: below) remain enforced in code.
 - **★ THE GATE IS `media:manage`, NOT `builder:manage`.** The artefact is a
   Media Library row; placing it is a separate 9B layout proposal with its own
   Builder gate, so requiring Builder here would withhold image generation from
@@ -3839,11 +4890,26 @@ one charged, immutable private proposal that IS an image.
   number is provisional and unmeasured against a real bill; pricing is the
   owner's call.
 - **★ IMAGE GENERATION USES THE GLOBAL VERTEX ENDPOINT.**
-  `MINK_IMAGE_MODEL` defaults to `gemini-3.1-flash-image` and
-  `MINK_IMAGE_LOCATION` defaults to `global`. They remain separate overrides
-  from chat so an operator can move either independently. One attempt, never a
-  retry: a retry is a second charge for a request the caller has already been
-  billed a credit for.
+  `MINK_IMAGE_MODEL` defaults to `gemini-nano-banana-2.1` (owner, 25 Oct
+  2026; it was `gemini-3.1-flash-image`; cloudbuild.yaml passes
+  `_MINK_IMAGE_MODEL`); every caller states `imageSize` and `thinkingLevel`
+  (2K, MINIMAL), and `requestMinkImage` fits the request to the model
+  (`imageRequestConfig`, `lib/theme-studio/image-models.ts`). A config with
+  no size is never sent (`MinkImageNotSentError`, so the allowance is given
+  back). `MINK_IMAGE_LOCATION` defaults to `global`. They remain separate overrides
+  from chat so an operator can move either independently. ★★ A 429 IS ASKED
+  AGAIN, NOTHING ELSE IS (B10, 2026-10-23). Vertex answers 429 before the
+  model runs, so asking again is never a second bill: a chat image and Refine
+  ask again twice after a jittered 5 to 15 s, at the same location (never
+  another region), each try on its own clock (45 s for a chat image, 60 s for
+  Refine) instead of one clock for the whole call, which also counted the
+  refusals and the waits. A timeout or a 5xx after sending may have drawn and
+  billed a picture nobody received, so that is still one paid attempt, never
+  retried. `requestMinkImage` (`media-generation.ts`) is the one loop both
+  use, on the shared `minkVertexClient` (B25); `MINK_CHAT_IMAGE_RETRY` and
+  `REFINE_RETRY` are the two policies. Other callers keep their own:
+  personalisation the whole-call 45 s clock with 4 to 6 s waits, the revamp a
+  single 75 s attempt.
 - **⚠ A LATER FAILURE DOES NOT SILENTLY LOSE A SUCCESSFUL IMAGE.** Once the
   generated row and draft exist, a later same-run layout failure may discard
   the draft card while the image remains visible under Media. A failure while
@@ -3892,7 +4958,8 @@ one charged, immutable private proposal that IS an image.
   of which the SDK types (`aspectRatio` and `imageSize` are bare `string`) and
   none of which any environment overrides — `MINK_IMAGE_MODEL` appears in no
   `cloudbuild.yaml` substitution and no `.env`, so the compiled default IS what
-  production calls, once, with no retry and no fallback. A free publisher-model
+  production calls, with no fallback model or location (since 2026-10-23 a
+  429 is asked again at the same location, B10). A free publisher-model
   metadata read answered the model half (`gemini-3.1-flash-image` → 200,
   `launchStage: GA`; an invented id → 404, so the endpoint discriminates), and a
   one-attempt `generateContent` carrying the real safety settings,
@@ -3903,7 +4970,10 @@ one charged, immutable private proposal that IS an image.
   (45 s) is comfortable but not generous; a 2K hero is roughly half the budget.
   ★ The three values move TOGETHER: `gemini-2.5-flash-image` predates the wide
   aspect and 2K options, so reverting the model while keeping 21:9/2K is the
-  broken combination, not the safe one.
+  broken combination, not the safe one. (Since 25 Oct 2026 the default is
+  `gemini-nano-banana-2.1`, verified on storemink-staging that day with every
+  request option, and cloudbuild.yaml sets `MINK_IMAGE_MODEL` from
+  `_MINK_IMAGE_MODEL`.)
 
 ### Mink reference-grounded image generation (2026-09-20)
 
@@ -4023,7 +5093,9 @@ production exactly as `[1,2,3,3]`.
 `lib/db/client.ts` also retries a transient connection failure that happens on
 `BEGIN` or identity/role setup after an idle socket has already been returned
 by the pool. The broken socket is destroyed and work starts once on a fresh
-connection. Nothing is ever retried after the transaction callback begins, so
+connection. A 53300 refusal (too many clients) in that window gets one short
+retry, then `DatabaseBusyError` (2026-10-23; §4 `lib/db/`). Nothing is ever
+retried after the transaction callback begins, so
 an uncertain write cannot be replayed. This closes the pre-run failure where a
 stale Cloud SQL socket produced the generic “couldn't start” response before
 Mink had called the model. A buy-X-get-Y near miss also carries the single
@@ -4729,6 +5801,16 @@ wholesip/
 │                              # 43-table Phase-5 snapshot (no billing_*, no
 │                              # store_locations) and the manifest baseline is far later,
 │                              # so CI cannot replay the ledger from scratch.
+├── docs/monitoring.md         # ★ Production alerting (2026-10-23, owner-approved): the
+│                              # 15 alert policies applied on 23 Oct, the five Theme
+│                              # Studio alert definitions (plan P6, applied after the
+│                              # Theme Studio release with the owner's OK, step A1),
+│                              # 3 uptime checks, the log-based counter
+│                              # mink_chat_run_failures and the "StoreMink owner email"
+│                              # channel in storemink-prod: what each alert means, what to
+│                              # check first, its threshold, and how to re-run
+│                              # scripts/prod-monitoring.py. Read it when an alert email
+│                              # arrives.
 ├── Dockerfile / .dockerignore / cloudbuild.yaml  # ★ Cloud Run container (GCP Phase 4 —
 │                              # see docs/gcp-migration-phase4-cloud-run.md). Multi-stage
 │                              # standalone build; NEXT_PUBLIC_* are build args, secrets
@@ -4742,7 +5824,25 @@ wholesip/
 │                              # Studio capture job is released WITH the web service. It was
 │                              # deployed by hand and drifted — prod ran a 1 Oct job against
 │                              # 3 Oct code, so every automatic QA run failed first try. The
-│                              # job is derived from _SERVICE (prod/dev); others skip.
+│                              # job is derived from _SERVICE. ★ Since the Theme Studio
+│                              # release (plan P4) capture-deploy runs BEFORE
+│                              # theme-workers-deploy, so a refused worker deploy cannot
+│                              # leave the capture job on old code. Only production's job
+│                              # is updated: the dev build no longer touches
+│                              # storemink-theme-studio-capture-dev (deleting that job is
+│                              # step A6, with the owner's OK); dev still BUILDS the
+│                              # capture image, so a broken Dockerfile fails on dev first.
+│                              # The deploy step also sets THEME_STUDIO_BUILD_ID to the
+│                              # commit (COMMIT_SHA, plan P3); it is empty on a manual
+│                              # build, so the app falls back to K_REVISION. It passes
+│                              # THEME_STUDIO_IMAGE_MODEL and MINK_IMAGE_MODEL from
+│                              # _THEME_STUDIO_IMAGE_MODEL / _MINK_IMAGE_MODEL (TS-3F) and
+│                              # _THEME_STUDIO_DAILY_SPEND_USD is "50" (TS-3C).
+│                              # scripts/cloudbuild-yaml.test.ts runs the deploy and
+│                              # capture-deploy steps after Cloud Build-style
+│                              # substitution with a recording stand-in for gcloud, and
+│                              # pins P3, P4, the spend default, the image models and that
+│                              # no step names a substitution Cloud Build does not know.
 │                              # ★★ FOUR STEPS SINCE 2026-09-09: build-push → tip-check →
 │                              # migrate → deploy. `migrate` is what removed the laptop
 │                              # release ritual and the need for anyone to hold the prod
@@ -4833,6 +5933,8 @@ wholesip/
 │   │   │                      # "homepage sentinel"); reads published/preview sections
 │   │   │                      # just like [pageSlug]. Edited in /dashboard/builder (§11)
 │   │   ├── storefront-theme.css
+│   │   ├── input-zoom-coverage.test.ts # ★ storefront text boxes 16px on phones
+│   │   │                      # (iPhone focus zoom; allow-lists and rule: §5)
 │   │   ├── (pages)/           # Customer-facing pages:
 │   │   │   ├── shop/          #   product listing + [slug] product detail (reviews, related);
 │   │   │   │                  #   shop-filter-controls.tsx = the filter groups (sidebar, drawer,
@@ -4941,7 +6043,8 @@ wholesip/
 │   │       ├── menu-provider.tsx    # Supplies per-store header/footer nav (store_menus)
 │   │       ├── shop-card.tsx / share-buttons.tsx
 │   │       ├── structured-data.tsx  # homepage Organization + WebSite JSON-LD
-│   │       ├── json-ld.tsx          # generic <JsonLd> renderer (builders: lib/seo)
+│   │       ├── json-ld.tsx          # generic <JsonLd> renderer; escapes through
+│   │       │                        # lib/seo/json-ld.ts (builders: lib/seo/schema.ts)
 │   │       ├── quick-add-button.tsx # "+ Add" on product cards (theme layout.card
 │   │       │                        # = "quick_add"; hidden by CSS otherwise)
 │   │       ├── studio-acceptance-probe.tsx # Theme Studio acceptance
@@ -4964,16 +6067,24 @@ wholesip/
 │   │   ├── mink-ai.ts         # ★ Flag-selected drawer client: disabled → canned reply;
 │   │   │                      # enabled → abortable SSE, restores/loads the actor's last
 │   │   │                      # ten conversations, deletes scoped threads, tool progress,
-│   │   │                      # proposal/read artifacts, safe errors, Stop + Retry.
+│   │   │                      # proposal/read artifacts, safe errors, Stop + Retry;
+│   │   │                      # openConversationFromAddress opens a ?chat=<id> chat
+│   │   │                      # quietly (404/400 starts a new one, B20; the open one
+│   │   │                      # is loaded again, draft kept), counting each open in
+│   │   │                      # addressOpens before the load; awaitKeptCard fetches
+│   │   │                      # the redesign card a stopped reply kept (B4).
 │   │   ├── mink-artifact-parser.ts # Restores every bounded card type, including private
 │   │   │                      # proposal review cards, from live SSE and saved history.
 │   │   ├── chat-context.tsx   # Shares the same Mink thread between Home, drawer and
 │   │   │                      # expanded view; receives the private server-side flag;
-│   │   │                      # runs the voice loop and exposes it as useMinkVoice().
+│   │   │                      # runs the voice loop and exposes it as useMinkVoice();
+│   │   │                      # MinkChatAddress reads ?chat= once, opens that chat in the
+│   │   │                      # full view and strips it from the address (B20).
 │   │   ├── mink-voice-mode.ts # ★ The spoken conversation's loop: mic open all turn,
 │   │   │                      # barge-in, parked sends, one speech session per reply;
 │   │   │                      # mink-speech-session.ts plays its sentences on one
-│   │   │                      # playhead; mink-voice-view.tsx is the full-screen view.
+│   │   │                      # playhead; mink-voice-view.tsx is its bar (MinkVoiceBar),
+│   │   │                      # docked under the thread while voice chat is on.
 │   │   ├── dashboard-chat.tsx # Mink panel/full-view renderer: Codex-style history sidebar
 │   │   │                      # with confirmed deletion, persisted drag/keyboard width,
 │   │   │                      # Help-matched robot identity and auto-growing composer;
@@ -4981,6 +6092,10 @@ wholesip/
 │   │   │                      # dashboard topbar, navigation and page content. Phones use
 │   │   │                      # one dynamic-viewport full-screen surface, history closed by
 │   │   │                      # default, a 16px no-zoom composer and one contained scroller.
+│   │   │                      # followNewestMessage (follow the newest message, no turn
+│   │   │                      # anchor) serves a chat chosen in History, New chat, an
+│   │   │                      # open from the address (addressOpens) and a new scroller
+│   │   │                      # (panel opened, side panel to full view and back).
 │   │   ├── mink-answer.tsx    # Safe React-rendered headings/lists/tables/emphasis/code plus
 │   │   │                      # allowlisted dashboard/Help links; no model HTML is executed.
 │   │   ├── mink-artifacts.tsx # Permission-safe metric/catalog/order/product/inventory/source cards
@@ -4993,6 +6108,10 @@ wholesip/
 │   │   │                      # code, target state and escaped source into an isolated preview;
 │   │   │                      # mink-storefront-publication-controls.tsx owns Phase 7D's
 │   │   │                      # browser-check, publish and exact-rollback human workflow.
+│   │   ├── mink-revamp-card.tsx # ★ The storefront revamp card (§ Mink storefront revamp):
+│   │   │                      # polls /api/mink/revamps/[revampId] for progress and the
+│   │   │                      # review, Stop, then its three buttons; mink-revamp-preview.tsx
+│   │   │                      # is the before/after preview on the storefront's renderer.
 │   │   ├── mink-feedback.tsx  # Per-answer thumbs + bounded, privacy-redacted issue report.
 │   │   ├── mink-mark.tsx      # Shared solid-purple robot mark matching Help Centre Mink.
 │   │   ├── page.tsx           # Home: greeting + PlanTag (plan-tag.tsx), then while the
@@ -5366,6 +6485,46 @@ wholesip/
 │   │                          # withService (RLS bypassed), so the gate belongs where
 │   │                          # the read is. ⚠ page.tsx deliberately does NOT use it:
 │   │                          # it redirects to /dashboard, which IS page.tsx.
+│   │                          # ★ themes/ (TS-2, 25 Oct 2026; §5 item 11, "Theme Studio
+│   │                          # wave TS-2") is ONE page with two tabs, both
+│   │                          # superadmin-only (themes-header.tsx, themes-tabs.tsx;
+│   │                          # themes/layout.tsx loads studio/studio.css, the Studio's
+│   │                          # own studio- classes, for every Themes screen): Catalog
+│   │                          # at /dashboard/themes (themes-panel.tsx, one level up:
+│   │                          # the demo stores, Open and Seed/Reseed) and Theme Studio
+│   │                          # at /dashboard/themes/studio (studio/page.tsx +
+│   │                          # studio-list.tsx: the filters All, Needs you, Building,
+│   │                          # Ready, Live and Archived from
+│   │                          # lib/theme-studio/progress.ts
+│   │                          # listThemeStudioProjectsForConsole).
+│   │                          # studio/studio-status.ts studioStatus is the ONE status
+│   │                          # function (19 rows: words, tone, main button) for the
+│   │                          # list, the theme page and the Design list;
+│   │                          # studio-words.ts holds every sentence, by finding and
+│   │                          # stop code (designLabel: Design N is the version
+│   │                          # number); use-studio-progress.ts polls the progress
+│   │                          # route through lib/pos/use-poll.ts; studio-ui.tsx holds
+│   │                          # StudioBadge and the shared helpers. New theme at
+│   │                          # studio/new/ (new-project-form.tsx; new-theme-helpers.ts
+│   │                          # holds its pure rules). studio/[projectId]/ is the theme
+│   │                          # page: page.tsx (the gate, then one tab's server
+│   │                          # component, and release-controls.tsx on the release
+│   │                          # rows), workspace.tsx (header, Design list, "..." menu,
+│   │                          # chat, tabs, phone bar), conversation.tsx,
+│   │                          # progress-card.tsx, studio-tabs.tsx (the page API and
+│   │                          # the tab list), tab-types.ts (?tab=&version=&do=), the
+│   │                          # tabs checks-tab.tsx (with checks-model.ts,
+│   │                          # checks-controls.tsx and check-screenshots.tsx),
+│   │                          # pictures-tab.tsx, changes-tab.tsx and log-tab.tsx,
+│   │                          # release-controls.tsx + release/release-workspace.tsx
+│   │                          # (the Publish dialog and the live panel), tab-reads.ts
+│   │                          # (server-only cached reads) and tab-rules.ts (client
+│   │                          # copies of the server's rules); versions/[versionId]/
+│   │                          # keeps preview-frame.tsx and the picture and evidence
+│   │                          # components, while versions/[versionId], its acceptance/
+│   │                          # and images/, compare/ and release/ are redirects into
+│   │                          # their tab. theme-studio-tile.tsx is the Overview's
+│   │                          # superadmin-only Theme Studio tile.
 │   │                          # (guarded by supabase/multitenant_07_platform_admins.sql)
 │   │                          # (the OAuth callback route was removed in Phase 6 —
 │   │                          # Google now uses signInWithPopup)
@@ -5430,6 +6589,15 @@ wholesip/
 │   │                      # (updateTag(STORE_TAG), so /in-progress ends on the
 │   │                      # next request); revalidates /dashboard/storefront,
 │   │                      # /dashboard/builder and /dashboard.
+│   ├── theme-studio-actions.ts # ★ Theme Studio operator actions; every export
+│   │                      # re-derives a superadmin through getThemeStudioActor.
+│   │                      # TS-1F: stopThemeStudioChecksAction (stop.ts) and
+│   │                      # recheckThemeStudioVersionAction (capture.ts
+│   │                      # queueThemeStudioRecheck, reason always check_again);
+│   │                      # publish answers kind published | failed | rechecking;
+│   │                      # Make current returns changed and outcome; a picture
+│   │                      # save returns checking; the after-response worker pass
+│   │                      # runs only with the offline provider.
 │   ├── billing-actions.ts # ★ Invoices & tax (§17): tax-class CRUD + save billing/
 │   │   │                      # invoice settings. Gated on `billing`, revalidates TAGS.billing.
 │   │   ├── store-domain.ts    # Custom domain connect (§30) — the GATE only; the
@@ -5570,8 +6738,12 @@ wholesip/
 │       │                      # tool/message/usage/done events to the dashboard client;
 │       │                      # a voice turn's <spoken> block goes out as `spoken` /
 │       │                      # `spoken_end` events and stays out of the stored text.
+│       │                      # The run's own stop (deadline, client gone) reaches every
+│       │                      # tool (runMinkAgent abortSignal); a failed run's kept
+│       │                      # redesign card goes out as a `message` before `error`.
 │       ├── mink/conversations/ # ★ No-store, rate-limited recent-history API: list the
-│       │   └── [conversationId]/ # actor/store's last ten; load or same-origin delete one.
+│       │   └── [conversationId]/ # actor/store's last ten; load or same-origin delete one
+│       │                      # (a dead run of that chat is closed first, B7).
 │       ├── mink/media/discard/ # ★ Same-origin, actor-resolved `keepalive` transport
 │       │                  # for an image the composer uploaded and never sent. It
 │       │                  # exists ONLY because a Server Action cannot be keepalive:
@@ -5591,6 +6763,9 @@ wholesip/
 │       │                      # only the actor's own tenant run and stores redacted detail.
 │       ├── mink/workflows/[workflowId]/ # ★ Phase 6A no-store owner/tenant-scoped status,
 │       │                      # strict same-origin cancellation and approval-resume boundary.
+│       ├── mink/revamps/[revampId]/ # ★ The revamp card's requester-only GET (progress,
+│       │                      # review; kicks a stalled job) and POST (cancel, publish,
+│       │                      # undo); same-origin, rate-limited, no-store.
 │       ├── mink/drafts/[draftId]/ # ★ No-store private-draft read/save/rollback API;
 │       │                      # same-origin writes, optimistic versions, actor/store/RBAC scope.
 │       │   ├── product-action/ # ★ Phase 4A same-origin preview/execute/rollback endpoint;
@@ -5666,16 +6841,30 @@ wholesip/
 │       │                      # for the headless-Chromium capture job (CRON_SECRET).
 │       │                      # The job is STARTED by the per-minute runs/QA routes
 │       │                      # only when a capture waits (lib/theme-studio/
-│       │                      # capture-start.ts), not by its own schedule.
+│       │                      # capture-start.ts), not by its own schedule,
+│       │                      # and right after a capture is queued (TS-3A).
+│       │                      # Each such tick first fails a capture nobody
+│       │                      # took for 15 minutes (capture_not_started,
+│       │                      # sweepStaleThemeStudioCaptures, TS-1E). A finish
+│       │                      # whose picture, QA report or screenshot is
+│       │                      # malformed is that try's error (TS-3A).
 │       ├── internal/theme-studio/runs/ # ★ Theme Studio Phase 3 MODEL worker: CRON_SECRET
 │       │                      # bearer, maxDuration 1200, TWO run lanes + an independent visual-QA lane.
 │       │                      # Needs its own Scheduler job (1200s deadline, no retries) and a
 │       │                      # ≥1200s Cloud Run timeout — docs/cron-jobs.md. Takes no input.
 │       ├── internal/theme-studio/qa/ # Independent CRON_SECRET-gated visual-QA drain: two
 │       │                      # leased lanes, 300s deadline; deploy a separate one-minute scheduler.
+│       │                      # TS-3A: the capture job also calls it when its captures
+│       │                      # end; at most 2 design reviews run platform-wide; logs
+│       │                      # theme_studio.qa_waiting when reviews wait over 10 min.
+│       ├── internal/mink/revamps/run/ # ★ The storefront revamp runner: CRON_SECRET
+│       │                      # bearer, maxDuration 1200, one leased job per process;
+│       │                      # kicked by lib/mink/revamp/trigger.ts, never scheduled.
 │       ├── cron/mink-workflows/ # ★ Every minute: CRON_SECRET-gated Phase 6A lease worker;
 │       │                      # bounded deterministic steps, retries, cancellation and completion.
-│       │                      # Also sweeps idle Theme Studio preview stores (isolated).
+│       │                      # Also sweeps idle Theme Studio preview stores, stalled
+│       │                      # storefront revamps (five kicks a tick) and chat runs a dead
+│       │                      # server left running (twenty a tick), each isolated.
 │       ├── theme-studio/preview/enter/ # ★ On a PREVIEW STORE's host: swaps a 10-min entry
 │       │                      # token for a 1h host-only grant cookie; relative redirect.
 │       ├── theme-studio/placeholders/[assetId]/ # ★ PUBLIC, placeholder-purpose-only
@@ -5684,6 +6873,18 @@ wholesip/
 │       │                      # (image purpose only, never a reference).
 │       ├── platform/theme-studio/projects/[projectId]/slot-images/ # superadmin
 │       │                      # raw-body upload of one slot image; changes no version.
+│       ├── platform/theme-studio/projects/ # ★ TS-2 GET reads (25 Oct 2026), superadmin
+│       │                      # only: (JSON routes) a foreign origin 403, then 401 with
+│       │                      # no session, 403 for anyone but a superadmin, 404 for an
+│       │                      # unknown theme; never cached. route.ts ?filter= the Theme Studio
+│       │                      # list; [projectId]/progress/ the theme page's 3 s poll
+│       │                      # (a route, not a server action: actions run one at a
+│       │                      # time per browser, so a poll would hold back Publish,
+│       │                      # Send and Stop); [projectId]/check-screenshots/
+│       │                      # ?versionId= the newest final check's screenshots
+│       │                      # (pages, widths, sizes), and its [assetId]/ one
+│       │                      # screenshot's bytes (only a qa_screenshot of that
+│       │                      # project, with the reference route's lock-down headers).
 │       ├── cron/domain-reconcile/ # ★ HOURLY (§30): finishes every custom domain
 │       │                      # whose certificate issued after the merchant closed
 │       │                      # the tab. Without it a domain only ever goes live if
@@ -5707,6 +6908,7 @@ wholesip/
 │       │                      # lib/retention/prune.ts. notifications 90d,
 │       │                      # activity_events 365d, email_logs 90d (+ closed
 │       │                      # whatsapp_conversations 730d, pos_parked_sales 7d,
+│       │                      # ai_quota_refunds 90d, raw SQL: no Drizzle model,
 │                              # Step 15 — the 20-per-counter CAP is what runs
 │                              # out, not the disk) — windows
 │       │                      # that were documented for months and enforced by
@@ -6112,7 +7314,9 @@ wholesip/
 │   │                          # incl. a guard that the two catalogs stay in step
 │   ├── retention/             # ★ §32: prune.ts — the log-retention sweep.
 │   │                          # RETENTION_POLICIES is the registry (add a table
-│   │                          # = add an entry); batches are 1000 rows, EACH ITS
+│   │                          # = add an entry; ai_quota_refunds, which has no
+│   │                          # Drizzle model, has a raw-SQL deleter,
+│   │                          # aiQuotaRefundBatchDeleter); batches are 1000 rows, EACH ITS
 │   │                          # OWN withService transaction. NOT a "use server"
 │   │                          # file, deliberately — the version that lived in
 │   │                          # app/actions was an ungated public endpoint that
@@ -6153,7 +7357,48 @@ wholesip/
 │   │                          # withUser({uid,email}) (SET LOCAL ROLE app_user + app.current_user_id
 │   │                          # GUC → auth.uid() shim), withAnon (no GUC). Schema in drizzle/
 │   │                          # (introspected). See docs/gcp-migration-phase5-6.md.
-│   │                          # errors.ts: pg error helpers (isUniqueViolation etc).
+│   │                          # ★★ ONE POOL PER PROCESS (2026-10-23, robustness audit B26):
+│   │                          # the pool lives on globalThis[Symbol.for("storemink.db.pool")],
+│   │                          # because a Next build carries this module in several server
+│   │                          # chunks (the 20 Oct build: route handlers, the proxy, the app
+│   │                          # pages), each with its own module cache, so a module-level pool
+│   │                          # meant up to three pools of DB_POOL_MAX per process (3 × 5 = 15
+│   │                          # on a prod server; one was measured holding 14 to 19). closePool
+│   │                          # clears the slot before the pool finishes closing.
+│   │                          # ★ EVERY POOL, web and Theme Studio worker, has a 5 s connection
+│   │                          # wait (connectionTimeoutMillis: the queue and a new connection
+│   │                          # alike), a 30 s statement_timeout and a 60 s
+│   │                          # idle_in_transaction_session_timeout (B27; the workers already
+│   │                          # had them). Measured locally on 200k orders: a 12-month report
+│   │                          # read takes under 1 s; a transaction that needs a statement
+│   │                          # longer than 30 s must SET LOCAL statement_timeout itself
+│   │                          # (deleteStore's purge and both analytics rollup transactions
+│   │                          # do: 5 min each, measured 2026-10-24 in app/actions/platform.ts
+│   │                          # and lib/analytics/storefront-rollup.ts; the checks deferred
+│   │                          # to COMMIT are not timed by statement_timeout at all).
+│   │                          # SQLSTATE 53300 (too many clients) on connect or BEGIN gets ONE
+│   │                          # retry after 250 to 500 ms per scope, then DatabaseBusyError
+│   │                          # (reason too_many_clients, code 53300, the original as cause;
+│   │                          # isDatabaseBusy()); pg-pool's 5 s wait running out is
+│   │                          # DatabaseBusyError (pool_wait_timeout), never retried; nothing is
+│   │                          # retried once the callback has started. A checked-out client
+│   │                          # carries an error listener (db.checked_out_client_error; 25P03 =
+│   │                          # a transaction ended by the 60 s limit): a session the server
+│   │                          # ends while it is lent out used to be an uncaught `error`, and
+│   │                          # that socket is destroyed. Connections are named
+│   │                          # storemink-<web|worker>:<K_REVISION|local>:<tag> in
+│   │                          # pg_stat_activity, one tag per process, which is how to check
+│   │                          # B26 on a live database. scripts/db-migrate.mjs opens its own
+│   │                          # pg.Client, so migrations are untouched.
+│   │                          # errors.ts: pg error helpers (isUniqueViolation etc), and
+│   │                          # ★ loggableError (B22 + its review, 2026-10-24): what a catch
+│   │                          # hands logError. A failed query becomes the database's own
+│   │                          # reason only (Drizzle's "Failed query: … params: …" carries
+│   │                          # merchant text); any other Error is logged as itself, so its
+│   │                          # stack and name (DatabaseBusyError) reach the log; anything
+│   │                          # else its message, never "[object Object]". Used by
+│   │                          # lib/offers/cart.ts, lib/inventory/alerts.ts and the revamp
+│   │                          # run route.
 │   │                          # Ported so far: colors, categories, enquiries (incl.
 │   │                          # dashboard/enquiries/data.ts), reviews, blog-taxonomy,
 │   │                          # coupons, blogs (actions + dashboard list + settings +
@@ -6298,6 +7543,15 @@ wholesip/
 │   ├── seo/                   # ★ schema.ts — pure JSON-LD builders (productSchema/
 │   │                          # articleSchema/breadcrumbSchema), tested. Rendered via the
 │   │                          # (storefront) <JsonLd> component on product/blog pages.
+│   │                          # ★★ json-ld.ts: serializeJsonLd, the ONE escaper for every
+│   │                          # application/ld+json script StoreMink writes, shared by
+│   │                          # <JsonLd> and the apex, POS, themes and help pages. It
+│   │                          # turns <, >, & and the two line separators into JSON
+│   │                          # unicode escapes, because the values are typed text (a
+│   │                          # store blurb, a Mink revamp's copy) and a "</script" in
+│   │                          # one would end the element on the store's origin. Its
+│   │                          # guard, json-ld-coverage.test.ts, scans app, components,
+│   │                          # lib and hooks and fails on a script written any other way.
 │   │                          # Article/help publishers carry @id + url so they
 │   │                          # resolve to the site's own #organization node.
 │   │                          # og-card.ts — brandOgImageUrl() builds the /api/og URL
@@ -6348,8 +7602,28 @@ wholesip/
 │   │                          # testimonials, video, newsletter, rich_text + custom_code (§11)
 │   ├── menus.ts               # ★ Per-store nav (§11): StoreMenus types, DEFAULT_MENUS,
 │   │                          # normalize/sanitize. Read cached via getStoreMenus.
-│   ├── ai/gemini.ts           # Gemini/Vertex AI client for AI copy (dual backend, §7);
-│   │                          # emits ai.generate telemetry (latency + tokens) via observability
+│   ├── ai/gemini.ts           # Gemini/Vertex AI client for AI copy (dual backend, §7):
+│   │                          # gemini-3.5-flash-lite, then gemini-3.5-flash once on a
+│   │                          # busy/slow/refused main model; 30 s per attempt; LOW thinking
+│   │                          # with 1,024 tokens of headroom; responseJsonSchema;
+│   │                          # vertexHost() (also used by lib/help/embeddings.ts);
+│   │                          # three plain messages (AI_BUSY_MESSAGE,
+│   │                          # AI_UNAVAILABLE_MESSAGE, AI_UNUSABLE_MESSAGE); ai.generate
+│   │                          # logs model, location, attempts, status and Google's message
+│   │                          # (≤500 chars), never a prompt; promptText (cuts a prompt
+│   │                          # field: AI_PROMPT_FIELD_MAX 4,000, AI_PROMPT_SHORT_FIELD_MAX
+│   │                          # 300); withoutNothingChargedClaim (the same message without
+│   │                          # "nothing was charged", for a refund that failed)
+│   ├── ai/quota.ts            # ★ consumeAiQuota(storeId, { actorId }) (AI_COPY_RATE_LIMITS
+│   │                          # first, then plan cycle, then top-up credits; returns
+│   │                          # `taken`, an AiQuotaTake) and refundAiQuota(storeId, taken),
+│   │                          # which gives a failed generation's credit back once, tried
+│   │                          # twice, answering refunded | none | failed (refund_ai_quota,
+│   │                          # migration 0237; §16); getAiUsage; aiWarnAt
+│   ├── ai/credited-copy.ts    # ★ withAiCredit: take the credit, run the request, give it
+│   │                          # back on every way out that does not deliver, and drop the
+│   │                          # "nothing was charged" claim when the refund failed. Shared
+│   │                          # by the four Generate with AI actions (§16)
 │   ├── ai/credits.ts          # (see below) pure CreditPack shape + the bounds a pack
 │   │                          # must satisfy; the catalogue itself is in the database
 │   ├── ai/credit-pricing.ts   # ★ reads the operator-owned mink_credit_packs catalogue.
@@ -6377,6 +7651,9 @@ wholesip/
 │   ├── media/library.ts       # server-only Library listing (hidden sources filtered here)
 │   ├── media/product-images.ts # server-only: photos products use (derived), usage by URL,
 │   │                          # and the "still in use" guard for product image clean-up
+│   ├── media/image-usage.ts   # server-only: what else shows a Library image (pages,
+│   │                          # header/footer, categories, a pending storefront redesign);
+│   │                          # the Media Library delete guard's read
 │   ├── media/image-hosts.ts   # client-safe canOptimizeImage(): may next/image optimise
 │   │                          # this URL? Mirrors next.config.ts remotePatterns (a test
 │   │                          # reads that file); any other host renders `unoptimized`
@@ -6392,10 +7669,29 @@ wholesip/
 │   ├── mink/voice-turn.ts     # client-safe: one voice turn, mic to transcript (shares
 │   │                          # transcription with dictation)
 │   ├── mink/spend-limits.ts   # server-only: claimSpendLimits (every limit counts a paid
-│   │                          # call, or none: one transaction, fails closed) and the
-│   │                          # best-effort releaseSpendLimits; MINK_IMAGE_GLOBAL_LIMIT
+│   │                          # call, or none: one transaction, fails closed; returns the
+│   │                          # database's claimedAt) and the best-effort
+│   │                          # releaseSpendLimits, which takes `claimedAt` to give back only
+│   │                          # to the window that counted the claim; MINK_IMAGE_GLOBAL_LIMIT
 │   ├── mink/vertex-clients.ts # server-only: the one Mink Vertex client per project and
-│   │                          # location (session, storefront writer, chat namer)
+│   │                          # location (session, storefront writer, chat namer, image
+│   │                          # generation, Refine, WhatsApp Mink, the attachment reader)
+│   ├── mink/media-generation.ts # server-only: requestMinkImage, the one image loop for
+│   │                          # chat images and Refine (a 429 asked again, per-try clocks,
+│   │                          # the caller's deadline and stop), MinkImageNotSentError,
+│   │                          # isUnbilledImageFailure, reserveMinkImageGeneration's
+│   │                          # once-only giveBack (§ "Mink image calls")
+│   ├── mink/revamp/           # ★ The storefront revamp (§ Mink storefront revamp). Job
+│   │                          # and runner: jobs.ts, runner.ts, trigger.ts, actor.ts,
+│   │                          # photo-hold.ts, ports.ts, deps.ts, step-error.ts. Steps:
+│   │                          # snapshot.ts, site-schema.ts, site-planner.ts,
+│   │                          # fake-plan.ts, site-compiler.ts, copy-checks.ts,
+│   │                          # distinctness.ts (the redo memory's check),
+│   │                          # ownership.ts, photos.ts, image-store.ts, products.ts,
+│   │                          # assemble.ts, digests.ts, checks.ts, card.ts. Card and
+│   │                          # after: review.ts, ready-notice.ts, apply-v2.ts (Apply),
+│   │                          # publish.ts (Publish, Undo). Shared: contract.ts,
+│   │                          # request.ts, lifecycle-types.ts, provider.ts.
 │   ├── mink/                  # ★ Dashboard agent foundation (docs/mink-ai-dashboard-plan.md):
 │   │                          # default-on global + fail-closed invited-store access;
 │   │                          # system-prompt.ts, image-prompt.ts and whatsapp-prompt.ts
@@ -6426,11 +7722,16 @@ wholesip/
 │   │                          # Order/customer output is role-gated and masks direct PII;
 │   │                          # selected IDs are revalidated against the trusted tenant.
 │   │                          # conversation-history.ts owns actor-scoped conversation
-│   │                          # list/detail/delete and successful message/feedback history;
-│   │                          # history APIs avoid draft execution and email dependencies.
+│   │                          # list/detail/delete and successful message/feedback history
+│   │                          # (plus a failed run's kept redesign card), and the dead-run
+│   │                          # rule (staleMinkRunCondition) the delete and the sweep share;
+│   │                          # history APIs avoid draft execution and email dependencies
+│   │                          # (the delete imports persistence.ts only for a dead run).
 │   │                          # persistence.ts owns runs, redacted tool records, extractive
 │   │                          # history compaction, answer artifacts and append-only partial
-│   │                          # usage + versioned shadow cost/credits; re-exports history.
+│   │                          # usage + versioned shadow cost/credits, the failure record
+│   │                          # that keeps a redesign (B4) and closeStaleMinkRuns (B7);
+│   │                          # re-exports history.
 │   │                          # feedback.ts accepts only actor-owned runs and redacts private
 │   │                          # detail; request-origin.ts is the shared Cloud Run CSRF boundary.
 │   │                          # drafts.ts + draft-types.ts and tools/draft-tools.ts implement
@@ -6538,9 +7839,13 @@ wholesip/
 │   │                          # Phase 7D publication remains an authenticated human-only action.
 │   │                          # `evals/mink/read-alpha.json` + `npm run mink:eval` are the
 │   │                          # 88-case live tool/safety/latency gate.
-│   ├── theme-studio/          # ★ OPERATOR-ONLY AI Theme Studio Phase 0 contracts
-│   │                          # (docs/mink-ai-theme-studio-phase0.md; no routes or provider
-│   │                          # runtime yet). contracts.ts owns the bounded ThemeIntent and
+│   ├── theme-studio/          # ★ OPERATOR-ONLY AI Theme Studio. Phase 0 contracts
+│   │                          # (docs/mink-ai-theme-studio-phase0.md); routes and the
+│   │                          # runtime came in the phases below. ★ Since TS-1 (24 Oct
+│   │                          # 2026) one superadmin publishes once the automatic checks
+│   │                          # and design review pass on today's build: serious findings
+│   │                          # block, the rest are warnings. contracts.ts owns the
+│   │                          # bounded ThemeIntent and
 │   │                          # ThemePackageV2 parsers, fixed responsive review viewports,
 │   │                          # project state machine, run/intake ceilings and explicit
 │   │                          # capability-gap vocabulary. It refuses unknown/instruction-
@@ -6553,7 +7858,11 @@ wholesip/
 │   │                          # registered with merchant Mink.
 │   │                          # Phase 3: gemini-vertex.ts (the ONLY Studio model client —
 │   │                          # @google/genai Vertex mode, ADC, responseJsonSchema, no
-│   │                          # tools, HIGH thinking, thought parts discarded),
+│   │                          # tools, HIGH thinking, thought parts discarded; a
+│   │                          # client given `capacityAt` sends each photo check
+│   │                          # (`image_review`) to Google's US endpoint first and
+│   │                          # once to its own location when the US refuses or
+│   │                          # times out, TS-3D),
 │   │                          # schemas.ts (closed Stage A/B JSON schemas), prompts.ts
 │   │                          # (deterministic, versioned, untrusted input fenced),
 │   │                          # compiler.ts (draft → ThemePackageV2; the server owns id,
@@ -6568,52 +7877,131 @@ wholesip/
 │   │                          # placeholders.ts (solid WebP per image slot), pipeline.ts
 │   │                          # (Stage A → B, ≤2 repairs each, pure over the client),
 │   │                          # rate-limit-backoff.ts (the 429 wait: bounded, jittered,
-│   │                          # abortable; SDK keeps the fast 5xx retry),
+│   │                          # abortable; SDK keeps the fast 5xx retry; the pause one
+│   │                          # refusal sets for everyone else capped at 15 s),
 │   │                          # abortable.ts (whole-call deadlines, including SDK auth/retries),
 │   │                          # image-request-pool.ts (three image calls shared by concurrent
 │   │                          # worker lanes per provider project/location/model, shared 429
-│   │                          # pause and gradual recovery, process-local),
+│   │                          # pause and one permit back per success, process-local),
 │   │                          # provider-capacity.ts / provider-capacity-store.ts (shared
 │   │                          # service-only PostgreSQL admission, fenced expiring permits
-│   │                          # and cross-instance cooldown/recovery; migration 0149),
+│   │                          # and cross-instance cooldown/recovery; migration 0149;
+│   │                          # image models start-paced 10 to 45 s apart,
+│   │                          # IMAGE_START_PACING, migration 0236, each gap move logged
+│   │                          # as theme_studio.provider_pace; an optional scope gives
+│   │                          # a caller its own row),
 │   │                          # capture-profile.ts (bounded timings and same-claim HTML
 │   │                          # reuse), benchmark.ts (complete persisted pipeline metrics),
 │   │                          # image-recovery.ts (exact paid-response replay and
-│   │                          # independent image-review recovery), image-checkpoint-store.ts
+│   │                          # independent image-review recovery; checkUncheckedPhotos,
+│   │                          # the check of a photo still unchecked before the final
+│   │                          # design review, recorded on the drawing run's outcome
+│   │                          # entry), notify.ts (operator notices told only to the
+│   │                          # operator who started the theme:
+│   │                          # notifyThemeStudioOperator(db, ...) and
+│   │                          # sendThemeStudioNotice(...)), image-checkpoint-store.ts
 │   │                          # (private byte/evidence checkpoints, live-lease fencing and
 │   │                          # incremental spend; migration 0147),
+│   │                          # image-prompt.ts (renders docs/theme-studio-image-prompt.md;
+│   │                          # image-prompt.golden.json pins every rendered Theme Studio
+│   │                          # image request and the review texts byte for byte, because
+│   │                          # paid checkpoints are keyed on them; only the Mink storefront
+│   │                          # redesign sets a brief's goods, B16),
+│   │                          # image-models.ts (the one image model, Nano Banana 2.1,
+│   │                          # the Pro rollback, Theme Studio's photo sizes, and
+│   │                          # imageRequestConfig, the rules every image request
+│   │                          # follows, TS-3F),
 │   │                          # cost.ts (versioned ESTIMATE, priced per call because
-│   │                          # Pro's tier follows each prompt's size), evaluation.ts (golden-set
+│   │                          # Pro's tier follows each prompt's size, and at the
+│   │                          # location that served it: the US at 1.1 times global
+│   │                          # since TS-3D, `gemini-api-list-2026-09-us-1.1x`; image
+│   │                          # calls at the rates of the model that drew them,
+│   │                          # `gemini-image-list-2026-10`, TS-3F), evaluation.ts (golden-set
 │   │                          # grading + independent package safety checks).
 │   │                          # Phase 4: preview.ts (materialize/evict/sweep hidden demo
-│   │                          # preview stores; theme-asset rewrite), preview-token.ts
+│   │                          # preview stores, never one a capture is measuring;
+│   │                          # theme-asset rewrite), preview-token.ts
 │   │                          # (entry + grant HMAC), preview-store.ts (pure marker +
 │   │                          # safe-path check), preview-access.ts (the resolver gate),
 │   │                          # diff.ts (pure version compare).
 │   │                          # Phase 5: acceptance-gates.ts (pure gates + evidence
 │   │                          # digests), acceptance.ts (server stage, browser-stage
-│   │                          # verdict, candidate transitions, evidence re-check),
+│   │                          # verdict, candidate transitions, evidence re-check;
+│   │                          # currentPublishEvidence / publishEvidenceWithDb: may this
+│   │                          # theme publish now, on today's build with a design review
+│   │                          # bound to its newest check run),
 │   │                          # acceptance-http.ts (loopback page fetch with the
 │   │                          # preview Host header).
 │   │                          # Track 4/5: industry-playbooks.ts supplies exhaustive
 │   │                          # page/section/palette/imagery starts; visual-qa.ts
-│   │                          # leases five-width screenshot evidence, applies the
-│   │                          # eight-row scorecard and queues ≤3 hidden repairs.
+│   │                          # leases five-width screenshot evidence, classifies the
+│   │                          # review into serious findings and taste (scorecard.ts)
+│   │                          # and queues ≤3 hidden repairs; taste left after them is
+│   │                          # a warning; worn-out rows settle in their own savepoint;
+│   │                          # at most 2 design reviews run at once (TS-3A).
 │   │                          # automatic-work.ts queues artwork/final capture after layout
-│   │                          # preflight; qa-diagnosis.ts routes renderer/settings/image
-│   │                          # failures and detects stalled or recurring QA patterns.
-│   │                          # automatic-qa-policy.ts requires all acceptance gates, classifies
-│   │                          # repairable failures and enforces the database iteration bound.
+│   │                          # preflight, and the after-commit operator notices
+│   │                          # (withServiceAndNotices, TS-3A); capture-start.ts also
+│   │                          # starts the job right after a capture is queued
+│   │                          # (startCaptureJobForQueued / startCaptureJobAfterCommit);
+│   │                          # finding-severity.ts (pure: severity-v1, what
+│   │                          # stops Publish and what is a warning, the AA contrast
+│   │                          # line, the StoreMink platform label); qa-diagnosis.ts
+│   │                          # routes the serious findings of the gates that stop a run
+│   │                          # to renderer/settings/image repairs and detects stalled or
+│   │                          # recurring QA patterns (warnings never count);
+│   │                          # automatic-qa-policy.ts decides pass, revise, attention or
+│   │                          # blocked from the gates and the design review's outcome
+│   │                          # (pass, taste or serious; none is never a pass), never
+│   │                          # revises at the repair ceiling, and enforces the database
+│   │                          # iteration bound; automaticQaAttention says why it stopped
+│   │                          # (checks_incomplete versus quality_bar_not_met).
 │   │                          # slot-images-core.ts (pure: describe slots, apply
 │   │                          # replacements, carry images into a revision) +
 │   │                          # slot-images.ts (crop/compress an upload, store it,
-│   │                          # save replacements as one asset_edit version).
-│   │                          # Phase 6: scorecard.ts (the §5 rows/chairs/bar; no
-│   │                          # imports, client-safe), publication-core.ts (pure:
-│   │                          # scorecard + approval rules, blockers, semver, the
+│   │                          # save replacements as one asset_edit version; with the
+│   │                          # automatic checks on, a hidden version checked by one
+│   │                          # final capture, TS-1D); worker.ts reachesFinalCheck
+│   │                          # decides whether an operator's photo run joins the
+│   │                          # automatic checks.
+│   │                          # TS-1E: stop.ts (Stop: ends captures and design reviews at
+│   │                          # once, lease-fenced, cancels runs, retires abandoned
+│   │                          # in-browser checks); capture.ts queueThemeStudioRecheck
+│   │                          # (+WithDb) (the capture half of the re-check contract) and
+│   │                          # sweepStaleThemeStudioCaptures (15 minutes,
+│   │                          # capture_not_started); capture-core.ts
+│   │                          # remeasuresInPlace/versionPassedChecks; worker-lease.ts
+│   │                          # retries a renewal that throws.
+│   │                          # scorecard.ts (the §5 rows, the bar, the rejections and
+│   │                          # which are serious, decision 3 score limits; no imports,
+│   │                          # client-safe), publication-core.ts (pure:
+│   │                          # publicationBlockers {blocking, warnings},
+│   │                          # publicationWarnings, publicationWarningLog, semver, the
 │   │                          # published-package builder, catalog changes),
-│   │                          # publication.ts (server-only: review, approve, publish,
-│   │                          # hide/show/restore, read model; I/O injectable).
+│   │                          # publication.ts (server-only: one-step publish, which
+│   │                          # re-checks the design on today's build first when its
+│   │                          # evidence is not today's; hide/show/restore; read model;
+│   │                          # I/O injectable); frozen-releases.test.ts with
+│   │                          # __fixtures__/frozen-releases.json.gz freezes the stored
+│   │                          # packages the renderer re-checks.
+│   │                          # TS-2 (25 Oct 2026): progress.ts (server-only reads
+│   │                          # behind the operator screens, never a write, never
+│   │                          # picture bytes or a whole stored document):
+│   │                          # readThemeStudioProgress (the theme page's status facts
+│   │                          # and the progress-card steps of the newest piece of
+│   │                          # work), listThemeStudioProjectsForConsole (the list's
+│   │                          # rows and every filter's count, at most 4 statements),
+│   │                          # readThemeStudioBuildTimeRange (the last 10 finished
+│   │                          # builds on a real provider, else 35 to 75 minutes),
+│   │                          # listThemeStudioCheckScreenshots +
+│   │                          # readThemeStudioCheckScreenshot (the owner-approved
+│   │                          # check screenshots); finished check runs' counts and
+│   │                          # versions' picture facts are cached in memory.
+│   │                          # acceptance-repair.ts describeFixDraft: the Describe a
+│   │                          # fix draft (serious findings only, THEME_FIX_CHECKS with
+│   │                          # package.security, the design review's serious findings
+│   │                          # except photos, Design N words, no run id);
+│   │                          # acceptanceRepairDraft kept.
 │   ├── help/                   # ★ Public Help reads/types plus Mink AI retrieval (§21):
 │   │                          # assistant-input.ts rejects low-signal turns; chunks.ts
 │   │                          # creates heading-aware plain-text sections; embeddings.ts
@@ -7054,7 +8442,8 @@ wholesip/
 │                              # computed checksum) across 27 ledger rows including
 │                              # production, for no functional gain — the ids are
 │                              # already unique. It is a naming wart, not a defect.
-│                              # ★ THE NEXT MIGRATION TAKES 0094. 0085 and 0086 are
+│                              # ★ NUMBERING RESUMED AT 0094 (the list below runs to
+│                              # the current "Next free" number). 0085 and 0086 are
 │                              # used by the offers series, so those collide too;
 │                              # 0087 documents the StoreMink logo refresh,
 │                              # 0088 Help first-visit/error recovery, and 0089 the
@@ -7291,7 +8680,71 @@ wholesip/
 │                              # personalisation (tool, draft kind, per-kind
 │                              # 200-credit ceiling, Help); 0233 adds the
 │                              # edited-pages sentence to its Help paragraph.
-│                              # Next free: 0234.
+│                              # 0234 is the storefront revamp: service-only
+│                              # mink_revamps (one queued or running job per
+│                              # store, only a full revamp may be free, a ready
+│                              # one always has its draft) and
+│                              # mink_revamp_images, and mink_drafts' credit
+│                              # check widened so a storefront_personalization
+│                              # draft may be free ('free', 0 credits); 0235
+│                              # replaces the Mink Website Builder guide's
+│                              # personalisation paragraph with the revamp's,
+│                              # two sentences of the Media guide and the
+│                              # general Mink guide's Media Library sentence.
+│                              # 0236 adds start-time pacing to
+│                              # theme_studio_provider_capacity (next_start_at,
+│                              # gap_ms with a 1000..300000 CHECK; image model
+│                              # keys only, expand-only, old revisions never
+│                              # name them).
+│                              # 0237 adds service-only ai_quota_refunds (one
+│                              # row per refunded take; store FK cascade; RLS
+│                              # on; app_service only) and
+│                              # refund_ai_quota(uuid,uuid,text,text) (SECURITY
+│                              # DEFINER, EXECUTE for app_service only):
+│                              # Generate with AI gives back the credit a failed
+│                              # request took (§16). 0238 edits the AI usage and
+│                              # credits Help guide in place: a credit given back
+│                              # shows in the activity as a Grant with the note
+│                              # "Refund: an AI request failed", and a busy or
+│                              # unavailable AI charges nothing.
+│                              # 0239 edits the Mink website guide's storefront
+│                              # redesign sentences in place: a stopped reply
+│                              # keeps the redesign and its card (Stop on the
+│                              # card stops it), the photographs show the
+│                              # merchant's own products or none, and the ready
+│                              # notification opens the chat with the card;
+│                              # and the general Mink guide's discard sentence
+│                              # gains the redesign exception.
+│                              # 0240 adds seven indexes (storefront_events
+│                              # (order_id) where order_id is not null, for a
+│                              # store purge's cascade; mink_runs (started_at,
+│                              # id) where status = 'running', for the dead-run
+│                              # sweep; notification_sms_queue (event_id),
+│                              # notification_whatsapp_queue (event_id),
+│                              # whatsapp_mink_answers (conversation_id),
+│                              # (message_id) and (sent_message_id) where not
+│                              # null, for the retention cascades) and the two
+│                              # app_service grants the failed-run record's
+│                              # holder run needs (DELETE on mink_runs, UPDATE
+│                              # of run_id only on mink_draft_credit_usage); no
+│                              # CONCURRENTLY (one transaction), so a SHARE
+│                              # lock per table until COMMIT; pinned by
+│                              # scripts/release-indexes-and-grants-migration.test.ts.
+│                              # 0241 publishes Privacy Policy v3 (one guarded
+│                              # DO block, publishLegalVersion's retire then
+│                              # insert, created_by 'script'; nothing where v3
+│                              # or later is current, a plain RAISE on a v3 row
+│                              # that is not current; never Terms or Acceptable
+│                              # Use); pinned by
+│                              # lib/legal/privacy-v3-migration.test.ts.
+│                              # 0242 replaces, in place, the general Mink
+│                              # guide's two attachment-reading sentences
+│                              # (never retries, never another model): a busy
+│                              # reader is tried again and may use a backup
+│                              # model within the 45 s, and a safety or
+│                              # too-complex refusal is reported as it is
+│                              # (robustness B12, input-provider.ts).
+│                              # Next free: 0243.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -7451,6 +8904,25 @@ wholesip/
 │                              # own package.json, Dockerfile and cloudbuild.yaml; not in
 │                              # the web image. Runbook: docs/image-matting-service.md
 ├── scripts/
+│   ├── prod-monitoring.py     # ★ The repo copy of what made production alerting
+│   │                          # (2026-10-23, owner-approved; docs/monitoring.md): one email
+│   │                          # channel, three uptime checks, the mink_chat_run_failures log
+│   │                          # counter and 15 alert policies in storemink-prod (applied
+│   │                          # 23 Oct), all labelled managed-by=storemink-alerts, plus five
+│   │                          # Theme Studio log alerts defined 25 Oct (plan P6: a run
+│   │                          # failed or lost its lease, the capture job failed to
+│   │                          # start, design reviews not draining, a platform finding,
+│   │                          # a Theme Studio schedule attempt failed). They match the
+│   │                          # web service, both private workers and the capture job,
+│   │                          # never dev, and are applied after the release with the
+│   │                          # owner's OK (step A1); scripts/prod-monitoring.test.ts
+│   │                          # reads the dry run and pins them. `python3 -I
+│   │                          # scripts/prod-monitoring.py` is a dry run that prints every
+│   │                          # body; `--apply --email <address>` creates only what is
+│   │                          # missing (idempotent by display name) with the caller's gcloud
+│   │                          # login. The address is an argument, never committed. Writes
+│   │                          # only to storemink-prod; reads configuration and metric
+│   │                          # descriptors, never time series, logs or secrets.
 │   ├── whatsapp-media-to-private.mjs # `npm run whatsapp:media-to-private`: move
 │   │                          # WhatsApp chat media (stores/*/whatsapp/**) from the
 │   │                          # public bucket to GCS_PRIVATE_BUCKET, same path. Dry run
@@ -7461,6 +8933,64 @@ wholesip/
 │   │                          # (§30). Dry run unless --commit --confirm-project <project>;
 │   │                          # refuses a database, project and root domain from different
 │   │                          # environments. Logic in sync-auth-hosts-core.ts (tested).
+│   ├── revamp-live-check.ts   # `npm run revamp:live-check`: a whole Mink storefront
+│   │                          # revamp on this machine, without the chat, for the four
+│   │                          # shops of revamp-live-fixtures.ts (--setup, --run,
+│   │                          # --apply --publish, --undo, --report, --reset). Drives
+│   │                          # runRevampJob with the kick off; offline fakes unless
+│   │                          # --live --yes; refuses unless the database is
+│   │                          # storemink_local on loopback, the models are
+│   │                          # storemink-staging's and GCS_BUCKET is set and not a
+│   │                          # production bucket; exits 1 when a shop failed.
+│   ├── revamp-live-check-core.ts # The live check's runner loop (driveRevamp), no
+│   │                          # server import, tested: waits a parked lease out
+│   │                          # (its line names the step's failures in a row,
+│   │                          # leaseWaitLine) and settles a job nobody may claim
+│   │                          # again (stopped, out of failures, or past its 4-hour
+│   │                          # ceiling, pastRunCeiling) with the card's status read.
+│   ├── revamp-live-fixtures.ts # The four made-up shops (kesar-ghani on Vitrine,
+│   │                          # crumb-and-co, tara-jewels, neem-ritual): each one's
+│   │                          # interview answers as start_storefront_revamp sends them.
+│   ├── revamp-priority-test.ts # `npm run revamp:priority-test`: the Priority PayGo
+│   │                          # A/B on storemink-staging (owner, 2026-10-23). 152 calls
+│   │                          # a pass in two stages. First, alone, a spacing ladder of
+│   │                          # 12 Standard gemini-nano-banana-2.1 photos (HIGH), three
+│   │                          # each 60, 40, 30 and 15 s apart, widest first. Then 140
+│   │                          # pass calls in seven lanes: Theme Studio's photo (HIGH)
+│   │                          # 10 Standard + 10 Priority, Mink's photo (MINIMAL) 10 + 10
+│   │                          # at global and 10 Standard each at us and eu, the 3.8
+│   │                          # Flash photo check 20 + 20 at global and 20 Standard each
+│   │                          # at us and eu. Each call sent once, never retried, at
+│   │                          # most 6 in flight, Standard and Priority alternating.
+│   │                          # About $6.43 a pass at list prices ($11.57 on the 23 Oct
+│   │                          # models). Dry run by default; `--live --yes` spends,
+│   │                          # capped by `--max-usd` (default 15, at most 25; the
+│   │                          # owner approved about $24 for both passes). Refuses any
+│   │                          # project but storemink-staging and an overridden Vertex
+│   │                          # endpoint. Writes a results JSON (version 2) and a
+│   │                          # markdown summary with a "Spacing ladder" section to
+│   │                          # `--out`; every refusal keeps errorBody, errorDetails
+│   │                          # and quotaNamed, every call gapSincePrevStartMs (since
+│   │                          # the last start on the same model and endpoint); keeps
+│   │                          # the final image part and counts the thought drafts. Its
+│   │                          # drift test (revamp-priority-test.test.ts) fails when the
+│   │                          # copied production requests change. Runbook:
+│   │                          # docs/mink-revamp-speed.md.
+│   ├── revamp-uniqueness-test.ts # Step 10 of the robustness audit's uniqueness plan,
+│   │                          # run with npx tsx --tsconfig tsconfig.scripts.json
+│   │                          # scripts/revamp-uniqueness-test.ts (no npm alias yet).
+│   │                          # Three bakeries and three skincare shops (two from
+│   │                          # revamp-live-fixtures.ts) on one bundled theme (--theme,
+│   │                          # default basket), each planned for a first redesign and
+│   │                          # a redo (12 planning calls, no photographs, no database)
+│   │                          # and measured against section 5: same trade at least the
+│   │                          # same-theme bar apart, every redo past it after the
+│   │                          # check, under half of the settings equal to the v4
+│   │                          # default, pages not all near-white; v4 is modelled (its
+│   │                          # prompt is gone). Dry run by default ($0, fake planner
+│   │                          # only); --live needs --budget-usd (at most 2),
+│   │                          # storemink-staging and the owner's approval; --out
+│   │                          # writes the JSON report. Tested.
 │   ├── theme-studio-eval.ts   # ★ Phase 0 golden set through the Phase 3 pipeline, no DB.
 │   │                          # Offline (fake) by default and grades nothing; --live needs
 │   │                          # --max-usd AND --yes, because GCP_PROJECT_ID in a dev .env
@@ -7473,6 +9003,10 @@ wholesip/
 │   │                          # --review-from rechecks a saved synthetic tank without redrawing.
 │   ├── theme-studio-renderer-check.mjs # ★ Offline Chromium fixture using production
 │   │                          # CSS: carousel targets/focus and hero crops at five QA widths.
+│   ├── theme-studio-contrast-check.mjs # ★ Offline Chromium + axe: every shared storefront
+│   │                          # contrast defect (4, 8, 9, 10 Oct, TS-1G) on the 12 shipped
+│   │                          # palettes and 2 Studio ones, each beside a broken copy that
+│   │                          # must still fail; also in the CI renderer job.
 │   ├── product-card-layout-check.mjs # Offline production-CSS card fixtures: five widths,
 │   │                          # five skins, home/shop, both CSS load orders, ordinary and
 │   │                          # long labels/prices. No DB, network or image generation.
@@ -7489,7 +9023,10 @@ wholesip/
 │   │                          # in-page half). Plan Phase 2 exit evidence; §11.
 │   ├── theme-studio-model-check.mjs # ★ Manual ADC/Vertex availability probe for
 │   │                          # the two Theme Studio Gemini models. --dry-run makes no
-│   │                          # request; a live probe sends one FREE countTokens call per
+│   │                          # request and prints the host it would call (vertexHost's
+│   │                          # rule written out: global, aiplatform.<us|eu>.rep.googleapis.com,
+│   │                          # <region>-aiplatform; scripts/theme-studio-model-check.test.ts);
+│   │                          # a live probe sends one FREE countTokens call per
 │   │                          # model, reports only status/latency/safe code and never falls
 │   │                          # back to another model. Not a CI job: needs ADC + a project.
 │   ├── help-content-lint.mjs  # ★★ THE HELP CENTRE GATE (docs/help-centre.md).
@@ -7705,7 +9242,13 @@ wholesip/
     A pooled connection that fails transiently during `BEGIN` or this role/GUC
     setup is destroyed and retried before the callback starts. Never broaden
     that retry past callback entry: the callback may write, and an uncertain
-    transaction must not be replayed.
+    transaction must not be replayed. SQLSTATE 53300 (too many clients) at
+    connect or in that setup gets one short retry per scope (250 to 500 ms),
+    then a `DatabaseBusyError`; the same rule applies (never after the
+    callback has started). Every pool also has a 5 s connection wait, a 30 s
+    statement limit and a 60 s idle-in-transaction limit (§4 `lib/db/`), so a
+    transaction that needs a longer statement must `SET LOCAL
+statement_timeout` itself.
 3.  **Route groups**: `(storefront)` = customer site, `dashboard/` = store admin,
     `platform/` = StoreMink itself. Don't put platform pages in the storefront group —
     the proxy rewrite depends on this separation.
@@ -7795,6 +9338,57 @@ wholesip/
       rubber-band bounce cannot reveal that near-white body behind a dark
       full-screen till. Scoped to that element, NOT html/body: globally it would
       also disable pull-to-refresh on the storefront.
+    - **★★ A STOREFRONT TEXT BOX IS 16px ON PHONES, OR AN IPHONE ZOOMS THE PAGE**
+      (TS-3E, 25 Oct 2026).
+      - iOS Safari zooms the whole page when a shopper taps an input, select or
+        textarea whose text is under 16px, and does not zoom back out. Every
+        iPhone browser is Safari underneath, Chrome and the Instagram and
+        WhatsApp in-app browsers too. Chrome's phone emulation never shows it,
+        so neither Theme Studio's browser check nor a desktop look catches it.
+      - The fix is CSS at phone widths only, the pattern of the profile page and
+        the shop sort:
+        `@media (max-width: 600px) { <the box's own selector> { font-size: 16px; } }`,
+        AFTER the base rule and with the SAME selector (a different selector
+        has a different specificity). Larger screens keep their size.
+      - Never `maximum-scale` or `user-scalable=no`: shoppers must still be able
+        to zoom. Never size a box in its markup (an inline `fontSize`, a
+        Tailwind `text-sm`): no phone rule reaches it.
+      - Fixed on 25 Oct:
+        - the product page PIN code box (`shop.css` `.pdp-delivery-form input`);
+        - the coupon box (`CouponField.module.css` `.input`);
+        - the delivery location box (`delivery-location.module.css` `.form input`);
+        - the checkout boxes (`checkout.module.css` `.input` and the pickup store
+          search `.pickerInput`);
+        - the enquiry form (`enquiries.module.css` `.input`, `.phoneInput`,
+          `.select`);
+        - the not-found page's search (`not-found.css`).
+      - `app/(storefront)/input-zoom-coverage.test.ts` reads the CSS and markup
+        as text (no browser) and checks:
+        - the six boxes keep their phone rule;
+        - no stylesheet a storefront page loads (`app/(storefront)`,
+          `components/`, `app/globals.css`) gives a text box or its placeholder
+          text under 16px at 320 to 430px without a later same-selector
+          override. A box is found by element, by the classes the markup puts
+          on an input, select, textarea or PhoneInput's numberInputProps, or by
+          a class whose last word is input, select or textarea;
+        - no text box a storefront page renders (`app/(storefront)` and the
+          `components/` files it imports) sets text under 16px in its own
+          markup;
+        - no stylesheet resizes the root (1rem stays 16px), and nothing turns
+          zoom off.
+      - Exceptions carry a reason:
+        - `hidden`: the header's own search box, display:none on phones
+          (checked);
+        - `unused`: two `.countrySelect` classes no markup uses (checked);
+        - ★ 12 boxes that STILL ZOOM an iPhone, outside the owner-approved six:
+          the blog list search, the Write a blog Excerpt box and its Add your
+          email box (an inline 15px), the order page's return form (reason,
+          details, quantity, exchange size or colour) and cancel reason, the
+          product review box, the sign-in dialog's new-account name and email
+          boxes, the footer newsletter box and the blog comment box.
+      - That list can only shrink (`ZOOMS_AT_MOST`): fix a box with the same
+        phone rule and delete its entry. No Help Centre update: no article
+        describes these boxes' text size, and no merchant step changes.
     - **★★ AN ABSOLUTE BOX THAT TRANSLATES MUST DECLARE ITS OWN `left`.** The UA
       stylesheet sets `text-align: center` on `<button>` and Tailwind's preflight
       does NOT reset it — so a `position: absolute` child with `left: auto` falls
@@ -8169,7 +9763,8 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     Instrument Serif, every `shape` token `0px`, hairline borders instead of
     cards, and one markdown red as the only hue. Published on 2026-08-23 after
     its accessibility/Lighthouse and required two-person design-review gates
-    passed. Its ten `public/themes/vitrine/*.webp` assets are bundled, and the
+    passed (one reviewer is required since 24 Oct 2026, owner decision 5). Its
+    ten `public/themes/vitrine/*.webp` assets are bundled, and the
     healthy `demo-vitrine` store is seeded on staging and production.
     `visibility: public` and `status: published` expose it in both the public
     catalog and the dashboard's Storefront page.
@@ -8268,9 +9863,12 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     publishable, seeded pages/homepages/catalogs meet minimum content floors,
     and referenced imagery is optimized + catalog-sized. The full release gate
     is **`docs/theme-acceptance.md`**: CI package integrity + live storefront
-    stories + accessibility/performance + a scored two-reviewer design pass;
+    stories + accessibility/performance + a scored design pass (one reviewer
+    for a hand-built theme; a Studio theme's automatic checks and design
+    review, then one superadmin Publish, owner decision 5, 24 Oct 2026);
     generated/licensed asset provenance lives in **`docs/theme-assets.md`**.
-    A valid definition is deliberately NOT the same as an approved theme.
+    A valid definition is deliberately NOT the same as a theme that may go
+    live.
     **Demo stores**: one per theme
     (`demo-{id}` — the namespace is blocked at signup), seeded/reseeded via
     `seedDemoStore` (platform superadmin action) from the Themes panel on the
@@ -8388,11 +9986,16 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     append-only versions/events, one version per run, and cross-project
     foreign keys. `lib/theme-studio/repository.ts` (not "use server") owns
     writes under row + per-operator advisory locks with idempotency keys,
-    stale-revision refusal and the daily/concurrency caps.
+    stale-revision refusal and the daily/concurrency caps. The concurrency
+    cap (2 per operator) counts only runs the operator started: not
+    `automatic` steps or the worker's photo fill rounds, but every Retry
+    (TS-1D, 2026-10-24).
     `lib/theme-studio/worker.ts` leases runs with `FOR UPDATE SKIP LOCKED`,
     reclaims expired leases, fails exhausted ones and CANCELS (never re-runs) an
-    expired run awaiting cancellation; it runs after queueing via `after()` and
-    as an isolated pass on the existing `/api/cron/mink-workflows` heartbeat.
+    expired run awaiting cancellation; it runs after queueing via `after()`
+    (only with the offline provider since TS-1F; with a model provider that
+    pass would claim nothing) and as an isolated pass on the existing
+    `/api/cron/mink-workflows` heartbeat.
     Phase 2 executes only the offline `fake-provider.ts`, which returns a
     validated `ThemeIntent` labelled as not model-generated.
     `THEME_STUDIO_PROVIDER` (default `fake`) and
@@ -8401,8 +10004,11 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `docs/mink-ai-theme-studio-phase2.md`. Operator-only: no Help Centre
     migration.
     **Theme Studio permanent deletion (2026-10-05):** the superadmin project
-    workspace offers **Delete permanently**, including archived projects, with
-    an exact theme-ID confirmation. `lib/theme-studio/deletion.ts` and the
+    workspace offers **Delete permanently** (since TS-2 **Delete** in the
+    theme page's "..." menu), including archived projects, with
+    an exact theme-ID confirmation (the field asks a phone's keyboard not to
+    capitalise or correct it, and says when the typed ID does not match yet).
+    `lib/theme-studio/deletion.ts` and the
     session-gated `deleteThemeStudioProjectAction` call migration
     `20261005_0161_theme_permanent_deletion`'s bounded service function. It
     locks the project and store installations, rejects stale revisions, active
@@ -8472,12 +10078,16 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     the model/provider CHECKs (0128) admit only the Gemini keys and
     `vertex-gemini`. Usage records input (incl. cached), cached, output and
     thinking tokens; the estimate uses Gemini API list prices
-    (`gemini-api-list-2026-09`) — Vertex billing is authoritative.
+    (`gemini-api-list-2026-09`; since TS-3D, 25 Oct 2026,
+    `gemini-api-list-2026-09-us-1.1x`, which prices a call answered at any
+    location but global, in practice a photo check answered at the US, at 1.1
+    times) — Vertex billing is authoritative.
     Controls: per-model `THEME_STUDIO_DISABLED_MODELS`, a per-operator
     rolling-24h ESTIMATED spend cap `THEME_STUDIO_DAILY_SPEND_USD` (checked at
     queue/retry/answer; the fake is exempt; since 2026-09-29 there is NO cap
     unless it is set to a positive number — see "Theme Studio at full
-    capacity" below), and the Phase 2
+    capacity" below; production sets 50 dollars since the Theme Studio
+    release, §7), and the Phase 2
     emergency stop. `npm run theme-studio:eval` runs the Phase 0 golden set.
     Record and rollout steps: `docs/mink-ai-theme-studio-phase3.md`.
     Operator-only: no Help Centre migration.
@@ -8492,8 +10102,21 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `<operator_revision>` block, Stage B the base theme in `<current_theme>`
     (prompt version `theme-studio-v2`). The new version's parent is the version
     revised, which is how branching works. Answering a revision's questions
-    CONTINUES that revision; `restoreThemeStudioVersion` only moves
-    `current_version_id`. **★★ A PREVIEW IS A REAL STORE, NOT A SECOND
+    CONTINUES that revision. `restoreThemeStudioVersion` (Make current) moves
+    `current_version_id`, never to a hidden version. ★ With the automatic
+    checks on it is never a dead end (TS-1D, 2026-10-24), each case in the
+    same transaction: (1) a version that passed (`versionPassedChecks`) whose
+    `currentPublishEvidence` (acceptance.ts) still holds goes ready →
+    candidate; (2) one that passed but whose evidence does not hold is
+    re-measured in place (`queueThemeStudioRecheckWithDb`, reason
+    `check_again`); (3) one that never passed is checked on a new hidden
+    version with fresh catalogue pictures (the same call; its capture settle
+    makes the version); (4) one with a capture blocker left waits on `ready`.
+    It returns `changed` and an `outcome` (`ready`, `ready_to_publish`,
+    `rechecking` or `checking`) and records the outcome (with
+    `acceptanceRunId` or `captureId`) on `version_restored`; acceptance.ts
+    and capture.ts are imported dynamically there, because both import
+    repository.ts. **★★ A PREVIEW IS A REAL STORE, NOT A SECOND
     RENDERER** (`lib/theme-studio/preview.ts`): one hidden store per version
     (`studio-preview-<hex>`, prefix reserved at signup) with `settings.demo`
     (checkout refuses, noindex, no sitemap) AND `settings.studioPreview`,
@@ -8512,14 +10135,18 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     RELATIVE redirect. `theme-asset://` slots become
     `/api/theme-studio/placeholders/<id>`, a PUBLIC placeholder-only route
     (next/image fetches without cookies); the reference route now filters to
-    references. Retention: 3 per project (LRU eviction), 50 platform-wide,
-    removed 24h after last open by `sweepThemeStudioPreviews` on the
-    `mink-workflows` heartbeat, and on archive; the delete requires both
+    references. Retention: 3 per project (LRU eviction, never the store of a
+    version with a queued capture or a running capture on a live lease,
+    TS-1E), 50 platform-wide, removed 24h after last open by
+    `sweepThemeStudioPreviews` on the `mink-workflows` heartbeat (which skips
+    a measured store the same way), and on archive; the delete requires both
     markers. Preview stores are excluded from the operator store list and
-    overview counts. Screens: `…/studio/[projectId]/versions/[versionId]`
-    (laptop/iPad/mobile frame, six surfaces, pop-out) and `…/compare?from=&to=`
-    (`lib/theme-studio/diff.ts`: tokens, pages by slug ignoring section ids,
-    catalogue, navigation, gaps). Migration
+    overview counts. Screens (since TS-2): the theme page's Preview tab
+    (Desktop, Tablet and Phone frames fitted to the tab's width and height,
+    six surfaces, Open full page; `…/studio/[projectId]/versions/[versionId]`
+    redirects there) and its Changes tab (`lib/theme-studio/diff.ts`: tokens,
+    pages by slug ignoring section ids, catalogue, navigation, gaps;
+    `…/compare?from=&to=` redirects there). Migration
     `20260924_0130_theme_studio_preview_revision` adds the run base columns +
     CHECK, `theme_studio_previews` (store FK ON DELETE CASCADE) and five event
     types. Also fixed: `applyTheme`'s product conflict branch published draft
@@ -8534,8 +10161,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     provide assistant summaries and preview links, and clarification/failure
     responses and active work appear in the conversation. Automatic repair
     prompts remain in run history rather than appearing as operator messages.
-    Runs, cancellation/retry, version comparison, acceptance and release controls
-    remain available below the conversation.
+    Since TS-2 the runs (Cancel, Retry), Activity, the model and the creator
+    are in the Log tab, the designs in the header's Design list, and Checks,
+    Pictures and Changes are tabs beside the Preview.
     Upload, paste and drop use the existing private sanitizing reference route;
     prior screenshots can be selected again without deleting immutable history.
     The three queue actions snapshot explicit `referenceAssetIds` per message,
@@ -8553,14 +10181,15 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     no Help Centre update.
     **Acceptance recovery and shared storefront fixes (2026-09-29).** Checks
     distinguishes earlier-build/incomplete runs, preview metadata failures and
-    asset capture failures. Catalog placeholders stay blocking, but direct the
-    operator to browser capture under Images instead of image generation.
-    `lib/theme-studio/acceptance-repair.ts` turns failed theme gates into a
-    bounded repair draft. **Fix theme issues in chat** resolves the stored run
-    under the authorized project, requires the same build/version/package
-    digest, selects that version and fills the editable composer. The operator
-    can attach screenshots and must send the message; opening the link queues
-    no work. Infrastructure/capture failures and advisory gates are excluded.
+    asset capture failures. Catalog placeholders stay blocking (since TS-2
+    every final check takes the catalogue pictures, so there is no capture
+    button to send the operator to).
+    `lib/theme-studio/acceptance-repair.ts` (`describeFixDraft`, since TS-2)
+    builds the **Describe a fix** draft from the design's serious findings
+    only (never warnings, never StoreMink's own code or a picture),
+    `package.security` included, plus the design review's serious findings,
+    in Design-N words with no run id. The Checks tab puts it in the chat; the
+    operator reads, changes and sends it, and nothing is queued until they do.
     Storefront page metadata omits unset robots fields so the parent preview,
     demo and unlaunched-store noindex policy survives Next metadata merging.
     The browser probe distinguishes CSS-clipped accessible labels, ellipses,
@@ -8613,13 +10242,22 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     provider errors are never cached. Each checkpoint write and final settlement
     is fenced on the worker lease. A crash after the provider answered but
     before its checkpoint commits can still repeat that call. Exhaustion ends
-    in `rate_limited`, preserving the existing version. Model selection,
+    in `rate_limited`, preserving the existing version. TS-3B (2026-10-25): an
+    UNAVAILABLE (`provider_unavailable`) is waited out twice and a timed-out
+    call (`provider_timeout`) once, about 2 then 4 minutes (jittered 75 to
+    100%; generation-recovery.ts `PROVIDER_FAILURE_WAITS`,
+    `providerFailureDelayMs`). Each wait is counted from the run's own
+    `run_queued` events (`detail.reason` is the code; no column). The run is
+    requeued with `retry_not_before` (no crash attempt spent; outcome detail
+    `provider_wait`) and its saved answers replay, so only the failed call is
+    sent again. Other provider failures still end the run. Model selection,
     publication checks and the separate image/vision retry policies remain in
     place; provider capacity cannot be guaranteed. Operator-only: no
     merchant-visible change, no Help Centre update.
-    **Mink AI Theme Studio Phase 5 (2026-09-24; automated acceptance):** a
-    version's **Checks** screen (`…/versions/[versionId]/acceptance`) runs the
-    gates on the project's CURRENT version. `lib/theme-studio/acceptance-gates.ts`
+    **Mink AI Theme Studio Phase 5 (2026-09-24; automated acceptance):** the
+    **Checks** screen (since TS-2 the theme page's Checks tab;
+    `…/versions/[versionId]/acceptance` redirects there) runs the gates on the
+    project's CURRENT version. `lib/theme-studio/acceptance-gates.ts`
     is the pure decision layer: package contract, the extracted
     `lib/themes/validation.ts` floors (which gained rendered-pair WCAG AA
     contrast and dead-link rules — policy pages exempt, menus read through
@@ -8638,7 +10276,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     exempt,
     axe-core — now a runtime dependency, imported on demand — confirmed broken
     images, LCP/CLS). ★ The server applies every threshold; performance is the
-    one advisory gate. ★ A probe that has measured stays silent and every
+    one advisory gate. Since severity-v1 (TS-1A, 24 Oct 2026) every finding
+    carries a severity set when it is measured, and a run passes when no
+    serious finding is left (see "Finding severity"). ★ A probe that has measured stays silent and every
     message carries a per-page sample number, or the previous page acks the
     next page's request. Migration `20260924_0131_theme_studio_acceptance`
     adds append-only `theme_studio_acceptance_runs` bound to package digest,
@@ -8648,8 +10288,12 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     (plus the one new transition `candidate → ready`, mirrored in contracts and
     pinned by a SQL-parsing parity test). A pass makes a candidate, a quality
     failure keeps/demotes to `ready`, a security failure blocks, and a deploy
-    makes evidence stale: `verifyThemeStudioCandidateEvidence` is what Phase 6
-    approval must call. `…_0132_theme_studio_operator_removal` fixes a Phase 2
+    makes evidence stale (a deploy of a new commit, docs-only ones included,
+    since the build id is the commit, TS-3C; never a settings-only
+    revision): Publish asks `currentPublishEvidence` (see "Publish
+    on today's evidence"). The parity test (`contracts.test.ts`) reads the
+    NEWEST migration that defines the project guard (0151 today) and fails by
+    name if a later one replaces it. `…_0132_theme_studio_operator_removal` fixes a Phase 2
     bug — `created_by ON DELETE SET NULL` beside immutability triggers made
     deleting any operator who had uploaded a reference fail; the triggers now
     admit exactly that change. Also fixed: the header "Deliver to" label used
@@ -8658,8 +10302,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     asset provenance until an operator replaces them (next paragraph). Record:
     `docs/mink-ai-theme-studio-phase5.md`. Operator-only: no Help Centre
     migration.
-    **Theme Studio operator images per slot (2026-09-24):** a version's
-    **Images** screen (`…/versions/[versionId]/images`) lists every
+    **Theme Studio operator images per slot (2026-09-24):** the **Images**
+    screen (since TS-2 the theme page's Pictures tab;
+    `…/versions/[versionId]/images` redirects there) lists every
     `theme-asset://` slot with its current image, shape and where it renders.
     An upload (`POST /api/platform/theme-studio/projects/[projectId]/slot-images?versionId=&slot=`,
     a route handler for the 6 MB server-action cap) is decoded by the shared
@@ -8668,11 +10313,29 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     small is refused), and compressed to TA-2.6's WebP limits (500 KiB; the
     catalog card 250 KiB), then stored as an `image` asset without changing
     any version. `replaceThemeStudioSlotImages` saves the staged images as ONE
-    new version (`origin = 'asset_edit'`, no run, parent = the version edited,
-    made current; a candidate returns to `ready`) through the pure
-    `applySlotReplacements` (slot-images-core.ts), which refuses a wrong
-    shape, a non-image asset or a short screenshot alt and re-runs the package
-    contract. ★ `carryOverSlotImages` makes a REVISION keep uploaded images
+    new version (`origin = 'asset_edit'`, no run, parent = the version edited)
+    through the pure `applySlotReplacements` (slot-images-core.ts), which
+    refuses a wrong shape, a non-image asset or a short screenshot alt and
+    re-runs the package contract. ★ Every change is checked (TS-1D,
+    2026-10-24). With the automatic checks on and no capture blocker left
+    (`captureBlockers` empty), the version is inserted HIDDEN
+    (`internal`/`pending`, `qa_iteration = MAX_AUTOMATIC_QA_REPAIRS`, so the
+    check can never buy a paid restyle). The project moves to `generating`
+    and keeps its current version. One automatic FINAL capture is queued
+    (`queueAutomaticCapture`, its key carrying the new version's id); there
+    is no layout check, because only pictures changed. That capture makes the usual
+    capture-made child with fresh catalogue pictures and a check run, then
+    the design review. The theme ends Ready to publish (generating → ready →
+    candidate) or shows the edited version with its reason; Stop, the
+    stale-capture sweep and a failed capture all reveal it. Events:
+    `slot_images_replaced` (with `automaticQa` and `altFromSlot`),
+    `auto_qa_started`, `capture_requested`. Nothing is written to the chat.
+    Otherwise (checks off, or a placeholder left) the new version is made
+    current at once and a candidate returns to `ready`, as before. A picture
+    saved with a blank alt takes its slot's own alt (the compiler's
+    description, or an earlier save's), checked again at 3 to 200
+    characters; a licence note is never filled in. The function also returns
+    `checking`. ★ `carryOverSlotImages` makes a REVISION keep uploaded images
     for slots that keep their id and shape. Operator images are served
     publicly by `/api/theme-studio/images/[assetId]` (image purpose only,
     never a reference) because next/image sends no cookies; `preview.ts`'s
@@ -8683,20 +10346,28 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     Operator-only: no Help Centre migration.
     **Mink AI Theme Studio Phase 6 (2026-09-25; publication and rollback —
     SIMPLIFIED TO ONE STEP 2026-10-03):** `…/studio/[projectId]/release`
-    holds one **Publish theme** button and, once live, one-click **Hide /
-    Show / Restore**. - **★★ NO HUMAN SCORECARD AND NO SEPARATE APPROVAL.**
+    held one **Publish theme** button and, once live, one-click **Hide /
+    Show / Restore**. Since TS-2 Publish sits in the theme page's header,
+    the live panel offers **Stop offering this theme** or **Offer again**,
+    Restore has no button (the server's restore stays for live updates),
+    and `…/release` redirects to the Log tab, which holds Publish history
+    and the catalog audit. - **★★ NO HUMAN SCORECARD AND NO SEPARATE APPROVAL.**
     The original design had two superadmins score the candidate (a design and
     a commerce chair, one not an author) and a third step to approve it, then
     a typed theme id to publish. The owner found it too complex, and it was
-    redundant: a candidate has already passed every required automated
-    acceptance gate AND the automated visual QA scorecard (the same eight
-    `scorecard.ts` rows), so a second human round re-asked a question the
-    pipeline had answered. `publishThemeStudioProject` now takes a candidate
-    directly; inside `beginAttempt`'s transaction it re-verifies evidence
-    from the CURRENT build and `publicationBlockers`, moves `candidate` →
-    `approved` (event `project_approved`, `automatic` set) and writes the
-    attempt. `approved` survives only as the state a failed publication waits
-    in, so the same button retries with the evidence it started on. ★ The
+    redundant: a candidate has already passed the automated acceptance
+    checks AND the automated design review (the same eight `scorecard.ts`
+    rows), so a second human round re-asked a question the pipeline had
+    answered. `publishThemeStudioProject` takes a candidate directly. Inside
+    `beginAttempt`'s transaction it refuses a package `publicationBlockers`
+    blocks and a publish still running, then asks `publishEvidenceWithDb` for
+    today's evidence (see "Publish on today's evidence"); only then does it
+    move `candidate` to `approved` and write the attempt. Since TS-1C there
+    is no `project_approved` event: one click is one Activity line
+    (`publication_started`), and the events rule still allows old rows.
+    `approved` survives only as the state a publish that did not finish waits
+    in. "Try again" follows the same evidence rule and resumes the release
+    that version already stored. ★ The
     database still guards it: migration `20261003_0151` replaces the project
     guard so entering `approved` needs a PASSED acceptance run over the
     current version's exact digest (instead of two reviews), and `published`
@@ -8705,8 +10376,10 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `approveThemeStudioCandidate`, `validateScorecard` and
     `approvalReadiness` were removed. Catalog changes take an OPTIONAL reason
     — a blank one records a plain sentence — and the publish confirmation is
-    a native confirm, not a typed id. Status badges read **Ready to publish**
-    (candidate) and **Publishing** (approved). - **Publication** (`publishThemeStudioProject`, plan §8). It writes a `theme_studio_publications` attempt (semver 1.0.0,
+    an in-app dialog naming the design, the real reach and the warnings that
+    go live (TS-1F; it was a native confirm), not a typed id. Status badges
+    read **Ready to publish** (candidate) and **Publish didn't finish**
+    (approved), or **Publishing** while an attempt runs (TS-1F). - **Publication** (`publishThemeStudioProject`, plan §8). It writes a `theme_studio_publications` attempt (semver 1.0.0,
     then the next minor; a failed attempt's stored release is RESUMED,
     because the row is immutable and its digest includes the release date).
     It copies each slot image, re-hashed, to
@@ -8737,12 +10410,15 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     Centre migration.
     **Theme Studio generated imagery, Track 3.1 (2026-09-26; the image
     client — nothing yet stores, runs or shows a generated image).**
-    `image-models.ts` allowlists ONE image model, `gemini-3.1-flash-image`:
+    `image-models.ts` allowlists ONE image model, `gemini-3.1-flash-image`
+    (Pro from 29 Sep; Nano Banana 2.1, with Pro as the owner's rollback, since
+    25 Oct 2026: see "One image model for every picture"):
     the model merchant Mink already calls, reusing Mink's live evidence
     (2026-09-21) but NOT Mink's client, which is bound to a store, a merchant
     prompt and five fixed purposes. `THEME_STUDIO_IMAGE_MODEL` may pin only a
     version of that model (`isAllowedProviderVersion`, now exported from
-    `models.ts`); `-flash-lite-image` is refused. `image-provider.ts` is the
+    `models.ts`; since 25 Oct a version of 2.1, or the Pro family as the
+    rollback); `-flash-lite-image` is refused. `image-provider.ts` is the
     pure seam:
     `ThemeImageRequest {purpose, briefId, aspectRatio, prompt, references}`, results ok / refused / error, the model's ten aspect ratios
     (every Stage A brief ratio is one; a slot's exact ratio comes from the
@@ -8752,9 +10428,13 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     references; at most 3).
     ★ `image-prompt.ts` renders `docs/theme-studio-image-prompt.md` (its own
     executable prompt, validated like Mink's, traced into the standalone build
-    and excepted in `.dockerignore`): fictional unbranded goods, one shoot's
-    look across the set, no text/people/real brands. ★★ ONE-PASS RENDER: the
-    four placeholders are filled by a single replace, so brief text containing
+    and excepted in `.dockerignore`): fictional unbranded goods (Theme
+    Studio's own; since B16, 2026-10-24, a Mink storefront redesign's brief
+    sets `goods`: the merchant's own products, each sent as a reference with
+    role `product` labelled `PRODUCT:`, or none), one shoot's look across the
+    set, no text/people/real brands. ★★ ONE-PASS RENDER: the
+    placeholders (six since B16: theme_direction, asset_brief, composition,
+    reference_guidance, goods, people) are filled by a single replace, so brief text containing
     `{{composition}}` is inserted, never expanded, and braces are stripped from
     model-written text anyway. ★ COMPOSITION IS CODE, NOT BRIEF
     (`compositionFor`): where the subject sits depends on how the storefront
@@ -8766,20 +10446,58 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     each sent inline after a text label.
     ★ `image-vertex.ts` fixes Mink's verified safety values in code (four harm
     filters at BLOCK_LOW_AND_ABOVE, `personGeneration: ALLOW_NONE`, prominent
-    people blocked, one candidate, 2K JPEG q95). ★★ ONE PAID ATTEMPT: the SDK
+    people blocked, one JPEG candidate at q95; since 25 Oct 2026 the size and
+    thinking level are the caller's, fitted to the model by image-models.ts
+    `imageRequestConfig`). ★★ ONE PAID ATTEMPT: the SDK
     never retries (a timeout or 5xx may have billed); only a 429, which bills
-    nothing, waits out the text client's slow backoff. A refusal is a normal
-    result carrying its reason; no image and no reason is a failure, never an
-    empty success. 90s per request.
+    nothing, is asked again, after at most the 15 s shared pause and back
+    through the start pacer (2026-10-23). ★★ The image kept is the LAST
+    inline image part that is not a thought, never a thought image (since
+    about 22 Oct `gemini-3-pro-image` sends a 1K draft before the 2K
+    picture, and keeping the first part made every photo 1K; Nano Banana 2.1
+    sends one before every picture, 25 Oct 2026). A refusal is
+    a normal result carrying its reason; no image and no reason is a
+    failure, never an empty success. 180 s per request
+    (`IMAGE_REQUEST_TIMEOUT_MS`). ★ Each answer writes one
+    `theme_studio.image_answer` info line: its image parts and thought
+    drafts (`themeImageAnswerParts`), the kept picture's width and height
+    read from its JPEG, PNG or WebP header (`imageDimensions`, never a
+    decode) and the size asked for. `theme_studio.image_below_requested_size`
+    warns when the kept picture's long edge is under 85% of the requested
+    size's square edge (`BELOW_REQUESTED_SIZE_SHARE`, `minimumLongEdgePx`:
+    1741 px for 2K): no real 2K frame is under that line and every 1K frame
+    is, and a draft alone never warns. It is the early sign that 1K photos
+    are back, which went unseen through two redesign runs. ★★ Every 429,
+    timeout and provider error logs Google's own answer
+    (`providerErrorFacts`, `gemini-vertex.ts`, shared by both clients): the
+    HTTP status, the error status, the message cut to 500 characters
+    (`PROVIDER_ERROR_MESSAGE_MAX`) and `quotaNamed`, the quota it names from
+    ErrorInfo metadata, QuotaFailure violations or a "Quota exceeded for"
+    message, null for the shared pool's 429, which names none. That is the
+    only way to tell a project quota from the shared pool's contention
+    (robustness audit B23, 2026-10-23). It rides on the retry lines
+    (`theme_studio.image_rate_limited_retry`,
+    `theme_studio.rate_limited_retry`) and on one
+    `theme_studio.image_provider_error` / `theme_studio.provider_error` line
+    when a call fails for good, which used to log nothing at all; a call our
+    own run cancelled writes none. ★ Content-free (status, Google's message,
+    quota names, part counts and pixel sizes; never the prompt, the
+    references or the picture) and never a throw: a log line never costs a
+    paid image. The storefront revamp's photos and checks go through the same
+    two clients, so a redesign writes the same lines.
     ★ `image-fake.ts` returns the same PNG for the same request, at the
     requested ratio and 2K long edge, so the offline path exercises the real
     crop; `[[fake-image:refuse]]` / `[[fake-image:error]]` hooks.
     `estimateImageCostMicroUsd` (`cost.ts`, `gemini-image-list-2026-09`):
     $0.50/M input and $60/M output from Google's list — a 2K image is ~1,680
     tokens, ≈ $0.10; text tokens priced at the image rate (the safe direction
-    for a number the spend cap will read). `npm run theme-studio:image-check`
+    for a number the spend cap will read). Since 25 Oct 2026
+    (`gemini-image-list-2026-10`) each call is priced at the rates of the
+    model that drew it, thinking at its text rate (see "One image model for
+    every picture"). `npm run theme-studio:image-check`
     runs anchor → product → product offline (fake), or live with
-    `--live --yes` (three calls, ≈ $0.30), writing raw and cropped files.
+    `--live --yes` (three calls, ≈ $0.30 then, about $0.20 on Nano Banana
+    2.1), writing raw and cropped files.
     ★ LIVE-VERIFIED 2026-09-26 (`storemink-staging`, global): anchor 2400×1792
     in 20.0 s, then two 4:5 product shots with inline references (1856×2304,
     15.5 s and 18.9 s); input tokens rose with each reference (601 → 1,788 →
@@ -8789,15 +10507,31 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     two product shots on the same seamless backdrop at the same camera height,
     unbranded, with no text or people. Operator-only: no Help Centre migration.
     **Theme Studio generated imagery, Track 3.2 (2026-09-26; image runs).**
-    An operator asks for a version's images (`queueThemeStudioImages`, the
-    "Generate images" panel on the version's Images page, with the image count
-    and list-price estimate stated before the click). It queues a run of the
+    An operator asks for a version's images (`queueThemeStudioImages`; since
+    TS-2 **Draw missing pictures** or **Redraw** in the theme page's Pictures
+    tab, whose small confirm states the picture count and the list-price
+    estimate before anything is queued). It queues a run of the
     new kind `images`, bound to that version and to the package digest on
     screen like a revision, recorded by an immutable `images` message and an
-    `images_requested` event. ★ NEVER AUTOMATIC AND NEVER RETRIED BY THE
-    WORKER: every image is paid, so `max_attempts` is 1 (a retry through
-    `retryThemeStudioRun` stays an image run with one attempt), and states are
+    `images_requested` event. ★ Every image is paid, so an operator's photo
+    run is never queued by the worker on its own; a run reclaims after a
+    crash up to `IMAGE_CRASH_ATTEMPTS` (3), and missing slots get up to
+    `IMAGE_FILL_ROUNDS` (3) fill rounds (a retry through
+    `retryThemeStudioRun` stays an image run), and states are
     `ready`/`candidate` only — an approved version is frozen for publication.
+    ★ Checked since TS-1D (2026-10-24). With the automatic checks on,
+    `finishImages` (worker.ts) puts an operator's photo run (Draw missing
+    pictures, a redraw, or a Retry of one) into the automatic final check when its
+    result can reach it: `reachesFinalCheck` requires no design-level capture
+    blocker, at least one catalogue shot, and that every placeholder art slot
+    left is one a fill round still owes. Its version is hidden at
+    `qa_iteration` 3. Every fill round it needs, including the round after an
+    `images_none` result, is queued `automatic` at 3, so Stop, a cancel and a
+    failure reveal its version like any automatic step. The complete version
+    gets one final capture (its key carrying the run's id, no layout check) and the
+    design review, and `auto_qa_started` is recorded. A result that cannot
+    reach the check (a redraw that leaves other placeholders) becomes current
+    at once, as before.
     `image-generation-core.ts` (pure) picks the slots: PLACEHOLDER slots of
     kind hero/product/category/content only, never one an operator filled and
     never the catalog card or a catalog screenshot (pictures of the
@@ -8808,7 +10542,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     construction). `image-generation.ts` draws the anchor, then the slots
     three at a time. ★★ THE ANCHOR GATES THE RUN: refused or failed, nothing
     else is attempted, because images drawn without the shared look do not
-    belong together and each is paid. ★ A failed slot (refused, errored, or an
+    belong together and each is paid (since TS-3B a fill round then draws a
+    fresh anchor while rounds remain, so a refused one no longer ends the
+    theme). ★ A failed slot (refused, errored, or an
     image the crop cannot use) KEEPS ITS PLACEHOLDER and is recorded in the
     run's `outcome_detail`; the rest carry on. ★ EVERY CALL'S USAGE IS
     RECORDED, refused ones included, so the daily spend cap counts what may
@@ -8926,7 +10662,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     output tokens; priced $2/$120 per M (`gemini-pro-image-list-2026-09`,
     ≈$0.135/image, not yet reconciled against an invoice), request timeout
     180 s. ⚠ 2K is kept, not 4K: every slot is stored at ≤1600 px, so 4K would
-    be paid for and then downscaled away. (2) Every image reaching a text model
+    be paid for and then downscaled away. (Superseded 25 Oct 2026: every
+    picture is Nano Banana 2.1, and the homepage's hero slides are drawn at 4K
+    by the owner's choice, stored at 2,400 px.) (2) Every image reaching a text model
     (Stage A references, the image reviewer, visual QA) is sent at
     `MEDIA_RESOLUTION_ULTRA_HIGH` — 2,240 tokens per image instead of 1,120 —
     accepted by both allowlisted models with a JSON schema and HIGH thinking.
@@ -8937,8 +10675,10 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     redraws (`THEME_IMAGE_REDRAWS`), the anchor three, Stage A/B three repairs
     and auto QA three revision iterations. (5) No spend ceiling by default:
     unset, empty, `unlimited`, `0` or junk all mean none (`0` used to mean a
-    zero ceiling, which blocks every paid run), and `cloudbuild.yaml` sets
-    `unlimited`. ⚠ Deliberately NOT raised: per-operator run concurrency (2),
+    zero ceiling, which blocks every paid run), and `cloudbuild.yaml` set
+    `unlimited` until the Theme Studio release, which sets `50`
+    (owner-approved 24 Oct 2026, 23:55 IST; see §7
+    `THEME_STUDIO_DAILY_SPEND_USD`). ⚠ Deliberately NOT raised: per-operator run concurrency (2),
     projects per day (20), image concurrency (3 — the shared project's image
     quota already rate-limits) and the 20-minute run wall time, which is the
     Cloud Run/Scheduler deadline rather than a Studio setting.
@@ -8946,6 +10686,82 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `20260929_0145_theme_studio_qa_iterations`: 0144 bounded `qa_iteration`
     to 0–2 in four CHECKs, so the third automatic revision would have been
     refused at insert. The migration only widens them.
+
+    **★★ ONE IMAGE MODEL FOR EVERY PICTURE: NANO BANANA 2.1 (owner, 25 Oct
+    2026: "use gemini-nano-banana-2.1 for all image generation tasks";
+    TS-3F).** It replaces the 29 Sep rule above (Pro for every Theme Studio
+    photo) and Mink's `gemini-3.1-flash-image`, everywhere at the `global`
+    endpoint.
+    - Who draws with it: Theme Studio's photo runs (worker.ts
+      `imageClientFor`); the redesign's photos (photos.ts
+      `defaultImageClient`); chat images, storefront personalisation photos,
+      the redesign's product studio photos and Refine with Mink AI
+      (lib/mink/config.ts `imageModel`, media-generation.ts); and
+      `scripts/marketing-photos.mjs`. Photo checks (gemini-3.8-flash) and
+      background removal (BiRefNet) did not change.
+    - Verified live on storemink-staging on 25 Oct with every request option
+      sent: 2K at 4:3, 4:5, 1:1, 16:9 and 3:4, 4K at 21:9; thinking HIGH,
+      MEDIUM and MINIMAL; inline references, the four harm filters,
+      `ALLOW_NONE` and `ALLOW_ADULT`, prominent people blocked, JPEG q95.
+      Every answer carried a draft picture (`thought: true`) before the final
+      one; an `imageSize` of "512" is refused (400, free).
+    - The allowlist (image-models.ts `getThemeStudioImageConfig`):
+      `THEME_STUDIO_IMAGE_MODEL_KEY` is `gemini-nano-banana-2.1`.
+      `THEME_STUDIO_IMAGE_MODEL` may name the 2.1 family or, as the owner's
+      rollback only, the Pro family (`THEME_STUDIO_ROLLBACK_IMAGE_MODEL_KEY`,
+      `gemini-3-pro-image`), published versions included; anything else
+      throws. cloudbuild.yaml sets it and `MINK_IMAGE_MODEL` from the
+      substitutions `_THEME_STUDIO_IMAGE_MODEL` and `_MINK_IMAGE_MODEL` (both
+      2.1), so switching back is one trigger substitution and a deploy.
+    - Each call site states its size and thinking level (required options, no
+      hidden default): Theme Studio 2K, the homepage's hero slides 4K
+      (`themeStudioImageSize(request, homepageSlides)`: a `hero` photo in a
+      frame of 16:9 or wider whose slot the homepage opens with, its first
+      enabled section's hero_carousel slides or fullbleed hero, named by
+      worker.ts `imageClientFor(provider, homepageOpeningPhotoIds(pkg))`; a
+      wide banner hero opening another page, and every photo of a caller
+      that names no slides, is 2K), HIGH; the redesign's photos 2K, MEDIUM;
+      product studio photos,
+      personalisation photos, chat images and Refine 2K, MINIMAL.
+    - `imageRequestConfig(model, config)` (image-models.ts) fits every request
+      in both clients (`themeImageConfig`, `requestMinkImage`). To 2.1: never
+      a sampling parameter (`IMAGE_SAMPLING_PARAMETERS`); only 1K, 2K or 4K (a
+      legacy 512 or 0.5K becomes 1K, or 2K at 9:16, whose 1K picture is 768 px
+      wide, under the 800 px minimum); the thinking level must be stated. To
+      any other model: no thinking config, everything else as given. A config
+      without a size throws before anything is sent; Mink then raises
+      `MinkImageNotSentError`, so the allowance is given back.
+    - Usage: `imageUsageOf` counts `thinkingTokens` (`thoughtsTokenCount`:
+      about 1,250 to 1,360 a photo at HIGH, none reported at MINIMAL) and
+      names the `model` that answered; a replayed saved draw keeps both. Image
+      runs store them per call through the checkpoint call records; the
+      redesign records thinking in its photo usage.
+    - Price (cost.ts, `gemini-image-list-2026-10`): each call at the rates of
+      the model that drew it (`imageRatesFor`). 2.1, per million tokens: $1.50
+      input, $30 picture (1,120 tokens at 1K, 1,680 at 2K, 3,780 at 4K: about
+      $0.0336, $0.0504 and $0.113 a picture; `NANO_BANANA_PICTURE_TOKENS`),
+      $7.50 text and thinking (a third-party figure). Pro $2, $120 and $12; 3.1
+      Flash $0.50, $60 and $3; no model or an unknown one is priced at Pro's
+      rates. Measured all in: about $0.050 to $0.052 a 2K photo at MINIMAL,
+      $0.059 at MEDIUM, $0.061 to $0.062 at HIGH and $0.125 a 4K hero.
+      `IMAGE_LIST_PRICE_USD` is about $0.07 and
+      `PRODUCT_PHOTO_ESTIMATED_COST_MICRO_USD` 53,400.
+    - One photo line: product studio photos now queue on the same paced
+      capacity row as the redesign's photos and Theme Studio's.
+    - Image runs record `gemini-nano-banana-2.1` as their model key and in the
+      release note, even on the Pro rollback; the run's `providerModel` and
+      each call's usage name the model that drew.
+    - Tests: image-models.test.ts (with the size checks at every frame),
+      image-vertex.test.ts, cost.test.ts, worker-image-client.test.ts and
+      image-generation.test.ts; the lib/mink media-generation, image-refine,
+      media-image-proposals, storefront-personalization-proposals,
+      tools/media-tools and config tests; the revamp photos and products tests
+      (`MINK_REVAMP_LOCAL_TEST=1`); scripts/cloudbuild-yaml.test.ts,
+      scripts/marketing-photos.test.ts and
+      scripts/revamp-priority-test.test.ts.
+    - No migration. No Help Centre update: no article names the model, and its
+      quality claims hold at 2K.
+
     **★★ AN IMAGE RUN WITH GAPS IS KEPT AND REFILLED (2026-09-29).** Measured
     on a production fashion theme: the automatic run drew 14 of 18 images
     (about 2.22 USD) and failed as `auto_images_incomplete`, so version 1 was
@@ -9000,12 +10816,13 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     and version) for a redraw that passes and one that stays rejected.
     Operator-only: no Help Centre migration.
     **Theme Studio generated imagery, Track 3.5 (2026-09-27; redraw chosen
-    slots, and see each image's brief, check and cost).** A version's Images
-    page (`slot-images-editor.tsx`) shows, per slot, what the image model is
-    asked for (subject, direction, shape) and how the current image came to be
-    (`historyLine`: drawn and checked, redrawn, kept with a minor problem,
-    failed its check and kept the placeholder, refused, not drawn), with that
-    slot's estimated cost. A placeholder or GENERATED image can be ticked and
+    slots, and see each image's brief, check and cost).** The theme page's
+    Pictures tab (`slot-images-editor.tsx`; a version's Images page before
+    TS-2) shows, per slot, what the image model is asked for (subject,
+    direction, shape) and how the current image came to be (`historyLine`:
+    drawn and checked, redrawn, kept with a minor problem, failed its check
+    and kept the placeholder, refused, not drawn); since TS-2 costs are in the
+    Log tab and in the Redraw confirm only. A placeholder or GENERATED image can be ticked and
     redrawn: `queueThemeStudioImages({ slotIds })` (1–40 ids, deduped),
     stored on the run as `theme_studio_runs.image_slot_ids` (migration
     `20260927_0142_theme_studio_image_slots`, empty = every placeholder, only
@@ -9049,7 +10866,11 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     (`queueThemeStudioCapture`, `lib/theme-studio/capture.ts`) of the CURRENT
     version, refused while any art slot is still a placeholder
     (`captureBlockers`, `capture-core.ts`: a card of solid-colour blocks would
-    pass every check and sell nothing). ★★ A SEPARATE CLOUD RUN JOB TAKES THE
+    pass every check and sell nothing). ⚠ Since TS-2 there is no capture
+    button: every final check takes the catalogue pictures, and
+    `capture-panel.tsx` only shows them (`CatalogPictures`, "In the theme
+    catalog" at the top of the Pictures tab); `queueThemeStudioCaptureAction`
+    remains with no screen. ★★ A SEPARATE CLOUD RUN JOB TAKES THE
     PICTURES (owner-approved): `jobs/theme-studio-capture/` (its own
     `package.json` pinning `playwright-core`, its own Dockerfile with Debian's
     Chromium and Noto fonts; kept out of the web image by `.dockerignore`).
@@ -9076,9 +10897,25 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     another version became current, and a failed capture returns the project
     to `ready`. Automatic captures use five leased attempts with a fresh
     browser after reported browser failures; manual captures keep the two-
-    attempt database default. ★★ CAPTURE IS FAIL-CLOSED until the worker
-    exists: `THEME_STUDIO_CAPTURE_ENABLED` defaults false in code, the Images panel
-    disables the control and names upload as the available path, and
+    attempt database default. ★ Since TS-3A (owner, 24 Oct 2026) an error a
+    retry cannot fix fails at once instead of spending the remaining tries: a
+    deterministic one on its first report, any other code that repeats on its
+    second, while timeouts, network errors and a 429 or 5xx keep every try
+    (`captureErrorKind`; see "Each step starts the next at once" below).
+    ★ With automatic checks on (TS-1E, 2026-10-24)
+    every capture an operator queues is AUTOMATIC: Retry automatic QA on a
+    failed version keeps its repair rounds (`qa_iteration` 0); "Capture
+    catalog pictures" on any other version runs at
+    `MAX_AUTOMATIC_QA_REPAIRS` (a check, never a paid restyle) and makes a
+    new hidden version that goes through the full checks and the design
+    review, where it used to land as Ready with no review. Only with the
+    checks off is a capture still manual. Since TS-2 neither button is on
+    screen; **Check again** is the capture an operator starts. An operator's capture key with a
+    server-only prefix (the re-check and automatic ones,
+    `isReservedCaptureKey`) is refused. ★★ CAPTURE IS FAIL-CLOSED until the worker
+    exists: `THEME_STUDIO_CAPTURE_ENABLED` defaults false in code, the
+    Pictures tab then names upload as the available path and lists the
+    catalogue slots for upload, and
     `queueThemeStudioCapture` independently refuses direct calls before any
     queue/project state can change. As of 2026-09-29, dev and production each
     have a deployed Cloud Run capture job and five-minute schedule; both passed
@@ -9094,13 +10931,42 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     lapsed lease, created or lapsed within 6 hours), and only then POST
     `run.googleapis.com/v2/…/jobs/{job}:run`. One start per 90 s per job through
     the shared rate limiter; never throws into the worker. The job name is
-    derived from `K_SERVICE` exactly as cloudbuild's capture-deploy step derives
-    it from `_SERVICE` (`-prod` → `storemink-theme-studio-capture`, `-dev` →
+    derived from `K_SERVICE` (`-prod` → `storemink-theme-studio-capture`, `-dev` →
     `…-capture-dev`), with `THEME_STUDIO_CAPTURE_JOB` / `_REGION` overrides.
+    Since the Theme Studio release (P4) cloudbuild's capture-deploy updates
+    only production's job, and dev has capture switched off, so the dev name
+    is never started.
     ⚠ Needs `roles/run.invoker` on each job for the runtime service account,
     and the jobs' own schedules paused only after that grant and this deploy
     (docs/theme-studio-capture-job.md); a refused start logs
-    `theme_studio.capture_job_start_failed` with the HTTP status.
+    `theme_studio.capture_job_start_failed` with the HTTP status. Done:
+    production's capture schedule is PAUSED (its last scheduled run was
+    2026-10-10 14:32 UTC, checked 2026-10-11), no dev schedule exists, and
+    the grant is on both jobs.
+    ★ A capture the job never takes is failed, not left waiting (TS-1E):
+    every `startCaptureJobIfWaiting` call first runs
+    `sweepStaleThemeStudioCaptures` (`capture.ts`), whether or not that
+    deployment can start the job. It fails a capture queued for
+    `CAPTURE_STALE_MINUTES` (15) since it was queued or sent back
+    (`updated_at`), or running on a lease that lapsed 15 minutes ago, as
+    `capture_not_started` through `failCapture` (an automatic one reveals its
+    hidden version as failed and returns the theme to `ready`), and logs the
+    content-free `theme_studio.capture_stale`. At most 20 a pass, SKIP
+    LOCKED, never throws.
+    ★ AND RIGHT AFTER A CAPTURE IS QUEUED (TS-3A, plan optimisation 2). Where
+    the queueing transaction is capture.ts's own (an operator's capture,
+    `queueThemeStudioRecheck`), `startCaptureJobForQueued` (capture-start.ts)
+    runs once it commits. Where it is a caller's (a build step settling in
+    worker.ts through `queueAutomaticCapture`, a picture save, Make current
+    through `queueThemeStudioRecheckWithDb`, a deploy re-capture),
+    `startCaptureJobAfterCommit(captureId)` polls the capture row (100 ms to
+    8 s, about 16 s in all, `COMMIT_POLL_DELAYS_MS`; it becomes visible only
+    on commit) and starts the job when it is still queued. It is tracked
+    in-process, and the QA route awaits `settleCaptureJobStarts()` before
+    answering. `queueAutomaticCapture(…, { startJob: false })` is for the
+    capture job's own finish, whose job claims the capture next. The rate
+    limit (one start per 90 s) and the minute schedules are unchanged: they
+    are the safety net.
     `docs/theme-studio-capture-job.md` is the build, deploy and schedule runbook,
     and `npm run theme-studio:capture`
     runs it locally against the installed Chrome. ★ Preview storefronts now show the theme's
@@ -9149,7 +11015,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     and CLS measurements plus compressed full-page screenshots. `capture.ts`
     revalidates the raw evidence against package-derived surfaces, stores WebP
     `qa_screenshot` assets, and runs the SAME full package/assets/preview-route/
-    link/markup/browser acceptance gates as the operator's Checks page.
+    link/markup/browser acceptance gates as the operator's Checks tab.
     `recordAutomaticAcceptance` saves a final, digest/build-bound acceptance
     row for the new catalog-capture version in the settlement transaction.
     Capture refuses catalog slots reused in storefront content, so replacing
@@ -9160,17 +11026,42 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `visual-qa.ts` skips paid vision when deterministic failures already give
     a repair brief. Once they pass it builds contact sheets and asks the
     configured Studio provider for the exact eight `scorecard.ts` dimensions.
-    Passing requires every row ≥4, total ≥34, no rejection, EVERY required
-    acceptance gate passing, and revalidated current build/package/asset evidence.
-    Settlement reveals `operator/passed` and moves generating → ready → candidate
-    atomically, so there is no extra manual acceptance step for a successful
-    automatic run. Human design/commerce approval and publication stay separate.
+    A clean pass is still every row ≥4, total ≥34 and no rejection (the bar),
+    over revalidated current build/package/asset evidence.
+    **Fix it, then allow Publish (TS-1B, 2026-10-24).** `classifyVisualQaReport`
+    (`visual-qa-request.ts`; rules in `scorecard.ts`) splits the review into
+    serious findings and taste. Serious: the rejections `copied`,
+    `unfinished_surface`, `placeholder_copy`, `inaccessible_copy` and
+    `unsupported_claim`; a score of 2 or below on commerce clarity,
+    responsive composition, brand adaptability, typography or detail quality
+    (`SERIOUS_SCORE_LIMITS`, owner decision 3); and a photo whose own check
+    has not passed on its bytes, or found a hard problem
+    (`imageIssueFindings`, `qa-image-issues.ts`; the review's approval clears
+    only a photo flagged for small things). Taste: every other rejection or
+    low score, a small-flagged photo the review did not approve, and a bare
+    revise. `automaticQaDecision(gates, { outcome } | null, iteration, phase)`
+    decides (null = no review, never a pass): taste is repaired for up to
+    three rounds and then passes as warnings; a serious finding stops at the
+    ceiling. Taste that only a StoreMink fix could change, or that stopped
+    improving, passes as warnings at once. A serious photo with no redraw
+    queued stops as `image_check_required` rather than buying a revision.
+    Every review row records `severityRules` (`severity-v1`) and
+    `reviewSeverity` ({ outcome, serious, warnings }; codes in `scorecard.ts`
+    `ReviewFinding`), and `auto_qa_passed` records the rule version and the
+    warning codes accepted. A passing settlement reveals `operator/passed` and
+    moves generating → ready → candidate atomically; one-step publish
+    follows, with no second person.
     **The manual path cannot bypass that review (2026-10-08):** an operator's
     browser evidence (`submitThemeStudioBrowserEvidence`) still records the
     passing acceptance run, but `manualAcceptanceTransition` promotes
-    ready → candidate only when a FINAL-phase `theme_studio_visual_qa_runs`
-    row has passed the same version/package digest; otherwise the project
-    stays `ready` and the event/result carry `visualQa: "required"`. Where
+    ready → candidate only when the NEWEST final-phase
+    `theme_studio_visual_qa_runs` row of the same version and package digest
+    on the manual run's own build (`browser_report.buildId`) has passed
+    (TS-1C: a review from another build never counts, and neither does an
+    older pass beside a newer review that failed, was stopped or is still
+    waiting). Even then the manual run has no review bound to it, so Publish
+    re-checks the design on today's build before publishing; otherwise the
+    project stays `ready` and the event/result carry `visualQa: "required"`. Where
     automatic QA is not deployed (`autoQaEnabled` false) promotion proceeds
     and is labelled `visualQa: "not_configured"`.
     **The reviewer is benchmarked against known defects (2026-10-08).**
@@ -9181,21 +11072,1218 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     same request byte for byte. `lib/theme-studio/visual-fixtures.ts` is
     twenty whole homepages in the storefront's own section markup, built
     from a bundled theme's catalogue (so the reviewer's context matches the
-    page): ten each carry ONE defect it must catch (duplicate newsletter,
-    lorem copy, invented awards/ratings, white-on-gold hero, flat
-    placeholder art, empty sections, overlapping copy, 9px grey text, a
-    neon palette against an ivory brief, clipped headings) and ten are
-    clean. `npm run theme-studio:visual-fixtures` renders them in local
-    Chrome with production CSS at phone390/desktop1440, runs the screenshots
-    through the real `buildVisualEvidence` and request, and answers with the
-    fake client (mechanism only); `-- --live --yes` sends the twenty reviews
-    to Vertex and exits 1 unless ≥9/10 defects are caught AND ≥9/10 clean
-    pages pass (`VISUAL_FIXTURE_BAR`). ★ Both directions, because a false
-    fail buys a paid repair. ★ The fixtures carry the theme's own
-    `designToCssVars` inline, the `data-sm-closing` mark and the footer's
+    page), graded on the findings each page produces, never on the verdict
+    (`fixtureCaught`, `fixtureBenchmarkSummary`; TS-1B). The 8 serious pages
+    must each produce their named serious finding (`placeholder_copy`;
+    `unsupported_claim`; `unfinished_surface` for flat placeholder art and
+    empty sections; `inaccessible_copy` for the white-on-gold hero and the
+    overlapping, 9px grey and clipped copy). The 2 warning pages (duplicate
+    newsletter, off-brief palette) must produce at least a warning, and at
+    least 9 of the 10 clean pages no serious finding. Every set is held to
+    `VISUAL_FIXTURE_BAR`, so 8/8, 2/2 and 9/10. Reviewer prompt v7
+    (`theme-studio-visual-qa-v7`) has no chair wording and names every
+    serious defect as its rejection, any copy it cannot read as
+    `inaccessible_copy`. `npm run theme-studio:visual-fixtures` renders the
+    pages in local Chrome with production CSS at phone390/desktop1440, runs
+    the screenshots through the real `buildVisualEvidence` and request, and
+    answers with the fake client (mechanism only, nothing graded);
+    `-- --live --yes` sends the twenty reviews to Vertex and exits 1 unless
+    every set clears the bar. ★ Both directions, because a false fail buys a
+    paid repair. ★ The fixtures carry the theme's own `designToCssVars`
+    inline, the `data-sm-closing` mark and the footer's
     `data-sm="footer-newsletter"` hook, so the one-form-per-page rule holds
-    there too. Not yet run live; the first live result belongs in
+    there too. ⚠ v7 is checked offline only; the live run (plan step A2,
+    about $0.50 to $1.50) comes after the release and before any production
+    use of v7, so until it passes nobody presses Publish or Check again on an
+    existing production theme. The first live result belongs in
     `docs/theme-studio-shopify-grade-plan.md` Phase 1.
+
+    **★★ Theme Studio wave TS-1: safe to publish, no dead ends (24 Oct 2026;
+    owner: "Fix it, then allow Publish").** No step needs a second person: one
+    superadmin presses Publish (the two-chair approval ended on 3 Oct with
+    migration 0151, which production runs). Theme Studio repairs what it can
+    in its automatic rounds; a SERIOUS finding left after them stops Publish
+    (pages that break or render unthemed, text below the AA line whatever
+    caused it, broken links, security, broken or unchecked pictures, invented
+    claims, unfinished shop, product or cart views, copied work, very low
+    design-review scores, and anything the checks could not check or nobody
+    classified), and everything smaller is a warning the operator may publish
+    past, recorded with the publish under the rule version `severity-v1`. A
+    theme publishes only on a check run and a design review made together on
+    today's build; otherwise Publish (and Try again) re-checks it first in the
+    capture job, about 3 to 5 minutes with no tab to keep open (the owner's
+    decision 4). Nothing leaves a theme stuck: Stop, a 15-minute stale-capture
+    sweep, every hand change checked automatically, Make current never a dead
+    end, a lease renewal that survives a slow pool (P2), and a design review
+    that can no longer stall the platform's queue. The paragraphs below hold
+    the detail: Finding severity (TS-1A), the design review's queue fix
+    (TS-1B; its severity rules are in the Tracks 4 and 5 passage above),
+    Nothing stuck (TS-1E), Publish on today's evidence (TS-1C), Every change
+    is checked (TS-1D) and Today's Studio screens (TS-1F); the shared
+    storefront contrast check in CI (TS-1G) sits beside the exemplar browser
+    run below. Reviewer prompt v7 is checked offline only (the live fixture
+    run, plan step A2, comes after the release). Hand-built themes need one
+    reviewer (`docs/theme-acceptance.md`, owner decision 5). No migration and
+    no new event type. Plan: `revamp-handoff/tasks/theme-studio-plan.md`
+    (outside the repo). Operator-only: no merchant-visible change, no Help
+    Centre update (TS-1G's CSS fixes change only how a few storefront labels
+    look).
+
+    **Finding severity (TS-1A, `severity-v1`).**
+    `lib/theme-studio/finding-severity.ts` (pure, client-safe) decides what
+    stops Publish. `findingSeverity(gateId, finding)` is `serious` or `minor`;
+    unknown codes, unknown gates, `skipped` and `unmeasured` are serious.
+    Warnings: `assets.integrity` `over_budget`, `preview_over_budget`,
+    `below_target` and `unused`; `routes.render` `indexable`; `routes.markup`
+    `lang` and `img_alt`; `browser.tap_targets` `small_target`;
+    `browser.image_crops` `extreme_crop`; `browser.performance` `lcp` and
+    `cls` (serious once `THEME_STUDIO_PERFORMANCE_REQUIRED` makes the gate
+    required); `browser.clipped_text` clips of 2 px or less
+    (`CLIPPED_TEXT_WARNING_PX`); and axe rules other than colour contrast at
+    moderate or minor impact. ★ Colour contrast is serious whatever its impact
+    or cause when measured text is at or below the AA line axe recorded
+    (`CONTRAST_AA_LINE`: 4.5 to 1 normal, 3 to 1 large; owner decision 1, one
+    constant) or when a ratio cannot be read; `routes.markup`
+    `external_resource` stays serious though repairs file it as renderer work.
+    ★ `gate()` (`acceptance-gates.ts`) stamps each finding's severity as it is
+    measured (a measuring step may raise it, never lower it; an advisory gate
+    holds only warnings), puts serious findings first before the 40-finding
+    cap (`MAX_GATE_FINDINGS`), and stamps `severityRules` on every gate
+    result. Clipped text is cut to its largest clips, never page order: the
+    probe (`studio-acceptance-probe.tsx`) measures every clipped element of
+    its 6000-element scan, lists the largest first (40 per page, 20 per
+    opened chrome state: `PROBE_CLIPPED_TEXT_LIMITS`) and reports
+    `clippedTextFound`; the parser keeps the 40 largest; and a full list
+    from an older probe (no `clippedTextFound`) with no serious clip in it
+    adds one serious `unmeasured` finding, so forty two-pixel clips can never
+    hide a heading cut in half. A stored finding without a severity counts
+    as serious (`isSeriousFinding`). A gate's STATUS is unchanged (a required
+    gate with any finding is `fail`), so `scripts/theme-studio-exemplar-check.ts` fails
+    on what it failed on before; the policy lives only in `acceptanceOutcome`,
+    via `gateBlocks` (a required, not-passed gate blocks when it holds a
+    serious finding, holds nothing, or is skipped or unknown), and in
+    `automaticQaDecision`. `below_target` (a stored picture narrower than
+    `slotTargetSize` but at least 800 px) is listed without failing
+    `assets.integrity`; the bundled exemplar pictures are 800 to 1000 px. The
+    shared `size` code is split (`imageRuleCode`) into `wrong_format`,
+    `too_small`, `preview_too_small` and `preview_shape` (serious) and
+    `over_budget` and `preview_over_budget` (warnings); an unrecognised
+    message keeps `size` (serious). `acceptanceWarnings(gates)` lists what a
+    passing run carries. Axe finding messages introduce their examples with a
+    semicolon ("examples:", "first:") instead of a dash (`qa-diagnosis.ts`
+    still reads the older dash form in stored evidence), and findings carry
+    `impact`, `nodes`, `clipped` and `targets`. ★
+    `isPlatformFinding(gateId, finding)` labels StoreMink's own code from a
+    closed list: the codes `indexable`, `lang`, `img_alt` and `small_target`;
+    every axe rule but contrast; and contrast, clipped text or overflow
+    measured inside a chrome state or on shared selectors (CSS-module classes,
+    `.shop-card-off`, `.shop-card-base`, `.shop-card-badge`,
+    `.pdp-price-base`, `.pdp-variant-was`, `.pdp-category`,
+    `.sm-gallery-count`, `.home-hero-badge`, `.sr-only`,
+    `#header-profile-btn`, `#profile-dropdown`). It changes words only ("Needs
+    a StoreMink fix"), never severity, and never labels a check that could not
+    run. `gate()` logs `theme_studio.platform_finding` at WARNING with `gate`,
+    `code`, `findingSeverity` and `count`, counted before the cap (never
+    selectors or messages, and no top-level `severity`, which Cloud Logging
+    reads as the level); moderate or minor axe rules log
+    `findingSeverity: "minor"`, so an alert filters on `serious`.
+    `automaticQaDecision` and `qa-diagnosis.ts` act only on the serious
+    findings of the gates that stop a run, so a warning never buys a paid
+    revision. Tests: `finding-severity.test.ts`, `acceptance-gates.test.ts`,
+    `automatic-qa-policy.test.ts`, `qa-diagnosis.test.ts`.
+
+    **The design review cannot stall the queue (TS-1B).** Only a hidden
+    pending version can be judged (the 0144 guard refuses any other version
+    update), and the design review used to update versions by id alone: "Retry
+    automatic QA" on a version that failed its layout check queued a layout
+    re-check over a visible version, its settle raised, the row was retried
+    and raised again, and then `claimQa` raised on every tick, so no design
+    review on the platform could be claimed. Now `revealVersion`
+    (`visual-qa.ts`) updates a version only while it is `internal` and
+    `pending`. A review over a version the operator already sees (a layout
+    re-check after Retry, a deploy re-capture, a re-check before Publish)
+    leaves the version row alone, and the theme's state is read from its
+    newest check run and review, never the version's old mark. `claimQa`
+    settles each worn-out row, a run whose inputs are gone, and a last-attempt
+    provider failure in its own savepoint (`settleOnItsOwn`; a raw SAVEPOINT,
+    because `withService` opens its transaction by hand and drizzle's
+    `db.transaction()` would commit it). A transient failure (a statement or
+    lock timeout, a lock NOWAIT refused, a serialization failure or deadlock,
+    a lost connection or a database shutting down: SQLSTATE 57014, 55P03,
+    40001, 40P01, 57P01 to 57P03, classes 08 and 53) leaves the row as it
+    was, so the next claim settles it and reveals its version; it logs
+    `theme studio: visual QA row settlement deferred to the next claim`. If
+    the database refuses the settlement (a guard's raise, a constraint) or it
+    fails otherwise, that row alone is closed (its project is left for Stop,
+    which shows its newest hidden version) and
+    `theme studio: visual QA row could not be settled` is logged, so one bad
+    row never blocks every other review. ★ An `attention` stop is recorded as
+    `checks_incomplete` when the checks could not finish or StoreMink's
+    preview broke (`automaticQaAttention` in `automatic-qa-policy.ts`
+    answers `unfinished` or `runtime`; its diagnosis says so and asks for
+    Check again), and as `quality_bar_not_met` only for a serious finding
+    left at the repair ceiling, so no stop sends the operator to a paid
+    revision that cannot help. Deploy re-captures stay (at most
+    `MAX_BUILD_RECAPTURES` = 2) and are counted per check: only re-captures
+    created since the version's newest capture that was not itself one, so a
+    re-check is not refused for the deploys its first check met. The stop
+    (`acceptance_build_unstable`) carries a plain reason. Rollback-only
+    regression: `lib/theme-studio/visual-qa-postgres.test.ts`
+    (`THEME_STUDIO_RECOVERY_DB_TEST=1`), covering the stall and the
+    design-review half of the re-check contract: a pass or taste review ends
+    Ready to publish with no repair run, a serious one ends Ready with its
+    reason, a deploy during the re-check re-captures in place, and the version
+    row is never written.
+
+    **Nothing stuck: Stop, re-checks and stale captures (TS-1E).** ★
+    `queueThemeStudioRecheck(actor, input)` (`capture.ts`; the input is
+    `projectId`, `versionId`, `expectedRevision` and a `reason`, `check_again`
+    or `publish_recheck`; `queueThemeStudioRecheckWithDb(db, actor, input)`
+    applies the same rules inside a caller's transaction) is the capture half
+    of the re-check contract. It needs capture and automatic checks on. It
+    locks the project and refuses unless the project is `ready`, `candidate`
+    or `approved` (not with a `publishing` attempt younger than 15 minutes),
+    the version is current, no capture, design review or run is queued or
+    running, and the version can be captured (`captureBlockers`). It then
+    moves the project to `generating` (0151) and queues one automatic FINAL
+    capture with `previous_status = 'generating'` (the live
+    `theme_studio_captures_shape_check` requires it of every automatic
+    capture), `qa_iteration = MAX_AUTOMATIC_QA_REPAIRS` (so
+    `automaticQaDecision` never asks for a paid revision) and the key
+    `recheck_<reason>_<uuid>`; captures have no detail column, so the reason
+    rides in the key, as deploy re-captures mark themselves
+    `auto_recapture_<qa run id>`. It logs `capture_requested` with `recheck`
+    and `inPlace`. ★ `remeasuresInPlace(capture, version)` (`capture-core.ts`)
+    decides at claim and at finish. IN PLACE means no catalogue shots, the
+    same version, a complete new check run and a design-review row bound to it
+    through `browser_report.acceptanceRunId`, and the version row is never
+    written. That covers a hidden capture-made version, as before, and a
+    re-check or deploy re-capture of a visible version whose mark is `passed`
+    (`versionPassedChecks`). Every other version, every Retry automatic QA
+    included (an operator's key; no screen queues one since TS-2), gets a new hidden version with fresh
+    catalogue pictures. ★
+    `stopThemeStudioChecks(actor, { projectId, expectedRevision })` (new
+    `lib/theme-studio/stop.ts`) is one transaction. It takes the project lock,
+    then every active capture, design review, run and abandoned in-browser
+    check with NOWAIT; a worker settling the same step makes Stop answer "try
+    again in a few seconds" instead of deadlocking. Captures and design
+    reviews become `failed` with the stop code `cancelled`
+    (`THEME_STUDIO_STOP_CODE`) and lose their leases, so a capture job's
+    answer is refused (409) and a review worker's next renewal answers false
+    and stops its model call. A queued run, or a running one whose lease
+    lapsed, is cancelled; a run with a live worker is asked to cancel, and the
+    worker stops within about 10 s, keeps drawn photos (reused only by a
+    Retry of that step: `image-checkpoint-store.ts` follows retry ancestry,
+    so a new photo run draws them again), records spend and settles the
+    theme, while Stop answers `generating` with `cancelling: true`. An
+    in-browser check waiting for its tab expires, and a server stage older
+    than 15 minutes errors, as a new start would retire them; with nothing
+    else to stop, a younger one makes Stop say it finishes by itself. The
+    hidden version the stopped work was on is revealed as failed and becomes
+    current, as `failCapture`, the design review and the run worker do. When
+    Stop ended nothing that was on a version (a design review the queue had
+    to close on its own), the newest hidden version newer than the current
+    one is revealed the same way, with `auto_qa_failed` and the code
+    `cancelled`, so a paid build is never stranded hidden; otherwise the
+    theme returns to its current version (`ready`), or `failed` with none.
+    Archive and Delete work afterwards. Events reuse
+    `capture_failed`, `auto_qa_failed`, `run_cancelled` and
+    `run_cancel_requested`. ★ A capture nobody takes fails after 15 minutes
+    (`sweepStaleThemeStudioCaptures`; see the Track 3.6 passage), and preview
+    stores a capture is measuring are never evicted or swept (`preview.ts`). ★
+    P2: a lease renewal that THROWS (wave 1's 5-second pool wait running out,
+    a dropped connection) is retried at the next 30-second tick and logged as
+    `theme_studio.lease_renewal_retry`; paid work stops only when a renewal
+    answers `false` (the lease is gone) or the watchdog fires 5 s before the
+    last renewed lease could lapse (`worker-lease.ts`). Rollback-only test:
+    `capture-recheck-postgres.test.ts` (`THEME_STUDIO_RECOVERY_DB_TEST=1`).
+
+    **Publish on today's evidence (TS-1C; owner decision 4).**
+    `currentPublishEvidence(db, { projectId })` (`acceptance.ts`) answers
+    `{ ok: true, acceptanceRunId }` or `{ ok: false, reason }` with the reason
+    `old_build`, `no_review` or `none`; `publishEvidenceWithDb(db, project)`
+    gives the same answer over a row the caller holds, with what Publish
+    records. The NEWEST check run of the current version that reached a
+    verdict (passed, failed or blocked;
+    `completed_at desc nulls last, created_at desc`) must have passed over the
+    version's exact package and pictures (otherwise `none`: a newer failed
+    check is never outweighed by an older pass). It must have run on today's
+    build (`currentAcceptanceBuildId`, otherwise `old_build`). A passed final
+    design review must be bound to that very run
+    (`browser_report.acceptanceRunId`, same package and build, otherwise
+    `no_review`), so the in-browser runner's checks never publish directly. It
+    is read-only and status-agnostic, and stored findings are never judged
+    again. With the automatic checks off (local development) the review is not
+    asked for: the labelled exception. ★ Publish and "Try again" use it inside
+    `beginAttempt`, after the package blockers and the publish-in-progress
+    refusal. If it is not ok, nothing is written; after that read commits,
+    `queueThemeStudioRecheck` with the reason `publish_recheck` moves the
+    theme to `generating` and queues one automatic final capture at the repair
+    ceiling, in place for a version that passed, and Publish answers
+    `kind: "rechecking"` with `captureId`, `inPlace`, `reason` and a
+    one-sentence `problems` (`recheckStartedMessage`). Publication never
+    writes an acceptance row, so old browser data is never stored under a new
+    build id. With the checks off, old evidence is refused as before. ★
+    `PublicationResult` gains `kind` (`published`, `failed`, `rechecking`).
+    `publicationBlockers(pkg, { gates, review })` returns
+    `{ blocking, warnings }`: only the package refuses, and `warnings`
+    (`PublicationWarning`: source, gate, code, count, the stored words with
+    any long dash replaced, up to 5 places, the StoreMink platform label) are
+    the run's `acceptanceWarnings` and the review's `reviewSeverity.warnings`.
+    `publication_started` and `theme_published` record `acceptanceRunId`,
+    `severityRules` (`severity-v1`), `measuredUnder` (the run's own stamp,
+    null before severity-v1), `designReview` (`passed` or `not_configured`),
+    `designReviewId` and `warnings` (`publicationWarningLog`: a count, at most
+    16 kinds, and `omitted`, within the 4 KiB event limit).
+    `getThemeStudioReleaseState` adds `evidenceGap`, `recheckOnPublish` and
+    `warnings`. Acceptance runs stamp `severityRules` on both reports, and
+    their events record `failedGates` through `gateBlocks`, plus
+    `severityRules` and up to 20 `gate:code` warnings. ★ Frozen releases:
+    `lib/theme-studio/frozen-releases.test.ts` re-reads gzip copies
+    (`__fixtures__/frozen-releases.json.gz`, exported once from
+    `storemink_local` on 24 Oct 2026, never regenerated) of all 14 local
+    stored releases through the renderer's own `loadExactReleaseWithDb`, and 2
+    generated packages from `theme_studio_versions` that carry the model key,
+    checking each digest and that each re-validates. A contract change that
+    fails it needs a compatibility path, never new copies. Rollback-only
+    regression: `lib/theme-studio/publication-postgres.test.ts`
+    (`THEME_STUDIO_RECOVERY_DB_TEST=1`). `drizzle/schema.ts` no longer exports
+    the unused `themeStudioReviews`; the table stays.
+
+    **Every change is checked (TS-1D).** With the automatic checks on, nothing
+    an operator changes by hand lands as an unchecked version that Publish
+    refuses. ★ A picture save (`slot-images.ts`, the operator images passage)
+    and an operator's photo run (`finishImages` and `reachesFinalCheck` in
+    `worker.ts`, the Track 3.2 passage) make a hidden version at the repair
+    ceiling and go straight to one final capture and the design review; a save
+    or run that leaves a placeholder becomes current as before. ★
+    `retryThemeStudioRun` keeps an automatic step's `automatic` and
+    `qa_iteration`, recorded on `run_retried`; with the checks off it drops
+    them, because an automatic step would then fail `auto_qa_disabled` after
+    its paid call. ★ Make current (`restoreThemeStudioVersion`) ends Ready to
+    publish at once, re-checks in place, checks a new hidden version, or waits
+    on ready (the Phase 4 passage). ★ A blocked theme may be revised when no
+    questions are open: `questionsOpen` means the newest run is a succeeded
+    `clarify` and no `version_restored` was recorded since. A theme its checks
+    blocked (security) has none open; before this it was a dead end. ★ The
+    concurrency cap counts only runs the operator started. ★ Cancelling a
+    QUEUED automatic step reveals the hidden version it was building as failed
+    and makes it current, as the worker does for a running one. ★ The theme
+    id, alt text and licence note refusals say "3 to 80", "3 to 200" and "3 to
+    300" (no en dash). Rollback-only regression:
+    `lib/theme-studio/change-checks-postgres.test.ts`
+    (`THEME_STUDIO_RECOVERY_DB_TEST=1`): replacing one picture on a theme that
+    is Ready to publish reaches Ready to publish again through the real
+    capture settle, check run and design review, with no chat message and no
+    new run; it also covers the photo run, Retry, the cap, revise from
+    blocked, Make current and cancel. ★ The five rollback-only suites that
+    isolate and claim the shared capture and design-review queues
+    (`capture-recheck`, `change-checks`, `layout-preflight`, `publication`
+    and `visual-qa`, each `-postgres.test.ts`) first take one transaction
+    advisory lock, `pg_advisory_xact_lock(hashtext('theme_studio_queue_db_tests'))`,
+    before their lock timeout, and isolate every active row with a plain
+    UPDATE (never `SKIP LOCKED`), so run side by side they never claim each
+    other's rows or a committed local one (a capture queued since 29 Sep did
+    exactly that); `change-checks` also asserts each claimed capture is its
+    own project's. `recovery-safety-postgres.test.ts` takes the same lock,
+    because the 0147 guard it runs locks `theme_studio_runs` against every
+    open write; it then takes that table lock itself with `nowait`, retried
+    every 100 ms for up to 45 s, since a request waiting in Postgres's lock
+    queue would hold back every new write to the table past the 5 s lock
+    timeout of the suites outside the advisory lock (`worker-recovery` keeps
+    writes open for about 7 s).
+
+    **Studio words and controls from TS-1 (TS-1F).** TS-1F put these on the
+    screens of its day so TS-1 was usable before TS-2; since TS-2 each lives
+    on the theme page ("Theme Studio wave TS-2" below). ★ **Stop** (the theme
+    page's "..." menu) is offered while a run, capture or design review is
+    working or an in-browser check waits for its tab or its server stage
+    stopped answering, behind an in-app dialog saying that a capture or design
+    review stops at once, a build step within a few seconds, drawn pictures
+    are kept for **Continue building** (a Retry of the stopped step), and the
+    theme goes back to its last design (a theme with none yet shows as
+    Stopped; the toast says which: `stoppedMessage`)
+    (`stopThemeStudioChecksAction`). Each step's **Cancel** in the Log tab
+    sits behind the same kind of dialog (`CancelRunButton`). Remove from list
+    and Delete wait, with the reason under them, while anything holds the
+    theme (migration 0161 refuses both then); their server refusals point at
+    Stop. **Check again** measures the current design when the theme is
+    `ready`, Ready to publish or a publish that did not finish, nothing is
+    working and no attempt runs (`recheckThemeStudioVersionAction`, reason
+    `check_again`, never chosen by the browser): the main button of status
+    rows 10 (a stopped check), 12 and 19, and in the Checks tab, only where
+    the automatic checks are on (`studioStatus` drops it when they are off).
+    Make current says where it left the theme. A theme `blocked` with no
+    questions open takes a change in the chat; `questionsOpen` in
+    `studio-ui.tsx` is the client copy of the server rule. ★ Publish (since
+    TS-2 the header's release controls) reads **Re-check now** when
+    `recheckOnPublish`, with the server's reason, and treats the `rechecking`
+    answer as news, not an error; the theme then reads **Checking on today's
+    StoreMink build**. An in-app dialog names the design and the real reach
+    (the theme catalog on themes.storemink.com and every store's Theme
+    library; signup has no theme step since 11 Oct) and lists the warnings
+    that go live, worded by code (since TS-2 by studio-words.ts through
+    `publishWarningLine`, never the stored finding text; platform warnings say
+    StoreMink's shared code). A publish that did not finish shows its last
+    attempt's reasons beside **Try again**; there is no button while an
+    attempt runs. The live panel shows whenever a published release exists. ★
+    The Checks tab offers **Check again**; the in-browser runner is a fallback
+    under "Check the pages in this browser instead" in Technical details (the
+    only way to check where the automatic checks are off). Each finding reads
+    Must fix (`gateBlocks`) or Warning, plus "StoreMink's code"
+    (`isPlatformFinding`); earlier runs count only the checks that stop
+    Publish. When the design's newest checks stopped (the design review can
+    stop a design whose page checks passed), the Checks tab says why: the stop
+    sentence, the diagnosis and the next step. ★ Words: every run, capture and
+    design-review stop code has its own sentence (since TS-2 in
+    `studio-words.ts`; `studio-ui.tsx` `stopText(code, kind)` answers from
+    it), with the code beside it only in the Log tab and Technical details,
+    never the code alone; `activityLine` words every event type the database
+    allows and hides `project_approved` and `review_submitted` (the two-person
+    approval that ended on 3 Oct); `plainText` takes long dashes out of stored
+    words. The Design list, the chat's design cards and the Checks tab read
+    the newest checks outcome from Activity (`checksOutcome`); the status
+    words read the progress read's newest check run and design review; neither
+    reads the version's mark. Only a stop a change to the theme can clear
+    (`stopNeedsThemeChange`: `quality_bar_not_met`, `qa_no_progress`,
+    `repair_not_supported`, `acceptance_security_failed`,
+    `auto_revision_clarified`) suggests describing a fix; every other stop,
+    `checks_incomplete`, `renderer_fix_required` and `cancelled` included,
+    says what to do instead (`stoppedNextStep`). Guard tests in
+    `studio-ui.test.ts` fail when a stop code the worker, capture or
+    design-review sources write has no sentence, or an event type in the
+    newest events CHECK has no words. The after-response worker pass in
+    `theme-studio-actions.ts` runs only with the offline provider. ★ Colours
+    (`STUDIO_TONE` in `studio-ui.tsx`, 25 Oct): TS-1's controls and notices
+    use the dashboard's tokens and `dash-btn`, never a raw Tailwind colour. A
+    notice keeps its tone in a soft tint and a border and its words in the
+    dashboard's ink (the dashboard's amber and green read 3.3 to 1 or less as
+    text); red words go only on a white card or in a dialog (4.8 to 1
+    there, 4.3 on the page); a stop code is in the second ink, never light red (2.9
+    to 1). The `STUDIO_TONE` guard in `studio-ui.test.ts` measures every pair
+    at 4.5 to 1 or more from `dashboard.css`, and the Log tab shows stop codes
+    in `studio-code`, the second ink. The theme page's files carry no raw
+    Tailwind colour (`studio-css.test.ts`).
+
+    **★★ Theme Studio wave TS-3: speed and production (25 Oct 2026).** Each
+    step now starts the next at once: the capture job starts right after a
+    capture is queued, the layout check settles inside the capture's finish,
+    and the capture job wakes the design review when its captures end, under
+    a platform-wide cap of 2 design reviews (TS-3A). Photo checks go to
+    Google's US endpoint first and once to global (TS-3D), and a photo whose
+    check stayed unavailable is kept unchecked and checked again before the
+    final design review instead of failing the drawn, paid photo run (TS-3B).
+    The worker continues a photo run its request deadline cut, starts a fresh
+    photo run only with 9 minutes of the request left, claims automatic
+    repairs first, waits out text-model outages, queues Theme Studio's text
+    calls on a capacity row of their own (the design review has its own too,
+    TS-3A), and lets an idle lane ask every 5 to 10 s (TS-3B). The operator
+    who started a theme
+    gets an in-app notice and an email when it is ready to publish, needs a
+    fix or has questions (owner decision 8). A capture error a retry cannot
+    fix fails at once (owner, 24 Oct). Deploys bind passed checks to the
+    commit, update the capture job before the workers and in production only,
+    and set a daily spend cap of 50 dollars per operator; five alert
+    definitions wait for step A1 (TS-3C). Every picture is drawn by Nano
+    Banana 2.1 (TS-3F), and six storefront text boxes no longer zoom an
+    iPhone (TS-3E). The paragraphs below hold the detail: Each step starts
+    the next at once (TS-3A), The check of a photo still unchecked (TS-3B)
+    and Photo checks at Google's US endpoint first (TS-3D). Elsewhere: the
+    Track 3.6 capture passage (the start right after queueing, the fail-fast
+    rule), the rate-limit recovery passage (text outages), the durable image
+    recovery passage (the third review pass, the style photo refill, the
+    deadline continuation), the worker isolation passage (lanes, the photo
+    floor, repairs first, capacity rows, `firstCapturePhase`), "One image
+    model for every picture" after the full-capacity passage, the
+    notifications section (`restrictToOperatorEmails`), the storefront
+    styling rules of §5 (the 16px rule) and §7 (the build id, the spend cap,
+    the alerts). No migration and no new Theme Studio event type (the three
+    notification keys are code only). Operator-only, except shoppers on
+    phones (TS-3E) and the pictures Mink AI draws for merchants (TS-3F);
+    neither changes a step a merchant takes, so no Help Centre update.
+
+    **Each step starts the next at once; the design-review lane (TS-3A, 25
+    Oct 2026).**
+    - The layout check needs no model call, so `finishThemeStudioCapture`
+      settles it inside the finish (`settleThemeStudioLayoutCheck`,
+      visual-qa.ts). One transaction claims exactly that row (SKIP LOCKED)
+      and settles it as the review worker would. If it cannot (a switched-off
+      model, an error), the row stays queued for the review route.
+    - A finish that leaves a design review queued answers
+      `designReview: "waiting"`: every automatic final capture, and a layout
+      check left queued. When its captures are done, the capture job POSTs
+      `/api/internal/theme-studio/qa` with its `Bearer CRON_SECRET` and waits
+      (at most 300 s and its remaining budget less 10 s; skipped with under
+      60 s left), so the review starts at once and its paid work stays inside
+      that web request. It does the same when it stops at its capture limit
+      or budget, since that route starts the job again for any capture
+      waiting. The job measures with 3 browser contexts (`MAX_QA_CONTEXTS`;
+      2 peaked at 24% of 2 GiB on 4 Oct; the first production theme measures
+      3).
+    - ★ At most `DESIGN_REVIEW_CAP` (2) design reviews run at once on the
+      platform, checked in `claimQa`. The claim takes
+      `pg_advisory_xact_lock(hashtextextended('theme-studio:design-review-claim', 0))`
+      for its own short transaction, counts final-phase reviews running on
+      live leases, and at the cap claims only a layout check (no model call);
+      otherwise the worker answers `capped: 1`. Nothing holds a lock or
+      connection through the review's model call. A final review Stop ended
+      (`cancelled`, started) still counts for `STOPPED_REVIEW_HOLDS_SLOT_MS`
+      (35 s): Stop clears its lease at once (the lifecycle CHECK allows no
+      lease on a failed row), but its worker's model call runs until its next
+      lease renewal (every 30 s) finds the row gone.
+    - A review sent back after a failed try is claimable again only after
+      `QA_RETRY_COOLDOWN_SECONDS` (60; a row never claimed has no
+      `started_at`; the QA guard stamps `updated_at`). One sent back because
+      its photo checks took their own claim (`photoCheck.state` `checked`) is
+      claimable at once.
+    - The review has its own capacity row on its model
+      (`THEME_STUDIO_REVIEW_CAPACITY_SCOPE` = `theme-studio-review`,
+      optimisation 8).
+    - Our own missing or unreadable inputs (`qa_input_missing`,
+      `qa_image_input_missing`, `qa_screenshot_unusable`) fail the review at
+      once as `qa_input_missing`, never as a provider failure.
+    - A model call that answered unusably (refused, truncated, invalid JSON,
+      incomplete) keeps its usage on the row through the retry
+      (`vision_report.failedCalls`, `failedCallUsage`) and in the closing
+      report; `usage` stays the successful call's. (`benchmark.ts`
+      `visualUsage` still reads `usage` alone.)
+    - ★ The photo check before every final design review: a generated photo
+      of the reviewed version with no check on its bytes (`qaImageIssues`
+      `unreviewed`) goes through `checkUncheckedPhotos(withService, …)`
+      (below) after the final capture and before the review's model call. It
+      runs there, not before the capture, because a photo check is a paid
+      call that may run only inside an HTTP request with no transaction
+      holding locks, and the capture claim must answer the job within 60 s;
+      the review row's lease means no photo is checked twice at once, and the
+      capture photographs the same bytes either way.
+      - ★★ No connection is held through a check (TS-3 fixer, 25 Oct 2026):
+        given `withService` itself, the check reads in a short transaction of
+        its own that commits before anything is sent, and claims and records
+        each try in short transactions of their own. (It used to run inside
+        the lane's own `withService`, kept alive with `SELECT 1`: one of the
+        web's 5 pooled connections per lane for the whole check, and a
+        worker with a pool of 1 could never claim a photo.)
+      - ★★ The checks get until `PHOTO_CHECK_BUDGET_MS` (250 s) after the
+        claim, enough for a try at the US and one at global on Theme
+        Studio's 120 s clock with 10 s to be admitted. That deadline is the
+        checks' own clock (`deadline`), never the caller's stop: a check it
+        cuts counts as a try, so the same bytes are not sent again on every
+        claim, and a check starts only with `PHOTO_RECHECK_MIN_CLOCK_MS`
+        (180 s) left. (The earlier 90 s budget stopped every slow US try
+        before its own clock could send the check on to global, released the
+        claim unspent and sent the same bytes again on the next claim.)
+      - passed within `PHOTO_CHECK_INLINE_MS` (20 s) of the claim: the row is
+        marked `photoCheck.state` `checked` and the review runs in the same
+        claim, with its whole clock (`QA_TIMEOUT_MS`, 4 min).
+      - passed later: the row goes back to the queue without spending a try,
+        marked `checked`, claimable at once, so one claim never holds photo
+        checks and a review together past the QA route's 5-minute deadline.
+      - waiting: the row goes back to the queue without spending a try, with
+        `vision_report.photoCheck` = {state: checking|waiting, since,
+        unchecked}, which the progress read (TS-2) words as Checking
+        pictures (it reads `checked` as no photo work left).
+      - failed, or more than `PHOTO_CHECK_WAIT_LIMIT_MS` (20 min) waiting:
+        `checks_incomplete` with a picture-check diagnosis (Couldn't finish
+        the checks, Check again).
+    - ★ The operator who started the theme is told it is ready to publish
+      (`passFinal`) or needs them (a review or automatic capture that stops a
+      generating theme). The notice is noted inside the settlement
+      (`noteThemeStudioOperatorNotice`, automatic-work.ts) and sent after
+      commit by `withServiceAndNotices` through notify.ts
+      `sendThemeStudioNotice`; never for a rolled-back change, and a
+      savepoint rollback drops its notices (`withNoticeScope`).
+    - ★ Owner, 24 Oct 2026: a capture error a retry cannot fix fails at once
+      (`captureErrorKind`, `captureRetryDecision`, capture-core.ts).
+      - Deterministic: a screenshot over 512 KB, a report or screenshot set
+        the server refuses. Fails on the first report.
+      - Transient: timeouts, network errors, a deploy mid-capture, a 429 or
+        5xx. Keeps every try.
+      - Anything else: fails when the same code is reported on two tries in a
+        row. ★ That includes one of our own preview pages answering 404 or
+        another 4xx (TS-3 fixer, 25 Oct 2026): a preview answers 404 while
+        the database is briefly out of reach (`captureIsRunning` in
+        preview-access.ts and `getCurrentStoreOrNull` in lib/store/resolve.ts
+        fail closed, then the storefront layout calls `notFound()`), for
+        example on wave 1's 5 s pool wait. So a 404 is tried again and fails
+        when the next try reports it too.
+      - Each send-back records a worker `capture_requested` event
+        {captureId, versionId, attempt, retryAfter}, which the next try is
+        judged against. The job names the preview page a status error came
+        from (`failedSurface`); the failed try's log line carries it
+        (`surface`).
+      - The finish route answers a malformed picture, QA report or screenshot
+        under its lease as that try's error instead of a bare 400 (which left
+        the lease to lapse and retried up to 5 times).
+    - Log lines (content-free): `theme_studio.capture_attempt_failed`
+      (WARNING: errorCode, errorKind, attempt, maxAttempts, outcome, and
+      `surface` for a preview page's status) and
+      `theme_studio.qa_waiting` (WARNING, logged by each QA route call only
+      when reviews have waited over `QA_WAITING_ALERT_MINUTES`, 10: waiting,
+      oldestMinutes, overMinutes, cap).
+    - ⚠ `startCaptureJobAfterCommit` runs beside its caller; the QA route
+      awaits it, the runs route and the server actions do not, so a start
+      that outlives their response may run with throttled CPU and the minute
+      ticks cover it. One QA claim holds photo checks (until 250 s after the
+      claim) or a review (4 min), never both past the QA route's 5-minute
+      schedule deadline, the capture job's 300 s wake and the route's
+      `maxDuration` (pinned in `worker-image-reviewer.test.ts`).
+    - Tests: `visual-qa-worker.test.ts`, `capture-core.test.ts`,
+      `capture-start.test.ts`, `automatic-work.test.ts`,
+      `jobs/theme-studio-capture/capture-job.test.mjs`, and
+      `visual-qa-postgres.test.ts` and `layout-preflight-postgres.test.ts`
+      (`THEME_STUDIO_RECOVERY_DB_TEST=1`).
+
+    **The check of a photo still unchecked (TS-3B).**
+    `checkUncheckedPhotos(source, { projectId, versionId, signal, deadline? })`
+    (image-recovery.ts; `source` is `withService` itself, or a caller's `db`)
+    returns `passed`, `waiting` or `failed`. It reads the
+    version's photos the way the design review does (per stored bytes, the
+    nearest image run in the ancestry) and checks each `unreviewed` one with
+    the same check: `reviewThemeImage` with the reviewer of the provider that
+    drew it (worker.ts `themeImageReviewerFor`), the stored crop, that run's
+    anchor, a SET for products, and the outcome's attempt. The result is
+    written on the photo's entry in that run's `outcome_detail.outcomes`
+    (`review` passed or flagged, `problems`, `note`, `recheckedAt`), and its
+    spend is added to that run's usage. Every later version, the design
+    review and the Pictures history see it, and the same bytes are never paid
+    for twice.
+    - One caller at a time per photo: a try is claimed on the entry
+      (`recheck: { tries, at, until }`, 6 minutes) in a short transaction of
+      its own, the check runs outside it on a 5-minute clock
+      (`PHOTO_RECHECK_CALL_MS`), and the result is written in another.
+    - A check that is unavailable is tried again 1 and then 2 minutes later,
+      3 tries in all (`PHOTO_RECHECK_TRIES`), then the photo is `failed`
+      (Couldn't finish the checks) for 30 minutes, after which a later call
+      starts a fresh round. A check the caller stops (`signal`, a lost lease)
+      is not counted as a try. Given a `deadline` (the design review passes
+      its claim plus `PHOTO_CHECK_BUDGET_MS`), a check starts only with
+      `PHOTO_RECHECK_MIN_CLOCK_MS` (180 s: a whole 120 s try at the US and a
+      minute at global) left, else the photo waits unclaimed, and its own
+      clock is what is left; a check that clock cuts is a try like any
+      timeout, so the same bytes are never sent again on every claim.
+    - A reviewer switched off (`THEME_STUDIO_DISABLED_MODELS`), or missing
+      bytes, brief or record, is `failed` at once. `passed` means nothing is
+      left unchecked; a flagged photo is judged by the design review.
+    - ★ Given `withService` itself (the design review's call since the
+      25 Oct fix), it reads the version, its photos and the bytes to send in
+      one short transaction that commits before any check is sent, and each
+      claim and record is a short transaction of its own: no pooled
+      connection is held while Google answers and no transaction is opened
+      inside another, so it works on a worker's pool of one
+      (`photo-check-pool-postgres.test.ts`: the real pool with
+      `DB_POOL_MAX=1`, then the review lane on a pool-of-one `withService`
+      that refuses a nested acquire, plus the old call as a negative
+      control). Given a caller's `db` (tests only), that transaction is only
+      read: the function throws before paying if it has written or holds row
+      locks (`txid_current_if_assigned()`) and keeps it alive with `SELECT 1`
+      every 20 s, so it holds a connection through the checks while each
+      claim takes a second one. ⚠ Never call it that way on a pool of one:
+      the claim waits the pool's 5 s, fails as `DatabaseBusyError`, and the
+      photo stays waiting until the checks stop as could not finish.
+    - Log lines: `theme_studio.photo_check` (ids and counts),
+      `theme_studio.photo_check_unrecordable` (reason),
+      `theme_studio.photo_check_deferred`. TS-3A calls it in the design-review
+      lane before the review's model call. Tests: `photo-recheck.test.ts` and
+      `image-recovery-postgres.test.ts` (`THEME_STUDIO_RECOVERY_DB_TEST=1`).
+
+    **Photo checks at Google's US endpoint first (TS-3D, 25 Oct 2026; owner's
+    decision, 23 Oct, 19:45 IST).** Every check of a photo (`image_review`):
+    Theme Studio's image runs and its check of a photo still unchecked, the
+    redesign's photos, and its studio product photos.
+    - Where it goes: Google's US multi-region endpoint first
+      (`IMAGE_REVIEW_FIRST_LOCATION` = `us`). The SDK sends it to
+      `aiplatform.us.rep.googleapis.com`, a pool separate from global. On
+      storemink-staging (23 Oct) US checks answered 20 of 20, median 8.8 s,
+      against 6 of 20 at global.
+    - It goes once to the client's own location (global in every deploy) when
+      the US refuses it (a 429, any 5xx such as UNAVAILABLE, an outright 403
+      or 404), its try times out (its own clock, or a 408), or it never
+      reached the US (a network failure with no answer). A 400, a 422, a 401
+      or a credential failure is final at the US.
+    - Never a third try: both tries are single SDK attempts, with no 429 wait
+      between or after them. A caller's own re-asks (the redesign's 15, 30 and
+      60 s) are separate calls.
+    - `createVertexModelClient` (gemini-vertex.ts) takes two options:
+      - `capacityAt(providerModel, location)`: each try queues on ITS
+        location's shared row
+        (`sharedProviderCapacity(project, location, model)`). A US 429
+        pauses only the US row (the checks' 10 to 20 s
+        pause, held to 15 s), and the try at global takes a permit of the
+        global row. It takes the place of `capacity`, so one client never
+        queues one location's calls on another location's row. A client
+        without it keeps one location for every call: the scripts, the design
+        review and the text calls.
+      - `imageReviewTryTimeoutMs`: one try's clock from the moment it is
+        admitted. It is 75 s (`IMAGE_REVIEW_TRY_TIMEOUT_MS`) unless the caller
+        sets it, and never more than the client's ten-minute timeout.
+    - Every other stage of a client given `capacityAt` stays at its own
+      location, on `capacityAt(model, region)`. A client already at `us`
+      keeps today's waits.
+    - Who passes them: worker.ts `imageReviewerFor` (Theme Studio's image runs
+      and, through `themeImageReviewerFor`, `checkUncheckedPhotos`) uses
+      `THEME_STUDIO_IMAGE_REVIEW_TRY_TIMEOUT_MS` = 120 s (plan H1): on 4 Oct
+      the 103 checks took a median 9.07 s, the 102 that answered all did so
+      within 110.9 s, and two tries (240 s) fit `PHOTO_RECHECK_CALL_MS` (5
+      min). The redesign's `defaultReviewer` (photos.ts) and
+      `defaultStudioReviewer` (products.ts) pass 75 s and wrap EACH location's
+      capacity in `revampDrainingCapacity`, so the deadline drain stops a
+      check's wait for its turn at the US or at global alike, and a check not
+      sent reads `cancelled`, never an outage that goes on.
+    - Only a try that was admitted and sent goes on. A wait the caller or the
+      drain ended, a row that could not give a turn and a permit lost mid-call
+      are final. A US answer is the answer: a refusal, a truncation or bad
+      JSON never goes on.
+    - Price: the US costs 1.1 times global. The client marks the usage object
+      it returns with the location that served it (`markServedLocation`, a
+      WeakMap beside the object, so stored usage keeps its four counts), and
+      `estimateCostMicroUsd` prices it there (`locationPriceFactor`: global 1,
+      any other location `NON_GLOBAL_PRICE_FACTOR` 1.1). `reviewThemeImage`
+      and the studio photo check therefore record the US price with no change
+      of their own; a copy of the usage is priced at global. Pricing version
+      `gemini-api-list-2026-09-us-1.1x`; about $0.01 to $0.03 more per theme
+      (estimate). Redesign credits come from itemised charges, so no merchant
+      pays more. ⚠ The location is not stored beside the token counts, so a
+      later repricing from raw counts alone cannot tell a US check from a
+      global one.
+    - Logs, content-free: `theme_studio.image_review_fallback` (WARNING:
+      stage, model, from, to, code and Google's status, words and named quota)
+      for each US try that went on; `theme_studio.provider_error`,
+      `theme_studio.shared_cooldown_failed` and
+      `theme_studio.unexpected_finish_reason` add `location` for a client that
+      sends checks to two places; a US 429 still reaches `onRetry`
+      (`waitMs: 0`, `location: "us"`).
+    - Theme Studio's check text is unchanged byte for byte
+      (image-prompt.golden.json; gemini-vertex.test.ts compares the request
+      bytes sent to the US, to global and by a one-location client). Nothing
+      else moves: drawings, design calls, the design review and chat stay
+      where they were. No migration: the US rows of
+      `theme_studio_provider_capacity` are made on first use. The redesign's
+      photos may therefore be processed in the US, which the privacy policy's
+      sentence on providers outside the merchant's country covers (step A3
+      reads which version production serves).
+    - Tests: `gemini-vertex.test.ts`, `cost.test.ts`,
+      `worker-image-reviewer.test.ts`, photos.test.ts and products.test.ts
+      (`MINK_REVAMP_LOCAL_TEST=1`), `us-checks-postgres.test.ts`
+      (`THEME_STUDIO_CAPACITY_DB_TEST=1`).
+
+    **★★ Theme Studio wave TS-2: three screens instead of nine (25 Oct 2026;
+    plan section 4).** One Theme Studio job used to take nine screens (themes,
+    the studio list, new project, the project, its preview, checks, images,
+    compare and release pages) and about 55 controls. Now there are three, all
+    superadmin only. **Themes** (`/dashboard/themes`) is one page with two
+    tabs: Catalog (the demo-store panel) and Theme Studio
+    (`/dashboard/themes/studio`, every Studio theme by what it needs). **New
+    theme** (`/dashboard/themes/studio/new`) is one form ending in **Create
+    and start**. **The theme page**
+    (`/dashboard/themes/studio/[projectId]?tab=&version=&do=`) is full width:
+    the chat on the left, folding to a rail; the tabs Preview, Checks,
+    Pictures, Changes and Log on the right; the status words and one main
+    button in the header. The old addresses redirect into their tab:
+    `…/versions/[versionId]` to `?tab=preview&version=`,
+    `…/versions/[versionId]/acceptance` to `?tab=checks&version=`,
+    `…/versions/[versionId]/images` to `?tab=pictures&version=`,
+    `…/compare?from=&to=` to `?tab=changes&version=<to>` (`from` is dropped:
+    the tab compares a design with the one it came from), `…/release` to
+    `?tab=log` (Publish sits in the header on every tab), and the old Checks
+    page's `?repairAcceptance=<runId>` to `?tab=checks&do=describe_fix`. The
+    list's and the theme page's addresses never changed, because the operator
+    notices link to them (`lib/notifications/render.ts` `themeStudioUrl`). On
+    the server the wave adds reads only: `lib/theme-studio/progress.ts` and
+    four GET routes under `/api/platform/theme-studio/projects/`;
+    `acceptance-repair.ts` builds the Describe a fix draft.
+    `app/actions/theme-studio-actions.ts` is unchanged. No migration and no
+    new Theme Studio event type. Screen rules: the dashboard's design system
+    only (`dash-*` classes and `--dash-*` tokens, plus the Studio's own
+    classes in `studio/studio.css`; no violet, no raw Tailwind colour); in-app
+    dialogs, never `window.confirm` or `alert`; plain sentences, with codes,
+    the model, the creator and the build only in the Log tab, in Checks,
+    Technical details and in the text **Copy details** puts on the clipboard;
+    the reason for a disabled button written under it, never a tooltip
+    (tooltips do not open on touch); no em or en dash and no number of Mink
+    credits, including words that come from `lib/theme-studio` (stored text
+    goes through `plainText` or `plainWords`). Operator-only screens: no
+    merchant-visible change, no Help Centre update. ⚠ Not yet opened in a real
+    browser: the pass at 360, 390, 768 and 1440 px with the offline provider,
+    measuring the preview at 1280 and 1440 px, comes after the wave (plan
+    section 9).
+
+    **The status function: one set of words everywhere (TS-2A).**
+    `studioStatus(input)` (`themes/studio/studio-status.ts`) decides the
+    words, the tone, the main button and the secondary actions for the list,
+    the theme page's header and the Design list. It is pure (every age is
+    measured against `input.now`, the read time) and total: 19 rows, the first
+    match wins, a test per row. The rows, with their main button:
+    - Row 1, a published release, whatever the project's status (an archived
+      theme can still be live): **Live, v1.0.0** (Open live demo) or **Not
+      offered to new stores** (Offer again).
+    - Row 2, a publish attempt whose last write is under 15 minutes old
+      (`PUBLISH_ATTEMPT_MINUTES`): **Publishing**, no button.
+    - Row 3, `approved` otherwise: **Publish didn't finish** with its first
+      reason (Try again).
+    - Row 4, archived and never published: **Removed from list** (Delete, in
+      the "..." menu).
+    - Row 5, working: **Waiting to start (since 10:05)**, **Building: drawing
+      pictures (26 min)**, **Checking on today's StoreMink build** (a
+      re-check: capture-core.ts `recheckReasonOf` reads the capture's key),
+      **Checking pictures** (the design-review row's `photoCheck` state) or
+      **Checking your change** (saved pictures, Make current, an operator's
+      photo run). Stop is in the menu.
+    - Row 6, working with nothing new for 20 minutes (`STUDIO_STUCK_MINUTES`:
+      a step, a drawn picture or an event counts, a lease renewal does not)
+      and no next try pending: **Stuck since 10:40** (Stop and check again).
+    - Row 7, `blocked` with questions open: **Needs your answer** (Answer).
+    - Row 8, questions open but a revision already holds
+      `MAX_REVISION_MESSAGES` (20) messages, so the server refuses another
+      answer: **Needs a new start: too many questions** (Start a new theme
+      from this brief).
+    - Row 9, `blocked` with no questions open (its security check failed):
+      **Can't publish: security problem** (Describe a fix).
+    - Row 10, stop code `cancelled`: **Stopped** (Continue building for a run;
+      Check again for a capture or a design review).
+    - Row 11, every serious finding is StoreMink's own, or a
+      `renderer_fix_required` stop: **Needs a StoreMink fix** (no main button;
+      Copy details).
+    - Row 12, a capture or design-review stop that no theme change, redraw
+      (`image_check_required`) or StoreMink fix answers, any unknown code, and
+      a build step's unknown code once a design exists: **Couldn't finish the
+      checks** with a plain reason (Check again). An unknown code never
+      reaches Describe a fix.
+    - Row 13, pictures missing or the last picture run failed: **Pictures
+      missing (3)** or **Drawing pictures didn't finish** (Draw missing
+      pictures, or Retry). A failed picture run counts only while it belongs
+      to the newest piece of work (`progress.ts` `lastPictureRun`): once a
+      Check again, a Make current or a change started since, it stays in the
+      Log tab with its Retry and no longer holds the theme ahead of Ready to
+      publish (a failed picture run makes no design).
+    - Row 14, serious findings left after the repairs, or a stop a theme
+      change can clear (studio-ui.tsx `stopNeedsThemeChange`): **Needs a fix
+      (2 problems)** (Describe a fix; Redraw first when every serious finding
+      that is not StoreMink's is a picture).
+    - Row 15, `candidate` and `currentPublishEvidence` ok: **Ready to
+      publish**, or **Ready to publish, 2 warnings** (Publish).
+    - Row 16, `candidate` whose evidence is from an earlier build, **Ready to
+      publish (StoreMink was updated)**, or lacks a design review bound to its
+      newest check run (or a passed check run at all), **Ready to publish
+      (needs a quick re-check)**: Publish, which offers the re-check first.
+    - Row 17, `failed`: **Couldn't finish** with a plain reason (Try again;
+      Start a new theme from this brief for a declined or refused brief).
+    - Row 18, `draft`: **Not started** (Start building).
+    - Row 19, anything else. A build step that stopped for a known reason on
+      a theme that keeps its design (a change from the chat that failed;
+      `worker.ts` settles the theme back at ready on that design): **Your
+      change didn't finish** with its plain reason (Try again, which retries
+      that step; Check again beside it, which brings the kept design back to
+      Ready to publish; Check again alone for a declined change). Otherwise
+      **Not checked yet**, **Not checked on today's build**, or, for a design
+      that passed on today's build while the theme is not marked Ready to
+      publish, **Checked on today's build; check it again to publish** (Check
+      again).
+
+    When building is switched off (`THEME_STUDIO_GENERATION_ENABLED=false`),
+    the theme's own model is (`THEME_STUDIO_DISABLED_MODELS`) or the automatic
+    checks are (local development only), a row whose main button needs it says
+    so in its words ("Not started, building is switched off") and shows no
+    main button, and the page shows a banner. The code's state names
+    (candidate, approved, ready, blocked) never reach the screen.
+    `studioListFilter` puts every theme in exactly one filter besides All:
+    Live (row 1), Building (rows 2 and 5), Ready (15 and 16), Archived (4) and
+    Needs you (every other row). `STUDIO_MENU_KINDS` (Stop, Remove from list,
+    Delete) always sit in the header's "..." menu; on `STUDIO_RELEASE_ROWS`
+    (1, 2, 3, 15 and 16) the release controls render every other button. ★ The
+    words file, `themes/studio/studio-words.ts`, holds every sentence the
+    screens show: by check and finding code (`findingWords`, with the
+    measurement, such as "3.9 to 1, needs 4.5 to 1", and the place, such as
+    "Product at 390 px"), by design-review finding (`reviewFindingWords`) and
+    by run, capture and design-review stop code (`stopReasonWords`;
+    studio-ui.tsx `stopText` and `STOP_CODES` answer from it). StoreMink's own
+    findings end "StoreMink has been told". `designLabel(n)` names a design
+    "Design N", N being its version number, on every screen and in every text
+    a screen writes; gaps in the numbers are accepted, because stored chat and
+    events never change. Times are India time (`clockWords`), durations read
+    "3 min 39 s" (`durationWords`), and `copyDetailsText` is the one text
+    outside the Log tab and Technical details with a code or a build in it.
+    Guard tests read the sources of the gates, the stop codes and the review
+    findings and fail when a code has no words.
+
+    **The progress reads and the poll route (TS-2A).**
+    `lib/theme-studio/progress.ts` holds the reads behind the screens. Each
+    takes the caller's `db` and reads narrow columns and JSON paths: never
+    picture bytes (except the one screenshot), a whole theme file, a whole
+    model answer or a whole browser report. `readThemeStudioProgress` answers
+    the theme page's facts (`StudioStatusInput`) and its progress-card steps.
+    The facts come from the current version's newest check run, design review,
+    capture and run, never from the version row's old passed mark (re-check
+    contract item 4). The steps belong to the newest piece of work, which
+    starts at the operator's newest start event (studio-ui.tsx
+    `STUDIO_WORK_STARTERS`; Make current and saved pictures win a tie with the
+    capture they queue) or at the project's creation: the brief and the design
+    from the operator's run (stage times from `usage.calls`), the layout
+    check, the pictures (image checkpoints counted without reading
+    `image_bytes`; "Google is accepting pictures slowly" after a 429), each
+    repair as its own row ("Fixing what the review found (round 2 of 3)"), the
+    photo check, the final check and the design review. Checks older than the
+    newest repair wait again, or are left out once nothing works. A next-try
+    time appears only for a run's `retry_not_before` or a queued review's
+    60-second cooldown, and only while it is still to come (a time already
+    past means the work waits only for a worker); it is the step's
+    `nextTryAt`, never also part of its detail, so the card says it once.
+    Serious findings and warnings are counted by kind (the
+    check and its code, or the review's code), as the Publish dialog groups
+    them, through the server's own `gateBlocks`, `isSeriousFinding` and
+    `isPlatformFinding`. `currentPublishEvidence` (it validates the whole
+    theme file) is read only for a theme that is ready or Ready to publish,
+    with nothing working and no release; the list checks the same three
+    conditions in its own query. `listThemeStudioProjectsForConsole` answers
+    the list's rows (the most recently changed first, at most 100) and every
+    filter's count (over at most 1000 projects) in at most 4 statements,
+    whatever the number of projects. `readThemeStudioBuildTimeRange` gives
+    "Usually N to M minutes" from the last 10 finished builds on a real
+    provider (the first build run to the first `auto_qa_passed`, rounded
+    outward to 5 minutes), else 35 to 75 (the 4 Oct 2026 benchmark). Cost: a
+    poll while building is 2 statements in one transaction plus the actor's
+    `platform_admins` read; a finished check run's findings and a design's
+    pictures never change, so they are cached in memory per server process
+    (500 entries each).
+
+    ★ **The poll is a GET route, not a server action.** Next.js dispatches
+    server actions one at a time per browser, so a poll in flight would sit in
+    front of the operator's Publish, Send or Stop (§5 item 22, "THE POLLS ARE
+    A ROUTE HANDLER, NOT SERVER ACTIONS", the till lesson).
+    `useStudioProgress` (`themes/studio/use-studio-progress.ts`) asks
+    `GET /api/platform/theme-studio/projects/[projectId]/progress` through
+    `lib/pos/use-poll.ts` every 3 s (`STUDIO_PROGRESS_POLL_MS`; a visible,
+    online tab only, never stacked), stretching the interval while nothing but
+    the read time changed, and only on rows 2, 5 and 6, the states that change
+    by themselves. ★ A restart asks after 3 s: `use-poll.ts` keeps its count
+    of unchanged answers while polling is off, and an interval it already
+    stretched (up to 48 s) when the page changes under it, so polling turning
+    on again, or the page re-rendering with a new revision while it polls
+    (after Stop, Continue building or Stop and check again), turns back-off
+    off until the first answer lands, and that answer counts as news. It
+    stops for good on 401 (the page says to sign in again), 403 or 404, and
+    keeps the last answer on any other failure. The page calls
+    `router.refresh()` only when the revision or the list of designs changed,
+    or when a release row came or went at the same revision (`serverRow`: the
+    release controls are the server's, rendered for the row it saw, and a
+    publish that did not finish, or stopped answering for 15 minutes, moves
+    row 2 to row 3 with no new revision, where polling stops); the old page
+    re-rendered everything every 2.5 seconds (about 1,600 full renders per tab
+    per build). The four routes, in
+    `app/api/platform/theme-studio/projects/`: `route.ts` (GET `?filter=`, the
+    list; an unknown filter is a 400), `[projectId]/progress/route.ts` (the
+    poll), `[projectId]/check-screenshots/route.ts` (GET `?versionId=`, absent
+    for the current design: the screenshots' pages, widths and sizes) and
+    `[projectId]/check-screenshots/[assetId]/route.ts` (one screenshot's
+    bytes). The three JSON routes first refuse a foreign browser origin
+    (`rejectForeignMinkOrigin`); every route then answers 401 with no
+    session, 403 for anyone but a superadmin and 404 for a malformed or
+    unknown theme (the bytes route in plain text), and only then reads,
+    inside `withService`. None is cached (`no-store`; the two screenshot routes
+    `private, no-store`). The bytes route serves only a `qa_screenshot` asset
+    of that same project, as stored (WebP, or PNG for a page taller than
+    16,383 px), with the reference route's lock-down headers (`nosniff`,
+    `default-src 'none'; sandbox`, inline, same-origin, `noindex`). ⚠ Only the
+    progress route and the bytes route have a caller on screen today: the list
+    and the Checks tab read on the server, so the list route and the
+    screenshots' JSON route wait for a client part. ⚠ Each poll checks the
+    session twice (`getServerUser` for the 401, then `getThemeStudioActor`),
+    because `access.ts` was not this wave's to change, and the routes carry no
+    rate limit (`lib/rate-limit.ts` writes a row per call, which would double
+    each poll's cost).
+
+    **The theme page (TS-2B).** `[projectId]/page.tsx` gates first
+    (`requireOperator`, then `getThemeStudioActor`; anyone else gets
+    `SuperadminOnly` and nothing is read). It then reads
+    `readThemeStudioProgress` and `readThemeStudioBuildTimeRange` (one
+    `withService`, one after the other), then the project once through
+    `tab-reads.ts` `readStudioProject` (React `cache`, keyed by the id the
+    progress read returns, so the open tab and the release controls share the
+    one read of the whole project), reads the progress again when the project
+    is newer (a write between the two reads; the buttons shown never describe
+    an older state than the revision every action sends), and computes
+    `studioStatus`, whose row it also hands the workspace (`serverRow`). It renders exactly one
+    tab's server component, the open one (`checks-tab.tsx`,
+    `pictures-tab.tsx`, `changes-tab.tsx` or `log-tab.tsx`: async server
+    components taking `StudioTabProps`, because server actions are for changes
+    and there are no tab GET routes), and `release-controls.tsx` only on
+    `STUDIO_RELEASE_ROWS`. A `?version=` that is not an operator-visible
+    design of the theme shows the current design (else the newest with a theme
+    file), never an error page. `workspace.tsx` (`ProjectWorkspace`): the
+    header has the back link, the name, the status words in `StudioBadge`, the
+    **Design N** list (show a design, Make current with its outcome, change
+    it), the row's buttons or the release controls, and the **...** menu: Stop
+    (its dialog says what is kept), Remove from list (keeps its history),
+    never on a live theme, and Delete, each behind an in-app dialog that
+    returns focus to the menu. Remove and Delete wait, with the reason under
+    them, while Theme Studio works. The chat folds to a 52 px rail and resizes
+    from 300 to 640 px (pointer, or arrow keys on the separator); both are
+    kept in localStorage `studio:chat`. Folding moves focus to the rail's
+    Open the chat, unfolding to Fold the chat. The tabs follow the WAI-ARIA tabs
+    pattern with manual activation (arrow keys, Home, End, a roving tabindex),
+    because every tab but Preview is a server request; the tab bar and its
+    panels are neighbours in the DOM (the chat comes before them on a wide
+    screen and after the tab bar on a phone, keyed, so crossing the
+    breakpoint moves only the tab bar or the chat, never the preview's
+    frame), so Tab goes from a tab into its panel. ★ Switching tabs uses
+    `router.replace` with `{ scroll: false }`, which swaps only the tab's
+    server part, since Next keys client state without search params, so the
+    Preview tab (the workspace's own) stays mounted while another tab is open.
+    `studio-tabs.tsx`: `StudioPageProvider` and `useStudioPage` (the page API:
+    `putInChat` fills the composer and never sends, `openTab`,
+    `requestIntent`, and the optional `reportPublishWait`, through which the
+    release controls tell the phone bar why Publish waits), `StudioTabList`
+    (a strip wider than its room fades on the side with more tabs,
+    `data-more-start` and `data-more-end`), `useStudioIntent`, `StudioPopover`
+    (a bottom sheet on phones; a press on its dim backdrop counts as inside
+    and the backdrop's own click closes it, so a tap never falls through to
+    the page beneath) and `useIsPhone`. `tab-types.ts`: the tab keys,
+    `StudioTabProps` and the address (`studioTabFromParam`,
+    `studioIntentFromParam`, `studioPageHref`). ★ `do=<kind>` carries one
+    action to the control that owns it: it opens that control's dialog,
+    confirm or list, or moves focus, never starts work by itself, and is then
+    cleared from the address (`history.replaceState`). `describe_fix` and
+    `copy_details` switch to Checks, and `redraw`, `draw_missing_pictures` and
+    `retry_pictures` to Pictures, where the tab acts on them; the header's
+    buttons for them open the tab on the current design (`versionId: null`),
+    because the status is the current design's.
+    `progress-card.tsx`, at the end of the chat: each step by name with its
+    time, a repair round as its own row, "Next try at 10:31" only when a step
+    really waits for one, "Usually N to M minutes. You can leave this page."
+    (about 3 to 5 minutes for a re-check), "We'll let you know" only for the
+    operator who started the theme, and a Plan line (the current design's
+    assumptions and non-blocking gaps); it folds into "What Theme Studio did
+    last" once nothing works. `conversation.tsx`: Design N names, **Start
+    building** (the saved brief, with the screenshots New theme uploaded),
+    Send answer or Send message, **Screenshots** (upload, Earlier screenshots
+    to attach again, Delete for an upload no message used), one idempotency
+    key per message made on its first send (`newIdempotencyKey`, never
+    `crypto.randomUUID` at render: a phone reaching the dev server over http
+    has no secure context, so it lacks it) and a `ComposerApi`
+    for the page. `versions/[versionId]/preview-frame.tsx`: Desktop, Tablet
+    and Phone frames fitted to the tab's width and height (`previewScale`),
+    opening at Tablet below 900 px of box and at Phone below 600 px
+    (`previewStartViewport`); **Open full page** opens its window inside the
+    tap and fills in the address when the preview token arrives (a window
+    opened later is what Safari blocks); in a box under 600 px the screen
+    sizes stay in the buttons' names only, and the group wraps. ★ On phones
+    (767 px and narrower) the page scrolls as one column: the header and the
+    banners scroll away, the tab bar stays at the top and the sticky bar at
+    the bottom, and the chat or a tab's panel takes the screen's height
+    between them (`--studio-pane-h`), the chat keeping its own scroll; a
+    locked composer folds to its one-line reason (`data-locked`). Chat is a
+    tab of its own, lists open as bottom sheets of at most 85% of the screen
+    height, and the sticky bar shows the status while Theme Studio works
+    ("Publishing. You can leave this page." during a publish, which sends no
+    notice) or Publish when the theme is ready (held back, with the release
+    controls' reason under it, when Publish waits), hidden while the composer
+    has focus. A
+    start New theme could not make is read once from sessionStorage
+    `studio:start-refused:<id>` and shown in the header, beside Start
+    building, until dismissed. Banners say
+    when building, the model or the automatic checks are switched off, or the
+    offline test provider is on. ⚠ The draft layout banner (the layout in the
+    preview while pictures are drawn, plan optimisation 1) is built, but
+    `page.tsx` passes `draftLayout={null}` until the progress read names that
+    hidden version, so the Preview tab says the layout passed and the preview
+    opens when the pictures are done.
+
+    ★ **The Studio CSS file.** `themes/studio/studio.css` is loaded once, by
+    `themes/layout.tsx`, so every Themes and Studio screen has it and no other
+    file imports it. Every class starts with `studio-` and uses the `--dash-*`
+    tokens only (`dashboard.css` is never edited). `.studio-fullwidth`, which
+    the theme page's workspace sets on `.dashboard-frame` (the analytics
+    editor's pattern), and `:has(.studio-page)` for the server's first paint
+    hide `.dash-sidebar` at 768 px and up; on phones the sidebar stays a
+    drawer. Buttons, button links, the back link (`a.studio-crumb`), inputs,
+    selects and summaries are at least
+    44 px tall under `(max-width: 767px), (pointer: coarse)`, so a tablet or a
+    touch laptop of any width gets them too; the rule works through
+    `.studio-root`, which every Studio screen's outermost element and every
+    Studio dialog carry (a dialog renders in a portal, outside the page). An
+    attachment's 44 px remove button hangs over its corner unclipped, and a
+    label drawn as a button around a hidden file field shows the keyboard's
+    focus ring. A status badge (`studio-badge`
+    with `data-tone`) or notice (`studio-notice`) keeps its tone in a soft
+    tint and a border and its words in `--dash-text`, because the dashboard's
+    amber and green fail the AA line as text; `studio-error` (red words) goes
+    only on a white card or in a dialog; `studio-code` (a code or a build,
+    mono, the second ink) only in the Log tab and Technical details. Guard:
+    `themes/studio/studio-css.test.ts` (one importer, the prefix, tokens only,
+    the 44 px rule with the back link and the attachment's remove button, the
+    85% sheet, the phone's scrolling column, the wrapping segmented group, the
+    tab strip's fades, `studio-root` on every Studio dialog, badge contrast
+    measured from `dashboard.css`, and no raw palette class, `confirm`,
+    tooltip, long dash or credit number in the theme page's files).
+
+    **The tabs and Publish (TS-2C).** The tab files read through
+    `[projectId]/tab-reads.ts` (server-only; React `cache` shares the project,
+    the check runs and the release state between the theme page itself, the
+    open tab and the release controls in one render), which adds two narrow
+    reads of its own:
+    `readStudioDesignReview` (the newest final design review of a design, by
+    JSON path, `vision_report -> 'reviewSeverity'`, never the model's whole
+    answer) and `readStudioShownAncestor` (a recursive walk of at most 50
+    steps to the nearest operator-visible design a design was made from).
+    `tab-rules.ts` holds pure client copies of the server's rules, each with
+    the sentence written under a disabled button. ★ **Checks**
+    (`checks-tab.tsx`) opens with what the checks covered, one sentence from
+    the stored samples (`checkCoverageWords`, owner-approved 24 Oct 2026: the
+    pages, the widths, the header panels opened on the home page, "the cart
+    while empty", and a theme with no product or content page says so). Then
+    **Must fix before publishing**, **Warnings (you can still publish)** and
+    **Passed** (Show all), grouped by kind exactly as `progress.ts` counts
+    them (`checks-model.ts` `studioChecksModel`, so the header and the lists
+    agree): a warning is a finding of a check that does not stop Publish, a
+    minor finding inside a stopping check waits in Technical details, and
+    checks that stopped with nothing listed read "not known yet", never
+    "none". Then **Screenshots** and **Technical details** (the codes, the
+    version id, the build, digests, the design review's state and findings,
+    the AI's assumptions and non-blocking gaps, the automatic fixes, earlier
+    runs, **Copy details**, and the in-browser runner as a fallback, whose
+    pass never publishes without a design review of its own). **Check again**
+    shows on the current design when the automatic checks are on. ★ "Fix it"
+    by kind, never a one-click paid revision: a theme setting or security
+    problem gets **Describe a fix**, which puts `acceptance-repair.ts`
+    `describeFixDraft` in the chat through `putInChat` and never sends it
+    (serious findings only, never warnings; the checks in `THEME_FIX_CHECKS`,
+    `package.security` included, plus the design review's serious findings
+    except photos; Design-N words and no run id; at most 12 kinds); pictures
+    get **Redraw N pictures** (exactly the slots the serious picture findings
+    name) or **Draw missing pictures**; StoreMink's own code gets "Publish
+    waits until StoreMink's code is fixed" and **Copy details for an
+    engineer** (`copyDetailsText`), with no fix button; a design-review matter
+    of taste gets **Describe a change**, which opens the chat empty. A design
+    review from before `severity-v1` whose stop asks for a theme change shows
+    as one problem, described from its own words. `do=describe_fix` puts the
+    draft in the chat once; `do=copy_details` opens Technical details at the
+    first Copy details button (`checks-controls.tsx`). ★ **Screenshots**
+    (`check-screenshots.tsx`, owner-approved 24 Oct 2026) shows the newest
+    final check's screenshots, read on the server
+    (`listThemeStudioCheckScreenshots`, which pairs `screenshot_asset_ids[i]`
+    with the stored sample i) and loaded through the bytes route: closed until
+    opened, one width at a time (Phone 360, Phone 390, Tablet 768, Laptop
+    1024, Desktop 1440), thumbnails lazy-loaded with their stored size so
+    nothing jumps, and an in-app viewer that moves with the arrow keys and a
+    sideways swipe (a vertical drag still scrolls), keeps Previous and Next
+    focusable at either end (`aria-disabled`, so focus never drops out of
+    the dialog), closes on Escape, returns
+    focus to the thumbnail and names the page and width under the picture. ★
+    **Pictures** (`pictures-tab.tsx`): **Redraw** (the serious picture slots
+    first, else the photos flagged for something small), **Draw missing
+    pictures** and **Retry** for a stopped picture run, each one click and a
+    small confirm that names how many and their list-price estimate in dollars
+    (`generate-images-button.tsx`; no cost on the main view). `do=redraw`,
+    `do=draw_missing_pictures` and `do=retry_pictures` open them, or move
+    focus to the picture list when there is nothing to act on.
+    `capture-panel.tsx` `CatalogPictures` shows the catalogue card and
+    screenshots with no capture button (every final check takes them); the
+    picture list (`slot-images-editor.tsx`) keeps uploads, "Show only slots
+    with a placeholder" and "What the image model is asked for", and a reload
+    with staged uploads warns. ★ **Changes** (`changes-tab.tsx` `ChangesView`)
+    compares the design shown with the nearest design in the Design list it
+    came from and counts the automatic-fix drafts between. ★ **Log**
+    (`log-tab.tsx`): the theme ID, the model, the creator and today's
+    StoreMink build; the runs with codes, attempts, tokens and costs (Cancel
+    behind a confirm, Retry, Copy details); **Publish history** with each
+    attempt's reasons and the catalog audit; Activity. ★ **Release controls**
+    (`release-controls.tsx` reads, `release/release-workspace.tsx`
+    `ReleasePanel` acts) render on `STUDIO_RELEASE_ROWS` with the status
+    function's own actions (the menu's kinds stay in the header). The
+    **Publish dialog** names the design and when it was made, the real reach
+    (`PUBLISH_REACH`: the theme catalog on themes.storemink.com and every
+    store's Theme library, with a live demo store), the warnings that go live
+    (`publishWarningLine`, in studio-words.ts words, never a stored code) and,
+    when another design is on screen, "You are looking at Design 1; Design 2
+    is the one that will go live. Make Design 1 current first." with a button
+    that opens the Design list once the dialog has fully closed
+    (`onOpenChangeComplete`), the dialog then giving focus back to nothing,
+    or its late focus return would close the list again. On **Try again** it
+    says instead that Try again publishes the design the attempt started
+    with, and offers no Make current (no design can be made current until
+    the attempt finishes). When the evidence is not today's it gives the
+    re-check line and **Re-check now**; the `rechecking` answer is news, not
+    an error. While a publish runs the header shows its static steps
+    (`PUBLISH_STEPS`); one that did not finish shows its last reasons beside
+    **Try again**; Publish waits, with the reason under it, when the theme
+    file refuses or no re-check can start, and then no intent (the list's
+    Publish, the phone bar's) opens the dialog either: focus moves to the
+    button, whose reason is read with it. The dialog gives focus back to the
+    control that opened it (the header's Publish or the phone bar's). The **live panel** shows whenever a
+    published release exists: **Open live demo**, **Stop offering this theme**
+    (it replaced "Hide from new stores"; its dialog says the theme also leaves
+    the Theme library of every store that has not installed it) or **Offer
+    again**, "Live, v1.0.0, since 1 Oct. Stores that installed it keep this
+    exact version. Live themes can't be changed yet." and **Start a new theme
+    from this brief** (a button, the live row's next step). There is no release version picker or Restore on screen
+    (the server's `select_release` stays for live updates, owner decision 6).
+    The `do=` intents `publish`, `retry_publish`, `offer_again` and
+    `stop_offering` open their dialogs; `open_live_demo` moves focus to the
+    demo link. Guard: `[projectId]/tabs-guard.test.ts`.
+
+    **The list and New theme (TS-2D).** The Themes page's header and tabs
+    (`themes/themes-header.tsx`, `themes/themes-tabs.tsx`) are shared by both
+    tabs; each tab is an address, so the tab bar is links in an ARIA tab list
+    (arrow keys, Home, End, Space). Catalog (`themes/page.tsx`) is today's
+    demo-store panel (`themes-panel.tsx`: Open, Seed or Reseed; no Hide or
+    Show), whose seed result is a note on its row, never a browser alert. The
+    Theme Studio tab (`studio/page.tsx`, `studio/studio-list.tsx`) shows the
+    filters All, Needs you, Building, Ready, Live and Archived with their
+    counts, and each row's catalogue card (or a plain block), name, status
+    words, time ("12 min ago", or "34 min so far" while it works), the working
+    step or "2 questions for you", and its main button. The model and the
+    creator are not on the list (Log tab). The main button never acts by
+    itself: Open live demo opens `demo-<themeId>`; Start a new theme from this
+    brief opens `/dashboard/themes/studio/new?from=<projectId>`; every other
+    action opens the theme page with `?do=<kind>`. **New theme**
+    (`studio/new/page.tsx`, `new-project-form.tsx`, pure rules in
+    `new-theme-helpers.ts`) is one form: Name (the ID derived from it, under
+    **(change)**), Brief, Screenshots and **Industries (1 to 5)**, one
+    preselected from words in the brief and still editable; catalogue size,
+    must-have features, the starting theme and the model sit under **More
+    options**. Screenshots are checked for type and size as they are dropped,
+    pasted or chosen, before anything exists (`checkScreenshots`: JPEG, PNG,
+    WebP or AVIF, up to 10, 10 MB each and 40 MB in all, the server's own
+    limits). "Start from a theme" offers only the bundled themes
+    `validateProjectInput` accepts (`THEME_META` filtered by
+    `isBundledThemeId`; a published Studio theme cannot be a base). ★ **Create
+    and start** chains `createThemeStudioProjectAction`, one raw-body upload
+    per screenshot to the references route (XHR, with each file's progress),
+    then `queueThemeStudioGenerationAction` with `expectedRevision` 0 (a new
+    project's revision, which uploads never move) and those screenshot ids.
+    Once the theme exists it is never created again: any later refusal (a
+    screenshot the server rejects, building or the model switched off, the
+    2-build cap, the daily spend cap, a stale page) leaves the server's
+    sentence in sessionStorage under `studio:start-refused:<id>`, and the
+    theme page shows it as Not started with the brief and screenshots kept.
+    With building switched off the button reads "Create (building is switched
+    off)" and only creates. `?from=` is read on the server after the gate (the
+    source's first brief message, else its draft brief; the name becomes
+    "Aurora 2"; values no longer offered are dropped), never brief text from
+    the address. The heading's time sentence is `buildTimeWords` of the
+    build-time range. ★ The console's Themes entry and its search alias "Theme
+    Studio" are shown to superadmins only (a member was always redirected from
+    Themes and refused by `access.ts`). The Overview's Theme Studio tile
+    (`theme-studio-tile.tsx`, "Theme Studio: 1 needs you, 2 ready to
+    publish.", with links to those filters) re-checks `getThemeStudioActor`
+    before it reads, streams in its own Suspense boundary, and says so when
+    its read fails instead of showing zeroes.
+
+    Tests: `studio-status.test.ts` (a test per row and both time boundaries),
+    `studio-words.test.ts`, `use-studio-progress.test.ts`,
+    `studio-ui.test.ts`, `studio-css.test.ts` and `studio-list.test.tsx` under
+    `themes/studio/`; `lib/theme-studio/progress.test.ts`,
+    `progress-postgres.test.ts` (`THEME_STUDIO_RECOVERY_DB_TEST=1`, rollback
+    only, behind the queue suites' advisory lock) and
+    `acceptance-repair.test.ts`; the four route tests; a `page.test.tsx`
+    beside every page and redirect; under `[projectId]/` the workspace,
+    conversation, delete-theme-button, studio-tabs, tab-types, progress-card,
+    checks-model, checks-tab, check-screenshots, pictures-tab, changes-tab,
+    log-tab, release-controls, tab-reads, tab-rules and tabs-guard tests,
+    `release/release-workspace.test.tsx`, the preview frame and the moved
+    picture and evidence components; New theme's form and helper tests; and
+    `themes-tabs.test.tsx`, `themes-panel.test.tsx`,
+    `theme-studio-tile.test.tsx` and the console's `layout.test.tsx`.
+
     **Rendered contrast reaches the hidden states (2026-10-08, plan Phase 1
     item 3).** axe already judged every text element on a loaded page, but
     two things it never saw: (1) the menus, drawers and dialogs, which are
@@ -9254,7 +12342,8 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     widths are reported in the metrics, never failed. Once required, an
     unreported LCP (the operator's framed browser run never gets one) is a
     finding — "we could not measure" is not a pass — so performance can pass
-    only from the automatic capture, which the Checks page says.
+    only from the automatic capture (the Checks tab words such a page "Loading
+    speed was not measured on this page.").
     `deterministicRepairs` routes a performance failure to the RENDERER (no
     paid settings call) and visual prompt v6 tells the reviewer the same.
     Flip criterion: one live batch whose frozen worst LCP/CLS at the two
@@ -9785,6 +12874,61 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     one of the seven exemplars passes every package, route and browser gate
     the script runs (2026-10-10; `browser.clipped_text` and
     `browser.performance` skipped, as only the deployed probe measures them).
+
+    **Shared storefront contrast is checked on every palette, in CI (TS-1G,
+    2026-10-24).** `scripts/theme-studio-contrast-check.mjs` renders
+    StoreMink's shared storefront surfaces with production CSS in offline
+    Chromium, under reduced motion as the capture job measures, on the 12
+    palettes this build ships (the un-themed default, Basket, Studio, Ritual,
+    Vitrine and the seven exemplars) and two Studio palettes whose ink and
+    on-accent are not opposites. Surfaces: product cards in all seven skins
+    with every flag and the ink badge; the quick-add dialog; the classic and
+    grocery product pages, including the offer badge, the sale option's Best
+    value badge, the PIN-code delivery card (before a check, with an answer,
+    with a refusal) and the grocery purchase card; the hero badge and promo
+    tiles; the account menu signed in and out, and the sign-in dialog; and
+    phone drawers under the palette's own header and the classic, market and
+    transparent ones, signed in and out, with the delivery panel open. A
+    labelled surface fails below the AA line axe applies (4.5:1, or 3:1 for
+    large text), and also when axe cannot measure it (a gradient or a
+    pseudo-element), because "we could not check it" is never a pass. Each
+    defect keeps a broken copy of the rule as it shipped, which must still
+    fail at its recorded ratio (34 negative controls; for example the card
+    discount pill 2.58:1, beauty-a's struck price 2.71:1, the market drawer's
+    brand name 1.01:1). The script prints the lowest ratio per surface and
+    each broken copy's ratio: 646 cases in about 45 s. The CI renderer job
+    runs it right after `scripts/theme-studio-renderer-check.mjs`, even when
+    that step fails. ★ Its first full run failed 137 cases on eleven shared
+    surfaces, with every shipped palette failing at least one; all are fixed
+    in storefront CSS: the carousel and listing ink badge wrote on-accent
+    (1.12:1 on a light-accent palette), now on-ink; the card save flag wrote
+    white on the sale colour (2.77:1 on bold-and-loud), now the surface; the
+    quick-add dialog's struck price and the signed-in account menu's phone
+    line were ink-faint (2.47:1 on Basket), now ink-soft; the delivery panel's
+    "Use my current location" was the accent as 13px text (3.40:1 on Basket),
+    now ink; the delivery panel's error line was a fixed #b42318 (2.64:1 on a
+    dark drawer), now `--sm-error`; the product page offer badge wrote
+    on-accent on the warm accent (2.91:1 on the default palette), now ink and
+    on-ink, the card offer flag's pair; the grocery purchase card's tax note
+    and trust row were ink-soft on butter (3.76:1 on Studio's), which a
+    merchant can pick on any theme while the contract pairs ink-soft with
+    butter only for a grocery storefront, now ink; the delivery card's refusal
+    was a fixed #b42318 (2.53:1 on a dark palette), now `--sm-error`; and the
+    Best value badge wrote on-accent over a gradient of the highlight (1.16:1
+    at its light end on Ritual) that axe could not measure, now ink and
+    on-ink, keeping its glow and shine (under reduced motion its shine
+    pseudo-element is not generated, because a parked one also hid the text
+    from axe). `.shop-card-badge` has no renderer today, so its fix is latent.
+    ⚠ Not fixed, as outside the surfaces the script renders (none can stop a
+    Studio theme today: preview stores have no blog posts, reviews or stock,
+    and acceptance skips the account pages): text rules still on ink-faint,
+    which reads 2.47 to 3.97:1 on 11 of 14 palettes (blog meta and comments,
+    review dates, the option picker's sold-out value, the password page's
+    owner line, the grocery cart's breadcrumb and tax note, the error
+    reference, and the orders, profile, notifications, enquiries, checkout and
+    blog-write pages). Storefront presentation only: a few labels change
+    colour; no merchant workflow change, no Help Centre update.
+
     **The first live v26 run found four renderer defects, all shared chrome
     (2026-10-09, Bubble v3 on production).** Automatic QA stopped the theme
     before artwork as `renderer_fix_required`, so every image stayed a
@@ -9820,8 +12964,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     script (`scripts/theme-studio-contrast-check.mjs`) gained the three
     chrome-state fixtures with negative controls (122 cases). None of the
     four is a theme setting, which is why the repair loop could not clear
-    them. After deploying, **Images → Retry automatic QA** on Bubble
-    re-captures the same version; artwork then runs. Storefront presentation
+    them. After deploying, **Images → Retry automatic QA** on Bubble (a
+    button TS-2 removed; **Check again** is the capture an operator starts
+    now) re-captures the same version; artwork then runs. Storefront presentation
     and accessibility only: no merchant workflow change, no Help Centre
     update.
     offline provider's draft now opens with a fullbleed hero at full width.
@@ -9832,7 +12977,22 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     no published guide names the hero layouts, so no Help Centre update.
     `automatic-qa-policy.ts` queues targeted exact-package revisions for theme
     failures, up to THREE repairs (iterations 0→1→2→3, the ceiling migration
-    0145 allows; `MAX_AUTOMATIC_QA_REPAIRS`).
+    0145 allows; `MAX_AUTOMATIC_QA_REPAIRS`). Since TS-1A (2026-10-24)
+    `automaticQaDecision(gates, review, iteration, phase)` takes the design
+    review's outcome (`pass`, `taste` or `serious`, or null for no review,
+    never a pass in the final phase; the layout phase ignores it): serious
+    gate findings or a taste or serious review revise while repairs remain;
+    taste left at the ceiling becomes warnings (pass); anything serious at
+    the ceiling is attention; it never revises at `MAX_AUTOMATIC_QA_REPAIRS`,
+    so a re-check cannot buy a restyle; a check that could not finish
+    (`budget`, `timeout`, `skipped`, `unmeasured`) and runtime faults (demo,
+    coverage, a serious integrity finding, a page that would not render
+    themed or was never fetched) go to attention; a failed `package.security`
+    gate is `blocked`; a missing noindex is a warning, no longer attention.
+    `automaticQaAttention(gates, review, iteration, phase)` says why an
+    `attention` answer stopped the theme (`unfinished`, `runtime` or
+    `serious`, null for any other answer), so `visual-qa.ts` records
+    `checks_incomplete` or `quality_bar_not_met`.
     **Early layout QA and progress routing (2026-10-02):** migration 0148
     adds immutable capture `phase=layout|final`, defaulting older captures to
     final. Layout claims still measure all five widths and all package-derived
@@ -9852,9 +13012,12 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     ceiling remains shared across phases. Build changes recapture without
     comparing old-renderer evidence, and unrelated branches cannot end a run.
     Visual prompt v3 supplies closed repair routes: native settings paths,
-    exact generated artwork slot IDs, or platform renderer work. Small click
-    areas and non-contrast axe defects stop as `renderer_fix_required` before
-    paying for settings calls or artwork. Unsupported targets and owner uploads
+    exact generated artwork slot IDs, or platform renderer work. Non-contrast
+    axe defects at a serious, critical or unknown impact stop as
+    `renderer_fix_required` before paying for settings calls or artwork;
+    small click areas, tight crops and moderate or minor axe rules are
+    warnings since severity-v1 and never enter the repair loop, which counts
+    only the serious findings of the gates that stop a run. Unsupported targets and owner uploads
     cannot be redrawn. Valid image repairs carry bounded slot-specific reviewer
     corrections through the existing durable image/review pipeline, preserving
     stored anchor/SET and every unrelated image. Mixed findings stabilize settings
@@ -9867,8 +13030,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     full-width settings, with deliberately broken measurement controls. It uses
     production CSS and axe contrast rules, not a duplicate storefront or full-theme
     benchmark. The independent CI renderer job runs it with Chromium. The Images
-    retry action permits layout QA while artwork is incomplete; manual catalog
-    capture still requires finished artwork. Layout captures display a check
+    retry action permits layout QA while artwork is incomplete; a catalog
+    capture (automatic with the checks on since TS-1E) still requires
+    finished artwork. Layout captures display a check
     result rather than claiming a catalog snapshot was saved. This
     is an operator/internal pipeline change; no merchant workflow change or Help
     Centre update.
@@ -9895,7 +13059,8 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     including supported settings and capability gaps; advisory performance
     timing alone does not request a design revision. Visual quality thresholds
     remain unchanged. The operator workspace shows the latest visual findings
-    and resolves parent version numbers even for private intermediate snapshots.
+    (since TS-2 in the Checks tab) and resolves parent version numbers even
+    for private intermediate snapshots.
     Shared editorial PDP CSS bounds title scale, enlarges the gallery and uses
     a portrait frame; `lib/themes/footer.ts` carries homepage newsletter copy
     into default commerce footers while preserving merchant-authored copy and
@@ -9922,12 +13087,60 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     contrast, content-floor, preflight and final quality thresholds remain required.
     `theme_studio_provider_capacity` and `theme_studio_provider_leases` are
     service-only, RLS-enabled tables introduced by migration 0149. A short row lock
-    admits at most three active requests per hashed provider project/location/model
-    across workers. Admission/expiry use the database wall clock after lock waits,
+    admits at most three active requests per capacity key across workers: the
+    hashed provider project, location and model, plus an optional scope (so
+    `gemini-3.8-flash`, which the revamp planner's `revamp-planner` scope splits,
+    can have three planner calls and three others in flight). Admission/expiry use the database wall clock after lock waits,
     avoiding a false initial pause from PostgreSQL's transaction-start `now()`.
-    A 429 pauses every instance, releases active capacity while
-    sleeping, and resumes at one request; three successes from the current epoch
-    restore one permit. Duplicate/stale responses cannot restore capacity.
+    A 429 pauses the other requests on that key for at most 15 s
+    (`SHARED_RATE_LIMIT_PAUSE_MAX_MS`; a longer pause already on the row is cut
+    back to it), releases active capacity while sleeping, drops the key to one
+    permit, and each success from the current epoch gives one permit back.
+    Duplicate/stale responses cannot restore capacity. ★★ Image model keys
+    (`isImageProviderModel`) are also START-PACED (migration
+    `20261023_0236_theme_studio_provider_pacing`, `IMAGE_START_PACING`,
+    2026-10-23): a request starts no earlier than `next_start_at`, the latest
+    admission plus `gap_ms`; the gap starts at 40 s, shrinks 10% per
+    current-epoch success to 10 s and grows 1.5x per 429 to 45 s, with overlap
+    allowed up to the 3 permits. ★★ THE BOUNDS SET THE PACE, NOT THE FACTORS
+    (corrected the same day from the first build's 25 to 90 s; robustness
+    audit B28, owner: "Change to 10 to 45 s"): x0.9 and x1.5 cancel at about
+    21% of starts refused, so a line refused more often sits at the ceiling
+    and one refused less at the floor, and the 90 s ceiling would have halved
+    the line whenever refusals were not about our spacing. 45 s is close to
+    the busy-hour accepted rate fitted to the 23 Oct trace (one start per
+    about 39 s, an estimate); 10 s lets a quiet hour run near the three
+    permits. Spacing by start, not by the end of the last draw, keeps about
+    1.5 starts a minute at the 40 s gap whatever a draw takes; measured on
+    staging (21 requests, one shop, one night), `gemini-3-pro-image` refused 5
+    of 7 requests sent straight after a photo and accepted 11 of 12 sent 12 s
+    or more later. Text keys never read the new columns. ★ Each move of an
+    image key's gap of a second or more (`PACE_LOG_MIN_CHANGE_MS`) logs
+    `theme_studio.provider_pace`: model, location and scope (never the
+    project), `outcome` (`success` or `rate_limited`), `gapBeforeMs`,
+    `gapAfterMs` and `refusals`, the key's epoch, so two lines' difference
+    counts the 429s between them, those at the ceiling (which move nothing
+    and log nothing) included. The UPDATE that moves the gap returns these (a
+    `with before as (...)` CTE plus RETURNING), so the log costs no read:
+    `CapacityStore.release`/`pause` answer a `PaceChange` and
+    `coordinatedProviderCapacity` takes `onPaceChange`, whose failure never
+    fails a call, a pause or a release. ⚠ Successes at the floor log nothing
+    either, so the lines give the gap but not the exact refusal share; Cloud
+    Monitoring's `model_invocation_count` by response code does.
+    `sharedProviderCapacity` takes an optional `scope`,
+    a row of its own on the same model (`providerCapacityKey`; no scope hashes
+    the original three parts, so existing rows are kept); the storefront
+    revamp's planner uses `revamp-planner`. ⚠ The pacer has no priority:
+    whichever waiter claims first after `next_start_at` starts, so Theme
+    Studio builds and revamps share one paced line per image model.
+    ★★ A caller may pass `ProviderRunOptions.admission`, which ends only the
+    WAIT for a permit or a paced start: a waiter it stops never claims again,
+    while a call already admitted keeps its own signal and finishes. The
+    revamp's deadline drain uses it for its draws and checks, because on a paced
+    key an admission stamps the next start, so a draw admitted only to send
+    nothing pushed every other caller on the model a whole gap back. ⚠ A claim
+    already on its way back when the signal fires can still stamp one start;
+    its late permit is given back and nothing is sent.
     Permits expire after two minutes and renew every thirty seconds. A transient
     renewal exception retries after five seconds while the existing lease remains
     valid. A confirmed loss or an independent expiry timer cancels transport at
@@ -10014,8 +13227,24 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `image_review_deferrals` with two separate delayed retries (60/120 seconds);
     these waits do not consume crash attempts. A pending product leader's
     followers wait for its reviewed SET so resumption keeps request bindings
-    stable. The worker writes one immutable version after review settles; after
-    exhaustion it reports `image_review_unavailable`, retaining the base.
+    stable. The worker writes one immutable version after review settles.
+    TS-3B: the third pass (deferrals spent) runs with
+    `deferUnavailableReviews` off, so a check still unavailable keeps its
+    photo `unreviewed` instead of failing the drawn, paid run as
+    `image_review_unavailable` (that code now appears only for legacy pending
+    evidence). An unchecked photo stays serious (qa-image-issues.ts) until
+    `checkUncheckedPhotos` checks it before the final design review (see "The
+    check of a photo still unchecked", in the TS-3 paragraphs). A style photo
+    (anchor) that was refused, rejected or not returned no longer ends the
+    theme while fill rounds remain: the run fails with its anchor code
+    (`images_anchor_refused`, `images_anchor_rejected` and the like) and a
+    fill round, whose key names the first image run and the round, queues
+    every slot again and draws a fresh anchor; only the last round fails the
+    theme. A photo run cut by its request's deadline goes back to the queue as
+    it is (`retry_not_before` = now, no crash attempt, a `run_queued` event
+    with `reason: deadline`) and the next request replays its saved draws and
+    checks. After `PHOTO_RUN_CONTINUATIONS` (3) a cut settles what it has and
+    the fill rounds finish it.
     Run summaries distinguish saved images awaiting review from failed draws.
     Operator Retry recovers completed draws and successful evidence from up to
     fifty retry ancestors of the same project and immutable base; unavailable
@@ -10042,7 +13271,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     aborts during image review keep paid, prepared candidates explicitly
     `unreviewed` for partial version settlement, without consuming reviewer-outage
     deferrals. Explicit cancellation still saves no version; final automatic QA
-    and human publication gates remain required. Known zero-usage 429s and
+    and the operator's Publish remain required. Known zero-usage 429s and
     admission failures before transport are not replayed as durable failures.
     Legacy free-error rows remain immutable; a deterministic replacement key
     stores later paid output once and is recoverable through explicit retry ancestry.
@@ -10087,17 +13316,31 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     or provider validation. No merchant action changes, no Help Centre update.
     Security failures block; runtime/coverage/asset-integrity
     failures and the final unsuccessful repair reveal `operator/failed` for
-    recovery, with **Needs attention** on the workspace's current failed result.
-    Shared Studio badges label the unverified `ready` database state **Needs
-    checks**, rather than implying a successful acceptance result, and
-    **Needs attention** when automatic QA failed the current version — one
-    rule (`StudioStatusBadge` + `currentQaFailed`) on every Studio page and
-    the project list, which reads the current version's QA status.
+    recovery, with the reason on the theme page. Status words never show the
+    code's words candidate, approved, ready or blocked. Since TS-2 every
+    screen takes them from `studioStatus` over the progress read (the 19 rows
+    of "Theme Studio wave TS-2"): a theme's state comes from its current
+    version's newest check run and design review, never the version's mark,
+    because a re-check cannot rewrite the mark. `ready` reads **Not checked
+    yet**, **Couldn't finish the checks**, **Needs a fix** or another row by
+    those facts; `candidate` is **Ready to publish**; `approved` is **Publish
+    didn't finish**, unless an attempt whose last write is under
+    `PUBLISH_ATTEMPT_MINUTES` (15) old runs, which reads **Publishing**; a
+    `generating` theme whose design is being checked (a re-check, Make
+    current or saved pictures) reads **Checking on today's StoreMink build**
+    or **Checking your change**. TS-1F's badges (`studio-ui.tsx`
+    `studioStatusLabel` and `StudioStatusBadge`, with **Needs checks** and
+    **Needs attention**) are kept for their test, but no screen renders them;
+    with `studioStatusTone`, `currentQaFailed`, `currentChecksFailed` and
+    repository.ts `listThemeStudioProjects` (the TS-1 copies of the "newest
+    checks decide" rule) they are listed for the TS-4C clean-up, and no
+    screen may be built on them.
     A deployment between capture and visual settlement queues a fresh capture
     of the same version rather than redrawing the theme; that recapture
     re-measures the version in place (no catalog shots, no new version) and
     is counted as `recaptureQueued`, never as a revision; after
-    `MAX_BUILD_RECAPTURES` (2) for one version, QA stops as
+    `MAX_BUILD_RECAPTURES` (2) for one check (since TS-1B counted from the
+    version's newest capture that was not itself a re-capture), QA stops as
     `acceptance_build_unstable` instead of cycling through deploys. A capture
     job too old to report its build fails at once as `capture_job_outdated`
     (no retries), a missing QA payload as `qa_report_invalid`. Passing gates over a stored acceptance
@@ -10117,9 +13360,10 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     The independent `/api/internal/theme-studio/qa`
     worker drains two leased rows so long model/image runs cannot occupy its
     scheduler; the original run worker keeps its QA lane as a fallback.
-    Browser capture uses two isolated viewport contexts at a time and keeps
+    Browser capture uses isolated viewport contexts (three at a time since
+    TS-3A, two before) and keeps
     evidence ordered, removes redundant network-idle waits, and bounds launch
-    plus rendering (at most `MAX_QA_CONTEXTS`, two, QA contexts at once)
+    plus rendering (at most `MAX_QA_CONTEXTS`, three, QA contexts at once)
     while reserving the full 270-second finish timeout — the real bound on
     server acceptance, since Cloud Run does not enforce the route's
     `maxDuration`. A claim starts only with at least three
@@ -10129,23 +13373,30 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     seconds left. An exhausted budget (`budget`) or a page that timed out
     (`timeout`) is not a `fetch`: neither is recaptured, and automatic QA
     routes both to needs-attention; only a reset/dropped connection recaptures.
-    Operator reads filter out internal versions; visible versions show an auto
-    QA badge and iteration count. ★ Migration `20260927_0144` owns the version,
+    Operator reads filter out internal versions; visible versions show an
+    "automatic checks passed" or "stopped" chip, read from the newest outcome
+    in Activity (TS-1F; the repair count is no longer shown). ★ Migration
+    `20260927_0144` owns the version,
     run and capture QA columns, the service-only visual queue, QA asset/event
     vocabularies and a narrow version guard: package, intent, lineage and
     digests remain immutable; only `internal/pending → operator/passed|failed`
     is mutable. As of 2026-09-29, dev and production run the one-minute model
     worker and five-minute Chromium job, use a 1,200-second web-service timeout,
-    and enable `vertex-gemini`, capture and automatic QA through Cloud Build.
+    and enable `vertex-gemini`, capture and automatic QA through Cloud Build
+    (since 2026-10-10 production only, with the capture job started on demand
+    and its schedule paused; dev builds no themes).
     `docs/theme-studio-capture-job.md` is the shared job runbook. A terminal
-    capture error is carried into the workspace as "auto QA capture failed"
+    capture error reaches the theme page as a capture stop with its own
+    sentence (since TS-2 **Couldn't finish the checks**, with Check again),
     so it is not confused with a visual verdict. With automatic QA enabled,
-    **Images → Retry automatic QA** on a failed current version queues fresh
+    **Images → Retry automatic QA** (no button since TS-2; **Check again**
+    replaces it) on a failed current version queued fresh
     browser evidence and visual review with the existing bounded repair loop;
     it does not silently create an unchecked manual capture version. The
     transaction checks current version, revision and digest, and deduplicates
-    repeated requests. Manual captures retain their existing behavior when QA
-    is disabled or the version has not failed QA.
+    repeated requests. A capture is manual only when automatic QA is disabled
+    (TS-1E: with it on, a capture of a version that has not failed QA is an
+    automatic final check at the repair ceiling; see Track 3.6).
     Category image slots are required by the draft schema, prompt v17 and
     compiler: missing or unknown asset briefs enter bounded draft repair
     before a version is saved. Legacy versions with empty category imagery
@@ -10214,8 +13465,11 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     refused, truncated or failed optional patch keeps the valid draft and flags
     similarity. Revisions preserve identity; reference-led scores are advisory.
     Image edits and captures copy comparison evidence; visual QA includes it in
-    `vision_report.distinctness`. The workspace shows score, nearest theme,
-    shared choices and correction status separately from acceptance/visual QA.
+    `vision_report.distinctness`. The workspace showed score, nearest theme,
+    shared choices and correction status separately from acceptance/visual QA;
+    since TS-2 the Checks tab shows only a warning when a design is still
+    similar (its distinctness against the threshold), and
+    `varietyCorrectionNote` (workspace.tsx) has no screen.
     Existing versions are not retroactively scored or redesigned. Evaluation:
     `scripts/theme-studio-variety-eval.ts` (eight builds/four industries, offline
     plumbing or bounded paid live mode; no DB/artwork writes). The completed
@@ -10329,17 +13583,43 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
 
     **Worker isolation and readable QA (local, 2026-10-04):** `worker-lease.ts`
     and `worker-lease-store.ts` renew generation/visual-QA ownership every thirty
-    seconds with 180-second clock-fenced leases. Renewal failure or an independent
-    expiry watchdog aborts paid transport; late renewal cannot revive it.
+    seconds with 180-second clock-fenced leases. A renewal that answers
+    `false` (the lease is gone) or the independent expiry watchdog (5 s
+    before the lease the last successful renewal took could lapse) aborts
+    paid transport; a renewal that THROWS (for example the 5-second pool wait
+    running out) is retried at the next 30-second tick and logged as
+    `theme_studio.lease_renewal_retry` (TS-1E P2, 2026-10-24); late renewal
+    cannot revive it.
     All settlements require an unexpired owner. Text deadlines retry with existing
     paid checkpoints within the claim limit; the last claim fails rather than
     leaving an unclaimable queued row. `worker-lanes.ts` drains a free generation
     lane up to eight claims under one absolute 19-minute request budget, reserving
-    four minutes before admission; full generation/manual creative revisions
-    require ten minutes, while images/focused automatic repairs can use shorter
-    windows. Paid work remains awaited on peer failure.
-    `worker-runtime.ts` bounds private Sharp decoder/cache use. Private-only DB
-    pools have acquisition/statement/idle-transaction deadlines.
+    four minutes before admission. An idle lane beside a busy peer asks again
+    every 5 to 10 s (jittered, `IDLE_LANE_WAIT_MS`; it was 1 s, about two
+    transactions a second for up to 19 minutes). Full generation and manual
+    creative revisions require ten minutes. A FRESH photo run requires nine
+    (`FRESH_PHOTO_RUN_MIN_MS`); one already started (`started_at` set)
+    continues with less. Focused automatic repairs can use shorter windows and
+    are claimed FIRST (`ORDER BY (kind = 'revise' AND automatic) DESC, created_at`;
+    a repair takes 3 to 23 s of model time but waited a median 117 s on 4
+    Oct). Theme Studio's text calls queue on their own capacity row
+    (`THEME_STUDIO_TEXT_CAPACITY_SCOPE` = `theme-studio-text`), so a design
+    call never holds a permit a photo check needs. An automatic version with
+    nothing left to draw (`captureBlockers(pkg, "final")` empty: an
+    operator's edit or a late repair) goes straight to the final capture
+    (`firstCapturePhase`); a first build or any version with a placeholder
+    still measures its layout first. Paid work remains awaited on peer
+    failure. The `theme studio: run settled` log line carries `outcome` and,
+    when there is one, `errorCode` (a failed run's code, or why a requeued
+    one waits), and `continues: true` on a failed photo run whose slots a
+    fill round it queued draws again (a style photo refused or rejected, or
+    nothing drawn): the theme is still generating, so production alert 16
+    leaves that line out (`AND NOT jsonPayload.continues=true`,
+    scripts/prod-monitoring.py). Tests: worker-recovery.test.ts, worker.test.ts,
+    worker-fixes-postgres.test.ts (`THEME_STUDIO_RECOVERY_DB_TEST=1`).
+    `worker-runtime.ts` bounds private Sharp decoder/cache use. Every DB pool,
+    the web's included since 2026-10-23, has acquisition/statement/
+    idle-transaction deadlines (`lib/db/client.ts`).
     `scripts/theme-studio-workers.py` deploys independent private generation and
     QA services (2 GiB, 2 CPU, concurrency 1, max 1 instance, pool 1), from the
     serving web digest and acceptance build ID. ★ PRODUCTION ONLY, ONE INSTANCE
@@ -10390,14 +13670,27 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     budget, which could starve it behind a populated run queue.
     `image-request-pool.ts` shares three image permits across both lanes for
     each provider project/location/model; 429s pause admission while releasing
-    active permits and then probe with reduced concurrency. Cancelled
-    waiters leave the queue. The local bound is additionally coordinated across
-    worker invocations by migration 0149; actual provider quota remains external,
+    active permits and then probe with reduced concurrency, each success
+    restoring one permit (2026-10-23). Cancelled waiters leave the queue.
+    ★ A refused image's local pause is at most 15 s, and the image client's
+    retry waits no longer than that, then queues again through the pool and
+    the shared start pacer, five retries at most (`image-vertex.ts`; it used
+    to sleep its own 7.5 to 120 s on top). The local bound is additionally
+    coordinated across worker invocations by migration 0149 (start pacing for
+    image models by 0236); actual provider quota remains external,
     so bounded backoff and missing-slot fill runs remain.
     `abortable.ts` fences late SDK results across authentication, retries and
     body decoding. Image reviews retain HIGH effort and uncapped output but
-    have a 180-second whole-call deadline; other structured requests have ten
-    minutes, always bounded by the run's own deadline. Image attempts have
+    give each try its own clock (`IMAGE_REVIEW_TRY_TIMEOUT_MS`, 75 s,
+    2026-10-23; it was one 180-second clock that also counted the 429
+    waits). A caller may set its own with `imageReviewTryTimeoutMs`; Theme
+    Studio's worker sets 120 s (`THEME_STUDIO_IMAGE_REVIEW_TRY_TIMEOUT_MS`,
+    TS-3D). A one-location client waits a jittered 10 to 20 s after a 429,
+    two retries at most. A client given `capacityAt` (every photo-check setup
+    since TS-3D) instead sends the check to Google's US endpoint first and
+    once to global (see "Photo checks at Google's US endpoint first"). Other
+    structured requests have ten minutes, always bounded by the run's own
+    deadline. Image attempts have
     both SDK and caller-enforced 180-second deadlines. A throwing image call
     or decoder affects only its slot, retaining other completed paid images.
 
@@ -11651,7 +14944,61 @@ running subscription is how you get chargebacks.
     transaction and, since `migrate` precedes `deploy`, the release with it.
     `AiUsageSummary.resetsAt` is the single reset date rendered by Plans and the
     Mink composer. Called BEFORE Gemini in every AI action; blocked stores get
-    a plan-aware message.
+    a plan-aware message. ★★ AND EVERY WAY OUT THAT DOES NOT DELIVER GIVES IT
+    BACK (robustness audit B1, 2026-10-23). `consumeAiQuota` returns `taken`
+    (an `AiQuotaTake`: a plan take with its cycle period, a credit take, or
+    `none` for an unlimited plan or a fail-open read), each take with its own
+    UUID. The four AI actions (product description and product SEO in
+    `product-actions.ts`, `brand-voice-actions.ts`, `coupon-email-actions.ts`)
+    run through `withAiCredit` (`lib/ai/credited-copy.ts`), which takes the
+    credit, runs the request and calls `refundAiQuota(storeId, quota.taken)`
+    on every way out that does not deliver, a throw re-thrown after it, so a
+    model error, an unusable reply and a throw all refund and a success never
+    does. It is a module of its own so the actions' tests, which mock
+    quota.ts, still see which take was refunded. `refund_ai_quota` (migration
+    `20261023_0237_ai_credit_refund`) gives a plan take back by lowering that
+    period's `ai_usage.used` by one, never below 0, and a credit take by
+    putting one credit back on `ai_credit_balances` with an `ai_credit_ledger`
+    'grant' row (ref `refund:<take id>`, note "Refund: an AI request failed").
+    ★ A grant, not a new kind: `KIND_META` in `plans-client.tsx` renders only
+    purchase, grant and spend, and an unknown kind would stop Plans & Billing
+    rendering; the `refund:` ref tells it apart from an operator's grant
+    (theirs is the operator's email). A separate kind would mean widening the
+    ledger CHECK, `KIND_META`, `AiLedgerEntry.kind`, the function and the
+    operator console's ledger view in one release. ★ Once per take:
+    service-only `ai_quota_refunds` records the take id FIRST (ON CONFLICT DO
+    NOTHING), so a second refund of the same take gives back nothing.
+    `refundAiQuota` answers `refunded`, `none` (nothing to give back, or given
+    back already) or `failed`: a write that throws is tried once more after
+    300 to 600 ms (`AI_REFUND_ATTEMPTS`, safe because of the once-per-take
+    rule), then it logs `ai.quota: refund failed` (logError, store, source and
+    attempts) and answers `failed`, never throwing. ★★ THEN THE MERCHANT IS NOT
+    TOLD NOTHING WAS CHARGED (review of B1): every `callGemini` message says it
+    was, so on `failed` `withAiCredit` swaps it through
+    `withoutNothingChargedClaim` (gemini.ts) for the same advice without that
+    claim; the log line is what an operator grants the credit back from.
+    ★★ THE RATES COME FIRST (review of B1). Once a failure gave its credit back,
+    nothing bounded a loop of failing requests, and Google bills their tokens
+    all the same. `consumeAiQuota(storeId, { actorId })` checks
+    `AI_COPY_RATE_LIMITS` before it reads or takes anything: 20 a minute and
+    200 an hour per store and 10 a minute per admin (`actorId`, the signed-in
+    admin's uid), shared by every Generate with AI button, through
+    `rateLimit` (fails open), logged `ai.quota: rate limited` (logWarn, which
+    limit only) and refused with "Your store has asked AI to write a lot in a
+    short time. Try again a little later." ★ What reaches the model is cut to
+    size first (`promptText` in gemini.ts: `AI_PROMPT_FIELD_MAX` 4,000
+    characters for a description or instructions, `AI_PROMPT_SHORT_FIELD_MAX`
+    300 for a name, a code or a label, a product's variants to 100), silently,
+    because each field already passed its own form. ★ A
+    refunded take sends no `ai.credits_low` notice (`refundedTakes` in
+    quota.ts): the deferred balance read ran after the refund, so every failed
+    generation at exactly 3 credits left re-sent "Mink credits running low".
+    ⚠ A new AI-copy caller goes through `withAiCredit` with the signed-in
+    admin's id, never `consumeAiQuota` and `refundAiQuota` by hand, and caps
+    its prompt fields with `promptText`. `ai_quota_refunds` is pruned after
+    90 days by `created_at` (`RETENTION_POLICIES`, `prune-logs`): a take can
+    only be refunded within the request that took it, so old rows are never
+    needed.
     **Mink credits (purchasable top-ups):** once the included allowance is
     spent, `consumeAiQuota` falls back to the store's credit balance
     (never-expiring integers) via `try_spend_ai_credit` — the expiring
@@ -12331,7 +15678,10 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     attribution and daily tables, enables the platform module, and publishes
     the privacy/metric Help guide. `/api/cron/analytics-rollup` rebuilds the
     14-day correction window into 30-minute ordered sessions and durable daily
-    funnel totals; Cloud Scheduler must invoke it hourly at `:40`. Raw events
+    funnel totals; Cloud Scheduler must invoke it hourly at `:40`. Each
+    rebuild is one platform-wide statement in its own transaction with
+    `set local statement_timeout = '5min'` (`setRollupStatementLimit`; 2.2 s
+    and 2.6 s for 211,473 local events, 2026-10-24), not the pool's 30 s. Raw events
     and attribution are pruned after 14 days by `prune-logs`. Pro merchants
     receive Visitors, Sessions, Page views, and ordered Funnel cards; lower
     plans and a disabled platform switch receive neither collection nor cards. - **Phase 10 gross margin (2026-08-20):** migration
@@ -12466,7 +15816,10 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     Balancer must add `X-SM-Geo-Country: {client_region}`,
     `X-SM-Geo-Region: {client_region_subdivision}` and
     `X-SM-Geo-City: {client_city}`. Until then location columns stay null
-    and the location card shows its empty state. `gcloud compute
+    and the location card shows its empty state. ✅ Checked 2026-10-24:
+    `storemink-prod-backend` (serverless NEG `storemink-prod-neg` →
+    `storemink-web-prod`) sends all three; `storemink-dev-backend` sends
+    none, so dev records no locations. `gcloud compute
 backend-services update` REPLACES the whole custom-header list, so
     `describe` first and repeat any existing headers:
     `bash
@@ -12482,7 +15835,9 @@ backend-services update` REPLACES the whole custom-header list, so
     The headers are trusted for analytics only (a spoofed value can at
     worst mislabel that visitor's own session); no IP is read or stored. - _Rollup._ `runStorefrontDimensionRollup` (called by the hourly
     `analytics-rollup`) rebuilds `storefront_daily_dimensions` for days
-    at least two days clear of the 14-day raw prune (DELETE then INSERT):
+    at least two days clear of the 14-day raw prune (DELETE then INSERT,
+    one transaction with its own 5-minute `statement_timeout`,
+    `setRollupStatementLimit` in `lib/analytics/storefront-rollup.ts`):
     a session is credited by its FIRST page view (source, referrer,
     campaign, landing page); device and location belong to the daily
     visitor key; sales = totals of orders whose purchase event landed in
@@ -12494,10 +15849,10 @@ backend-services update` REPLACES the whole custom-header list, so
     referrer and by campaign (`getTrafficBreakdown`, labels via
     `trafficKeyLabel`). The funnel is now half width in the default. - _Disclosure._ The storefront analytics Help guide gains what is now
     recorded and a "Where visitors come from" section (in the
-    migration). `lib/legal/content.ts` privacy section 8 has a v3 DRAFT
-    sentence describing the same; publishing it
-    (`scripts/publish-legal.ts --publish`) makes every merchant re-accept,
-    so it waits for owner/legal review. - **Live View, Targets and Insights (2026-10-12):** - _Live View_ (`/dashboard/analytics/live`, every plan; header button
+    migration). `lib/legal/content.ts` privacy section 8 (v3) describes the
+    same. A lawyer approved v3 on 24 Oct 2026, and migration
+    `20261024_0241` publishes it with the release (§25), so every dashboard
+    account accepts it again on its next visit. - **Live View, Targets and Insights (2026-10-12):** - _Live View_ (`/dashboard/analytics/live`, every plan; header button
     with a pulsing dot). `live/data.ts` reads RAW `storefront_events`
     (current to the second, Pro collection only): visitors right now
     (5 min), visitors today, Shopify's customer behaviour (furthest step
@@ -12554,6 +15909,12 @@ backend-services update` REPLACES the whole custom-header list, so
     `withService` holds one connection for its whole transaction; the
     Overview fires ~45 of them, so total query work, not the slowest card,
     decides page time and how long other requests on that instance wait.
+    ⚠ Since 2026-10-23 that is ONE pool per process, shared by route
+    handlers, the proxy and pages (§4 `lib/db/`), with a 5 s wait for a
+    connection: a queue longer than that now fails as `DatabaseBusyError`
+    where it used to be only slow. Far off at today's data (the 1-minute
+    Overview cache below softens it); after a database upgrade, consider
+    raising `DB_POOL_MAX`.
     Fixes: `getSalesAnalytics` derives totals from its buckets (12 queries
     to 6; folding units into the orders query was measured and REJECTED,
     40% slower at 12 months); `getCustomerMix` classifies in SQL instead
@@ -13626,7 +16987,14 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       model-produced URL or HTML is rendered, and insufficient documentation
       produces an explicit no-answer state instead of a guess. If answer
       generation is unavailable, the assistant still returns verified source
-      guides. The browser keeps the conversation only in Help layout state
+      guides. ★ A TURN HAS ONE 45 S BUDGET (`HELP_ASSISTANT_DEADLINE_MS`,
+      2026-10-24, review of B2): the search's model call and the answer's run
+      in a row and each may take about a minute (30 s on the main model, 30 s
+      on the fallback), so both now share one `AbortSignal`
+      (`searchPublishedHelpWithAi(query, { signal })` and `callGemini`'s
+      `signal`); when it fires the search keeps its keyword results and the
+      answer becomes the verified guides, on time rather than after about
+      two minutes. The browser keeps the conversation only in Help layout state
       (including across Help-page navigation); it is not persisted server-side.
       The drawer includes focus trapping, keyboard/Escape handling, an ARIA
       dialog and live response region, ordered steps, privacy guidance,
@@ -15874,6 +19242,35 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       store's routing rule, so it obeys the same floor everything else does:
       naming somebody who cannot view the event's section delivers to nobody,
       not to them. Omitting it leaves every other event exactly as it was.
+    - **★ `restrictToOperatorEmails` NARROWS THE OPERATORS AUDIENCE, AND ONLY
+      EVER NARROWS** (TS-3B, 2026-10-25). The emails are lowercased and
+      applied last to `operatorRecipients`. Naming somebody who is not on
+      `platform_admins` reaches nobody, an empty list reaches nobody, and
+      omitting it leaves every platform event as it was. It is used by the
+      three Theme Studio operator notices `platform.theme_studio_ready`,
+      `platform.theme_studio_needs_fix` and `platform.theme_studio_questions`
+      (group Platform, section activity, operators in-app AND email,
+      `configurable: false` because no operator has a settings page and the
+      email footer must not link the merchants' one; owner decision 8).
+      `lib/theme-studio/notify.ts` sends them with the project's
+      `created_by_email` through `sendThemeStudioNotice({ projectId, kind })`,
+      called with no transaction open (read, then record); it skips an
+      archived project and never throws (`theme_studio.operator_notice_failed`,
+      ids and kind only). `notifyThemeStudioOperator(db, ...)` has no caller
+      but its test (TS-4C clean-up): it records in its own transaction, so
+      inside one it needs a second connection (on the workers' pool of one it
+      waits 5 s and fails); never call it inside a transaction.
+      The worker sends `questions` (the AI asks about a brief) and `needs_fix`
+      (a failure or a reaped lease that moved the project out of
+      `generating`; never a cancel, a requeue or a fill that continues) after
+      its settle commits. The design review sends `ready` and `needs_fix`
+      (TS-3A, an after-commit outbox in automatic-work.ts). The title names
+      the theme (`Ready to publish · <theme>`, `Needs a fix · <theme>`,
+      `Questions about <theme>`), the body is fixed, and the link is
+      `/dashboard/themes/studio/<projectId>` on the platform host. The email
+      is the notification queue's `notification` mail carrying the in-app
+      copy; `email-samples.ts` renders all three, so
+      `lib/email/no-long-dash.test.ts` guards them.
     - **ROUTING HAS A LOCATION AXIS, AND IT IS A SCOPE NOT A MODE.**
       `RoutingRule` was `mode: permission | roles | admins` with no idea where
       anyone worked, so a manager bound to one shop was still emailed about
@@ -15905,7 +19302,10 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       and both workers used to mark all 100 failed, permanently in the campaign
       worker, which has no retry. It now re-sends a failed slice message by
       message so only the real culprit fails; three failures in a row is an
-      outage, not a poison pill, so it stops probing.
+      outage, not a poison pill, so it stops probing. ★ Both of its log lines
+      (the batch refusal it retries after, and the stop after three in a row)
+      pass Resend's text through `withoutAddresses`: a refusal can quote an
+      address, and an email address never goes to the log.
     - **SENDING ≠ DELIVERY.** `/api/webhooks/resend` (Svix-verified,
       `RESEND_WEBHOOK_SECRET`) writes permanent bounces + complaints to
       **`email_suppressions`** — GLOBAL, no `store_id`, the one table here that
@@ -16171,7 +19571,9 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       `createStore` (for a wizard resumed past the account step) is a no-op when
       the first one landed.
     - **CONTENT LIVES IN CODE, TRUTH LIVES IN THE DB.** `lib/legal/content.ts`
-      holds v1 so it is reviewable in a diff; `scripts/seed-legal.ts` publishes
+      holds the policy text so it is reviewable in a diff (v1 at first; on 24
+      Oct 2026 Privacy v3 and an unpublished v2 of the Terms and the
+      Acceptable Use Policy); `scripts/seed-legal.ts` publishes
       it idempotently (the `ensureHomepage` pattern). Once published the DB row
       is authoritative and immutable — editing the file changes what the NEXT
       version says, never what anyone already accepted. `/legal/[slug]` renders
@@ -16201,12 +19603,16 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       every merchant behind a consent screen they cannot pass. But a consent
       write that finds no published documents logs an ERROR: an account created
       with no recorded agreement is exactly what this exists to prevent.
-    - **⚠ THE POLICY TEXT IS NOT LAWYER-REVIEWED.** It covers the shields this
-      product structurally needs — platform-not-seller, funds settling directly
-      to merchants (§18), merchant-as-controller, "as is", liability capped at
-      12 months' fees, merchant indemnity — and carries `⚠ REVIEW` markers on
-      the clauses where wording most affects exposure. Get counsel on it before
-      taking real money.
+    - **⚠ ONLY THE PRIVACY POLICY IS LAWYER-APPROVED.** The text covers the
+      shields this product structurally needs — platform-not-seller, funds
+      settling directly to merchants (§18), merchant-as-controller, "as is",
+      liability capped at 12 months' fees, merchant indemnity — and carries
+      `⚠ REVIEW` markers on the clauses where wording most affects exposure.
+      A lawyer approved Privacy Policy v3 exactly as written (owner, 24 Oct
+      2026). The Terms and the Acceptable Use Policy have no such approval
+      recorded, and their v2 also waits for the company's registered name and
+      address and a governing-law clause: get counsel on them before taking
+      real money.
     - **EDITING A POLICY MEANS PUBLISHING A NEW VERSION.** There is no other
       way, and three things enforce it: the DB trigger rejects an UPDATE to a
       published body, `ensureLegalSeeded` skips a kind that already has a
@@ -16227,6 +19633,26 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       checksum — otherwise that edit silently does nothing and whoever made it
       believes the policy changed. (This is why `PublishedDoc` carries
       `checksum`.)
+    - **★ PRIVACY POLICY v3 IS PUBLISHED BY MIGRATION `20261024_0241`, NOT BY
+      THE SCRIPT** (owner, 24 Oct 2026: approved by a lawyer exactly as
+      written, live with this release). The deploy's migrate step publishes
+      it, on `storemink_staging` with the dev push and on `storemink` with the
+      main push, so nobody handles a database password. One guarded DO block
+      does what `publishLegalVersion` does: it retires the current privacy row
+      by id, then inserts v3 as current, with content.ts's title, the exact
+      body (already trimmed) in a dollar quote, `checksumBody(body)` as a
+      literal the block re-checks before it writes, `effective_at` and
+      `published_at` now(), and `created_by` 'script' (what
+      `scripts/publish-legal.ts` writes). It does nothing where privacy v3 or
+      later is current (a no-op on `storemink_local`, which has had v3 since
+      13 Oct), and it stops the deploy with a plain RAISE on a v3 row that is
+      not current. It never names the Terms or the Acceptable Use Policy,
+      whose v2 stays unpublished. `lib/legal/privacy-v3-migration.test.ts`
+      holds the file to content.ts while content.ts is at v3. ⚠ A migration
+      cannot bust `LEGAL_TAG`, so on a revision already running the 60 s
+      `getSignupDocsCached` lets the re-acceptance gate lag by up to a
+      minute; `/legal/privacy` and signup read uncached and change at the
+      commit. The script stays the tool for any later version.
     - **THE RE-ACCEPTANCE GATE LIVES IN THE DASHBOARD LAYOUT, NOT `proxy.ts`.**
       The proxy reads its claims straight from the verified session cookie and
       does no DB query at all — that is its design — and "which documents has
@@ -17516,7 +20942,9 @@ way — an entry there is a deliberate act, not a way to silence the guard.
     nowhere.** `lib/retention/prune.ts`, driven daily by
     `/api/cron/prune-logs` (03:00 UTC). Windows: `notifications` 90 days,
     `activity_events` 365, `email_logs` 90, closed `whatsapp_conversations`
-    730 (by last message; media first, see the inbox section). Full operational detail —
+    730 (by last message; media first, see the inbox section),
+    `ai_quota_refunds` 90 (by `created_at`; a raw-SQL deleter, since the table
+    has no Drizzle model). Full operational detail —
     the schedule, the `gcloud` command, how to read a response — is in
     `docs/cron-jobs.md`.
     - **★ IT WAS DOCUMENTED, INDEXED, AND DEAD.** `supabase/email_logs.sql`
@@ -17560,17 +20988,38 @@ way — an entry there is a deliberate act, not a way to silence the guard.
     - **Financial records are never touched** — orders, refunds and credit notes
       live in their own tables. This sweep only ever deletes the inbox, the
       activity feed and the mail log.
-    - **⚠ §31's `data_jobs` / `data_job_issues` are NOT swept yet, and they
-      should be.** `ISSUE_CAP` bounds issues per job, but nothing bounds the
-      number of jobs. The sweep was written on `main`, where those tables do
-      not exist; on this branch they do, so the blocker is gone. Adding them is
-      two `RETENTION_POLICIES` entries — **issues before jobs**, because
-      `data_job_issues.job_id` is `ON DELETE CASCADE` from `data_jobs`, the
-      same shape as notifications→events. ⚠ They also carry only
-      `(store_id, created_at)` composite indexes, which a sweep filtering on
-      `created_at` ALONE cannot use, so each also wants a plain `created_at`
-      index in `supabase/import_export_01_jobs.sql` — a separate
-      `CREATE INDEX IF NOT EXISTS`, so re-running the file stays idempotent.
+    - **★ The cascades a batch meets are indexed** (migration
+      `20261024_0240`, 2026-10-24). `activity_events` cascades to
+      `notification_sms_queue.event_id` and `notification_whatsapp_queue.event_id`
+      (`notification_sms_queue_event_idx`, `notification_whatsapp_queue_event_idx`;
+      the queues themselves are still not pruned). A pruned WhatsApp
+      conversation deletes its Mink answers by `conversation_id`
+      (`whatsapp_mink_answers_conversation_id_idx`; the two older indexes
+      naming that column lead with `store_id` or hold drafts only, so each
+      pruned conversation read every answer of every store: 270 ms for one
+      50-conversation batch over 200,000 answers in a scratch database on
+      25 Oct, 0.42 ms with the index) and sets
+      `whatsapp_mink_answers.message_id` and `sent_message_id` to null per
+      message (`whatsapp_mink_answers_message_idx`, and
+      `whatsapp_mink_answers_sent_message_idx`, partial on
+      `sent_message_id is not null` because only a sent answer has one).
+      Without them, a 1,000-event batch could have passed the pool's 30 s
+      from about September 2027, once those queues held tens of thousands of
+      rows (an estimate from the scan rate measured locally), and the
+      WhatsApp cascade from the first 730-day prune in about October 2028.
+      Each cascade's generic plan uses its index (checked locally). The one
+      cascade left without an index is `mink_csv_files.job_id`, set to null
+      when a `data_jobs` row is pruned: that table keeps only 7 days of rows.
+    - **§31's `data_jobs` / `data_job_issues` are swept** (90 days each;
+      `ISSUE_CAP` bounds issues per job, but nothing else bounds the number
+      of jobs), **issues before jobs**, because `data_job_issues.job_id` is
+      `ON DELETE CASCADE` from `data_jobs`, the same shape as
+      notifications→events. Their `(store_id, created_at)` composite indexes
+      cannot serve a sweep filtering on `created_at` ALONE, so each has a
+      plain `created_at` index in its own file,
+      `supabase/retention_01_prune_indexes.sql` (not an edit to the applied
+      `import_export_01_jobs.sql`). (Until 2026-10-25 this bullet said they
+      were not swept yet, long after `RETENTION_POLICIES` gained both.)
     - **⚠ The Cloud Scheduler job did not exist when this shipped** — created
       and verified **2026-08-11**, along with `import-worker`, which was also
       absent. Both had been documented in `docs/cron-jobs.md` as though they
@@ -19952,6 +23401,19 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       `listDemoStoreSlugs()` instead of the store list (it used the list to
       decide Seed vs Reseed, and would otherwise have offered Seed for a demo
       that already exists).
+    - **★ THEMES IS ONE PAGE WITH TWO TABS, BOTH SUPERADMIN-ONLY** (TS-2, 25
+      Oct 2026). Catalog (`/dashboard/themes`, the demo-store panel, no Hide
+      or Show; a seed's result is a note on its row, never a browser alert)
+      and Theme Studio (`/dashboard/themes/studio`, the old list address,
+      which the operator notices still link to). Each tab is an address, so
+      the tab bar is links in an ARIA tab list (arrow keys, Home, End, Space).
+      The nav entry and its search alias "Theme Studio" are shown to
+      superadmins only: a member was always redirected from Themes and refused
+      by `access.ts`. The Overview's Theme Studio tile
+      (`theme-studio-tile.tsx`) re-checks `getThemeStudioActor` before it
+      reads, streams in its own Suspense boundary, and says so when its read
+      fails instead of showing zeroes. Detail: §5 item 11, "Theme Studio wave
+      TS-2".
     - **★ PEOPLE UNIONS TWO TABLES FOR ONE QUESTION** (`lib/platform/people.ts`,
       `/dashboard/people`). `admins` and `pos_staff` were each reachable only
       from inside the store that owned them, so "which stores is this person
@@ -19987,6 +23449,17 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       because it is still in use is NAMED in that warning too, since its email
       will not sign up as new; the role check is `authIdsInUse`
       (`lib/auth/identity-usage.ts`), the same one the signup reclaim uses.
+      ★ The cascade's transaction sets its own `statement_timeout` of 5
+      minutes (2026-10-24), before `set constraints all deferred`, because the
+      pool's 30 s cancels it on a large store: on a local copy, deleting a
+      store with 200,305 orders was cancelled after 238 s, held by
+      `storefront_events.order_id`, a foreign key that then had no index,
+      which cost one scan of `storefront_events` per order (16.8 ms each at
+      211k events); with that index the same delete took 13.9 s. Migration
+      `20261024_0240` adds it (`storefront_events_order_idx`,
+      `(order_id) where order_id is not null`; the cascade for 200 orders
+      went from 2,999 ms to 0.75 ms). The checks deferred to COMMIT are not
+      timed by `statement_timeout` at all.
     - **★★ `LogsRail` TAKES ITS REGISTRY AS A PROP, AND THAT IS LOAD-BEARING.**
       Both consoles share `DashboardSidebar`, and their logs are NOT the same
       set: an operator has no import/export jobs and no per-store activity feed
@@ -20078,8 +23551,11 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       would change nothing a visitor sees or would break a checksum:
       `lib/themes/definitions/` and `lib/themes/meta.ts` (bundled theme
       releases are digest-checked, so changed content without a version bump
-      fails `importBundledThemeReleases`), `lib/theme-studio/` (model-facing,
-      and `qa-diagnosis.ts` splits acceptance messages on " — examples: ") and
+      fails `importBundledThemeReleases`), `lib/theme-studio/` (model-facing
+      prompts; acceptance messages carry no dash since severity-v1
+      ("; examples: ", and `qa-diagnosis.ts` still reads the older dash form
+      in stored evidence), so every Theme Studio builder greps its changed
+      files for both long dashes by hand) and
       `lib/help/embedding-worker.ts` (embedding input only). The guard fails if
       an exempt path stops existing.
     - **★ The pricing matrix's "—" was a sentinel, not text.**
@@ -20106,6 +23582,9 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       `scripts/publish-legal.ts --publish` runs, which still asks every
       merchant to accept again (§25),
       and the two blocked v1 clauses at the top of that file are unchanged.
+      (Privacy has since moved to v3, which a lawyer approved and migration
+      `20261024_0241` publishes with the release, §25; the Terms and
+      Acceptable Use v2 stay unpublished.)
     - **★ THE HELP CENTRE IS CLEANED BY MIGRATION 0184**, one generic pass
       over every article and category, published or draft, including console
       edits: a table cell of only a dash becomes "-", a dash in a heading or
@@ -20364,6 +23843,13 @@ npm run theme-studio:model-check -- --dry-run # resolve the two task-scoped
 npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, offline
                     #   (fake provider, grades nothing). A paid live run needs
                     #   `-- --live --model=gemini-3.8-flash --max-usd=5 --yes`
+npm run revamp:priority-test -- --out=<dir> # Priority PayGo A/B plan and cost for
+                    #   storemink-staging, a dry run: 152 calls (a 12-photo spacing
+                    #   ladder first, then 140 in seven lanes). `--live --yes` spends
+                    #   (about $11.57 a pass at list prices; `--max-usd` default 15, at
+                    #   most 25). The night pass takes `--lead=priority` and
+                    #   `--max-usd` = $24 less what the evening pass spent, at most 15.
+                    #   docs/mink-revamp-speed.md
 ```
 
 ## 7. Environments / external services
@@ -20439,6 +23925,23 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
     identical, so every `admins`/`users` FK + the `app.current_user_id` GUC keep
     working with zero remapping.
 - **Vercel**: hosting + cron. Wildcard domain `*.storemink.com` → store subdomains.
+- **Cloud Monitoring (production alerting, 2026-10-23, owner-approved)**: 15
+  alert policies (plus five Theme Studio log alerts defined in the script,
+  plan P6, applied after the Theme Studio release with the owner's OK, step
+  A1), three uptime checks (storemink.com, a merchant store and its
+  dashboard login, every 60 s from USA, Europe and Asia Pacific), the
+  log-based counter `mink_chat_run_failures` and one email channel ("StoreMink
+  owner email"; the address is never in the repo), all in storemink-prod,
+  labelled `managed-by=storemink-alerts` and created by
+  `scripts/prod-monitoring.py`. The app reads none of it and no environment
+  variable configures it. What each alert means and what to check first:
+  **`docs/monitoring.md`**. ⚠ The server, memory and log alerts watch
+  `storemink-web-prod` only and the database alerts the shared
+  `storemink-prod-db` instance, so the dev service is not watched; the five
+  Theme Studio alerts also match the private Theme Studio workers, the
+  capture job and the Theme Studio schedules' own attempt log (the Google AI
+  and Cloud Run quota alerts cover the whole project); the storemink-staging
+  project has no alerts.
 - **Resend**: transactional email + custom-domain DNS verification. Delivery
   webhooks post to `/api/webhooks/resend` and need **`RESEND_WEBHOOK_SECRET`**
   (Svix signing secret) plus the endpoint registered in the Resend dashboard,
@@ -20487,10 +23990,35 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   Default Credentials (ADC — no API key; automatic on Cloud Run) at
   **`GCP_LOCATION`** (default `global`). (An env with BOTH set prefers the free
   key.) Same request/response shape both ways; callers see the unchanged
-  `{text,error}` contract. Vertex needs `google-auth-library` +
+  `{text,error}` contract. **`GEMINI_MODEL`** (default
+  `gemini-3.5-flash-lite`) accepts only a Flash-Lite id, optionally
+  version-pinned (`-001`, `-09-2026`, `-preview-…`); anything else, including
+  the old `gemini-2.5-flash` (whose Vertex retirement date was 20 Oct 2026),
+  is ignored with one `ai.generate: model override ignored` warning per
+  process. **`GEMINI_FALLBACK_MODEL`** (default `gemini-3.5-flash`) accepts
+  only a Flash id. Cloud Build sets neither, so deployments use the defaults;
+  a local `.env` still naming gemini-2.5-flash should drop the line. On Vertex
+  the main model runs at `GCP_LOCATION` (global; Cloud Build sets it) and the
+  fallback at `MINK_FALLBACK_LOCATION` (asia-south1, read through
+  `getMinkConfig()`), the pool Mink chat already fails over to; the Developer
+  API has no location. Each attempt has 30 s (`GEMINI_ATTEMPT_TIMEOUT_MS`,
+  token, request and reply inside it) and honours a caller's signal. A 408,
+  429, 5xx, network failure or timeout gets one attempt on the fallback, and
+  so does a 400, 403 or 404 on the main model (logged as `ai.generate: main
+model refused`, logError); the fallback is final, so the worst case is about
+  a minute. Requests use LOW thinking (`thinkingConfig.thinkingLevel`, the
+  shape `conversation-namer.ts` runs live through @google/genai) with 1,024
+  tokens of headroom on top of the caller's answer budget; JSON replies use
+  `responseJsonSchema` (lowercase JSON Schema), the Help assistant, Help search
+  and the Help console's AI command included. ⚠ Not yet called live on this
+  path (no paid calls in wave 1): the first owner-approved run should do one
+  description, one SEO reply and one coupon email on Vertex and read the
+  `ai.generate: ok` line's model and location. Vertex needs `google-auth-library` +
   `roles/aiplatform.user` on the runtime credentials (see
   `docs/gcp-migration-phase5-6.md`). Mink AI embeddings use the same backend
-  precedence and credentials through `lib/help/embeddings.ts`, with
+  precedence, credentials and Vertex address rule (`vertexHost`: us and eu
+  through their regional-endpoint hosts, `global` through
+  aiplatform.googleapis.com) through `lib/help/embeddings.ts`, with
   **`GEMINI_EMBEDDING_MODEL`** defaulting to `gemini-embedding-2` (served only
   through Vertex's `embedContent`; the former `gemini-embedding-001` is capped at
   five requests a minute, see §21) and a fixed
@@ -20508,14 +24036,16 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   **`MINK_MAX_TOOL_CALLS_PER_RUN`** (16),
   **`MINK_MAX_PARALLEL_READ_TOOLS`** (4), and
   **`MINK_MAX_OUTPUT_TOKENS`** (2048), **`MINK_IMAGE_MODEL`**
-  (`gemini-3.1-flash-image`) and **`MINK_IMAGE_LOCATION`** (`global`; still an
+  (`gemini-nano-banana-2.1` since 25 Oct 2026, cloudbuild
+  `_MINK_IMAGE_MODEL`; another model is sent no thinking level) and **`MINK_IMAGE_LOCATION`** (`global`; still an
   independent override from the chat location), plus reliability controls
   **`MINK_MAX_MODEL_RETRIES`** (2, bounded 0–3), **`MINK_RUN_TIMEOUT_SECONDS`**
   (180, bounded 15–300), **`MINK_FIRST_CHUNK_SECONDS`** and
   **`MINK_STREAM_IDLE_SECONDS`** (20 each, bounded 5–120), and the fallback
   **`MINK_FALLBACK_MODEL`** (`gemini-3.5-flash`; "off" or empty disables it,
   and anything but a Gemini id reads as off) at **`MINK_FALLBACK_LOCATION`**
-  (`asia-south1`); see "Mink keeps answering when its model is busy". Tool routing reads
+  (`asia-south1`), where voice chat turns start unless
+  **`MINK_VOICE_ON_FALLBACK`** is "false"/"0"; see "Mink keeps answering when its model is busy". Tool routing reads
   **`MINK_TOOL_ROUTING`** (on unless "false"/"0"), **`MINK_LITE_MODEL`** (default
   `gemini-3.5-flash-lite`; anything but a Flash-Lite id falls back to it) and
   **`MINK_LITE_ROUTING`** (off unless "true"/"1"); see "Mink tool routing". The dashboard layout reads the private
@@ -20539,27 +24069,64 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   **`THEME_STUDIO_CAPTURE_ENABLED`** (code default false; enables catalog-picture
   queueing only after the separate Chromium capture job and scheduler exist),
   **`THEME_STUDIO_DISABLED_MODELS`** (comma-separated model KEYS to switch
-  off), **`THEME_STUDIO_DAILY_SPEND_USD`** (per-operator rolling-24h
-  estimated-spend ceiling; none unless set to a positive number), and
+  off; ★ the EMERGENCY SWITCH for one model, kept although it looks unused:
+  the new-theme form hides a disabled model, queueing a run, revision or
+  answer on it is refused, a run already queued fails as `model_disabled`,
+  and a design review on it fails its tries and stops the theme as
+  `qa_provider_failed`; `gemini-3.8-flash` is also the per-photo checker
+  (`THEME_IMAGE_REVIEW_MODEL_KEY`), so switching it off leaves Theme Studio
+  photos unchecked, which stops a theme at its final check
+  (`image_check_required`, TS-1B), and leaves the storefront revamp's photo
+  and product-photo checks unreviewed (`lib/mink/revamp/photos.ts`,
+  `products.ts`). Set it with `gcloud run services update` and
+  `--update-env-vars`, no build; ⚠ the next deploy's `--set-env-vars`
+  replaces the whole environment and drops it unless it is added to
+  `cloudbuild.yaml`, though the new revision no longer makes passed checks
+  old, because evidence binds to the commit (TS-3C)),
+  **`THEME_STUDIO_DAILY_SPEND_USD`** (per-operator rolling-24h
+  estimated-spend ceiling; in code none unless set to a positive number;
+  `cloudbuild.yaml` sets `50` since the Theme Studio release, owner-approved
+  24 Oct 2026, 23:55 IST. Past it, starting a theme, Retry, answering the
+  AI's questions, asking for a change and a photo run are refused with "You
+  have reached today's Theme Studio spending limit. Try again tomorrow." It
+  never stops a build already running: automatic repairs and fill rounds
+  count toward the total but are never refused, design reviews are neither
+  counted nor refused, and the offline provider is exempt. A trigger
+  substitution overrides the default), and
   **`THEME_STUDIO_AUTO_QA_ENABLED`** (code default false and effective only
   with capture enabled), and **`THEME_STUDIO_PERFORMANCE_REQUIRED`** (code
   default false; `true` makes `browser.performance` a required gate: LCP
   ≤ 3 s and CLS < 0.1 at phone390 and desktop1440, judged from the
   automatic capture). Cloud Build explicitly sets the provider to
-  `vertex-gemini` and enables generation, capture and automatic QA in dev and
-  production; both worker schedules were deployed and smoke-checked on
-  2026-09-29. Preview tokens are signed with
+  `vertex-gemini` and enables generation, capture and automatic QA in
+  production (the file's defaults; since 2026-10-10 the dev trigger sets the
+  offline provider and switches all three off, so dev builds no themes);
+  both worker schedules were deployed and smoke-checked on 2026-09-29.
+  Preview tokens are signed with
   **`THEME_STUDIO_PREVIEW_SECRET`** when set, otherwise with a key derived
   from `CRON_SECRET` under a purpose label; with neither, previews refuse.
-  Acceptance evidence is bound to **`THEME_STUDIO_BUILD_ID`** when set,
-  otherwise Cloud Run's `K_REVISION` (so each deploy makes evidence stale);
+  Acceptance evidence is bound to **`THEME_STUDIO_BUILD_ID`** when set and
+  not empty, otherwise to Cloud Run's `K_REVISION`. Cloud Build sets it to
+  the commit (`COMMIT_SHA`, TS-3C, plan P3), so a settings-only revision or a
+  re-run of the same commit never makes evidence old, but ANY new commit that
+  deploys does, a docs-only or baseline-only one included (a
+  `schema-fingerprint.json` commit to `main` deploys production; `[skip ci]` in
+  its message skips the build). A manual
+  `gcloud builds submit` has no commit and sets it empty, so the app uses `K_REVISION` and
+  every new revision makes evidence old, as before. The first deploy
+  carrying P3 changes the id from a revision name to a commit; like any code
+  deploy, ready themes then re-check once at Publish. ⚠ A settings-only
+  change to what the checks require (for example
+  `THEME_STUDIO_PERFORMANCE_REQUIRED`) no longer expires passed checks
+  either: press Check again on ready themes before publishing;
   the server stage fetches preview pages from **`THEME_STUDIO_ACCEPTANCE_ORIGIN`**
   when set, otherwise `http://127.0.0.1:$PORT`.
   Dedicated private services set **`THEME_STUDIO_WORKER_ONLY=true`** and
   **`THEME_STUDIO_WORKER_ROLE=generation|qa`**. They run one lane per request,
   bound Sharp/DB resources and accept the separate application secret header
   behind OIDC; these settings must not be applied to the merchant web service.
-  Their **`THEME_STUDIO_BUILD_ID`** is the serving web's build, not the worker
+  Their **`THEME_STUDIO_BUILD_ID`** is the serving web's build (the commit
+  since P3, or the web's serving revision when that is empty), not the worker
   revision. See `docs/theme-studio-worker-rollout.md` for first scheduler routing.
   Theme Studio's manual `theme-studio:model-check` uses ADC plus **`THEME_STUDIO_GCP_PROJECT_ID`**
   (fallback `GCP_PROJECT_ID`) and **`THEME_STUDIO_VERTEX_LOCATION`** (default
@@ -20571,8 +24138,31 @@ npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, 
   same project/location variables configure the Studio model worker.
   The Studio image client (Track 3) uses the same project, its own
   **`THEME_STUDIO_IMAGE_LOCATION`** (default `global`) and
-  **`THEME_STUDIO_IMAGE_MODEL`**, which may only pin a version of
-  `gemini-3-pro-image`.
+  **`THEME_STUDIO_IMAGE_MODEL`** (`gemini-nano-banana-2.1`, cloudbuild
+  `_THEME_STUDIO_IMAGE_MODEL`), which may pin a published version of it, or
+  name the `gemini-3-pro-image` family as the owner's rollback; anything else
+  throws.
+  The storefront revamp (§ Mink storefront revamp) reads
+  **`MINK_REVAMP_PROVIDER`** (`lib/mink/revamp/provider.ts`, the one reader
+  every step takes its client from, so a run never mixes a fake plan with paid
+  photos): `fake` (trimmed, any case) runs the offline planner and the fake
+  image and review clients at no cost, for local development,
+  `npm run revamp:live-check` and the opt-in `e2e.local` suite
+  (`MINK_REVAMP_LOCAL_TEST=1`); anything else, and unset, is Vertex.
+  `cloudbuild.yaml` never sets it, so dev and production always use the real
+  models. Its planner, photographs and photo review use the Theme Studio
+  Vertex settings and shared provider capacity above
+  (`THEME_STUDIO_GCP_PROJECT_ID` or `GCP_PROJECT_ID`,
+  `THEME_STUDIO_VERTEX_LOCATION`, `THEME_STUDIO_IMAGE_LOCATION`,
+  `THEME_STUDIO_IMAGE_MODEL`; `THEME_STUDIO_DISABLED_MODELS` switching off the
+  reviewer keeps the photos unreviewed), its product studio photos Mink's own
+  `MINK_IMAGE_MODEL` / `MINK_IMAGE_LOCATION`, its stored photos `GCS_BUCKET`
+  (unset, a revamp with photos to draw fails as `internal`), its
+  budget the allowance `MINK_CHARGE_CREDITS` selects, and its run route and kick
+  `CRON_SECRET` (the kick goes to the current request's origin, else
+  `PLATFORM_URL`, from `NEXT_PUBLIC_APP_URL`). `THEME_STUDIO_PROVIDER` and
+  `THEME_STUDIO_GENERATION_ENABLED` do not apply to it; `MINK_AI_ENABLED=false`
+  stops it (the run route claims nothing, the sweep does nothing).
 - **Razorpay** (§18, §16): two SEPARATE credential sets. Per-store BYO gateway
   creds live in the DB (`store_payment_providers`, encrypted with env
   **`PAYMENT_CRED_KEY`** — 32-byte base64; generate with

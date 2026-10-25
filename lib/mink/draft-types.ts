@@ -43,7 +43,11 @@ export type MinkDraftCreditSource =
   | "plan"
   | "credit"
   | "mixed"
-  | "plan_unlimited";
+  | "plan_unlimited"
+  // A storefront redesign the store gets at no charge (its first one).
+  // Nothing was taken from the plan or the balance, so it is its own source
+  // rather than a zero-priced "plan" row that would read as a spend.
+  | "free";
 
 export interface MinkDraftField {
   key: string;

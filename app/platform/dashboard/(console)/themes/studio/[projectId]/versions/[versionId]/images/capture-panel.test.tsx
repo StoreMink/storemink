@@ -1,237 +1,89 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { STOP_CODES } from "../../../../studio-ui";
+import {
+  CatalogPictures,
+  captureErrorText,
+  catalogPictureState,
+  type CatalogSlotSummary,
+} from "./capture-panel";
 
-const refresh = vi.fn();
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
-const queue = vi.fn();
-vi.mock("@/app/actions/theme-studio-actions", () => ({
-  queueThemeStudioCaptureAction: (...args: unknown[]) => queue(...args),
-}));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The catalogue pictures at the top of the Pictures tab (wave TS-2, builder
+// 2C): what the theme catalog shows and where each came from, with no
+// "Capture catalogue pictures" button (every final check takes them).
 
-import { CapturePanel, captureErrorText } from "./capture-panel";
+const EM = String.fromCharCode(0x2014);
+const EN = String.fromCharCode(0x2013);
 
 afterEach(() => cleanup());
 
-const slots = [
+const slots: CatalogSlotSummary[] = [
   {
-    id: "preview",
-    label: "Catalog card",
-    url: null,
-    placeholder: true,
-    captured: false,
+    id: "catalog-preview",
+    label: "Catalogue card",
+    url: "/img/card",
+    placeholder: false,
+    captured: true,
   },
   {
-    id: "screenshot-desktop",
+    id: "catalog-desktop",
     label: "Desktop screenshot",
     url: null,
     placeholder: true,
     captured: false,
   },
+  {
+    id: "catalog-mobile",
+    label: "Phone screenshot",
+    url: "/img/phone",
+    placeholder: false,
+    captured: false,
+  },
 ];
 
-const props = {
-  projectId: "p",
-  versionId: "v",
-  revision: 7,
-  packageDigest: "d".repeat(64),
-  isCurrent: true,
-  canEdit: true,
-  captureEnabled: true,
-  blockers: [] as string[],
-  latest: null,
-  resultVersionNumber: null,
-  slots,
-};
-
-const button = () =>
-  screen.getByRole("button", {
-    name: /Capture/,
-  }) as HTMLButtonElement;
-
-describe("the catalog pictures panel", () => {
-  it("offers a failed automatic result another browser and visual review", async () => {
-    queue.mockResolvedValue({ ok: true, id: "c" });
-    render(<CapturePanel {...props} retryAutomaticQa />);
+describe("CatalogPictures", () => {
+  it("shows each catalogue picture and where it came from, with no capture button", () => {
+    render(<CatalogPictures slots={slots} captureEnabled />);
     expect(
-      screen.getByText(/rerun browser checks and visual review/),
+      screen.getByRole("heading", { name: "In the theme catalog" }),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Retry automatic QA" }));
-    await vi.waitFor(() =>
-      expect(queue).toHaveBeenCalledWith(
-        expect.objectContaining({ versionId: "v" }),
-      ),
-    );
+    expect(screen.getByText("Taken by the checks")).toBeTruthy();
+    expect(screen.getByText("Still a placeholder")).toBeTruthy();
+    expect(screen.getByText("Uploaded")).toBeTruthy();
+    expect(screen.getByText(/Every final check takes them again/)).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
+    for (const img of document.querySelectorAll("img"))
+      expect(img.getAttribute("loading")).toBe("lazy");
   });
 
-  it("permits failed QA to retry layout before artwork while keeping structural blockers and manual capture requirements", () => {
-    const unfinished = [
-      "1 image is still a placeholder. Draw or upload it first.",
-    ];
-    render(
-      <CapturePanel
-        {...props}
-        blockers={unfinished}
-        layoutBlockers={[]}
-        retryAutomaticQa
-      />,
-    );
+  it("says to upload them where the browser job is switched off", () => {
+    render(<CatalogPictures slots={slots} captureEnabled={false} />);
     expect(
-      (
-        screen.getByRole("button", {
-          name: "Retry automatic QA",
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(false);
-    expect(screen.getByText(/layout checks run first/)).toBeTruthy();
-    cleanup();
-    render(
-      <CapturePanel {...props} blockers={unfinished} layoutBlockers={[]} />,
-    );
-    expect(button().disabled).toBe(true);
-    cleanup();
-    render(
-      <CapturePanel
-        {...props}
-        blockers={unfinished}
-        layoutBlockers={["Category has no image slot"]}
-        retryAutomaticQa
-      />,
-    );
-    expect(
-      (
-        screen.getByRole("button", {
-          name: "Retry automatic QA",
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-  });
-  it("describes a layout-only result without claiming catalog pictures or a new version", () => {
-    render(
-      <CapturePanel
-        {...props}
-        latest={{
-          id: "c",
-          phase: "layout",
-          versionId: "v",
-          status: "succeeded",
-          errorCode: null,
-          resultVersionId: "v",
-          attemptCount: 1,
-          createdAt: "",
-          finishedAt: "",
-        }}
-      />,
-    );
-    expect(screen.getByText(/Layout checks complete/)).toBeTruthy();
-    expect(screen.queryByText(/Captured into/)).toBeNull();
-  });
-  it("queues a capture of the version on screen", async () => {
-    queue.mockResolvedValue({ ok: true, id: "c" });
-    render(<CapturePanel {...props} />);
-    expect(button().textContent).toContain("Capture catalog pictures");
-    fireEvent.click(button());
-    await vi.waitFor(() => expect(refresh).toHaveBeenCalled());
-    expect(queue).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "p",
-        versionId: "v",
-        expectedRevision: 7,
-        expectedPackageDigest: "d".repeat(64),
-      }),
-    );
-  });
-
-  it("says why it cannot capture, and cannot be pressed", () => {
-    render(
-      <CapturePanel
-        {...props}
-        blockers={["1 image is still a placeholder. Draw or upload it first."]}
-      />,
-    );
-    expect(
-      screen.getByText(
-        "1 image is still a placeholder. Draw or upload it first.",
-      ),
+      screen.getByText(/switched off on this deployment, so upload them/),
     ).toBeTruthy();
-    expect(button().disabled).toBe(true);
-    cleanup();
-    render(<CapturePanel {...props} isCurrent={false} />);
-    expect(
-      screen.getByText("Only the current version can be captured."),
-    ).toBeTruthy();
-    expect(button().disabled).toBe(true);
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("stays disabled until the browser worker is deployed", () => {
-    render(<CapturePanel {...props} captureEnabled={false} />);
-    expect(screen.getByText(/browser worker is deployed/)).toBeTruthy();
-    expect(button().disabled).toBe(true);
-    expect(queue).not.toHaveBeenCalled();
+  it("shows nothing for a theme with no catalogue pictures", () => {
+    const { container } = render(<CatalogPictures slots={[]} captureEnabled />);
+    expect(container.innerHTML).toBe("");
   });
 
-  it("follows a capture in flight, and names a failure", () => {
-    const latest = {
-      id: "c",
-      versionId: "v",
-      status: "queued" as const,
-      errorCode: null,
-      resultVersionId: null,
-      attemptCount: 0,
-      createdAt: "",
-      finishedAt: null,
-    };
-    render(<CapturePanel {...props} latest={latest} />);
-    expect(screen.getByText(/Queued: the capture job/)).toBeTruthy();
-    expect(button().disabled).toBe(true);
-    cleanup();
-    render(
-      <CapturePanel
-        {...props}
-        latest={{
-          ...latest,
-          status: "failed",
-          errorCode: "preview_status_404",
-        }}
-      />,
-    );
-    expect(
-      screen.getByText(
-        "Last capture failed: The preview answered with HTTP 404 instead of the storefront.",
-      ),
-    ).toBeTruthy();
-    expect(button().disabled).toBe(false);
+  it("words a picture's state", () => {
+    expect(catalogPictureState(slots[0])).toBe("Taken by the checks");
+    expect(catalogPictureState(slots[1])).toBe("Still a placeholder");
+    expect(catalogPictureState(slots[2])).toBe("Uploaded");
   });
+});
 
-  it("links a finished capture to the version it made, and offers to capture again", () => {
-    render(
-      <CapturePanel
-        {...props}
-        latest={{
-          id: "c",
-          versionId: "v",
-          status: "succeeded",
-          errorCode: null,
-          resultVersionId: "v2",
-          attemptCount: 1,
-          createdAt: "",
-          finishedAt: "",
-        }}
-        resultVersionNumber={9}
-        slots={slots.map((s) => ({ ...s, placeholder: false, captured: true }))}
-      />,
-    );
-    const link = screen.getByRole("link", { name: "version 9" });
-    expect(link.getAttribute("href")).toBe(
-      "/dashboard/themes/studio/p/versions/v2/images",
-    );
-    expect(button().textContent).toContain("Capture again");
-  });
-
-  it("explains every code the capture can fail with", () => {
-    expect(captureErrorText("lease_expired")).toMatch(/stopped responding/);
-    expect(captureErrorText("mystery")).toBe("The capture failed.");
-    expect(captureErrorText(null)).toBe("The capture failed.");
+describe("captureErrorText", () => {
+  it("has a sentence for every capture stop code, and for none or an unknown one", () => {
+    for (const code of [...STOP_CODES.capture, null, "made_up_code"]) {
+      const text = captureErrorText(code);
+      expect(text, String(code)).toMatch(/\.$/);
+      expect(text).not.toMatch(/made_up_code/);
+      expect(text.includes(EM) || text.includes(EN)).toBe(false);
+    }
   });
 });

@@ -7,7 +7,7 @@ import type {
   MinkModelTurn,
   MinkUsage,
 } from "./types";
-import { MinkToolRegistry } from "./tools/registry";
+import { MinkToolRegistry, type MinkToolContext } from "./tools/registry";
 
 const ZERO_USAGE: MinkUsage = {
   promptTokens: 0,
@@ -55,6 +55,7 @@ function config(overrides: Partial<MinkConfig> = {}): MinkConfig {
     streamIdleTimeoutMs: 20_000,
     fallbackModel: "gemini-3.5-flash",
     fallbackLocation: "asia-south1",
+    voiceStartsOnFallback: true,
     toolRouting: true,
     liteModel: "gemini-3.5-flash-lite",
     liteRouting: false,
@@ -455,6 +456,86 @@ describe("runMinkAgent", () => {
 // prompt already asks it not to repeat a successful read; the memo makes that
 // true whether or not the model complies.
 // ---------------------------------------------------------------------------
+// ★★ B6: the run's own stop (its deadline, the merchant leaving) reaches the
+//    tools it runs, so a stopped run stops their paid work.
+describe("★★ the run's stop reaches its tools (B6)", () => {
+  function waitingRegistry(seen: { context?: MinkToolContext }) {
+    return new MinkToolRegistry([
+      {
+        declaration: {
+          name: "get_store_profile",
+          description: "Read store.",
+          parametersJsonSchema: { type: "object", properties: {} },
+        },
+        permission: { section: "dashboard", action: "view" },
+        timeoutMs: 60_000,
+        execute: vi.fn(
+          (_actor, _args, context?: MinkToolContext) =>
+            new Promise<Record<string, unknown>>((resolve) => {
+              seen.context = context;
+              context?.signal.addEventListener("abort", () =>
+                resolve({ stopped: true }),
+              );
+            }),
+        ),
+      },
+    ]);
+  }
+
+  function oneToolSession(): MinkModelSession {
+    return {
+      sendUserMessage: vi.fn(async () =>
+        turn({
+          functionCalls: [
+            { id: "call-1", name: "get_store_profile", args: {} },
+          ],
+        }),
+      ),
+      sendToolResponses: vi.fn(async () => turn({ text: "Stopped." })),
+    };
+  }
+
+  it("★★ hands the run's signal to every tool call", async () => {
+    const run = new AbortController();
+    const seen: { context?: MinkToolContext } = {};
+    const pending = runMinkAgent({
+      actor: ACTOR,
+      message: "How is my store?",
+      config: config(),
+      registry: waitingRegistry(seen),
+      session: oneToolSession(),
+      abortSignal: run.signal,
+    });
+    await vi.waitFor(() => expect(seen.context).toBeDefined());
+    expect(seen.context?.signal.aborted).toBe(false);
+    run.abort();
+    await pending;
+    expect(seen.context?.signal.aborted).toBe(true);
+  });
+
+  it("★ a run that has already stopped never starts its tool", async () => {
+    const run = new AbortController();
+    run.abort();
+    const seen: { context?: MinkToolContext } = {};
+    const registry = waitingRegistry(seen);
+    const execute = vi.spyOn(registry, "execute");
+    await runMinkAgent({
+      actor: ACTOR,
+      message: "How is my store?",
+      config: config(),
+      registry,
+      session: oneToolSession(),
+      abortSignal: run.signal,
+    });
+    expect(execute).toHaveBeenCalledWith(
+      ACTOR,
+      expect.objectContaining({ name: "get_store_profile" }),
+      { signal: run.signal },
+    );
+    expect(seen.context).toBeUndefined();
+  });
+});
+
 describe("repeated tool calls", () => {
   function memoRegistry(repeatSafe: boolean, execute = vi.fn()) {
     return new MinkToolRegistry([

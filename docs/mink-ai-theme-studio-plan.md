@@ -1,5 +1,17 @@
 # Mink AI Theme Studio — implementation plan
 
+> **★ Current state, 24 Oct 2026 (this plan is history; read this first).**
+> Phases 0 to 6 are built, and production runs the automatic checks, the
+> automatic design review and a one-step Publish. No step needs a second
+> person: the two-reviewer scorecard (§7.3 and Phase 6 below) was built on
+> 25 Sep and removed on 3 Oct 2026 (migration 0151). Since wave TS-1
+> (24 Oct 2026) a theme publishes when no serious finding is left and its
+> design review passed on today's StoreMink build; smaller findings are
+> warnings the operator may publish past ("Fix it, then allow Publish").
+> Current behaviour: `docs/theme-acceptance.md` §5,
+> `docs/mink-ai-theme-studio-phase6.md` and the Theme Studio passages of
+> `CODEBASE.md`. The status note below is the plan's own, from 23 Sep.
+>
 > **Status:** Phases 0–5 are implemented: contracts, the runtime registry, the
 > superadmin Studio shell with secure intake, the Gemini-on-Vertex generation
 > pipeline (moved from Anthropic models on 2026-09-23, owner's decision),
@@ -374,14 +386,18 @@ validation functions, then have Vitest test those functions. A candidate runs:
    URLs, unknown CSS values, or unregistered capabilities reached the package.
 
 Failure keeps the version in `draft` or moves it to `blocked`; it does not
-publish with a warning. Reports are tied to exact manifest/build/asset digests
+publish with a warning. (Since 24 Oct 2026 only a serious finding stops
+Publish; smaller ones are warnings the operator may publish past.) Reports are tied to exact manifest/build/asset digests
 so changing any input invalidates approval.
 
 ### 7.3 Human gate
 
 Reuse `docs/theme-acceptance.md` rather than inventing a lighter AI-specific
 standard. The Studio should render its scorecard and require two approvals,
-including one non-author reviewer. Automatic rejection still applies when the
+including one non-author reviewer. (Superseded on 3 Oct 2026: the automatic
+design review scores the same rows and one superadmin publishes; since
+24 Oct its serious rejections block and the rest are warnings.) Automatic
+rejection still applies when the
 candidate is merely an existing theme with new colors/order, copies another
 site, leaves core commerce surfaces generic, depends on custom code, or shows
 placeholder/inaccessible content.
@@ -547,7 +563,8 @@ Deliver:
 - candidate/block state transitions.
 
 Exit: a candidate cannot reach human approval with a failed required gate, and
-changing its manifest or assets invalidates prior evidence.
+changing its manifest or assets invalidates prior evidence. (Since 24 Oct
+2026: a theme cannot be published with a serious finding left.)
 
 Implementation record: `docs/mink-ai-theme-studio-phase5.md`. The theme
 package rules are production functions in `lib/themes/validation.ts`. The
@@ -572,7 +589,8 @@ them to the public immutable prefix at publication.
 
 Deliver:
 
-- two-reviewer scorecard and non-author rule;
+- two-reviewer scorecard and non-author rule (removed on 3 Oct 2026; one
+  superadmin publishes);
 - semantic release allocation and publish confirmation;
 - zero-warning live demo promotion;
 - public catalog/signup exposure and cache invalidation;
@@ -585,7 +603,8 @@ existing store's pinned version.
 
 Implementation record: `docs/mink-ai-theme-studio-phase6.md`.
 
-- **Reviews.** The §5 scorecard is stored as columns, so the approval bar is
+- **Reviews** (history: removed on 3 Oct 2026). The §5 scorecard is stored
+  as columns, so the approval bar is
   a database CHECK. Reviews bind to the latest passing acceptance run, and
   the database refuses `approved` without an approving review from each
   chair, one of them by a non-author.
@@ -600,9 +619,9 @@ Implementation record: `docs/mink-ai-theme-studio-phase6.md`.
   `theme_catalog_audit`. Stores pinned to a release are never touched.
 
 The flow was verified end to end against the local database and dev server,
-with storage injected. The **staging canary** — a real model run reviewed by
-two superadmins — has not been run; it is the remaining step of this exit
-criterion, and the runbook is in the implementation record §9.
+with storage injected. The **staging canary** was never run. Themes are never
+built on dev, and the first live checks come after the TS-1 release, each
+with the owner's OK; the runbook is in the implementation record §9.
 
 ### Phase 7 — quality expansion
 
@@ -737,7 +756,8 @@ The first production release is complete only when:
 - the real storefront can be reviewed at the three required viewports and on a
   physical device;
 - all package, commerce, accessibility, performance, provenance, security, and
-  two-reviewer gates are stored against exact digests;
+  design-review gates are stored against exact digests (two human reviewers
+  until 3 Oct 2026, the automatic design review since);
 - the model cannot publish or execute arbitrary code;
 - a superadmin can publish an approved release without an app deploy;
 - the release appears in the catalog/signup and its live demo passes with zero

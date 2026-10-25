@@ -50,7 +50,7 @@ export const MINK_TOOL_GROUPS = [
   "shipping",
   "blogs",
   "builder",
-  "personalize",
+  "revamp",
   "storefront_code",
   "media",
   "csv",
@@ -71,7 +71,16 @@ interface GroupTools {
   read: readonly string[];
   /** Sent only when the message asks for a change (`wantsChange`). */
   change?: readonly string[];
+  /**
+   * Sent only when the route names them in `stateTools`: the conversation's
+   * state decides these, not the wording of one message.
+   */
+  stateful?: readonly string[];
 }
+
+const REVAMP_CONTEXT = "get_storefront_revamp_context";
+const REVAMP_START = "start_storefront_revamp";
+const REVAMP_REFINE = "refine_storefront_revamp";
 
 /**
  * ★ A tool may sit in several groups; the route is the union. A tool in NO
@@ -183,16 +192,16 @@ export const MINK_TOOL_GROUP_TOOLS: Record<MinkToolGroup, GroupTools> = {
       "list_current_offers",
     ],
   },
-  // ★ THE PROPOSAL RIDES WITH THE READ. A personalisation is an interview:
-  //   the message that finishes it is the merchant's answers ("we sell
-  //   handmade candles in Pune, warm and calm"), which carries no change
-  //   word, so a proposal held back for `wantsChange` would be missing on
-  //   exactly the turn it is needed.
-  personalize: {
-    read: [
-      "get_storefront_personalization_context",
-      "propose_storefront_personalization",
-    ],
+  // ★ THE CONVERSATION, NOT THE MESSAGE, PICKS THE REVAMP TOOL. A redesign
+  //   is an interview, and the message that finishes it is the merchant's
+  //   answers ("we sell handmade candles in Pune, warm and calm"), which
+  //   carries no change word, so the start rides with the interview window
+  //   as well as with a change request. Once the conversation holds a
+  //   finished redesign only the refinement is sent: a second start would
+  //   throw away the review the merchant is looking at.
+  revamp: {
+    read: [REVAMP_CONTEXT],
+    stateful: [REVAMP_START, REVAMP_REFINE],
   },
   // ★ The code proposal is sent even for a question, because "explain how a
   //   custom-code proposal is reviewed" is answered from that tool's rules.
@@ -270,6 +279,13 @@ const TOOL_LESS_GROUPS: ReadonlySet<MinkToolGroup> = new Set([
 interface Vocabulary {
   words?: RegExp;
   phrases?: readonly string[];
+  /**
+   * Pairs of phrase lists that count only together: a phrase of each list
+   * somewhere in the message. ★ For a phrase too common to stand alone
+   * ("hisaab se" is "by" or "according to" in Hinglish) that means a
+   * redesign only beside a whole-store object.
+   */
+  together?: ReadonlyArray<readonly [readonly string[], readonly string[]]>;
 }
 
 function words(source: string): RegExp {
@@ -398,20 +414,60 @@ const TOPICS: Partial<Record<MinkToolGroup, Vocabulary>> = {
     ),
     phrases: ["वेबसाइट", "होमपेज"],
   },
-  // ★ Whole-store wording only: "customise the header" is a Builder edit,
-  //   "customise my store" is this.
-  personalize: {
+  // ★ Whole-store wording only: "customise the header" or "redesign the
+  //   homepage" is a Builder edit, "customise my store" is a redesign.
+  revamp: {
     words: words(
-      "personali[sz](?:e|es|ed|ing|ation|ations)|customi[sz](?:e|es|ed|ing) (?:my |our |the |this )?(?:whole |entire |online )?(?:store|shop|site|website|storefront|store front)|make (?:my |our |the |this )?(?:store|shop|site|website|storefront) (?:look |feel )?(?:like (?:mine|my own|my brand|my business|my shop)|mine|my own|more (?:me|personal|unique)|personal|unique)|(?:generic|default|sample) (?:theme|photos?|pictures?|images?|banners?|content|text)|theme(?:'s)? (?:photos?|pictures?|images?|banners?|sample (?:text|content))|replace (?:all )?(?:the )?(?:theme(?:'s)? )?(?:photos?|pictures?|images?|banners?) (?:with|for) (?:my|our)|(?:fit|suit|match) (?:my|our) (?:business|brand|products?|shop|store)|rebrand(?:ing)?|tailor(?:ed)? (?:to|for) (?:my|our)",
+      "(?:customi[sz]|personali[sz])(?:e|es|ed|ing) (?:my |our |the |this )?(?:whole |entire |online )?(?:store|shop|site|website|storefront|store front)|(?:revamp|redesign|rebuild|overhaul|refresh)(?:s|ed|ing)? (?:my |our |the |this )?(?:whole |entire |online )?(?:store|shop|site|website|storefront|store front)|(?:store|shop|site|website|storefront|dukaan|dukan)(?: ko)? (?:customi[sz]e|personali[sz]e|redesign|revamp|rebuild)|(?:make|build|create|design|set up) (?:me )?(?:a |my |our |the |this )?(?:new )?(?:whole |entire |online )?(?:store|shop|site|website|storefront)(?: look| feel)? (?:for|around|about|to fit|to suit|to match|that fits) (?:my|our) (?:business|brand|products?|shop)|build (?:me )?(?:a |my |our |the )?(?:new )?(?:online )?(?:store|shop|site|website|storefront)|make (?:my |our |the |this )?(?:store|shop|site|website|storefront) (?:look |feel )?(?:like (?:mine|my own|my brand|my business|my shop)|mine|my own|more (?:me|personal|unique)|personal|unique)|(?:generic|default|sample) (?:theme|photos?|pictures?|images?|banners?|content|text)|theme(?:'s)? (?:photos?|pictures?|images?|banners?|sample (?:text|content))|replace (?:all )?(?:the )?(?:theme(?:'s)? )?(?:photos?|pictures?|images?|banners?) (?:with|for) (?:my|our)|(?:fit|suit|match) (?:my|our) (?:business|brand|products?|shop|store)|rebrand(?:ing)?|tailor(?:ed)? (?:to|for) (?:my|our)|personali[sz]ations? (?:of|for) (?:my |our |the |this )?(?:whole |entire |online )?(?:store|shop|site|website|storefront|store front)",
     ),
     phrases: [
-      "hisaab se",
-      "hisab se",
       "personalise karo",
       "personalize karo",
+      "customise karo",
+      "customize karo",
+      "website bana",
+      "site bana",
+      "store bana",
+      "dukaan bana",
+      "nayi website",
       "पर्सनलाइज",
       "पर्सनलाइज़",
-      "हिसाब से",
+      "कस्टमाइज",
+      "कस्टमाइज़",
+      "रीडिज़ाइन",
+      "रीडिजाइन",
+      "वेबसाइट बना",
+      "स्टोर बना",
+    ],
+    // ★★ "hisaab se" ALONE IS ORDINARY HINGLISH ("city ke hisaab se orders
+    //   dikhao", orders by city), and it opened the redesign interview, so the
+    //   start tool and its rule rode on the next three unrelated turns. It is
+    //   a redesign only as "business ke hisaab se" beside a whole-store object
+    //   (chat-7).
+    together: [
+      [
+        [
+          "business ke hisaab se",
+          "business ke hisab se",
+          "brand ke hisaab se",
+          "brand ke hisab se",
+          "dhande ke hisaab se",
+          "dhande ke hisab se",
+          "kaam ke hisaab se",
+          "kaam ke hisab se",
+        ],
+        ["website", "web site", "site", "store", "shop", "dukaan", "dukan"],
+      ],
+      [
+        [
+          "बिज़नेस के हिसाब से",
+          "बिजनेस के हिसाब से",
+          "ब्रांड के हिसाब से",
+          "धंधे के हिसाब से",
+          "काम के हिसाब से",
+        ],
+        ["वेबसाइट", "स्टोर", "दुकान", "साइट", "शॉप"],
+      ],
     ],
   },
   storefront_code: {
@@ -473,7 +529,7 @@ const DECLINE_WORDS = words(
 );
 
 const CHANGE_WORDS = words(
-  "add|create|make|build|generate|draft|write|rewrite|compose|prepare|propose|update|change|edit|modify|set|fix|correct|improve|enhance|optimi[sz]e|replace|remove|delete|hide|unhide|publish|unpublish|schedule|send|launch|adjust|increase|decrease|reduce|raise|lower|mark|move|rename|reorder|rearrange|redesign|restyle|upload|import|apply|activate|deactivate|enable|disable|turn (?:on|off)|switch|put|place|insert|swap|convert|translate|shorten|lengthen|refresh|revamp|tweak|restock|transfer|refund|cancel|duplicate|copy|clone|use (?:this|that|these|those|it|my|the)|(?:need|want|would like|looking for) (?:a |an |some |the )?(?:new )?(?:picture|image|photo|banner|hero|page|section|description|blog|post|caption|coupon|offer|discount|product|category|group|menu|logo|design|layout|campaign|email|message)",
+  "add|create|make|build|rebuild|redo|generate|draft|write|rewrite|compose|prepare|propose|update|change|edit|modify|set|fix|correct|improve|enhance|optimi[sz]e|customi[sz](?:e|ed|ing)|personali[sz](?:e|ed|ing)|rebrand|replace|remove|delete|hide|unhide|publish|unpublish|schedule|send|launch|adjust|increase|decrease|reduce|raise|lower|mark|move|rename|reorder|rearrange|redesign|restyle|upload|import|apply|activate|deactivate|enable|disable|turn (?:on|off)|switch|put|place|insert|swap|convert|translate|shorten|lengthen|refresh|revamp|tweak|restock|transfer|refund|cancel|duplicate|copy|clone|use (?:this|that|these|those|it|my|the)|(?:need|want|would like|looking for) (?:a |an |some |the )?(?:new )?(?:picture|image|photo|banner|hero|page|section|description|blog|post|caption|coupon|offer|discount|product|category|group|menu|logo|design|layout|campaign|email|message)",
 );
 const CHANGE_PHRASES = [
   " banao",
@@ -638,6 +694,12 @@ export interface MinkToolRouteInput {
   /** Earlier turns of this conversation, oldest first; only user turns are read. */
   history?: ReadonlyArray<{ role: string; text: string }>;
   answerMedium?: "written" | "spoken";
+  /**
+   * The storefront redesigns this conversation holds (the stream route reads
+   * them). `hasReady`: one finished and not undone, so it can be refined;
+   * `hasActive`: one still building.
+   */
+  revamp?: { hasReady: boolean; hasActive: boolean };
 }
 
 export interface MinkToolRoute {
@@ -651,6 +713,11 @@ export interface MinkToolRoute {
   light: boolean;
   /** Short, content-free labels for the run log ("topic", "page", "history"). */
   reasons: string[];
+  /**
+   * The `stateful` group tools this route sends (the revamp start or
+   * refinement). Absent or empty: none of them.
+   */
+  stateTools?: string[];
 }
 
 export function routeMinkTools(input: MinkToolRouteInput): MinkToolRoute {
@@ -713,12 +780,37 @@ export function routeMinkTools(input: MinkToolRouteInput): MinkToolRoute {
     }
   }
 
-  // ★ An interview keeps its tools. A personalisation is several answers
-  //   long and the answers rarely repeat the word that started it, so a
-  //   recent message that asked for one keeps the group for the turns after.
-  if (!groups.has("personalize") && recentlyAskedToPersonalize(input.history)) {
-    groups.add("personalize");
+  // ★ An interview keeps its tools. A redesign is several answers long and
+  //   the answers rarely repeat the word that started it, so a recent message
+  //   that asked for one keeps the group for the turns after.
+  const interview = recentlyAskedToRevamp(input.history);
+  if (!groups.has("revamp") && interview) {
+    groups.add("revamp");
     reasons.push("interview");
+  }
+
+  // ★ A finished redesign is refined in the merchant's own words ("make it
+  //   warmer", "redo the opening photo"), which rarely name the store, so
+  //   while the conversation holds one, a follow-up or anything about what
+  //   shoppers see brings the group along.
+  // ★★ ADDING PRODUCTS OR CATEGORIES IS A REFINEMENT TOO (chat-3): "Add my
+  //   products" is a chip under every redesign card, and it names only the
+  //   catalogue, so once the interview window closed it was sent the
+  //   standalone product draft and the redesign got no product section. A
+  //   catalogue question that changes nothing stays off it.
+  const revampState = input.revamp;
+  const catalogueChange =
+    wantsChange && (groups.has("catalog") || groups.has("categories"));
+  if (
+    !groups.has("revamp") &&
+    (revampState?.hasReady || revampState?.hasActive) &&
+    (continuation ||
+      groups.has("builder") ||
+      groups.has("media") ||
+      catalogueChange)
+  ) {
+    groups.add("revamp");
+    reasons.push("revamp_state");
   }
 
   // A record open in the dashboard is what most questions asked from it are
@@ -754,19 +846,48 @@ export function routeMinkTools(input: MinkToolRouteInput): MinkToolRoute {
     input.answerMedium !== "spoken" &&
     !SENSITIVE.test(text) &&
     sorted.every((group) => LIGHT_GROUPS.has(group));
-  return { mode: "narrow", groups: sorted, wantsChange, light, reasons };
+  const stateTools = groups.has("revamp")
+    ? revampStateTools(revampState, wantsChange || interview)
+    : [];
+  return {
+    mode: "narrow",
+    groups: sorted,
+    wantsChange,
+    light,
+    reasons,
+    ...(stateTools.length ? { stateTools } : {}),
+  };
+}
+
+/**
+ * ★★ ONE REDESIGN AT A TIME, AND NEVER A SECOND START OVER A FINISHED ONE.
+ * A ready redesign is refined, because a fresh start would replace the
+ * review the merchant is looking at; one still building gets neither (the
+ * job refuses a second, and there is nothing finished to refine yet). With
+ * neither, the start comes with a change request or inside the interview.
+ */
+function revampStateTools(
+  state: MinkToolRouteInput["revamp"],
+  wantsStart: boolean,
+): string[] {
+  if (state?.hasReady) return [REVAMP_REFINE];
+  if (state?.hasActive) return [];
+  return wantsStart ? [REVAMP_START] : [];
 }
 
 /** The tools a narrow route sends; null for "all". */
 export function toolsForRoute(
-  route: Pick<MinkToolRoute, "mode" | "groups" | "wantsChange">,
+  route: Pick<MinkToolRoute, "mode" | "groups" | "wantsChange" | "stateTools">,
 ): ReadonlySet<string> | null {
   if (route.mode === "all") return null;
   const tools = new Set<string>();
+  const picked = new Set(route.stateTools ?? []);
   for (const group of route.groups) {
     const def = MINK_TOOL_GROUP_TOOLS[group];
     for (const name of def.read) tools.add(name);
     if (route.wantsChange) for (const name of def.change ?? []) tools.add(name);
+    for (const name of def.stateful ?? [])
+      if (picked.has(name)) tools.add(name);
   }
   return tools;
 }
@@ -809,7 +930,10 @@ export interface MinkRoutedDeclarations {
  */
 export function applyMinkToolRoute(
   permitted: MinkToolDeclaration[],
-  route: Pick<MinkToolRoute, "mode" | "groups" | "wantsChange"> | null,
+  route: Pick<
+    MinkToolRoute,
+    "mode" | "groups" | "wantsChange" | "stateTools"
+  > | null,
 ): MinkRoutedDeclarations {
   const allowed = route ? toolsForRoute(route) : null;
   if (!allowed) return { declarations: permitted, narrowed: false, omitted: 0 };
@@ -845,13 +969,19 @@ function topicalGroups(text: string): Set<MinkToolGroup> {
   const groups = new Set<MinkToolGroup>();
   for (const group of MINK_TOOL_GROUPS) {
     const vocabulary = TOPICS[group];
-    if (!vocabulary) continue;
-    if (
-      vocabulary.words?.test(text) ||
-      hasPhrase(text, vocabulary.phrases ?? [])
-    )
-      groups.add(group);
+    if (vocabulary && matchesVocabulary(vocabulary, text)) groups.add(group);
   }
+  // ★ "Redesign my website" names the Website Builder only because a
+  //   redesign covers the whole site. Its proposal tools would ride along on
+  //   every redesign step for nothing, so the Builder stays only when the
+  //   rest of the message asks for something of its own ("... and change the
+  //   header").
+  if (
+    groups.has("revamp") &&
+    groups.has("builder") &&
+    !matchesVocabulary(TOPICS.builder!, withoutRevampWording(text))
+  )
+    groups.delete("builder");
   if (REVENUE_WORDS.test(text) && DECLINE_WORDS.test(text))
     groups.add("revenue_investigation");
   if (QUESTION_START.test(text.trim())) groups.add("help");
@@ -859,6 +989,31 @@ function topicalGroups(text: string): Set<MinkToolGroup> {
   // highlight), so help always brings navigation along.
   if (groups.has("help")) groups.add("navigation");
   return groups;
+}
+
+function matchesVocabulary(vocabulary: Vocabulary, text: string): boolean {
+  return Boolean(
+    vocabulary.words?.test(text) ||
+    hasPhrase(text, vocabulary.phrases ?? []) ||
+    (vocabulary.together ?? []).some(
+      ([first, second]) => hasPhrase(text, first) && hasPhrase(text, second),
+    ),
+  );
+}
+
+const REVAMP_WORDING = new RegExp(TOPICS.revamp!.words!.source, "gi");
+
+/** The message with its whole-store redesign wording taken out. */
+function withoutRevampWording(text: string): string {
+  let rest = text.replace(REVAMP_WORDING, " ");
+  for (const phrase of TOPICS.revamp!.phrases ?? [])
+    rest = rest.split(phrase).join(" ");
+  for (const [first, second] of TOPICS.revamp!.together ?? []) {
+    if (!hasPhrase(text, first) || !hasPhrase(text, second)) continue;
+    for (const phrase of [...first, ...second])
+      rest = rest.split(phrase).join(" ");
+  }
+  return rest;
 }
 
 function changeRequested(text: string): boolean {
@@ -905,22 +1060,18 @@ function lastUserMessage(
   return null;
 }
 
-/** How many recent merchant messages keep a personalisation interview going. */
+/** How many recent merchant messages keep a redesign interview going. */
 const INTERVIEW_TURNS = 3;
 
-function recentlyAskedToPersonalize(
+function recentlyAskedToRevamp(
   history: MinkToolRouteInput["history"],
 ): boolean {
   if (!history) return false;
-  const vocabulary = TOPICS.personalize!;
+  const vocabulary = TOPICS.revamp!;
   let seen = 0;
   for (let index = history.length - 1; index >= 0; index--) {
     if (history[index].role !== "user") continue;
-    const text = visibleText(history[index].text);
-    if (
-      vocabulary.words?.test(text) ||
-      hasPhrase(text, vocabulary.phrases ?? [])
-    ) {
+    if (matchesVocabulary(vocabulary, visibleText(history[index].text))) {
       return true;
     }
     seen += 1;

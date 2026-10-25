@@ -25,8 +25,10 @@ import {
   type StructuredResult,
 } from "./provider";
 import { prepareSlotImage } from "./slot-images";
+import { NANO_BANANA_PICTURE_TOKENS, estimateImageCostMicroUsd } from "./cost";
 import {
   GENERATED_LICENSE_NOTE,
+  IMAGE_LIST_PRICE_USD,
   applyGeneratedImages,
   directionFromPackage,
   generatableSlots,
@@ -312,14 +314,37 @@ describe("choosing what to draw", () => {
   });
 
   it("states a run's likely cost and its ceiling with every image redrawn", () => {
-    // 6 slots + the anchor = 7 images at $0.135, each reviewed at $0.01;
-    // at most every slot drawn three times and the anchor four.
+    // 6 slots + the anchor = 7 images at about $0.07 each (Nano Banana 2.1
+    // since 25 Oct 2026), each reviewed at $0.01; at most every slot drawn
+    // three times and the anchor four.
     expect(imageRunEstimate(6)).toEqual({
       images: 7,
-      expectedUsd: 1.02,
-      mostUsd: 3.19,
+      expectedUsd: 0.56,
+      mostUsd: 1.76,
     });
     expect(imageRunEstimate(0).images).toBe(1);
+  });
+
+  it("★★ prices a photo as a theme's mix of 2.1 photos: 2K at HIGH thinking with its references, and the 4K hero slides", () => {
+    expect(IMAGE_LIST_PRICE_USD).toBe(0.07);
+    const photo = (picture: number, input: number) =>
+      estimateImageCostMicroUsd({
+        inputTokens: input,
+        outputTokens: picture,
+        thinkingTokens: 1_350,
+        model: "gemini-nano-banana-2.1",
+      }) / 1_000_000;
+    // A product shot with its ANCHOR and SET (2 x 1,120 input tokens) and a
+    // prompt of about 1,500; a hero slide with its ANCHOR alone.
+    const twoK = photo(NANO_BANANA_PICTURE_TOKENS["2K"], 3_740);
+    const fourK = photo(NANO_BANANA_PICTURE_TOKENS["4K"], 2_620);
+    expect(twoK).toBeCloseTo(0.066, 3);
+    expect(fourK).toBeCloseTo(0.127, 3);
+    // About 21 photos, 2 or 3 of them hero slides.
+    for (const heroes of [2, 3]) {
+      const mix = ((21 - heroes) * twoK + heroes * fourK) / 21;
+      expect(Math.abs(mix - IMAGE_LIST_PRICE_USD)).toBeLessThan(0.01);
+    }
   });
 
   it("asks for the accepted ratio nearest a slot's own shape", () => {

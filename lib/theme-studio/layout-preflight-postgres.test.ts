@@ -29,12 +29,16 @@ vi.mock("./preview", async (original) => ({
   ...(await original<typeof import("./preview")>()),
   openThemeStudioPreview: openPreview,
 }));
+// TS-3A: a stop tells its operator once the settlement commits (builder
+// 3B's notify.ts); here no notification or email worker runs.
+vi.mock("./notify", () => ({ sendThemeStudioNotice: vi.fn(async () => {}) }));
 import { runThemeStudioWorker } from "./worker";
 import { runThemeStudioVisualQaWorker } from "./visual-qa";
 import { claimThemeStudioCapture, finishThemeStudioCapture } from "./capture";
 import { previewPagesFor } from "./preview";
 import { currentAcceptanceBuildId } from "./acceptance";
 import type { ThemePackageV2 } from "./contracts";
+import { CHROME_STATES } from "./chrome-states";
 
 it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
   "checks layouts before artwork, keeps publication fail-closed and stops repeated settings failures using real ancestry",
@@ -55,6 +59,11 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
     await pg.connect();
     try {
       await pg.query("BEGIN");
+      // One queue suite at a time (change-checks-postgres.test.ts says why);
+      // taken before the lock timeout, released by the ROLLBACK.
+      await pg.query(
+        "SELECT pg_advisory_xact_lock(hashtext('theme_studio_queue_db_tests'))",
+      );
       await pg.query("SET LOCAL lock_timeout = '5s'");
       if (
         !(
@@ -152,8 +161,10 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
         return { projectId, version };
       }
       async function measure(
-        version: { package_json: ThemePackageV2 },
+        version: { id: string; package_json: ThemePackageV2 },
         fail = false,
+        /** A small tap target on the phone home page: a warning only. */
+        warn = false,
       ) {
         const pages = previewPagesFor(version.package_json);
         openPreview.mockResolvedValue({
@@ -175,11 +186,28 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
             overflowPx: 0,
             overflowOffenders: [],
             clippedText: [],
-            smallTapTargets: [],
+            smallTapTargets:
+              warn && viewport === "phone360" && page.surface === "home"
+                ? [{ target: "a.tiny", width: 18, height: 18 }]
+                : [],
             imageCropIssues: [],
             brokenImages: 0,
             lcpMs: 900,
             cls: 0.01,
+            // The home page's menu, search, cart, account and sign-in states,
+            // opened and clean: the coverage gate requires them there.
+            ...(page.surface === "home"
+              ? {
+                  states: CHROME_STATES.map((state) => ({
+                    state,
+                    measured: true,
+                    violations: [],
+                    clippedText: [],
+                    smallTapTargets: [],
+                    contrastUnresolved: [],
+                  })),
+                }
+              : {}),
             violations:
               fail && viewport === "phone360" && page.surface === "home"
                 ? [
@@ -194,6 +222,8 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
                 : [],
           })),
         );
+        // ★ TS-3A: the layout check needs no model call, so the capture's
+        // own finish settles it; no review is left waiting for the route.
         expect(
           await finishThemeStudioCapture({
             captureId: claim!.captureId,
@@ -205,7 +235,7 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
               screenshots: [],
             },
           }),
-        ).toMatchObject({ status: "succeeded" });
+        ).toEqual({ status: "succeeded", versionId: version.id });
       }
       async function rejected(sql: string, args: unknown[]) {
         await pg.query("SAVEPOINT invalid_write");
@@ -221,7 +251,17 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
         "INSERT INTO theme_studio_visual_qa_runs(project_id,version_id,package_digest,qa_iteration,browser_report,screenshot_asset_ids) VALUES($1,$2,$3,0,'{}','{}')",
         [first.projectId, first.version.id, first.version.package_digest],
       );
-      await measure(first.version);
+      await measure(first.version, false, true);
+      // The finish records only the checks that stop the run: a check that
+      // holds only a warning (the small tap target) is not one.
+      expect(
+        (
+          await pg.query(
+            "SELECT detail->'failedGates' AS failed FROM theme_studio_events WHERE project_id=$1 AND event_type='auto_qa_browser_finished'",
+            [first.projectId],
+          )
+        ).rows,
+      ).toEqual([{ failed: [] }]);
       expect(
         (
           await pg.query(
@@ -238,9 +278,19 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
           )
         ).rows[0].n,
       ).toBe(1);
+      // Settled in the finish: passed, with the photo run already queued,
+      // and nothing left for the review worker.
+      expect(
+        (
+          await pg.query(
+            "SELECT status FROM theme_studio_visual_qa_runs WHERE project_id=$1",
+            [first.projectId],
+          )
+        ).rows,
+      ).toEqual([{ status: "passed" }]);
       expect(
         await runThemeStudioVisualQaWorker({ providers: ["fake"] }),
-      ).toMatchObject({ layoutPassed: 1, passed: 0 });
+      ).toMatchObject({ claimed: 0, layoutPassed: 0, passed: 0 });
       expect(
         (
           await pg.query(
@@ -272,9 +322,18 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
       await pg.query("ROLLBACK TO SAVEPOINT candidate_attempt");
       const second = await draft();
       await measure(second.version, true);
+      // The failed layout check queued its settings repair in the finish.
+      expect(
+        (
+          await pg.query(
+            "SELECT status FROM theme_studio_visual_qa_runs WHERE project_id=$1",
+            [second.projectId],
+          )
+        ).rows,
+      ).toEqual([{ status: "revision_queued" }]);
       expect(
         await runThemeStudioVisualQaWorker({ providers: ["fake"] }),
-      ).toMatchObject({ revisionQueued: 1, failed: 0 });
+      ).toMatchObject({ claimed: 0 });
       const [repair] = (
         await pg.query(
           "SELECT id FROM theme_studio_runs WHERE project_id=$1 AND automatic AND kind='revise'",

@@ -14,7 +14,11 @@
 //     next open starts a new chat (the old one stays in History);
 //   - a question asked from Home, or an "Ask Mink" button, starts a new chat;
 //   - choosing a chat in History continues it, and deleting the open chat
-//     leaves a new one.
+//     leaves a new one;
+//   - a dashboard address that names a chat (`?chat=<id>`, the "redesign
+//     ready" notice's link) opens it in the full view, as choosing it in
+//     History does, and only the viewer's own: one the server does not find
+//     for them opens a new chat.
 //
 // The tab is remembered in sessionStorage, which a reload keeps and a new tab
 // does not, so "same tab" needs no other bookkeeping. Pure apart from the
@@ -35,6 +39,43 @@ export const MINK_NEW_CHAT_TITLE = "New chat";
 export const MINK_CONVERSATION_LIMIT = 10;
 
 const STORAGE_KEY = "storemink:mink-active-chat";
+
+/**
+ * ★★ The dashboard address parameter that opens one of the viewer's chats
+ *   (robustness audit B20): `/dashboard?chat=<conversation id>`. The chat
+ *   provider reads it once, opens the chat in the full view and takes the
+ *   parameter off the address. Pure, so the server (the ready notice) and the
+ *   browser (the provider) build and read one address.
+ */
+export const MINK_CHAT_PARAM = "chat";
+
+const CHAT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/**
+ * The chat an address names, or null when it names none that could be one:
+ * only a conversation id (a UUID, any case) is ever asked for.
+ */
+export function readMinkChatParam(
+  value: string | null | undefined,
+): string | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim().toLowerCase();
+  return CHAT_ID_PATTERN.test(id) ? id : null;
+}
+
+/**
+ * The dashboard address that opens a chat in the full view, or plain
+ * `/dashboard` when there is no chat to name.
+ */
+export function minkChatHref(
+  conversationId: string | null | undefined,
+): string {
+  const id = readMinkChatParam(conversationId);
+  return id
+    ? `/dashboard?${MINK_CHAT_PARAM}=${encodeURIComponent(id)}`
+    : "/dashboard";
+}
 
 export type MinkActiveChat = { id: string; lastActivityAt: number };
 

@@ -583,7 +583,7 @@ export default function ShopClient({
                         }
                       >
                         {shop.min !== null && shop.max !== null
-                          ? `${formatPrice(shop.min)} – ${formatPrice(shop.max)}`
+                          ? `${formatPrice(shop.min)} to ${formatPrice(shop.max)}`
                           : shop.min !== null
                             ? `From ${formatPrice(shop.min)}`
                             : `Up to ${formatPrice(shop.max!)}`}
@@ -698,7 +698,7 @@ export default function ShopClient({
                       {shopFilters && paging === "paged" && (
                         <nav className="shop-pages" aria-label="Pages">
                           <p className="shop-pages-count" aria-live="polite">
-                            Showing {offset + 1}–{offset + shown.length} of{" "}
+                            Showing {offset + 1} to {offset + shown.length} of{" "}
                             {plural(filtered.length)}
                           </p>
                           {pageCount > 1 && (

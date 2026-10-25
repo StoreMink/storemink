@@ -7,6 +7,7 @@ import { adminLocations, orders, products, stores } from "@/drizzle/schema";
 import { withUser } from "@/lib/db/client";
 import { normalizeAnalyticsTimeZone } from "@/lib/analytics/range";
 import { resolveStoreSettings } from "@/lib/settings/registry";
+import { effectivePlan } from "@/lib/plans";
 import { getBrandSoulForStore } from "@/lib/ai/brand-voice";
 import { MinkRequestError } from "./errors";
 import { requireMinkStoreInvite } from "./access";
@@ -58,7 +59,13 @@ export async function getMinkActorContext(
   const identity = { uid: viewer.userId, email: viewer.userEmail };
   const trusted = await withUser(identity, async (db) => {
     const storeRows = await db
-      .select({ plan: stores.plan, settings: stores.settings })
+      .select({
+        plan: stores.plan,
+        planExpiresAt: stores.planExpiresAt,
+        compPlan: stores.compPlan,
+        compExpiresAt: stores.compExpiresAt,
+        settings: stores.settings,
+      })
       .from(stores)
       .where(eq(stores.id, viewer.storeId))
       .limit(1);
@@ -118,10 +125,20 @@ export async function getMinkActorContext(
       503,
     );
   }
+  // ★ The plan every other gate reads: a lapsed timed grant is free today
+  //   and a live comp overlay raises the plan (lib/plans.ts effectivePlan).
+  //   Reading the stored column alone gave Mink different limits in chat
+  //   than the dashboard showed, and than the revamp runner's rebuilt actor.
+  const plan = effectivePlan({
+    plan: rawPlan,
+    plan_expires_at: trusted.store?.planExpiresAt ?? null,
+    comp_plan: trusted.store?.compPlan ?? null,
+    comp_expires_at: trusted.store?.compExpiresAt ?? null,
+  }) as MinkPlan;
 
   const settings = resolveStoreSettings(
     (trusted.store?.settings as Record<string, unknown> | undefined) ?? {},
-    rawPlan,
+    plan,
   );
   const rawBusiness =
     trusted.store?.settings &&
@@ -148,7 +165,7 @@ export async function getMinkActorContext(
     roleSlug: viewer.profile.role ?? "",
     permissions: viewer.permissions,
     isSuperadmin: viewer.isSuperadmin,
-    effectivePlan: rawPlan as MinkPlan,
+    effectivePlan: plan,
     locationIds: trusted.locationIds,
     analyticsTimeZone: normalizeAnalyticsTimeZone(rawBusiness.timeZone),
     currency: "INR",

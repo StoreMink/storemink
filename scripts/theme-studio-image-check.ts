@@ -8,8 +8,10 @@
  *   npm run theme-studio:image-check -- --live --yes
  *       Live. Calls the image model on Vertex AI three times — an anchor, a
  *       product shot matched to it, and a second product shot matched to both —
- *       about $0.40 at list price. --yes is required. Needs ADC and
- *       THEME_STUDIO_GCP_PROJECT_ID (or GCP_PROJECT_ID).
+ *       about $0.20 at list price (Nano Banana 2.1 at 2K with HIGH thinking,
+ *       as Theme Studio's worker asks; it was about $0.40 on Pro). --yes is
+ *       required. Needs ADC and THEME_STUDIO_GCP_PROJECT_ID (or
+ *       GCP_PROJECT_ID).
  *   Add --review to use the production HIGH-effort image reviewer, and
  *   --apparel for two full-length garments. At most three draws and three
  *   reviews, under a nine-minute deadline. report.json records timings and
@@ -23,6 +25,7 @@
  * provider image and its cropped, compressed slot WebP, so a paid run can be
  * looked at rather than only measured.
  */
+import { ThinkingLevel } from "@google/genai";
 import { loadEnvConfig } from "@next/env";
 import type {
   ThemeImageRequest,
@@ -91,7 +94,7 @@ async function main() {
     await import("../lib/theme-studio/image-fake");
   const { createVertexImageClient } =
     await import("../lib/theme-studio/image-vertex");
-  const { getThemeStudioImageConfig } =
+  const { getThemeStudioImageConfig, themeStudioImageSize } =
     await import("../lib/theme-studio/image-models");
   const { estimateImageCostMicroUsd } =
     await import("../lib/theme-studio/cost");
@@ -126,7 +129,13 @@ async function main() {
       console.error("Set THEME_STUDIO_GCP_PROJECT_ID or GCP_PROJECT_ID.");
       process.exit(2);
     }
-    client = createVertexImageClient(config);
+    // ★ Theme Studio's own request (worker.ts imageClientFor): 2K, HIGH
+    //   thinking (owner, 25 Oct 2026). Only the photos a homepage opens with
+    //   are 4K, and this check draws none (it names no homepage slides).
+    client = createVertexImageClient(config, {
+      imageSize: themeStudioImageSize,
+      thinkingLevel: ThinkingLevel.HIGH,
+    });
     console.log(
       `Live: ${config.providerModel} in ${config.location} (${config.projectId})`,
     );

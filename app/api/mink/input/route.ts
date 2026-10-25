@@ -11,11 +11,46 @@ import {
   extractMinkDesign,
   extractMinkInput,
 } from "@/lib/mink/input-provider";
+import type { MinkReaderUnavailableError } from "@/lib/mink/input-provider";
 import { reserveMinkInput } from "@/lib/mink/input-limits";
 import { MinkRequestError } from "@/lib/mink/errors";
-import { logInfo } from "@/lib/observability/logger";
+import { logError, logInfo } from "@/lib/observability/logger";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+/** The whole request, every model attempt included. */
+const INPUT_DEADLINE_MS = 45_000;
+
+/**
+ * What may be logged about a failed request: counts, model ids, locations,
+ * HTTP statuses and our own error codes. Never the provider's own words, a
+ * filename, bytes or a transcript (the rule this route has always kept).
+ */
+function failureFacts(error: unknown): Record<string, unknown> {
+  if (error instanceof MinkRequestError) return { code: error.code };
+  if (error instanceof Error && error.name === "MinkReaderUnavailableError") {
+    const failure = error as MinkReaderUnavailableError;
+    return {
+      attempts: failure.attempts,
+      model: failure.model,
+      location: failure.location,
+      status: failure.status ?? undefined,
+    };
+  }
+  return {};
+}
+
+/** A content-free one-line reason, logged in place of the error itself. */
+function failureReason(error: unknown, timedOut: boolean): string {
+  if (timedOut) return "the attachment reader timed out";
+  if (error instanceof MinkRequestError) return error.code;
+  if (error instanceof Error && error.name === "MinkReaderUnavailableError") {
+    const status = (error as MinkReaderUnavailableError).status;
+    return status
+      ? `no model could read the attachment (HTTP ${status})`
+      : "no model could read the attachment";
+  }
+  return error instanceof Error ? error.name : "unknown";
+}
 const json = (body: unknown, status = 200) =>
   NextResponse.json(body, {
     status,
@@ -46,7 +81,11 @@ export async function POST(request: Request) {
     return json({ error: "Input processing is busy. Try again shortly." }, 429);
   processing++;
   const id = crypto.randomUUID();
-  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(45_000)]);
+  const deadlineAt = Date.now() + INPUT_DEADLINE_MS;
+  const signal = AbortSignal.any([
+    request.signal,
+    AbortSignal.timeout(INPUT_DEADLINE_MS),
+  ]);
   let attempted = false;
   try {
     const actor = await getMinkActorContext(id);
@@ -72,17 +111,24 @@ export async function POST(request: Request) {
     // comes back differs. Routing the design read through this endpoint is what
     // gives it the 5 MiB cap, the image validation, the replay key and the rate
     // limits for free; a second endpoint would have had to repeat all of them.
+    // ★ The reader retries a busy model and then fails over to the Mink
+    // fallback (input-provider.ts), all inside this route's one deadline.
     const result =
       input.mode === "design"
-        ? await extractMinkDesign(config, checked, signal)
-        : await extractMinkInput(config, checked, signal, input.maxCharacters);
+        ? await extractMinkDesign(config, checked, signal, { deadlineAt })
+        : await extractMinkInput(config, checked, signal, input.maxCharacters, {
+            deadlineAt,
+          });
     // Content-free telemetry only. Never log a filename, byte buffer, transcript or provider error.
     logInfo("mink.input.completed", {
       requestId: id,
       storeId: actor.storeId,
       kind: checked.kind,
       mode: input.mode,
-      model: config.model,
+      // The model that read it, which is the fallback after a failover.
+      model: result.model,
+      location: result.location,
+      attempts: result.attempts,
       inputTokens: result.usage?.promptTokenCount ?? null,
       outputTokens: result.usage?.candidatesTokenCount ?? null,
       thoughtTokens: result.usage?.thoughtsTokenCount ?? null,
@@ -113,11 +159,30 @@ export async function POST(request: Request) {
         : { text: result.text, kind: checked.kind, mode: "extract" },
     );
   } catch (error) {
-    logInfo("mink.input.failed", {
+    const context = {
       requestId: id,
       providerAttempted: attempted,
       usageStatus: "unavailable",
-    });
+      ...failureFacts(error),
+    };
+    if (error instanceof MinkRequestError && error.status < 500) {
+      // A verdict on this request (too large, unreadable, a limit, no access
+      // or consent): nothing is broken, so it is information.
+      logInfo("mink.input.failed", context);
+    } else if (request.signal.aborted) {
+      // The merchant went away before the reading came back.
+      logInfo("mink.input.failed", { ...context, cancelled: true });
+    } else {
+      // ★★ THE READER COULD NOT ANSWER (robustness audit B12: these were
+      // logged as information, so nobody ever saw them). Every model busy or
+      // refusing, the deadline, a configuration or database fault: an error,
+      // with a content-free reason in place of the error's own words.
+      logError(
+        "mink.input.failed",
+        failureReason(error, signal.aborted),
+        context,
+      );
+    }
     if (error instanceof MinkRequestError)
       return json({ error: error.message, code: error.code }, error.status);
     return json(

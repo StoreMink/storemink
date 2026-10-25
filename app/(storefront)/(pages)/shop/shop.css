@@ -572,7 +572,8 @@
   right: 14px;
   top: 14px;
   background: var(--sm-ink);
-  color: var(--shop-on-accent);
+  /* On-ink on the ink fill, the home carousel's rule (homepage.css). */
+  color: var(--sm-on-ink);
   font-size: 13px;
   padding: 6px 14px;
   text-transform: none;
@@ -900,8 +901,13 @@
   text-decoration: line-through;
 }
 
-/* Flashy "Best value" badge — gold gradient, glow, and a slow shine sweep so
-   it catches the eye and sells the deal. */
+/* Flashy "Best value" badge: a glow in the theme's highlight and a slow shine
+   sweep so it catches the eye and sells the deal. The pill itself is ink
+   with on-ink text, the pair the design contract holds to 4.5:1. It was a
+   gradient of the highlight under on-accent text, two colours the contract
+   never pairs: 1.16:1 at its light end on Ritual, 1.67:1 on the default
+   palette, and a gradient the browser check cannot measure at all
+   (scripts/theme-studio-contrast-check.mjs). */
 .pdp-variant-badge {
   position: relative;
   overflow: hidden;
@@ -912,13 +918,8 @@
   letter-spacing: 0.06em;
   padding: 3px 9px;
   border-radius: 6px;
-  color: var(--sm-on-accent);
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--sm-highlight) 72%, #fff) 0%,
-    var(--sm-highlight) 55%,
-    color-mix(in srgb, var(--sm-highlight) 82%, #000) 100%
-  );
+  color: var(--sm-on-ink);
+  background: var(--sm-ink);
   box-shadow:
     0 2px 8px color-mix(in srgb, var(--sm-highlight) 45%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.5);
@@ -946,9 +947,12 @@
     transform: translateX(130%);
   }
 }
+/* No shine under reduced motion, so no pseudo-element either: a parked one
+   is invisible but still makes the browser check (axe, which measures with
+   reduced motion) report the badge's text as unmeasurable. */
 @media (prefers-reduced-motion: reduce) {
   .pdp-variant-badge::after {
-    animation: none;
+    content: none;
   }
 }
 
@@ -1101,6 +1105,15 @@
   font-size: 0.9rem;
 }
 
+/* 16px stops iOS zooming the page when the PIN code box takes focus (every
+   iPhone browser is Safari underneath). Larger screens keep 0.9rem.
+   Pinned by app/(storefront)/input-zoom-coverage.test.ts. */
+@media (max-width: 600px) {
+  .pdp-delivery-form input {
+    font-size: 16px;
+  }
+}
+
 .pdp-delivery-form button {
   align-self: stretch;
   min-width: 82px;
@@ -1187,9 +1200,12 @@
   color: #15803d;
 }
 
+/* The theme's error colour, as the drawer's delivery panel writes its error
+   line (delivery-location.module.css): a fixed #b42318 read 2.53:1 on a dark
+   palette's card (scripts/theme-studio-contrast-check.mjs). */
 .pdp-delivery-result.is-unavailable,
 .pdp-delivery-result.is-unavailable > svg {
-  color: #b42318;
+  color: var(--sm-error, #b42318);
 }
 
 .pdp-delivery-result.is-loading {
@@ -2370,7 +2386,11 @@
 }
 .sm-storefront-grocery .gpdp-price-note {
   font-size: 0.85rem;
-  color: var(--sm-ink-soft);
+  /* Ink, as the prices above it: this card is butter, and the design
+     contract pairs ink-soft with butter only for a grocery storefront, while
+     a merchant can pick this product page on any theme (ink-soft read 3.76:1
+     on Studio's butter, scripts/theme-studio-contrast-check.mjs). */
+  color: var(--sm-ink);
   margin: -6px 0 0;
 }
 
@@ -2500,7 +2520,8 @@
   gap: 7px;
   font-size: 0.85rem;
   font-weight: 600;
-  color: var(--sm-ink-soft);
+  /* Ink on the butter card, the price note's rule above. */
+  color: var(--sm-ink);
 }
 .sm-storefront-grocery .gpdp-trust svg {
   color: var(--sm-accent, var(--brand-primary));

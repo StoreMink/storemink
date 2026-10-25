@@ -2048,9 +2048,10 @@ top-up answers again. (WA-8.5)
 
 **L16.10 The eval set, live.** Operator terminal, against the project dev
 runs on: `npm run mink:whatsapp-eval -- --live --yes --out=/tmp/wa-eval.json`.
-Expect: every case passes. The report's `stalledOnce` counts answers that
-needed the second attempt; record it with the latencies. Attach the report to
-the results. (WA-8.9)
+Expect: every case passes. The report's summary counts the answers that
+needed another attempt as `stalls`, `busyRetries` and `fallbackAnswers`
+(always 0: the eval grades the configured model alone); record them with the
+latencies. Attach the report to the results. (WA-8.9)
 
 ### Part L17: The full inbox (WA-9.1 to WA-9.9)
 

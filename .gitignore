@@ -41,6 +41,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# python bytecode (written whenever a scripts/*.py file runs)
+__pycache__/
+*.py[cod]
+
 .mcp.json
 
 # staging data dump (test-user contact data — local re-seed source only)

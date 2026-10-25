@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { after } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
@@ -20,6 +21,8 @@ import {
 import { getPlanAllowancesLive } from "@/lib/plans/allowances";
 import { getMinkConfig } from "@/lib/mink/config";
 import { recordEvent } from "@/lib/notifications/record";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
+import { rateLimit } from "@/lib/rate-limit";
 
 // Per-store Mink credit quota — the first real enforcement of a plan limit.
 // Every supported task consumes credits; the included cap comes from the
@@ -127,21 +130,109 @@ export async function getMinkCreditCycle(
   }
 }
 
+/**
+ * Exactly what one consumeAiQuota call took, so refundAiQuota can give back
+ * that and nothing else: one unit of the plan cycle's included allowance (with
+ * the period it was counted in), one purchased or granted credit, or nothing
+ * at all (an unlimited plan, or a read that failed open).
+ *
+ * ★ EVERY TAKE HAS ITS OWN ID, minted here. It is what makes a refund
+ * idempotent: refund_ai_quota records the id before it gives anything back,
+ * so a second refund of the same take finds it and gives back nothing.
+ */
+export type AiQuotaTake =
+  | { source: "plan"; takeId: string; period: string }
+  | { source: "credit"; takeId: string }
+  | { source: "none" };
+
+const NOTHING_TAKEN: AiQuotaTake = { source: "none" };
+
+// ★ Takes given back in this process. The low-balance notice reads the
+// balance AFTER the response, by which time a failed generation's credit is
+// back, so a store sitting at exactly LOW_REMAINING was told "3 left" again on
+// every failure. A refunded take reports nothing. Weak, so a take is forgotten
+// with the request that held it.
+const refundedTakes = new WeakSet<AiQuotaTake>();
+
 export interface QuotaResult {
   allowed: boolean;
-  /** What the generation was drawn from ("plan" allowance or a purchased
-   *  "credit") — lets callers phrase UI copy accurately. */
-  source?: "plan" | "credit";
+  /** Present whenever `allowed`: what was taken, for refundAiQuota. */
+  taken?: AiQuotaTake;
   /** Friendly, plan-aware message when blocked. */
   error?: string;
 }
 
 /**
+ * How often one store, and one admin in it, may ask Generate with AI to
+ * write. ★★ THE ONE BOUND ON A LOOP OF FAILURES (robustness review of B1):
+ * every way out that does not deliver gives its credit back, a reply cut short
+ * at its token limit included, and Google bills those tokens all the same.
+ * Before the refunds a failing request still cost the store a credit, which
+ * was the only thing that stopped a script asking for copy that always
+ * fails. Generous for a person (a click every few seconds, all day), and
+ * shared by every Generate with AI button, since each costs the same.
+ */
+export const AI_COPY_RATE_LIMITS = {
+  storePerMinute: 20,
+  storePerHour: 200,
+  adminPerMinute: 10,
+} as const;
+
+/** What a store over its Generate with AI rate is told. */
+export const AI_COPY_RATE_LIMITED_MESSAGE =
+  "Your store has asked AI to write a lot in a short time. Try again a little later.";
+
+/** Whether one more Generate with AI request is within the rates. Fails open. */
+async function withinAiCopyRates(
+  storeId: string,
+  actorId: string,
+): Promise<boolean> {
+  const limits = AI_COPY_RATE_LIMITS;
+  const [storeMinute, storeHour, adminMinute] = await Promise.all([
+    rateLimit(`ai-copy:store:${storeId}`, {
+      max: limits.storePerMinute,
+      windowSeconds: 60,
+    }),
+    rateLimit(`ai-copy:store-hour:${storeId}`, {
+      max: limits.storePerHour,
+      windowSeconds: 3_600,
+    }),
+    rateLimit(`ai-copy:admin:${storeId}:${actorId}`, {
+      max: limits.adminPerMinute,
+      windowSeconds: 60,
+    }),
+  ]);
+  if (storeMinute.allowed && storeHour.allowed && adminMinute.allowed) {
+    return true;
+  }
+  // Content-free: which rate, never what was asked.
+  logWarn("ai.quota: rate limited", {
+    storeId,
+    storeMinute: storeMinute.allowed,
+    storeHour: storeHour.allowed,
+    adminMinute: adminMinute.allowed,
+  });
+  return false;
+}
+
+/**
  * Reserve one Mink credit for the store: the plan's included allowance first,
  * then one purchased/granted credit once the cycle is spent.
- * Call BEFORE the Gemini request in every AI action.
+ * Call BEFORE the Gemini request in every AI action, and hand the result's
+ * `taken` to refundAiQuota on every way out that does not deliver the copy
+ * (lib/ai/credited-copy.ts does both).
+ *
+ * ★ THE RATES COME FIRST (`AI_COPY_RATE_LIMITS`, per store and per admin
+ *   `actorId`), so a request over them reads nothing and takes nothing. The
+ *   limiter fails open: a database hiccup must not stop the merchant writing.
  */
-export async function consumeAiQuota(storeId: string): Promise<QuotaResult> {
+export async function consumeAiQuota(
+  storeId: string,
+  { actorId }: { actorId: string },
+): Promise<QuotaResult> {
+  if (!(await withinAiCopyRates(storeId, actorId))) {
+    return { allowed: false, error: AI_COPY_RATE_LIMITED_MESSAGE };
+  }
   let storeRow:
     | {
         plan: string;
@@ -177,12 +268,12 @@ export async function consumeAiQuota(storeId: string): Promise<QuotaResult> {
       "consumeAiQuota (plan read, failing open):",
       err instanceof Error ? err.message : err,
     );
-    return { allowed: true };
+    return { allowed: true, taken: NOTHING_TAKEN };
   }
 
   const plan = effectivePlan(storeRow ?? NO_COMP);
   const cap = allowanceFor(plan, allowances);
-  if (cap === null) return { allowed: true, source: "plan" }; // unlimited
+  if (cap === null) return { allowed: true, taken: NOTHING_TAKEN }; // unlimited
 
   let ok: boolean;
   try {
@@ -197,11 +288,16 @@ export async function consumeAiQuota(storeId: string): Promise<QuotaResult> {
       "consumeAiQuota (RPC, failing open):",
       err instanceof Error ? err.message : err,
     );
-    return { allowed: true };
+    return { allowed: true, taken: NOTHING_TAKEN };
   }
   if (ok) {
-    reportAiBalance(storeId);
-    return { allowed: true, source: "plan" };
+    const taken: AiQuotaTake = {
+      source: "plan",
+      takeId: randomUUID(),
+      period: cycle.period,
+    };
+    reportAiBalance(storeId, taken);
+    return { allowed: true, taken };
   }
 
   // Monthly allowance spent — fall back to the purchased-credit balance.
@@ -216,11 +312,12 @@ export async function consumeAiQuota(storeId: string): Promise<QuotaResult> {
       "consumeAiQuota (credits, failing open):",
       err instanceof Error ? err.message : err,
     );
-    return { allowed: true };
+    return { allowed: true, taken: NOTHING_TAKEN };
   }
   if (spent) {
-    reportAiBalance(storeId);
-    return { allowed: true, source: "credit" };
+    const taken: AiQuotaTake = { source: "credit", takeId: randomUUID() };
+    reportAiBalance(storeId, taken);
+    return { allowed: true, taken };
   }
 
   return {
@@ -229,6 +326,83 @@ export async function consumeAiQuota(storeId: string): Promise<QuotaResult> {
       ? `You've used all ${cap} Mink credits included in the ${PLAN_META[plan].name} plan for this cycle and have no top-up credits left. Buy Mink credits (Dashboard → Plans & Billing) or upgrade your plan.`
       : `You've used all ${cap} Mink credits included in the ${PLAN_META[plan].name} plan for this cycle. Upgrade your plan for more.`,
   };
+}
+
+/**
+ * What refundAiQuota did: gave the take back; had nothing to give back (no
+ * take, an unlimited plan, a read that failed open, or a take already given
+ * back); or could not write the refund, so the credit stays spent.
+ */
+export type AiRefundOutcome = "refunded" | "none" | "failed";
+
+/** Attempts at writing one refund: the first, and one more after a pause. */
+export const AI_REFUND_ATTEMPTS = 2;
+/** The pause before the second attempt: a random 300 to 600 ms. */
+export const AI_REFUND_RETRY_DELAY_MS = { min: 300, max: 600 } as const;
+
+/**
+ * Give back what consumeAiQuota took when the work it paid for did not
+ * happen: the model call failed, its reply was unusable, or something threw
+ * before the copy reached the merchant (robustness audit B1: the credit used
+ * to be taken before the model was asked and never returned). A plan take
+ * lowers that period's `ai_usage.used` by one, never below 0; a credit take
+ * puts one credit back on the balance with a ledger row (refund_ai_quota,
+ * migration 20261023_0237_ai_credit_refund).
+ *
+ * ★ ONCE PER TAKE: a second call with the same take gives back nothing, so a
+ * retried request or a double-wired caller cannot mint credits.
+ *
+ * ★ ASKED TWICE: a write that throws (the pool had no connection free within
+ * its 5 s wait, a dropped socket) is tried once more after a short pause,
+ * which the once-per-take rule makes safe even when the first did land.
+ *
+ * ★ FAILS SOFT: logs and answers "failed", never throws. A refund that could
+ * not be written is a credit the store is owed, which an operator can grant
+ * back from the log; the caller must then stop telling the merchant nothing
+ * was charged (`withoutNothingChargedClaim`).
+ */
+export async function refundAiQuota(
+  storeId: string,
+  taken: AiQuotaTake | undefined,
+): Promise<AiRefundOutcome> {
+  if (!taken || taken.source === "none") return "none";
+  const { source, takeId } = taken;
+  const period = taken.source === "plan" ? taken.period : null;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const res = await withService((db) =>
+        db.execute(
+          sql`select refund_ai_quota(p_take => ${takeId}::uuid, p_store => ${storeId}::uuid, p_source => ${source}, p_period => ${period}::text) as refunded`,
+        ),
+      );
+      const refunded =
+        (res.rows[0] as { refunded?: unknown } | undefined)?.refunded === true;
+      // ★ Given back either way: false means this take already was (by an
+      //   earlier attempt whose answer was lost, say), so no notice follows.
+      refundedTakes.add(taken);
+      logInfo("ai.quota: refund", { storeId, source, refunded, attempt });
+      return refunded ? "refunded" : "none";
+    } catch (err) {
+      if (attempt < AI_REFUND_ATTEMPTS) {
+        await pause(
+          AI_REFUND_RETRY_DELAY_MS.min +
+            Math.random() *
+              (AI_REFUND_RETRY_DELAY_MS.max - AI_REFUND_RETRY_DELAY_MS.min),
+        );
+        continue;
+      }
+      logError("ai.quota: refund failed", err, {
+        storeId,
+        source,
+        attempts: attempt,
+      });
+      return "failed";
+    }
+  }
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Remaining generations at which the merchant gets a heads-up. */
@@ -257,11 +431,13 @@ export function aiWarnAt(remaining: number): boolean {
  * Warn once when a store's AI allowance runs low (see aiWarnAt).
  *
  * Deferred and fully swallowed: a quota warning must never affect the
- * generation that triggered it.
+ * generation that triggered it. A take that was refunded reports nothing
+ * (see refundedTakes).
  */
-function reportAiBalance(storeId: string): void {
+function reportAiBalance(storeId: string, taken: AiQuotaTake): void {
   try {
     after(async () => {
+      if (refundedTakes.has(taken)) return;
       try {
         const usage = await getAiUsage(storeId);
         if (usage.cap === null) return; // unlimited plan — nothing to warn about

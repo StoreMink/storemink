@@ -661,15 +661,19 @@ card; nothing is charged until a person presses Send. _Pinned by
 `inbound-auto-reply.test.ts` ("a draft (drafts mode) is asked for")._
 
 **WA-8.8 — Bounded and quiet when it cannot.** At most 20 answers an hour
-per conversation, 300 per store and 3,000 platform-wide; a model call is
-held to 25 seconds and asked once more only when it stalled (a refusal is
-final, and a stall costs no credit); a provider error, two stalls, a
-switched-off mode, a paused number or Mink being unavailable all end as "a
-person reads it", never as a failed delivery. _Pinned by
-`mink-answer.test.ts` ("rate limits, a switched-off mode, and an unavailable
-Mink all skip to a person", "never throws", "needed the second attempt") and
-`mink-model.test.ts` (a stall is followed by exactly one more attempt; a
-refusal is final)._
+per conversation, 300 per store and 3,000 platform-wide; each model attempt
+is held to 25 seconds; a busy main model (a 429, a 5xx, a dropped connection
+or a stall) is asked once more, then gemini-3.5-flash at asia-south1 once; a
+main model that refuses outright (403 or 404) goes straight to that
+fallback; any other refusal (400, 401, 422) is final; no retry costs a
+credit. A provider error, a refusal, three busy attempts, a switched-off
+mode, a paused number or Mink being unavailable all end as "a person reads
+it", never as a failed delivery. _Pinned by `mink-answer.test.ts` ("rate
+limits, a switched-off mode, and an unavailable Mink all skip to a person",
+"never throws", "needed the second attempt") and `mink-model.test.ts` (a
+stall is followed by exactly one more attempt; a 429 is asked once more,
+then the fallback; a main 403 or 404 goes to the fallback, and with a busy
+fallback hands over on the refusal; 400, 401 and 422 are final)._
 
 **WA-8.9 — The eval set.** `npm run mink:whatsapp-eval` runs 21 cases
 offline (the gate, the fixtures, the sheet and the parser);

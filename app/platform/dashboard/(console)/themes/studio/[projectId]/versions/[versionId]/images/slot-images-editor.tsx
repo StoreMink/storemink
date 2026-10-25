@@ -2,30 +2,41 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ImageUp, Loader2, RefreshCw, Save, X } from "lucide-react";
+import { ImageUp, Loader2, Save, X } from "lucide-react";
 import { toast } from "sonner";
-import {
-  queueThemeStudioImagesAction,
-  replaceThemeStudioSlotImagesAction,
-} from "@/app/actions/theme-studio-actions";
+import { replaceThemeStudioSlotImagesAction } from "@/app/actions/theme-studio-actions";
+import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
 import {
   THEME_IMAGE_PROBLEM_LABEL,
   redrawEstimate,
   type SlotDrawHistory,
 } from "@/lib/theme-studio/image-history";
 import type { ThemeStudioSlotView } from "@/lib/theme-studio/slot-images";
+import { plainText } from "../../../../studio-ui";
+import { designLabel } from "../../../../studio-words";
+import { useStudioPage } from "../../../studio-tabs";
+import { RedrawPicturesButton } from "./generate-images-button";
+import { pictureName } from "./picture-names";
 
-// The slot-image editor. Uploads go straight to the slot-image route, which
-// crops and stores them without changing any version; they are STAGED here
-// with alt text and provenance, and saved together as one new version.
-// Nothing here decides validity — the server re-checks every field.
+// ---------------------------------------------------------------------------
+// The picture editor of the theme page's Pictures tab (wave TS-2, builder
+// 2C; plan section 4, "Controls that keep a home").
 //
-// Track 3.5: each slot also shows what an image run is asked to draw for it
-// (the brief) and how its current image came to be (attempts, the check's
-// verdict, cost), and a placeholder or generated image can be ticked for a
-// REDRAW — a run of just those slots, matched to the theme's existing
-// art-direction image. An uploaded image is never offered: it is the
-// operator's to replace.
+// Uploads go straight to the slot-image route, which crops and stores them
+// without changing any design; they are STAGED here with their description
+// and where they came from, and saved together as ONE new design. Nothing
+// here decides validity: the server checks every field again.
+//
+// Each picture also says what the image model is asked to draw for it and
+// how its current picture came to be (the picture check's verdict). A
+// placeholder or a drawn picture can be ticked for a Redraw: a run of just
+// those pictures, matched to the theme's existing art direction, started
+// with one click and a small confirm that names how many. An uploaded
+// picture is never offered: it is the operator's to replace.
+//
+// ★ WORDS. A design is "Design N"; costs are in the Log tab and in the
+// Redraw confirm only; the dashboard's tokens only.
+// ---------------------------------------------------------------------------
 
 type Source = "operator-owned" | "licensed";
 
@@ -41,10 +52,10 @@ interface Staged {
 }
 
 const SOURCE_LABEL: Record<string, string> = {
-  generated: "Generated",
-  "operator-owned": "Operator-owned",
+  generated: "Drawn by Theme Studio",
+  "operator-owned": "Ours",
   licensed: "Licensed",
-  "legacy-bundled": "Bundled",
+  "legacy-bundled": "From a bundled theme",
 };
 
 function ratio(width: number | null, height: number | null): string {
@@ -69,23 +80,28 @@ function kb(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-function usd(microUsd: number): string {
-  return `~$${(microUsd / 1_000_000).toFixed(microUsd < 10_000 ? 3 : 2)}`;
-}
-
 function problems(list: SlotDrawHistory["problems"]): string {
   return list.map((p) => THEME_IMAGE_PROBLEM_LABEL[p]).join(", ");
 }
 
-/** One line on how a slot's image came to be, and its tone. */
+/** A provider's reason in words, or nothing when it is only a code. */
+function reasonWords(reason: string | null): string {
+  if (!reason) return "";
+  const plain = plainText(reason).trim();
+  return /\s/.test(plain) ? ` (${plain})` : "";
+}
+
+/** One line on how a slot's picture came to be, and its tone. */
 export function historyLine(history: SlotDrawHistory): {
   text: string;
   tone: "ok" | "warn" | "bad";
 } {
   const twice = history.attempts > 1 ? " after a redraw" : "";
   // The reviewer writes whole sentences; the line adds its own full stop.
-  const trimmed = history.note.trim().replace(/[.\s]+$/, "");
-  const note = trimmed ? ` - ${trimmed}` : "";
+  const trimmed = plainText(history.note)
+    .trim()
+    .replace(/[.\s]+$/, "");
+  const note = trimmed ? `: ${trimmed}` : "";
   switch (history.status) {
     case "generated":
       if (history.review === "passed") {
@@ -97,7 +113,7 @@ export function historyLine(history: SlotDrawHistory): {
           tone: "warn",
         };
       }
-      return { text: `Drawn${twice}; not checked.`, tone: "warn" };
+      return { text: `Drawn${twice}; not checked yet.`, tone: "warn" };
     case "rejected":
       return {
         text: `Failed its check twice (${problems(history.problems)})${note}. The placeholder was kept.`,
@@ -105,32 +121,26 @@ export function historyLine(history: SlotDrawHistory): {
       };
     case "refused":
       return {
-        text: `The image model refused it${history.reason ? ` (${history.reason})` : ""}.`,
+        text: `The image model refused it${reasonWords(history.reason)}.`,
         tone: "bad",
       };
     default:
       return {
-        text: `Not drawn${history.reason ? ` (${history.reason})` : ""}.`,
+        text: `Not drawn${reasonWords(history.reason)}.`,
         tone: "bad",
       };
   }
 }
 
-const TONE: Record<"ok" | "warn" | "bad", string> = {
-  ok: "text-emerald-700",
-  warn: "text-amber-700",
-  bad: "text-red-700",
-};
-
 export function SlotImagesEditor({
   projectId,
   versionId,
   versionNumber,
-  nextVersionNumber,
   packageDigest,
   revision,
   canEdit,
   blockedReason,
+  drawBlockedReason = null,
   slots,
   anchorReusable,
   prices,
@@ -138,18 +148,24 @@ export function SlotImagesEditor({
   projectId: string;
   versionId: string;
   versionNumber: number;
-  nextVersionNumber: number;
   packageDigest: string;
   revision: number;
   canEdit: boolean;
+  /** Why nothing can be saved or drawn now; written beside the controls. */
   blockedReason: string | null;
+  /** Why pictures can't be drawn now even though they can be saved (the
+   * building switch); written under Redraw. */
+  drawBlockedReason?: string | null;
   slots: ThemeStudioSlotView[];
-  /** A redraw matches the existing art-direction image instead of drawing one. */
+  /** A redraw matches the existing art-direction picture instead of drawing
+   * one. */
   anchorReusable: boolean;
-  /** List prices for the redraw estimate; null for the test provider. */
+  /** List prices for the Redraw confirm's estimate; null for the offline
+   * test provider. */
   prices: { imageUsd: number; reviewUsd: number } | null;
 }) {
   const router = useRouter();
+  const page = useStudioPage();
   const [staged, setStaged] = useState<Record<string, Staged>>({});
   const [uploading, setUploading] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -158,49 +174,32 @@ export function SlotImagesEditor({
   );
   const [pending, startTransition] = useTransition();
   const [redraw, setRedraw] = useState<Set<string>>(new Set());
-  const [confirmingRedraw, setConfirmingRedraw] = useState(false);
-  // The licence note typed last, offered for the next image: most uploads in
-  // one sitting come from the same place.
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // The licence note typed last, offered for the next picture: most uploads
+  // in one sitting come from the same place.
   const lastLicense = useRef<{ source: Source; note: string } | null>(null);
+  const design = designLabel(versionNumber);
 
   const visible = onlyPlaceholders
     ? slots.filter((slot) => slot.placeholder || staged[slot.id])
     : slots;
   const stagedCount = Object.keys(staged).length;
-  const redrawCount = redraw.size;
+  // Staged uploads, their descriptions and licence notes wait for Save: a
+  // reload must not throw them away silently.
+  useUnsavedChangesWarning(stagedCount > 0);
+  // Package order, so the run's message lists them as the page does.
+  const chosen = slots.map((s) => s.id).filter((id) => redraw.has(id));
   const estimate =
-    prices && redrawCount > 0
-      ? redrawEstimate(redrawCount, anchorReusable, prices)
+    prices && chosen.length > 0
+      ? redrawEstimate(chosen.length, anchorReusable, prices)
       : null;
 
   function toggleRedraw(slotId: string, on: boolean) {
-    setConfirmingRedraw(false);
     setRedraw((prev) => {
       const next = new Set(prev);
       if (on) next.add(slotId);
       else next.delete(slotId);
       return next;
-    });
-  }
-
-  function startRedraw() {
-    startTransition(async () => {
-      const result = await queueThemeStudioImagesAction({
-        projectId,
-        versionId,
-        expectedRevision: revision,
-        expectedPackageDigest: packageDigest,
-        idempotencyKey: crypto.randomUUID(),
-        // Package order, so the run's message lists them as the page does.
-        slotIds: slots.map((s) => s.id).filter((id) => redraw.has(id)),
-      });
-      if (!result.ok) {
-        toast.error(result.error ?? "The redraw couldn't be queued.");
-        return;
-      }
-      toast.success("Redrawing. The run appears on the project.");
-      setRedraw(new Set());
-      router.push(`/dashboard/themes/studio/${projectId}`);
     });
   }
 
@@ -230,7 +229,9 @@ export function SlotImagesEditor({
       if (!response.ok || !body.id || !body.url) {
         setErrors((prev) => ({
           ...prev,
-          [slot.id]: body.error ?? "The image couldn't be uploaded.",
+          [slot.id]: plainText(
+            body.error ?? "The picture couldn't be uploaded.",
+          ),
         }));
         return;
       }
@@ -281,38 +282,69 @@ export function SlotImagesEditor({
   }
 
   function save() {
+    setSaveError(null);
     startTransition(async () => {
-      const result = await replaceThemeStudioSlotImagesAction({
-        projectId,
-        versionId,
-        expectedRevision: revision,
-        expectedPackageDigest: packageDigest,
-        replacements: Object.entries(staged).map(([slotId, image]) => ({
-          slotId,
-          assetId: image.assetId,
-          alt: image.alt,
-          source: image.source,
-          licenseNote: image.licenseNote,
-        })),
-      });
-      if (!result.ok || !result.id) {
-        toast.error(result.error ?? "The images couldn't be saved.");
-        return;
+      try {
+        const result = await replaceThemeStudioSlotImagesAction({
+          projectId,
+          versionId,
+          expectedRevision: revision,
+          expectedPackageDigest: packageDigest,
+          replacements: Object.entries(staged).map(([slotId, image]) => ({
+            slotId,
+            assetId: image.assetId,
+            alt: image.alt,
+            source: image.source,
+            licenseNote: image.licenseNote,
+          })),
+        });
+        if (!result.ok || !result.id) {
+          setSaveError(
+            plainText(result.error ?? "The pictures couldn't be saved."),
+          );
+          return;
+        }
+        const saved = result.versionNumber
+          ? designLabel(result.versionNumber)
+          : "a new design";
+        setStaged({});
+        if (result.checking) {
+          // The new design stays hidden while one capture and the design
+          // review check it; the theme shows it when they finish.
+          toast.success(
+            `Saved as ${saved}. Checking it now, about 3 to 5 minutes; you can leave this page.`,
+          );
+          router.refresh();
+          return;
+        }
+        toast.success(`Saved as ${saved}.`);
+        page.openTab("pictures", { versionId: result.id });
+      } catch {
+        setSaveError(
+          "The request failed. Reload the page before trying again.",
+        );
       }
-      toast.success(
-        `Saved as version ${result.versionNumber ?? nextVersionNumber}.`,
-      );
-      setStaged({});
-      router.push(
-        `/dashboard/themes/studio/${projectId}/versions/${result.id}/images`,
-      );
     });
   }
 
+  const saveReason = !canEdit
+    ? blockedReason
+    : stagedCount === 0
+      ? "Upload a picture for a slot first; saving makes a new design."
+      : uploading
+        ? "Wait for the upload to finish."
+        : null;
+  const redrawReason = !canEdit
+    ? blockedReason
+    : (drawBlockedReason ??
+      (stagedCount > 0
+        ? "Save or remove your uploads before redrawing."
+        : null));
+
   return (
-    <div className="space-y-4">
-      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
-        <label className="inline-flex items-center gap-2 text-sm text-slate-600">
+    <div className="grid gap-4">
+      <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-3 rounded-[var(--dash-radius)] border border-[var(--dash-border)] bg-[var(--dash-surface)] px-4 py-3">
+        <label className="studio-check-label inline-flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={onlyPlaceholders}
@@ -320,111 +352,100 @@ export function SlotImagesEditor({
           />
           Show only slots with a placeholder
         </label>
-        <div className="flex flex-wrap items-center gap-3">
-          {!canEdit && blockedReason ? (
-            <span className="text-sm text-slate-500">{blockedReason}</span>
+        <div className="flex flex-wrap items-start gap-3">
+          {chosen.length > 0 ? (
+            <RedrawPicturesButton
+              projectId={projectId}
+              versionId={versionId}
+              versionNumber={versionNumber}
+              revision={revision}
+              packageDigest={packageDigest}
+              slotIds={chosen}
+              slotNames={chosen.map(pictureName)}
+              estimate={
+                estimate
+                  ? {
+                      images: estimate.images,
+                      expectedUsd: estimate.expectedUsd,
+                      mostUsd: estimate.mostUsd,
+                    }
+                  : null
+              }
+              blockedReason={redrawReason}
+            />
           ) : null}
-          {redrawCount > 0 ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="max-w-md text-xs text-slate-600">
-                {stagedCount > 0
-                  ? "Save or discard your uploads before redrawing."
-                  : estimate
-                    ? `${estimate.images} image${estimate.images === 1 ? "" : "s"}${anchorReusable ? "" : " (with a new art-direction image)"}, about $${estimate.expectedUsd.toFixed(2)}, at most $${estimate.mostUsd.toFixed(2)} if each needs every redraw.`
-                    : "The test provider redraws at no cost."}
-              </span>
-              {confirmingRedraw ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmingRedraw(false)}
-                    disabled={pending}
-                    className="rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={startRedraw}
-                    disabled={pending}
-                    className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
-                  >
-                    {pending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                    Confirm redraw
-                  </button>
-                </>
+          <span className="studio-action">
+            <button
+              type="button"
+              onClick={save}
+              disabled={saveReason !== null || pending}
+              className="dash-btn dash-btn-primary"
+            >
+              {pending ? (
+                <Loader2 aria-hidden="true" className="h-4 w-4 studio-spin" />
               ) : (
-                <button
-                  type="button"
-                  onClick={() => setConfirmingRedraw(true)}
-                  disabled={!canEdit || stagedCount > 0 || pending}
-                  className="inline-flex items-center gap-2 rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-800 hover:bg-violet-100 disabled:opacity-50"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  Redraw {redrawCount} image{redrawCount === 1 ? "" : "s"}
-                </button>
+                <Save aria-hidden="true" className="h-4 w-4" />
               )}
-            </div>
-          ) : null}
-          <button
-            type="button"
-            onClick={save}
-            disabled={!canEdit || stagedCount === 0 || pending || !!uploading}
-            className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
-          >
-            {pending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              {stagedCount === 0
+                ? "Save as a new design"
+                : `Save ${stagedCount} picture${stagedCount === 1 ? "" : "s"} as a new design`}
+            </button>
+            {saveReason ? (
+              <span className="studio-reason">{saveReason}</span>
             ) : (
-              <Save className="h-4 w-4" />
+              <span className="studio-reason">{design} stays as it is.</span>
             )}
-            {stagedCount === 0
-              ? "Upload images to save a new version"
-              : `Save ${stagedCount} image${stagedCount === 1 ? "" : "s"} as version ${nextVersionNumber}`}
-          </button>
+          </span>
         </div>
+        {saveError ? (
+          <p role="alert" className="studio-error w-full text-sm">
+            {saveError}
+          </p>
+        ) : null}
       </div>
 
       {visible.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-slate-300 px-6 py-8 text-center text-sm text-slate-500">
-          Every slot in version {versionNumber} already has a real image.
+        <p className="studio-muted rounded-[var(--dash-radius)] border border-dashed border-[var(--dash-border-strong)] px-6 py-8 text-center text-sm">
+          Every slot in {design} already has a real picture. Untick the box
+          above to see them all.
         </p>
       ) : null}
 
-      <ul className="space-y-3">
+      <ul className="grid gap-3">
         {visible.map((slot) => {
           const image = staged[slot.id];
           const error = errors[slot.id];
+          const name = pictureName(slot.id);
+          const line = slot.history ? historyLine(slot.history) : null;
           return (
             <li
               key={slot.id}
-              className="rounded-xl border border-slate-200 bg-white p-4"
+              className="rounded-[var(--dash-radius)] border border-[var(--dash-border)] bg-[var(--dash-surface)] p-4"
             >
               <div className="flex flex-wrap gap-4">
                 <div className="flex gap-3">
-                  <figure className="w-32 space-y-1">
-                    <div className="flex h-24 w-32 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                  <figure className="grid w-32 gap-1">
+                    <div className="flex h-24 w-32 items-center justify-center overflow-hidden rounded-[var(--dash-radius-sm)] border border-[var(--dash-border)] bg-[var(--dash-surface-2)]">
                       {slot.url ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={slot.url}
                           alt={slot.alt}
+                          loading="lazy"
+                          decoding="async"
                           className="max-h-full max-w-full object-contain"
                         />
                       ) : (
-                        <span className="text-xs text-slate-400">No image</span>
+                        <span className="studio-muted text-xs">No picture</span>
                       )}
                     </div>
-                    <figcaption className="text-center text-xs text-slate-500">
-                      Current
+                    <figcaption className="studio-muted text-center text-xs">
+                      Now
                     </figcaption>
                   </figure>
                   {image ? (
-                    <figure className="w-32 space-y-1">
-                      <div className="flex h-24 w-32 items-center justify-center overflow-hidden rounded-lg border-2 border-emerald-400 bg-slate-50">
+                    <figure className="grid w-32 gap-1">
+                      <div className="flex h-24 w-32 items-center justify-center overflow-hidden rounded-[var(--dash-radius-sm)] border-2 border-[var(--dash-accent)] bg-[var(--dash-surface-2)]">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={image.url}
@@ -432,67 +453,62 @@ export function SlotImagesEditor({
                           className="max-h-full max-w-full object-contain"
                         />
                       </div>
-                      <figcaption className="text-center text-xs text-emerald-700">
-                        New · {image.width}×{image.height} · {kb(image.bytes)}
+                      <figcaption className="text-center text-xs">
+                        New, {image.width} by {image.height} px,{" "}
+                        {kb(image.bytes)}
                       </figcaption>
                     </figure>
                   ) : null}
                 </div>
 
-                <div className="min-w-[16rem] flex-1 space-y-2">
+                <div className="grid min-w-[16rem] flex-1 content-start gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-sm text-slate-900">
-                      {slot.id}
+                    <h3 className="text-sm font-semibold">{name}</h3>
+                    <span className="studio-muted text-xs">
+                      {ratio(slot.width, slot.height)}
+                      {slot.catalogPreview ? ", at most 250 KB" : ""}
                     </span>
-                    <span className="text-xs text-slate-500">
-                      {slot.kind} · {ratio(slot.width, slot.height)}
-                      {slot.catalogPreview ? " · max 250 KB" : ""}
+                    <span
+                      className="studio-badge"
+                      data-tone={slot.placeholder ? "warning" : "neutral"}
+                    >
+                      {slot.placeholder
+                        ? "Placeholder"
+                        : (SOURCE_LABEL[slot.source] ?? "Uploaded")}
                     </span>
-                    {slot.placeholder ? (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-800">
-                        placeholder
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
-                        {SOURCE_LABEL[slot.source] ?? slot.source}
-                      </span>
-                    )}
                   </div>
                   {slot.usage.length ? (
-                    <p className="text-xs text-slate-500">
+                    <p className="studio-muted text-xs">
                       Shown on: {slot.usage.slice(0, 4).join("; ")}
                       {slot.usage.length > 4
                         ? ` and ${slot.usage.length - 4} more`
                         : ""}
                     </p>
                   ) : null}
-                  {slot.history ? (
-                    <p className="text-xs">
-                      <span className={TONE[historyLine(slot.history).tone]}>
-                        {historyLine(slot.history).text}
-                      </span>
-                      <span className="text-slate-500">
-                        {" "}
-                        {slot.history.redraw ? "Redraw · " : ""}
-                        {usd(slot.history.costMicroUsd)} estimated
-                      </span>
+                  {line ? (
+                    <p
+                      className={
+                        line.tone === "bad" ? "studio-error text-xs" : "text-xs"
+                      }
+                    >
+                      {line.text}
                     </p>
                   ) : null}
                   {slot.brief ? (
-                    <details className="text-xs text-slate-600">
-                      <summary className="cursor-pointer text-slate-500 hover:text-slate-900">
+                    <details className="text-xs">
+                      <summary className="studio-muted cursor-pointer">
                         What the image model is asked for
                       </summary>
                       <dl className="mt-1 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
-                        <dt className="text-slate-400">Subject</dt>
-                        <dd>{slot.brief.subject}</dd>
+                        <dt className="studio-muted">Subject</dt>
+                        <dd>{plainText(slot.brief.subject)}</dd>
                         {slot.brief.artDirection ? (
                           <>
-                            <dt className="text-slate-400">Direction</dt>
-                            <dd>{slot.brief.artDirection}</dd>
+                            <dt className="studio-muted">Direction</dt>
+                            <dd>{plainText(slot.brief.artDirection)}</dd>
                           </>
                         ) : null}
-                        <dt className="text-slate-400">Shape</dt>
+                        <dt className="studio-muted">Shape</dt>
                         <dd>{slot.brief.aspectRatio}</dd>
                       </dl>
                     </details>
@@ -500,10 +516,10 @@ export function SlotImagesEditor({
 
                   {image ? (
                     <div className="grid gap-2 sm:grid-cols-2">
-                      <label className="space-y-1 text-xs text-slate-600 sm:col-span-2">
-                        Alt text
+                      <label className="grid gap-1 text-xs sm:col-span-2">
+                        Description (alt text)
                         {slot.catalogScreenshot
-                          ? " (at least 15 characters)"
+                          ? ", at least 15 characters"
                           : ""}
                         <input
                           value={image.alt}
@@ -511,11 +527,11 @@ export function SlotImagesEditor({
                           onChange={(event) =>
                             update(slot.id, { alt: event.target.value })
                           }
-                          className="block w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900"
+                          className="dash-input"
                         />
                       </label>
-                      <label className="space-y-1 text-xs text-slate-600">
-                        Source
+                      <label className="grid gap-1 text-xs">
+                        Where it came from
                         <select
                           value={image.source}
                           onChange={(event) =>
@@ -523,7 +539,7 @@ export function SlotImagesEditor({
                               source: event.target.value as Source,
                             })
                           }
-                          className="block w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900"
+                          className="dash-input"
                         >
                           <option value="operator-owned">
                             Ours (photographed or made by us)
@@ -531,45 +547,50 @@ export function SlotImagesEditor({
                           <option value="licensed">Licensed</option>
                         </select>
                       </label>
-                      <label className="space-y-1 text-xs text-slate-600">
+                      <label className="grid gap-1 text-xs">
                         Licence note
                         <input
                           value={image.licenseNote}
                           maxLength={300}
                           placeholder={
                             image.source === "licensed"
-                              ? "e.g. Unsplash licence, photo by …"
-                              : "e.g. Photographed by StoreMink, 2026"
+                              ? "For example: Unsplash licence, photo by ..."
+                              : "For example: Photographed by StoreMink, 2026"
                           }
                           onChange={(event) =>
                             update(slot.id, {
                               licenseNote: event.target.value,
                             })
                           }
-                          className="block w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900"
+                          className="dash-input"
                         />
                       </label>
                     </div>
                   ) : null}
 
                   {error ? (
-                    <p className="text-xs text-red-700">{error}</p>
+                    <p role="alert" className="studio-error text-xs">
+                      {error}
+                    </p>
                   ) : null}
 
                   <div className="flex flex-wrap items-center gap-2">
                     <label
-                      className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 ${
+                      className={`studio-check-label dash-btn dash-btn-ghost dash-btn-sm ${
                         !canEdit || uploading
-                          ? "pointer-events-none opacity-50"
+                          ? "pointer-events-none opacity-60"
                           : ""
                       }`}
                     >
                       {uploading === slot.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <Loader2
+                          aria-hidden="true"
+                          className="h-3.5 w-3.5 studio-spin"
+                        />
                       ) : (
-                        <ImageUp className="h-3.5 w-3.5" />
+                        <ImageUp aria-hidden="true" className="h-3.5 w-3.5" />
                       )}
-                      {image ? "Replace upload" : "Upload image"}
+                      {image ? "Replace the upload" : "Upload a picture"}
                       <input
                         type="file"
                         accept="image/jpeg,image/png,image/webp,image/avif"
@@ -583,8 +604,9 @@ export function SlotImagesEditor({
                       />
                     </label>
                     {slot.redrawable && !image ? (
-                      <label className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-slate-700">
+                      <label className="studio-check-label inline-flex items-center gap-1.5 px-2 text-xs">
                         <input
+                          id={`studio-redraw-${slot.id}`}
                           type="checkbox"
                           checked={redraw.has(slot.id)}
                           disabled={!canEdit}
@@ -599,9 +621,10 @@ export function SlotImagesEditor({
                       <button
                         type="button"
                         onClick={() => unstage(slot.id)}
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-slate-500 hover:text-slate-900"
+                        className="dash-btn dash-btn-ghost dash-btn-sm"
                       >
-                        <X className="h-3.5 w-3.5" /> Don&apos;t use
+                        <X aria-hidden="true" className="h-3.5 w-3.5" />
+                        Don&apos;t use it
                       </button>
                     ) : null}
                   </div>

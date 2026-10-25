@@ -111,6 +111,42 @@ export function customerCopy(pkg: ThemePackageV2): string[] {
   ];
 }
 
+/** The rules one piece of copy breaks: claims `evidence` does not support. */
+function unsupportedRules(
+  text: string,
+  evidence: string,
+  numbers: Set<string>,
+): ClaimRule[] {
+  const broken: ClaimRule[] = [];
+  for (const rule of CLAIM_RULES) {
+    const match = rule.re.exec(text);
+    if (!match) continue;
+    const supported = rule.numeric
+      ? [...numbersIn(match[0])].every((n) => numbers.has(n))
+      : rule.evidence.test(evidence);
+    if (!supported) broken.push(rule);
+  }
+  return broken;
+}
+
+/**
+ * The marketing claims ONE piece of copy makes that `evidence` does not
+ * support, by label ("an award", "a rating"). The Mink storefront revamp
+ * checks its copy field by field with this (lib/mink/revamp/copy-checks.ts).
+ */
+export function unsupportedClaimLabels(
+  text: string,
+  evidence: string,
+): string[] {
+  return [
+    ...new Set(
+      unsupportedRules(text, evidence, numbersIn(evidence)).map(
+        (rule) => rule.label,
+      ),
+    ),
+  ];
+}
+
 /**
  * Repair sentences for claims the evidence does not support. `evidence` is
  * the brief for an initial generation; a revision adds the base theme's own
@@ -123,13 +159,7 @@ export function unsupportedClaimIssues(
   const numbers = numbersIn(evidence);
   const issues = new Set<string>();
   for (const text of customerCopy(pkg)) {
-    for (const rule of CLAIM_RULES) {
-      const match = rule.re.exec(text);
-      if (!match) continue;
-      const supported = rule.numeric
-        ? [...numbersIn(match[0])].every((n) => numbers.has(n))
-        : rule.evidence.test(evidence);
-      if (supported) continue;
+    for (const rule of unsupportedRules(text, evidence, numbers)) {
       const excerpt = text.length > 80 ? `${text.slice(0, 77)}…` : text;
       issues.add(
         `Copy claims ${rule.label} ("${excerpt}") that the brief does not support. Remove the claim or rephrase without it; never invent awards, press, ratings, counts, certifications or dates.`,

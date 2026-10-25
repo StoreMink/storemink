@@ -19,7 +19,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import { isSchemaNotReady, dbErrorMessage } from "@/lib/db/errors";
+import { isSchemaNotReady, loggableError } from "@/lib/db/errors";
 import { logError, logWarn } from "@/lib/observability/logger";
 import { offerRedemptions, orderItemOffers } from "@/drizzle/schema";
 import { toPaise, toRupees } from "@/lib/money/allocate";
@@ -43,6 +43,14 @@ import type {
   OfferFulfilmentType,
   OfferPaymentMethod,
 } from "./types";
+
+// ★ EVERY FAILURE BELOW IS LOGGED AS logError(message, error, context): the
+//   error is `loggableError(err)` and the ids are the context (robustness
+//   audit B22). One object as the second argument became the "error", so the
+//   log read "[object Object]" and lost the ids. A failed query is logged as
+//   the database's reason only, never Drizzle's own "Failed query: …
+//   params: …" (an offer's name is merchant text); any other error as itself,
+//   so a bug in the engine keeps its stack and a busy pool its name.
 
 export interface ResolveOffersInput {
   storeId: string;
@@ -130,9 +138,8 @@ export async function resolveOffersForCart(
         storeId: input.storeId,
       });
     } else {
-      logError("resolveOffersForCart failed", {
+      logError("resolveOffersForCart failed", loggableError(err), {
         storeId: input.storeId,
-        error: dbErrorMessage(err, "unknown"),
       });
     }
     return null;
@@ -257,10 +264,9 @@ export async function reserveOfferUses(
           storeId,
         });
       } else {
-        logError("reserve_offer_use failed", {
+        logError("reserve_offer_use failed", loggableError(err), {
           storeId,
           offerId: offer.offerId,
-          error: dbErrorMessage(err, "unknown"),
         });
       }
       // Fails OPEN, deliberately — see the docblock.
@@ -286,10 +292,9 @@ export async function releaseOfferUses(
       ),
     ).catch((err) => {
       if (!isSchemaNotReady(err)) {
-        logError("release_offer_use failed", {
+        logError("release_offer_use failed", loggableError(err), {
           storeId,
           offerId: r.offerId,
-          error: dbErrorMessage(err, "unknown"),
         });
       }
     });
@@ -378,10 +383,9 @@ export async function recordOfferRedemptions(
     });
   } catch (err) {
     if (!isSchemaNotReady(err)) {
-      logError("recordOfferRedemptions failed", {
+      logError("recordOfferRedemptions failed", loggableError(err), {
         storeId: input.storeId,
         orderId: input.orderId,
-        error: dbErrorMessage(err, "unknown"),
       });
     }
   }
@@ -438,9 +442,8 @@ export async function loadOffersForRegister(
         storeId,
       });
     } else {
-      logError("loadOffersForRegister failed", {
+      logError("loadOffersForRegister failed", loggableError(err), {
         storeId,
-        error: dbErrorMessage(err, "unknown"),
       });
     }
     // ★ FAILS OPEN TO NO OFFERS. A register that cannot open is a shop that

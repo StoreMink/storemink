@@ -1,116 +1,407 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Sparkles } from "lucide-react";
+import { ImagePlus, RefreshCw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
-import { queueThemeStudioImagesAction } from "@/app/actions/theme-studio-actions";
+import {
+  queueThemeStudioImagesAction,
+  retryThemeStudioRunAction,
+} from "@/app/actions/theme-studio-actions";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import type { StudioActionKind } from "../../../../studio-status";
+import { plainText } from "../../../../studio-ui";
+import { designLabel } from "../../../../studio-words";
+import { newIdempotencyKey } from "../../../../new/new-theme-helpers";
+import { useStudioIntent } from "../../../studio-tabs";
 
-// Queues an image run for one version (Track 3.2). The cost is stated before
-// the click because every image is paid and a run is never retried on its own.
-// Each image is checked by a vision model and redrawn up to twice if it has a
-// problem (Track 3.4), so the statement gives the likely cost and the most a
-// run can cost.
-export function GenerateImagesButton({
-  projectId,
-  versionId,
-  revision,
-  packageDigest,
-  slots,
-  estimate,
+// ---------------------------------------------------------------------------
+// The picture runs the theme page starts (wave TS-2, builder 2C; plan
+// section 4, "Fix it" by kind, and section 8 row 2): Draw missing pictures,
+// Redraw (exactly the slots named) and Retry a picture run that stopped.
+//
+// ★ ONE CLICK WITH A SMALL CONFIRM that names how many, instead of today's
+// "Generate images" then "Draw N images". Every picture is paid, so the
+// confirm says what a run may cost at list price before anything is queued;
+// the main view carries no cost line (those are in the Log tab).
+// ★ AN INTENT ONLY OPENS THE CONFIRM (`do=draw_missing_pictures`, `redraw`,
+// `retry_pictures`): the operator still presses the button inside it.
+// ★ After a run is queued the page refreshes in place: the theme's status
+// says it is drawing, and the progress card follows it.
+// ---------------------------------------------------------------------------
+
+/** What a run may cost at list price (image-generation-core.ts
+ * imageRunEstimate, image-history.ts redrawEstimate), or null for the
+ * offline test provider, which draws for nothing. */
+export interface PictureRunEstimate {
+  images: number;
+  expectedUsd: number;
+  mostUsd: number;
+}
+
+function costLine(estimate: PictureRunEstimate | null): string {
+  if (!estimate)
+    return "The offline test provider draws placeholder pictures at no cost.";
+  return `That is ${estimate.images} picture${estimate.images === 1 ? "" : "s"}, about $${estimate.expectedUsd.toFixed(2)} at list price, or at most $${estimate.mostUsd.toFixed(2)} if every picture needs every redraw.`;
+}
+
+function count(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** A button that opens a small confirm; the confirm starts the run. */
+function ConfirmedRun({
+  label,
+  icon,
+  primary,
+  small,
   blockedReason,
+  intent,
+  title,
+  body,
+  confirmLabel,
+  run,
+  done,
+  id,
 }: {
-  projectId: string;
-  versionId: string;
-  revision: number;
-  packageDigest: string;
-  /** Placeholder slots the run would draw. */
-  slots: number;
-  /** List-price figures (imageRunEstimate), or null for the test provider. */
-  estimate: { images: number; expectedUsd: number; mostUsd: number } | null;
+  label: string;
+  icon: ReactNode;
+  primary: boolean;
+  small: boolean;
   blockedReason: string | null;
+  intent: StudioActionKind | null;
+  title: string;
+  body: ReactNode;
+  confirmLabel: string;
+  /** Starts the run; resolves to the server's refusal, or null. */
+  run: () => Promise<string | null>;
+  done: string;
+  id?: string;
 }) {
   const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const [confirming, setConfirming] = useState(false);
-
-  if (slots === 0) return null;
-  const images = slots + 1;
-
-  const start = () =>
+  const button = useRef<HTMLButtonElement>(null);
+  const reason = useRef<HTMLSpanElement>(null);
+  useStudioIntent(intent ? [intent] : [], () => {
+    if (blockedReason !== null) {
+      // A disabled button can't take focus: its reason can, and is read.
+      reason.current?.focus();
+      return;
+    }
+    setError(null);
+    setOpen(true);
+  });
+  function start() {
     startTransition(async () => {
-      const result = await queueThemeStudioImagesAction({
-        projectId,
-        versionId,
-        expectedRevision: revision,
-        expectedPackageDigest: packageDigest,
-        idempotencyKey: crypto.randomUUID(),
-      });
-      if (!result.ok) {
-        toast.error(result.error);
-        return;
+      try {
+        const refusal = await run();
+        if (refusal) {
+          setError(plainText(refusal));
+          return;
+        }
+        toast.success(done);
+        setOpen(false);
+        router.refresh();
+      } catch {
+        setError("The request failed. Reload the page before trying again.");
       }
-      toast.success("Images are being drawn. The run appears on the project.");
-      router.push(`/dashboard/themes/studio/${projectId}`);
     });
-
+  }
   return (
-    <section className="rounded-xl border border-violet-200 bg-violet-50/60 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="max-w-2xl space-y-1">
-          <h2 className="text-sm font-semibold text-slate-900">
-            Generate images
-          </h2>
-          <p className="text-sm text-slate-600">
-            Draw an image for each of the {slots} placeholder slot
-            {slots === 1 ? "" : "s"}, all matched to one art-direction image so
-            they read as a set. The images become a new version; this one stays
-            as it is. Each image is checked, and one with a problem is redrawn
-            up to twice.{" "}
-            {estimate
-              ? `That is ${images} images, about $${estimate.expectedUsd.toFixed(2)} at list price, or at most $${estimate.mostUsd.toFixed(2)} if every image needs every redraw.`
-              : "The test provider draws placeholder pictures at no cost."}
-          </p>
-          {blockedReason ? (
-            <p className="text-sm text-amber-700">{blockedReason}</p>
+    <span className="studio-action">
+      <button
+        ref={button}
+        id={id}
+        type="button"
+        disabled={blockedReason !== null}
+        className={[
+          "dash-btn",
+          primary ? "dash-btn-primary" : "dash-btn-ghost",
+          small ? "dash-btn-sm" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        onClick={() => {
+          setError(null);
+          setOpen(true);
+        }}
+      >
+        {icon}
+        {label}
+      </button>
+      {blockedReason ? (
+        <span ref={reason} tabIndex={-1} className="studio-reason">
+          {blockedReason}
+        </span>
+      ) : null}
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!pending) setOpen(next);
+        }}
+      >
+        <DialogContent className="studio-root" finalFocus={button}>
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription render={<div />}>{body}</DialogDescription>
+          </DialogHeader>
+          {error ? (
+            <p role="alert" className="studio-error text-sm">
+              {error}
+            </p>
           ) : null}
-        </div>
-        {confirming ? (
-          <div className="flex items-center gap-2">
+          <DialogFooter>
             <button
               type="button"
-              onClick={() => setConfirming(false)}
               disabled={pending}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-white"
+              onClick={() => setOpen(false)}
+              className="dash-btn dash-btn-ghost"
             >
               Cancel
             </button>
             <button
               type="button"
-              onClick={start}
               disabled={pending}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60"
+              onClick={start}
+              className="dash-btn dash-btn-primary"
             >
-              {pending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-              Draw {images} images
+              {pending ? "Starting…" : confirmLabel}
             </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setConfirming(true)}
-            disabled={Boolean(blockedReason)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Sparkles className="h-4 w-4" />
-            Generate images
-          </button>
-        )}
-      </div>
-    </section>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </span>
+  );
+}
+
+interface PictureTarget {
+  projectId: string;
+  versionId: string;
+  versionNumber: number;
+  revision: number;
+  packageDigest: string;
+}
+
+/**
+ * "Draw missing pictures": a picture for every placeholder of this design,
+ * all matched to one art direction, after a confirm that names how many.
+ * Nothing shows when no placeholder needs drawing.
+ */
+export function GenerateImagesButton({
+  projectId,
+  versionId,
+  versionNumber,
+  revision,
+  packageDigest,
+  slots,
+  estimate,
+  blockedReason,
+  intent = null,
+  primary = true,
+}: PictureTarget & {
+  /** Placeholder slots the run would draw. */
+  slots: number;
+  estimate: PictureRunEstimate | null;
+  blockedReason: string | null;
+  /** The address intent that opens this confirm (the Pictures tab's). */
+  intent?: StudioActionKind | null;
+  primary?: boolean;
+}) {
+  if (slots === 0) return null;
+  const design = designLabel(versionNumber);
+  return (
+    <ConfirmedRun
+      label="Draw missing pictures"
+      icon={<ImagePlus aria-hidden="true" className="h-4 w-4" />}
+      primary={primary}
+      small={false}
+      blockedReason={blockedReason}
+      intent={intent}
+      title={`Draw ${count(slots, "missing picture", "missing pictures")}?`}
+      body={
+        <>
+          <p>
+            Theme Studio draws a picture for{" "}
+            {slots === 1
+              ? "the placeholder"
+              : `each of the ${slots} placeholders`}
+            , matched to one art direction so they read as a set, and checks
+            each one. They are saved as a new design; {design} stays as it is.
+          </p>
+          <p className="mt-2">{costLine(estimate)}</p>
+        </>
+      }
+      confirmLabel={`Draw ${count(slots, "picture", "pictures")}`}
+      run={async () => {
+        const result = await queueThemeStudioImagesAction({
+          projectId,
+          versionId,
+          expectedRevision: revision,
+          expectedPackageDigest: packageDigest,
+          idempotencyKey: newIdempotencyKey(),
+        });
+        return result.ok ? null : (result.error ?? "That didn't start.");
+      }}
+      done="Drawing the pictures. The theme page follows it."
+    />
+  );
+}
+
+/**
+ * "Redraw": exactly these slots, drawn again to match the theme's art
+ * direction and checked, after a confirm that names how many and which.
+ */
+export function RedrawPicturesButton({
+  projectId,
+  versionId,
+  versionNumber,
+  revision,
+  packageDigest,
+  slotIds,
+  slotNames,
+  estimate,
+  blockedReason,
+  intent = null,
+  primary = false,
+  small = false,
+  label,
+  id,
+}: PictureTarget & {
+  slotIds: readonly string[];
+  /** Each slot's name in words, in the same order. */
+  slotNames: readonly string[];
+  estimate: PictureRunEstimate | null;
+  blockedReason: string | null;
+  intent?: StudioActionKind | null;
+  primary?: boolean;
+  small?: boolean;
+  label?: string;
+  id?: string;
+}) {
+  if (slotIds.length === 0) return null;
+  const n = slotIds.length;
+  const design = designLabel(versionNumber);
+  const names = slotNames.slice(0, 8);
+  return (
+    <ConfirmedRun
+      id={id}
+      label={label ?? `Redraw ${count(n, "picture", "pictures")}`}
+      icon={<RefreshCw aria-hidden="true" className="h-4 w-4" />}
+      primary={primary}
+      small={small}
+      blockedReason={blockedReason}
+      intent={intent}
+      title={`Redraw ${count(n, "picture", "pictures")}?`}
+      body={
+        <>
+          <p>
+            Theme Studio draws {n === 1 ? "this picture" : `these ${n}`} again,
+            matched to the theme&apos;s art direction, and checks each one. They
+            are saved as a new design; {design} stays as it is.
+          </p>
+          {names.length ? (
+            <ul className="mt-2 list-disc pl-5">
+              {names.map((name, index) => (
+                <li key={`${slotIds[index]}`}>{name}</li>
+              ))}
+              {n > names.length ? (
+                <li>and {count(n - names.length, "more", "more")}</li>
+              ) : null}
+            </ul>
+          ) : null}
+          <p className="mt-2">{costLine(estimate)}</p>
+        </>
+      }
+      confirmLabel={`Redraw ${count(n, "picture", "pictures")}`}
+      run={async () => {
+        const result = await queueThemeStudioImagesAction({
+          projectId,
+          versionId,
+          expectedRevision: revision,
+          expectedPackageDigest: packageDigest,
+          idempotencyKey: newIdempotencyKey(),
+          slotIds: [...slotIds],
+        });
+        return result.ok ? null : (result.error ?? "That didn't start.");
+      }}
+      done={`Redrawing ${count(n, "picture", "pictures")}. The theme page follows it.`}
+    />
+  );
+}
+
+/**
+ * The picture intents no button on the tab takes (nothing to redraw, draw
+ * or retry): the address's `do` only moves focus to the picture list, and
+ * is taken out of the address.
+ */
+export function PictureIntentFallback({
+  kinds,
+  focusId,
+}: {
+  kinds: readonly StudioActionKind[];
+  focusId: string;
+}) {
+  useStudioIntent(kinds, () => {
+    document.getElementById(focusId)?.focus();
+  });
+  return null;
+}
+
+/**
+ * "Retry" a picture run that stopped or failed (retryThemeStudioRunAction):
+ * it keeps the pictures already drawn and draws the rest.
+ */
+export function RetryPicturesButton({
+  projectId,
+  runId,
+  drawn,
+  blockedReason,
+  intent = null,
+  primary = true,
+}: {
+  projectId: string;
+  runId: string;
+  /** Pictures the run already drew, when it said. */
+  drawn: number | null;
+  blockedReason: string | null;
+  intent?: StudioActionKind | null;
+  primary?: boolean;
+}) {
+  return (
+    <ConfirmedRun
+      label="Retry"
+      icon={<RotateCcw aria-hidden="true" className="h-4 w-4" />}
+      primary={primary}
+      small={false}
+      blockedReason={blockedReason}
+      intent={intent}
+      title="Try drawing the pictures again?"
+      body={
+        <p>
+          {drawn
+            ? `The ${count(drawn, "picture", "pictures")} already drawn ${drawn === 1 ? "is" : "are"} kept and reused; Theme Studio draws the rest and checks each one.`
+            : "Pictures already drawn are kept and reused; Theme Studio draws the rest and checks each one."}
+        </p>
+      }
+      confirmLabel="Try again"
+      run={async () => {
+        const result = await retryThemeStudioRunAction({
+          projectId,
+          runId,
+          idempotencyKey: newIdempotencyKey(),
+        });
+        return result.ok ? null : (result.error ?? "That didn't start.");
+      }}
+      done="Drawing the pictures again. The theme page follows it."
+    />
   );
 }

@@ -33,6 +33,13 @@ export async function runMinkAgent(input: {
   session: MinkModelSession;
   onEvent?: (event: MinkRunEvent) => void | Promise<void>;
   onProgress?: (progress: MinkRunProgress) => void;
+  /**
+   * The run's own stop: its deadline, or the merchant leaving. ★ Passed to
+   *   every tool call (`registry.execute(..., { signal })`), so a stopped run
+   *   stops the paid work its tools are doing, and a tool that has not
+   *   started yet never starts.
+   */
+  abortSignal?: AbortSignal;
 }): Promise<MinkRunResult> {
   const { actor, message, config, registry, session, onEvent, onProgress } =
     input;
@@ -207,7 +214,9 @@ export async function runMinkAgent(input: {
             return { response: repeatedResponse(hit, call.id), repeat: true };
           }
           if (!registry.isRestartSafe(call.name)) sideEffects = true;
-          const response = await registry.execute(actor, call);
+          const response = await registry.execute(actor, call, {
+            signal: input.abortSignal,
+          });
           // ★ Only a SUCCESS is remembered. A failure is often transient, and
           // replaying it would deny the model its one legitimate retry.
           if (
@@ -375,6 +384,7 @@ const PRODUCED_ARTIFACTS: ReadonlySet<MinkArtifact["type"]> = new Set([
   "storefront_design_proposal",
   "media_image_proposal",
   "storefront_personalization_proposal",
+  "storefront_revamp",
   "workflow",
   "clarification",
   "navigation",

@@ -950,6 +950,12 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
         l.spokenIds.add(id);
         turn.finalised = true;
         l.replyPending = false;
+        // ★ The question is answered, so nothing is left to cancel or carry.
+        // The reply stream is still closing here (isReplying stays true until
+        // it does), and speech in that moment used to cancel the answered
+        // run and send the answered question again, joined to the new words:
+        // the thread then showed the question twice.
+        l.asked = null;
         // After an acknowledgement the session is open again for whatever
         // the answer says, even nothing: ending it then still idles the turn.
         if (turn.awaiting) resumeTurn(turn);

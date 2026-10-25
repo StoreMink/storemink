@@ -28,10 +28,12 @@
 > exposed release-blocking contrast/semantics and LCP/performance gaps. The
 > `f1` candidate fixes the automated accessibility findings and LCP image
 > priority, but must be deployed, both demos must be reseeded, and all TA-4
-> thresholds rerun. The two-reviewer release gate also remains outstanding.
+> thresholds rerun. The reviewer release gate also remains outstanding (one
+> reviewer's scorecard since 24 Oct 2026, owner decision 5; two reviewers
+> before).
 > Basket remains the default implementation, but it is **blocked from approval**
 > until its missing live demo is repaired and the browser, accessibility,
-> performance, and two-reviewer gates are recorded.
+> performance, and reviewer gates are recorded.
 >
 > **Earlier implementation status:** P1 (F&B slice) + P2 DONE (2026-07-04): hero /
 > usp_bar / tile_grid blocks, market header + quick-add card layout variants,
@@ -316,8 +318,9 @@ Biz screenshots), not the artisanal farm-to-table draft. Spec:
   content floors, strict section validity, complete design tokens, theme-local
   optimized assets, and a catalog-sized preview.
 - `docs/theme-acceptance.md` owns the complete gate: package CI, live storefront
-  stories, accessibility/performance evidence, and a scored two-reviewer design
-  pass. A theme does not count as done merely because it renders.
+  stories, accessibility/performance evidence, and a scored design pass by one
+  reviewer (two before 24 Oct 2026). A theme does not count as done merely
+  because it renders.
 - CI parity throughout: `lint`, `typecheck`, `test`, `prettier`, `build`.
 
 ## 11. Next phase
@@ -342,11 +345,12 @@ Biz screenshots), not the artisanal farm-to-table draft. Spec:
   health. Studio and Ritual `0.1.0` now pass the automated package gate as hidden
   blocked releases, have their asset provenance recorded, and pass the
   production route/responsive/commerce sweep. Next deploy and reseed both
-  demos, close the recorded accessibility/performance failures, obtain two
-  independent approvals, restore Basket's production demo/release evidence,
+  demos, close the recorded accessibility/performance failures, obtain one
+  reviewer's scorecard (owner decision 5, 24 Oct 2026; two independent
+  approvals before), restore Basket's production demo/release evidence,
   then author subsequent
   vertical presets against the completed shared capability contract. A preset is
-  not done until every applicable acceptance story and two-reviewer gate is
+  not done until every applicable acceptance story and the reviewer gate are
   recorded.
 - **Basket repair — parallel prerequisite:** restore/reseed `demo-basket` and
   run the new acceptance stories. This can return Basket to Candidate, but does

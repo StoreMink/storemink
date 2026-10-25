@@ -43,7 +43,7 @@ import { minkStorefrontDesignTools } from "./storefront-design-tools";
 import { minkBuilderTools } from "./builder-tools";
 import { minkMediaTools } from "./media-tools";
 import { minkStorefrontLayoutTools } from "./storefront-layout-tools";
-import { minkStorefrontPersonalizationTools } from "./storefront-personalization-tools";
+import { minkStorefrontRevampTools } from "./storefront-revamp-tools";
 import { openDashboardPage } from "./navigation-tools";
 import { queryAnalytics } from "./analytics-tools";
 import { getMarketingChannels, getShippingSettings } from "./commerce-tools";
@@ -1988,7 +1988,9 @@ export const minkReadToolRegistry = new MinkToolRegistry([
   ...minkStorefrontDesignTools,
   ...minkBuilderTools,
   ...minkMediaTools,
-  // The context read inside is marked repeat-safe itself; the proposal draws
-  // paid photos and is not.
-  ...minkStorefrontPersonalizationTools,
+  // ★ The storefront revamp replaced the v1 personalisation proposal in the
+  //   model's registry; that module stays for the cards and approvals of
+  //   drafts already made. The context read is repeat-safe; the starts queue
+  //   paid work and are not.
+  ...minkStorefrontRevampTools,
 ]);

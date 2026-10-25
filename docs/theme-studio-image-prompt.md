@@ -3,18 +3,37 @@
 This document is the executable prompt Theme Studio sends to its image model
 (`lib/theme-studio/image-models.ts`) for every generated theme image.
 `lib/theme-studio/image-prompt.ts` reads the marked text fence at runtime,
-validates its five placeholders and fills them from the theme's Stage A intent,
+validates its six placeholders and fills them from the theme's Stage A intent,
 its compiled palette and one asset brief. `{{people}}` is the output rule about
 people, chosen per brief (`peopleRule` in `image-prompt.ts`): the people-free
 rule unless the Stage A brief set `people: "adults"`, in which case adults may
 appear where the picture is about the product being worn or used. Children and
 prominent people are refused by the provider settings whatever the rule says.
+A storefront redesign picture with no products in it gets its own people rule
+instead (`NO_GOODS_PEOPLE_RULE`: nobody, and the place, tools and materials in
+place of a person), because both of Theme Studio's rules centre a product;
+Theme Studio's rendered requests never carry it.
+
+`{{goods}}` is set rule 2, the goods the picture shows (`goodsRule` in
+`image-prompt.ts`). For every Theme Studio image it renders exactly the
+sentence this document carried before the rule became a placeholder: the goods
+are fictional demonstration products. Theme Studio's paid checkpoints are keyed
+on the rendered request, so that sentence must not change by a character
+(`lib/theme-studio/image-prompt.golden.json` pins every rendered Theme Studio
+request). Only the Mink storefront redesign, which draws its banner, content
+and category photographs through this same prompt, sets a brief's `goods`
+(owner's decision B16, "real goods or no goods"): either the merchant's own
+products, each sent as a reference image labelled PRODUCT and shown exactly as
+photographed, or no products at all. Its anchor shows no products either: it
+follows the opening photograph's art direction, never its goods, and no page
+photo is ever cut from it.
 
 It is a separate document from `docs/mink-ai-image-prompt.md` on purpose. Mink
 makes one marketing image for a merchant's real product; Theme Studio makes a
 coherent SET of demonstration images for a theme that has no real products, so
 it must invent believable, unbranded goods and keep every image in one visual
-language.
+language. A storefront redesign never invents goods; `{{goods}}` says so for its
+pictures.
 
 Provider safety settings, the people block, the aspect ratio, the output size
 and format, and the retry policy are enforced in code
@@ -40,7 +59,7 @@ REFERENCE IMAGES
 
 SET RULES
 1. Follow the theme direction for mood, palette, light, surfaces, materials and camera style. When it describes the photography of the operator's reference screenshots, match that photographic approach (setting, styling, light, crop and product presentation) while inventing your own products: never reproduce a specific photograph, product or brand from the references. The palette colours are the theme's own. When THIS IMAGE names a background colour, gradient or coloured set, use it fully and boldly; otherwise let the backdrop, props and grade sit comfortably with the palette.
-2. The goods are fictional demonstration products for a theme preview. Invent believable, well-made, unbranded products that fit the store's industry. Never depict a real brand, a recognisable trademarked design, a celebrity product or a competitor's packaging.
+2. {{goods}}
 3. Photograph real-looking physical objects with believable scale, contact shadows, reflections and material texture. It must look shot, not rendered or pasted.
 4. Keep the whole subject inside the crop-safe area described in the composition, with breathing room on every edge, and extend the background naturally so a responsive crop never cuts the subject.
 5. When a style anchor is supplied, match its lighting quality, lens, colour grade, surface materials and prop style so the set reads as one shoot. THIS IMAGE's own background colour or gradient takes precedence over the anchor's backdrop: a hero, banner, category or editorial image that asks for a magenta-to-lime gradient or a coral set gets it, even when the anchor was shot on white. Keep this image's subject and product identity. Do not substitute warm limestone or a dark wooden table for a bright white/concrete anchor merely because the asset brief mentions those surfaces.
@@ -62,8 +81,12 @@ Return exactly one image.
 
 - Keep exactly one ordered marker pair and one `text` code fence.
 - Keep `{{theme_direction}}`, `{{asset_brief}}`, `{{composition}}`,
-  `{{reference_guidance}}` and `{{people}}` exactly once each and add no other
-  placeholders.
+  `{{reference_guidance}}`, `{{goods}}` and `{{people}}` exactly once each and
+  add no other placeholders.
+- Theme Studio's rendered requests must stay byte for byte as
+  `lib/theme-studio/image-prompt.golden.json` records them: a change to the
+  text around a placeholder needs a prompt version bump and a deliberate
+  refresh of that file.
 - Do not add Markdown formatting inside the marked prompt.
 - The file ships with the server: it is listed in `next.config.ts`
   `outputFileTracingIncludes` and excepted in `.dockerignore`.

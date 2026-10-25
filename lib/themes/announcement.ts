@@ -83,18 +83,24 @@ export function announcementIssues(raw: unknown): string[] {
 }
 
 /**
- * Carry the pinned theme's announcement onto a store whose bar is enabled
- * and empty (every row saved before the field existed, and a merchant who
- * has not written one). Merchant text wins; a disabled bar stays disabled;
- * a theme without an announcement changes nothing.
+ * Carry a theme's announcement line onto a store whose bar is enabled and
+ * empty (every row saved before the field existed, and a merchant who has
+ * not written one). Merchant text wins; a disabled bar stays disabled; a
+ * theme without an announcement changes nothing.
+ *
+ * ★ `line` is the theme's `preset.announcement`, or the copy of it the
+ *   storefront layout handed a preview frame (`themeChromeDefaults` in
+ *   ./footer): read with the same rule either way, because the frame receives
+ *   it over the wire. ★ A chrome with no bar at all (one a preview frame was
+ *   sent by an older sender) is left as it is rather than read through.
  */
-export function withThemeAnnouncement(
+export function withAnnouncementLine(
   chrome: StoreChrome,
-  theme: ThemeDefinition | null,
+  line: unknown,
 ): StoreChrome {
-  const current = chrome.header.announcement;
-  if (!current.enabled || current.text) return chrome;
-  const themed = normalizeAnnouncement(theme?.preset.announcement);
+  const current = chrome.header?.announcement;
+  if (!current?.enabled || current.text) return chrome;
+  const themed = normalizeAnnouncement(line);
   if (!themed) return chrome;
   return {
     ...chrome,
@@ -107,6 +113,14 @@ export function withThemeAnnouncement(
       },
     },
   };
+}
+
+/** `withAnnouncementLine` with the pinned theme's own bar. */
+export function withThemeAnnouncement(
+  chrome: StoreChrome,
+  theme: ThemeDefinition | null,
+): StoreChrome {
+  return withAnnouncementLine(chrome, theme?.preset.announcement);
 }
 
 /** The bar the storefront shows for this chrome, or null for none. */

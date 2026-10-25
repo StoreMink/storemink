@@ -108,7 +108,7 @@ export function MinkMultimodalInput({
     /**
      * What the composer shows while dictating, in place of its toolbar row
      * (ChatGPT/Claude style): the live waveform with Cancel and Done. Null
-     * otherwise. Voice chat has its own full-screen view in the chat surface.
+     * otherwise. Voice chat has its own bar in the chat surface (mink-voice-view.tsx).
      */
     recorder: ReactNode;
     recording: "dictation" | null;

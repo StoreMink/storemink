@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { renderMinkSystemInstruction } from "./system-prompt";
-import { applyMinkToolRoute, routeMinkTools } from "./tool-routing";
+import {
+  applyMinkToolRoute,
+  routeMinkTools,
+  type MinkToolRouteInput,
+} from "./tool-routing";
 import { minkReadToolRegistry } from "./tools/read-tools";
 import type { MinkActorContext, MinkToolDeclaration } from "./types";
 
@@ -50,9 +54,12 @@ function declarationSize(declarations: MinkToolDeclaration[]): number {
   );
 }
 
-function measure(message: string | null) {
+function measure(
+  message: string | null,
+  extra: Partial<MinkToolRouteInput> = {},
+) {
   const permitted = minkReadToolRegistry.declarationsFor(OWNER);
-  const route = message === null ? null : routeMinkTools({ message });
+  const route = message === null ? null : routeMinkTools({ message, ...extra });
   const routed = applyMinkToolRoute(permitted, route);
   const prompt = renderMinkSystemInstruction(
     OWNER,
@@ -60,7 +67,8 @@ function measure(message: string | null) {
     routed.narrowed ? route : null,
   ).length;
   const tools = declarationSize(routed.declarations);
-  return { prompt, tools, total: prompt + tools };
+  const names = new Set(routed.declarations.map((tool) => tool.name));
+  return { prompt, tools, total: prompt + tools, names };
 }
 
 describe("★★ Mink prompt and tool budget (characters per model step)", () => {
@@ -108,10 +116,39 @@ describe("★★ Mink prompt and tool budget (characters per model step)", () =>
     expect(routed.total / measure(null).total).toBeLessThan(0.2);
   });
 
-  it("a storefront personalisation interview carries its tools, not every tool", () => {
-    // 2026-10-20: 30,241 (the Builder reads come along with "storefront").
-    const routed = measure("Personalise my storefront for my business");
-    expect(routed.total).toBeLessThanOrEqual(32_000);
-    expect(routed.total / measure(null).total).toBeLessThan(0.25);
-  });
+  // ★ The storefront redesign replaced the personalisation proposal on
+  //   2026-10-21. Its interview measured 30,241 on 2026-10-20 (the Builder
+  //   reads come along with "website"); the redesign keeps that ceiling, and
+  //   its tagged rule is shorter than the one it replaced (1,323 characters
+  //   against 1,532), so nothing here was raised for it.
+  it.each([
+    ["a redesign request", "Customise my store for my business", {}, "start"],
+    [
+      "a redesign that names the website",
+      "redesign my website for my mustard oil business",
+      {},
+      "start",
+    ],
+    [
+      "a refinement of a finished redesign",
+      "make it warmer",
+      { revamp: { hasReady: true, hasActive: false } },
+      "refine",
+    ],
+  ])(
+    "★ %s carries the redesign tools, not every tool",
+    (_label, message, extra, next) => {
+      const routed = measure(message, extra);
+      expect(routed.names.has("get_storefront_revamp_context")).toBe(true);
+      expect(
+        routed.names.has(
+          next === "start"
+            ? "start_storefront_revamp"
+            : "refine_storefront_revamp",
+        ),
+      ).toBe(true);
+      expect(routed.total).toBeLessThanOrEqual(32_000);
+      expect(routed.total / measure(null).total).toBeLessThan(0.25);
+    },
+  );
 });

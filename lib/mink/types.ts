@@ -1,4 +1,5 @@
 import type { MinkFormPrefill } from "./form-prefill";
+import type { RevampArtifact } from "./revamp/contract";
 import type { MinkHighlight } from "./guide-targets";
 import type {
   DesignFont,
@@ -349,6 +350,8 @@ export type MinkArtifact =
       chargedCredits: number;
       creditSource: MinkDraftCreditSource;
     }
+  // The storefront revamp's live card: an id the card polls, never the plan.
+  | RevampArtifact
   | {
       type: "storefront_design_proposal";
       draftId: string;

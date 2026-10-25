@@ -23,7 +23,10 @@ scenes" were made for that rail on 2026-10-09 and retired the same day.
 - **Created:** 2026-10-09
 - **Source:** Google's `gemini-3-pro-image` on Vertex AI (project
   `storemink-staging`, location `global`) by `scripts/marketing-photos.mjs`,
-  which holds the exact prompt for every file. Images carry SynthID.
+  which holds the exact prompt for every file. Images carry SynthID. From
+  25 Oct 2026 `scripts/marketing-photos.mjs` draws with
+  `gemini-nano-banana-2.1` (and keeps the last image part that is not a
+  thought, never 2.1's draft); record the model in each new file's entry.
 - **Safety settings:** the four harm filters at `BLOCK_LOW_AND_ABOVE`,
   prominent people blocked, `personGeneration: ALLOW_ADULT` (people are the
   subject of many of these, unlike the theme assets, which allow none).

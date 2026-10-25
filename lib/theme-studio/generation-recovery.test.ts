@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   generationRecoveryDelayMs,
+  isWaitedProviderFailure,
+  PROVIDER_FAILURE_WAITS,
+  providerFailureDelayMs,
   resumableGenerationClient,
   type SavedModelResponse,
 } from "./generation-recovery";
@@ -33,6 +36,47 @@ function memoryStore() {
   };
 }
 const signal = () => new AbortController().signal;
+
+describe("waiting out a provider failure (TS-3B)", () => {
+  it("waits out an unavailable model twice and a timed-out call once", () => {
+    expect(PROVIDER_FAILURE_WAITS).toEqual({
+      provider_unavailable: 2,
+      provider_timeout: 1,
+    });
+    expect(
+      [0, 1, 2].map((n) =>
+        providerFailureDelayMs("provider_unavailable", n, () => 1),
+      ),
+    ).toEqual([120_000, 240_000, null]);
+    expect(
+      [0, 1].map((n) => providerFailureDelayMs("provider_timeout", n, () => 1)),
+    ).toEqual([120_000, null]);
+    // Jittered to 75 to 100% of the step, like the 429 recovery.
+    expect(providerFailureDelayMs("provider_unavailable", 0, () => 0)).toBe(
+      90_000,
+    );
+    expect(
+      providerFailureDelayMs("provider_unavailable", 0, () => 9),
+    ).toBeLessThanOrEqual(120_000);
+  });
+
+  it("never waits out an answer that waiting cannot change", () => {
+    for (const code of [
+      "rate_limited",
+      "provider_rejected",
+      "provider_auth",
+      "cancelled",
+      "model_refused",
+      "output_truncated",
+      "toString",
+    ]) {
+      expect(isWaitedProviderFailure(code)).toBe(false);
+      expect(providerFailureDelayMs(code, 0, () => 1)).toBeNull();
+    }
+    expect(isWaitedProviderFailure("provider_unavailable")).toBe(true);
+    expect(isWaitedProviderFailure("provider_timeout")).toBe(true);
+  });
+});
 
 describe("durable generation recovery", () => {
   it("bounds delayed retries separately from the worker's crash budget", () => {

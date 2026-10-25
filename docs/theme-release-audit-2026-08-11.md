@@ -3,8 +3,8 @@
 This is the Phase 4 release record for Studio `0.1.0` and Ritual `0.1.0`.
 The audit was run against the production demo hosts with the Codex in-app
 Chromium browser and Lighthouse `12.8.2`. It is technical release evidence,
-not either of the two independent human approvals required by
-`docs/theme-acceptance.md`.
+not either of the two independent human approvals `docs/theme-acceptance.md`
+then required (one reviewer's scorecard since 24 Oct 2026).
 
 ## Production storefront sweep
 

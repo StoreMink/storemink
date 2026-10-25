@@ -45,6 +45,24 @@ describe("Mink tool labels", () => {
     );
   });
 
+  it("says what the storefront revamp tools are doing in the merchant's words", () => {
+    expect(minkToolStatus("get_storefront_revamp_context", "running")).toBe(
+      "Reading your store…",
+    );
+    expect(minkToolStatus("start_storefront_revamp", "running")).toBe(
+      "Starting your store's redesign…",
+    );
+    expect(minkToolStatus("start_storefront_revamp", "completed")).toBe(
+      "Started your store's redesign",
+    );
+    expect(minkToolStatus("refine_storefront_revamp", "running")).toBe(
+      "Starting the changes…",
+    );
+    expect(minkToolStatus("refine_storefront_revamp", "failed")).toBe(
+      "Couldn't start the changes",
+    );
+  });
+
   it("falls back to readable words for a tool it does not know", () => {
     expect(minkToolLabel("get_returns_summary")).toBe("returns summary");
     expect(minkToolStatus("list_new_thing", "running")).toBe(

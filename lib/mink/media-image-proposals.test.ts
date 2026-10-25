@@ -41,7 +41,10 @@ vi.mock("@/lib/storage/gcs", () => ({
   ),
   gcsDeletePaths: vi.fn(async () => []),
 }));
-vi.mock("@/lib/observability/logger", () => ({ logError: vi.fn() }));
+vi.mock("@/lib/observability/logger", () => ({
+  logError: vi.fn(),
+  logWarn: vi.fn(),
+}));
 vi.mock("./config", () => ({ getMinkConfig: () => ({ projectId: "p" }) }));
 vi.mock("./drafts", () => ({
   createMinkDraftProposal: vi.fn(async () => ({
@@ -54,13 +57,28 @@ vi.mock("./drafts", () => ({
     creditSource: "plan",
   })),
 }));
-vi.mock("./media-generation", () => ({
-  generateMinkMediaImage: vi.fn(async () => ({
-    bytes: Buffer.from("img"),
-    mimeType: "image/jpeg",
-  })),
-  reserveMinkImageGeneration: vi.fn(async () => undefined),
+const allowance = vi.hoisted(() => ({
+  giveBack: vi.fn(async () => undefined),
 }));
+vi.mock("./media-generation", async () => {
+  // The pure rules are the real ones; the paid call and the claim are not.
+  const actual =
+    await vi.importActual<typeof import("./media-generation")>(
+      "./media-generation",
+    );
+  return {
+    MINK_CHAT_IMAGE_RETRY: actual.MINK_CHAT_IMAGE_RETRY,
+    MinkImageNotSentError: actual.MinkImageNotSentError,
+    isUnbilledImageFailure: actual.isUnbilledImageFailure,
+    generateMinkMediaImage: vi.fn(async () => ({
+      bytes: Buffer.from("img"),
+      mimeType: "image/jpeg",
+    })),
+    reserveMinkImageGeneration: vi.fn(async () => ({
+      giveBack: allowance.giveBack,
+    })),
+  };
+});
 vi.mock("./media-reference-images", () => ({
   resolveMinkMediaReferenceImages: vi.fn(async () => []),
 }));
@@ -73,11 +91,22 @@ vi.mock("@/lib/chrome/queries", () => ({
   })),
 }));
 
-import { createMinkMediaImageProposal } from "./media-image-proposals";
 import {
+  POST_DRAW_RESERVE_MS,
+  createMinkMediaImageProposal,
+} from "./media-image-proposals";
+import {
+  MinkImageNotSentError,
   generateMinkMediaImage,
   reserveMinkImageGeneration,
 } from "./media-generation";
+import {
+  MinkImageRateLimitedError,
+  MinkRequestError,
+  MinkToolInputError,
+  MinkToolTimeoutError,
+} from "./errors";
+import type { MinkToolContext } from "./tools/registry";
 import { createMinkDraftProposal } from "./drafts";
 import { gcsDeletePaths, gcsUploadObject } from "@/lib/storage/gcs";
 import { withService } from "@/lib/db/client";
@@ -334,6 +363,8 @@ describe("createMinkMediaImageProposal", () => {
     const uploaded = vi.mocked(gcsUploadObject).mock.calls[0][0];
     expect(dbState.deletes).toBe(1);
     expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledWith([uploaded]);
+    // ★ The write tidies up after itself, once; nothing deletes it again.
+    expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledTimes(1);
   });
 
   it("does not return an unusable card when the Media row cannot be saved", async () => {
@@ -345,5 +376,145 @@ describe("createMinkMediaImageProposal", () => {
     expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
     const uploaded = vi.mocked(gcsUploadObject).mock.calls[0][0];
     expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledWith([uploaded]);
+    expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** A tool context like the registry's, its deadline 100 s away. */
+function toolContext(): MinkToolContext & {
+  stop: AbortController;
+  commit: ReturnType<typeof vi.fn>;
+} {
+  const stop = new AbortController();
+  return {
+    stop,
+    signal: stop.signal,
+    deadlineAt: Date.now() + 100_000,
+    commit: vi.fn(async (write: () => Promise<unknown>) => {
+      if (stop.signal.aborted) throw new MinkToolTimeoutError();
+      return write();
+    }),
+  } as never;
+}
+
+describe("★★ a chat image under the tool's deadline (B6, B10)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    toolEnabled.current = true;
+    dbState.inserts = [];
+    dbState.deletes = 0;
+    dbState.failMediaInsert = false;
+  });
+
+  it("asks with the chat's retry rule, the tool's stop, and its deadline less the writes' reserve, at 2K with MINIMAL thinking", async () => {
+    const context = toolContext();
+    await createMinkMediaImageProposal({ actor, ...ask, context });
+    expect(vi.mocked(generateMinkMediaImage).mock.calls[0][3]).toEqual({
+      rateLimitRetries: 2,
+      attemptTimeoutMs: 45_000,
+      rateLimitWaitMs: { min: 5_000, max: 15_000 },
+      abortSignal: context.signal,
+      deadlineAt: context.deadlineAt - POST_DRAW_RESERVE_MS,
+      // ★★ Owner, 25 Oct 2026: a chat image at 2K, MINIMAL thinking.
+      imageSize: "2K",
+      thinkingLevel: "MINIMAL",
+    });
+    // ★ The Media row and the charged draft are the tool's last write.
+    expect(context.commit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createMinkDraftProposal)).toHaveBeenCalledTimes(1);
+  });
+
+  it("★★ gives the store's allowance back when Google never drew the picture (B3)", async () => {
+    for (const unbilled of [
+      new MinkImageRateLimitedError("busy"),
+      new MinkImageNotSentError("image_provider_unavailable", "busy", 503),
+    ]) {
+      allowance.giveBack.mockClear();
+      vi.mocked(generateMinkMediaImage).mockRejectedValueOnce(unbilled);
+      await expect(
+        createMinkMediaImageProposal({ actor, ...ask, context: toolContext() }),
+      ).rejects.toBe(unbilled);
+      expect(allowance.giveBack).toHaveBeenCalledTimes(1);
+    }
+    expect(vi.mocked(gcsUploadObject)).not.toHaveBeenCalled();
+    expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
+  });
+
+  it("★★ keeps it spent for a failure Google may have billed, and for a picture that came back", async () => {
+    for (const billed of [
+      new MinkRequestError("image_provider_unavailable", "timed out", 503),
+      new MinkToolInputError("The image service refused this description."),
+    ]) {
+      vi.mocked(generateMinkMediaImage).mockRejectedValueOnce(billed);
+      await expect(
+        createMinkMediaImageProposal({ actor, ...ask, context: toolContext() }),
+      ).rejects.toBe(billed);
+    }
+    await createMinkMediaImageProposal({
+      actor,
+      ...ask,
+      context: toolContext(),
+    });
+    expect(allowance.giveBack).not.toHaveBeenCalled();
+  });
+
+  it("★★ stores, saves and charges nothing when the time ran out during the draw", async () => {
+    const context = toolContext();
+    vi.mocked(generateMinkMediaImage).mockImplementationOnce(async () => {
+      context.stop.abort(new MinkToolTimeoutError());
+      return { bytes: Buffer.from("img"), mimeType: "image/jpeg" };
+    });
+    await expect(
+      createMinkMediaImageProposal({ actor, ...ask, context }),
+    ).rejects.toBeInstanceOf(MinkToolTimeoutError);
+    expect(vi.mocked(gcsUploadObject)).not.toHaveBeenCalled();
+    expect(dbState.inserts).toEqual([]);
+    expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
+    // The draw may have been billed: the allowance stays spent.
+    expect(allowance.giveBack).not.toHaveBeenCalled();
+  });
+
+  it("★★ a write refused at the deadline removes the picture already stored", async () => {
+    const context = toolContext();
+    vi.mocked(gcsUploadObject).mockImplementationOnce(async (path: string) => {
+      context.stop.abort(new MinkToolTimeoutError());
+      return `https://storage.googleapis.com/bucket/${path}`;
+    });
+    await expect(
+      createMinkMediaImageProposal({ actor, ...ask, context }),
+    ).rejects.toBeInstanceOf(MinkToolTimeoutError);
+    const uploaded = vi.mocked(gcsUploadObject).mock.calls[0][0];
+    expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledWith([uploaded]);
+    expect(dbState.inserts).toEqual([]);
+    expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
+  });
+
+  it("★ outside a tool, saves and charges nothing once its own time is up", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.mocked(generateMinkMediaImage).mockImplementationOnce(async () => {
+        vi.setSystemTime(Date.now() + 100_001);
+        return { bytes: Buffer.from("img"), mimeType: "image/jpeg" };
+      });
+      await expect(
+        createMinkMediaImageProposal({ actor, ...ask }),
+      ).rejects.toBeInstanceOf(MinkToolTimeoutError);
+      const uploaded = vi.mocked(gcsUploadObject).mock.calls[0][0];
+      expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledWith([uploaded]);
+      expect(dbState.inserts).toEqual([]);
+      expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives itself a deadline when called outside a tool", async () => {
+    const before = Date.now();
+    await createMinkMediaImageProposal({ actor, ...ask });
+    const options = vi.mocked(generateMinkMediaImage).mock.calls[0][3]!;
+    expect(options.abortSignal).toBeUndefined();
+    expect(options.deadlineAt).toBeGreaterThanOrEqual(
+      before + 100_000 - POST_DRAW_RESERVE_MS,
+    );
   });
 });

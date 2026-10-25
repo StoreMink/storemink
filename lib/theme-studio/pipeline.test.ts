@@ -663,6 +663,8 @@ describe("theme generation pipeline", () => {
       expect(page.seo_description?.length ?? 0).toBeGreaterThanOrEqual(20);
       expect(page.seo_description!.length).toBeLessThanOrEqual(160);
       expect(page.seo_description).toContain(base.name);
+      // A shopper reads it: no em dash or en dash (the product's dash rule).
+      expect(page.seo_description).not.toMatch(/[\u2013\u2014]/);
     }
   });
 

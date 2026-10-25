@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -14,24 +14,46 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-export function DeleteThemeButton({
-  projectId,
-  themeId,
-  name,
-  revision,
-  disabled,
-}: {
+// Delete a theme for good, behind a dialog that asks for its theme ID. The
+// theme page opens the dialog from its "..." menu (DeleteThemeDialog); the
+// server refuses, in a sentence shown in the dialog, while a store uses the
+// theme or while work holds it (migration 0161).
+
+export interface DeleteThemeProps {
   projectId: string;
   themeId: string;
   name: string;
   revision: number;
-  disabled: boolean;
+}
+
+/** The Delete dialog on its own, opened by a control elsewhere (the "..."
+ * menu). `returnFocusTo` gets focus back when it closes. */
+export function DeleteThemeDialog({
+  projectId,
+  themeId,
+  name,
+  revision,
+  open,
+  onOpenChange,
+  returnFocusTo,
+}: DeleteThemeProps & {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  returnFocusTo?: RefObject<HTMLElement | null>;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Every opening starts clean, however it was opened.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setConfirmation("");
+      setError(null);
+    }
+  }
   function remove() {
     startTransition(async () => {
       try {
@@ -44,8 +66,8 @@ export function DeleteThemeButton({
           setError(result.error ?? "The theme could not be deleted.");
           return;
         }
-        toast.success("Theme permanently deleted.");
-        setOpen(false);
+        toast.success("Theme deleted for good.");
+        onOpenChange(false);
         router.push("/dashboard/themes/studio");
         router.refresh();
       } catch {
@@ -54,76 +76,100 @@ export function DeleteThemeButton({
     });
   }
   return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!pending) onOpenChange(next);
+      }}
+    >
+      <DialogContent className="studio-root" finalFocus={returnFocusTo}>
+        <DialogHeader>
+          <DialogTitle>Delete {name} for good?</DialogTitle>
+          <DialogDescription>
+            This removes the theme, its chat, screenshots, designs, previews,
+            checks and its published release. It can&apos;t be undone. A theme a
+            store uses can&apos;t be deleted. Published pictures are kept,
+            because stores may still show them.
+          </DialogDescription>
+        </DialogHeader>
+        <label
+          className="grid gap-2 text-sm"
+          htmlFor="delete-theme-confirmation"
+        >
+          <span>
+            Type <strong>{themeId}</strong> to confirm
+          </span>
+          {/* Compared exactly (here and in the database): a phone's
+              keyboard must not capitalise or correct "aurora" into
+              "Aurora". */}
+          <input
+            id="delete-theme-confirmation"
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            disabled={pending}
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            aria-describedby={
+              confirmation && confirmation !== themeId
+                ? "delete-theme-mismatch"
+                : undefined
+            }
+            className="dash-input w-full"
+          />
+        </label>
+        {confirmation && confirmation !== themeId ? (
+          <p id="delete-theme-mismatch" className="studio-reason">
+            That doesn&apos;t match yet: type {themeId} exactly, with the same
+            letters, to delete the theme.
+          </p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="studio-error text-sm">
+            {error}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => onOpenChange(false)}
+            className="dash-btn dash-btn-ghost"
+          >
+            Keep it
+          </button>
+          <button
+            type="button"
+            disabled={pending || confirmation !== themeId}
+            onClick={remove}
+            className="dash-btn dash-btn-primary"
+          >
+            {pending ? "Deleting…" : "Delete theme permanently"}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** A Delete button with its dialog. */
+export function DeleteThemeButton({
+  disabled,
+  ...props
+}: DeleteThemeProps & { disabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
     <>
       <button
         type="button"
-        disabled={disabled || pending}
-        onClick={() => {
-          setConfirmation("");
-          setError(null);
-          setOpen(true);
-        }}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+        disabled={disabled}
+        onClick={() => setOpen(true)}
+        className="dash-btn dash-btn-ghost"
       >
-        <Trash2 className="h-4 w-4" /> Delete permanently
+        <Trash2 aria-hidden="true" className="h-4 w-4" /> Delete permanently
       </button>
-      <Dialog
-        open={open}
-        onOpenChange={(next) => {
-          if (!pending) setOpen(next);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete {name} permanently?</DialogTitle>
-            <DialogDescription>
-              This removes this project, its conversation, screenshots,
-              generated versions, previews and published theme releases. It
-              cannot be undone. Themes in use by a store cannot be deleted.
-              Published images are retained because stores may reuse them.
-            </DialogDescription>
-          </DialogHeader>
-          <label
-            className="space-y-2 text-sm"
-            htmlFor="delete-theme-confirmation"
-          >
-            <span>
-              Type <strong>{themeId}</strong> to confirm
-            </span>
-            <input
-              id="delete-theme-confirmation"
-              value={confirmation}
-              onChange={(event) => setConfirmation(event.target.value)}
-              disabled={pending}
-              autoComplete="off"
-              className="w-full rounded-md border border-slate-300 px-3 py-2"
-            />
-          </label>
-          {error ? (
-            <p role="alert" className="text-sm text-red-700">
-              {error}
-            </p>
-          ) : null}
-          <DialogFooter>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => setOpen(false)}
-              className="rounded-md border px-3 py-2 text-sm"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={pending || confirmation !== themeId}
-              onClick={remove}
-              className="rounded-md bg-red-700 px-3 py-2 text-sm text-white disabled:opacity-50"
-            >
-              {pending ? "Deleting…" : "Delete theme permanently"}
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DeleteThemeDialog {...props} open={open} onOpenChange={setOpen} />
     </>
   );
 }

@@ -63,14 +63,6 @@ describe("finishing a capture", () => {
   it("refuses a malformed or oversized body before anything is processed", async () => {
     expect((await finishRoute(post("not json"), params)).status).toBe(400);
     expect((await finishRoute(post({ images: [] }), params)).status).toBe(400);
-    expect(
-      (
-        await finishRoute(
-          post({ leaseToken: "l", images: [{ slotId: 1, base64: "x" }] }),
-          params,
-        )
-      ).status,
-    ).toBe(400);
     // Past the ceiling: catalog/QA images, six bounded HTML pages and headroom.
     const huge = "a".repeat(6 * 1024 * 1024 + 200 * 1024);
     expect(
@@ -82,6 +74,106 @@ describe("finishing a capture", () => {
       ).status,
     ).toBe(400);
     expect(finish).not.toHaveBeenCalled();
+  });
+
+  // ★ Owner, 24 Oct 2026: a report the server refuses is the same on every
+  // try. Once the body names its lease, it is that try's error, which fails
+  // the capture at once; a bare 400 left the lease to lapse and the capture
+  // was tried again, identically, up to five times.
+  it.each([
+    [
+      "a malformed picture",
+      { images: [{ slotId: 1, base64: "x" }] },
+      "capture_unusable",
+    ],
+    ["a malformed QA report", { images: [], qa: {} }, "qa_report_invalid"],
+    [
+      "a malformed QA screenshot",
+      { images: [], qa: { screenshots: [{ key: "phone360:home" }] } },
+      "qa_screenshots_invalid",
+    ],
+    [
+      "an empty QA screenshot",
+      {
+        images: [],
+        qa: {
+          screenshots: [
+            {
+              key: "phone360:home",
+              viewport: "phone360",
+              surface: "home",
+              path: "/",
+              base64: "",
+            },
+          ],
+        },
+      },
+      "qa_screenshot_unusable",
+    ],
+    [
+      "a QA screenshot over the limit",
+      {
+        images: [],
+        qa: {
+          screenshots: [
+            {
+              key: "phone360:home",
+              viewport: "phone360",
+              surface: "home",
+              path: "/",
+              base64: Buffer.alloc(1025).toString("base64"),
+            },
+          ],
+        },
+      },
+      "qa_screenshot_too_large",
+    ],
+  ])(
+    "answers %s under its lease as that try's error",
+    async (_label, payload, code) => {
+      finish.mockResolvedValueOnce({ status: "failed", errorCode: code });
+      const response = await finishRoute(
+        post({ leaseToken: "l", ...payload }),
+        params,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        status: "failed",
+        errorCode: code,
+      });
+      expect(finish).toHaveBeenCalledWith({
+        captureId: "c-1",
+        leaseToken: "l",
+        error: code,
+      });
+    },
+  );
+
+  it("passes on the page a status error came from, and nothing that is not a page name", async () => {
+    finish.mockResolvedValue({ status: "failed", errorCode: "x" });
+    await finishRoute(
+      post({
+        leaseToken: "l",
+        error: "preview_status_404",
+        failedSurface: "home",
+      }),
+      params,
+    );
+    expect(finish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        error: "preview_status_404",
+        errorSurface: "home",
+      }),
+    );
+    await finishRoute(
+      post({
+        leaseToken: "l",
+        error: "preview_status_404",
+        failedSurface: "<script>",
+      }),
+      params,
+    );
+    expect(finish.mock.lastCall?.[0]).not.toHaveProperty("errorSurface");
   });
 
   it("passes same-claim route responses, digest and timing to leased server validation", async () => {

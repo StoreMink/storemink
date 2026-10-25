@@ -33,6 +33,24 @@ export const CANNED_REPLY = `Hi, I'm ${ASSISTANT_NAME} - your store assistant. I
 const REPLY_DELAY_MS = 500;
 /** How long after a send History asks again for a title that had not arrived. */
 const TITLE_REFRESH_MS = 4_000;
+/**
+ * ★★ The tools that start a storefront redesign (lib/mink/tools/
+ * storefront-revamp-tools.ts): a reply stopped after one ran keeps the
+ * redesign, and the server saves its card to the chat (robustness audit B4).
+ */
+const REDESIGN_TOOLS: ReadonlySet<string> = new Set([
+  "start_storefront_revamp",
+  "refine_storefront_revamp",
+]);
+/**
+ * The waits before this tab asks again for a stopped reply's kept redesign
+ * card. ★ The server saves it once the run's failure is recorded, which waits
+ * for a tool's write still under way (a minute at most, the tool registry's
+ * grace), so the last ask comes about two minutes after the stop.
+ */
+const KEPT_CARD_CHECK_DELAYS_MS: readonly number[] = [
+  1_500, 4_000, 10_000, 30_000, 70_000,
+];
 
 /** One tool the run called, as the progress list shows it. */
 export type MinkRunStep = {
@@ -186,6 +204,12 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
   const [feedbackSubmittingRunId, setFeedbackSubmittingRunId] = useState<
     string | null
   >(null);
+  // ★ How many times this tab has opened a chat from the dashboard address
+  // (`openConversationFromAddress`). The chat view watches it and meets that
+  // chat the way it meets one chosen in History: at its newest message,
+  // following new output (dashboard-chat.tsx). A count, not a flag, so the
+  // same chat opened twice (the notification clicked again) still counts.
+  const [addressOpens, setAddressOpens] = useState(0);
   const nextId = useRef(0);
   const isReplyingRef = useRef(false);
   const conversationId = useRef<string | null>(null);
@@ -208,6 +232,8 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
   // than flashing its stored excerpt first (lib/mink/conversation-title.ts).
   const pendingTitleId = useRef<string | null>(null);
   const titleRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The next ask for a stopped reply's kept redesign card (`awaitKeptCard`).
+  const keptCardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setReplying = useCallback((value: boolean) => {
     isReplyingRef.current = value;
@@ -229,9 +255,24 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
       });
   }, []);
 
-  const loadConversation = useCallback(
-    async (id: string, options: { lastActivityAt?: number } = {}) => {
-      if (!enabled || isReplyingRef.current) return;
+  /**
+   * Opens one of the actor's chats into the thread, and says how it went:
+   * `skipped` when nothing should change (Mink is off, a reply is running, or
+   * a send or a newer load took the thread meanwhile), `missing` when the
+   * server does not have the chat for this viewer and the caller asked to
+   * hear that instead of an error (`quietIfMissing`). `keepDraft` leaves the
+   * composer's words as they are (the chat already open, loaded again).
+   */
+  const loadConversationInto = useCallback(
+    async (
+      id: string,
+      options: {
+        lastActivityAt?: number;
+        quietIfMissing?: boolean;
+        keepDraft?: boolean;
+      } = {},
+    ): Promise<"loaded" | "missing" | "failed" | "skipped"> => {
+      if (!enabled || isReplyingRef.current) return "skipped";
       shouldRestoreLatest.current = false;
       historyAbortController.current?.abort();
       const controller = new AbortController();
@@ -248,7 +289,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
         const body = (await response.json()) as unknown;
         const detail = readConversationDetail(body);
         // A message sent meanwhile owns the thread now; keep it.
-        if (sendSerial.current !== serial) return;
+        if (sendSerial.current !== serial) return "skipped";
         conversationId.current = detail.id;
         // Opening a chat from History is using it; a reload's restore keeps
         // the time of its last real message.
@@ -258,12 +299,20 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
         setActiveConversationTitle(detail.title);
         setMessages(detail.messages);
         setMemoryPrompt(null);
-        setInput("");
+        if (!options.keepDraft) setInput("");
         setStatusText(null);
         lastFailedMessage.current = null;
+        return "loaded";
       } catch (caught) {
-        if (!controller.signal.aborted && sendSerial.current === serial)
-          setError(toUiError(caught));
+        if (controller.signal.aborted || sendSerial.current !== serial) {
+          return "skipped";
+        }
+        const failure = toUiError(caught);
+        if (options.quietIfMissing && isMissingConversation(failure)) {
+          return "missing";
+        }
+        setError(failure);
+        return "failed";
       } finally {
         if (historyAbortController.current === controller) {
           historyAbortController.current = null;
@@ -272,6 +321,13 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
       }
     },
     [enabled, setMemoryPrompt, touchActivity, releasePreviews],
+  );
+
+  const loadConversation = useCallback(
+    async (id: string, options: { lastActivityAt?: number } = {}) => {
+      await loadConversationInto(id, options);
+    },
+    [loadConversationInto],
   );
 
   const loadConversations = useCallback(
@@ -382,9 +438,70 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
       historyAbortController.current?.abort();
       if (replyTimer.current) clearTimeout(replyTimer.current);
       if (titleRefreshTimer.current) clearTimeout(titleRefreshTimer.current);
+      if (keptCardTimer.current) clearTimeout(keptCardTimer.current);
       releasePreviews();
     };
   }, [enabled, loadConversations, releasePreviews]);
+
+  const stopKeptCardChecks = useCallback(() => {
+    if (keptCardTimer.current) clearTimeout(keptCardTimer.current);
+    keptCardTimer.current = null;
+  }, []);
+
+  /**
+   * ★★ A REPLY STOPPED AFTER IT STARTED A STOREFRONT REDESIGN KEEPS IT (B4),
+   *   and the server saves the redesign's card to the chat, under the stopped
+   *   run, once the run's failure is recorded. This tab stopped reading the
+   *   reply first, so it asks for the chat again after each of
+   *   KEPT_CARD_CHECK_DELAYS_MS until that card is there, then adds it after
+   *   the question it answers. Nothing else in the thread changes (a stopped
+   *   question stays where it is), a card already shown is never added twice,
+   *   and the checks end when the chat is left.
+   */
+  const awaitKeptCard = useCallback(
+    (id: string, runId: string, afterMessageId: MinkMessage["id"]) => {
+      stopKeptCardChecks();
+      const check = (attempt: number) => {
+        const delay = KEPT_CARD_CHECK_DELAYS_MS[attempt];
+        if (delay === undefined) return;
+        keptCardTimer.current = setTimeout(() => {
+          keptCardTimer.current = null;
+          void (async () => {
+            if (conversationId.current !== id) return;
+            let kept: MinkMessage[] = [];
+            try {
+              const response = await fetch(
+                `/api/mink/conversations/${encodeURIComponent(id)}`,
+                { cache: "no-store" },
+              );
+              if (response.ok) {
+                kept = readConversationDetail(
+                  (await response.json()) as unknown,
+                ).messages.filter(
+                  (message) =>
+                    message.role === "assistant" &&
+                    message.runId === runId &&
+                    revampIdsOf([message]).size > 0,
+                );
+              }
+            } catch {
+              // Asked again after the next wait.
+            }
+            if (conversationId.current !== id) return;
+            if (kept.length === 0) {
+              check(attempt + 1);
+              return;
+            }
+            setMessages((previous) =>
+              withKeptCards(previous, kept, afterMessageId),
+            );
+          })();
+        }, delay);
+      };
+      check(0);
+    },
+    [stopKeptCardChecks],
+  );
 
   const run = useCallback(
     async (
@@ -480,6 +597,10 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
       const creatingChat = conversationId.current === null;
       // Assigned in the stream's callback, so typed wide rather than narrowed.
       let createdChatId = null as string | null;
+      // ★ B4: this reply's run, and whether it called a tool that starts a
+      //   storefront redesign, which a stop keeps (`awaitKeptCard`).
+      let streamRunId = null as string | null;
+      let startedRedesign = false;
 
       if (prepared) {
         // ★★ THE MESSAGE IS ALREADY IN THE CHAT; ITS FILES ARE READ HERE.
@@ -571,6 +692,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
 
         await consumeMinkSse(response.body, (event, data) => {
           if (event === "status") {
+            if (typeof data.runId === "string") streamRunId = data.runId;
             if (typeof data.conversationId === "string") {
               const id = data.conversationId;
               conversationId.current = id;
@@ -621,6 +743,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
           } else if (event === "tool") {
             const name =
               typeof data.name === "string" ? data.name : "store_data";
+            if (REDESIGN_TOOLS.has(name)) startedRedesign = true;
             const state: MinkToolState =
               data.state === "failed"
                 ? "failed"
@@ -729,7 +852,10 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
           lastFailedMessage.current = message;
         }
       } finally {
-        if (abortController.current === controller) {
+        // ★ Still this tab's reply: it ended, failed or the merchant stopped
+        //   it (a new chat or leaving the dashboard detaches it first).
+        const own = abortController.current === controller;
+        if (own) {
           abortController.current = null;
           setStatusText(null);
           setStreamingText("");
@@ -739,6 +865,11 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
           setSteps([]);
           setReplying(false);
         }
+        // ★★ B4: stopped or cut off after it started a redesign, with no
+        //    answer read: the card the server keeps is fetched into the chat.
+        const keptIn = conversationId.current;
+        if (own && !receivedMessage && startedRedesign && streamRunId && keptIn)
+          awaitKeptCard(keptIn, streamRunId, userMessageId);
         // ★ The title is usually ready long before the answer. When it was
         // not (a fast answer, a busy model, a stopped run), it is still saved
         // on the server, so History asks once more a moment later; a chat that
@@ -756,7 +887,14 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
         }
       }
     },
-    [enabled, loadConversations, setReplying, setMemoryPrompt, touchActivity],
+    [
+      enabled,
+      loadConversations,
+      setReplying,
+      setMemoryPrompt,
+      touchActivity,
+      awaitKeptCard,
+    ],
   );
 
   /**
@@ -810,6 +948,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     // A history load that lands late must not fill the new chat.
     sendSerial.current += 1;
     if (replyTimer.current) clearTimeout(replyTimer.current);
+    stopKeptCardChecks();
     conversationId.current = null;
     lastActivityAt.current = null;
     clearMinkActiveChat(minkSessionStorage());
@@ -830,7 +969,7 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     setError(null);
     setIsHistoryLoading(false);
     setReplying(false);
-  }, [setReplying, setMemoryPrompt, releasePreviews]);
+  }, [setReplying, setMemoryPrompt, releasePreviews, stopKeptCardChecks]);
 
   /** "New chat": the header button, a question from Home, "Ask Mink". */
   const startNewChat = useCallback(() => reset(), [reset]);
@@ -845,6 +984,41 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     if (isReplyingRef.current || !conversationId.current) return;
     if (isMinkChatStale(lastActivityAt.current, Date.now())) reset();
   }, [reset]);
+
+  /**
+   * ★★ A dashboard address that names a chat (`?chat=<id>`, robustness audit
+   *   B20): the "redesign ready" notice opens the chat its card is in. It
+   *   opens the way choosing the chat in History does, and only the viewer's
+   *   own: the history API answers for the actor's chats alone, so an id that
+   *   is not theirs (or no id at all) opens a new, empty chat, never somebody
+   *   else's and never an error.
+   * ★★ The chat already open is loaded again, its draft kept: the card may
+   *   have been saved after this tab last read the chat (a reply stopped here,
+   *   or a run a dead server left, closed later; B4), and the notice promises
+   *   the chat with the card.
+   * ★ A reply still running keeps its chat: switching would stop that answer
+   *   (the Home question's rule), and History still lists the named chat.
+   * ★★ The view is told before the load (`addressOpens`), as History's choice
+   *   resets the view's scroll-follow state before it loads: a full view last
+   *   left scrolled up used to open the named chat at its top, the card it
+   *   was opened for out of sight below. Not while a reply is running, whose
+   *   question stays anchored where the merchant left it.
+   */
+  const openConversationFromAddress = useCallback(
+    async (id: string | null) => {
+      if (!enabled || isReplyingRef.current) return;
+      setAddressOpens((count) => count + 1);
+      if (id) {
+        const outcome = await loadConversationInto(id, {
+          quietIfMissing: true,
+          keepDraft: conversationId.current === id,
+        });
+        if (outcome !== "missing") return;
+      }
+      reset();
+    },
+    [enabled, loadConversationInto, reset],
+  );
 
   /**
    * One tap saves the offered sentence through the same memories API the
@@ -966,6 +1140,8 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
     reset,
     startNewChat,
     resumeOrStartFresh,
+    openConversationFromAddress,
+    addressOpens,
     loadConversation,
     deleteConversation,
     submitFeedback,
@@ -1049,6 +1225,19 @@ function toPrepareError(error: unknown): MinkUiError {
   return toUiError(error);
 }
 
+/**
+ * The history API's answer for a chat this viewer does not have: another
+ * admin's or another store's (the API is scoped to the actor and says
+ * `conversation_not_found`), one deleted since, or an id it refuses to read.
+ */
+function isMissingConversation(error: MinkUiError): boolean {
+  return (
+    error.code === "conversation_not_found" ||
+    error.code === "http_404" ||
+    error.code === "http_400"
+  );
+}
+
 function toUiError(error: unknown): MinkUiError {
   if (
     error &&
@@ -1088,6 +1277,40 @@ function readConversationSummaries(value: unknown): MinkConversationSummary[] {
       },
     ];
   });
+}
+
+/** The storefront redesigns whose cards some of these messages carry. */
+function revampIdsOf(messages: readonly MinkMessage[]): Set<string> {
+  const out = new Set<string>();
+  for (const message of messages) {
+    for (const artifact of message.artifacts ?? []) {
+      if (artifact.type === "storefront_revamp") out.add(artifact.revampId);
+    }
+  }
+  return out;
+}
+
+/**
+ * The thread with a stopped reply's kept redesign cards added (B4), right
+ * after the question they answer (at the end when it is no longer there),
+ * each one once: never a message, or a redesign's card, the thread shows.
+ */
+function withKeptCards(
+  thread: MinkMessage[],
+  kept: readonly MinkMessage[],
+  afterId: MinkMessage["id"],
+): MinkMessage[] {
+  const shownIds = new Set(thread.map((message) => message.id));
+  const shownCards = revampIdsOf(thread);
+  const missing = kept.filter(
+    (message) =>
+      !shownIds.has(message.id) &&
+      ![...revampIdsOf([message])].some((revampId) => shownCards.has(revampId)),
+  );
+  if (missing.length === 0) return thread;
+  const at = thread.findIndex((message) => message.id === afterId);
+  if (at < 0) return [...thread, ...missing];
+  return [...thread.slice(0, at + 1), ...missing, ...thread.slice(at + 1)];
 }
 
 function readConversationDetail(value: unknown): {

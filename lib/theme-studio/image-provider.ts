@@ -54,9 +54,12 @@ export type ThemeImagePurpose = (typeof THEME_IMAGE_PURPOSES)[number];
  * An earlier image sent with the request. `anchor` asks the model to match the
  * theme's light, palette and materials; `set` asks it to match an earlier
  * product shot's staging exactly, so a catalogue reads as one shoot.
+ * `product` is one of the merchant's real products, from its own photograph,
+ * for a Mink storefront redesign picture of the merchant's goods (B16,
+ * image-prompt.ts `goodsRule`); Theme Studio never sends one.
  */
 export interface ThemeImageReference {
-  role: "anchor" | "set";
+  role: "anchor" | "set" | "product";
   mediaType: "image/webp" | "image/jpeg" | "image/png";
   base64: string;
 }

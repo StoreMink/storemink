@@ -91,6 +91,23 @@ describe("replacement input", () => {
     expect(parsed.ok).toBe(false);
     expect(!parsed.ok && parsed.error).toMatch(message);
   });
+
+  // TS-1D: product text never uses an en dash or an em dash.
+  it("states the length rules in words, with no dash", () => {
+    const alt = validateSlotReplacements([{ ...replacement(), alt: "x" }]);
+    const note = validateSlotReplacements([
+      { ...replacement(), licenseNote: "" },
+    ]);
+    expect(!alt.ok && alt.error).toBe(
+      "Describe the slot-1 image in 3 to 200 characters (alt text).",
+    );
+    expect(!note.ok && note.error).toBe(
+      "Add a licence note for the slot-1 image (3 to 300 characters).",
+    );
+    for (const result of [alt, note]) {
+      expect(!result.ok && result.error).not.toMatch(/[\u2013\u2014]/);
+    }
+  });
 });
 
 describe("applying replacements", () => {

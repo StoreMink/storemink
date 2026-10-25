@@ -11,12 +11,13 @@
  *
  * ★ THE VERB FOLLOWS THE TOOL'S SHAPE. A read is "Reading …", a proposal is
  * "Preparing …" (it changes nothing until approved), a durable workflow is
- * "Queuing …", and the image provider is "Generating …". The label is the
+ * "Queuing …", the image provider is "Generating …", and a background job
+ * the chat's card follows (the storefront revamp) is "Starting …". The label is the
  * object of that verb, so it reads as one sentence in each state.
  */
 export type MinkToolState = "running" | "completed" | "failed";
 
-type ToolVerb = "read" | "prepare" | "queue" | "generate" | "correct";
+type ToolVerb = "read" | "prepare" | "queue" | "generate" | "correct" | "start";
 
 const VERBS: Record<
   ToolVerb,
@@ -38,6 +39,12 @@ const VERBS: Record<
     running: "Correcting",
     completed: "Corrected",
     failed: "Couldn't correct",
+  },
+  // A background job the card then follows, such as the storefront revamp.
+  start: {
+    running: "Starting",
+    completed: "Started",
+    failed: "Couldn't start",
   },
 };
 
@@ -73,6 +80,7 @@ export const MINK_TOOL_LABELS: Record<
     verb: "read",
     label: "your storefront",
   },
+  get_storefront_revamp_context: { verb: "read", label: "your store" },
   get_storefront_section_context: { verb: "read", label: "the page section" },
   get_website_builder_context: { verb: "read", label: "Website Builder" },
   inspect_product_csv: { verb: "read", label: "the product CSV" },
@@ -128,6 +136,8 @@ export const MINK_TOOL_LABELS: Record<
   search_products: { verb: "read", label: "products" },
   search_storefront_categories: { verb: "read", label: "categories" },
   start_business_brief: { verb: "queue", label: "a business brief" },
+  start_storefront_revamp: { verb: "start", label: "your store's redesign" },
+  refine_storefront_revamp: { verb: "start", label: "the changes" },
   start_delayed_pickup_review: { verb: "queue", label: "a pickup review" },
   start_product_launch_preparation: { verb: "queue", label: "a launch check" },
   start_revenue_decline_investigation: {

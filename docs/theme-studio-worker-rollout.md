@@ -4,6 +4,11 @@ Status: implemented locally on 4 October 2026; deployment, scheduler routing and
 a fresh complete-theme benchmark are still required. The baseline production
 batch produced 5/8 candidates with a 68.28-minute successful median. These
 changes do not establish a new completion-time or production-readiness result.
+The private workers are deployed (production only, one instance each since
+17 October) but unrouted: theme work still runs inside the web service, and
+routing waits for decision 9 after the Theme Studio release (plan P1 and
+P9). The Theme Studio release (TS-3, 25 October) changes what each request
+does (below) and the release order (capture job first).
 
 ## Runtime changes
 
@@ -28,6 +33,28 @@ Text deadlines requeue within the existing claim limit; the final timed-out
 claim closes rather than leaving a poisoned queued row at its attempt ceiling.
 Image deadlines preserve the existing checkpoint/partial-image behavior.
 
+Since the Theme Studio release (TS-3B):
+
+- An idle lane beside a busy one asks for work every 5 to 10 s, jittered
+  (`IDLE_LANE_WAIT_MS`); it was every second, about two transactions a
+  second for up to 19 minutes.
+- A FRESH photo run needs 9 minutes of the request left
+  (`FRESH_PHOTO_RUN_MIN_MS`); one already started continues with less. A
+  photo run cut by the request's deadline goes back to the queue as it is
+  (no crash attempt spent) and the next request replays its saved draws and
+  checks, up to 3 times (`PHOTO_RUN_CONTINUATIONS`); a later cut settles
+  what it has and the fill rounds finish it.
+- Automatic repairs are claimed before any other work (a repair takes 3 to
+  23 s of model time but waited a median 117 s on 4 October).
+- Theme Studio's text calls queue on their own capacity row
+  (`theme-studio-text`) and the design review on its own
+  (`theme-studio-review`), so neither holds a permit a photo check needs.
+- A text call that fails as `provider_unavailable` is waited out twice and
+  one that fails as `provider_timeout` once (about 2, then 4 minutes), like
+  a 429; the saved answers replay, so nothing completed is paid twice.
+- The "theme studio: run settled" line carries `errorCode`, which a P6
+  alert reads (`docs/monitoring.md`, alert 16).
+
 The private topology separates model work from QA and storefront requests:
 
 | Role              | Production service                  | HTTP request bound | Independent schedules                                             |
@@ -41,23 +68,41 @@ services were deleted on 2026-10-17 and Cloud Build deploys workers for
 concurrency one, maximum ONE instance (two until 2026-10-17) and minimum zero:
 every worker instance counts against the asia-south1 Cloud Run quota of 40 GiB
 and 20 vCPU for the whole project, which `storemink-web-prod` shares, and
-Theme Studio is a staff-only tool. One lane runs in each private request. Two
-independent schedules allow a completed request to start again while its peer
-is busy; with one instance, the second waits for the first. Every paid call remains awaited. The public web endpoint retains its
+Theme Studio is a staff-only tool. One lane runs in each private request. The
+two "-peer" schedules in the table were meant to start a second request while
+the first is busy, but with one instance at request concurrency one Cloud
+Run refuses that second request with HTTP 429; it does not queue it. So the
+peers add nothing, and routing (plan P1, after the release) drops them: do
+not create them. Every paid call remains awaited. The public web endpoint retains its
 two draining lanes and QA fallback until routing is changed.
 
 Each worker pool has one database connection with a five-second acquisition
 timeout, 30-second statement timeout and 60-second idle-transaction timeout.
+One connection is enough only because no transaction is held through a
+model call and none is opened inside another: on a pool of one the inner
+transaction waits the five seconds and fails as busy. Until 25 October the
+photo check before a design review did exactly that (it held a transaction
+while each photo's claim opened its own), so on the QA worker no unchecked
+photo could ever be claimed and the theme would end as could not finish
+after 20 minutes of "Checking pictures". It now opens its transactions one
+at a time, and `lib/theme-studio/photo-check-pool-postgres.test.ts` runs that
+path on a pool of one (`THEME_STUDIO_RECOVERY_DB_TEST=1`, local database).
+Check that it passes before routing (plan P1, step A8).
 Sharp uses one decoder thread and a 16 MiB cache on private workers only. The
-web's database and Sharp settings are unchanged. Worker logs include settled-run
+web's Sharp settings are unchanged; since 2026-10-23 the web pool has the same
+three database limits (`lib/db/client.ts`), and every process holds one pool.
+Worker logs include settled-run
 RSS; a memory ceiling is not proof that peak memory remains below it.
 
 ## Release and capacity gate
 
-Cloud Build deploys both private services from the **serving web image digest**,
-then updates the Chromium capture job. Workers use the web's acceptance build
-ID, including an explicit override if configured; their own revision names
-must not invalidate screenshots taken on the web service. Only Studio/DB
+Cloud Build updates the Chromium capture job, then deploys both private
+services from the **serving web image digest** (capture first since the Theme
+Studio release, plan P4, so a refused worker deploy cannot leave the capture
+job on old code). Workers use the web's acceptance build ID:
+`THEME_STUDIO_BUILD_ID`, which Cloud Build sets to the commit (plan P3), or
+the web's serving revision when it is empty (a manual build); their own
+revision names must not invalidate screenshots taken on the web service. Only Studio/DB
 configuration and required secret references are copied. Payment credentials
 and database administrator credentials are excluded.
 
@@ -90,7 +135,10 @@ After the coordinated web/worker/capture deployment succeeds, inspect the plan:
 python3 -B scripts/theme-studio-workers.py --plan --web=storemink-web-prod --project=storemink-prod
 ```
 
-Then route the two existing schedules and add their peers:
+Then route the two existing schedules. ⚠ Today the script also adds their
+peers, which at one instance only collect HTTP 429s (above); plan P1 removes
+that step before any routing, which in any case waits for decision 9 after
+the Theme Studio release:
 
 ```bash
 python3 -B scripts/theme-studio-workers.py --route-schedulers --web=storemink-web-prod --project=storemink-prod --max-db-connections=<verified-SQL-limit>
@@ -101,10 +149,13 @@ insufficient combined connection budget, a stale worker image/build/role or a
 split worker rollout. Both roles are validated before moving any schedule.
 Confirm each schedule is enabled, targets the correct
 private URL and answers a scheduled empty-queue request successfully. Observe
-first real claims on both peers. Private service deployment alone does not
-move existing schedules off the storefront service.
+first real claims on both roles. Once routing is active the web's
+design-review route refuses, and the capture job's wake (which knows only
+`APP_ORIGIN`, storemink.com) must reach the review worker instead, or the
+worker's minute schedule drains it (plan P1). Private service deployment
+alone does not move existing schedules off the storefront service.
 
-If reverting routing, remove the two peer jobs and restore the original
+If reverting routing, remove any peer jobs and restore the original
 schedules' web URLs and bearer authentication through a secret-safe flags file.
 The web fallback remains available; leases/checkpoints prevent two owners from
 settling the same work. Do not expose the private services publicly.
@@ -189,10 +240,18 @@ publish or submit orders during the benchmark.
 Require 8/8 current-build candidates, zero false quality passes, zero OOMs,
 bounded recovery without duplicate settlements, and materially shorter queue
 waits and total times before claiming this batch passes. Repeat a second fresh
-batch and controlled worker interruption/provider-cooldown cases in dev before
+batch and controlled worker interruption/provider-cooldown cases before
 making a production-readiness claim. Local tests prove mechanisms; they do not
 prove live visual quality or latency. Reference fidelity and the strict variety
 exit criteria remain separate unfinished tracks.
+
+⚠ Since the Theme Studio plan of 24 Oct, every live run is in production (dev
+builds no themes: no schedules, no workers, Theme Studio off) and needs the
+owner's OK. Until routing (P9), build one theme at a time outside shopper
+peaks (P10); the first live runs are plan P7 (one Check again on an existing
+theme) and P8 (one theme at a quiet hour, then two at once), which also
+measure the three capture contexts, the 9-minute photo floor, the deadline
+continuations and the provider waits.
 
 No merchant-visible workflow change, no Help Centre update. One forward-only
 asset-constraint migration is included.

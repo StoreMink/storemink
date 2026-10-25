@@ -3,7 +3,10 @@
 This is the release gate for every StoreMink storefront theme. A theme is not
 "done" because its definition compiles, its homepage looks attractive, or its
 demo was reviewed once. It is done only when the automated, storefront, and
-human-review gates below all pass for the release being published.
+design gates below all pass for the release being published. The design gate
+is one reviewer's scorecard for a hand-built theme, and the automatic checks
+and design review for a Theme Studio theme, which one superadmin then
+publishes (section 5). No step needs a second person.
 
 - **Theme implementation plan:** `docs/vertical-templates-plan.md`
 - **Theme packages:** `lib/themes/`
@@ -249,6 +252,10 @@ disabled, sale, error, success, badge, header, and footer states.
 
 **Pass:** WCAG AA for normal text and interactive components.
 
+StoreMink's shared labels, flags and badges are replayed on every shipped
+palette by `node scripts/theme-studio-contrast-check.mjs` (CI renderer job). A
+new shared label, flag or badge needs a fixture and a broken copy there.
+
 **TA-4.4 — Mobile performance**
 
 Measure a production build with the pristine demo data.
@@ -266,12 +273,18 @@ for a small render; the LCP image is correctly prioritized and sized.
 
 ---
 
-## 5. Human design gate
+## 5. Design gate
 
-Two reviewers are required: one product/design reviewer and one commerce/QA
-reviewer. At least one must not have authored the theme.
+Every theme is judged on the eight rows below. A hand-built theme is judged by
+one reviewer; a Theme Studio theme by its automatic design review, after its
+automatic checks, and one superadmin then publishes it. No step needs a second
+person (owner decision 5, 24 Oct 2026).
 
-Score every row from 1–5. Approval requires every row ≥ 4 and an average ≥ 4.2.
+### Hand-built themes: one reviewer
+
+One reviewer scores every row from 1 to 5, and may be the theme's author.
+Approval requires every row ≥ 4, an average ≥ 4.2, and none of the rejection
+conditions below.
 
 | Dimension              | What reviewers judge                                                                                                 |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -284,31 +297,82 @@ Score every row from 1–5. Approval requires every row ≥ 4 and an average ≥
 | Detail quality         | Spacing, icons, borders, motion, empty states, and error states feel finished.                                       |
 | Brand adaptability     | A merchant logo, primary color, and real catalog content can replace the seed without destroying the design.         |
 
-Automatic rejection conditions:
+Rejection conditions (`REJECTION_CONDITIONS`, `lib/theme-studio/scorecard.ts`;
+the rows, the bar and these conditions live there, so change them together).
+Naming any one rules out a clean pass. For a hand-built theme any of them
+rejects it. For a Theme Studio theme, serious ones stop Publish once the
+automatic repairs are used up, and taste ones are warnings.
 
-- It is an existing StoreMink theme with only palette, font, radius, or section
-  order changes.
-- It copies another company's theme, screenshots, copy, or proprietary assets.
-- The homepage is polished but shop, product, cart, or mobile views are generic
-  or unfinished.
-- It needs custom code to render its core advertised design.
-- Placeholder copy or inaccessible text is visible in the demo.
+Serious:
 
-**Theme Studio themes record this gate in the product** (Studio → project →
-Review and release; `docs/mink-ai-theme-studio-phase6.md`). The rows, the bar
-and the rejection conditions above are `lib/theme-studio/scorecard.ts` — change
-them together. The database enforces what it can:
+- It copies another company's theme, screenshots, copy or proprietary assets
+  (`copied`, owner decision 2).
+- A shop, product, cart or mobile view is unfinished: placeholder or blank
+  artwork, a headed section with nothing under it, or missing products, prices
+  or buttons (`unfinished_surface`).
+- Placeholder copy is visible in the demo (`placeholder_copy`).
+- Copy a shopper cannot read is visible: over a photograph, a gradient or an
+  overlapping layer, clipped, or too small or too faint (`inaccessible_copy`).
+- It shows an award, certification, endorsement, rating, review count, press
+  mention or clinical result the brief does not support (`unsupported_claim`).
 
-- an approving scorecard below the bar, or with a condition ticked, cannot be
-  stored;
-- each chair is reviewed once per piece of acceptance evidence, and one person
-  cannot take both chairs;
-- a project cannot be approved without an approving review from each chair on
-  its latest passing evidence, one of them by a reviewer who did not author
-  the theme.
+Taste:
 
-"Author" is derived from the project's history: whoever created it, ran it,
-answered it, revised it or replaced its images.
+- It is an existing StoreMink theme with only palette, font, radius or
+  section-order changes (`palette_only`).
+- Shop, product, cart or mobile views are finished but generic: they could
+  belong to any store (`generic_surface`).
+- It needs custom code to render its core advertised design
+  (`needs_custom_code`).
+
+Very low scores (owner decision 3, `SERIOUS_SCORE_LIMITS`): for a Theme Studio
+theme, 2 or below on commerce clarity, responsive composition, brand
+adaptability, typography or detail quality is serious; every other score under
+the bar (every row 4, total 34 of 40) is a warning.
+
+### Theme Studio themes: the automatic checks, the design review and one Publish
+
+A Studio theme has no human scorecard and no separate approval (since 3 Oct
+2026, migration 0151). Theme Studio checks it, repairs what it can in up to
+three automatic rounds, and then one superadmin publishes it from Studio →
+project → Release (`docs/mink-ai-theme-studio-phase6.md`). The rule is "Fix it,
+then allow Publish" (owner, 24 Oct 2026): serious findings block, smaller ones
+are warnings the operator may publish past.
+
+- **The automatic checks.** A Studio check run passes when no serious finding
+  is left (rules version `severity-v1`, `lib/theme-studio/finding-severity.ts`).
+  Serious: broken, unthemed or unfetchable pages, broken links, security
+  findings (including an off-site resource in rendered markup), text at or
+  below the AA contrast line (4.5 to 1, 3 to 1 for large text) whatever its
+  cause or with no readable ratio, sideways scrolling, clipped text of 3 px or
+  more, broken, missing, wrongly formatted or too small pictures, placeholders,
+  missing licence notes or alt text, serious or critical accessibility rules,
+  and anything the checks could not check or did not classify. Warnings, kept
+  with the run and shown, which the operator may publish past: small tap
+  targets, tight crops, speed (unless the performance gate is required), a
+  picture narrower than its slot, image byte budgets, unused files,
+  StoreMink's preview noindex, page language and image alt attribute, moderate
+  or minor accessibility rules, and clips of 1 or 2 px. Clipped text is listed
+  largest first before any limit, so many small clips can never hide a large
+  one. A finding in StoreMink's own shared storefront code is labelled "Needs
+  a StoreMink fix"; the label changes the words, never the severity. A check
+  that could not finish stops the theme as "The checks could not finish" and
+  asks for Check again, never for a change to the theme.
+- **The design review.** An AI reviewer scores the eight rows above on today's
+  screenshots and names the rejection conditions it sees. Taste is repaired
+  for up to three rounds and then becomes warnings; a serious finding left at
+  the ceiling, or no review at all, stops the theme with its reason. A drawn
+  photo whose own photo check has not passed on its exact bytes, or found a
+  hard problem, is serious whatever the review says.
+- **Publish.** A Studio theme publishes only on a check run and a design
+  review made together on today's StoreMink build. When either is missing or
+  older, Publish starts a re-check on today's build first (about 3 to 5
+  minutes, nothing redrawn), and the warnings the theme carries are recorded
+  with the publish, with the rules version.
+
+The database enforces the core of it: a project reaches Ready to publish, or a
+publish attempt, only with a passed check run over the version's exact package
+(migration 0151), and it is published only with a published publication.
 
 ---
 
@@ -325,7 +389,7 @@ Every Candidate keeps this evidence in its launch PR or linked release record:
 | Browser matrix and date                                            | Yes                           |
 | Accessibility report                                               | Yes                           |
 | Production-build Lighthouse report                                 | Yes                           |
-| Human scorecard with two reviewers                                 | Yes                           |
+| Reviewer scorecard (one reviewer)                                  | Yes                           |
 | Asset licenses/source log                                          | Yes                           |
 | Known exceptions with owner and expiry                             | Only when an exception exists |
 
@@ -335,8 +399,10 @@ accessibility violations, or a non-working demo.
 A **Theme Studio** release keeps its evidence in the database instead of a PR,
 bound by digest:
 
-- the acceptance run (package, asset bytes, build);
-- the two scorecards on that run;
+- the acceptance run (package, asset bytes, build) and its rules version;
+- the design review bound to that run (its scorecard, serious findings and
+  warnings);
+- the warnings accepted at publish, on the publish events;
 - the publication attempt;
 - the demo render check;
 - the catalog audit.
@@ -354,6 +420,10 @@ releases.
 | Studio  | Passes the automated package gate as published preset `studio@0.1.0` on `storefront-editorial@1`; asset provenance is recorded | Production demos were reseeded and the desktop/tablet/mobile route and commerce sweep passed on 2026-08-12. Catalog and signup exposure are live. | Five-page accessibility is 98–100. **Performance remains open:** 67, LCP 7.26 s, CLS 0.008; anonymous-auth deferral awaits deployment/retest. | Not reviewed; authoring review does not count toward the two-reviewer gate            | Published; acceptance open |
 | Ritual  | Passes the automated package gate as published preset `ritual@0.1.0` on `storefront-editorial@1`; asset provenance is recorded | Production demos were reseeded and the desktop/tablet/mobile route and commerce sweep passed on 2026-08-12. Catalog and signup exposure are live. | Five-page accessibility is 98–100. **Performance remains open:** 73, LCP 6.73 s, CLS 0; anonymous-auth deferral awaits deployment/retest.     | Not reviewed; authoring review does not count toward the two-reviewer gate            | Published; acceptance open |
 | Vitrine | Passes the automated package gate as published preset `vitrine@0.1.0` on `storefront-classic@1`; asset provenance is recorded  | Production demo seeded and route-checked on 2026-08-22 (shop, PDP, content pages, all ten assets). Catalog and signup exposure are live.          | Passed; accessibility and Lighthouse gates confirmed on 2026-08-23                                                                            | Passed the required two-person review, including a non-author reviewer, on 2026-08-23 | Published                  |
+
+The Human gate column records the two-person review these themes were judged
+under before 24 Oct 2026. From then on a hand-built theme needs one reviewer's
+scorecard (section 5); Studio and Ritual still have none recorded.
 
 The baseline is intentionally strict. Basket remains the default theme in code,
 but it is not evidence that the new professional-theme acceptance bar has been

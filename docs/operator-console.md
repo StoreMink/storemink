@@ -22,23 +22,27 @@ single scroll, under a metric row. Three consequences, all of them real:
 
 ## The information architecture
 
-| Group              | Entry          | Path                       | What it answers                         |
-| ------------------ | -------------- | -------------------------- | --------------------------------------- |
-| **OPERATIONS**     | Overview       | `/dashboard`               | What needs someone right now?           |
-|                    | Stores         | `/dashboard/stores`        | The merchant estate (no demos/previews) |
-|                    | ↳ store detail | `/dashboard/stores/[id]`   | Everything about ONE merchant           |
-|                    | People         | `/dashboard/people`        | Who can sign in to which store          |
-|                    | Announcements  | `/dashboard/announcements` | Tell merchants something _(phase 4)_    |
-|                    | Logs           | `/dashboard/logs`          | What happened, what broke _(phase 3)_   |
-|                    | Mink AI        | `/dashboard/mink`          | Are agent runs reliable and affordable? |
-| **ADMINISTRATION** | Help Centre    | `/dashboard/help`          | Platform docs                           |
-|                    | Themes         | `/dashboard/themes`        | The catalog + its live demo stores      |
-|                    | ↳ Theme Studio | `/dashboard/themes/studio` | Draft new themes _(superadmin only)_    |
-|                    | Pricing        | `/dashboard/pricing`       | What StoreMink charges                  |
-|                    | Analytics      | `/dashboard/analytics`     | Platform Analytics availability         |
-|                    | Roles          | `/dashboard/roles`         | The staff roles every store picks from  |
-|                    | Operators      | `/dashboard/operators`     | Who runs the platform                   |
-|                    | Billing & tax  | `/dashboard/billing`       | StoreMink's own GST identity            |
+| Group              | Entry          | Path                       | What it answers                                                                      |
+| ------------------ | -------------- | -------------------------- | ------------------------------------------------------------------------------------ |
+| **OPERATIONS**     | Overview       | `/dashboard`               | What needs someone right now?                                                        |
+|                    | Stores         | `/dashboard/stores`        | The merchant estate (no demos/previews)                                              |
+|                    | ↳ store detail | `/dashboard/stores/[id]`   | Everything about ONE merchant                                                        |
+|                    | People         | `/dashboard/people`        | Who can sign in to which store                                                       |
+|                    | Announcements  | `/dashboard/announcements` | Tell merchants something _(phase 4)_                                                 |
+|                    | Logs           | `/dashboard/logs`          | What happened, what broke _(phase 3)_                                                |
+|                    | Mink AI        | `/dashboard/mink`          | Are agent runs reliable and affordable?                                              |
+| **ADMINISTRATION** | Help Centre    | `/dashboard/help`          | Platform docs                                                                        |
+|                    | Themes         | `/dashboard/themes`        | Catalog tab: the catalog + its live demo stores _(superadmin only)_                  |
+|                    | ↳ Theme Studio | `/dashboard/themes/studio` | Theme Studio tab: every Studio theme by what it needs, New theme _(superadmin only)_ |
+|                    | Pricing        | `/dashboard/pricing`       | What StoreMink charges                                                               |
+|                    | Analytics      | `/dashboard/analytics`     | Platform Analytics availability                                                      |
+|                    | Roles          | `/dashboard/roles`         | The staff roles every store picks from                                               |
+|                    | Operators      | `/dashboard/operators`     | Who runs the platform                                                                |
+|                    | Billing & tax  | `/dashboard/billing`       | StoreMink's own GST identity                                                         |
+
+Themes appears in the sidebar and the search only for superadmins; the Overview
+shows superadmins a Theme Studio tile ("Theme Studio: 1 needs you, 2 ready to
+publish.") that links to those filters.
 
 **The split is by job**, the rule `app/dashboard/lib/permissions.ts` already
 applies to the merchant nav. Operations is what an operator watches and acts on
@@ -170,132 +174,288 @@ the session (`getThemeStudioActor`) before touching anything. Reference images
 are stored sanitized in Postgres and served only through a gated, no-store
 route. Full record: `docs/mink-ai-theme-studio-phase2.md`.
 
-Open a project's workspace and choose **Delete permanently** to remove the
-project, conversation, reference screenshots, generated versions, private
-previews and its published theme releases. This also works for archived projects.
-Type the exact theme ID shown in the confirmation dialog. Deletion cannot be
-undone. Finish or cancel active work first; a theme installed by a merchant store
-cannot be deleted until that store switches themes. If another project shares a
-published theme's ID, delete that other project first. Theme-owned demo stores
-are removed with released themes. A minimal deletion receipt remains for audit;
-shared published images remain because stores may reuse them in saved content.
-To recreate a deleted design, enter the same theme name and ID in **New project**.
-Studio keeps the name and automatically assigns an available ID such as
-`bubble-2`. The project workspace shows the assigned ID. Deleted IDs stay
-reserved so old release links cannot point to a different design. An ID used by
-an active project still needs to be changed manually.
-Bundled themes are code-owned and cannot be deleted from Theme Studio.
+Since TS-2 (25 Oct 2026) Theme Studio is three screens: **Themes** with its
+Catalog and Theme Studio tabs, **New theme**, and one page per theme. The Themes
+entry in the console's sidebar and search is shown to superadmins only.
 
-The project workspace refreshes throughout generation, image drawing, catalog
-capture and visual QA, including immediately when an unfinished tab is reopened.
-Use the conversation to describe a theme, answer questions and request changes.
-Edit the initial brief in the message box, then send it. After a version is
-created, describe the fixes in the same box and attach screenshots with
-**Attach screenshots**, paste, or drag and drop. Each message can include up to
-10 screenshots totaling 40 MB (10 MB each). Old screenshots stay with their
-messages and can be attached again from **Reuse screenshots**; they do not use
-the next message's attachment allowance. A conversation retains up to 100
-screenshots / 400 MB; unused uploads can be deleted from that list.
-Follow-ups use the current version unless an older version is selected under
-**Editing** or **Change this version**. Each completed request creates a new
-version; preview links and the conversation retain earlier results. Replies
-to questions continue the same request and can include fresh screenshots.
-Only selected screenshots are sent with each message. While work is running,
-the composer shows progress and waits for it to finish; cancellation, retry
-and detailed run information remain under **Runs**.
-Internal drafts remain hidden while layout checks run before artwork, then
-Mink draws missing images, captures the storefront and runs full acceptance.
+**Themes** has two tabs. **Catalog** is the demo-store panel: open a theme's
+demo store, or seed or reseed it (the result is a note on its row). **Theme
+Studio** lists every Studio theme with its catalogue card, its status in words,
+when it last changed (or how long it has been working) and one button; filter by
+All, Needs you, Building, Ready (ready to publish), Live and Archived. The model
+and the creator are on the theme's Log tab, not the list. A button never acts by
+itself: it opens the live demo, New theme, or the theme page at that action's
+dialog. **New theme** takes a name (the ID is derived from it; change it under
+**(change)**), a brief, up to 10 screenshots (JPEG, PNG, WebP or AVIF, 10 MB
+each and 40 MB in all, checked as you drop, paste or choose them, before
+anything is created) and 1 to 5 industries, one picked from the brief for you.
+Catalogue size, must-have features, a starting theme (StoreMink's own themes
+only) and the model sit under **More options**. The heading says how long a
+build usually takes, from the last 10 finished builds (35 to 75 minutes until
+there are 10). **Create and start** creates the theme, adds the screenshots with
+each one's progress and starts the build. If the build can't start (building or
+the model switched off, your 2 running builds, the daily spend cap, a stale
+page), you land on the theme as **Not started** with the reason shown and the
+brief and screenshots kept; nothing is created twice. With building switched off
+the button reads **Create (building is switched off)** and only creates. **Start
+a new theme from this brief** opens New theme filled in from that theme's brief.
+
+A theme's status is one phrase with one main button, the same on the list, the
+theme page and the Design list: **Live, v1.0.0** or **Not offered to new
+stores**; **Publishing**; **Publish didn't finish** with its first reason (**Try
+again**); **Removed from list**; **Waiting to start**, **Building: drawing
+pictures (26 min)**, **Checking on today's StoreMink build**, **Checking
+pictures** or **Checking your change**; **Stuck since 10:40** after 20 minutes
+with nothing new (**Stop and check again**); **Needs your answer**; **Needs a
+new start: too many questions**; **Can't publish: security problem**;
+**Stopped**; **Needs a StoreMink fix**; **Couldn't finish the checks** with its
+reason; **Pictures missing (3)**; **Needs a fix (2 problems)**; **Ready to
+publish**, with its warnings; **Ready to publish (StoreMink was updated)**;
+**Couldn't finish** with its reason; **Not started**; **Your change didn't
+finish** with its reason (a change from the chat that stopped, on a theme that
+kept its design); **Not checked yet**. (Times and counts are examples.) When building or the automatic checks are
+switched off, the phrase says so and no main button shows.
+
+Open a theme and choose **Delete** in its **...** menu to remove the theme, its
+chat, screenshots, designs, private previews and its published release. This
+also works for a theme removed from the list. Type the exact theme ID shown in
+the confirmation dialog. Deletion cannot be undone. Stop any work first; a theme
+installed by a merchant store cannot be deleted until that store switches
+themes. If another project shares a published theme's ID, delete that other
+project first. Theme-owned demo stores are removed with released themes. A
+minimal deletion receipt remains for audit; shared published images remain
+because stores may reuse them in saved content. To recreate a deleted design,
+enter the same theme name and ID (under **(change)**) in **New theme**. Studio
+keeps the name and automatically assigns an available ID such as `bubble-2`. The
+theme's Log tab shows the assigned ID. Deleted IDs stay reserved so old release
+links cannot point to a different design. An ID used by an active project still
+needs to be changed manually. Bundled themes are code-owned and cannot be
+deleted from Theme Studio.
+
+**The theme page** (`/dashboard/themes/studio/<id>`) is one full-width page: the
+console sidebar steps aside while it is open, the chat is on the left and the
+tabs **Preview**, **Checks**, **Pictures**, **Changes** and **Log** are on the
+right. Fold the chat to a slim rail with **Fold the chat** beside its heading,
+or drag its edge (or focus it and use the arrow keys) to change its width; this
+browser remembers both. The header shows the theme's status in plain words and
+its one main button; **Design N** lists every design (its number is the version
+number) to show it, make it current or change it; the **...** menu holds
+**Stop**, **Remove from list (keeps its history)** (never on a live theme) and
+**Delete**, each behind a dialog, and Remove and Delete wait, with the reason
+under them, while Theme Studio works. The address keeps the open tab and design
+(`?tab=checks&version=<id>`); a link with `do=<action>` opens that action's
+dialog or moves to its button and never starts work by itself. The old addresses
+(`/versions/<id>`, `/acceptance`, `/images`, `/compare`, `/release`) open the
+matching tab. While Theme Studio works, the chat ends with a progress card: each
+step by name with its time (a repair round is its own row; a "next try at" time
+appears only when a step waits for one), how long a build usually takes, and the
+AI's plan (what it assumed and what it left out). The page asks a small progress
+route every 3 seconds, slowing down while nothing changes, and reloads only when
+the theme itself changes; you can leave it, and the operator who started the
+theme gets a notice and an email when it is ready or needs them.
+
+**Start building** sends the first brief, with the screenshots New theme added.
+After a design exists, describe a change and attach screenshots with
+**Screenshots**, paste or drag and drop (up to 10 per message, 40 MB in total,
+10 MB each); **Screenshots** also lists earlier screenshots to attach again and
+deletes an upload no message has used (a theme keeps up to 100 screenshots / 400
+MB). A change goes to the design you are looking at unless you pick another
+under **Changing**, and each makes a new design. Answers to the AI's questions
+continue the same request and can include fresh screenshots. **Stop** says what
+is kept: a capture or the design review stops at once, a build step within a few
+seconds, and pictures already drawn are saved and reused by **Continue
+building**. The theme goes back to its last design; a first build stopped before
+its first design shows as **Stopped**, and **Continue building** starts it
+again. Work with nothing new for 20 minutes offers **Stop and check again**, one
+dialog that stops it and then checks the current design again. **Check again**
+measures the current design on today's StoreMink build with its design review,
+in about 3 to 5 minutes; nothing is redrawn. A theme whose security check failed
+takes a change in the chat straight away. The runs (with **Cancel** behind a
+confirm, and **Retry**), their codes, tokens and costs, Activity in plain words,
+the model and the creator are in the **Log** tab, and every stopped step says
+why in a sentence. On a phone the page scrolls as one column (the header scrolls
+away, the tabs stay at the top), the chat is a tab of its own that keeps the
+screen's height, the preview fits the screen's height, lists open as bottom
+sheets, and a bar at the bottom shows the status while Theme Studio works and
+**Publish** when the theme is ready (held back, with the reason under it, when
+Publish has to wait; it hides while you type). While nothing can be sent, the
+message box folds to the sentence that says why.
+
+Internal drafts remain hidden while layout checks run before artwork, then Theme
+Studio draws missing images, captures the storefront and runs full acceptance.
 Settings defects receive focused repairs; image defects redraw only the named
 generated slots. Mixed findings repair settings first. Renderer defects stop
 with a platform diagnosis. A repair that repeats or worsens the same findings
-stops early; up to three improving repair rounds are allowed. The workspace
-shows the diagnosis and exact repair targets. Visual review runs after deterministic checks pass. A successful result
-is already a **Candidate** with saved acceptance evidence; it still needs human
-review and publication. Runtime faults or exhausted repairs preserve the draft
-with **Needs attention**, a failed QA badge and recovery actions. They are not
-reported as successful themes. Unverified versions show **Needs checks** in
-shared status badges. Performance remains advisory.
-The version summary distinguishes missing artwork from missing catalog
-pictures: when only catalog pictures remain, use **Images → Capture catalog
-pictures** instead of redrawing the artwork. Capture failure reasons are shown
-on the Images page. For a failed automatic result, **Images → Retry automatic
-QA** captures fresh screenshots and reruns browser checks and AI visual review
-when automatic QA is enabled. If artwork is unfinished, retry starts with
-layout checks, then draws missing images only after those checks pass. Manual
-catalog capture still requires finished artwork.
-If the summary says a category has no image slot, revise that version to add
-its category imagery; drawing existing slots cannot fill an undeclared slot.
-The Images page shows the capture status for the selected version. Full
-automatic-QA recovery requires the repaired web service and capture job;
-see `docs/theme-studio-reliability.md`.
+stops early; up to three improving repair rounds are allowed. The Checks tab's
+Technical details show the diagnosis and the exact repair targets ("The
+automatic fixes"). Visual review runs after deterministic checks pass. Only
+serious findings are repaired or stop a theme ("Fix it, then allow Publish"):
+broken or unthemed pages, unreadable text whatever its cause, broken links,
+security, broken or unchecked pictures, invented claims, unfinished shop,
+product or cart views, copied work, very low design-review scores, and anything
+that could not be checked. Smaller findings and taste left after the repairs are
+warnings you may publish past. A successful result is **Ready to publish**, with
+saved check evidence and its design review; one Publish takes it live, with no
+second person. Runtime faults, serious findings left after the repairs, or a
+Stop keep the draft and say why in a sentence, with the next step (**Needs a
+fix**, **Couldn't finish the checks**, **Stopped** and so on); they are not
+reported as successful themes. Only a serious finding left after the repairs
+asks you to describe a fix in the chat; checks that could not finish, or
+StoreMink's preview not working, read **Couldn't finish the checks** and offer
+**Check again**, since no change to the theme can help. The list, the theme page
+and the Design list all read the newest result of the checks, so a design that
+passed once and then stopped on **Check again** says so everywhere, and the
+Checks tab says why. A design no check has judged reads **Not checked yet**. A
+change from the chat that stopped reads **Your change didn't finish** with its
+reason, with **Try again** and **Check again** (the design it kept is still the
+current one). A picture run that failed shows **Drawing pictures didn't finish**
+with **Retry** until you start something else (Check again, Make current or a
+change); after that it stays in the Log tab. Performance remains advisory.
 
-Since Phase 3 a run can call a paid Gemini model on Vertex AI. Each run shows
-its tokens and estimated cost, and a per-operator ceiling on estimated spend in
-any 24 hours refuses new runs once reached. New v21 builds choose a direction,
-palette family and native styles explicitly. Their version card shows **Design
-distinctness**: the distance to the closest catalogue or recent Studio design,
-shared choices, and whether a bounded correction was attempted. A similarity
-warning calls for composition review; the score does not replace acceptance or
-visual QA. References take priority over novelty. Image updates retain the
-comparison, and older versions have no score.
+Since Phase 3 a run can call a paid Gemini model on Vertex AI. Each run's tokens
+and estimated cost are in the Log tab, and a per-operator ceiling on estimated
+spend in any 24 hours refuses new runs once reached (50 dollars in production
+since the Theme Studio release: "You have reached today's Theme Studio spending
+limit. Try again tomorrow."; a build already running is never stopped). The
+operator who started a theme gets an in-app notice and an email when it is ready
+to publish, needs a fix, or has questions; other operators are not told. New v21
+builds choose a direction, palette family and native styles explicitly. When a
+design still looks like a theme already in the catalogue, the Checks tab says so
+with its distinctness and the threshold: a warning that calls for a look at the
+composition and never stops Publish. References take priority over novelty.
+Image updates retain the comparison, and older versions have no score.
 
-A model that asks for details
-leaves the project **blocked** until the operator answers in the workspace.
-Every image in a generated version is a marked placeholder, so a version is a
-draft to review, never something to publish. Record:
+A model that asks for details leaves the theme at **Needs your answer** until
+you answer in the chat, or make another design current, which sets the questions
+aside. A theme stopped by its security check (**Can't publish: security
+problem**) has no questions open and can be changed straight away. Images start
+as marked placeholders until Theme Studio draws them or an operator uploads
+them, and a design with a placeholder left cannot be published. Record:
 `docs/mink-ai-theme-studio-phase3.md`.
 
-Since Phase 4 each version has a **Preview**: a private store built from that
-version and rendered by the live storefront, in laptop, iPad and mobile
-frames, with a pop-out. It takes no orders, is hidden from search and from the
+**Emergency switches** (superadmin operations, on the web service's
+environment; see `CODEBASE.md` §7 and `docs/mink-ai-theme-studio-phase6.md`
+§9): `THEME_STUDIO_GENERATION_ENABLED=false` stops new Studio runs, and
+`THEME_STUDIO_DISABLED_MODELS` switches off one model without a build. Turning
+off `gemini-3.8-flash` also turns off the per-photo check that merchant
+storefront redesigns share. The next deploy replaces the environment, so a
+switch that must last goes into `cloudbuild.yaml`.
+
+Each design opens in the theme page's **Preview** tab: a private store built
+from that design and rendered by the live storefront, at Desktop, Tablet or
+Phone size, fitted to the tab's width and height (it opens at Tablet in a box
+narrower than about 900 px and at Phone in one narrower than 600 px); **Open
+full page** opens it in a new window at once. The preview stays loaded while
+another tab is open. It takes no orders, is hidden from search and from the
 Stores list and overview counts, and is removed a day after it was last opened.
-A version can be **revised** (revising an older one starts a branch),
-**compared** with its parent or the current version, and **made current**
-again. Record: `docs/mink-ai-theme-studio-phase4.md`.
+A design can be **changed** from the chat (changing an older one starts a
+branch), **compared** with the design it came from in the **Changes** tab, and
+**made current** again from the header's **Design N** list. With automatic
+checks on, Make current never leaves a theme stuck. A design that passed is
+**Ready to publish** at once when its checks and design review still hold on
+today's StoreMink build; otherwise it is checked again in place (about 3 to 5
+minutes, nothing redrawn). A design that never passed is checked on a new hidden
+version. One with a placeholder left reads **Pictures missing**. A design still
+inside a check cannot be made current. Record:
+`docs/mink-ai-theme-studio-phase4.md`.
 
-Since Phase 5 each version has **Checks**: automated acceptance gates for the
-current version. The server checks the package and the preview's rendered
-pages; this browser then measures layout, accessibility and images at laptop,
-iPad and mobile sizes. Passing makes the project a **candidate**. A quality
-failure keeps it `ready`, a security failure blocks it, and a deploy makes a
-candidate's evidence stale until the checks run again. Placeholder images
-fail the checks until resolved under **Images**. Catalog slots (preview,
-desktop screenshot and mobile screenshot) need **browser capture** of the
-finished storefront; missing theme artwork needs generation or replacement.
-The Checks recovery panel links to Images, calls out results from an earlier
-build and unfinished browser runs, and identifies missing preview noindex as
-a shared storefront code issue. Rerun after deploying code fixes and keep the
-tab visible until browser checks finish.
-
-For a failed run from the current build, **Fix theme issues in chat** opens an
-editable message containing the relevant findings and selects the checked
-version as the revision base. Add instructions or screenshots and send it to
-create a new version; opening the link does not start generation. Stale or
-mismatched evidence cannot seed a repair. Capture/infrastructure issues and
-advisories are not sent as theme fixes. Run Checks again on the new current
-version before review. Record:
+The **Checks** tab starts with what the checks covered (the pages, the widths,
+the header panels opened on the home page, and the cart checked empty), then
+**Must fix before publishing**, **Warnings (you can still publish)** and
+**Passed** (Show all), each in a plain sentence with where it was found. Checks
+that stopped before they finished never count as passed. **Check again**
+measures the current design on today's StoreMink build with its design review,
+in about 3 to 5 minutes; nothing is redrawn. Each serious problem gets its own
+next step. A theme setting or security problem gets **Describe a fix**, which
+puts a short summary of the serious problems (never the warnings) in the chat
+for you to read, change and send; it never sends. A picture gets **Redraw**, for
+exactly those pictures, after a small confirm. A fault in StoreMink's own shared
+storefront code gets no fix button: it says StoreMink has been told and offers
+**Copy details for an engineer** (we fix those in our code; the label never
+makes a serious finding a warning). A design-review matter of taste offers
+**Describe a change**, which opens the chat. A security failure blocks the
+theme, warnings never stop it, and placeholder pictures fail the checks until
+they are drawn or uploaded. **Screenshots** shows the newest final check's
+pictures one width at a time; nothing loads until you open it, and a picture
+opens full size in a viewer you move through with the arrow keys or a swipe.
+**Technical details** holds the codes, the build, the design review's state, the
+AI's assumptions, the automatic fixes, earlier runs, **Copy details** and, as a
+fallback while Check again is new, the in-browser runner (keep the tab open and
+visible; its result never publishes without a design review of its own). Record:
 `docs/mink-ai-theme-studio-phase5.md`.
 
-Each version also has **Images**: every picture slot with its current image
-and where it appears. An operator uploads an image per slot (cropped to the
-slot's shape and compressed to storefront limits), says whether it is theirs
-or licensed, and saves the staged images as one new version. Revisions keep
-those images. Record: `docs/mink-ai-theme-studio-slot-images.md`.
+The **Pictures** tab keeps the catalogue pictures apart from the artwork. Every
+final check takes the catalogue card and the desktop and phone screenshots from
+the design's preview store, so there is no button to capture them; where the
+browser job is switched off, upload them in the picture list. **What the
+pictures need** offers **Redraw** for exactly the pictures the checks flagged (a
+missing, too small or wrongly stored picture, a photo with a hard problem or one
+not checked yet; when nothing is serious, the photos flagged for something
+small), **Draw missing pictures** for the placeholders and **Retry** for a
+picture run that stopped. Each is one click and a small confirm that names how
+many and what it may cost at list price. For a design whose checks did not pass,
+**Check again** measures it again. A capture the job never starts is stopped
+after 15 minutes, and the theme returns to its last design. A category with no
+image slot counts as a missing picture, but drawing cannot fill a slot the
+design never declared: change that design in the chat to add its category
+imagery. Full automatic-QA recovery requires the repaired web service and
+capture job; see `docs/theme-studio-reliability.md`.
 
-A candidate (every automated check and the visual QA scorecard passed) has
-**Publish it**, which opens a single **Publish theme** button for a
-superadmin. There is no separate human scorecard or approval step
-(simplified 2026-10-03). Publishing:
+Below them, the Pictures tab lists every picture of the design shown, with where
+it appears, what the image model is asked for and how it came to be. Upload a
+replacement (cropped to the slot's shape and compressed to storefront limits),
+say whether it is yours or licensed, and save the staged pictures as one new
+design; a reload with unsaved uploads asks first. Tick drawn pictures or
+placeholders to redraw them. With automatic checks on, a save whose pictures are
+complete is checked before it is shown: one capture of the storefront (fresh
+catalogue pictures, every page measured on today's build) and the design review,
+never a paid redesign. The theme then returns to Ready to publish, or shows the
+new design with the reason. A picture saved with no alt text takes its slot's
+own description; the licence note is always yours to write. Picture runs you
+start (Draw missing pictures, Redraw, Retry) are checked the same way once their
+pictures are complete, and only runs an operator started count toward the
+two-at-once limit. Changes keep those pictures. Record:
+`docs/mink-ai-theme-studio-slot-images.md`. The **Changes** tab compares the
+design shown with the design it was made from, past the automatic fixes' drafts.
+The **Log** tab holds the runs with their codes, tokens and costs, Publish
+history with each attempt's reasons, the catalog audit, the model, the creator
+and today's build.
+
+A theme that is **Ready to publish** (its automatic checks left no serious
+finding and its design review passed) shows **Publish** in the theme page's
+header, and in the bar at the bottom on a phone. One superadmin publishes; there
+is no separate human scorecard or approval step, and no second person. The
+dialog names the design and when it was made, says where it goes live (the theme
+catalog on themes.storemink.com and every store's Theme library, with a live
+demo store; stores that install it keep that exact version) and lists the
+warnings that go live with it. If you are looking at another design, it says
+which design will go live and opens the Design list so you can make yours
+current first (on **Try again** it only says which design the attempt started
+with: no design can be made current until that publish finishes). When Publish
+has to wait (the theme file refuses it, or no re-check can start), the reason
+is written under the button, and neither the list's Publish nor the phone bar's
+opens the dialog. If StoreMink was updated since the checks, or the newest check
+has no design review of its own, the button reads **Re-check now**: the design
+is checked again on today's build first (about 3 to 5 minutes; you can leave the
+page, and the operator who started the theme is told when it is ready to
+publish). The warnings a theme carries are recorded with the publish. While it
+publishes, the header shows each step. Publishing:
 
 1. copies its images to permanent public storage;
 2. stores an immutable release;
 3. seeds and renders its demo store;
-4. only then adds it to the public catalog and signup.
+4. only then adds it to the public catalog and every store's Theme library.
 
-A failed publication stays hidden and the same button retries it. Afterwards
-the same screen hides it from new stores, shows it again, or restores an
-earlier release, each with one click. Each change is written to an audit, and a store that already
-installed the theme keeps its exact version. Record:
+A publish that did not finish stays hidden and shows **Publish didn't finish**
+with its last reasons beside **Try again**, which resumes the same release
+(after a StoreMink update it checks the design again first). A live theme shows
+**Open live demo**, **Stop offering this theme** (it also leaves the Theme
+library of every store that has not installed it) or **Offer again**, each
+behind a dialog, and **Start a new theme from this brief**, because live themes
+can't be changed yet. Each change is written to an audit (in the Log tab), and a
+store that already installed the theme keeps its exact version. ⚠ Until the live
+design-review benchmark has passed after the TS-1 release (plan step A2), nobody
+presses Publish or Check again on an existing production theme. Record:
 `docs/mink-ai-theme-studio-phase6.md`.
 
 ## Phases

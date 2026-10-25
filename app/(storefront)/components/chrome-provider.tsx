@@ -1,9 +1,24 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  previewBrandFrom,
+  usePreviewBrandSetter,
+} from "@/app/(storefront)/components/brand-provider";
 import { DEFAULT_CHROME, type StoreChrome } from "@/lib/chrome/types";
 import { resolveStorefrontAppearance } from "@/lib/chrome/types";
 import type { ThemeLayout } from "@/lib/themes/types";
+import {
+  withThemeChromeDefaults,
+  type ThemeChromeDefaults,
+} from "@/lib/themes/footer";
 import {
   DESIGN_FONT_NAMES,
   DESIGN_PALETTE_TOKENS,
@@ -35,15 +50,47 @@ const ChromeContext = createContext<StoreChrome | null>(null);
  * page sections. Without that, editing the header would need a full iframe
  * reload per keystroke and the builder would feel broken next to the rest of
  * its own UI.
+ *
+ * ★ The same listener takes `sm-brand`: the colour is repainted here, and the
+ *   tagline and footer description (which Mink's redesign preview sends, and
+ *   which go live at Apply with no draft) are handed to BrandProvider. It is
+ *   the one place that knows the preview gate (`live`), and BrandProvider
+ *   sits outside it in the layout, so the words travel through its setter.
+ *
+ * ★★ CHROME A FRAME WAS HANDED OUTLIVES A SERVER REFRESH. A preview frame
+ *   refreshes itself (StorefrontRefresh on focus, so one click inside it, and
+ *   PreviewBridge when the Builder pings after Publish), and the server then
+ *   answers with the SAVED draft. Taking that answer put the old header and
+ *   footer back under the redesign preview's sections and words, which stay
+ *   (DraftCanvas, BrandProvider): its proposal is saved nowhere, so nothing
+ *   ever sent it again. So a frame keeps what it was handed until the next
+ *   `sm-chrome`, and only a frame handed nothing renders the server's.
+ *
+ * ★★ CHROME A FRAME IS HANDED IS READ THE WAY THE LIVE STORE READS IT. The
+ *   storefront layout lays the theme's announcement bar and newsletter words
+ *   over the store's chrome (withThemeChromeDefaults), and hands this
+ *   provider the same defaults (`themeChrome`) for chrome it is sent, so a
+ *   bar left on with no text shows the theme's line here as it does live.
+ *   Without it the frame showed no bar and the platform's newsletter copy
+ *   while the store showed the theme's: the preview was not what goes live.
+ *
+ * ★ Only the window that frames this page may send: the Website Builder and
+ *   the redesign dialog both post from it (previewBrandFrom's and the draft
+ *   canvas's rule). A sibling frame, a pop-up or a frame this page embeds is
+ *   not the editor, and what it sends would now outlast a refresh.
  */
 export function ChromeProvider({
   chrome,
+  themeChrome,
   themeLayout,
   themeVars,
   live = false,
   children,
 }: {
   chrome: StoreChrome;
+  /** What the pinned theme lays over a store's own header and footer, for
+   *  chrome a preview frame is sent (the server's `chrome` already has it). */
+  themeChrome?: ThemeChromeDefaults;
   themeLayout?: ThemeLayout;
   /** The pinned theme's own CSS variables, so clearing an override can put the
    *  theme value back rather than falling through to the globals.css default.
@@ -55,10 +102,28 @@ export function ChromeProvider({
   live?: boolean;
   children: React.ReactNode;
 }) {
-  const [value, setValue] = useState<StoreChrome>(chrome);
+  // The header and footer the window framing this preview handed it, if it
+  // has: the Website Builder's latest edit, or the redesign's proposal.
+  const [pushed, setPushed] = useState<StoreChrome | null>(null);
+  // ★★ Handed chrome wins while this is a preview (the ★★ note above). For
+  //   the Builder too: the saved draft a refresh brings can be older than
+  //   the edit still inside its save debounce. Derived, not copied into
+  //   state, so wherever nothing was handed in (the redesign's "before"
+  //   frame, the draft after Apply, every storefront outside a preview) the
+  //   server's chrome is never a stale copy, and a frame that leaves
+  //   `?preview=1` (a link clicked inside it) shows the store's own again.
+  //   ★★ Handed chrome gets the theme's bar and newsletter words the way the
+  //   layout gives the server's (the note above).
+  const value = useMemo(
+    () =>
+      live && pushed ? withThemeChromeDefaults(pushed, themeChrome) : chrome,
+    [live, pushed, themeChrome, chrome],
+  );
   // The brand colour as last pushed by the builder, if at all — see the design
   // effect below for why it has to be remembered rather than re-read.
   const livePrimary = useRef<string | null>(null);
+  // Where the brand's words go (stable, so it never re-runs the listener).
+  const showPreviewBrand = usePreviewBrandSetter();
 
   useEffect(() => {
     if (!live) return;
@@ -135,30 +200,21 @@ export function ChromeProvider({
     }
   }, [live, themeVars, value.design]);
 
-  // Adopt server-rendered chrome when it changes (navigation, or a
-  // router.refresh after publish) — otherwise the preview keeps rendering a
-  // stale copy. Adjusted DURING RENDER rather than in an effect: React handles
-  // this case specially (it re-renders immediately without committing the
-  // discarded output), whereas a setState in an effect paints the stale value
-  // first. Same pattern as inspector-panel's tab reset.
-  const [prevChrome, setPrevChrome] = useState(chrome);
-  if (chrome !== prevChrome) {
-    setPrevChrome(chrome);
-    setValue(chrome);
-  }
-
   useEffect(() => {
     if (!live) return;
     const onMessage = (e: MessageEvent) => {
       // Same-origin only. The preview iframe is served from the store's own
       // host, so anything from elsewhere is not the builder.
       if (e.origin !== window.location.origin) return;
+      // ★ And only the window that frames this one (the note above): the
+      //   Builder and the redesign dialog post from the parent window.
+      if (e.source !== window.parent) return;
       const data = e.data as {
         type?: string;
         chrome?: StoreChrome;
         brand?: { primaryColor?: string; logoUrl?: string | null };
       } | null;
-      if (data?.type === "sm-chrome" && data.chrome) setValue(data.chrome);
+      if (data?.type === "sm-chrome" && data.chrome) setPushed(data.chrome);
       // Brand colour is a CSS variable written inline on .storefront-root by
       // the layout, so a live change is one setProperty — no re-render, and
       // the whole theme skin (buttons, links, accents) repaints with it.
@@ -169,6 +225,14 @@ export function ChromeProvider({
         livePrimary.current = data.brand.primaryColor;
         root?.style.setProperty("--brand-primary", data.brand.primaryColor);
       }
+      // ★ The brand's WORDS are no CSS variable: the footer description and
+      //   the shop hero's tagline render from useBrand(), so they go to
+      //   BrandProvider, which lays them over the store's own lines.
+      //   previewBrandFrom holds the rules (this host, only the window that
+      //   frames this page, bounded text, those two lines and nothing else),
+      //   so the builder's colour-and-logo message hands it nothing.
+      const text = previewBrandFrom(e);
+      if (text) showPreviewBrand?.(text);
     };
     window.addEventListener("message", onMessage);
     // Tell the builder we're ready for draft pushes — it may have mounted
@@ -178,7 +242,7 @@ export function ChromeProvider({
       window.location.origin,
     );
     return () => window.removeEventListener("message", onMessage);
-  }, [live]);
+  }, [live, showPreviewBrand]);
 
   return (
     <ChromeContext.Provider value={value}>{children}</ChromeContext.Provider>

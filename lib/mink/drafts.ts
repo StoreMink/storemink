@@ -117,6 +117,9 @@ export interface MinkDraftState {
   lastCampaign: MinkCampaignResult | null;
 }
 
+const DRAFT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export async function createMinkDraftProposal(input: {
   actor: MinkActorContext;
   kind: MinkDraftKind;
@@ -136,8 +139,37 @@ export async function createMinkDraftProposal(input: {
    * `MAX_DRAFT_CREDITS`); never set from model input.
    */
   expectedCredits?: number;
+  /**
+   * The draft costs nothing: no charge is attempted and the row records
+   * credit source "free". Only a storefront personalisation (the revamp card,
+   * whose first run per store is free by the owner's decision) may be free.
+   */
+  free?: boolean;
+  /**
+   * A fixed id for the draft, for a caller that may run twice (the revamp's
+   * card step uses the revamp's own id). A second call with the same id
+   * returns the draft the first one made, and charges nothing again.
+   */
+  draftId?: string;
 }): Promise<MinkArtifact> {
   const { actor, kind } = input;
+  const free = input.free === true;
+  if (input.draftId !== undefined && !DRAFT_ID_PATTERN.test(input.draftId)) {
+    throw new Error("A fixed Mink draft id must be a UUID");
+  }
+  // ★ A FREE DRAFT IS ONE KIND, AND NEVER A PRICED ONE. Every other kind is
+  //   paid by design, so `free` on it is a caller bug, not a discount; and a
+  //   free draft that also names a price is two answers to one question.
+  if (free && kind !== "storefront_personalization") {
+    throw new Error("Only a storefront personalisation draft can be free");
+  }
+  if (
+    free &&
+    input.expectedCredits !== undefined &&
+    input.expectedCredits !== 0
+  ) {
+    throw new Error("A free Mink draft cannot also carry a price");
+  }
   assertDraftAuthority(actor, kind, true);
   if (!actor.runId) {
     throw new MinkToolInputError("The draft run is not available. Try again.");
@@ -161,8 +193,9 @@ export async function createMinkDraftProposal(input: {
   }
   const content = normalizeForTool(kind, input.content);
   const before = normalizeOptionalContent(kind, input.before);
-  const expectedCredits =
-    input.expectedCredits ?? MINK_DRAFT_CONFIG[kind].expectedCredits;
+  const expectedCredits = free
+    ? 0
+    : (input.expectedCredits ?? MINK_DRAFT_CONFIG[kind].expectedCredits);
   if (
     !Number.isInteger(expectedCredits) ||
     expectedCredits < 0 ||
@@ -170,7 +203,86 @@ export async function createMinkDraftProposal(input: {
   ) {
     throw new Error("Mink draft credit weight is out of range");
   }
-  const draftId = crypto.randomUUID();
+  const draftId = input.draftId ?? crypto.randomUUID();
+  const draftRow = {
+    id: draftId,
+    storeId: actor.storeId,
+    adminId: actor.adminId,
+    runId: actor.runId!,
+    kind,
+    destinationType,
+    destinationId: input.destinationId ?? null,
+    locationId: input.destinationLocationId ?? null,
+    variantId: input.destinationVariantId ?? null,
+    destinationLabel,
+    destinationPath: input.destinationPath,
+    title,
+    beforeJson: before,
+    contentJson: content,
+    expectedCredits,
+  };
+  const proposalArtifact = (
+    chargedCredits: number,
+    creditSource: MinkDraftCreditSource,
+  ): MinkArtifact => ({
+    type: "proposal",
+    draftId,
+    draftKind: kind,
+    title,
+    destinationLabel,
+    destinationPath: input.destinationPath,
+    before: minkDraftFields(kind, before),
+    after: minkDraftFields(kind, content),
+    content,
+    status: "proposed",
+    currentVersion: 0,
+    expectedCredits,
+    chargedCredits,
+    creditSource,
+  });
+  /** The draft an earlier call with the same fixed id made. */
+  const existingDraft = async (db: Db): Promise<MinkArtifact> => {
+    const rows = await db
+      .select({
+        storeId: minkDrafts.storeId,
+        adminId: minkDrafts.adminId,
+        kind: minkDrafts.kind,
+        chargedCredits: minkDrafts.chargedCredits,
+        creditSource: minkDrafts.creditSource,
+      })
+      .from(minkDrafts)
+      .where(eq(minkDrafts.id, draftId))
+      .limit(1);
+    const row = rows[0];
+    // ★ Another store's, admin's or kind's draft under this id is a caller
+    //   bug, never something to hand back.
+    if (
+      !row ||
+      row.storeId !== actor.storeId ||
+      row.adminId !== actor.adminId ||
+      row.kind !== kind ||
+      !isCreditSource(row.creditSource)
+    ) {
+      throw new Error(
+        "A Mink draft with this fixed id belongs to something else",
+      );
+    }
+    return proposalArtifact(row.chargedCredits, row.creditSource);
+  };
+  if (free) {
+    // ★ NO CHARGE IS ATTEMPTED, so no allowance or cycle is read either: the
+    //   row is written settled ("free", nothing charged) in its insert, and
+    //   consume_mink_draft_credits is never called for it.
+    return withService(async (db) => {
+      const inserted = await db
+        .insert(minkDrafts)
+        .values({ ...draftRow, chargedCredits: 0, creditSource: "free" })
+        .onConflictDoNothing({ target: minkDrafts.id })
+        .returning({ id: minkDrafts.id });
+      if (!inserted[0]) return existingDraft(db);
+      return proposalArtifact(0, "free");
+    });
+  }
   // ★ aiAllowanceFor, NOT limitsFor(...).aiGenerationsPerMonth. This read the
   // legacy number directly, so the moment MINK_CHARGE_CREDITS is switched on a
   // draft proposal would meter against 3/10/50 while a conversational run
@@ -187,23 +299,14 @@ export async function createMinkDraftProposal(input: {
   );
 
   return withService(async (db) => {
-    await db.insert(minkDrafts).values({
-      id: draftId,
-      storeId: actor.storeId,
-      adminId: actor.adminId,
-      runId: actor.runId!,
-      kind,
-      destinationType,
-      destinationId: input.destinationId ?? null,
-      locationId: input.destinationLocationId ?? null,
-      variantId: input.destinationVariantId ?? null,
-      destinationLabel,
-      destinationPath: input.destinationPath,
-      title,
-      beforeJson: before,
-      contentJson: content,
-      expectedCredits,
-    });
+    // ★ A FIXED ID IS MADE ONCE AND CHARGED ONCE. The charge runs only when
+    //   this call inserted the row; a repeat returns the first draft as it is.
+    const inserted = await db
+      .insert(minkDrafts)
+      .values(draftRow)
+      .onConflictDoNothing({ target: minkDrafts.id })
+      .returning({ id: minkDrafts.id });
+    if (!inserted[0]) return existingDraft(db);
 
     const charge = await db.execute(sql`
       select public.consume_mink_draft_credits(
@@ -231,7 +334,8 @@ export async function createMinkDraftProposal(input: {
         `This store doesn't have enough Mink credits left for this ${MINK_DRAFT_CONFIG[kind].label.toLocaleLowerCase("en-IN")}. Buy Mink credits or upgrade under Plans & Billing.`,
       );
     }
-    if (!isCreditSource(source)) {
+    // A paid draft can never settle as "free": only the branch above writes it.
+    if (!isCreditSource(source) || source === "free") {
       throw new Error("Mink draft charge did not return a valid source");
     }
     const chargedCredits = source === "plan_unlimited" ? 0 : expectedCredits;
@@ -242,22 +346,7 @@ export async function createMinkDraftProposal(input: {
         and(eq(minkDrafts.id, draftId), eq(minkDrafts.storeId, actor.storeId)),
       );
 
-    return {
-      type: "proposal",
-      draftId,
-      draftKind: kind,
-      title,
-      destinationLabel,
-      destinationPath: input.destinationPath,
-      before: minkDraftFields(kind, before),
-      after: minkDraftFields(kind, content),
-      content,
-      status: "proposed",
-      currentVersion: 0,
-      expectedCredits,
-      chargedCredits,
-      creditSource: source,
-    };
+    return proposalArtifact(chargedCredits, source);
   });
 }
 
@@ -705,7 +794,8 @@ function isCreditSource(value: unknown): value is MinkDraftCreditSource {
     value === "plan" ||
     value === "credit" ||
     value === "mixed" ||
-    value === "plan_unlimited"
+    value === "plan_unlimited" ||
+    value === "free"
   );
 }
 

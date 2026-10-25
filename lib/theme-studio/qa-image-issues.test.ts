@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 import { operatorImagePackage } from "./_test-helpers";
 import { describeSlots } from "./slot-images-core";
-import { imageAssessmentsComplete, qaImageIssues } from "./qa-image-issues";
+import {
+  imageAssessmentsComplete,
+  imageIssueFindings,
+  qaImageIssues,
+} from "./qa-image-issues";
 function fixture() {
   const pkg = operatorImagePackage();
   const slot = describeSlots(pkg).find(
@@ -87,4 +91,95 @@ it("refuses a passing verdict that omits, duplicates or disapproves an unresolve
       repairs: [{ kind: "image", target: "other", reason: "Fix it" }],
     }),
   ).toBe(false);
+});
+it("carries the photo check's problems for a flagged photo, bound to its bytes", () => {
+  const { pkg, asset } = fixture();
+  expect(
+    qaImageIssues(pkg, [
+      {
+        sha256: asset.sha256,
+        review: "flagged",
+        note: "Lettering on the jar",
+        problems: ["text_or_logo", 7, "off_style"],
+      },
+    ]),
+  ).toEqual([
+    {
+      slotId: asset.id,
+      sha256: asset.sha256,
+      review: "flagged",
+      note: "Lettering on the jar",
+      problems: ["text_or_logo", "off_style"],
+    },
+  ]);
+  // An unchecked photo carries none, whatever its history row says.
+  expect(
+    qaImageIssues(pkg, [
+      { sha256: asset.sha256, review: "unreviewed", problems: ["malformed"] },
+    ])[0],
+  ).not.toHaveProperty("problems");
+});
+it("keeps an unchecked or hard-flagged photo serious whatever the design review says", () => {
+  const { pkg, asset } = fixture();
+  const approved = [{ slotId: asset.id, approved: true, reason: "Fine" }];
+  const unchecked = qaImageIssues(pkg, []);
+  expect(imageIssueFindings(unchecked, approved)).toEqual({
+    serious: [{ code: "image_unchecked", slotId: asset.id }],
+    warnings: [],
+  });
+  for (const hard of [
+    "wrong_subject",
+    "text_or_logo",
+    "person",
+    "malformed",
+    "multiple_subjects",
+  ])
+    expect(
+      imageIssueFindings(
+        qaImageIssues(pkg, [
+          { sha256: asset.sha256, review: "flagged", problems: [hard] },
+        ]),
+        approved,
+      ),
+    ).toEqual({
+      serious: [{ code: "image_hard_problem", slotId: asset.id }],
+      warnings: [],
+    });
+  // Small problems: the review's approval clears them, its refusal warns.
+  const small = qaImageIssues(pkg, [
+    {
+      sha256: asset.sha256,
+      review: "flagged",
+      problems: ["off_style", "staging_mismatch", "poor_crop"],
+    },
+  ]);
+  expect(imageIssueFindings(small, approved)).toEqual({
+    serious: [],
+    warnings: [],
+  });
+  expect(
+    imageIssueFindings(small, [{ ...approved[0], approved: false }]),
+  ).toEqual({
+    serious: [],
+    warnings: [{ code: "image_redraw", slotId: asset.id }],
+  });
+  // A flag recorded before problems were kept is a small one: the photo run
+  // never keeps a photo with a hard problem.
+  expect(
+    imageIssueFindings(
+      qaImageIssues(pkg, [{ sha256: asset.sha256, review: "flagged" }]),
+      approved,
+    ),
+  ).toEqual({ serious: [], warnings: [] });
+});
+it("treats a problem the photo check does not know as hard: what nobody classified is serious", () => {
+  const { pkg, asset } = fixture();
+  expect(
+    imageIssueFindings(
+      qaImageIssues(pkg, [
+        { sha256: asset.sha256, review: "flagged", problems: ["glitter"] },
+      ]),
+      [{ slotId: asset.id, approved: true, reason: "Fine" }],
+    ).serious,
+  ).toEqual([{ code: "image_hard_problem", slotId: asset.id }]);
 });

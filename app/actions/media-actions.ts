@@ -22,7 +22,9 @@ import {
   listProductImages,
   productImageUsage,
 } from "@/lib/media/product-images";
+import { storefrontImageUsage } from "@/lib/media/image-usage";
 import {
+  imageInUseMessage,
   MEDIA_PICKER_PAGE_SIZE,
   usedByLabel,
   type MediaAsset,
@@ -116,6 +118,11 @@ export async function uploadMediaAsset(
  *    the object would leave a broken photo on the storefront, and nothing on
  *    the product would say why. If we cannot tell whether a product uses it,
  *    the delete is refused too: a missing photo cannot be undone, a retry can.
+ * ★★ SO IS ONE A PAGE, THE HEADER OR FOOTER, A CATEGORY OR A STOREFRONT
+ *    REDESIGN STILL USES (lib/media/image-usage.ts). A redesign's photos are
+ *    in the Library as "Made by Mink AI" and no product uses them: deleting one
+ *    broke the card's preview and made its Apply refuse for ever, or took the
+ *    picture off a live page. Same rule on a failed read.
  */
 export async function deleteMediaAsset(
   id: string,
@@ -156,6 +163,21 @@ export async function deleteMediaAsset(
       error: `${usedByLabel(usedBy)} ${usedBy.length === 1 ? "uses" : "use"} this image. Remove it from ${usedBy.length === 1 ? "that product" : "those products"} first.`,
     };
   }
+
+  let inUse: string | null;
+  try {
+    inUse = imageInUseMessage(await storefrontImageUsage(storeId, asset));
+  } catch (err) {
+    console.error(
+      "deleteMediaAsset (storefront usage):",
+      err instanceof Error ? err.message : err,
+    );
+    return {
+      error:
+        "Couldn't check whether your store still uses this image, so it was not deleted. Please try again.",
+    };
+  }
+  if (inUse) return { error: inUse };
 
   // DB row is the library's source of truth → delete it first, then best-effort
   // remove the object (gcsDeletePaths never throws).

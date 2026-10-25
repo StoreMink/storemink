@@ -10,20 +10,34 @@
 // rendered with production CSS by scripts/theme-studio-visual-fixtures.ts
 // and pushed through the same evidence builder and request as a real run.
 //
-// Ten pages each carry ONE deliberate defect the reviewer must catch; ten are
-// clean and must pass. The bar is 9/10 in both directions
-// (VISUAL_FIXTURE_BAR): a reviewer that fails clean pages is as useless as
-// one that passes broken ones, because every false fail buys a paid repair.
+// Ten pages each carry ONE deliberate defect; ten are clean. Graded on the
+// FINDINGS each page produces, never on the verdict ("Fix it, then allow
+// Publish", TS-1B): a "revise" is only a warning under that rule. Eight
+// defects are serious, and each page must produce its named serious finding;
+// two are taste, and must produce at least a warning; a clean page must
+// produce no serious finding. The bar is VISUAL_FIXTURE_BAR in every set, so
+// all eight serious pages, both warning pages and nine of ten clean pages:
+// a reviewer that blocks clean pages is as useless as one that passes broken
+// ones, because every false block stops a theme from being published.
 // ---------------------------------------------------------------------------
 
 import { designToCssVars, type ThemeDefinition } from "@/lib/themes/types";
+import type { RejectionCondition } from "./scorecard";
+import {
+  classifyVisualQaReport,
+  type VisualQaReport,
+} from "./visual-qa-request";
 
-export type FixtureExpectation = "pass" | "revise";
+/** What the review must produce on a page: no serious finding (a clean
+ * page), at least a warning, or its named serious finding. */
+export type FixtureExpectation = "clean" | "warning" | "serious";
 
 export interface VisualFixture {
   id: string;
   expected: FixtureExpectation;
-  /** The one defect a reviewer must catch; null on a clean page. */
+  /** The serious finding a serious page must produce; null otherwise. */
+  finding: RejectionCondition | null;
+  /** The one defect on the page; null on a clean page. */
   defect: string | null;
   /** The operator brief the reviewer reads as the source of factual claims. */
   brief: string;
@@ -294,7 +308,7 @@ export function fixtureFooter(
   const groups = cat.footerGroups.length
     ? cat.footerGroups
     : [{ title: "Shop", links: ["All products", "New in"] }];
-  return `<footer class="footer"><div class="newsletterBar" data-sm="footer-newsletter"><div class="newsletterInner"><div class="newsletterText"><span class="newsletterLabel">Stay in the loop</span><p class="newsletterSub">New arrivals, offers and stories — no spam.</p></div><form class="newsletterForm"><div class="newsletterFields"><input class="newsletterInput" type="email" placeholder="you@example.com" aria-label="Email"><button class="newsletterBtn" type="button">Subscribe</button></div></form></div></div><div class="footerMain"><div class="mainGrid"><div class="brandCol"><a href="/" class="logo"><span class="brandNameText">${esc(cat.name)}</span></a>${cat.tagline ? `<p class="tagline"${opts.textStyle ? ` style="${opts.textStyle}"` : ""}>${esc(cat.tagline)}</p>` : ""}</div>${groups
+  return `<footer class="footer"><div class="newsletterBar" data-sm="footer-newsletter"><div class="newsletterInner"><div class="newsletterText"><span class="newsletterLabel">Stay in the loop</span><p class="newsletterSub">New arrivals, offers and stories - no spam.</p></div><form class="newsletterForm"><div class="newsletterFields"><input class="newsletterInput" type="email" placeholder="you@example.com" aria-label="Email"><button class="newsletterBtn" type="button">Subscribe</button></div></form></div></div><div class="footerMain"><div class="mainGrid"><div class="brandCol"><a href="/" class="logo"><span class="brandNameText">${esc(cat.name)}</span></a>${cat.tagline ? `<p class="tagline"${opts.textStyle ? ` style="${opts.textStyle}"` : ""}>${esc(cat.tagline)}</p>` : ""}</div>${groups
     .slice(0, 3)
     .map(
       (g) =>
@@ -351,7 +365,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   // ----------------------------------------------------------- clean pages
   {
     id: "clean-baseline",
-    expected: "pass",
+    expected: "clean",
+    finding: null,
     defect: null,
     brief: BRIEF,
     note: "Split hero, USP strip, products, aisles, story, dark signup band.",
@@ -359,7 +374,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "clean-banner-hero",
-    expected: "pass",
+    expected: "clean",
+    finding: null,
     defect: null,
     brief: BRIEF,
     note: "Photographic banner hero with light copy on a dark image.",
@@ -385,7 +401,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "clean-promo",
-    expected: "pass",
+    expected: "clean",
+    finding: null,
     defect: null,
     brief: BRIEF,
     note: "Story band on the right, a promo banner, signup mid-page.",
@@ -422,7 +439,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "clean-cards-testimonials",
-    expected: "pass",
+    expected: "clean",
+    finding: null,
     defect: null,
     brief: BRIEF,
     note: "Category cards and editorial testimonials.",
@@ -448,7 +466,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "clean-compact",
-    expected: "pass",
+    expected: "clean",
+    finding: null,
     defect: null,
     brief: BRIEF,
     note: "A short page: hero, products, aisles, signup.",
@@ -474,7 +493,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "clean-two-rows",
-    expected: "pass",
+    expected: "clean",
+    finding: null,
     defect: null,
     brief: BRIEF,
     note: "Two distinct product rows with different headings and selections.",
@@ -510,7 +530,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "clean-banner-usp",
-    expected: "pass",
+    expected: "clean",
+    finding: null,
     defect: null,
     brief: BRIEF,
     note: "Banner hero, USP strip, aisles, story on the right, products, signup.",
@@ -543,7 +564,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "clean-long-heading",
-    expected: "pass",
+    expected: "clean",
+    finding: null,
     defect: null,
     brief: BRIEF,
     note: "A long hero heading that wraps cleanly; nothing clipped.",
@@ -570,7 +592,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "clean-eight-products",
-    expected: "pass",
+    expected: "clean",
+    finding: null,
     defect: null,
     brief: BRIEF,
     note: "A full eight-card row and a promo banner.",
@@ -605,7 +628,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "clean-light-signup",
-    expected: "pass",
+    expected: "clean",
+    finding: null,
     defect: null,
     brief: BRIEF,
     note: "Light signup band, story, aisles, testimonials.",
@@ -640,7 +664,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   // ---------------------------------------------------------- defect pages
   {
     id: "defect-duplicate-newsletter",
-    expected: "revise",
+    expected: "warning",
+    finding: null,
     defect: "duplicate_newsletter",
     brief: BRIEF,
     note: "The same full newsletter module twice, back to back, at the end of the page.",
@@ -651,7 +676,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "defect-placeholder-copy",
-    expected: "revise",
+    expected: "serious",
+    finding: "placeholder_copy",
     defect: "placeholder_copy",
     brief: BRIEF,
     note: "Lorem ipsum in the hero and story; a product named 'Product name here'.",
@@ -684,7 +710,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "defect-invented-claims",
-    expected: "revise",
+    expected: "serious",
+    finding: "unsupported_claim",
     defect: "invented_claims",
     brief: BRIEF,
     note: "Awards, press and a rating the brief never mentioned.",
@@ -720,7 +747,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "defect-hero-contrast",
-    expected: "revise",
+    expected: "serious",
+    finding: "inaccessible_copy",
     defect: "hero_contrast",
     brief: BRIEF,
     note: "White hero copy on a pale gold field (about 1.5:1), the Bubble defect.",
@@ -751,7 +779,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "defect-placeholder-art",
-    expected: "revise",
+    expected: "serious",
+    finding: "unfinished_surface",
     defect: "placeholder_art",
     brief: BRIEF,
     note: "Every product and aisle image is a flat beige block: unfinished artwork.",
@@ -782,7 +811,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "defect-empty-sections",
-    expected: "revise",
+    expected: "serious",
+    finding: "unfinished_surface",
     defect: "empty_sections",
     brief: BRIEF,
     note: "Headed product, aisle and testimonial sections with nothing under them.",
@@ -813,7 +843,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "defect-overlapping-copy",
-    expected: "revise",
+    expected: "serious",
+    finding: "inaccessible_copy",
     defect: "overlapping_copy",
     brief: BRIEF,
     note: "The hero heading sits on top of its subheading and button.",
@@ -846,7 +877,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "defect-illegible-text",
-    expected: "revise",
+    expected: "serious",
+    finding: "inaccessible_copy",
     defect: "illegible_text",
     brief: BRIEF,
     note: "Story copy, product names and footer links at 9px in pale grey.",
@@ -880,7 +912,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "defect-off-brief-palette",
-    expected: "revise",
+    expected: "warning",
+    finding: null,
     defect: "off_brief_palette",
     brief: LUXURY_BRIEF,
     note: "The brief asks for ivory and charcoal; the page is neon green with hot-pink buttons.",
@@ -916,7 +949,8 @@ export const VISUAL_FIXTURES: readonly VisualFixture[] = [
   },
   {
     id: "defect-clipped-copy",
-    expected: "revise",
+    expected: "serious",
+    finding: "inaccessible_copy",
     defect: "clipped_copy",
     brief: BRIEF,
     note: "The hero heading and button are cut off mid-word; product names end in a hard clip.",
@@ -996,53 +1030,82 @@ ${css}
 export interface FixtureResult {
   id: string;
   expected: FixtureExpectation;
-  /** null when the reviewer gave no usable answer; counted as a miss. */
-  verdict: "pass" | "revise" | null;
+  /** The serious finding a serious page must produce; null otherwise. */
+  finding: RejectionCondition | null;
+  /** The parsed review; null when the reviewer gave no usable answer, which
+   * counts as a miss in every set. */
+  report: VisualQaReport | null;
 }
 
 export interface FixtureBenchmarkSummary {
-  defects: { total: number; caught: number; missed: string[] };
+  serious: { total: number; caught: number; missed: string[] };
+  warnings: { total: number; caught: number; missed: string[] };
   clean: { total: number; passed: number; falseFails: string[] };
   unanswered: string[];
+  /** Serious pages that produced their named serious finding. */
   catchRate: number;
+  /** Warning pages that produced at least a warning. */
+  warningRate: number;
+  /** Clean pages with no serious finding. */
   passRate: number;
   ok: boolean;
 }
 
-/** Catch rate over the defect pages, pass rate over the clean ones; both must
- * reach VISUAL_FIXTURE_BAR. An unanswered fixture is a miss in either set,
- * because a reviewer that cannot answer is not one that can be relied on. */
+/** Did this page's review produce what the page must produce? Graded on the
+ * findings, through the same rules production settles a review with. */
+export function fixtureCaught(result: FixtureResult): boolean {
+  if (!result.report) return false;
+  const severity = classifyVisualQaReport(result.report, []);
+  if (result.expected === "clean") return severity.serious.length === 0;
+  if (result.expected === "warning") return severity.outcome !== "pass";
+  return severity.serious.some((f) => f.code === result.finding);
+}
+
+/** Each set must reach VISUAL_FIXTURE_BAR: every serious page its serious
+ * finding, every warning page at least a warning, nine of ten clean pages no
+ * serious finding. */
 export function fixtureBenchmarkSummary(
   results: readonly FixtureResult[],
 ): FixtureBenchmarkSummary {
-  const defects = results.filter((r) => r.expected === "revise");
-  const clean = results.filter((r) => r.expected === "pass");
-  const missed = defects.filter((r) => r.verdict !== "revise").map((r) => r.id);
-  const falseFails = clean.filter((r) => r.verdict !== "pass").map((r) => r.id);
-  const catchRate = defects.length
-    ? (defects.length - missed.length) / defects.length
-    : 0;
-  const passRate = clean.length
-    ? (clean.length - falseFails.length) / clean.length
-    : 0;
+  const of = (expected: FixtureExpectation) =>
+    results.filter((r) => r.expected === expected);
+  const serious = of("serious");
+  const warnings = of("warning");
+  const clean = of("clean");
+  const missed = serious.filter((r) => !fixtureCaught(r)).map((r) => r.id);
+  const quiet = warnings.filter((r) => !fixtureCaught(r)).map((r) => r.id);
+  const falseFails = clean.filter((r) => !fixtureCaught(r)).map((r) => r.id);
+  const rate = (total: number, failed: number) =>
+    total ? (total - failed) / total : 0;
+  const catchRate = rate(serious.length, missed.length);
+  const warningRate = rate(warnings.length, quiet.length);
+  const passRate = rate(clean.length, falseFails.length);
   return {
-    defects: {
-      total: defects.length,
-      caught: defects.length - missed.length,
+    serious: {
+      total: serious.length,
+      caught: serious.length - missed.length,
       missed,
+    },
+    warnings: {
+      total: warnings.length,
+      caught: warnings.length - quiet.length,
+      missed: quiet,
     },
     clean: {
       total: clean.length,
       passed: clean.length - falseFails.length,
       falseFails,
     },
-    unanswered: results.filter((r) => r.verdict === null).map((r) => r.id),
+    unanswered: results.filter((r) => r.report === null).map((r) => r.id),
     catchRate,
+    warningRate,
     passRate,
     ok:
-      defects.length > 0 &&
+      serious.length > 0 &&
+      warnings.length > 0 &&
       clean.length > 0 &&
       catchRate >= VISUAL_FIXTURE_BAR &&
+      warningRate >= VISUAL_FIXTURE_BAR &&
       passRate >= VISUAL_FIXTURE_BAR,
   };
 }

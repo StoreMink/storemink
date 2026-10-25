@@ -1,13 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const { runQa, startCaptureJob } = vi.hoisted(() => ({
+const { runQa, startCaptureJob, logWaiting, settleStarts } = vi.hoisted(() => ({
   runQa: vi.fn(),
   startCaptureJob: vi.fn(),
+  logWaiting: vi.fn(async () => 0),
+  settleStarts: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/theme-studio/visual-qa", () => ({
   runThemeStudioVisualQaWorker: runQa,
+  logThemeStudioQaWaiting: logWaiting,
 }));
 vi.mock("@/lib/theme-studio/capture-start", () => ({
   startCaptureJobIfWaiting: startCaptureJob,
+  settleCaptureJobStarts: settleStarts,
 }));
 vi.mock("@/lib/observability/logger", () => ({ logError: vi.fn() }));
 import { POST } from "./route";
@@ -75,5 +79,30 @@ describe("independent QA worker", () => {
     const response = await pending;
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ ok: false });
+  });
+  // ★ TS-3A: the capture job wakes this route the moment its captures are
+  // done; the count an alert watches and any capture-job start a lane's
+  // settlement scheduled run inside the same request, after the lanes.
+  it("counts the reviews waiting too long and waits for capture-job starts, after the lanes", async () => {
+    const order: string[] = [];
+    runQa.mockImplementation(async () => {
+      order.push("lane");
+      return { claimed: 1 };
+    });
+    logWaiting.mockImplementationOnce(async () => {
+      order.push("waiting count");
+      return 0;
+    });
+    settleStarts.mockImplementationOnce(async () => {
+      order.push("capture starts");
+    });
+    expect((await POST(request("secret"))).status).toBe(200);
+    expect(order).toEqual(["lane", "lane", "waiting count", "capture starts"]);
+  });
+  it("still answers when the count or the starts have nothing to say", async () => {
+    runQa.mockRejectedValueOnce(new Error("lane failed"));
+    expect((await POST(request("secret"))).status).toBe(503);
+    expect(logWaiting).toHaveBeenCalledOnce();
+    expect(settleStarts).toHaveBeenCalledOnce();
   });
 });

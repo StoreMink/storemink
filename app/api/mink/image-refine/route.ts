@@ -10,7 +10,16 @@ import { logError, logWarn } from "@/lib/observability/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 90;
+// Above REFINE_DEADLINE_MS, so the deadline below is what stops a refine.
+export const maxDuration = 180;
+
+/**
+ * How long a merchant waits for one refine. ★ The model's chain stops before
+ * it (`requestMinkImage`'s deadline): two quick 429s, their 5 to 15 s waits
+ * and a full 60 s try (about 95 s) fit, with room left for the resize, the
+ * upload and the charge (`REFINE_POST_RESERVE_MS`).
+ */
+const REFINE_DEADLINE_MS = 150_000;
 
 const json = (body: unknown, status = 200) =>
   NextResponse.json(body, {
@@ -51,10 +60,18 @@ export async function POST(request: Request) {
     if (!isImageSpecKey(body.spec)) {
       return json({ error: "This image slot can't be refined." }, 400);
     }
+    // ★ The merchant leaving, or the deadline, stops the provider call in
+    //   flight, and nothing is stored or charged after it.
+    const deadlineAt = Date.now() + REFINE_DEADLINE_MS;
     const refined = await refineStoreImage({
       actor,
       sourceUrl: body.url,
       specKey: body.spec,
+      signal: AbortSignal.any([
+        request.signal,
+        AbortSignal.timeout(REFINE_DEADLINE_MS),
+      ]),
+      deadlineAt,
     });
     return json(refined);
   } catch (error) {

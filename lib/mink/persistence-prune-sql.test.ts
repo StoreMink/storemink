@@ -35,7 +35,7 @@ describe("mink conversation prune predicate", () => {
   it("parenthesises every not-exists subquery", () => {
     const text = compile();
     const openers = text.match(/not exists\s*\(/g) ?? [];
-    expect(openers).toHaveLength(2);
+    expect(openers).toHaveLength(3);
     // The failing shape, stated literally so a regression names itself.
     expect(text).not.toMatch(/not exists\s+select/i);
   });
@@ -44,6 +44,15 @@ describe("mink conversation prune predicate", () => {
     const text = compile();
     expect(text).toContain("mink_blog_publications");
     expect(text).toContain("mink_action_audit");
+  });
+
+  it("keeps a conversation whose storefront revamp is still live", () => {
+    const text = compile();
+    // Correlated to the row being pruned, not to a fixed id.
+    expect(text).toMatch(
+      /"mink_revamps"\."conversation_id" = "mink_conversations"\."id"/,
+    );
+    expect(text).toMatch(/"mink_revamps"\."status" in \(/);
   });
 
   it("stays scoped to the acting store and admin", () => {

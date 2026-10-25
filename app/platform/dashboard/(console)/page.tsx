@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -17,6 +18,7 @@ import { getServerUser } from "@/lib/auth/server-user";
 import { getPlatformViewer } from "@/app/actions/platform";
 import { getPlatformInsights } from "@/lib/platform/overview";
 import { PLAN_META } from "@/lib/plans";
+import { ThemeStudioTile, ThemeStudioTileFallback } from "./theme-studio-tile";
 
 export const metadata = { title: "StoreMink Admin" };
 
@@ -407,6 +409,16 @@ export default async function PlatformDashboard() {
           />
         </div>
       </section>
+
+      {/* Theme Studio is superadmin data: a member never gets the tile (and
+          the tile checks the Studio's own gate again before it reads). It
+          streams in on its own, so the rest of the Overview never waits on
+          the Studio list. */}
+      {viewer.role === "superadmin" ? (
+        <Suspense fallback={<ThemeStudioTileFallback />}>
+          <ThemeStudioTile />
+        </Suspense>
+      ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">

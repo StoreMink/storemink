@@ -58,7 +58,25 @@ it("requires the exact theme ID before sending a permanent delete", async () => 
     expect(state.push).toHaveBeenCalledWith("/dashboard/themes/studio"),
   );
 });
-it("keeps a refused deletion visible and does not navigate", async () => {
+it("asks a phone keyboard not to capitalise or correct the ID, and says why Delete waits", () => {
+  render(<DeleteThemeButton {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+  const field = screen.getByLabelText(
+    /Type clay-co to confirm/,
+  ) as HTMLInputElement;
+  expect(field.getAttribute("autocapitalize")).toBe("none");
+  expect(field.getAttribute("autocorrect")).toBe("off");
+  expect(field.getAttribute("spellcheck")).toBe("false");
+  // Nothing typed yet: the instruction above is enough.
+  expect(screen.queryByText(/doesn't match yet/)).toBeNull();
+  fireEvent.change(field, { target: { value: "Clay-co" } });
+  const reason = screen.getByText(/doesn't match yet/);
+  expect(reason.textContent).toContain("type clay-co exactly");
+  expect(field.getAttribute("aria-describedby")).toBe(reason.id);
+  fireEvent.change(field, { target: { value: "clay-co" } });
+  expect(screen.queryByText(/doesn't match yet/)).toBeNull();
+});
+it("keeps a refused deletion visible, does not navigate, and starts clean when opened again", async () => {
   state.remove.mockResolvedValue({
     ok: false,
     error: "A store is using this theme.",
@@ -76,6 +94,33 @@ it("keeps a refused deletion visible and does not navigate", async () => {
     "A store is using this theme.",
   );
   expect(state.push).not.toHaveBeenCalled();
+  // The refusal shows before the request has fully settled: wait for the
+  // dialog's buttons to come back before pressing one.
+  const keep = screen.getByRole("button", { name: "Keep it" });
+  await waitFor(() => expect((keep as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(keep);
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull(), {
+    timeout: 4000,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+  expect(
+    (screen.getByLabelText(/Type clay-co to confirm/) as HTMLInputElement)
+      .value,
+  ).toBe("");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+it("says what is erased and what is kept, in plain words", () => {
+  render(<DeleteThemeButton {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+  expect(screen.getByText("Delete Clay for good?")).toBeTruthy();
+  const words = screen.getByText(/It can't be undone/).textContent ?? "";
+  expect(words).toMatch(/A theme a store uses can't be deleted/);
+  expect(words).toMatch(/Published pictures are kept/);
+  expect(words).not.toMatch(/version/i);
+  expect(
+    words.includes(String.fromCharCode(0x2014)) ||
+      words.includes(String.fromCharCode(0x2013)),
+  ).toBe(false);
 });
 it("disables deletion while work is active", () => {
   render(<DeleteThemeButton {...props} disabled />);

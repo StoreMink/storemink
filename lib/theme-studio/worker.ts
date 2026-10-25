@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { ThinkingLevel } from "@google/genai";
 import { and, asc, count, eq, gt, inArray, lte, max, sql } from "drizzle-orm";
 import {
   themeStudioAssets,
@@ -46,7 +47,7 @@ import {
   generatableSlots,
   productSetReferenceSha,
 } from "./image-generation-core";
-import { captureBlockers } from "./capture-core";
+import { captureBlockers, captureShots } from "./capture-core";
 import {
   runThemeImageGeneration,
   type ThemeImageReviewer,
@@ -55,8 +56,11 @@ import {
 import {
   THEME_STUDIO_IMAGE_MODEL_KEY,
   getThemeStudioImageConfig,
+  homepageOpeningPhotoIds,
+  themeStudioImageSize,
 } from "./image-models";
 import { describeSlots } from "./slot-images-core";
+import { MAX_AUTOMATIC_QA_REPAIRS } from "./automatic-qa-policy";
 import type { ThemeStudioImageClient } from "./image-provider";
 import { createVertexImageClient } from "./image-vertex";
 import {
@@ -68,9 +72,12 @@ import { runThemeGeneration, type GenerationOutcome } from "./pipeline";
 import type { ThemeStudioModelClient } from "./provider";
 import {
   generationRecoveryDelayMs,
+  isWaitedProviderFailure,
+  providerFailureDelayMs,
   resumableGenerationClient,
   type SavedModelResponse,
 } from "./generation-recovery";
+import { sendThemeStudioNotice, type ThemeStudioNoticeKind } from "./notify";
 import { digestThemeStudioJson, recordThemeStudioEvent } from "./repository";
 import { runThemeStudioVisualQaWorker } from "./visual-qa";
 import {
@@ -83,6 +90,7 @@ import { startWorkerLease, WORKER_LEASE_SECONDS } from "./worker-lease";
 import { renewStudioLease } from "./worker-lease-store";
 import {
   IMAGE_CRASH_ATTEMPTS,
+  IMAGE_REVIEW_DEFERRALS,
   ImageCheckpointError,
   imageReviewRecoveryDelayMs,
   resumableImageClient,
@@ -110,6 +118,43 @@ import {
 // ---------------------------------------------------------------------------
 
 const LEASE_SECONDS = WORKER_LEASE_SECONDS;
+
+/**
+ * ★ THEME STUDIO'S LONG TEXT CALLS QUEUE ON A CAPACITY ROW OF THEIR OWN (plan
+ * optimisation 8, TS-3B). Designing, revising and repairing a theme are
+ * calls of minutes on the same model the photo checks use (3.8 Flash), so on
+ * the shared row a design call held a permit that a photo check, a Theme
+ * Studio one or a merchant redesign's, was waiting for. A scope gives them
+ * their own permits, pause and pace (provider-capacity.ts
+ * `providerCapacityKey`; the row is created on first use, no migration). The
+ * photo checks stay on the shared row and the design review has its own lane
+ * (TS-3A).
+ */
+export const THEME_STUDIO_TEXT_CAPACITY_SCOPE = "theme-studio-text";
+
+/**
+ * ★ A FRESH PHOTO RUN STARTS ONLY WITH 9 MINUTES OF ITS REQUEST LEFT (plan
+ * optimisation 4). A photo run starts with its style photo, and one started
+ * near the end of the 19-minute request was cut during it. A run that has
+ * started already (`started_at` is set: a continuation, a review wait, a
+ * crash) carries on with whatever time is left, because everything it drew
+ * is saved and replays at once.
+ */
+export const FRESH_PHOTO_RUN_MIN_MS = 9 * 60_000;
+
+/**
+ * ★ A PHOTO RUN CUT BY ITS REQUEST'S DEADLINE CONTINUES IN THE NEXT REQUEST
+ * (plan optimisation 4). Two of five first photo runs were cut at exactly 19
+ * minutes on 4 Oct, which failed the theme during the style photo
+ * (`images_anchor_cancelled`) or spent one of the three fill rounds. Now the
+ * run goes back to the queue as it is: its drawings and checks are saved
+ * (image checkpoints), so the next claim replays them without paying again
+ * and draws only what is left. A continuation is a delayed recovery
+ * (`retry_not_before`), never one of the three crash attempts, and it is
+ * counted from the run's own `run_queued` events (reason `deadline`). After
+ * this many the run settles with what it has and the fill rounds finish it.
+ */
+export const PHOTO_RUN_CONTINUATIONS = 3;
 
 export interface ThemeStudioWorkerResult {
   claimed: number;
@@ -143,7 +188,49 @@ type ClaimedRun = {
   createdBy: string | null;
 };
 
-async function reapExhaustedLeases(db: Db): Promise<number> {
+/** What settling one claimed run did, for the worker's counters, its log
+ * line and the operator's notice (sent after the settling transaction). */
+type Settlement = {
+  settled: "succeeded" | "failed" | "cancelled" | "requeued" | "lost";
+  /** The code a failed run was given, or why a requeued one waits. */
+  errorCode?: string;
+  /** A failed photo run whose slots a fill round it queued draws again (a
+   * style photo refused or rejected, or nothing drawn): the theme is still
+   * generating, so the run's log line says so and no alert fires. */
+  continues?: true;
+  /** Set when this settlement ended the theme's work and needs the operator. */
+  notice?: ThemeStudioNoticeKind;
+};
+
+/**
+ * Tell the operator who started the theme, once the settling transaction has
+ * committed: a short read, then the notice in its own short transaction,
+ * never one inside the other (notify.ts). Never throws.
+ */
+function sendNotice(projectId: string, kind: ThemeStudioNoticeKind) {
+  return sendThemeStudioNotice({ projectId, kind });
+}
+
+/**
+ * How many times this run already went back to the queue for `reason`,
+ * counted from its own `run_queued` events (the event detail records the
+ * reason), so a wait needs no column of its own and survives every reclaim.
+ */
+async function countRunWaits(
+  db: Db,
+  run: Pick<ClaimedRun, "id" | "projectId">,
+  reason: string,
+): Promise<number> {
+  const rows = await db.execute(sql`
+    SELECT count(*)::int AS "n" FROM theme_studio_events
+    WHERE project_id = ${run.projectId}::uuid AND run_id = ${run.id}::uuid
+      AND event_type = 'run_queued' AND detail->>'reason' = ${reason}`);
+  return Number((rows.rows[0] as { n?: unknown } | undefined)?.n ?? 0) || 0;
+}
+
+async function reapExhaustedLeases(
+  db: Db,
+): Promise<{ reaped: number; notices: string[] }> {
   // Two kinds of dead lease end here instead of being re-run: one out of
   // attempts, and one whose operator already asked to cancel it. Reclaiming the
   // second would pay for a whole provider call only to throw the result away.
@@ -173,16 +260,16 @@ async function reapExhaustedLeases(db: Db): Promise<number> {
     automatic: boolean;
     baseVersionId: string | null;
   }[];
+  // A run whose lease ran out of attempts stopped the theme: its operator is
+  // told (after this transaction commits). A cancelled one was their choice.
+  const notices: string[] = [];
   for (const run of reaped) {
-    if (
-      !(await revealAutomaticBase(
-        db,
-        run,
-        run.status === "cancelled" ? "cancelled" : "lease_expired",
-      ))
-    ) {
-      await settleProjectWithoutVersion(db, run.projectId);
-    }
+    const stopped = await settleStoppedProject(
+      db,
+      run,
+      run.status === "cancelled" ? "cancelled" : "lease_expired",
+    );
+    if (stopped && run.status === "failed") notices.push(run.projectId);
     await recordThemeStudioEvent(db, {
       projectId: run.projectId,
       runId: run.id,
@@ -191,7 +278,7 @@ async function reapExhaustedLeases(db: Db): Promise<number> {
       detail: run.status === "cancelled" ? {} : { errorCode: "lease_expired" },
     });
   }
-  return reaped.length;
+  return { reaped: reaped.length, notices };
 }
 
 async function claimRun(
@@ -206,18 +293,25 @@ async function claimRun(
   );
   // Older workers cannot reclaim retryable image runs without durable replay.
   // Migration 0150 gates claims on this transaction-local protocol declaration.
+  // ★ A fresh photo run needs FRESH_PHOTO_RUN_MIN_MS of the request; one that
+  //   has started continues with less (optimisation 4).
+  // ★ AUTOMATIC REPAIRS GO TO THE FRONT OF THE QUEUE (optimisation 7): a
+  //   repair takes 3 to 23 s of model time but waited a median 117 s behind
+  //   other work (measured 4 Oct), and the theme it repairs waits with it.
   const rows = await db.execute(sql`
     WITH protocol AS MATERIALIZED (
       SELECT set_config('app.theme_studio_image_recovery','v1',true)
     ), candidate AS (
       SELECT id FROM theme_studio_runs CROSS JOIN protocol
       WHERE provider IN (${providerList})
-        AND (${remainingMs}::int >= 600000 OR kind='images' OR (kind='revise' AND automatic))
+        AND (${remainingMs}::int >= 600000
+             OR (kind='images' AND (started_at IS NOT NULL OR ${remainingMs}::int >= ${FRESH_PHOTO_RUN_MIN_MS}::int))
+             OR (kind='revise' AND automatic))
         AND ((status = 'queued' AND cancel_requested_at IS NULL
               AND (retry_not_before IS NULL OR retry_not_before <= now()))
          OR (status = 'running' AND lease_expires_at <= now()
              AND attempt_count < max_attempts AND cancel_requested_at IS NULL))
-      ORDER BY created_at
+      ORDER BY (kind = 'revise' AND automatic) DESC, created_at
       LIMIT 1
       FOR UPDATE OF theme_studio_runs SKIP LOCKED
     )
@@ -335,22 +429,28 @@ async function queueFillImages(
   return true;
 }
 
-/** Reveal the most complete version with a failed QA result for recovery. */
+/** Reveal the most complete version with a failed QA result for recovery.
+ * True when it was revealed. */
 async function revealIncomplete(
   db: Db,
   run: ClaimedRun,
   versionId: string,
-): Promise<void> {
-  await revealAutomaticBase(
+): Promise<boolean> {
+  const revealed = await revealAutomaticBase(
     db,
     { ...run, baseVersionId: versionId },
     "auto_images_incomplete",
   );
+  return revealed ? revealed.settled : false;
 }
 
-/** Only legal from `generating`; a project in any other state is left alone. */
-async function settleProjectWithoutVersion(db: Db, projectId: string) {
-  await db
+/** Only legal from `generating`; a project in any other state is left alone.
+ * True when the project left `generating` here (the theme stopped). */
+async function settleProjectWithoutVersion(
+  db: Db,
+  projectId: string,
+): Promise<boolean> {
+  const settled = await db
     .update(themeStudioProjects)
     .set({
       status: sql`CASE WHEN ${themeStudioProjects.currentVersionId} IS NULL THEN 'failed' ELSE 'ready' END`,
@@ -361,17 +461,20 @@ async function settleProjectWithoutVersion(db: Db, projectId: string) {
         eq(themeStudioProjects.id, projectId),
         eq(themeStudioProjects.status, "generating"),
       ),
-    );
+    )
+    .returning({ id: themeStudioProjects.id });
+  return settled.length > 0;
 }
 
 /** An automated child failed after its hidden base existed. Reveal that last
  * complete base as a clearly failed QA result instead of stranding the
- * project with no operator-visible outcome. */
+ * project with no operator-visible outcome. False when there was none to
+ * reveal; otherwise whether the project left `generating` here. */
 async function revealAutomaticBase(
   db: Db,
   run: Pick<ClaimedRun, "id" | "projectId" | "automatic" | "baseVersionId">,
   errorCode: string,
-): Promise<boolean> {
+): Promise<false | { settled: boolean }> {
   if (!run.automatic || !run.baseVersionId) return false;
   const revealed = await db
     .update(themeStudioVersions)
@@ -386,7 +489,7 @@ async function revealAutomaticBase(
     )
     .returning({ id: themeStudioVersions.id });
   if (revealed.length === 0) return false;
-  await db
+  const settled = await db
     .update(themeStudioProjects)
     .set({
       status: "ready",
@@ -398,7 +501,8 @@ async function revealAutomaticBase(
         eq(themeStudioProjects.id, run.projectId),
         eq(themeStudioProjects.status, "generating"),
       ),
-    );
+    )
+    .returning({ id: themeStudioProjects.id });
   await recordThemeStudioEvent(db, {
     projectId: run.projectId,
     runId: run.id,
@@ -406,7 +510,25 @@ async function revealAutomaticBase(
     eventType: "auto_qa_failed",
     detail: { versionId: run.baseVersionId, errorCode },
   });
-  return true;
+  return { settled: settled.length > 0 };
+}
+
+/**
+ * Settle the project of a step that stopped: reveal the automatic chain's
+ * hidden base when there is one, else end `generating` with no new version.
+ * True only when the project left `generating` here, which is when the
+ * operator who started the theme is told (never for a project something
+ * else had already moved).
+ */
+async function settleStoppedProject(
+  db: Db,
+  run: Pick<ClaimedRun, "id" | "projectId" | "automatic" | "baseVersionId">,
+  errorCode: string,
+): Promise<boolean> {
+  const revealed = await revealAutomaticBase(db, run, errorCode);
+  return revealed
+    ? revealed.settled
+    : settleProjectWithoutVersion(db, run.projectId);
 }
 
 type RunInput = {
@@ -646,7 +768,13 @@ type Outcome =
       reusedAnchorAssetId: string | null;
     }
   | { kind: "failed"; errorCode: string; detail?: Record<string, unknown> }
-  | { kind: "retry"; errorCode: string };
+  | {
+      kind: "retry";
+      errorCode: string;
+      /** A photo run cut by its request's deadline: it continues in the next
+       * request without spending a crash attempt (PHOTO_RUN_CONTINUATIONS). */
+      continuation?: true;
+    };
 
 /** The run's own deadline, inside its lease so a finish always holds it. */
 const RUN_DEADLINE_MS = (THEME_STUDIO_LIMITS.runWallTimeSeconds - 60) * 1000;
@@ -673,8 +801,11 @@ function clientFor(
     const vertex = getVertexConfig();
     return vertex
       ? createVertexModelClient(vertex, {
+          // Its own lane: THEME_STUDIO_TEXT_CAPACITY_SCOPE.
           capacity: (model) =>
-            sharedProviderCapacity(vertex.projectId, vertex.region, model),
+            sharedProviderCapacity(vertex.projectId, vertex.region, model, {
+              scope: THEME_STUDIO_TEXT_CAPACITY_SCOPE,
+            }),
         })
       : null;
   }
@@ -865,12 +996,28 @@ async function loadImageSeed(
   });
 }
 
-function imageClientFor(provider: string): ThemeStudioImageClient | null {
+/**
+ * The image client for a photo run. ★★ Owner, 25 Oct 2026: Nano Banana 2.1
+ * (image-models.ts) draws every Theme Studio photo at "2K" and the
+ * homepage's hero slides at "4K" (themeStudioImageSize), thinking HIGH:
+ * these photos set the look of every store that installs the theme. The
+ * owner's rollback to Pro (THEME_STUDIO_IMAGE_MODEL) is sent the same sizes
+ * and no thinking level (image-models.ts imageRequestConfig).
+ * ★ `homepageSlides` names the slots of the photos the homepage opens with
+ * (image-models.ts homepageOpeningPhotoIds, from the run's package): only
+ * those may be drawn at "4K", never a wide hero that opens another page.
+ */
+export function imageClientFor(
+  provider: string,
+  homepageSlides: ReadonlySet<string> = new Set(),
+): ThemeStudioImageClient | null {
   if (provider === "fake") return createFakeImageClient();
   if (provider === "vertex-gemini") {
     const config = getThemeStudioImageConfig();
     return config
       ? createVertexImageClient(config, {
+          imageSize: (request) => themeStudioImageSize(request, homepageSlides),
+          thinkingLevel: ThinkingLevel.HIGH,
           capacity: sharedProviderCapacity(
             config.projectId,
             config.location,
@@ -883,10 +1030,30 @@ function imageClientFor(provider: string): ThemeStudioImageClient | null {
 }
 
 /**
+ * ★★ THEME STUDIO'S OWN CLOCK FOR ONE TRY OF A PHOTO CHECK (TS-3D, plan H1),
+ * longer than the redesigns' 75 s (gemini-vertex.ts,
+ * IMAGE_REVIEW_TRY_TIMEOUT_MS). Set from the 103 checks of the 4 Oct
+ * production benchmark (evals/theme-studio/full-live-2026-10-04.json): median
+ * 9.07 s, and the 102 that answered all took 111 s or less (79.5, 83.1, 83.1,
+ * 86.4 and 110.9 s were the five over 75 s; the one unanswered hit the old
+ * 180 s clock). Those times count from the first ask, the permit and 429
+ * waits included, where a try's clock starts when it is admitted, so 120 s
+ * lets every answered check of that day finish on its first try, with room.
+ * ★ A try that hangs holds its permit up to 120 s before the check goes on
+ *   from the US to global, so one check takes at most two clocks: 240 s, inside
+ *   the five-minute clock of the photo check before a final capture
+ *   (image-recovery.ts, PHOTO_RECHECK_CALL_MS).
+ */
+export const THEME_STUDIO_IMAGE_REVIEW_TRY_TIMEOUT_MS = 120_000;
+
+/**
  * The vision reviewer for an image run (Track 3.4): the fast Studio text
  * model. Null when the provider has no reviewer or an operator has switched
  * that model off — the run then keeps its images, marked unreviewed, rather
  * than failing: the review is a quality check, not the safety boundary.
+ * ★★ TS-3D: each check goes to Google's US endpoint first and to global when
+ *   the US refuses or times out (gemini-vertex.ts, `capacityAt`), each try
+ *   on its location's shared row, with Theme Studio's own longer clock.
  */
 function imageReviewerFor(provider: string): ThemeImageReviewer | null {
   if (provider === "fake") {
@@ -900,12 +1067,26 @@ function imageReviewerFor(provider: string): ThemeImageReviewer | null {
   if (!vertex) return null;
   return {
     client: createVertexModelClient(vertex, {
-      capacity: (model) =>
-        sharedProviderCapacity(vertex.projectId, vertex.region, model),
+      capacityAt: (model, location) =>
+        sharedProviderCapacity(vertex.projectId, location, model),
+      imageReviewTryTimeoutMs: THEME_STUDIO_IMAGE_REVIEW_TRY_TIMEOUT_MS,
     }),
     providerModel: resolveThemeStudioModel(THEME_IMAGE_REVIEW_MODEL_KEY)
       .providerModel,
   };
+}
+
+/**
+ * The same photo check an image run uses (imageReviewerFor, unchanged), for
+ * the check of a photo still unchecked before a final capture
+ * (image-recovery.ts `checkUncheckedPhotos`, which loads it lazily so the two
+ * modules do not import each other). A photo is re-checked with the reviewer
+ * of the provider that drew it.
+ */
+export function themeImageReviewerFor(
+  provider: string,
+): ThemeImageReviewer | null {
+  return imageReviewerFor(provider);
 }
 
 async function executeImages(
@@ -925,7 +1106,11 @@ async function executeImages(
   if (generatableSlots(input.package, input.intent, only).length === 0) {
     return { kind: "failed", errorCode: "images_nothing_to_draw" };
   }
-  const client = imageClientFor(run.provider);
+  // ★ Only the photos the homepage opens with are drawn at 4K.
+  const client = imageClientFor(
+    run.provider,
+    homepageOpeningPhotoIds(input.package),
+  );
   if (!client) return { kind: "failed", errorCode: "provider_unavailable" };
   // Filling new slots beside finished artwork must keep the original style.
   // A wholly new art set may establish a fresh anchor.
@@ -936,11 +1121,20 @@ async function executeImages(
   );
   const reuse =
     only || hasFinishedArt ? await loadImageSeed(run, input.package) : null;
+  // Read before drawing: whether a cut by this request's deadline may still
+  // continue in the next request (PHOTO_RUN_CONTINUATIONS).
+  const continuations = await withService((db) =>
+    countRunWaits(db, run, "deadline"),
+  );
 
   const controller = new AbortController();
   const signal = AbortSignal.any([controller.signal, leaseSignal]);
+  let timedOut = false;
   const deadline = setTimeout(
-    () => controller.abort(),
+    () => {
+      timedOut = true;
+      controller.abort();
+    },
     Math.min(
       RUN_DEADLINE_MS,
       deadlineAt
@@ -976,10 +1170,28 @@ async function executeImages(
       signal,
       {
         review: resumableImageReview(store, run.imageReviewDeferrals),
-        deferUnavailableReviews: true,
+        // ★★ THE LAST PASS KEEPS A PHOTO WHOSE CHECK IS STILL UNAVAILABLE
+        //   AS UNCHECKED, INSTEAD OF FAILING THE WHOLE RUN (optimisation 3).
+        //   A check that cannot answer pauses the run twice (60 s, 120 s,
+        //   IMAGE_REVIEW_DEFERRALS); the third pass tries each check once
+        //   more and keeps the photos it still could not check, marked
+        //   unchecked, where `image_review_unavailable` used to throw away a
+        //   photo run already drawn and paid for. An unchecked photo stays
+        //   serious until its own check passes on its bytes, which runs
+        //   before the final capture (image-recovery.ts checkUncheckedPhotos).
+        deferUnavailableReviews:
+          run.imageReviewDeferrals < IMAGE_REVIEW_DEFERRALS,
         corrections: input.corrections,
       },
     );
+    // A cut by the request's deadline is not the end of the photo run: it
+    // goes back to the queue and the next request carries on from its saved
+    // drawings and checks (PHOTO_RUN_CONTINUATIONS). What came back here is
+    // not settled, so no slot it did not finish is lost to a fill round and
+    // a style photo it was drawing is not a failed run.
+    if (timedOut && continuations < PHOTO_RUN_CONTINUATIONS) {
+      return { kind: "retry", errorCode: "run_timeout", continuation: true };
+    }
     return {
       kind: "images",
       distinctnessReport: input.distinctnessReport,
@@ -1198,8 +1410,8 @@ async function finish(
   workerId: string,
   run: ClaimedRun,
   outcome: Outcome,
-): Promise<"succeeded" | "failed" | "cancelled" | "requeued" | "lost"> {
-  return withService(async (db) => {
+): Promise<Settlement> {
+  return withService(async (db): Promise<Settlement> => {
     const rows = await db
       .select()
       .from(themeStudioRuns)
@@ -1213,7 +1425,7 @@ async function finish(
       )
       .for("update")
       .limit(1);
-    if (!rows[0]) return "lost"; // lease expired and another worker took it
+    if (!rows[0]) return { settled: "lost" }; // lease expired and another worker took it
     const locked: RunRow = rows[0];
     const [project] = await db
       .select()
@@ -1250,19 +1462,25 @@ async function finish(
         eventType,
         detail,
       });
+    // ★ A failure that stops the theme (its project leaves `generating`)
+    //   tells the operator who started it, once this transaction commits.
     const failRun = async (
       errorCode: string,
       outcomeDetail: Record<string, unknown> = {},
-    ) => {
+    ): Promise<Settlement> => {
       await db
         .update(themeStudioRuns)
         .set({ ...terminal, status: "failed", errorCode, outcomeDetail })
         .where(eq(themeStudioRuns.id, run.id));
-      if (project && !(await revealAutomaticBase(db, run, errorCode))) {
-        await settleProjectWithoutVersion(db, run.projectId);
-      }
+      const stopped =
+        project !== undefined &&
+        (await settleStoppedProject(db, run, errorCode));
       await event("run_failed", { errorCode });
-      return "failed" as const;
+      return {
+        settled: "failed",
+        errorCode,
+        ...(stopped ? { notice: "needs_fix" as const } : {}),
+      };
     };
 
     if (locked.cancelRequestedAt) {
@@ -1275,10 +1493,30 @@ async function finish(
         await settleProjectWithoutVersion(db, run.projectId);
       }
       await event("run_cancelled");
-      return "cancelled";
+      return { settled: "cancelled" };
     }
 
     if (outcome.kind === "retry") {
+      if (outcome.continuation) {
+        // ★ A photo run cut by its request's deadline goes back as it is,
+        //   due at once: a delayed recovery (`retry_not_before`), so its
+        //   next claim spends no crash attempt, and its saved drawings and
+        //   checks replay there (PHOTO_RUN_CONTINUATIONS, counted from this
+        //   event).
+        await db
+          .update(themeStudioRuns)
+          .set({
+            status: "queued",
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            retryNotBefore: sql`now()`,
+            usage,
+            updatedAt: sql`now()`,
+          })
+          .where(eq(themeStudioRuns.id, run.id));
+        await event("run_queued", { reason: "deadline" });
+        return { settled: "requeued", errorCode: outcome.errorCode };
+      }
       // A deadline or renewal failure on the final claim must terminate. A
       // queued row at maxAttempts would make its next claim violate the DB
       // attempt constraint and could poison every scheduler invocation.
@@ -1294,7 +1532,7 @@ async function finish(
           updatedAt: sql`now()`,
         })
         .where(eq(themeStudioRuns.id, run.id));
-      return "requeued";
+      return { settled: "requeued", errorCode: outcome.errorCode };
     }
     if (!project || project.status !== "generating") {
       return failRun("project_state_changed");
@@ -1343,7 +1581,45 @@ async function finish(
           retryNotBefore,
           recovery: locked.rateLimitDeferrals + 1,
         });
-        return "requeued";
+        return { settled: "requeued", errorCode: "rate_limited" };
+      }
+    }
+    if (
+      result.kind === "failed" &&
+      run.provider === "vertex-gemini" &&
+      isWaitedProviderFailure(result.errorCode)
+    ) {
+      // ★ An outage or a timed-out call is waited out like a 429, on a
+      //   shorter clock and a smaller budget (generation-recovery.ts
+      //   PROVIDER_FAILURE_WAITS): unavailable twice, a timeout once. The
+      //   saved answers of the stages that did answer replay on the next
+      //   claim, so only the call that failed is sent again.
+      const waits = await countRunWaits(db, run, result.errorCode);
+      const delay = providerFailureDelayMs(result.errorCode, waits);
+      if (delay !== null) {
+        const retryNotBefore = new Date(Date.now() + delay).toISOString();
+        await db
+          .update(themeStudioRuns)
+          .set({
+            status: "queued",
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            retryNotBefore,
+            usage,
+            outcomeDetail: {
+              kind: "provider_wait",
+              reason: result.errorCode,
+              stage: result.detail.stage,
+            },
+            updatedAt: sql`now()`,
+          })
+          .where(eq(themeStudioRuns.id, run.id));
+        await event("run_queued", {
+          reason: result.errorCode,
+          retryNotBefore,
+          recovery: waits + 1,
+        });
+        return { settled: "requeued", errorCode: result.errorCode };
       }
     }
     if (result.kind === "failed")
@@ -1372,7 +1648,8 @@ async function finish(
       await event("clarification_requested", {
         questions: result.questions.length,
       });
-      return "succeeded";
+      // The brief needs the operator's answers before anything is designed.
+      return { settled: "succeeded", notice: "questions" };
     }
 
     // A version. Its number was fixed before the provider call because the
@@ -1534,19 +1811,88 @@ async function finish(
       } else {
         // Measure the native layout with its planned image ratios before
         // paying for artwork. Passing this stage cannot create acceptance
-        // evidence.
-        await queueAutomaticCapture(db, run, version, packageDigest, "layout");
+        // evidence. An edit or a late repair of a theme whose pictures are
+        // all there has no artwork to pay for, so it goes straight to the
+        // final capture (firstCapturePhase).
+        await queueAutomaticCapture(
+          db,
+          run,
+          version,
+          packageDigest,
+          firstCapturePhase(result.package),
+        );
       }
     }
-    return "succeeded";
+    return { settled: "succeeded" };
   });
+}
+
+/**
+ * ★ WHICH CAPTURE A NEW VERSION'S CHECKS START WITH (plan optimisation 5).
+ * The layout capture exists to measure the layout before photos are paid
+ * for. A version that can be captured for real already (no placeholder art,
+ * catalogue pictures capturable, captureBlockers(pkg, "final") empty: an
+ * operator's edit or a late repair of a finished theme) has none to pay
+ * for, so the layout capture would only add about 2.2 minutes: it goes
+ * straight to the final capture, which measures everything the layout
+ * capture does and more, and pays for no design review unless those
+ * measurements pass. A first build always has placeholders: layout first.
+ */
+export function firstCapturePhase(pkg: ThemePackageV2): "layout" | "final" {
+  return captureBlockers(pkg, "final").length === 0 ? "final" : "layout";
+}
+
+/**
+ * Whether a photo run's result can reach the automatic final check: nothing
+ * stands between it and a final capture but the slots a fill round still
+ * owes (`owed`). Placeholders the run was never asked to draw (a redraw of
+ * two pictures in a theme with others still empty), or catalogue pictures
+ * that cannot be captured, leave nothing to check yet. With nothing owed this
+ * is exactly "captureBlockers(pkg, 'final') is empty".
+ */
+export function reachesFinalCheck(
+  pkg: ThemePackageV2,
+  owed: readonly string[],
+): boolean {
+  if (captureBlockers(pkg, "layout").length > 0) return false;
+  if (captureShots(pkg).length === 0) return false;
+  const pending = new Set(owed);
+  return describeSlots(pkg).every(
+    (slot) =>
+      slot.catalogPreview ||
+      slot.catalogScreenshot ||
+      !slot.placeholder ||
+      pending.has(slot.id),
+  );
 }
 
 /**
  * Settle an image run: store the anchor and each generated image, then write
  * ONE version whose package points at them and whose parent is the version
  * filled. Nothing generated is a failure that keeps the base version current.
+ *
+ * ★ EVERY CHANGE IS CHECKED (TS-1D). With automatic checks on, an operator's
+ * own photo run ("Generate images", a redraw, or a Retry of one) goes
+ * through the same automatic final check as a theme's own photos: its
+ * version is HIDDEN, a round that fills what it missed is queued as automatic
+ * work (so Stop, a cancel and a failure reveal that version, as for any
+ * automatic step), and once complete the version gets one final capture and
+ * the design review. All of it at the repair ceiling: checking a photo run
+ * the operator chose never buys a paid restyle. No layout check, because only
+ * pictures changed. A result that cannot reach the check (a placeholder the
+ * run was not asked to draw) becomes current at once, as before.
  */
+/** The run's error code when its style photo (the anchor) did not come back. */
+function anchorFailureCode(
+  failure: NonNullable<ThemeImageRunResult["anchorFailure"]>,
+): string {
+  return failure.kind === "refused"
+    ? "images_anchor_refused"
+    : failure.kind === "rejected"
+      ? "images_anchor_rejected"
+      : `images_anchor_${failure.code}`.slice(0, 64);
+}
+
 async function finishImages(
   db: Db,
   ctx: {
@@ -1558,9 +1904,9 @@ async function finishImages(
     failRun: (
       errorCode: string,
       detail?: Record<string, unknown>,
-    ) => Promise<"failed">;
+    ) => Promise<Settlement>;
   },
-): Promise<"succeeded" | "failed" | "requeued"> {
+): Promise<Settlement> {
   const { run, project, outcome, terminal, event, failRun } = ctx;
   const result = outcome.result;
   const detail = {
@@ -1600,18 +1946,7 @@ async function finishImages(
       retryNotBefore,
       recovery: run.imageReviewDeferrals + 1,
     });
-    return "requeued";
-  }
-  if (result.anchorFailure) {
-    const failure = result.anchorFailure;
-    return failRun(
-      failure.kind === "refused"
-        ? "images_anchor_refused"
-        : failure.kind === "rejected"
-          ? "images_anchor_rejected"
-          : `images_anchor_${failure.code}`.slice(0, 64),
-      detail,
-    );
+    return { settled: "requeued", errorCode: "image_review_unavailable" };
   }
   const missing = result.outcomes
     .filter((o) => o.status !== "generated")
@@ -1626,37 +1961,61 @@ async function finishImages(
     missing.length > 0 && position.round < IMAGE_FILL_ROUNDS
       ? { root: position.root, round: position.round + 1 }
       : null;
-  if (result.images.length === 0) {
-    // Nothing came back (a rate-limit storm): try the same slots again on the
-    // same base while rounds remain, rather than giving up.
+  // An operator's photo run joins the automatic final check whenever its
+  // result can reach it: from here on its work is automatic, at the repair
+  // ceiling. Anything else carries on exactly as `run` says.
+  const checkedChain = (
+    pkg: ThemePackageV2,
+    owed: readonly string[],
+  ): ClaimedRun =>
+    !run.automatic &&
+    getThemeStudioConfig().autoQaEnabled &&
+    reachesFinalCheck(pkg, owed)
+      ? { ...run, automatic: true, qaIteration: MAX_AUTOMATIC_QA_REPAIRS }
+      : run;
+  if (result.anchorFailure || result.images.length === 0) {
+    // Nothing came back: a rate-limit storm, or ★ a style photo (the anchor
+    // every other photo is matched to) that was refused, rejected or did not
+    // come back (section 7: 82 of 189 Pro attempts were refused inside runs).
+    // Either way nothing was drawn to keep, so the same slots are tried
+    // again on the same base while fill rounds remain, and a round with no
+    // anchor to reuse draws a fresh style photo; the run itself still
+    // records why it stopped. Only the last round fails the theme.
+    const errorCode = result.anchorFailure
+      ? anchorFailureCode(result.anchorFailure)
+      : "images_none";
     if (nextFill && run.baseVersionId && run.basePackageDigest) {
       await db
         .update(themeStudioRuns)
         .set({
           ...terminal,
           status: "failed",
-          errorCode: "images_none",
+          errorCode,
           outcomeDetail: detail,
         })
         .where(eq(themeStudioRuns.id, run.id));
-      await event("run_failed", { errorCode: "images_none" });
+      await event("run_failed", { errorCode });
       if (
         await queueFillImages(
           db,
-          run,
+          checkedChain(outcome.package, missing),
           { id: run.baseVersionId, packageDigest: run.basePackageDigest },
           missing,
           nextFill,
         )
       ) {
-        return "failed";
+        // The chain goes on: nothing to tell the operator yet, and the
+        // run's log line says it continues (alert 16 ignores it).
+        return { settled: "failed", errorCode, continues: true };
       }
-      if (!(await revealAutomaticBase(db, run, "images_none"))) {
-        await settleProjectWithoutVersion(db, run.projectId);
-      }
-      return "failed";
+      const stopped = await settleStoppedProject(db, run, errorCode);
+      return {
+        settled: "failed",
+        errorCode,
+        ...(stopped ? { notice: "needs_fix" as const } : {}),
+      };
     }
-    return failRun("images_none", detail);
+    return failRun(errorCode, detail);
   }
   if (run.automatic && !getThemeStudioConfig().autoQaEnabled) {
     return failRun("auto_qa_disabled", detail);
@@ -1727,6 +2086,10 @@ async function finishImages(
 
   const intentDigest = digestThemeStudioJson(outcome.intent);
   const packageDigest = digestThemeStudioJson(applied.value);
+  // The chain this version belongs to: the run's own, or for an operator's
+  // photo run under the automatic checks, the checked chain (see above).
+  const chain = checkedChain(applied.value, nextFill ? missing : []);
+  const hidden = chain.automatic;
   const [version] = await db
     .insert(themeStudioVersions)
     .values({
@@ -1739,11 +2102,11 @@ async function finishImages(
       intentDigest,
       packageJson: applied.value,
       packageDigest,
-      ...(run.automatic
+      ...(hidden
         ? {
             visibility: "internal",
             qaStatus: "pending",
-            qaIteration: run.qaIteration,
+            qaIteration: chain.qaIteration,
           }
         : {}),
     })
@@ -1773,7 +2136,7 @@ async function finishImages(
   const filling = nextFill
     ? await queueFillImages(
         db,
-        run,
+        chain,
         { id: version.id, packageDigest },
         missing,
         nextFill,
@@ -1782,8 +2145,8 @@ async function finishImages(
   await db
     .update(themeStudioProjects)
     .set({
-      status: run.automatic || filling ? "generating" : "ready",
-      ...(run.automatic ? {} : { currentVersionId: version.id }),
+      status: hidden || filling ? "generating" : "ready",
+      ...(hidden ? {} : { currentVersionId: version.id }),
       revision: project.revision + 1,
     })
     .where(eq(themeStudioProjects.id, run.projectId));
@@ -1797,19 +2160,27 @@ async function finishImages(
     imagesMissing: missing.length,
     fillQueued: filling,
     parentVersionId: run.baseVersionId,
-    automaticQa: run.automatic,
-    qaIteration: run.qaIteration,
+    automaticQa: hidden,
+    qaIteration: chain.qaIteration,
   });
-  if (run.automatic && !filling) {
+  if (hidden && !run.automatic) {
+    await event("auto_qa_started", {
+      versionId: version.id,
+      qaIteration: chain.qaIteration,
+    });
+  }
+  if (hidden && !filling) {
     // Every round is spent: capture only a complete version, otherwise reveal
-    // the most complete one as a failed QA result.
+    // the most complete one as a failed QA result (and tell the operator:
+    // the theme stopped there).
     if (captureBlockers(applied.value).length > 0) {
-      await revealIncomplete(db, run, version.id);
+      if (await revealIncomplete(db, chain, version.id))
+        return { settled: "succeeded", notice: "needs_fix" };
     } else {
-      await queueAutomaticCapture(db, run, version, packageDigest);
+      await queueAutomaticCapture(db, chain, version, packageDigest);
     }
   }
-  return "succeeded";
+  return { settled: "succeeded" };
 }
 
 /** Drain a bounded amount of queued work. Safe to call concurrently: claims
@@ -1841,7 +2212,10 @@ export async function runThemeStudioWorker(
     requeued: 0,
     reaped: 0,
   };
-  result.reaped = await withService(reapExhaustedLeases);
+  const reaped = await withService(reapExhaustedLeases);
+  result.reaped = reaped.reaped;
+  for (const projectId of reaped.notices)
+    await sendNotice(projectId, "needs_fix");
 
   while (
     result.claimed < maxRuns &&
@@ -1898,21 +2272,32 @@ export async function runThemeStudioWorker(
     // A lost/uncertain lease must never publish even a successful paid result.
     if (lease.signal.aborted)
       outcome = { kind: "retry", errorCode: "lease_renewal_failed" };
-    let settled: Awaited<ReturnType<typeof finish>>;
+    let settlement: Settlement;
     try {
-      settled = await finish(workerId, run, outcome);
+      settlement = await finish(workerId, run, outcome);
     } finally {
       await lease.stop();
     }
+    const settled = settlement.settled;
     if (settled !== "lost") result[settled] += 1;
+    // ★ Content-free, and an alert reads it (plan P6): `outcome` says how the
+    //   run ended, `errorCode` the code a failed run was given or why a
+    //   requeued one waits (absent when there is none), and `continues` that
+    //   a failed photo run's slots are drawn again in a fill round it queued
+    //   (the theme is still generating; scripts/prod-monitoring.py alert 16
+    //   leaves it out).
     logInfo("theme studio: run settled", {
       runId: run.id,
       provider: run.provider,
       modelKey: run.modelKey,
       attempt: run.attemptCount,
       outcome: settled,
+      ...(settlement.errorCode ? { errorCode: settlement.errorCode } : {}),
+      ...(settlement.continues ? { continues: true } : {}),
       rssMiB: Math.ceil(process.memoryUsage().rss / 1_048_576),
     });
+    // After the settling transaction committed, never inside it.
+    if (settlement.notice) await sendNotice(run.projectId, settlement.notice);
     // A requeued run is picked up again next pass, not in a tight loop.
     if (settled === "requeued") break;
   }

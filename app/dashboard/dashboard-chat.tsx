@@ -53,7 +53,7 @@ import {
 } from "./mink-ai";
 import { MinkMark } from "./mink-mark";
 import { MinkMultimodalInput } from "./mink-multimodal-input";
-import { MinkVoiceView } from "./mink-voice-view";
+import { MinkVoiceBar } from "./mink-voice-view";
 import { MinkArtifacts } from "./mink-artifacts";
 import { MinkFeedbackControls } from "./mink-feedback";
 import { readMinkCsvReference } from "@/lib/mink/csv-input";
@@ -234,6 +234,7 @@ export function DashboardChat({
     cancel,
     retry,
     startNewChat,
+    addressOpens,
     loadConversation,
     deleteConversation,
     submitFeedback,
@@ -241,16 +242,15 @@ export function DashboardChat({
     saveMemorySuggestion,
     dismissMemorySuggestion,
   } = useChat();
-  // The spoken conversation, run by ChatProvider; while it is on this surface
-  // shows the voice view in place of the thread and keeps the composer
-  // mounted but hidden (unmounting it would discard staged attachments).
+  // The spoken conversation, run by ChatProvider. While it is on, the thread
+  // stays on screen (cards included) and the voice bar takes the composer's
+  // place; the composer stays mounted but hidden (unmounting it would discard
+  // staged attachments).
   const voiceChat = useMinkVoice();
   const isOverlay = variant === "overlay";
   const pathname = usePathname();
   const scrollRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
-  /** The thread was swapped out for the voice view and has not come back yet. */
-  const voiceHidThreadRef = useRef(false);
   const latestUserMessageIdRef = useRef<number | string | null>(null);
   const anchoredUserMessageIdRef = useRef<number | string | null>(null);
   const autoAnchorSubmissionRef = useRef(true);
@@ -348,25 +348,59 @@ export function DashboardChat({
     }
   }, [isOverlay, panelWidth]);
 
-  useEffect(() => {
-    if (voiceChat.enabled) {
-      voiceHidThreadRef.current = true;
-      return;
+  /**
+   * A chat opened whole (chosen in History, opened from the address, a new
+   * one, or shown in a new scroller) starts at its newest message and follows
+   * new output. The caller hides the jump button too, at once or in a frame
+   * (`setShowJumpToLatest(false)`).
+   */
+  const followNewestMessage = useCallback(() => {
+    followLatestRef.current = true;
+    latestUserMessageIdRef.current = null;
+    anchoredUserMessageIdRef.current = null;
+    if (turnAnchorSpaceRef.current) {
+      turnAnchorSpaceRef.current.style.minHeight = "0px";
     }
+  }, []);
+
+  // ★★ A chat opened from the address (`?chat=`, robustness audit B20: the
+  // "redesign ready" notice) opens as one chosen in History does. A view
+  // keeps its scroll-follow state while it is closed, so a view last left
+  // scrolled up opened the named chat at its top, the card it was opened for
+  // out of sight below. A view the address opens gets a new scroller, which
+  // the scroll effect also resets; this reset is what moves a view that was
+  // already open, whose scroller stays. ★ Declared before the scroll effect:
+  // when the count and the loaded chat land in one render, the reset comes
+  // first. The button waits for a frame, as state set in an effect body would
+  // cascade.
+  const seenAddressOpens = useRef(addressOpens);
+  useEffect(() => {
+    if (seenAddressOpens.current === addressOpens) return;
+    seenAddressOpens.current = addressOpens;
+    followNewestMessage();
+    const frame = window.requestAnimationFrame(() =>
+      setShowJumpToLatest(false),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [addressOpens, followNewestMessage]);
+
+  // ★★ A NEW SCROLLER STARTS AT THE NEWEST MESSAGE. The thread's scroller is
+  // a new element each time the chat appears: the panel opened again, the
+  // switch between the side panel and the full view (two instances, each with
+  // its own scroller), or a chat's first message. A new element starts at its
+  // top, and this effect ran only when the chat changed, so opening the panel
+  // over a chat in memory showed its oldest messages. A mount now counts as a
+  // chat opened whole, as one chosen in History. A reply still running loses
+  // nothing: its question is still the newest one, so it is anchored at the
+  // top again, tail room included. `isChatOpen` and `isExpanded` are in the
+  // dependencies for the mount alone.
+  const seenScrollerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
     const scroller = scrollRef.current;
     if (!scroller) return;
-    if (voiceHidThreadRef.current) {
-      // ★ The voice view unmounted the thread, and it remounts at its top.
-      // Nothing else re-runs this effect when voice chat ends (the answers
-      // landed while it was hidden), so the merchant came back to their
-      // oldest message with no way to tell the newest were below. Open it at
-      // the latest message, as a restored conversation opens.
-      voiceHidThreadRef.current = false;
-      followLatestRef.current = true;
-      anchoredUserMessageIdRef.current = null;
-      latestUserMessageIdRef.current = latestMinkUserMessageId(messages);
-      if (turnAnchorSpaceRef.current)
-        turnAnchorSpaceRef.current.style.minHeight = "0px";
+    if (scroller !== seenScrollerRef.current) {
+      seenScrollerRef.current = scroller;
+      followNewestMessage();
     }
     const latestUserId = latestMinkUserMessageId(messages);
     const receivedNewUserMessage =
@@ -423,7 +457,15 @@ export function DashboardChat({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, isReplying, error, statusText, voiceChat.enabled]);
+  }, [
+    messages,
+    isReplying,
+    error,
+    statusText,
+    isChatOpen,
+    isExpanded,
+    followNewestMessage,
+  ]);
 
   useEffect(() => {
     const composer = composerRef.current;
@@ -476,15 +518,10 @@ export function DashboardChat({
 
   /** New chat, from the header or the History sidebar. */
   const startFreshChat = useCallback(() => {
-    followLatestRef.current = true;
+    followNewestMessage();
     setShowJumpToLatest(false);
-    latestUserMessageIdRef.current = null;
-    anchoredUserMessageIdRef.current = null;
-    if (turnAnchorSpaceRef.current) {
-      turnAnchorSpaceRef.current.style.minHeight = "0px";
-    }
     startNewChat();
-  }, [startNewChat]);
+  }, [followNewestMessage, startNewChat]);
 
   const chooseSkill = useCallback(
     (skill: MinkSkill) => {
@@ -711,13 +748,8 @@ export function DashboardChat({
               if (!isOverlay) setHistoryOpen(false);
             }}
             onSelect={(conversation) => {
-              followLatestRef.current = true;
+              followNewestMessage();
               setShowJumpToLatest(false);
-              latestUserMessageIdRef.current = null;
-              anchoredUserMessageIdRef.current = null;
-              if (turnAnchorSpaceRef.current) {
-                turnAnchorSpaceRef.current.style.minHeight = "0px";
-              }
               void loadConversation(conversation.id);
               if (!isOverlay) setHistoryOpen(false);
             }}
@@ -729,13 +761,7 @@ export function DashboardChat({
         )}
 
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
-          {voiceChat.enabled ? (
-            <MinkVoiceView
-              voice={voiceChat}
-              isReplying={isReplying}
-              onStopReply={cancel}
-            />
-          ) : !hasThread ? (
+          {!hasThread ? (
             <div className="flex min-h-0 flex-1 touch-pan-y flex-col items-center justify-center overflow-y-auto overscroll-contain p-6 text-center">
               <div className="mb-4">
                 <MinkMark size="lg" />
@@ -938,6 +964,14 @@ export function DashboardChat({
             </div>
           )}
 
+          {voiceChat.enabled ? (
+            <MinkVoiceBar
+              voice={voiceChat}
+              isReplying={isReplying}
+              onStopReply={cancel}
+              columnClass={columnClass}
+            />
+          ) : null}
           <div
             hidden={voiceChat.enabled}
             className="shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4"

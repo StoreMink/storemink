@@ -585,7 +585,9 @@
 .profileDropdownPhone {
   font-family: var(--font-outfit), sans-serif;
   font-size: 12px;
-  color: var(--sm-ink-faint);
+  /* Ink-soft, the login line's rule below: ink-faint read 2.47:1 on Basket.
+     Only a signed-in shopper sees this line, so no capture measures it. */
+  color: var(--sm-ink-soft);
 }
 
 .profileDropdownDivider {

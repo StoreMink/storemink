@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { ImageIcon } from "lucide-react";
@@ -128,6 +129,10 @@ export function ShopByCategorySection({
       {config.layout === "grid" ? (
         <div
           className={`home-cat-grid${config.display === "cards" ? " is-cards" : ""}`}
+          // ★ How many tiles the grid holds, so a short row can be centred
+          //   (homepage.css caps the grid at what they need) while a grid
+          //   that wraps keeps filling its rows from the left.
+          style={{ "--sm-cat-count": categories.length } as CSSProperties}
         >
           {content}
         </div>

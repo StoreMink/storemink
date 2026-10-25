@@ -31,6 +31,15 @@
   border-color: var(--sm-ink);
 }
 
+/* 16px stops iOS zooming the page when the coupon box takes focus (every
+   iPhone browser is Safari underneath). Larger screens keep 0.9rem.
+   Pinned by app/(storefront)/input-zoom-coverage.test.ts. */
+@media (max-width: 600px) {
+  .input {
+    font-size: 16px;
+  }
+}
+
 .applyBtn {
   flex: 0 0 auto;
   border: 1.5px solid var(--sm-ink);

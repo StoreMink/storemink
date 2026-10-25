@@ -28,7 +28,15 @@ vi.mock("@/lib/db/client", () => ({
             sql: rendered.sql.replace(/\s+/g, " ").trim(),
             params: rendered.params,
           });
-          return { rows: [{ allowed: h.allowed.shift() ?? true }] };
+          return {
+            rows: [
+              {
+                allowed: h.allowed.shift() ?? true,
+                // The transaction's own time, the same on every statement.
+                claimed_at: `2026-10-23 18:00:00.00000${tx}+00`,
+              },
+            ],
+          };
         },
       };
       try {
@@ -65,7 +73,10 @@ describe("★★ claimSpendLimits: every limit counts the call, or none does", (
   it("claims every limit in one transaction", async () => {
     await expect(
       claimSpendLimits([owner, store, MINK_IMAGE_GLOBAL_LIMIT]),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual({
+      ok: true,
+      claimedAt: "2026-10-23 18:00:00.000001+00",
+    });
     expect(h.statements.map((s) => s.tx)).toEqual([1, 1, 1]);
     expect(h.committed).toEqual([1]);
     expect(h.rolledBack).toEqual([]);
@@ -99,6 +110,12 @@ describe("★★ claimSpendLimits: every limit counts the call, or none does", (
     );
   });
 
+  it("★ says when the claim was made, in the database's own time", async () => {
+    // The window the claim was counted in starts at or before this.
+    await claimSpendLimits([owner]);
+    expect(h.statements[0].sql).toContain("now()::text as claimed_at");
+  });
+
   it("claims nothing for no limits", async () => {
     await expect(claimSpendLimits([])).resolves.toEqual({ ok: true });
     expect(h.statements).toHaveLength(0);
@@ -114,6 +131,20 @@ describe("releaseSpendLimits", () => {
     ]);
     expect(h.statements[0].sql).toContain("greatest(count -");
     expect(h.committed).toEqual([1]);
+  });
+
+  it("★★ gives back only to the window that counted the claim", async () => {
+    // A window is one row a later claim resets once it has run out; a
+    // release after that reset must not take one off the new window.
+    await releaseSpendLimits([{ key: "owner" }], {
+      claimedAt: "2026-10-23 18:00:00.000001+00",
+    });
+    expect(h.statements[0].sql).toContain("window_start <=");
+    expect(h.statements[0].params).toEqual([
+      1,
+      "owner",
+      "2026-10-23 18:00:00.000001+00",
+    ]);
   });
 
   it("★ never throws: a refund that does not land is logged", async () => {

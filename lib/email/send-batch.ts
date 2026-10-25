@@ -51,6 +51,14 @@ function errorText(error: unknown): string {
 }
 
 /**
+ * A provider's error as it may be logged: an email address it quotes (Resend
+ * names the account's own address in some refusals) is masked.
+ */
+function withoutAddresses(text: string): string {
+  return text.replace(/[^\s<>()"'`,;:]+@[^\s<>()"'`,;:]+/g, "[address]");
+}
+
+/**
  * Send every message, reporting per-message outcomes.
  *
  * Fast path is one batch call. Only a batch-level error costs extra requests,
@@ -78,9 +86,11 @@ export async function sendEmailBatch<K>(
     return { sent: [], failed: [{ key: messages[0].key, error: batchError }] };
   }
 
+  // ★ Masked like the outage line below: Resend names the account's own
+  //   address in some refusals, and no log line carries an email address.
   logWarn("email: batch send failed, retrying individually", {
     count: messages.length,
-    error: batchError,
+    error: withoutAddresses(batchError),
   });
 
   const sent: K[] = [];
@@ -93,10 +103,14 @@ export async function sendEmailBatch<K>(
       for (const rest of messages.slice(i)) {
         failed.push({ key: rest.key, error: batchError });
       }
-      logError("email: individual sends failing in a row, stopping", {
-        after: i,
-        error: batchError,
-      });
+      // ★ The provider's reason as the error and the count as the context
+      //   (robustness audit B22: one object here read "[object Object]"),
+      //   with any address it quotes masked.
+      logError(
+        "email: individual sends failing in a row, stopping",
+        withoutAddresses(batchError),
+        { after: i },
+      );
       break;
     }
 

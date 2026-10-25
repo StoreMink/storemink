@@ -334,6 +334,168 @@ describe("★ the fallback", () => {
     expect(session().model).toBe("gemini-3.7-flash");
   });
 
+  it("★★ is where a voice turn starts, and the main model is its failover", async () => {
+    // Owner's decision (2026-10-20): 3.5 Flash in Mumbai answered a spoken
+    // question in about half the time 3.7 Flash at global took.
+    const voiceConfig = { ...config, voiceStartsOnFallback: true };
+    const voice = () =>
+      createVertexMinkSession(
+        voiceConfig,
+        { ...actor, answerMedium: "spoken" },
+        [],
+        { history: [] },
+      );
+    expect(voice().model).toBe("gemini-3.5-flash");
+    expect(voice().location).toBe("asia-south1");
+    // A typed turn still starts on the main model.
+    expect(
+      createVertexMinkSession(voiceConfig, actor, [], { history: [] }).model,
+    ).toBe("gemini-3.7-flash");
+
+    h.plan = [status(429), answer("ok")];
+    await expect(voice().sendUserMessage("Hi")).resolves.toMatchObject({
+      text: "ok",
+      retryCount: 1,
+    });
+    expect(h.calls.map((call) => `${call.model}@${call.location}`)).toEqual([
+      "gemini-3.5-flash@asia-south1",
+      "gemini-3.7-flash@global",
+    ]);
+    // The fallback this instance just watched fail is not where the next
+    // voice turn starts.
+    expect(voice().model).toBe("gemini-3.7-flash");
+  });
+
+  it("★ stops starting voice turns on a fallback that refused outright", async () => {
+    // Verified at asia-south1 on staging only: if production refuses it, each
+    // voice turn must not pay that refusal before reaching the main model.
+    const voiceConfig = { ...config, voiceStartsOnFallback: true };
+    const voice = () =>
+      createVertexMinkSession(
+        voiceConfig,
+        { ...actor, answerMedium: "spoken" },
+        [],
+        { history: [] },
+      );
+    h.plan = [status(404), answer("ok")];
+    await expect(voice().sendUserMessage("Hi")).resolves.toMatchObject({
+      text: "ok",
+    });
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.5-flash",
+      "gemini-3.7-flash",
+    ]);
+    expect(voice().model).toBe("gemini-3.7-flash");
+  });
+
+  it("★★ keeps starting voice turns on a fallback that leaked its reasoning once", async () => {
+    // A reply that opens with its working is a glitch of a model that
+    // answered, not a sign it is down: asked again on the main model, but
+    // the next voice turn still starts on the fallback.
+    const voiceConfig = { ...config, voiceStartsOnFallback: true };
+    const voice = () =>
+      createVertexMinkSession(
+        voiceConfig,
+        { ...actor, answerMedium: "spoken" },
+        [],
+        { history: [] },
+      );
+    h.plan = [answer("Thinking:\nThe user wants a count.\n"), answer("ok")];
+    await expect(voice().sendUserMessage("Hi")).resolves.toMatchObject({
+      text: "ok",
+      retryCount: 1,
+    });
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.5-flash",
+      "gemini-3.7-flash",
+    ]);
+    expect(voice().model).toBe("gemini-3.5-flash");
+  });
+
+  it("★★ is not dropped or marked for a 400 on a conversation the main model wrote", async () => {
+    // The turn started on the main model, failed over, and the fallback would
+    // not read the main model's history: one request, not a broken model.
+    const voiceConfig = { ...config, voiceStartsOnFallback: true };
+    h.plan = [status(429), status(400), answer("ok")];
+    const mink = session();
+    await expect(mink.sendUserMessage("Hi")).resolves.toMatchObject({
+      text: "ok",
+      retryCount: 2,
+    });
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.7-flash",
+      "gemini-3.5-flash",
+      "gemini-3.7-flash",
+    ]);
+    expect(h.logError).not.toHaveBeenCalledWith(
+      "mink.model: fallback refused",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(h.logWarn).toHaveBeenCalledWith(
+      "mink.model: history refused",
+      expect.objectContaining({ model: "gemini-3.5-flash", status: 400 }),
+    );
+    // Still offered: a later failure in this session goes to it again ...
+    h.calls = [];
+    h.plan = [status(503), answer("again")];
+    await mink.sendToolResponses([{ id: "1", name: "tool", response: {} }]);
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.7-flash",
+      "gemini-3.5-flash",
+    ]);
+    // ... and a voice turn on this instance still starts there.
+    expect(
+      createVertexMinkSession(
+        voiceConfig,
+        { ...actor, answerMedium: "spoken" },
+        [],
+        { history: [] },
+      ).model,
+    ).toBe("gemini-3.5-flash");
+  });
+
+  it("★ a 400 on the fallback's own conversation is a rejected request: back to the main model, nothing marked", async () => {
+    const voiceConfig = { ...config, voiceStartsOnFallback: true };
+    const voice = () =>
+      createVertexMinkSession(
+        voiceConfig,
+        { ...actor, answerMedium: "spoken" },
+        [],
+        { history: [] },
+      );
+    h.plan = [status(400), answer("ok")];
+    await expect(voice().sendUserMessage("Hi")).resolves.toMatchObject({
+      text: "ok",
+      retryCount: 1,
+    });
+    expect(h.calls.map((call) => call.model)).toEqual([
+      "gemini-3.5-flash",
+      "gemini-3.7-flash",
+    ]);
+    expect(h.logWarn).toHaveBeenCalledWith(
+      "mink.model: fallback rejected the request",
+      expect.objectContaining({ model: "gemini-3.5-flash", status: 400 }),
+    );
+    expect(h.logError).not.toHaveBeenCalledWith(
+      "mink.model: fallback refused",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(voice().model).toBe("gemini-3.5-flash");
+  });
+
+  it("leaves voice turns on the main model when switched off", () => {
+    expect(
+      createVertexMinkSession(
+        { ...config, voiceStartsOnFallback: false },
+        { ...actor, answerMedium: "spoken" },
+        [],
+        { history: [] },
+      ).model,
+    ).toBe("gemini-3.7-flash");
+  });
+
   it("sends each attempt with the full chat config and its own abort signal", async () => {
     h.plan = [answer("ok")];
     const controller = new AbortController();
@@ -345,6 +507,84 @@ describe("★ the fallback", () => {
     // abandoned without stopping the run).
     expect(sent.abortSignal).not.toBe(controller.signal);
   });
+});
+
+describe("★★ a main model that refuses outright (B9)", () => {
+  it.each([404, 403])(
+    "a typed turn whose main model answers %i is answered by the fallback, logged loudly and remembered for a minute",
+    async (code) => {
+      vi.useFakeTimers();
+      h.plan = [status(code), answer("Twelve orders.")];
+      const mink = session();
+      await expect(mink.sendUserMessage("Hi")).resolves.toMatchObject({
+        text: "Twelve orders.",
+        retryCount: 1,
+      });
+      expect(h.calls.map((call) => `${call.model}@${call.location}`)).toEqual([
+        "gemini-3.7-flash@global",
+        "gemini-3.5-flash@asia-south1",
+      ]);
+      expect(h.logError).toHaveBeenCalledWith(
+        "mink.model: main refused",
+        expect.objectContaining({ status: code }),
+        expect.objectContaining({
+          model: "gemini-3.7-flash",
+          location: "global",
+          status: code,
+        }),
+      );
+      // Remembered on the instance: the next run starts on the fallback.
+      expect(session().model).toBe("gemini-3.5-flash");
+      // A minute later the main model is asked first again.
+      await vi.advanceTimersByTimeAsync(60_001);
+      expect(session().model).toBe("gemini-3.7-flash");
+    },
+  );
+
+  it("★★ a voice turn that started on the fallback goes back to it when the main model refuses", async () => {
+    const voiceConfig = { ...config, voiceStartsOnFallback: true };
+    h.plan = [status(429), status(404), answer("ok")];
+    const voice = createVertexMinkSession(
+      voiceConfig,
+      { ...actor, answerMedium: "spoken" },
+      [],
+      { history: [] },
+    );
+    await expect(voice.sendUserMessage("Hi")).resolves.toMatchObject({
+      text: "ok",
+      retryCount: 2,
+    });
+    expect(h.calls.map((call) => `${call.model}@${call.location}`)).toEqual([
+      "gemini-3.5-flash@asia-south1",
+      "gemini-3.7-flash@global",
+      "gemini-3.5-flash@asia-south1",
+    ]);
+    expect(h.logError).toHaveBeenCalledWith(
+      "mink.model: main refused",
+      expect.anything(),
+      expect.objectContaining({ model: "gemini-3.7-flash", status: 404 }),
+    );
+    // A typed run on this instance now starts on the fallback too.
+    expect(session().model).toBe("gemini-3.5-flash");
+  });
+
+  it.each([
+    [404, "provider_request_rejected"],
+    [403, "provider_auth_failed"],
+  ])(
+    "when the fallback's one attempt fails too, the turn ends on the main model's %i",
+    async (code, expected) => {
+      h.plan = [status(code), status(429)];
+      await expect(session().sendUserMessage("Hi")).rejects.toMatchObject({
+        code: expected,
+      });
+      // The main model is not asked again, and the fallback only once.
+      expect(h.calls.map((call) => call.model)).toEqual([
+        "gemini-3.7-flash",
+        "gemini-3.5-flash",
+      ]);
+    },
+  );
 });
 
 describe("★★ a reply that opens with the model's own reasoning", () => {
@@ -377,6 +617,8 @@ describe("★★ a reply that opens with the model's own reasoning", () => {
       "mink.model: attempt failed",
       expect.objectContaining({ leakedReasoning: true }),
     );
+    // The model answered; it is not marked down for its working.
+    expect(session().model).toBe("gemini-3.7-flash");
   });
 
   it("an ordinary answer is released from its first character", async () => {
