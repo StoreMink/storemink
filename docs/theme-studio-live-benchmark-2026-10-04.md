@@ -11,6 +11,16 @@ This is an internal validation record, not a product implementation. No
 merchant-visible change, no Help Centre update. No themes were published and no
 orders, payments, newsletter subscriptions or reviews were submitted.
 
+> **Note, 24 Oct 2026 (Theme Studio wave TS-1).** This record is kept as
+> measured. Its "independent operator still needs to judge the finished
+> design" no longer applies: no step needs a second person, the automatic
+> design review judges the design, and one superadmin publishes. Since TS-1
+> only a serious finding stops a theme ("Fix it, then allow Publish"); the
+> shared contrast defects found here are fixed and replayed on every shipped
+> palette in CI (`scripts/theme-studio-contrast-check.mjs`), and text below
+> the AA line stays serious whatever its cause. See
+> `docs/theme-acceptance.md` §5 and `docs/mink-ai-theme-studio-phase6.md`.
+
 ## Deployment and method
 
 - Production revision: `storemink-web-prod-00122-frg`, serving 100% of traffic.

@@ -58,14 +58,18 @@ Consequences worth knowing:
 
 One new file in `drizzle/migrations/sql/`, named `YYYYMMDD_NNNN_short_name.sql`.
 
-> **The next free sequence number is `0093`.** `0090`–`0092` are claimed by the
-> Mink Phase 8E input, unified-access and live-dictation migrations. The manifest
-> is authoritative for this branch, but also check other branches and the local
-> ledger before picking a number:
+> **The next free sequence number is `0243`** (25 Oct 2026: `0237` is the
+> Generate with AI credit refund, `0238` its Help edit, `0239` the storefront
+> redesign's Help edit after the robustness fixes, `0240` the release's
+> indexes and `app_service` grants, `0241` the Privacy Policy v3 publish,
+> `0242` the Mink guide's attachment-reading Help edit).
+> CODEBASE.md §4 keeps the running number at the end of its migration notes
+> ("Next free"); update both when you take one. The manifest is authoritative for this branch, but
+> also check other branches and the local ledger before picking a number:
 >
 > ```bash
 > npm run db:migrate:local status   # `unknown` lists ids other branches applied
-> git log --all -S"_0093_" -- drizzle/migrations
+> git log --all -S"_0243_" -- drizzle/migrations
 > ```
 >
 > Numbers 0076–0089 contain nine

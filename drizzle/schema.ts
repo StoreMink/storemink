@@ -9,7 +9,6 @@ import {
   boolean,
   timestamp,
   integer,
-  smallint,
   uniqueIndex,
   unique,
   numeric,
@@ -2590,6 +2589,16 @@ export const themeStudioProviderCapacity = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
+    /** Start pacing of an image model's key (0236): the earliest next start,
+     *  kept at the latest admission plus gapMs. Text keys never read it. */
+    nextStartAt: timestamp("next_start_at", {
+      withTimezone: true,
+      mode: "string",
+    })
+      .defaultNow()
+      .notNull(),
+    /** The adaptive gap between starts (0236); IMAGE_START_PACING bounds it. */
+    gapMs: integer("gap_ms").default(40000).notNull(),
   },
 );
 export const themeStudioProviderLeases = pgTable(
@@ -2737,36 +2746,6 @@ export const themeStudioAcceptanceRuns = pgTable(
     }),
   },
 );
-
-/** One reviewer's scorecard for one version, bound to the acceptance run
- * whose evidence they reviewed (migration 0134). The eight scores are columns
- * so the approval bar is a CHECK on the row. */
-export const themeStudioReviews = pgTable("theme_studio_reviews", {
-  id: uuid().defaultRandom().primaryKey().notNull(),
-  projectId: uuid("project_id").notNull(),
-  versionId: uuid("version_id").notNull(),
-  acceptanceRunId: uuid("acceptance_run_id").notNull(),
-  packageDigest: text("package_digest").notNull(),
-  evidenceDigest: text("evidence_digest").notNull(),
-  reviewerRole: text("reviewer_role").notNull(),
-  reviewerIsAuthor: boolean("reviewer_is_author").notNull(),
-  artDirection: smallint("art_direction").notNull(),
-  distinctness: smallint().notNull(),
-  commerceClarity: smallint("commerce_clarity").notNull(),
-  typography: smallint().notNull(),
-  imagery: smallint().notNull(),
-  responsiveComposition: smallint("responsive_composition").notNull(),
-  detailQuality: smallint("detail_quality").notNull(),
-  brandAdaptability: smallint("brand_adaptability").notNull(),
-  rejections: text().array().default([]).notNull(),
-  verdict: text().notNull(),
-  notes: text().default("").notNull(),
-  createdBy: uuid("created_by"),
-  createdByEmail: text("created_by_email").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
-    .defaultNow()
-    .notNull(),
-});
 
 /** One publication attempt (migration 0134). Written before anything leaves
  * the database, so a retry resumes the release it was building. */
@@ -9325,6 +9304,82 @@ export const whatsappMessages = pgTable("whatsapp_messages", {
   sentAt: timestamp("sent_at", { withTimezone: true, mode: "string" })
     .defaultNow()
     .notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+});
+
+// Mink storefront revamp (migration 20261021_0234, docs/mink-storefront-revamp.md).
+// Service-only: RLS on, no policies, app_user has no grants. The database is
+// the authority for every constraint; these definitions are for typed reads
+// and writes from lib/mink/revamp/.
+export const minkRevamps = pgTable("mink_revamps", {
+  id: uuid().primaryKey().notNull(),
+  storeId: uuid("store_id").notNull(),
+  adminId: text("admin_id").notNull(),
+  requesterEmail: text("requester_email"),
+  conversationId: uuid("conversation_id"),
+  originRunId: uuid("origin_run_id"),
+  parentId: uuid("parent_id"),
+  supersededBy: uuid("superseded_by"),
+  // full | refine
+  kind: text().notNull(),
+  // queued | running | ready | failed | cancelled | superseded
+  status: text().default("queued").notNull(),
+  step: text().default("snapshot").notNull(),
+  progress: jsonb().default([]).notNull(),
+  request: jsonb().notNull(),
+  snapshot: jsonb(),
+  plan: jsonb(),
+  result: jsonb(),
+  draftId: uuid("draft_id"),
+  free: boolean().default(false).notNull(),
+  budgetCredits: integer("budget_credits"),
+  credits: integer().default(0).notNull(),
+  leaseToken: uuid("lease_token"),
+  leaseUntil: timestamp("lease_until", { withTimezone: true, mode: "string" }),
+  attempts: integer().default(0).notNull(),
+  maxAttempts: integer("max_attempts").default(4).notNull(),
+  lastKickAt: timestamp("last_kick_at", { withTimezone: true, mode: "string" }),
+  cancelRequestedAt: timestamp("cancel_requested_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  errorCode: text("error_code"),
+  errorDetail: text("error_detail"),
+  appliedAt: timestamp("applied_at", { withTimezone: true, mode: "string" }),
+  publishedAt: timestamp("published_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  undoneAt: timestamp("undone_at", { withTimezone: true, mode: "string" }),
+  applySnapshot: jsonb("apply_snapshot"),
+  publishSnapshot: jsonb("publish_snapshot"),
+  usage: jsonb().default({}).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .defaultNow()
+    .notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true, mode: "string" }),
+});
+
+export const minkRevampImages = pgTable("mink_revamp_images", {
+  id: uuid().primaryKey().notNull(),
+  revampId: uuid("revamp_id").notNull(),
+  storeId: uuid("store_id").notNull(),
+  // anchor | slot | product
+  role: text().notNull(),
+  slotId: text("slot_id").notNull(),
+  url: text().notNull(),
+  path: text().notNull(),
+  sha256: text().notNull(),
+  width: integer().notNull(),
+  height: integer().notNull(),
+  // passed | flagged | unreviewed
+  review: text().default("unreviewed").notNull(),
+  problems: jsonb().default([]).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
     .defaultNow()
     .notNull(),

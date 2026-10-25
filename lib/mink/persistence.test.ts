@@ -25,13 +25,18 @@ describe("Mink persistence", () => {
     expect(query.sql).toContain('inner join "mink_blog_publications"');
     expect(query.sql).toContain('inner join "mink_action_approvals"');
     expect(query.sql).toContain('inner join "mink_action_audit"');
-    expect(query.sql.match(/not exists/g)).toHaveLength(2);
+    expect(query.sql).toContain('from "mink_revamps"');
+    expect(query.sql.match(/not exists/g)).toHaveLength(3);
     expect(query.params).toEqual([
       storeId,
       "owner",
       conversationId,
       storeId,
       storeId,
+      storeId,
+      "queued",
+      "running",
+      "ready",
     ]);
   });
 });

@@ -10,10 +10,11 @@
   padding: var(--sm-section-gap, clamp(40px, 6vw, 72px)) 0;
 }
 
-/* The header is position:fixed (takes no layout space). Hero-led pages can
-   place a transparent header over their imagery. Other leading sections
-   reserve the bar's height plus a breathing gap, so a ticker or heading
-   cannot paint behind the logo and controls. The
+/* The header is position:fixed (takes no layout space). A photograph-led
+   page starts flush under the whole header (the next rule), or under only
+   the announcement bar when the header is transparent and floats over the
+   photo. Other leading sections reserve the bar's height plus a breathing
+   gap, so a ticker or heading cannot paint behind the logo and controls. The
    solid "market" header's height is reserved once on .storefront-root
    (.sm-header-market in storefront-theme.css) so it clears EVERY page, not just
    ones with sections — so no per-section clearance is needed here. The base
@@ -29,6 +30,29 @@
     )
   ) {
   padding-top: calc(var(--sm-header-h, 68px) + clamp(16px, 2.5vw, 32px));
+}
+
+/* ★★ A PHOTOGRAPH-LED PAGE STARTS BELOW THE WHOLE HEADER, announcement bar
+   included, under every header that is not transparent (the market bar
+   reserves on the root, the transparent header floats over the photo: both
+   below). Such a page used to keep only the section gap above it, a fixed
+   offset (clamp(40px, 6vw, 72px)) that happened to clear the 80px classic bar
+   on a laptop and nothing else: the bar's 36px, a two-row header (stacked
+   108px, utility 135px), a phone's 68px header and a compact theme gap all
+   put the logo and menu half over the photograph's top edge (the revamped
+   homepages, live, 2026-10-22). --sm-header-h already counts the bar (it
+   rides in the header's top border): the server fallback before hydration,
+   the measured height after it. Flush, the way a solid header meets a
+   full-width photograph; max() keeps a theme's larger gap where it already
+   clears the header. scripts/storefront-header-layout-check.mjs pins it. */
+.storefront-root:not(.sm-header-market):not(.sm-header-transparent)
+  .home-sections:has(
+    > .home-section:first-child > :is(.home-hero, .home-carousel)
+  ) {
+  padding-top: max(
+    var(--sm-section-gap, clamp(40px, 6vw, 72px)),
+    var(--sm-header-h, 68px)
+  );
 }
 
 /* The transparent header (theme layout.header = "transparent") floats over
@@ -85,6 +109,18 @@
    header: cancel the top gutter that .home-sections adds above the first row. */
 .home-sections > .home-custom-code:first-child {
   margin-top: calc(-1 * var(--sm-section-gap, clamp(40px, 6vw, 72px)));
+}
+/* ★ The announcement bar is opaque, so a custom opening that floats under
+   the header starts under the bar, never behind it (the transparent
+   header's rule below, for its reason): the header row then floats over the
+   same top edge of the merchant's design that it floats over with no bar.
+   The market bar reserves its whole height on the root (below). */
+.storefront-root.sm-announce:not(.sm-header-market)
+  .home-sections
+  > .home-custom-code:first-child {
+  margin-top: calc(
+    var(--sm-announce-h, 0px) - var(--sm-section-gap, clamp(40px, 6vw, 72px))
+  );
 }
 
 /* The market header reserves space on the root itself; remove double padding */
@@ -466,7 +502,10 @@
   right: 14px;
   top: 14px;
   background: var(--sm-ink);
-  color: var(--sm-on-accent);
+  /* On-ink, the pair the design contract holds to 4.5:1 on an ink fill.
+     On-accent read 1.12:1 here on a light page with a light accent
+     (scripts/theme-studio-contrast-check.mjs, 2026-10-24). */
+  color: var(--sm-on-ink);
   font-size: 13px;
   padding: 6px 14px;
   text-transform: none;
@@ -508,6 +547,14 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 20px;
+  /* ★ A short row is centred under the heading; a grid that wraps is
+     today's grid. The cap is what the section's own tiles need at about
+     170px each (--sm-cat-count, written by shop-by-category-section.tsx),
+     so it binds only when they cannot fill the row: three categories sat at
+     the left of an empty 1,300px row (live, 2026-10-22). Without the count
+     there is no cap. */
+  max-width: calc(var(--sm-cat-count, 1000) * 190px - 20px);
+  margin-inline: auto;
 }
 
 .home-cat-scroll {
@@ -536,6 +583,17 @@
 .home-cat-scroll .home-cat-tile {
   flex: 0 0 160px;
   scroll-snap-align: start;
+}
+/* ★ A row whose tiles fit is centred; one that overflows starts at the left
+   and scrolls. Auto margins on the first and last tile share the free space
+   when there is some and fall to 0 when there is none. Never
+   `justify-content: center`, which centres an overflowing row too and pushes
+   its first tiles before the scroll origin, where no scroll reaches them. */
+.home-cat-scroll > .home-cat-tile:first-child {
+  margin-inline-start: auto;
+}
+.home-cat-scroll > .home-cat-tile:last-child {
+  margin-inline-end: auto;
 }
 
 .home-cat-arrow {

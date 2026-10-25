@@ -244,7 +244,7 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
           (a: { kind: string }) => a.kind === "product",
         ).id;
         const imageMessage = randomUUID();
-        let imageRun = randomUUID();
+        const imageRun = randomUUID();
         await pg.query(
           "UPDATE theme_studio_projects SET status='generating' WHERE id=$1",
           [id],
@@ -361,7 +361,7 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
         }
         if (round) {
           const drawnBefore = draw.mock.calls.length;
-          const failedRun = imageRun;
+          const keptRun = imageRun;
           for (let pass = 0; pass < 3; pass++) {
             review.mockImplementationOnce(async () => ({
               kind: "error",
@@ -370,45 +370,50 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
             }));
             expect(await runThemeStudioWorker(imageOptions)).toMatchObject({
               claimed: 1,
-              ...(pass < 2 ? { requeued: 1 } : { failed: 1 }),
+              ...(pass < 2 ? { requeued: 1 } : { succeeded: 1 }),
             });
             expect(draw.mock.calls.length).toBe(drawnBefore + 1);
             await pg.query(
               "UPDATE theme_studio_runs SET retry_not_before=now()-interval '1 second' WHERE id=$1 AND status='queued'",
-              [failedRun],
+              [keptRun],
             );
           }
-          expect(
-            (
-              await pg.query(
-                "SELECT error_code,usage FROM theme_studio_runs WHERE id=$1",
-                [failedRun],
-              )
-            ).rows[0],
-          ).toMatchObject({
-            error_code: "image_review_unavailable",
+          // ★ TS-3B (optimisation 3): after its two review waits, the last
+          // pass keeps the photo it still could not check, marked
+          // unchecked, instead of failing a photo run already drawn and paid
+          // for as image_review_unavailable. The photo is checked again
+          // before the final capture (checkUncheckedPhotos).
+          const [kept] = (
+            await pg.query(
+              "SELECT status,error_code,image_review_deferrals,usage,outcome_detail FROM theme_studio_runs WHERE id=$1",
+              [keptRun],
+            )
+          ).rows;
+          expect(kept).toMatchObject({
+            status: "succeeded",
+            error_code: null,
+            image_review_deferrals: 2,
             usage: { totals: { inputTokens: 11, outputTokens: 7 } },
           });
+          expect(kept.outcome_detail.anchorAssetId).toBe(anchorId);
+          expect(kept.usage.calls).toHaveLength(1);
+          expect(kept.usage.calls[0].referenceRoles).toEqual(["anchor", "set"]);
+          expect(kept.outcome_detail.outcomes).toEqual([
+            expect.objectContaining({
+              slotId: slot,
+              status: "generated",
+              review: "unreviewed",
+            }),
+          ]);
           expect(
             (
               await pg.query(
                 "SELECT count(*)::int AS n FROM theme_studio_versions WHERE run_id=$1",
-                [failedRun],
+                [keptRun],
               )
             ).rows[0].n,
-          ).toBe(0);
-          // The operator Retry ancestry recovers saved artwork; the new run
-          // pays only for its new review, not its parent's completed draw.
-          imageRun = randomUUID();
-          await pg.query(
-            `INSERT INTO theme_studio_runs (id,project_id,message_id,kind,provider,model_key,provider_model,prompt_version,idempotency_key,base_version_id,base_package_digest,image_slot_ids,max_attempts,retry_of_run_id,created_at)
-            SELECT $2,project_id,message_id,kind,provider,model_key,provider_model,prompt_version,$3,base_version_id,base_package_digest,image_slot_ids,3,id,'1900-01-01' FROM theme_studio_runs WHERE id=$1`,
-            [failedRun, imageRun, `retry_${imageRun}`],
-          );
-          await pg.query(
-            "UPDATE theme_studio_projects SET status='generating' WHERE id=$1",
-            [id],
-          );
+          ).toBe(1);
+          continue;
         }
         expect(await runThemeStudioWorker(imageOptions)).toMatchObject({
           claimed: 1,
@@ -444,65 +449,145 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
           ).rows[0].n,
         ).toBe(1);
       }
-      // A run deadline during review saves a partial image version even when
-      // reviewer deferrals are already exhausted; it is not a reviewer outage.
-      const timeoutBase = (
-        await pg.query(
-          "SELECT id,package_digest,package_json FROM theme_studio_versions WHERE project_id=$1 ORDER BY version_number DESC LIMIT 1",
-          [id],
-        )
-      ).rows[0];
-      const timeoutRun = randomUUID();
-      const timeoutMessage = randomUUID();
-      const timeoutSlot = timeoutBase.package_json.assets.find(
-        (a: { kind: string }) => a.kind === "product",
-      ).id;
-      await pg.query(
-        "INSERT INTO theme_studio_messages(id,project_id,kind,body) VALUES($1,$2,'images','Deadline verification')",
-        [timeoutMessage, id],
-      );
-      await pg.query(
-        "UPDATE theme_studio_projects SET status='generating' WHERE id=$1",
-        [id],
-      );
-      await pg.query(
-        "INSERT INTO theme_studio_runs(id,project_id,message_id,kind,provider,model_key,provider_model,prompt_version,idempotency_key,base_version_id,base_package_digest,image_slot_ids,max_attempts,image_review_deferrals,created_at) VALUES($1,$2,$3,'images','fake','gemini-3.8-flash','fake','test',$4,$5,$6,$7,3,2,'1900-01-01')",
-        [
-          timeoutRun,
-          id,
-          timeoutMessage,
-          `deadline_${timeoutRun}`,
-          timeoutBase.id,
-          timeoutBase.package_digest,
-          [timeoutSlot],
-        ],
-      );
-      let deadlineCallback: (() => void) | undefined;
+      // ★ TS-3B (optimisation 4): a photo run cut by its request's deadline
+      // goes back to the queue as it is, spending no crash attempt, and the
+      // next request carries on from its saved drawing; the photo's check is
+      // asked again there. Only after PHOTO_RUN_CONTINUATIONS cuts does a cut
+      // settle what it has (the partial version, the photo unchecked), even
+      // on the last review pass: a deadline is not a reviewer outage.
       const realTimeout = globalThis.setTimeout;
-      const clock = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
-        handler: (...args: unknown[]) => void,
-        delay?: number,
-        ...args: unknown[]
-      ) => {
-        if (delay === 19 * 60 * 1000) deadlineCallback = () => handler(...args);
-        return realTimeout(handler, delay, ...args);
-      }) as typeof setTimeout);
-      review.mockImplementationOnce(async () => {
-        if (!deadlineCallback) throw new Error("No run deadline");
-        deadlineCallback();
-        return { kind: "error", code: "cancelled", usage: ZERO_USAGE };
+      const cutPhotoRun = async (priorCuts: number) => {
+        const base = (
+          await pg.query(
+            "SELECT id,package_digest,package_json FROM theme_studio_versions WHERE project_id=$1 ORDER BY version_number DESC LIMIT 1",
+            [id],
+          )
+        ).rows[0];
+        const run = randomUUID();
+        const message = randomUUID();
+        const slotId = base.package_json.assets.find(
+          (a: { kind: string }) => a.kind === "product",
+        ).id;
+        await pg.query(
+          "INSERT INTO theme_studio_messages(id,project_id,kind,body) VALUES($1,$2,'images','Deadline verification')",
+          [message, id],
+        );
+        await pg.query(
+          "UPDATE theme_studio_projects SET status='generating' WHERE id=$1",
+          [id],
+        );
+        await pg.query(
+          "INSERT INTO theme_studio_runs(id,project_id,message_id,kind,provider,model_key,provider_model,prompt_version,idempotency_key,base_version_id,base_package_digest,image_slot_ids,max_attempts,image_review_deferrals,created_at) VALUES($1,$2,$3,'images','fake','gemini-3.8-flash','fake','test',$4,$5,$6,$7,3,2,'1900-01-01')",
+          [
+            run,
+            id,
+            message,
+            `deadline_${run}`,
+            base.id,
+            base.package_digest,
+            [slotId],
+          ],
+        );
+        for (let cut = 0; cut < priorCuts; cut++)
+          await pg.query(
+            "INSERT INTO theme_studio_events(project_id,run_id,actor_kind,event_type,detail) VALUES($1,$2,'worker','run_queued','{\"reason\":\"deadline\"}')",
+            [id, run],
+          );
+        let deadlineCallback: (() => void) | undefined;
+        const clock = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+          handler: (...args: unknown[]) => void,
+          delay?: number,
+          ...args: unknown[]
+        ) => {
+          if (delay === 19 * 60 * 1000)
+            deadlineCallback = () => handler(...args);
+          return realTimeout(handler, delay, ...args);
+        }) as typeof setTimeout);
+        review.mockImplementationOnce(async () => {
+          if (!deadlineCallback) throw new Error("No run deadline");
+          deadlineCallback();
+          return { kind: "error", code: "cancelled", usage: ZERO_USAGE };
+        });
+        try {
+          return {
+            run,
+            result: await runThemeStudioWorker({
+              ...options,
+              providers: ["fake"],
+            }),
+          };
+        } finally {
+          clock.mockRestore();
+        }
+      };
+      const versionsOf = async (run: string) =>
+        (
+          await pg.query(
+            "SELECT count(*)::int AS n FROM theme_studio_versions WHERE run_id=$1",
+            [run],
+          )
+        ).rows[0].n;
+      const drawnBeforeCut = draw.mock.calls.length;
+      const cut = await cutPhotoRun(0);
+      expect(cut.result).toMatchObject({
+        claimed: 1,
+        requeued: 1,
+        succeeded: 0,
+        failed: 0,
       });
-      try {
-        expect(
-          await runThemeStudioWorker({ ...options, providers: ["fake"] }),
-        ).toMatchObject({ claimed: 1, succeeded: 1, requeued: 0, failed: 0 });
-      } finally {
-        clock.mockRestore();
-      }
+      const [waitingCut] = (
+        await pg.query(
+          "SELECT status,attempt_count,image_review_deferrals,retry_not_before<=now() AS due,usage FROM theme_studio_runs WHERE id=$1",
+          [cut.run],
+        )
+      ).rows;
+      expect(waitingCut).toMatchObject({
+        status: "queued",
+        attempt_count: 1,
+        image_review_deferrals: 2,
+        due: true,
+      });
+      expect(waitingCut.usage.totals.inputTokens).toBe(11);
+      expect(await versionsOf(cut.run)).toBe(0);
+      expect(
+        (
+          await pg.query(
+            "SELECT count(*)::int AS n FROM theme_studio_events WHERE run_id=$1 AND event_type='run_queued' AND detail->>'reason'='deadline'",
+            [cut.run],
+          )
+        ).rows[0].n,
+      ).toBe(1);
+      // The next request replays the saved drawing (no new draw), asks the
+      // photo's check again and settles it, on the same crash attempt.
+      expect(
+        await runThemeStudioWorker({ ...options, providers: ["fake"] }),
+      ).toMatchObject({ claimed: 1, succeeded: 1 });
+      expect(draw.mock.calls.length).toBe(drawnBeforeCut + 1);
+      const [continued] = (
+        await pg.query(
+          "SELECT status,attempt_count,outcome_detail,usage FROM theme_studio_runs WHERE id=$1",
+          [cut.run],
+        )
+      ).rows;
+      expect(continued).toMatchObject({
+        status: "succeeded",
+        attempt_count: 1,
+      });
+      expect(continued.outcome_detail.outcomes[0].review).toBe("passed");
+      expect(continued.usage.totals.inputTokens).toBe(11);
+      expect(await versionsOf(cut.run)).toBe(1);
+      // Out of continuations: the cut settles the partial version as before.
+      const spent = await cutPhotoRun(3);
+      expect(spent.result).toMatchObject({
+        claimed: 1,
+        succeeded: 1,
+        requeued: 0,
+        failed: 0,
+      });
       const timeoutResult = (
         await pg.query(
           "SELECT image_review_deferrals,outcome_detail,usage FROM theme_studio_runs WHERE id=$1",
-          [timeoutRun],
+          [spent.run],
         )
       ).rows[0];
       expect(timeoutResult.image_review_deferrals).toBe(2);
@@ -510,14 +595,7 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
         "unreviewed",
       );
       expect(timeoutResult.usage.totals.inputTokens).toBe(11);
-      expect(
-        (
-          await pg.query(
-            "SELECT count(*)::int AS n FROM theme_studio_versions WHERE run_id=$1",
-            [timeoutRun],
-          )
-        ).rows[0].n,
-      ).toBe(1);
+      expect(await versionsOf(spent.run)).toBe(1);
       // Cancel after a completed draw: bytes/spend survive, no version appears.
       const [cancelBase] = (
         await pg.query(
@@ -595,6 +673,53 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
           )
         ).rows[0],
       ).toEqual({ read: false, write: true, update: false, delete: false });
+      // The operator Retry ancestry recovers saved artwork and its completed
+      // check: the new run pays for neither its parent's draw nor its review.
+      // (This used to retry a run that failed as image_review_unavailable,
+      // which the last review pass no longer produces: TS-3B.)
+      const retryRun = randomUUID();
+      await pg.query(
+        `INSERT INTO theme_studio_runs (id,project_id,message_id,kind,provider,model_key,provider_model,prompt_version,idempotency_key,base_version_id,base_package_digest,image_slot_ids,max_attempts,retry_of_run_id,created_at)
+        SELECT $2,project_id,message_id,kind,provider,model_key,provider_model,prompt_version,$3,base_version_id,base_package_digest,image_slot_ids,3,id,'1900-01-01' FROM theme_studio_runs WHERE id=$1`,
+        [cancelRun, retryRun, `retry_${retryRun}`],
+      );
+      await pg.query(
+        "UPDATE theme_studio_projects SET status='generating' WHERE id=$1",
+        [id],
+      );
+      const [drawsBeforeRetry, reviewsBeforeRetry] = [
+        draw.mock.calls.length,
+        review.mock.calls.length,
+      ];
+      expect(
+        await runThemeStudioWorker({ ...options, providers: ["fake"] }),
+      ).toMatchObject({ claimed: 1, succeeded: 1 });
+      expect(draw.mock.calls.length).toBe(drawsBeforeRetry);
+      expect(review.mock.calls.length).toBe(reviewsBeforeRetry);
+      const [retried] = (
+        await pg.query(
+          "SELECT status,usage,outcome_detail FROM theme_studio_runs WHERE id=$1",
+          [retryRun],
+        )
+      ).rows;
+      expect(retried.status).toBe("succeeded");
+      expect(retried.usage.calls).toHaveLength(1);
+      expect(retried.usage.calls[0].referenceRoles).toEqual(["anchor", "set"]);
+      expect(retried.usage.totals.inputTokens).toBe(0);
+      expect(retried.usage.reviews).toHaveLength(1);
+      expect(retried.outcome_detail.outcomes[0]).toMatchObject({
+        slotId: cancelledSlot,
+        status: "generated",
+        review: "passed",
+      });
+      expect(
+        (
+          await pg.query(
+            "SELECT count(*)::int AS n FROM theme_studio_versions WHERE run_id=$1",
+            [retryRun],
+          )
+        ).rows[0].n,
+      ).toBe(1);
       // The final timed-out claim must close, rather than leave an unclaimable
       // queued row that would violate attempt_count <= max_attempts forever.
       const deadlineProject = randomUUID(),

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ThinkingLevel } from "@google/genai";
 import { and, eq } from "drizzle-orm";
 import { mediaAssets, minkActionToolAccess } from "@/drizzle/schema";
 import { can } from "@/app/dashboard/lib/permissions";
@@ -11,7 +12,11 @@ import {
   gcsUploadObject,
 } from "@/lib/storage/gcs";
 import { createMinkDraftProposal } from "./drafts";
-import { MinkRequestError, MinkToolInputError } from "./errors";
+import {
+  MinkRequestError,
+  MinkToolInputError,
+  MinkToolTimeoutError,
+} from "./errors";
 import {
   MINK_GENERATED_MEDIA_FOLDER,
   MINK_GENERATED_PRODUCT_PHOTO_FOLDER,
@@ -22,8 +27,11 @@ import {
   type MinkMediaPurpose,
 } from "./media-generation-contract";
 import {
+  MINK_CHAT_IMAGE_RETRY,
   generateMinkMediaImage,
+  isUnbilledImageFailure,
   reserveMinkImageGeneration,
+  type MinkGeneratedImage,
 } from "./media-generation";
 import { getMinkConfig } from "./config";
 import { getStoreChrome } from "@/lib/chrome/queries";
@@ -31,6 +39,7 @@ import { IMAGE_EDIT_CREDITS, productPhotoSpec } from "@/lib/media/image-specs";
 import type { MinkDraftContent } from "./draft-types";
 import type { MinkActorContext, MinkArtifact } from "./types";
 import { resolveMinkMediaReferenceImages } from "./media-reference-images";
+import type { MinkToolContext } from "./tools/registry";
 
 // ---------------------------------------------------------------------------
 // Phase 9E - one charged, immutable proposal that IS an image.
@@ -70,17 +79,38 @@ import { resolveMinkMediaReferenceImages } from "./media-reference-images";
  */
 const MEDIA_TOOL = "generate_media_image";
 
+/**
+ * How long before the tool's deadline the drawing must end, so the upload,
+ * the Media row and the charged draft fit before it: a 2K JPEG upload and two
+ * short transactions, a few seconds at worst.
+ */
+export const POST_DRAW_RESERVE_MS = 10_000;
+
+/** The deadline a call made outside a tool gives itself (a tool's own). */
+const STANDALONE_DEADLINE_MS = 100_000;
+
 export interface MinkMediaProposalInput {
   actor: MinkActorContext;
   purpose: unknown;
   prompt: unknown;
   referenceImageUrls: unknown;
   alt: unknown;
+  /**
+   * The tool's deadline, stop and last-write gate (the registry's). Absent
+   * when called directly: a deadline of its own, and no stop.
+   */
+  context?: MinkToolContext;
 }
+
+type MediaImageProposal = Extract<
+  MinkArtifact,
+  { type: "media_image_proposal" }
+>;
 
 export async function createMinkMediaImageProposal(
   input: MinkMediaProposalInput,
-): Promise<Extract<MinkArtifact, { type: "media_image_proposal" }>> {
+): Promise<MediaImageProposal> {
+  const deadline = input.context ?? standaloneDeadline();
   await assertMediaGenerationAuthority(input.actor);
   if (!gcsConfigured) {
     throw new MinkRequestError(
@@ -139,13 +169,37 @@ export async function createMinkMediaImageProposal(
   if (!input.actor.runId) {
     throw new MinkToolInputError("The draft run is not available. Try again.");
   }
-  await reserveMinkImageGeneration(input.actor, input.actor.runId);
-
-  const image = await generateMinkMediaImage(
-    getMinkConfig(),
-    request,
-    references,
+  const allowance = await reserveMinkImageGeneration(
+    input.actor,
+    input.actor.runId,
   );
+
+  let image: MinkGeneratedImage;
+  try {
+    image = await generateMinkMediaImage(getMinkConfig(), request, references, {
+      // ★★ A 429 IS ASKED AGAIN, FOR FREE (B10): twice, each try on its own
+      //    45 s clock, 5 to 15 s apart, at the same location. The chain stops
+      //    at the tool's deadline, less the time the writes below need, and
+      //    the tool's stop aborts the request in flight (B6).
+      ...MINK_CHAT_IMAGE_RETRY,
+      abortSignal: deadline.signal,
+      deadlineAt: deadline.deadlineAt - POST_DRAW_RESERVE_MS,
+      // ★★ Owner, 25 Oct 2026: a chat image at "2K", so a full-width banner
+      //    and a 1,600 px product zoom stay sharp, with MINIMAL thinking.
+      imageSize: "2K",
+      thinkingLevel: ThinkingLevel.MINIMAL,
+    });
+  } catch (error) {
+    // ★★ A PICTURE GOOGLE NEVER DREW SPENDS NO ALLOWANCE (B3): every try
+    //    refused with 429, or none sent. A timeout or a 5xx after sending
+    //    keeps it spent, because Google may have billed it.
+    if (isUnbilledImageFailure(error)) await allowance.giveBack();
+    throw error;
+  }
+  // ★ Drawn after the tool's time ran out: the chat has already been told it
+  //   took too long, so the picture is not stored, saved or charged. It may
+  //   have been billed, so the allowance stays spent.
+  throwIfStopped(deadline.signal);
 
   const extension = image.mimeType === "image/png" ? "png" : "jpg";
   // ★ A catalogue photo lives in its own folder: that path is what lets the
@@ -170,98 +224,137 @@ export async function createMinkMediaImageProposal(
   const spec = MINK_MEDIA_PURPOSE_SPECS[request.purpose];
   const filename = `${request.purpose}-${Date.now()}.${extension}`;
 
-  // ★★ GENERATED MEANS KEPT. This row changes nothing shopper-visible, but
-  // it closes the hand-off between creation and placement: the URL returned to
-  // the model is now immediately accepted by the ordinary store-ownership
-  // guard if the same request also asks for a layout proposal.
+  // ★★ THE ROW AND THE CHARGED DRAFT ARE THE TOOL'S LAST WRITE, through the
+  //    registry's `commit`: refused (and the stored object removed) once the
+  //    tool's time is up, and while under way it holds the timeout, so the
+  //    merchant is charged exactly when they are shown the card (B6).
+  let writing = false;
   try {
-    await withService((db) =>
-      db.insert(mediaAssets).values({
-        storeId: input.actor.storeId,
-        url,
-        path,
-        filename,
-        contentType: image.mimeType,
-        sizeBytes: image.bytes.length,
-        createdBy: input.actor.adminId,
-        source: "mink_generated",
-      }),
-    );
-  } catch (error) {
-    await gcsDeletePaths([path]).catch(() => []);
-    logError("mink generated image media save failed", error, { path });
-    throw new MinkRequestError(
-      "image_media_save_failed",
-      "The image was created but could not be saved to Media. Nothing was kept; try again.",
-      503,
-    );
-  }
+    return await deadline.commit<MediaImageProposal>(async () => {
+      writing = true;
+      // ★★ GENERATED MEANS KEPT. This row changes nothing shopper-visible,
+      // but it closes the hand-off between creation and placement: the URL
+      // returned to the model is now immediately accepted by the ordinary
+      // store-ownership guard if the same request also asks for a layout
+      // proposal.
+      try {
+        await withService((db) =>
+          db.insert(mediaAssets).values({
+            storeId: input.actor.storeId,
+            url,
+            path,
+            filename,
+            contentType: image.mimeType,
+            sizeBytes: image.bytes.length,
+            createdBy: input.actor.adminId,
+            source: "mink_generated",
+          }),
+        );
+      } catch (error) {
+        await gcsDeletePaths([path]).catch(() => []);
+        logError("mink generated image media save failed", error, { path });
+        throw new MinkRequestError(
+          "image_media_save_failed",
+          "The image was created but could not be saved to Media. Nothing was kept; try again.",
+          503,
+        );
+      }
 
-  let stored;
-  try {
-    stored = await createMinkDraftProposal({
-      actor: input.actor,
-      kind: "media_image",
-      // ★ A product photo is priced like the photo editor's scene photo
-      //   (IMAGE_EDIT_CREDITS, the owner's price for one Flash image call), so
-      //   the same picture costs the same from either place.
-      expectedCredits:
-        request.purpose === "product" ? IMAGE_EDIT_CREDITS : undefined,
-      title: spec.label,
-      destinationType: "media_asset",
-      destinationLabel: `Media Library · ${spec.label}`,
-      destinationPath: "/dashboard/media",
-      content: draftContent({
+      let stored;
+      try {
+        stored = await createMinkDraftProposal({
+          actor: input.actor,
+          kind: "media_image",
+          // ★ A product photo is priced like the photo editor's scene photo
+          //   (IMAGE_EDIT_CREDITS, the owner's price for one Flash image
+          //   call), so the same picture costs the same from either place.
+          expectedCredits:
+            request.purpose === "product" ? IMAGE_EDIT_CREDITS : undefined,
+          title: spec.label,
+          destinationType: "media_asset",
+          destinationLabel: `Media Library · ${spec.label}`,
+          destinationPath: "/dashboard/media",
+          content: draftContent({
+            url,
+            path,
+            filename,
+            contentType: image.mimeType,
+            sizeBytes: image.bytes.length,
+            purpose: request.purpose,
+            prompt: request.prompt,
+            referenceImageUrls: request.referenceImageUrls,
+            alt: request.alt,
+          }),
+        });
+        if (stored.type !== "proposal") {
+          throw new Error("Generated image persistence returned no proposal");
+        }
+      } catch (error) {
+        // ★ The library row and object form one logical generated asset. If
+        // the conversation artefact cannot be stored, remove both best-effort
+        // instead of leaving a library item the run reports as failed.
+        await withService((db) =>
+          db
+            .delete(mediaAssets)
+            .where(
+              and(
+                eq(mediaAssets.storeId, input.actor.storeId),
+                eq(mediaAssets.path, path),
+              ),
+            ),
+        ).catch(() => undefined);
+        await gcsDeletePaths([path]).catch(() => []);
+        throw error;
+      }
+
+      return {
+        type: "media_image_proposal",
+        draftId: stored.draftId,
+        title: stored.title,
+        destinationLabel: stored.destinationLabel,
+        destinationPath: "/dashboard/media",
         url,
-        path,
-        filename,
-        contentType: image.mimeType,
-        sizeBytes: image.bytes.length,
-        purpose: request.purpose,
-        prompt: request.prompt,
-        referenceImageUrls: request.referenceImageUrls,
         alt: request.alt,
-      }),
+        prompt: request.prompt,
+        referenceImageCount: references.length,
+        purpose: request.purpose,
+        aspectRatio: aspectRatioFor(request.purpose, request.productPhotoShape),
+        placement: spec.placement,
+        saved: true,
+        status: "private_preview",
+        expectedCredits: stored.expectedCredits,
+        chargedCredits: stored.chargedCredits,
+        creditSource: stored.creditSource,
+      };
     });
-    if (stored.type !== "proposal") {
-      throw new Error("Generated image persistence returned no proposal");
-    }
   } catch (error) {
-    // ★ The library row and object form one logical generated asset. If the
-    // conversation artefact cannot be stored, remove both best-effort instead
-    // of leaving a library item the run reports as failed.
-    await withService((db) =>
-      db
-        .delete(mediaAssets)
-        .where(
-          and(
-            eq(mediaAssets.storeId, input.actor.storeId),
-            eq(mediaAssets.path, path),
-          ),
-        ),
-    ).catch(() => undefined);
-    await gcsDeletePaths([path]).catch(() => []);
+    // The time ran out before the write began (during the upload, say):
+    // nothing was saved or charged, so the stored object goes too.
+    if (!writing) await gcsDeletePaths([path]).catch(() => []);
     throw error;
   }
+}
 
+/** Stop here when the tool's time is up; nothing below runs after it. */
+function throwIfStopped(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw new MinkToolTimeoutError();
+}
+
+/**
+ * A deadline for a call made outside a tool: the tool's own length, no stop,
+ * and a last write that runs only while time remains.
+ */
+function standaloneDeadline(): Pick<
+  MinkToolContext,
+  "deadlineAt" | "commit"
+> & { signal?: AbortSignal } {
+  const deadlineAt = Date.now() + STANDALONE_DEADLINE_MS;
   return {
-    type: "media_image_proposal",
-    draftId: stored.draftId,
-    title: stored.title,
-    destinationLabel: stored.destinationLabel,
-    destinationPath: "/dashboard/media",
-    url,
-    alt: request.alt,
-    prompt: request.prompt,
-    referenceImageCount: references.length,
-    purpose: request.purpose,
-    aspectRatio: aspectRatioFor(request.purpose, request.productPhotoShape),
-    placement: spec.placement,
-    saved: true,
-    status: "private_preview",
-    expectedCredits: stored.expectedCredits,
-    chargedCredits: stored.chargedCredits,
-    creditSource: stored.creditSource,
+    deadlineAt,
+    async commit(write) {
+      if (Date.now() >= deadlineAt) throw new MinkToolTimeoutError();
+      return write();
+    },
   };
 }
 

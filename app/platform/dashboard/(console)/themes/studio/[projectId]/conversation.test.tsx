@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -27,7 +28,7 @@ const refresh = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("@/app/actions/theme-studio-actions", () => actions);
 vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
-import { ThemeConversation } from "./conversation";
+import { ThemeConversation, type ComposerApi } from "./conversation";
 
 const version: ThemeStudioVersionView = {
   id: "v1",
@@ -95,23 +96,28 @@ const props = {
   target: version,
   canRevise: true,
   onSelectVersion: vi.fn(),
-  composerRef: createRef<HTMLTextAreaElement>(),
+  now: "2026-09-29T10:30:00Z",
+  working: false,
 };
+const EM = String.fromCharCode(0x2014);
+const EN = String.fromCharCode(0x2013);
 const message = () =>
   screen.getByRole("textbox", { name: "Message Theme Studio" });
-const send = () => screen.getByRole("button", { name: "Send message" });
+const send = (name = "Send message") => screen.getByRole("button", { name });
+const openScreenshots = () =>
+  fireEvent.click(screen.getByRole("button", { name: /^Screenshots/ }));
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-describe("Theme Studio conversation", () => {
-  it("opens acceptance findings as an editable draft and sends only after operator review", async () => {
+describe("the theme page's chat", () => {
+  it("takes a drafted fix as editable text and sends only after the operator presses Send", async () => {
     render(
       <ThemeConversation
         {...props}
-        initialBody="Fix contrast in version 1: .shop-card-base"
+        initialBody="Fix contrast in Design 1: .shop-card-base"
       />,
     );
     expect((message() as HTMLTextAreaElement).value).toContain(
@@ -121,6 +127,7 @@ describe("Theme Studio conversation", () => {
     fireEvent.change(message(), {
       target: { value: "Fix contrast; preserve the golden header." },
     });
+    openScreenshots();
     fireEvent.click(screen.getByLabelText("Attach screenshot 1"));
     fireEvent.click(send());
     await waitFor(() =>
@@ -135,16 +142,13 @@ describe("Theme Studio conversation", () => {
     );
   });
 
-  it("attaches a new screenshot after ten historical references and sends only the selected image with the revision", async () => {
+  it("attaches a new screenshot after ten earlier ones and sends only the selected image", async () => {
     const fetcher = vi.fn(async () => ({
       ok: true,
       json: async () => ({ id: "new-image" }),
     }));
     vi.stubGlobal("fetch", fetcher);
     render(<ThemeConversation {...props} />);
-    expect(
-      screen.getByRole("link", { name: "Preview version 1" }),
-    ).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Upload screenshots"), {
       target: {
         files: [
@@ -186,19 +190,18 @@ describe("Theme Studio conversation", () => {
     await screen.findByAltText("Screenshot 1 to send");
   });
 
-  it("retains the message and attachments when sending fails and reuses its idempotency key", async () => {
+  it("keeps the message and attachments when sending fails and reuses its idempotency key", async () => {
     actions.reviseThemeStudioVersionAction.mockResolvedValueOnce({
       ok: false,
       error: "Try again",
     });
     render(<ThemeConversation {...props} />);
+    openScreenshots();
     fireEvent.click(screen.getByLabelText("Attach screenshot 1"));
     fireEvent.change(message(), { target: { value: "Fix spacing" } });
     fireEvent.click(send());
-    // The action is called synchronously on click, so a call count alone
-    // passes while the request is still in flight. Wait for the failure to be
-    // handled and the composer to re-enable, or the retry lands on a disabled
-    // button and is dropped.
+    // Wait for the failure to be handled and the composer to re-enable, or
+    // the retry lands on a disabled button and is dropped.
     await waitFor(() =>
       expect((send() as HTMLButtonElement).disabled).toBe(false),
     );
@@ -214,7 +217,54 @@ describe("Theme Studio conversation", () => {
     );
   });
 
-  it("sends the edited initial brief through the same composer", async () => {
+  it("makes its key on the first send, without crypto.randomUUID, and a new one per message", async () => {
+    // http on a LAN address (a phone reaching the dev server) is not a
+    // secure context: randomUUID is missing there, and rendering must not
+    // need it.
+    const real = globalThis.crypto;
+    vi.stubGlobal("crypto", {
+      getRandomValues: real.getRandomValues.bind(real),
+    });
+    const view = render(<ThemeConversation {...props} />);
+    fireEvent.change(message(), { target: { value: "Fix spacing" } });
+    fireEvent.click(send());
+    await waitFor(() =>
+      expect(actions.reviseThemeStudioVersionAction).toHaveBeenCalledTimes(1),
+    );
+    const first = (
+      actions.reviseThemeStudioVersionAction.mock.calls[0] as unknown[]
+    )[0] as { idempotencyKey: string };
+    expect(first.idempotencyKey).toMatch(/^[A-Za-z0-9_-]{16,80}$/);
+    await waitFor(() =>
+      expect((message() as HTMLTextAreaElement).value).toBe(""),
+    );
+    // The page refreshes with the theme's new revision.
+    view.rerender(
+      <ThemeConversation {...props} project={{ ...project, revision: 4 }} />,
+    );
+    fireEvent.change(message(), { target: { value: "Now the footer" } });
+    await waitFor(() =>
+      expect((send() as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(send());
+    await waitFor(() =>
+      expect(actions.reviseThemeStudioVersionAction).toHaveBeenCalledTimes(2),
+    );
+    const second = (
+      actions.reviseThemeStudioVersionAction.mock.calls[1] as unknown[]
+    )[0] as { idempotencyKey: string };
+    expect(second.idempotencyKey).toMatch(/^[A-Za-z0-9_-]{16,80}$/);
+    expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
+  it("keeps its hidden upload field out of the Tab order: Upload screenshots opens it", () => {
+    const { container } = render(<ThemeConversation {...props} />);
+    const field =
+      container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(field?.tabIndex).toBe(-1);
+  });
+
+  it("starts building from the edited brief with Start building", async () => {
     render(
       <ThemeConversation
         {...props}
@@ -224,18 +274,19 @@ describe("Theme Studio conversation", () => {
       />,
     );
     fireEvent.change(message(), { target: { value: "Build a bakery theme" } });
-    fireEvent.click(send());
+    fireEvent.click(send("Start building"));
     await waitFor(() =>
       expect(actions.queueThemeStudioGenerationAction).toHaveBeenCalledWith(
         expect.objectContaining({
           body: "Build a bakery theme",
           referenceAssetIds: [],
+          expectedRevision: 3,
         }),
       ),
     );
   });
 
-  it("answers clarification questions with the selected screenshots instead of starting a separate revision", async () => {
+  it("answers the AI's questions with the selected screenshots instead of starting a change", async () => {
     const run = {
       id: "r1",
       questions: ["Which header is the reference?"],
@@ -252,7 +303,7 @@ describe("Theme Studio conversation", () => {
     );
     expect(screen.getByText("Which header is the reference?")).toBeTruthy();
     fireEvent.change(message(), { target: { value: "Use this header" } });
-    fireEvent.click(send());
+    fireEvent.click(send("Send answer"));
     await waitFor(() =>
       expect(actions.submitThemeStudioDetailsAction).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -291,15 +342,7 @@ describe("Theme Studio conversation", () => {
               changed: 1,
               redraws: 1,
               fellBack: false,
-              redrawsDeferred: false,
-            }),
-            run("revise", {
-              scope: "revise",
-              summary: "Adding a lookbook page needs a revision.",
-              changed: 0,
-              redraws: 0,
-              fellBack: true,
-              redrawsDeferred: false,
+              redrawsDeferred: true,
             }),
             run("recreate", {
               scope: "recreate",
@@ -316,21 +359,14 @@ describe("Theme Studio conversation", () => {
     expect(
       screen.getByText("Small edit - only what you asked for changes"),
     ).toBeTruthy();
-    expect(
-      screen.getByText("Changed the hero heading to Spring Sale."),
-    ).toBeTruthy();
     expect(screen.getByText(/1 setting changed; everything else/)).toBeTruthy();
-    expect(screen.getByText(/Redrawing 1 picture/)).toBeTruthy();
-    expect(screen.getByText("Larger change - revising the theme")).toBeTruthy();
-    expect(screen.getByText(/couldn’t be made as a simple edit/)).toBeTruthy();
-    expect(
-      screen.getByText("Starting over - building a new theme from scratch"),
-    ).toBeTruthy();
-    expect(screen.getByText(/earlier versions stay available/)).toBeTruthy();
+    expect(screen.getByText(/from the Pictures tab to finish/)).toBeTruthy();
+    expect(screen.getByText(/earlier designs stay available/)).toBeTruthy();
   });
 
-  it("removes attachments from the next message without deleting screenshot history", async () => {
+  it("removes an attachment from the next message without deleting the screenshot", () => {
     render(<ThemeConversation {...props} />);
+    openScreenshots();
     fireEvent.click(screen.getByLabelText("Attach screenshot 1"));
     fireEvent.click(
       screen.getByRole("button", { name: "Remove screenshot 1 from message" }),
@@ -340,11 +376,44 @@ describe("Theme Studio conversation", () => {
     expect(actions.removeThemeStudioReferenceAction).not.toHaveBeenCalled();
   });
 
-  it("blocks a second request while generation is running and hides automatic repair prompts", () => {
+  it("lists earlier screenshots and deletes only one no message used", async () => {
+    render(
+      <ThemeConversation
+        {...props}
+        project={{
+          ...project,
+          references: [
+            { ...project.references[0], id: "used", cited: true },
+            { ...project.references[0], id: "spare", cited: false },
+          ],
+        }}
+      />,
+    );
+    openScreenshots();
+    expect(screen.getByText("Earlier screenshots (2)")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Delete screenshot 1" }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete screenshot 2" }),
+    );
+    await waitFor(() =>
+      expect(actions.removeThemeStudioReferenceAction).toHaveBeenCalledWith({
+        projectId: "project",
+        assetId: "spare",
+      }),
+    );
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("locks the composer while Theme Studio works, says why, and hides automatic repair prompts", () => {
     render(
       <ThemeConversation
         {...props}
         canRevise={false}
+        working
+        lockedReason="You can send changes when it finishes."
+        progressCard={<section aria-label="Progress card">steps</section>}
         project={{
           ...project,
           status: "generating",
@@ -361,16 +430,294 @@ describe("Theme Studio conversation", () => {
       />,
     );
     expect((message() as HTMLTextAreaElement).disabled).toBe(true);
+    expect(message().getAttribute("placeholder")).toBe(
+      "You can send changes when it finishes.",
+    );
+    expect(
+      screen.getByText("You can send changes when it finishes.", {
+        selector: "p",
+      }),
+    ).toBeTruthy();
+    openScreenshots();
     expect(
       (
         screen.getByRole("button", {
-          name: /Attach screenshots/,
+          name: /Upload screenshots/,
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
     expect(screen.queryByText("internal repair prompt")).toBeNull();
-    expect(screen.getByRole("status").textContent).toContain(
-      "running acceptance",
+    // The progress card sits at the end of the chat.
+    expect(screen.getByRole("region", { name: "Progress card" })).toBeTruthy();
+    // Marked locked, so a phone folds it to its one-line reason.
+    expect(
+      screen
+        .getByRole("form", { name: "Message Theme Studio" })
+        .getAttribute("data-locked"),
+    ).toBe("true");
+  });
+
+  it("is never marked locked while it takes a message", () => {
+    render(<ThemeConversation {...props} />);
+    expect(
+      screen
+        .getByRole("form", { name: "Message Theme Studio" })
+        .hasAttribute("data-locked"),
+    ).toBe(false);
+  });
+
+  it("says building is switched off when it is", () => {
+    render(<ThemeConversation {...props} generationEnabled={false} />);
+    expect(
+      screen.getByText(
+        "Building is switched off on this deployment, so messages can't be sent now.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("takes a change, not an answer, when the theme is blocked with no questions open", async () => {
+    render(
+      <ThemeConversation
+        {...props}
+        project={{ ...project, status: "blocked", runs: [] }}
+      />,
     );
+    expect(message().getAttribute("placeholder")).toMatch(/Describe a change/);
+    fireEvent.change(message(), { target: { value: "Remove the script" } });
+    fireEvent.click(send());
+    await waitFor(() =>
+      expect(actions.reviseThemeStudioVersionAction).toHaveBeenCalledWith(
+        expect.objectContaining({ body: "Remove the script", versionId: "v1" }),
+      ),
+    );
+    expect(actions.submitThemeStudioDetailsAction).not.toHaveBeenCalled();
+  });
+
+  it("treats questions a Make current set aside as closed", () => {
+    const run = {
+      id: "r1",
+      questions: ["Which header is the reference?"],
+      status: "succeeded",
+      createdAt: "2026-09-29T10:02:00Z",
+      finishedAt: "2026-09-29T10:03:00Z",
+    } as ThemeStudioRunView;
+    render(
+      <ThemeConversation
+        {...props}
+        project={{
+          ...project,
+          status: "blocked",
+          runs: [run],
+          events: [
+            {
+              id: "e2",
+              eventType: "version_restored",
+              actorKind: "operator",
+              actorEmail: "op@test.dev",
+              runId: null,
+              detail: {},
+              createdAt: "2026-09-29T10:04:00Z",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(message().getAttribute("placeholder")).toMatch(/Describe a change/);
+  });
+
+  it("says why a request stopped in a sentence, never a bare code", () => {
+    const run = {
+      id: "r9",
+      kind: "images",
+      questions: [],
+      declineReason: null,
+      status: "failed",
+      errorCode: "images_none",
+      createdAt: "2026-09-29T10:02:00Z",
+      finishedAt: "2026-09-29T10:03:00Z",
+    } as unknown as ThemeStudioRunView;
+    render(
+      <ThemeConversation {...props} project={{ ...project, runs: [run] }} />,
+    );
+    expect(
+      screen.getByText(/^No picture came back, so no version was made\./),
+    ).toBeTruthy();
+    expect(screen.queryByText(/images_none/)).toBeNull();
+  });
+
+  it("never points a first build stopped before its first design at earlier designs", () => {
+    const stopped = (status: "failed" | "cancelled") =>
+      ({
+        id: `r-${status}`,
+        kind: "generate",
+        questions: [],
+        declineReason: null,
+        status,
+        errorCode: status === "failed" ? "provider_timeout" : "cancelled",
+        createdAt: "2026-09-29T10:02:00Z",
+        finishedAt: "2026-09-29T10:03:00Z",
+      }) as unknown as ThemeStudioRunView;
+    const view = render(
+      <ThemeConversation
+        {...props}
+        project={{
+          ...project,
+          status: "failed",
+          currentVersionId: null,
+          versions: [],
+          runs: [stopped("cancelled"), stopped("failed")],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("This request was stopped before a design was made."),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("The model provider took too long to answer."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/earlier designs/)).toBeNull();
+    expect(screen.queryByText(/Runs below/)).toBeNull();
+    view.rerender(
+      <ThemeConversation
+        {...props}
+        project={{ ...project, runs: [stopped("cancelled")] }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "This request was stopped. Your earlier designs are still available.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("names designs by number and opens them in the Preview and Checks tabs", () => {
+    const onViewDesign = vi.fn();
+    const onOpenChecks = vi.fn();
+    render(
+      <ThemeConversation
+        {...props}
+        onViewDesign={onViewDesign}
+        onOpenChecks={onOpenChecks}
+        project={{
+          ...project,
+          events: [
+            {
+              id: "e3",
+              eventType: "auto_qa_failed",
+              actorKind: "worker",
+              actorEmail: null,
+              runId: null,
+              detail: {
+                qaRunId: "q",
+                versionId: "v1",
+                errorCode: "quality_bar_not_met",
+              },
+              createdAt: "2026-09-29T10:06:00Z",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Theme Studio, Design 1")).toBeTruthy();
+    expect(
+      screen.getByText(
+        /stopped on Design 1\. Read why in Checks, then describe/,
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Preview Design 1" }));
+    expect(onViewDesign).toHaveBeenCalledWith("v1");
+    fireEvent.click(screen.getByRole("button", { name: "Open Checks" }));
+    expect(onOpenChecks).toHaveBeenCalledWith("v1");
+  });
+
+  it("never asks for a fix when the checks only could not finish", () => {
+    render(
+      <ThemeConversation
+        {...props}
+        project={{
+          ...project,
+          events: [
+            {
+              id: "e3",
+              eventType: "auto_qa_failed",
+              actorKind: "worker",
+              actorEmail: null,
+              runId: null,
+              detail: {
+                qaRunId: "q",
+                versionId: "v1",
+                errorCode: "checks_incomplete",
+              },
+              createdAt: "2026-09-29T10:06:00Z",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(/the theme itself does not need a change/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/describe what to fix/)).toBeNull();
+  });
+
+  it("is filled by the page without sending, below what is already there", () => {
+    const apiRef = createRef<ComposerApi>();
+    render(<ThemeConversation {...props} apiRef={apiRef} />);
+    fireEvent.change(message(), { target: { value: "Keep the logo." } });
+    act(() => apiRef.current!.fill("Fix the contrast of the struck price."));
+    expect((message() as HTMLTextAreaElement).value).toBe(
+      "Keep the logo.\n\nFix the contrast of the struck price.",
+    );
+    // The same draft twice is not added twice.
+    act(() => apiRef.current!.fill("Fix the contrast of the struck price."));
+    expect((message() as HTMLTextAreaElement).value).toBe(
+      "Keep the logo.\n\nFix the contrast of the struck price.",
+    );
+    expect(document.activeElement).toBe(message());
+    expect(actions.reviseThemeStudioVersionAction).not.toHaveBeenCalled();
+  });
+
+  it("sends the saved brief when the page starts building on an empty message", async () => {
+    const apiRef = createRef<ComposerApi>();
+    render(
+      <ThemeConversation
+        {...props}
+        apiRef={apiRef}
+        canRevise={false}
+        target={null}
+        project={{ ...project, status: "draft", messages: [], versions: [] }}
+      />,
+    );
+    fireEvent.change(message(), { target: { value: "" } });
+    act(() => apiRef.current!.send("Build a warm grocery theme."));
+    await waitFor(() =>
+      expect(actions.queueThemeStudioGenerationAction).toHaveBeenCalledWith(
+        expect.objectContaining({ body: "Build a warm grocery theme." }),
+      ),
+    );
+  });
+
+  it("tells the page while the composer has focus", () => {
+    const onComposerActive = vi.fn();
+    render(
+      <ThemeConversation {...props} onComposerActive={onComposerActive} />,
+    );
+    fireEvent.focus(message());
+    expect(onComposerActive).toHaveBeenLastCalledWith(true);
+    fireEvent.blur(message(), { relatedTarget: document.body });
+    expect(onComposerActive).toHaveBeenLastCalledWith(false);
+  });
+
+  it("keeps long dashes out of the model's words", () => {
+    render(
+      <ThemeConversation
+        {...props}
+        project={{
+          ...project,
+          versions: [{ ...version, summary: `Warm ${EM} and calm ${EN} kind` }],
+        }}
+      />,
+    );
+    expect(screen.getByText("Warm, and calm, kind")).toBeTruthy();
   });
 });

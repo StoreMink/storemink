@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  Suspense,
   useContext,
   useEffect,
   useRef,
@@ -10,6 +11,8 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
+import { useSearchParams } from "next/navigation";
+import { MINK_CHAT_PARAM, readMinkChatParam } from "@/lib/mink/chat-session";
 import {
   useMinkAi,
   type MinkConversationSummary,
@@ -84,6 +87,11 @@ interface ChatContextType {
   reset: () => void;
   /** Leaves the open chat for a new, empty one; History keeps it. */
   startNewChat: () => void;
+  /**
+   * How many times this tab has opened a chat from the dashboard address
+   * (`?chat=`); the chat view meets each one at its newest message.
+   */
+  addressOpens: number;
   loadConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<MinkUiError | null>;
   submitFeedback: (input: {
@@ -262,7 +270,13 @@ export function ChatProvider({
     },
     [minkSendPrepared, noteSend],
   );
-  const { isReplying, setInput, startNewChat, resumeOrStartFresh } = mink;
+  const {
+    isReplying,
+    setInput,
+    startNewChat,
+    resumeOrStartFresh,
+    openConversationFromAddress,
+  } = mink;
 
   const refreshMinkCredits = useCallback(async () => {
     if (!minkEnabled) return;
@@ -312,6 +326,20 @@ export function ChatProvider({
     [isReplying, setInput, startNewChat, send],
   );
 
+  // ★★ An address that names a chat (`?chat=<id>`, robustness audit B20; the
+  // "redesign ready" notice links there) opens it in the full view, the way
+  // choosing it in History does; `openConversationFromAddress` keeps it to the
+  // viewer's own chats. Nothing opens while Mink AI is off.
+  const openChatFromAddress = useCallback(
+    (conversationId: string | null) => {
+      if (!minkEnabled) return;
+      setIsChatOpen(true);
+      setIsExpanded(true);
+      void openConversationFromAddress(conversationId);
+    },
+    [minkEnabled, openConversationFromAddress],
+  );
+
   const value = useMemo(
     () => ({
       isChatOpen,
@@ -350,6 +378,11 @@ export function ChatProvider({
   return (
     <ChatContext.Provider value={value}>
       <MinkVoiceContext.Provider value={voice}>
+        {/* ★ Its own Suspense boundary: reading the address must never hold
+            back the dashboard's own prerendered shell. */}
+        <Suspense fallback={null}>
+          <MinkChatAddress onOpen={openChatFromAddress} />
+        </Suspense>
         {children}
         {spotlight ? (
           <MinkSpotlight highlight={spotlight} onDone={clearSpotlight} />
@@ -357,6 +390,44 @@ export function ChatProvider({
       </MinkVoiceContext.Provider>
     </ChatContext.Provider>
   );
+}
+
+/**
+ * ★★ Reads `?chat=` once (B20). The parameter is taken off the address
+ *   before the chat opens (`history.replaceState`, which Next's router
+ *   follows), so a reload, Back or a shared link of the page never reopens
+ *   the chat, and the same link clicked again later (the notification once
+ *   more) is a new value and opens it again. An address that names no chat
+ *   that could exist still opens Mink, on a new chat, as an id that is not
+ *   the viewer's does.
+ */
+function MinkChatAddress({
+  onOpen,
+}: {
+  onOpen: (conversationId: string | null) => void;
+}) {
+  // Null outside the App Router (a test that renders the provider alone).
+  const params = useSearchParams();
+  const raw = params?.get(MINK_CHAT_PARAM) ?? null;
+  const handled = useRef<string | null>(null);
+  useEffect(() => {
+    if (raw === null) {
+      handled.current = null;
+      return;
+    }
+    // A render before the address catches up must not open it twice.
+    if (handled.current === raw) return;
+    handled.current = raw;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete(MINK_CHAT_PARAM);
+      window.history.replaceState(window.history.state, "", url.toString());
+    } catch {
+      // An address that cannot be rewritten still opens the chat once.
+    }
+    onOpen(readMinkChatParam(raw));
+  }, [raw, onOpen]);
+  return null;
 }
 
 export function useChat() {
@@ -403,6 +474,7 @@ export function useChat() {
       retry: () => {},
       reset: () => {},
       startNewChat: () => {},
+      addressOpens: 0,
       loadConversation: async () => {},
       deleteConversation: async () => ({
         code: "mink_unavailable",

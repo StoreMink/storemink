@@ -2,6 +2,7 @@ import type { MinkArtifact } from "@/lib/mink/types";
 import { MINK_WORKFLOW_TEMPLATES } from "@/lib/mink/workflow-types";
 import { readMinkFormPrefill } from "@/lib/mink/form-prefill";
 import { readMinkHighlight } from "@/lib/mink/guide-targets";
+import { isRevampArtifact } from "@/lib/mink/revamp/contract";
 
 const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "metrics",
@@ -16,6 +17,7 @@ const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "builder_proposal",
   "media_image_proposal",
   "storefront_personalization_proposal",
+  "storefront_revamp",
   "workflow",
   "product_import",
   "navigation",
@@ -41,7 +43,7 @@ export function readMinkArtifacts(value: unknown): MinkArtifact[] {
           typeof row.live === "boolean" &&
           isCreditCount(row.expectedCredits) &&
           isCreditCount(row.chargedCredits) &&
-          ["plan", "credit", "mixed", "plan_unlimited"].includes(
+          ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
             String(row.creditSource),
           ) &&
           [
@@ -182,6 +184,9 @@ export function readMinkArtifacts(value: unknown): MinkArtifact[] {
           artifact as Record<string, unknown>,
         );
       }
+      // ★ The revamp card is an id and a status; the card fetches the rest
+      // from the owner-checked status route, so nothing else is trusted here.
+      if (type === "storefront_revamp") return isRevampArtifact(artifact);
       if (type !== "catalog") return true;
       const catalog = artifact as Record<string, unknown>;
       return (
@@ -380,7 +385,7 @@ function isStorefrontCodeProposal(value: Record<string, unknown>): boolean {
     value.status === "private_preview" &&
     isCreditCount(value.expectedCredits) &&
     isCreditCount(value.chargedCredits) &&
-    ["plan", "credit", "mixed", "plan_unlimited"].includes(
+    ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
       String(value.creditSource),
     )
   );
@@ -416,7 +421,7 @@ function isStorefrontLayoutProposal(value: Record<string, unknown>): boolean {
     value.status === "private_preview" &&
     isCreditCount(value.expectedCredits) &&
     isCreditCount(value.chargedCredits) &&
-    ["plan", "credit", "mixed", "plan_unlimited"].includes(
+    ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
       String(value.creditSource),
     )
   );
@@ -444,7 +449,7 @@ function isStorefrontDesignProposal(value: Record<string, unknown>): boolean {
     value.status === "private_preview" &&
     isCreditCount(value.expectedCredits) &&
     isCreditCount(value.chargedCredits) &&
-    ["plan", "credit", "mixed", "plan_unlimited"].includes(
+    ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
       String(value.creditSource),
     )
   );
@@ -606,7 +611,7 @@ function isMediaImageProposal(value: Record<string, unknown>): boolean {
     value.status === "private_preview" &&
     isCreditCount(value.expectedCredits) &&
     isCreditCount(value.chargedCredits) &&
-    ["plan", "credit", "mixed", "plan_unlimited"].includes(
+    ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
       String(value.creditSource),
     )
   );
@@ -669,7 +674,7 @@ function isStorefrontPersonalizationProposal(
     value.status === "private_preview" &&
     isPersonalizationCredits(value.expectedCredits, 1) &&
     isPersonalizationCredits(value.chargedCredits, 0) &&
-    ["plan", "credit", "mixed", "plan_unlimited"].includes(
+    ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
       String(value.creditSource),
     )
   );

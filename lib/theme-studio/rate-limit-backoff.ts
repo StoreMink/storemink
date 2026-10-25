@@ -19,6 +19,10 @@
 // run's own abort signal. The worker aborts at the run wall time (20 min), so
 // a wait can never outlive the run it belongs to; an aborted wait resolves at
 // once instead of finishing its sleep.
+//
+// ★ THE IMAGE CLIENT WAITS AT MOST THE SHARED PAUSE (2026-10-23): its retry
+// goes back through the start pacer, which spaces image requests on its own;
+// sleeping this whole schedule on top of it only held the slot idle.
 // ---------------------------------------------------------------------------
 
 export const RATE_LIMIT_BACKOFF = {
@@ -31,6 +35,19 @@ export const RATE_LIMIT_BACKOFF = {
    * still holds if someone raises `retries` or the steps later. */
   totalMs: 6 * 60_000,
 } as const;
+
+/**
+ * ★★ THE LONGEST ONE REFUSAL MAY HOLD BACK EVERYONE ELSE ON ITS MODEL
+ * (owner's decision, 2026-10-23). A caller's own backoff above is its own
+ * business; the shared pause it registers (provider-capacity.ts) is capped
+ * here. It used to be the caller's whole 7.5 to 120 s step, so one 429 on
+ * the storefront revamp's photo model stopped every shop and every theme
+ * build for up to two minutes, and the photo line sat paused 27% of a
+ * measured half hour (staging, 2026-10-23). Image models are spaced by
+ * their start pacer instead (IMAGE_START_PACING), which is what actually
+ * keeps them clear of Google's refusals.
+ */
+export const SHARED_RATE_LIMIT_PAUSE_MAX_MS = 15_000;
 
 /**
  * How long to wait before retry number `retry` (0-based). Exponential, capped,

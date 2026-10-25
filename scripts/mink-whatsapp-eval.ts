@@ -14,9 +14,13 @@
  *       expected outcome, the words an answer must and must not carry, and a
  *       link the facts never gave. Needs ADC and GCP_PROJECT_ID; the model
  *       and location come from MINK_VERTEX_MODEL / MINK_VERTEX_LOCATION.
- *       One attempt per case with the live path's own rule, in order: a second
- *       attempt only after a stall (lib/whatsapp/mink-model.ts), and the
- *       report records how many attempts each answer took.
+ *       Each case gets the live path's retry rule on that model (one more
+ *       attempt after a 429, a 5xx or a stall, lib/whatsapp/mink-model.ts)
+ *       with the Mink fallback switched off, so the grade is the configured
+ *       model's alone (mink-whatsapp-eval-core.ts). The report records each
+ *       answer's attempts, the model that answered and why it was asked
+ *       again, and the summary splits the retried answers into stalls, busy
+ *       retries and fallback answers.
  *
  * Options: --cases=id,id, --out=report.json. Exit code 1 when any case fails.
  *
@@ -41,6 +45,12 @@ import {
   buildMinkWhatsAppUserTurn,
   callMinkWhatsAppModelWithRetry,
 } from "@/lib/whatsapp/mink-model";
+import {
+  evalModelOptions,
+  noRetries,
+  retrySplit,
+  type EvalRetries,
+} from "./mink-whatsapp-eval-core";
 
 interface EvalCase {
   id: string;
@@ -73,8 +83,12 @@ interface Result {
   reason: string;
   problems: string[];
   latencyMs: number;
-  /** Model attempts the case took: 0 offline or at the gate, 2 after a stall. */
+  /** Model attempts the answer took: 0 offline, at the gate or on failure. */
   attempts: number;
+  /** The model that answered; null offline, at the gate or on failure. */
+  model: string | null;
+  /** Why the model was asked again, counted whether or not it then answered. */
+  retries: EvalRetries;
 }
 
 async function main(): Promise<void> {
@@ -119,6 +133,8 @@ async function main(): Promise<void> {
         problems: [`fixture ${c.fixture} is not in the set`],
         latencyMs: 0,
         attempts: 0,
+        model: null,
+        retries: noRetries(),
       });
       continue;
     }
@@ -141,6 +157,8 @@ async function main(): Promise<void> {
         problems,
         latencyMs: Date.now() - started,
         attempts: 0,
+        model: null,
+        retries: noRetries(),
       });
       report(index, results[results.length - 1]);
       continue;
@@ -152,6 +170,8 @@ async function main(): Promise<void> {
     const allowed = allowedUrlsIn(facts);
     let parsed: unknown;
     let attempts = 0;
+    let model: string | null = null;
+    const retries = noRetries();
     if (live && gate.ok) {
       try {
         const out = await callMinkWhatsAppModelWithRetry(
@@ -162,9 +182,14 @@ async function main(): Promise<void> {
             now: new Date(),
             timeZone: "Asia/Kolkata",
           },
-          { timeoutMs: 30_000 },
+          evalModelOptions(retries),
         );
         attempts = out.attempts;
+        model = out.model;
+        // ★ Never graded as the configured model's answer when it is not.
+        if (out.model !== config.model) {
+          problems.push(`answered by ${out.model}, not ${config.model}`);
+        }
         parsed =
           out.finishReason === "STOP"
             ? out.parsed
@@ -213,6 +238,8 @@ async function main(): Promise<void> {
       problems,
       latencyMs: Date.now() - started,
       attempts,
+      model,
+      retries,
     });
     report(index, results[results.length - 1]);
   }
@@ -225,8 +252,10 @@ async function main(): Promise<void> {
     cases: results.length,
     passed: results.length - failed.length,
     failed: failed.length,
-    // Answers that needed the second attempt: a stall rate, not a failure.
-    stalledOnce: results.filter((r) => r.attempts > 1).length,
+    // Answers that needed another attempt, by why: a stall rate and a busy
+    // rate, not failures. Fallback answers stay 0 while the eval keeps the
+    // fallback off.
+    ...retrySplit(results, config.model),
     // The one request the user turn would carry, for a reviewer: the first case.
     sampleUserTurnChars: cases[0]
       ? buildMinkWhatsAppUserTurn({

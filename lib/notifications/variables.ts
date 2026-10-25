@@ -517,6 +517,10 @@ const SUBJECT_LABEL_SAMPLES: Partial<Record<EventKey, string>> = {
   "plan.changed": "Pro",
   "platform.store_created": "Acme Juice",
   "platform.domain_verified": "acme.com",
+  // The Theme Studio notices name the theme (lib/theme-studio/notify.ts).
+  "platform.theme_studio_ready": "Monsoon Market",
+  "platform.theme_studio_needs_fix": "Monsoon Market",
+  "platform.theme_studio_questions": "Monsoon Market",
 };
 
 /** Every variable a given event's templates may use. */

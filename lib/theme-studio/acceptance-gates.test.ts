@@ -1,20 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { THEME_DEFINITIONS } from "@/lib/themes";
 import { collectThemeImageUrls } from "@/lib/themes/validation";
 import type { ThemeDefinition } from "@/lib/themes/types";
+import { logWarn } from "@/lib/observability/logger";
 import {
   type BrowserStateSample,
   acceptanceAssetsDigest,
   acceptanceEvidenceDigest,
   acceptanceOutcome,
+  acceptanceWarnings,
   evaluateBrowserGates,
   evaluatePackageGates,
   gate,
+  gateBlocks,
+  imageRuleCode,
   internalLinks,
   linkFindings,
   pageTimeoutError,
   ACCEPTANCE_BUDGET_EXHAUSTED,
+  MAX_GATE_FINDINGS,
   markupFindings,
   parseBrowserEvidence,
   readAcceptanceReport,
@@ -25,8 +30,17 @@ import {
   type AcceptanceAssetRow,
   type AcceptanceSurface,
   type BrowserSample,
+  type GateFinding,
   type GateResult,
 } from "./acceptance-gates";
+import { SEVERITY_RULES_VERSION } from "./finding-severity";
+
+vi.mock("@/lib/observability/logger", () => ({
+  logWarn: vi.fn(),
+  logInfo: vi.fn(),
+  logError: vi.fn(),
+  logDebug: vi.fn(),
+}));
 import { PLACEHOLDER_LICENSE_NOTE } from "./compiler";
 import {
   THEME_PACKAGE_SCHEMA_VERSION,
@@ -195,12 +209,14 @@ describe("package gates", () => {
     const sized = evaluatePackageGates(pkg, rows).gates.find(
       (g) => g.id === "assets.integrity",
     )!;
-    expect(sized.findings.map((f) => f.code)).toContain("size");
+    expect(sized.findings).toEqual([
+      expect.objectContaining({ code: "too_small", severity: "serious" }),
+    ]);
     pkg.assets[1].licenseNote = PLACEHOLDER_LICENSE_NOTE;
     const exempt = evaluatePackageGates(pkg, rows).gates.find(
       (g) => g.id === "assets.integrity",
     )!;
-    expect(exempt.findings.map((f) => f.code)).not.toContain("size");
+    expect(exempt.findings.map((f) => f.code)).not.toContain("too_small");
   });
 
   it("thin content fails the content gate without blocking", () => {
@@ -600,7 +616,7 @@ describe("browser evidence", () => {
     expect(statusOf(gates, "browser.media")).toBe("fail");
 
     const soft = fullCoverage(surfaces);
-    // phone390 is a judged width, so the slow paint IS a finding — advisory.
+    // phone390 is a judged width, so the slow paint IS a finding: advisory.
     soft[1] = {
       ...soft[1],
       lcpMs: 9000,
@@ -649,7 +665,7 @@ describe("stored reports", () => {
   });
 });
 
-/** Every chrome state opened and found clean — what a sound home page reports. */
+/** Every chrome state opened and found clean: what a sound home page reports. */
 function measuredStates(): BrowserStateSample[] {
   return (["menu", "search", "cart", "account", "sign_in"] as const).map(
     (state) => chromeState(state),
@@ -897,6 +913,8 @@ describe("performance gate", () => {
           code: "cls",
           message: "CLS 0.100; the limit is under 0.1.",
           where: "desktop1440 · home",
+          // A deployment that requires the gate makes slowness serious.
+          severity: "serious",
         },
       ],
     );
@@ -921,6 +939,737 @@ describe("performance gate", () => {
     ).toEqual([
       ["unmeasured", "phone390 · home"],
       ["unmeasured", "desktop1440 · home"],
+    ]);
+  });
+});
+
+describe("severity (severity-v1)", () => {
+  beforeEach(() => vi.mocked(logWarn).mockClear());
+
+  const integrity = (pkg: ThemePackageV2, rows: AcceptanceAssetRow[]) =>
+    evaluatePackageGates(pkg, rows).gates.find(
+      (g) => g.id === "assets.integrity",
+    )!;
+  const previewIndex = (pkg: ThemePackageV2) =>
+    pkg.assets.findIndex((a) => a.path === pkg.definition.catalog.previewImage);
+  const contentIndex = (pkg: ThemePackageV2) =>
+    pkg.assets.findIndex(
+      (a, i) =>
+        i !== previewIndex(pkg) &&
+        !pkg.definition.catalog.screenshots.some((s) => s.src === a.path),
+    );
+  const resize = (
+    pkg: ThemePackageV2,
+    rows: AcceptanceAssetRow[],
+    index: number,
+    width: number,
+    height: number,
+    over: Partial<AcceptanceAssetRow> = {},
+  ) => {
+    pkg.assets[index] = { ...pkg.assets[index], width, height };
+    rows[index] = { ...rows[index], width, height, ...over };
+  };
+
+  it("stamps every finding and every gate as it is measured", () => {
+    const g = gate("routes.markup", [
+      { code: "lang", message: "The page has no language.", where: "/" },
+      {
+        code: "external_resource",
+        message: "Loads https://t.example/a.js from another origin.",
+        where: "/",
+      },
+    ]);
+    expect(SEVERITY_RULES_VERSION).toBe("severity-v1");
+    expect(g.severityRules).toBe(SEVERITY_RULES_VERSION);
+    expect(g.findings.map((f) => [f.code, f.severity])).toEqual([
+      ["external_resource", "serious"],
+      ["lang", "minor"],
+    ]);
+    expect(gate("package.schema", []).severityRules).toBe("severity-v1");
+    const { pkg, rows } = fixture();
+    for (const result of evaluatePackageGates(pkg, rows).gates) {
+      expect(result.severityRules, result.id).toBe("severity-v1");
+    }
+  });
+
+  it("keeps serious findings first, so the 40-finding cap can never hide one", () => {
+    const warnings = Array.from({ length: 45 }, (_, i) => ({
+      code: "lang",
+      message: "The page has no language.",
+      where: `/page-${i}`,
+    }));
+    const g = gate("routes.markup", [
+      ...warnings,
+      { code: "external_resource", message: "Loads x.", where: "/last" },
+    ]);
+    expect(MAX_GATE_FINDINGS).toBe(40);
+    expect(g.findings).toHaveLength(40);
+    expect(g.findings[0]).toMatchObject({
+      code: "external_resource",
+      severity: "serious",
+    });
+    // Within one severity the measured order is kept.
+    expect(g.findings[1].where).toBe("/page-0");
+    expect(acceptanceOutcome([g])).toBe("fail");
+  });
+
+  it("never lowers the severity a rule sets, and makes all an advisory gate holds a warning", () => {
+    const raised = gate("routes.render", [
+      { code: "indexable", message: "x", severity: "serious" },
+    ]);
+    expect(raised.findings[0].severity).toBe("serious");
+    const lowered = gate("package.security", [
+      { code: "markup", message: "x", severity: "minor" },
+    ]);
+    expect(lowered.findings[0].severity).toBe("serious");
+    expect(acceptanceOutcome([lowered])).toBe("blocked");
+    const advisory = gate(
+      "browser.performance",
+      [{ code: "unmeasured", message: "x" }],
+      { required: false },
+    );
+    expect(advisory.findings[0].severity).toBe("minor");
+    expect(acceptanceOutcome([advisory])).toBe("pass");
+  });
+
+  it("passes a run whose findings are all warnings, while each gate still reports them as measured", () => {
+    const gates = [
+      gate("package.schema", []),
+      gate("routes.render", [
+        {
+          code: "indexable",
+          message: "A preview page did not carry noindex.",
+          where: "/",
+        },
+      ]),
+      gate("browser.tap_targets", [
+        { code: "small_target", message: "9×9px", where: "phone390 · home" },
+      ]),
+    ];
+    // What the exemplar check fails on is unchanged: a required gate that
+    // reports anything is "fail".
+    expect(
+      gates.filter((g) => g.status === "fail" && g.required).map((g) => g.id),
+    ).toEqual(["routes.render", "browser.tap_targets"]);
+    expect(acceptanceOutcome(gates)).toBe("pass");
+    expect(acceptanceWarnings(gates).map((w) => w.id)).toEqual([
+      "routes.render",
+      "browser.tap_targets",
+    ]);
+  });
+
+  it("never passes a check that did not run, a failure that says nothing, or a status it does not know", () => {
+    expect(gateBlocks(gate("routes.links", [], { status: "skipped" }))).toBe(
+      true,
+    );
+    expect(
+      gateBlocks(
+        gate("routes.render", [{ code: "indexable", message: "x" }], {
+          status: "skipped",
+        }),
+      ),
+    ).toBe(true);
+    expect(gateBlocks(gate("routes.links", [], { status: "fail" }))).toBe(true);
+    expect(
+      gateBlocks({
+        required: true,
+        status: "unknown" as GateResult["status"],
+        findings: [{ code: "lang", message: "x", severity: "minor" }],
+      }),
+    ).toBe(true);
+    expect(
+      gateBlocks(
+        gate("routes.render", [], { status: "skipped", required: false }),
+      ),
+    ).toBe(false);
+    expect(
+      acceptanceOutcome([gate("routes.links", [], { status: "skipped" })]),
+    ).toBe("fail");
+  });
+
+  it("counts a finding stored before severity-v1 as serious, and trusts a passed gate as measured", () => {
+    const legacy: GateResult = {
+      id: "routes.render",
+      label: "Storefront routes",
+      required: true,
+      status: "fail",
+      findings: [
+        { code: "indexable", message: "A preview page did not carry noindex." },
+      ],
+    };
+    expect(acceptanceOutcome([legacy])).toBe("fail");
+    const listedNotFailed: GateResult = {
+      id: "browser.accessibility",
+      label: "Accessibility (axe)",
+      required: true,
+      status: "pass",
+      findings: [{ code: "region", message: "Region (1 element, moderate)" }],
+    };
+    expect(acceptanceOutcome([listedNotFailed])).toBe("pass");
+  });
+
+  it("splits the shared size code: a broken or too small picture blocks, a byte budget warns", () => {
+    let { pkg, rows } = fixture();
+    const c = contentIndex(pkg);
+    rows[c] = { ...rows[c], byteSize: 600 * 1024 };
+    expect(integrity(pkg, rows).findings).toEqual([
+      expect.objectContaining({ code: "over_budget", severity: "minor" }),
+    ]);
+    expect(acceptanceOutcome(evaluatePackageGates(pkg, rows).gates)).toBe(
+      "pass",
+    );
+
+    ({ pkg, rows } = fixture());
+    rows[c] = { ...rows[c], mediaType: "image/png" };
+    expect(
+      integrity(pkg, rows).findings.map((f) => [f.code, f.severity]),
+    ).toEqual([
+      ["format", "serious"],
+      ["wrong_format", "serious"],
+    ]);
+
+    ({ pkg, rows } = fixture());
+    const p = previewIndex(pkg);
+    rows[p] = { ...rows[p], byteSize: 300 * 1024 };
+    expect(integrity(pkg, rows).findings).toEqual([
+      expect.objectContaining({
+        code: "preview_over_budget",
+        severity: "minor",
+      }),
+    ]);
+
+    ({ pkg, rows } = fixture());
+    resize(pkg, rows, p, 1600, 1000);
+    expect(integrity(pkg, rows).findings).toEqual([
+      expect.objectContaining({ code: "preview_shape", severity: "serious" }),
+    ]);
+
+    ({ pkg, rows } = fixture());
+    resize(pkg, rows, p, 780, 585);
+    expect(
+      integrity(pkg, rows).findings.map((f) => [f.code, f.severity]),
+    ).toEqual([
+      ["too_small", "serious"],
+      ["preview_too_small", "serious"],
+    ]);
+    expect(imageRuleCode(": a rule nobody wrote down")).toBe("size");
+  });
+
+  it("warns when a stored picture is narrower than its slot, above the storefront minimum", () => {
+    let { pkg, rows } = fixture();
+    const c = contentIndex(pkg);
+    resize(pkg, rows, c, 1024, 768);
+    expect(integrity(pkg, rows).findings).toEqual([
+      expect.objectContaining({
+        code: "below_target",
+        severity: "minor",
+        where: pkg.assets[c].id,
+        message:
+          "The stored picture is 1024px wide, narrower than the 1600px its slot is made for, so it can look soft on large screens.",
+      }),
+    ]);
+    expect(acceptanceOutcome(evaluatePackageGates(pkg, rows).gates)).toBe(
+      "pass",
+    );
+    // Listed without failing the gate, so the exemplar check, whose bundled
+    // pictures are 800 to 1000px wide, passes what it passed before.
+    expect(integrity(pkg, rows).status).toBe("pass");
+    expect(
+      acceptanceWarnings(evaluatePackageGates(pkg, rows).gates).map(
+        (w) => w.id,
+      ),
+    ).toEqual(["assets.integrity"]);
+    // Beside anything else the gate reports, the gate fails as before.
+    rows[c] = { ...rows[c], byteSize: 600 * 1024 };
+    expect(integrity(pkg, rows).status).toBe("fail");
+    expect(
+      integrity(pkg, rows).findings.map((f) => [f.code, f.severity]),
+    ).toEqual([
+      ["over_budget", "minor"],
+      ["below_target", "minor"],
+    ]);
+    // A wide slot is made for 2400px.
+    ({ pkg, rows } = fixture());
+    resize(pkg, rows, c, 1600, 900);
+    expect(integrity(pkg, rows).findings.map((f) => f.code)).toEqual([
+      "below_target",
+    ]);
+    // A pixel of rounding is not a smaller picture.
+    ({ pkg, rows } = fixture());
+    resize(pkg, rows, c, 1599, 1199);
+    expect(integrity(pkg, rows).findings).toEqual([]);
+    // Below the minimum it is too small, which is serious, and only that.
+    ({ pkg, rows } = fixture());
+    resize(pkg, rows, c, 760, 570);
+    expect(integrity(pkg, rows).findings.map((f) => f.code)).toEqual([
+      "too_small",
+    ]);
+    // A placeholder is never held to its slot.
+    ({ pkg, rows } = fixture());
+    resize(pkg, rows, c, 1024, 768);
+    pkg.assets[c].licenseNote = PLACEHOLDER_LICENSE_NOTE;
+    expect(integrity(pkg, rows).findings.map((f) => f.code)).not.toContain(
+      "below_target",
+    );
+  });
+
+  it("keeps every package-level problem serious", () => {
+    const { pkg, rows } = fixture();
+    pkg.definition.preset.sampleData!.products =
+      pkg.definition.preset.sampleData!.products.slice(0, 3);
+    pkg.definition.description = "Lovely <script>steal()</script>";
+    pkg.assets[0].alt = "";
+    const gates = evaluatePackageGates(pkg, rows).gates;
+    for (const id of [
+      "package.content",
+      "package.security",
+      "assets.provenance",
+    ]) {
+      const g = gates.find((x) => x.id === id)!;
+      expect(g.findings.length, id).toBeGreaterThan(0);
+      expect(
+        g.findings.every((f) => f.severity === "serious"),
+        id,
+      ).toBe(true);
+    }
+  });
+
+  it("warns on a clip of a pixel or two and blocks a clip that hides part of a word", () => {
+    const surfaces: AcceptanceSurface[] = ["home"];
+    const clipped = (px: number) => {
+      const samples = fullCoverage(surfaces);
+      samples[0] = {
+        ...samples[0],
+        clippedText: [{ target: "h2.home-title", clippedX: 0, clippedY: px }],
+      };
+      return evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    };
+    const small = clipped(2);
+    expect(
+      small.find((g) => g.id === "browser.clipped_text")!.findings[0],
+    ).toMatchObject({
+      severity: "minor",
+      clipped: { x: 0, y: 2 },
+      targets: ["h2.home-title"],
+    });
+    expect(statusOf(small, "browser.clipped_text")).toBe("fail");
+    expect(acceptanceOutcome(small)).toBe("pass");
+    const large = clipped(12);
+    expect(
+      large.find((g) => g.id === "browser.clipped_text")!.findings[0].severity,
+    ).toBe("serious");
+    expect(acceptanceOutcome(large)).toBe("fail");
+  });
+
+  // A list cut at its limit must not hide a serious clip behind forty that
+  // are a pixel or two (review of TS-1, 25 Oct 2026).
+  const twoPixelClips = (n: number, prefix: string) =>
+    Array.from({ length: n }, (_, i) => ({
+      target: `${prefix}:nth-child(${i + 1}) .shop-card-name`,
+      clippedX: 2,
+      clippedY: 0,
+    }));
+  const headingClip = { target: "h2.home-title", clippedX: 0, clippedY: 14 };
+  const clippedGate = (gates: GateResult[]) =>
+    gates.find((g) => g.id === "browser.clipped_text")!;
+  /** Full coverage of one surface, the first sample replaced by `over`
+   * after it went through the parser, as the capture job sends it. */
+  const parsedRun = (over: Record<string, unknown>) => {
+    const surfaces: AcceptanceSurface[] = ["home"];
+    const samples = fullCoverage(surfaces);
+    const parsed = parseBrowserEvidence({
+      samples: [{ ...samples[0], ...over }, ...samples.slice(1)],
+    });
+    if (!parsed.ok) throw new Error(parsed.error);
+    return evaluateBrowserGates(parsed.value, surfaces);
+  };
+
+  it("keeps the largest clips when a page's list is cut, so forty small ones cannot hide a large one", () => {
+    const gates = parsedRun({
+      clippedText: [...twoPixelClips(40, "li"), headingClip],
+      clippedTextFound: 41,
+    });
+    const gateResult = clippedGate(gates);
+    expect(gateResult.findings).toHaveLength(MAX_GATE_FINDINGS);
+    expect(gateResult.findings[0]).toMatchObject({
+      severity: "serious",
+      clipped: { x: 0, y: 14 },
+      targets: ["h2.home-title"],
+    });
+    expect(gateBlocks(gateResult)).toBe(true);
+    expect(acceptanceOutcome(gates)).toBe("fail");
+  });
+
+  it("treats a page list an older probe cut at forty, every clip in it small, as not measured", () => {
+    // The probe that listed clips in page order stopped at 40 and never said
+    // how many it found: the heading clipped by 14px was never sent.
+    const old = parsedRun({ clippedText: twoPixelClips(40, "li") });
+    const gateResult = clippedGate(old);
+    expect(gateResult.findings[0]).toMatchObject({
+      code: "unmeasured",
+      severity: "serious",
+      where: "phone360 · home",
+    });
+    expect(gateBlocks(gateResult)).toBe(true);
+    expect(acceptanceOutcome(old)).toBe("fail");
+    // Today's probe lists the largest first and says how many it found:
+    // forty small clips listed of forty-one found means every clip is small.
+    const today = parsedRun({
+      clippedText: twoPixelClips(40, "li"),
+      clippedTextFound: 41,
+    });
+    expect(
+      clippedGate(today).findings.every((f) => f.code === "clipped_text"),
+    ).toBe(true);
+    expect(acceptanceOutcome(today)).toBe("pass");
+    // An older probe whose list never reached its limit listed every clip.
+    expect(
+      acceptanceOutcome(parsedRun({ clippedText: twoPixelClips(39, "li") })),
+    ).toBe("pass");
+  });
+
+  it("holds an opened chrome state to the same rule at its own limit of twenty", () => {
+    const withMenu = (menu: Record<string, unknown>) =>
+      parsedRun({
+        states: measuredStates().map((state) =>
+          state.state === "menu" ? { ...state, ...menu } : state,
+        ),
+      });
+    const cut = withMenu({
+      clippedText: [...twoPixelClips(20, "a"), headingClip],
+      clippedTextFound: 21,
+    });
+    expect(clippedGate(cut).findings[0]).toMatchObject({
+      severity: "serious",
+      clipped: { x: 0, y: 14 },
+      where: "phone360 · home · menu drawer",
+    });
+    expect(acceptanceOutcome(cut)).toBe("fail");
+    const old = withMenu({ clippedText: twoPixelClips(20, "a") });
+    expect(clippedGate(old).findings[0]).toMatchObject({
+      code: "unmeasured",
+      severity: "serious",
+      where: "phone360 · home · menu drawer",
+    });
+    expect(acceptanceOutcome(old)).toBe("fail");
+    expect(
+      acceptanceOutcome(
+        withMenu({ clippedText: twoPixelClips(20, "a"), clippedTextFound: 26 }),
+      ),
+    ).toBe("pass");
+  });
+
+  it("makes small tap targets and tight crops warnings, and overflow and broken images serious", () => {
+    const surfaces: AcceptanceSurface[] = ["home"];
+    const samples = fullCoverage(surfaces);
+    samples[0] = {
+      ...samples[0],
+      smallTapTargets: [{ target: "button.buy", width: 18, height: 20 }],
+      imageCropIssues: [{ target: "img.hero", retainedFraction: 0.2 }],
+    };
+    const soft = evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    for (const id of ["browser.tap_targets", "browser.image_crops"]) {
+      expect(statusOf(soft, id), id).toBe("fail");
+      expect(soft.find((g) => g.id === id)!.findings[0].severity, id).toBe(
+        "minor",
+      );
+    }
+    expect(acceptanceOutcome(soft)).toBe("pass");
+    samples[1] = {
+      ...samples[1],
+      overflowPx: 24,
+      overflowOffenders: ["div.hero"],
+    };
+    samples[2] = { ...samples[2], brokenImages: 1 };
+    const hard = evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    expect(
+      hard.find((g) => g.id === "browser.overflow")!.findings[0],
+    ).toMatchObject({ severity: "serious", targets: ["div.hero"] });
+    expect(
+      hard.find((g) => g.id === "browser.media")!.findings[0].severity,
+    ).toBe("serious");
+    expect(acceptanceOutcome(hard)).toBe("fail");
+  });
+
+  it("fails the accessibility gate on contrast whatever its impact, on serious rules and on an impact axe did not give", () => {
+    const surfaces: AcceptanceSurface[] = ["home"];
+    const withViolations = (violations: BrowserSample["violations"]) => {
+      const samples = fullCoverage(surfaces);
+      samples[0] = { ...samples[0], violations };
+      return evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    };
+    const a11y = (gates: GateResult[]) =>
+      gates.find((g) => g.id === "browser.accessibility")!;
+
+    const moderate = withViolations([
+      { id: "region", impact: "moderate", nodes: 1, help: "Region" },
+    ]);
+    expect(a11y(moderate).status).toBe("pass");
+    expect(a11y(moderate).findings[0]).toMatchObject({
+      severity: "minor",
+      impact: "moderate",
+    });
+    expect(acceptanceOutcome(moderate)).toBe("pass");
+
+    const unrated = withViolations([
+      { id: "region", impact: null, nodes: 1, help: "Region" },
+    ]);
+    expect(a11y(unrated).status).toBe("fail");
+    expect(a11y(unrated).findings[0].severity).toBe("serious");
+
+    const contrast = withViolations([
+      {
+        id: "color-contrast",
+        impact: "moderate",
+        nodes: 1,
+        help: "Contrast",
+        contrast: [{ target: ".shop-card-off", ratio: 4.39, required: 4.5 }],
+      },
+    ]);
+    expect(a11y(contrast).status).toBe("fail");
+    expect(a11y(contrast).findings[0]).toMatchObject({
+      severity: "serious",
+      nodes: 1,
+    });
+    expect(a11y(contrast).metrics).toMatchObject({
+      blockingViolations: 1,
+      otherViolations: 0,
+    });
+    expect(acceptanceOutcome(contrast)).toBe("fail");
+  });
+
+  it("puts the serious accessibility findings first, ahead of forty warnings", () => {
+    const surfaces: AcceptanceSurface[] = ["home"];
+    const samples: BrowserSample[] = fullCoverage(surfaces).map((s) => ({
+      ...s,
+      violations: Array.from({ length: 9 }, (_, i) => ({
+        id: `rule-${i}`,
+        impact: "minor" as const,
+        nodes: 1,
+        help: "Minor",
+      })),
+    }));
+    samples[4] = {
+      ...samples[4],
+      violations: [
+        ...samples[4].violations,
+        {
+          id: "color-contrast",
+          impact: "serious",
+          nodes: 1,
+          help: "Contrast",
+          contrast: [{ target: "h1", ratio: 2.1, required: 4.5 }],
+        },
+      ],
+    };
+    const g = evaluateBrowserGates({ userAgent: "", samples }, surfaces).find(
+      (x) => x.id === "browser.accessibility",
+    )!;
+    expect(g.findings).toHaveLength(40);
+    expect(g.findings[0]).toMatchObject({
+      code: "color-contrast",
+      severity: "serious",
+    });
+    expect(g.status).toBe("fail");
+    expect(g.metrics).toMatchObject({
+      blockingViolations: 1,
+      otherViolations: 45,
+    });
+  });
+
+  it("writes axe findings without a dash a person would read", () => {
+    const surfaces: AcceptanceSurface[] = ["home"];
+    const samples = fullCoverage(surfaces);
+    samples[0] = {
+      ...samples[0],
+      violations: [
+        {
+          id: "color-contrast",
+          impact: "serious",
+          nodes: 2,
+          help: "Contrast",
+          examples: [{ target: ".a", summary: "2.1:1" }],
+        },
+        {
+          id: "button-name",
+          impact: "critical",
+          nodes: 1,
+          help: "Buttons need names",
+          target: "button.x",
+        },
+      ],
+    };
+    const findings = evaluateBrowserGates(
+      { userAgent: "", samples },
+      surfaces,
+    ).find((g) => g.id === "browser.accessibility")!.findings;
+    expect(findings.map((f) => f.message)).toEqual([
+      "Contrast (2 elements, serious); examples: .a: 2.1:1",
+      "Buttons need names (1 element, critical); first: button.x",
+    ]);
+    expect(findings.map((f) => f.targets)).toEqual([[".a"], ["button.x"]]);
+    for (const f of findings) {
+      expect(f.message).not.toContain(String.fromCharCode(0x2014));
+      expect(f.message).not.toContain(String.fromCharCode(0x2013));
+    }
+  });
+
+  it("keeps speed a warning while the gate is advisory and makes it serious once required", () => {
+    const surfaces: AcceptanceSurface[] = ["home"];
+    const samples = fullCoverage(surfaces).map((s) =>
+      s.viewport === "phone390" ? { ...s, lcpMs: 9000 } : s,
+    );
+    const advisory = evaluateBrowserGates({ userAgent: "", samples }, surfaces);
+    expect(
+      advisory.find((g) => g.id === "browser.performance")!.findings[0]
+        .severity,
+    ).toBe("minor");
+    expect(acceptanceOutcome(advisory)).toBe("pass");
+    const required = evaluateBrowserGates(
+      { userAgent: "", samples },
+      surfaces,
+      { performanceRequired: true },
+    );
+    expect(
+      required.find((g) => g.id === "browser.performance")!.findings[0]
+        .severity,
+    ).toBe("serious");
+    expect(acceptanceOutcome(required)).toBe("fail");
+  });
+
+  it("makes a missing noindex, language or image alt a warning, and an off-site resource serious", () => {
+    const render = gate(
+      "routes.render",
+      routeRenderFindings([
+        {
+          surface: "cart",
+          path: "/cart",
+          status: 200,
+          themed: true,
+          noindex: false,
+          error: null,
+        },
+      ]),
+    );
+    expect(render.findings[0]).toMatchObject({
+      code: "indexable",
+      severity: "minor",
+    });
+    const markup = gate(
+      "routes.markup",
+      markupFindings(
+        [
+          {
+            path: "/",
+            html: '<html><img src="https://cdn.evil.example/p.jpg"></html>',
+          },
+        ],
+        "https://studio-preview-abc.storemink.com",
+      ),
+    );
+    expect(markup.findings.map((f) => [f.code, f.severity])).toEqual([
+      ["external_resource", "serious"],
+      ["img_alt", "minor"],
+      ["lang", "minor"],
+    ]);
+    expect(acceptanceOutcome([render])).toBe("pass");
+    expect(acceptanceOutcome([markup])).toBe("fail");
+  });
+
+  it("logs each StoreMink platform finding without content, and nothing for the theme's", () => {
+    gate("routes.render", [
+      { code: "indexable", message: "secret store words", where: "/a" },
+      { code: "indexable", message: "secret store words", where: "/b" },
+      { code: "status", message: "Returned 500.", where: "/c" },
+    ]);
+    expect(vi.mocked(logWarn).mock.calls).toEqual([
+      [
+        "theme_studio.platform_finding",
+        {
+          gate: "routes.render",
+          code: "indexable",
+          findingSeverity: "minor",
+          count: 2,
+        },
+      ],
+    ]);
+    vi.mocked(logWarn).mockClear();
+    gate("browser.accessibility", [
+      {
+        code: "color-contrast",
+        message: "Contrast",
+        where: "phone390 · home · menu drawer",
+        contrast: [{ target: "a.my-product", ratio: 1.37, required: 4.5 }],
+      },
+      {
+        code: "color-contrast",
+        message: "Contrast",
+        where: "phone390 · home",
+        contrast: [{ target: "h1", ratio: 2, required: 4.5 }],
+      },
+    ]);
+    expect(vi.mocked(logWarn).mock.calls).toEqual([
+      [
+        "theme_studio.platform_finding",
+        {
+          gate: "browser.accessibility",
+          code: "color-contrast",
+          findingSeverity: "serious",
+          count: 1,
+        },
+      ],
+    ]);
+    vi.mocked(logWarn).mockClear();
+    gate("browser.overflow", [
+      { code: "horizontal_overflow", message: "x", targets: ["div.hero"] },
+    ]);
+    expect(logWarn).not.toHaveBeenCalled();
+    // Never a top-level `severity`: Cloud Logging reads it as the log level.
+    gate("routes.markup", [{ code: "lang", message: "x" }]);
+    expect(vi.mocked(logWarn).mock.calls[0][1]).not.toHaveProperty("severity");
+  });
+
+  it("reads back the rules version and each finding's severity", () => {
+    const stored = JSON.parse(
+      JSON.stringify({
+        version: 2,
+        severityRules: SEVERITY_RULES_VERSION,
+        gates: [gate("routes.render", [{ code: "indexable", message: "x" }])],
+      }),
+    );
+    const report = readAcceptanceReport(stored);
+    expect(report.severityRules).toBe("severity-v1");
+    expect(report.gates[0].severityRules).toBe("severity-v1");
+    expect(report.gates[0].findings[0].severity).toBe("minor");
+    expect(
+      readAcceptanceReport({ ...stored, severityRules: 3 }).severityRules,
+    ).toBeUndefined();
+  });
+
+  it("lists as warnings only what does not stop the run", () => {
+    const gates = [
+      gate("routes.markup", [
+        { code: "external_resource", message: "Loads x." },
+        { code: "lang", message: "No language." },
+      ]),
+      gate("browser.performance", [{ code: "lcp", message: "Slow" }], {
+        required: false,
+      }),
+      gate(
+        "browser.accessibility",
+        [{ code: "region", message: "Region", impact: "moderate" }],
+        { status: "pass" },
+      ),
+      gate("package.schema", []),
+    ];
+    expect(
+      acceptanceWarnings(gates).map((w) => [
+        w.id,
+        w.findings.map((f: GateFinding) => f.code),
+      ]),
+    ).toEqual([
+      ["browser.performance", ["lcp"]],
+      ["browser.accessibility", ["region"]],
     ]);
   });
 });

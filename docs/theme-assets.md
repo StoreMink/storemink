@@ -2,7 +2,8 @@
 
 This log records the source and transformation history of assets bundled in
 `public/themes/{theme-id}/`. It is release evidence, not a statement that the
-theme has passed storefront, accessibility, performance, or human review.
+theme has passed storefront, accessibility, performance, or design review (one
+reviewer's scorecard since 24 Oct 2026, `docs/theme-acceptance.md` §5).
 
 ## Studio `0.1.0`
 
@@ -86,8 +87,9 @@ runtime dependencies.
   `THEME_DEFINITIONS` and `THEME_META`. `demo-vitrine` is seeded on BOTH staging
   and production and route-checked live on 2026-08-22 (shop 200 with 8 cards and
   2 hover layers, `/size-guide` and `/our-edit` 200, all ten assets serving), so
-  `demo.status` is `healthy`. Accessibility, Lighthouse and the required
-  two-person review were confirmed passed on 2026-08-23, so the preset is now
+  `demo.status` is `healthy`. Accessibility, Lighthouse and the two-person
+  review then required (one reviewer since 24 Oct 2026, owner decision 5)
+  were confirmed passed on 2026-08-23, so the preset is now
   published (`visibility: "public"`, `release.status: "published"`) in the
   catalog and signup picker.
 - **Source:** generated with an image-generation tool from the prompts below; no

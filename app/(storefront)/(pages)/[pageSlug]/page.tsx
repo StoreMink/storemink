@@ -31,10 +31,13 @@ import "@/app/(storefront)/components/homepage/homepage.css";
 
 type Props = {
   params: Promise<{ pageSlug: string }>;
-  searchParams: Promise<{ preview?: string }>;
+  searchParams: Promise<{ preview?: string; review?: string }>;
 };
 
 const isPreview = (sp: { preview?: string }) => sp.preview === "1";
+// ★ A preview for LOOKING (Mink's redesign review): the same draft canvas
+//   and handshake, with none of the Builder's edit controls drawn over it.
+const isReview = (sp: { review?: string }) => sp.review === "1";
 
 export async function generateMetadata({
   params,
@@ -92,6 +95,7 @@ async function renderSections(
   sections: PageSectionItem[],
   storeId: string,
   preview: boolean,
+  review = false,
 ) {
   const allowCustomCode = Boolean(await getStoreSetting("pages.customCode"));
   const entitledSections = allowCustomCode
@@ -108,8 +112,11 @@ async function renderSections(
       <main>
         <DraftCanvas initialSections={entitledSections} datasets={datasets} />
         <PreviewBridge />
-        <PreviewBadge />
-        <BuilderOverlay />
+        {/* The review frames never answer the overlay's add/select messages,
+            and its pills and hit rects would sit over the design being
+            judged, swallowing clicks on carousels and accordions. */}
+        {review ? null : <PreviewBadge />}
+        {review ? null : <BuilderOverlay />}
       </main>
     );
   }
@@ -133,7 +140,7 @@ export default async function StorePage({ params, searchParams }: Props) {
   if (isPreview(sp)) {
     const draft = await getDraftPageForPreview(storeId, pageSlug);
     if (draft) {
-      return renderSections(draft.sections ?? [], storeId, true);
+      return renderSections(draft.sections ?? [], storeId, true, isReview(sp));
     }
   }
 

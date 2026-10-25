@@ -497,6 +497,11 @@ with regeneration. Owner decision: no per-theme cost cap.
 
 ### Found and fixed while building 3.6
 
+> Since TS-2 (25 Oct 2026) a version's Images page is the theme page's
+> Pictures tab, and there is no "Capture catalog pictures" button: every final
+> check takes the catalogue pictures. Redraws are one click and a small confirm
+> there.
+
 - **A generated theme can now publish without an upload.** On a version's
   Images page, "Capture catalog pictures" has a real browser open the
   version's private preview and photograph its home page as the catalog card

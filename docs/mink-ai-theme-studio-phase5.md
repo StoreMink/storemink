@@ -1,7 +1,25 @@
 # Mink AI Theme Studio — Phase 5 automated acceptance
 
+> **Since 24 Oct 2026 (Theme Studio wave TS-1).** There is no human approval:
+> one superadmin publishes a theme that is Ready to publish (`candidate`). A
+> check run passes when no serious finding is left, under the rules version
+> `severity-v1` (`lib/theme-studio/finding-severity.ts`); smaller findings are
+> warnings the operator may publish past ("Fix it, then allow Publish";
+> `docs/theme-acceptance.md` §5). The automatic capture runs these same gates
+> on every version, the checks screen offers **Check again** first and keeps
+> the in-browser run below as a fallback, and Publish needs a check run and a
+> design review made together on today's StoreMink build, re-checking first
+> when they are older (`docs/mink-ai-theme-studio-phase6.md` §3).
+>
+> **Since 25 Oct 2026 (wave TS-2)** the checks screen is the theme page's
+> **Checks** tab (`…/versions/<id>/acceptance` redirects there): what the
+> checks covered, **Must fix before publishing**, **Warnings (you can still
+> publish)**, **Passed**, **Screenshots** and **Technical details**, where the
+> in-browser run below now lives as a fallback. `docs/operator-console.md`
+> describes today's screen.
+
 Phase 5 adds the automated gates a generated version must pass before it can
-be presented for human approval. It is operator-only: nothing a merchant,
+be published. It is operator-only: nothing a merchant,
 their staff or a shopper does changes, so there is no Help Centre migration.
 Plan: `docs/mink-ai-theme-studio-plan.md` §7.2 and §10.
 
@@ -12,19 +30,29 @@ screen (`…/studio/[projectId]/versions/[versionId]/acceptance`) runs the gates
 on the project's **current** version and shows the evidence: every gate, its
 findings, and the exact inputs the run judged.
 
-- **Run acceptance checks.** The server stage runs inside that request. It
+- **Check in this browser** (named "Run acceptance checks" until 24 Oct
+  2026; with the automatic checks on it sits under "Check the pages in this
+  browser instead"). The server stage runs inside that request. It
   checks the package, builds (or reuses) the preview store, and fetches its
   rendered pages. The browser stage then runs in the operator's own page. Each
   review surface loads in a visible frame at laptop (1440×900), iPad
   (768×1024) and mobile (390×844) size, and is measured there.
-- **Passing makes a candidate.** When every required gate passes, the project
-  moves from `ready` to `candidate`, and the workspace says so.
-- **Failing stays out of review.** A quality failure leaves the project
-  `ready`, and demotes a candidate back to `ready`; a revision fixes it. A
-  security failure moves the project to `blocked`.
-- **Evidence goes stale.** A pass is bound to the build that rendered it. After
-  a deploy, the checks screen says the candidate's evidence is no longer
-  current and the checks must be run again.
+- **Passing makes a candidate.** When every required gate passes (since
+  24 Oct 2026: when no serious finding is left), the project moves from
+  `ready` to `candidate`, and the workspace says so. Since 8 Oct the
+  in-browser run also needs a passed final design review of that version on
+  its own build.
+- **Failing keeps it from Publish.** A quality failure (a serious finding)
+  leaves the project `ready`, and demotes a candidate back to `ready`; a
+  revision fixes it. A security failure moves the project to `blocked`.
+- **Evidence goes stale.** A pass is bound to the build that rendered it.
+  After a deploy, Publish re-checks the design on today's build first, in the
+  capture job (since 24 Oct 2026; before, the checks had to be run again in
+  an open tab). Since the Theme Studio release the build is the code commit
+  (plan P3), so a settings-only revision or a re-run of the same commit
+  never makes a pass old, but a deploy of any new commit does, a docs-only
+  or baseline-only one included; a manual `gcloud builds submit` has no
+  commit and falls back to the Cloud Run revision.
 
 ## 2. The gates
 
@@ -85,7 +113,8 @@ The Studio gates call the same functions. Three rules are new:
 
 - **Inputs.** The version, its package digest, an assets digest over every
   asset paired with the stored row that backs it, and the build id
-  (`K_REVISION` on Cloud Run, or `THEME_STUDIO_BUILD_ID`).
+  (`THEME_STUDIO_BUILD_ID`, which Cloud Build sets to the commit since the
+  Theme Studio release, or Cloud Run's `K_REVISION` when it is empty).
 - **Evidence digest.** A finished run's digest covers those inputs and every
   gate, and the row can no longer be edited or deleted.
 - **One active run per version**, enforced by a partial unique index. A new
@@ -96,10 +125,11 @@ The Studio gates call the same functions. Three rules are new:
   package digest. It also refuses a candidate changing its version in place.
   `candidate → ready` is the one new transition, mirrored in the TypeScript
   contract. A test parses the guard's SQL and compares every state pair.
-- **Approval must re-verify.** `verifyThemeStudioCandidateEvidence`
+- **Publish must re-verify.** `verifyThemeStudioCandidateEvidence`
   re-derives the passing run, its package digest, the current build and a
-  freshly computed assets digest. Phase 6 approval must call it; the candidate
-  state alone is not enough.
+  freshly computed assets digest; the candidate state alone is not enough.
+  Since 24 Oct 2026 Publish asks `currentPublishEvidence` instead, which also
+  needs a passed design review bound to that run.
 
 ## 5. The server stage fetches itself
 
@@ -147,9 +177,11 @@ The first live run hung on exactly this. Every request, acknowledgement and
 result now carries a per-page sample number.
 
 **Trust.** The runner is a superadmin's own browser, as in Mink Phase 7D. A
-superadmin could forge the numbers. Human approval is the next gate in any
-case, and a nonce binds the report to its run (stored as a hash, 30 minutes
-long, single use).
+superadmin could forge the numbers. A nonce binds the report to its run
+(stored as a hash, 30 minutes long, single use), and the run's checks never
+publish on their own: promotion needs a passed final design review (8 Oct
+2026), and Publish a design review bound to the very check run it publishes
+(24 Oct 2026).
 
 ## 7. Fixed in passing
 

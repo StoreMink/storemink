@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { sendEmailBatch, type BatchSender } from "./send-batch";
+import { logError, logWarn } from "@/lib/observability/logger";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -123,5 +124,65 @@ describe("sendEmailBatch", () => {
   it("does nothing for an empty list", async () => {
     const { resend } = fakeResend();
     expect(await sendEmailBatch(resend, [])).toEqual({ sent: [], failed: [] });
+  });
+});
+
+// ★ B22: the outage log named "[object Object]"; it now carries the
+// provider's reason as the error and the count as the context.
+describe("sendEmailBatch outage log", () => {
+  it("logs the provider's reason and how far it got", async () => {
+    const { resend } = fakeResend([], { down: true });
+    await sendEmailBatch(resend, msgs("a", "b", "c", "d", "e"));
+    expect(vi.mocked(logError)).toHaveBeenCalledWith(
+      "email: individual sends failing in a row, stopping",
+      "service unavailable",
+      { after: 3 },
+    );
+  });
+
+  it("masks an address the provider quotes", async () => {
+    const refusal = {
+      error: {
+        message:
+          "You can only send testing emails to your own email address (owner@shop.in).",
+      },
+    };
+    const resend = {
+      batch: { send: async () => refusal },
+      emails: { send: async () => refusal },
+    } as unknown as BatchSender;
+    await sendEmailBatch(resend, msgs("a", "b", "c", "d"));
+    const [, reason] = vi.mocked(logError).mock.calls[0];
+    expect(reason).toBe(
+      "You can only send testing emails to your own email address ([address]).",
+    );
+  });
+
+  // ★ The first line too: the batch refusal is logged before any message is
+  //   retried, and it is the same provider text.
+  it("masks an address in the batch refusal it retries after", async () => {
+    vi.mocked(logWarn).mockClear();
+    const refusal = {
+      error: {
+        message:
+          "You can only send testing emails to your own email address (owner@shop.in).",
+      },
+    };
+    const resend = {
+      batch: { send: async () => refusal },
+      emails: { send: async () => ({}) },
+    } as unknown as BatchSender;
+    await sendEmailBatch(resend, msgs("a", "b"));
+    expect(vi.mocked(logWarn)).toHaveBeenCalledWith(
+      "email: batch send failed, retrying individually",
+      {
+        count: 2,
+        error:
+          "You can only send testing emails to your own email address ([address]).",
+      },
+    );
+    expect(JSON.stringify(vi.mocked(logWarn).mock.calls)).not.toContain(
+      "owner@shop.in",
+    );
   });
 });

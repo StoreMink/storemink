@@ -6,6 +6,10 @@
  *   it twice more. Execution re-reads the plan and every target and refuses
  *   unless each hashes to what was approved (9B's rule).
  *
+ * ★ ONE SHAPE FOR BOTH PLAN VERSIONS. A storefront revamp's card applies a
+ *   plan version 2 through the same approval, so the same eight values bind
+ *   it; only how each digest is computed differs (revamp/apply-v2.ts).
+ *
  * Client-safe: the review card reads these.
  */
 
@@ -35,7 +39,12 @@ export interface MinkStorefrontPersonalizationActionApproval {
   };
   before: MinkStorefrontPersonalizationActionValues;
   after: MinkStorefrontPersonalizationActionValues;
-  /** The pages the approval writes, for the card's Publish step. */
+  /**
+   * The pages the approval writes, for the card's Publish step. ★ A page a
+   * storefront revamp (plan version 2) creates has no id until Apply writes
+   * it, so its `id` is ""; the revamp card publishes from the revamp's own
+   * apply snapshot instead.
+   */
   pages: Array<{ id: string; slug: string; title: string }>;
   /** Whether the header, footer or look changed, so Publish includes them. */
   chromeChanged: boolean;

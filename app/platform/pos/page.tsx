@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import posDevicesImage from "@/public/brand/storemink-pos-multidevice.png";
 import { brandOgImageUrl } from "@/lib/seo/og-card";
+import { serializeJsonLd } from "@/lib/seo/json-ld";
 import { PLATFORM_URL, POS_URL } from "@/lib/site";
 import { PLAN_LIMITS, PLAN_META } from "@/lib/plans";
 import { getPlanPricing, inr } from "@/lib/plans/pricing";
@@ -383,9 +384,7 @@ export default async function PosMarketingPage() {
     <div className="stq posx">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{
-          __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c"),
-        }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
 
       <div className="posx-nav-shell">

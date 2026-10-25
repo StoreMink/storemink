@@ -203,7 +203,7 @@ export async function readPersonalizationTarget(
   });
 }
 
-async function readPages(
+export async function readPages(
   db: Db,
   storeId: string,
   settings: Record<string, unknown>,
@@ -291,14 +291,14 @@ export function themeSectionIdsFor(
     .map((section) => section.id);
 }
 
-function sectionContentDigest(section: PageSectionItem): string {
+export function sectionContentDigest(section: PageSectionItem): string {
   return digestMinkStorefrontValue({
     type: section.type,
     config: section.config,
   });
 }
 
-async function readChrome(
+export async function readChrome(
   db: Db,
   storeId: string,
 ): Promise<PersonalizationTarget["chrome"]> {
@@ -375,7 +375,7 @@ export function chromeTextDigest(chrome: StoreChrome): string {
   });
 }
 
-async function readCategories(
+export async function readCategories(
   db: Db,
   storeId: string,
   sampleSlugs: ReadonlySet<string>,
@@ -444,7 +444,7 @@ async function readSampleProducts(
     .limit(MAX_SAMPLE_PRODUCTS);
 }
 
-async function readFacts(
+export async function readFacts(
   db: Db,
   storeId: string,
   settings: Record<string, unknown>,

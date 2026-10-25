@@ -142,6 +142,69 @@ describe("the lite model", () => {
   });
 });
 
+// ★★ B24: the fallback, where voice turns start and a busy main model's turns
+// go, recorded an unknown cost for every run it answered.
+describe("the fallback model, Gemini 3.5 Flash", () => {
+  it("prices a run at asia-south1, where Mink calls it, at the regional rate", () => {
+    // 1,000 × 1.65 + 250 × 9.90 = 1,650 + 2,475 = 4,125 micro-USD.
+    expect(
+      estimateMinkCost({
+        model: "gemini-3.5-flash",
+        location: "asia-south1",
+        usage,
+      }),
+    ).toEqual({
+      estimatedCostMicrousd: 4_125,
+      pricingVersion: `gemini-3.5-flash-regional-2026-list-c${CACHED_INPUT_RATE_MULTIPLIER}`,
+    });
+  });
+
+  it("prices a run at global at the list rate", () => {
+    // 1,000 × 1.50 + 250 × 9.00 = 1,500 + 2,250 = 3,750 micro-USD.
+    expect(
+      estimateMinkCost({
+        model: "publishers/google/models/gemini-3.5-flash",
+        location: "global",
+        usage,
+      }),
+    ).toEqual({
+      estimatedCostMicrousd: 3_750,
+      pricingVersion: `gemini-3.5-flash-global-2026-list-c${CACHED_INPUT_RATE_MULTIPLIER}`,
+    });
+  });
+
+  it("charges its cached prompt tokens at the same reduced share", () => {
+    // 600 × 1.65 + 400 × 1.65 × 0.25 + 250 × 9.90 = 990 + 165 + 2,475.
+    expect(
+      estimateMinkCost({
+        model: "gemini-3.5-flash",
+        location: "asia-south1",
+        usage: { ...usage, cachedTokens: 400 },
+      }).estimatedCostMicrousd,
+    ).toBe(3_630);
+  });
+
+  it("★ a run priced here is told apart from the rows written before the price existed", () => {
+    const version = estimateMinkCost({
+      model: "gemini-3.5-flash",
+      location: "asia-south1",
+      usage,
+    }).pricingVersion;
+    // Earlier rows carry null; nor may it read as the lite model's version.
+    expect(version).not.toBeNull();
+    expect(version).not.toContain("flash-lite");
+  });
+
+  it("leaves a pinned or other 3.5 model unpriced rather than guessing", () => {
+    for (const model of ["gemini-3.5-flash-001", "gemini-3.5-pro"]) {
+      expect(
+        estimateMinkCost({ model, location: "asia-south1", usage })
+          .estimatedCostMicrousd,
+      ).toBeNull();
+    }
+  });
+});
+
 describe("cachedPromptTokens", () => {
   it("clamps a provider count that exceeds the prompt it is a subset of", () => {
     // This value is written to a column whose CHECK sits in the SAME

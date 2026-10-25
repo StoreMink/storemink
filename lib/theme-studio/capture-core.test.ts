@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTOMATIC_CAPTURE_MAX_ATTEMPTS,
   CAPTURED_LICENSE_NOTE,
   applyCapturedImages,
   captureBlockers,
+  captureErrorKind,
+  captureRetryDecision,
   captureShots,
+  isDeployRecaptureKey,
   isEvidenceRecapture,
+  isReservedCaptureKey,
+  recheckIdempotencyKey,
+  recheckReasonOf,
+  remeasuresInPlace,
+  versionPassedChecks,
 } from "./capture-core";
 import { PLACEHOLDER_LICENSE_NOTE } from "./compiler";
 import { validateThemePackageV2, type ThemePackageV2 } from "./contracts";
@@ -270,5 +279,250 @@ describe("isEvidenceRecapture", () => {
       false,
     );
     expect(isEvidenceRecapture({ ...produced, editDetail: null })).toBe(false);
+  });
+});
+
+describe("re-check keys", () => {
+  const uuid = "0f6b4c1e-8f3a-4d2b-9c7e-1a2b3c4d5e6f";
+  it("carries the reason inside the 16 to 80 characters the capture CHECK allows", () => {
+    for (const reason of ["check_again", "publish_recheck"] as const) {
+      const key = recheckIdempotencyKey(reason, uuid);
+      expect(key).toBe(`recheck_${reason}_${uuid}`);
+      expect(key.length).toBeGreaterThanOrEqual(16);
+      expect(key.length).toBeLessThanOrEqual(80);
+      expect(key).toMatch(/^[A-Za-z0-9_-]{16,80}$/);
+      expect(recheckReasonOf(key)).toBe(reason);
+    }
+  });
+  it("reads no reason from any other key", () => {
+    expect(recheckReasonOf(`recheck_publish_${uuid}`)).toBeNull();
+    expect(recheckReasonOf(`recheck_check_again_${uuid}x`)).toBeNull();
+    expect(recheckReasonOf(`auto_final_${uuid}`)).toBeNull();
+    expect(recheckReasonOf("capture-test-key-01")).toBeNull();
+    expect(recheckReasonOf(undefined as unknown as string)).toBeNull();
+  });
+  it("knows a deploy re-capture by the prefix visual QA writes", () => {
+    expect(isDeployRecaptureKey(`auto_recapture_${uuid}`)).toBe(true);
+    expect(isDeployRecaptureKey(`auto_final_${uuid}`)).toBe(false);
+    expect(isDeployRecaptureKey(undefined as unknown as string)).toBe(false);
+  });
+  it("keeps the server's prefixes out of an operator's key", () => {
+    expect(
+      isReservedCaptureKey(recheckIdempotencyKey("check_again", uuid)),
+    ).toBe(true);
+    expect(isReservedCaptureKey(`auto_recapture_${uuid}`)).toBe(true);
+    expect(isReservedCaptureKey(`auto_final_${uuid}`)).toBe(true);
+    expect(isReservedCaptureKey("capture-test-key-01")).toBe(false);
+    expect(isReservedCaptureKey(`capture-${uuid}`)).toBe(false);
+  });
+});
+
+describe("what is re-measured in place", () => {
+  const uuid = "0f6b4c1e-8f3a-4d2b-9c7e-1a2b3c4d5e6f";
+  const recheck = {
+    automatic: true,
+    idempotencyKey: recheckIdempotencyKey("publish_recheck", uuid),
+  };
+  const deploy = { automatic: true, idempotencyKey: `auto_recapture_${uuid}` };
+  const retry = { automatic: true, idempotencyKey: "retry-key-0123456789" };
+  const passed = {
+    origin: "asset_edit",
+    visibility: "operator",
+    qaStatus: "passed",
+    editDetail: { kind: "capture" },
+  };
+  const produced = {
+    origin: "asset_edit",
+    visibility: "internal",
+    qaStatus: "pending",
+    editDetail: { kind: "capture" },
+  };
+
+  it("takes a version that passed as visible and judged", () => {
+    expect(versionPassedChecks(passed)).toBe(true);
+    expect(versionPassedChecks({ ...passed, qaStatus: "failed" })).toBe(false);
+    expect(versionPassedChecks({ ...passed, qaStatus: "not_required" })).toBe(
+      false,
+    );
+    expect(versionPassedChecks(produced)).toBe(false);
+  });
+
+  it("★ re-checks and deploy re-captures of a visible version that passed", () => {
+    expect(remeasuresInPlace(recheck, passed)).toBe(true);
+    expect(
+      remeasuresInPlace(
+        {
+          automatic: true,
+          idempotencyKey: recheckIdempotencyKey("check_again", uuid),
+        },
+        passed,
+      ),
+    ).toBe(true);
+    expect(remeasuresInPlace(deploy, passed)).toBe(true);
+    // A version from a generation run that passed is the same case.
+    expect(
+      remeasuresInPlace(recheck, { ...passed, origin: "run", editDetail: {} }),
+    ).toBe(true);
+  });
+
+  it("keeps re-measuring the hidden version an earlier capture produced", () => {
+    expect(remeasuresInPlace(deploy, produced)).toBe(true);
+    expect(remeasuresInPlace(retry, produced)).toBe(true);
+    expect(remeasuresInPlace(recheck, produced)).toBe(true);
+  });
+
+  it("★ gives every other version a new hidden version", () => {
+    // Retry automatic QA on a failed version: an operator's key, never in place.
+    expect(remeasuresInPlace(retry, { ...passed, qaStatus: "failed" })).toBe(
+      false,
+    );
+    expect(remeasuresInPlace(retry, passed)).toBe(false);
+    // A re-check of a version that never passed takes fresh catalogue pictures.
+    expect(remeasuresInPlace(recheck, { ...passed, qaStatus: "failed" })).toBe(
+      false,
+    );
+    expect(
+      remeasuresInPlace(recheck, { ...passed, qaStatus: "not_required" }),
+    ).toBe(false);
+    expect(remeasuresInPlace(deploy, { ...passed, qaStatus: "failed" })).toBe(
+      false,
+    );
+    // A generated version still needs its catalogue pictures taken.
+    expect(
+      remeasuresInPlace(deploy, { ...produced, origin: "run", editDetail: {} }),
+    ).toBe(false);
+    // Manual captures never re-measure.
+    expect(remeasuresInPlace({ ...recheck, automatic: false }, passed)).toBe(
+      false,
+    );
+    expect(remeasuresInPlace({ ...deploy, automatic: false }, produced)).toBe(
+      false,
+    );
+  });
+});
+
+// ★ Owner, 24 Oct 2026: a capture error a retry cannot fix fails at once.
+describe("which reported capture errors are tried again", () => {
+  it.each([
+    // The same every time: a screenshot over the 512 KB limit, a report or
+    // screenshot set the server refuses, an outdated job.
+    "qa_screenshot_too_large",
+    "qa_report_invalid",
+    "qa_screenshots_invalid",
+    "qa_screenshot_unusable",
+    "capture_unusable",
+    "capture_job_outdated",
+  ])("%s comes back identically: deterministic", (code) => {
+    expect(captureErrorKind(code)).toBe("deterministic");
+  });
+
+  it.each([
+    // ★ One of our own preview pages answering 404 or another 4xx: a preview
+    // answers 404 while the database is briefly out of reach too (the
+    // preview gate and the store lookup fail closed), so it is judged by its
+    // repeats, never failed on its first report. So is the not-found sample
+    // answering 200, a status 0 and a redirect.
+    "preview_status_404",
+    "preview_status_403",
+    "preview_status_401",
+    "preview_status_410",
+    "preview_status_400",
+    "preview_status_499",
+    "preview_status_200",
+    "preview_status_0",
+    "preview_status_302",
+  ])("%s is judged by its repeats", (code) => {
+    expect(captureErrorKind(code)).toBe("other");
+  });
+
+  it.each([
+    "capture_timeout",
+    "qa_measure_timeout",
+    "capture_network",
+    "acceptance_route_fetch",
+    "capture_build_changed",
+    "preview_status_429",
+    "preview_status_500",
+    "preview_status_502",
+    "preview_status_503",
+    "preview_status_504",
+  ])("%s is the weather: transient", (code) => {
+    expect(captureErrorKind(code)).toBe("transient");
+  });
+
+  it.each([
+    "capture_browser_error",
+    "qa_probe_missing",
+    "qa_measure_failed",
+    "capture_work_failed",
+    "capture_failed",
+    "preview_status_4041",
+  ])("%s is neither: judged by its repeats", (code) => {
+    expect(captureErrorKind(code)).toBe("other");
+  });
+
+  const decide = (
+    code: string,
+    attemptCount: number,
+    previousCode: string | null = null,
+  ) =>
+    captureRetryDecision({
+      code,
+      kind: captureErrorKind(code),
+      attemptCount,
+      maxAttempts: AUTOMATIC_CAPTURE_MAX_ATTEMPTS,
+      previousCode,
+    });
+
+  it("★ a deterministic error fails on its first report, with tries left", () => {
+    expect(decide("qa_screenshot_too_large", 1)).toBe("fail");
+  });
+
+  it("★ a preview page's 404 is tried again, and fails only when the next try reports it again", () => {
+    // The database was briefly out of reach: the next try loads the page.
+    expect(decide("preview_status_404", 1)).toBe("requeue");
+    expect(decide("capture_timeout", 2, "preview_status_404")).toBe("requeue");
+    // A 404, then a different result, then a 404 again: still tried again.
+    expect(decide("preview_status_404", 3, "capture_browser_error")).toBe(
+      "requeue",
+    );
+    // The same 404 on two tries in a row is the page itself: it fails on
+    // the second try, not the fifth.
+    expect(decide("preview_status_404", 2, "preview_status_404")).toBe("fail");
+    expect(decide("preview_status_403", 2, "preview_status_403")).toBe("fail");
+    // A different 4xx before it is not a repeat.
+    expect(decide("preview_status_404", 2, "preview_status_403")).toBe(
+      "requeue",
+    );
+  });
+
+  it("★ a transient error keeps every try, even when it repeats", () => {
+    for (let attempt = 1; attempt < AUTOMATIC_CAPTURE_MAX_ATTEMPTS; attempt++)
+      expect(decide("capture_timeout", attempt, "capture_timeout")).toBe(
+        "requeue",
+      );
+    expect(
+      decide(
+        "capture_timeout",
+        AUTOMATIC_CAPTURE_MAX_ATTEMPTS,
+        "capture_timeout",
+      ),
+    ).toBe("fail");
+  });
+
+  it("★ any other error fails when the same code repeats on two tries in a row", () => {
+    expect(decide("capture_browser_error", 1)).toBe("requeue");
+    expect(decide("capture_browser_error", 2, "capture_browser_error")).toBe(
+      "fail",
+    );
+    // A different code before it, or a try that lapsed without a report.
+    expect(decide("capture_browser_error", 2, "capture_timeout")).toBe(
+      "requeue",
+    );
+    expect(decide("capture_browser_error", 3, null)).toBe("requeue");
+    // Out of tries, whatever it was.
+    expect(
+      decide("capture_browser_error", AUTOMATIC_CAPTURE_MAX_ATTEMPTS, null),
+    ).toBe("fail");
   });
 });

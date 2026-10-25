@@ -32,14 +32,24 @@ vi.mock("google-auth-library", () => ({
   }),
 }));
 vi.mock("@/lib/observability/logger", () => ({
+  logError: vi.fn(),
   logInfo: vi.fn(),
   logWarn: vi.fn(),
 }));
+const sweep = vi.hoisted(() => vi.fn(async () => ({ failed: 0 })));
+vi.mock("./capture", () => ({ sweepStaleThemeStudioCaptures: sweep }));
 
 import { withService } from "@/lib/db/client";
 import { rateLimit } from "@/lib/rate-limit";
-import { logInfo, logWarn } from "@/lib/observability/logger";
-import { captureJobTarget, startCaptureJobIfWaiting } from "./capture-start";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
+import {
+  COMMIT_POLL_DELAYS_MS,
+  captureJobTarget,
+  settleCaptureJobStarts,
+  startCaptureJobAfterCommit,
+  startCaptureJobForQueued,
+  startCaptureJobIfWaiting,
+} from "./capture-start";
 
 const PROD: NodeJS.ProcessEnv = {
   NODE_ENV: "production",
@@ -168,6 +178,28 @@ describe("startCaptureJobIfWaiting", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("★ fails captures nobody took first, on every call, even where no job can start", async () => {
+    const order: string[] = [];
+    sweep.mockImplementation(async () => {
+      order.push("sweep");
+      return { failed: 1 };
+    });
+    vi.mocked(withService).mockImplementationOnce((async () => {
+      order.push("waiting?");
+      return [];
+    }) as never);
+    await startCaptureJobIfWaiting(PROD);
+    expect(order).toEqual(["sweep", "waiting?"]);
+    for (const env of [
+      { ...PROD, K_SERVICE: undefined },
+      { ...PROD, THEME_STUDIO_CAPTURE_ENABLED: "false" },
+    ]) {
+      sweep.mockClear();
+      expect(await startCaptureJobIfWaiting(env)).toBe("unconfigured");
+      expect(sweep).toHaveBeenCalledOnce();
+    }
+  });
+
   it("reports a refused start and never throws into the worker", async () => {
     state.rows = [{ id: "capture-1" }];
     fetchMock.mockResolvedValueOnce(new Response("{}", { status: 403 }));
@@ -180,5 +212,119 @@ describe("startCaptureJobIfWaiting", () => {
     expect(await startCaptureJobIfWaiting(PROD)).toBe("failed");
     vi.mocked(withService).mockRejectedValueOnce(new Error("db down"));
     expect(await startCaptureJobIfWaiting(PROD)).toBe("failed");
+  });
+});
+
+// ★ TS-3A, plan optimisation 2: the job starts right after a capture is
+// queued, not at the next minute tick.
+describe("startCaptureJobForQueued", () => {
+  it("starts the job for a capture just committed, without the stale sweep", async () => {
+    state.rows = [{ id: "capture-1" }];
+    expect(await startCaptureJobForQueued(PROD)).toBe("started");
+    expect(sweep).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("touches nothing where this deployment has no job", async () => {
+    expect(
+      await startCaptureJobForQueued({ ...PROD, K_SERVICE: undefined }),
+    ).toBe("unconfigured");
+    expect(withService).not.toHaveBeenCalled();
+  });
+
+  it("is held to the same one start per window", async () => {
+    state.rows = [{ id: "capture-1" }];
+    state.allowed = false;
+    expect(await startCaptureJobForQueued(PROD)).toBe("throttled");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("startCaptureJobAfterCommit", () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** Each look-up answers the next status; null means not visible yet. */
+  function visibleAs(...statuses: (string | null)[]) {
+    for (const status of statuses)
+      vi.mocked(withService).mockImplementationOnce((async () =>
+        status === null ? [] : [{ status }]) as never);
+  }
+
+  it("★ starts the job once the queueing transaction has committed", async () => {
+    vi.useFakeTimers();
+    state.rows = [{ id: "capture-1" }];
+    // Not visible while the caller's transaction is open, then queued.
+    visibleAs(null, "queued");
+    startCaptureJobAfterCommit("capture-1", PROD);
+    expect(withService).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(COMMIT_POLL_DELAYS_MS[0]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(COMMIT_POLL_DELAYS_MS[1]);
+    await settleCaptureJobStarts();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(logInfo).toHaveBeenCalledWith("theme_studio.capture_job_started", {
+      job: "storemink-theme-studio-capture",
+    });
+  });
+
+  it("starts nothing for a capture already claimed or ended, even while another waits", async () => {
+    vi.useFakeTimers();
+    // Another capture is waiting: that one is the minute ticks' to start.
+    state.rows = [{ id: "another-capture" }];
+    visibleAs("running");
+    startCaptureJobAfterCommit("capture-1", PROD);
+    await vi.advanceTimersByTimeAsync(COMMIT_POLL_DELAYS_MS[0]);
+    await settleCaptureJobStarts();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(rateLimit).not.toHaveBeenCalled();
+  });
+
+  it("gives up on a capture that never becomes visible (rolled back), about 16 s later", async () => {
+    vi.useFakeTimers();
+    vi.mocked(withService).mockImplementation((async () => []) as never);
+    startCaptureJobAfterCommit("capture-1", PROD);
+    const total = COMMIT_POLL_DELAYS_MS.reduce((a, b) => a + b, 0);
+    expect(total).toBeLessThanOrEqual(20_000);
+    let settled = false;
+    void settleCaptureJobStarts().then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(total - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
+    await settleCaptureJobStarts();
+    expect(settled).toBe(true);
+    expect(withService).toHaveBeenCalledTimes(COMMIT_POLL_DELAYS_MS.length);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does nothing, and sets no timer, where this deployment has no job", async () => {
+    vi.useFakeTimers();
+    startCaptureJobAfterCommit("capture-1", { ...PROD, K_SERVICE: undefined });
+    startCaptureJobAfterCommit("capture-1", {
+      ...PROD,
+      THEME_STUDIO_CAPTURE_ENABLED: "false",
+    });
+    expect(vi.getTimerCount()).toBe(0);
+    await settleCaptureJobStarts();
+    expect(withService).not.toHaveBeenCalled();
+  });
+
+  it("never throws: a failed look-up is logged and left to the minute ticks", async () => {
+    vi.useFakeTimers();
+    vi.mocked(withService).mockRejectedValueOnce(new Error("db down"));
+    startCaptureJobAfterCommit("capture-1", PROD);
+    await vi.advanceTimersByTimeAsync(COMMIT_POLL_DELAYS_MS[0]);
+    await settleCaptureJobStarts();
+    expect(logError).toHaveBeenCalledWith(
+      "theme studio: capture start after commit failed",
+      expect.any(Error),
+      { captureId: "capture-1" },
+    );
+    expect(logWarn).not.toHaveBeenCalledWith(
+      "theme_studio.capture_job_start_failed",
+      expect.anything(),
+    );
   });
 });

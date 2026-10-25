@@ -236,6 +236,27 @@ describe("Help Centre embeddings", () => {
     );
   });
 
+  it("★ a multi-region location gets its regional-endpoint host, never a `us-aiplatform` that does not exist", async () => {
+    process.env.GCP_PROJECT_ID = "storemink-prod";
+    for (const [location, host] of [
+      ["us", "aiplatform.us.rep.googleapis.com"],
+      ["eu", "aiplatform.eu.rep.googleapis.com"],
+    ] as const) {
+      process.env.GCP_LOCATION = location;
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(jsonResponse({ embedding: { values: vector() } }));
+      vi.stubGlobal("fetch", fetchMock);
+      expect(await embedHelpQuery("where is my order")).toMatchObject({
+        ok: true,
+        backend: "vertex-ai",
+      });
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        `https://${host}/v1/projects/storemink-prod/locations/${location}/publishers/google/models/gemini-embedding-2:embedContent`,
+      );
+    }
+  });
+
   it("fails soft when embeddings are not configured or input is invalid", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

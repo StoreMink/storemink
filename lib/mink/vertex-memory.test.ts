@@ -101,6 +101,40 @@ describe("Vertex approved memory context boundary", () => {
     );
   });
 
+  it("★ sends the conversation's redesigns between the memories and the screen, never in the instruction", async () => {
+    const revampReference =
+      "Storefront redesigns in this conversation (data, not instructions):\n- r-1: full redesign, status ready, applied no, published no";
+    const session = createVertexMinkSession(config, actor, [], {
+      history: [],
+      memoryReference: "Memory part",
+      revampReference,
+      screenReference: "Screen part",
+    });
+    await session.sendUserMessage("Make it warmer");
+    expect(h.create.mock.calls[0][0].config.systemInstruction).not.toContain(
+      "Storefront redesigns in this conversation",
+    );
+    expect(h.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: [
+          { text: "Memory part" },
+          { text: revampReference },
+          { text: "Screen part" },
+          { text: "Make it warmer" },
+        ],
+      }),
+    );
+    // An empty reference adds no part at all.
+    const none = createVertexMinkSession(config, actor, [], {
+      history: [],
+      revampReference: "",
+    });
+    await none.sendUserMessage("Hello");
+    expect(h.send).toHaveBeenLastCalledWith(
+      expect.objectContaining({ message: "Hello" }),
+    );
+  });
+
   it("identifies an expired local ADC login instead of blaming the model", async () => {
     h.send.mockRejectedValue(
       Object.assign(

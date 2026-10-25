@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { readMinkArtifacts } from "./mink-artifact-parser";
 
 describe("readMinkArtifacts", () => {
@@ -465,5 +467,39 @@ describe("navigation artifacts", () => {
         { ...valid, status: "applied" },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("the storefront revamp card", () => {
+  const valid = {
+    type: "storefront_revamp",
+    revampId: "11111111-2222-4333-8444-555555555555",
+    kind: "full",
+    status: "running",
+  };
+
+  it("round-trips through saved history and refuses a malformed card", () => {
+    expect(readMinkArtifacts(JSON.parse(JSON.stringify([valid])))).toEqual([
+      valid,
+    ]);
+    expect(
+      readMinkArtifacts([
+        { ...valid, revampId: "not-an-id" },
+        { ...valid, kind: "partial" },
+        { ...valid, status: "applied" },
+        { type: "storefront_revamp" },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("counts as what the run produced, so the reads behind it do not bury it", () => {
+    const source = readFileSync(
+      join(process.cwd(), "lib/mink/orchestrator.ts"),
+      "utf8",
+    );
+    const produced = source.match(
+      /const PRODUCED_ARTIFACTS[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/,
+    );
+    expect(produced?.[1]).toContain('"storefront_revamp"');
   });
 });

@@ -4,6 +4,14 @@
 > shopper flow changes, so there is **no Help Centre migration**. Revisions run
 > on the same providers as generation — the offline provider by default, and
 > Gemini only where Phase 3's rollout steps have been completed.
+>
+> **Since 25 Oct 2026 (wave TS-2)** a version's Preview page and the compare
+> page are the theme page's **Preview** and **Changes** tabs
+> (`…/versions/<id>` and `…/compare` redirect there). The frames are Desktop,
+> Tablet and Phone, fitted to the tab's width and height, **Open full page**
+> opens at once, and a version is a "Design N" in the header's Design list.
+> This record keeps the Phase 4 screens as built; `docs/operator-console.md`
+> describes today's.
 
 ## 1. What changes for an operator
 
@@ -28,10 +36,13 @@ A project with a version now supports the whole review loop in the Studio:
   catalogue and navigation changes, and capability gaps added or cleared.
 - **Make current.** Any earlier version can be made current again. Nothing
   is copied or deleted, so the version you move away from stays one click away.
+  Since 24 Oct 2026, with the automatic checks on, it also checks the version
+  (see **Restore** below).
 
 A preview takes no orders, is hidden from search, and is removed a day after
 it was last opened. Each project keeps at most three open previews; opening a
-fourth closes the one used least recently.
+fourth closes the one used least recently (since 24 Oct 2026 never one a
+capture is measuring: the next oldest closes instead).
 
 ## 2. Revisions
 
@@ -72,7 +83,17 @@ Other behaviour:
   messages.
 - **Restore.** `restoreThemeStudioVersion` only moves `current_version_id`,
   and only from `ready` or `blocked`. From `blocked` it sets any pending
-  questions aside.
+  questions aside. It now also runs from Ready to publish (`candidate`),
+  which drops back to `ready` because its evidence covered another version.
+  Since 24 Oct 2026 (TS-1D) it refuses a version still
+  inside a check, and with the automatic checks on it is never a dead end, in
+  the same transaction: a version that passed and whose evidence still holds
+  on today's build (`currentPublishEvidence`) is Ready to publish at once; one
+  that passed but whose evidence does not hold is re-checked in place; one
+  that never passed is checked on a new hidden version; one with a placeholder
+  left waits on `ready`. It returns that outcome (`ready`,
+  `ready_to_publish`, `rechecking` or `checking`), recorded on
+  `version_restored`.
 
 ## 3. Previews
 
@@ -185,7 +206,9 @@ field accepts, rather than a URL that 404s inside the page.
 - **Archiving.** Archiving a project also discards its previews after the
   response.
 - **Limits.** 3 previews per project, evicting the least recently opened, and
-  50 across the platform.
+  50 across the platform. Since 24 Oct 2026 (TS-1E) neither the eviction nor
+  the sweep removes the store of a version that a queued capture, or a
+  running capture on a live lease, is measuring.
 
 ## 4. Schema — migration `20260924_0130_theme_studio_preview_revision`
 

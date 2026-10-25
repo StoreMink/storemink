@@ -7,11 +7,18 @@ vi.mock("@/app/dashboard/lib/access", () => ({
   getManagerUserId: vi.fn(),
   getActingStoreId: vi.fn(async () => "store-1"),
 }));
-vi.mock("@/lib/ai/gemini", () => ({
+vi.mock("@/lib/ai/gemini", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ai/gemini")>()),
   callGemini: vi.fn(),
 }));
+// What consumeAiQuota took; refundAiQuota must be handed exactly this back.
+const AI_TAKE = vi.hoisted(() => ({
+  source: "credit" as const,
+  takeId: "22222222-2222-4222-8222-222222222222",
+}));
 vi.mock("@/lib/ai/quota", () => ({
-  consumeAiQuota: vi.fn(async () => ({ allowed: true })),
+  consumeAiQuota: vi.fn(async () => ({ allowed: true, taken: AI_TAKE })),
+  refundAiQuota: vi.fn(async () => "refunded"),
   getAiUsage: vi.fn(async () => ({ used: 2, cap: 10 })),
 }));
 
@@ -31,15 +38,18 @@ import {
   generateBrandVoice,
 } from "./brand-voice-actions";
 import { getManagerUserId } from "@/app/dashboard/lib/access";
-import { callGemini } from "@/lib/ai/gemini";
-import { consumeAiQuota } from "@/lib/ai/quota";
+import { AI_UNUSABLE_MESSAGE, callGemini } from "@/lib/ai/gemini";
+import { consumeAiQuota, refundAiQuota } from "@/lib/ai/quota";
 
 describe("brand-voice actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbHolder.current = makeDbMock();
     vi.mocked(getManagerUserId).mockResolvedValue("user-1");
-    vi.mocked(consumeAiQuota).mockResolvedValue({ allowed: true });
+    vi.mocked(consumeAiQuota).mockResolvedValue({
+      allowed: true,
+      taken: AI_TAKE,
+    });
     vi.mocked(callGemini).mockResolvedValue({ text: "# Echos — Brand Voice" });
   });
 
@@ -135,12 +145,49 @@ describe("brand-voice actions", () => {
       expect(userText).toContain("warm, honest");
       // Review-before-save: generation must NOT write the profile.
       expect(dbHolder.current.calls.insert).toHaveLength(0);
+      // ★ A delivered draft keeps its credit.
+      expect(refundAiQuota).not.toHaveBeenCalled();
     });
 
-    it("surfaces a Gemini error", async () => {
+    // ★★ B1: the credit was taken first, so a failure gives it back.
+    it("surfaces a Gemini error and gives the credit back", async () => {
       vi.mocked(callGemini).mockResolvedValueOnce({ error: "AI busy" });
       const res = await generateBrandVoice({ sell: "juice" });
       expect(res.error).toBe("AI busy");
+      expect(refundAiQuota).toHaveBeenCalledTimes(1);
+      expect(refundAiQuota).toHaveBeenCalledWith("store-1", AI_TAKE);
+    });
+
+    it("gives the credit back for an empty reply", async () => {
+      vi.mocked(callGemini).mockResolvedValueOnce({ text: "" });
+      const res = await generateBrandVoice({ sell: "juice" });
+      expect(res.error).toBe(AI_UNUSABLE_MESSAGE);
+      expect(refundAiQuota).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives the credit back when the model call throws", async () => {
+      vi.mocked(callGemini).mockRejectedValueOnce(new Error("boom"));
+      await expect(generateBrandVoice({ sell: "juice" })).rejects.toThrow(
+        "boom",
+      );
+      expect(refundAiQuota).toHaveBeenCalledWith("store-1", AI_TAKE);
+    });
+
+    it("refunds nothing when the quota refused the generation", async () => {
+      vi.mocked(consumeAiQuota).mockResolvedValueOnce({
+        allowed: false,
+        error: "You've used all 10 AI generations…",
+      });
+      await generateBrandVoice({ sell: "juice" });
+      expect(refundAiQuota).not.toHaveBeenCalled();
+    });
+
+    // ★ The rates are per store AND per admin, so the take names who asked.
+    it("takes the credit for the admin who asked", async () => {
+      await generateBrandVoice({ sell: "juice" });
+      expect(consumeAiQuota).toHaveBeenCalledWith("store-1", {
+        actorId: "user-1",
+      });
     });
   });
 });

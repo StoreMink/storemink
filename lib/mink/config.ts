@@ -53,10 +53,10 @@ export interface MinkConfig {
    * answer to a spoken question started 15 to 18 s after it was sent on
    * gemini-3.7-flash at global and 6 to 10 s on 3.5 Flash in Mumbai; the
    * spoken "let me check" came at 5 to 9 s against 1.5 to 5.5 s. Typed chat
-   * stays on the main model. ⚠ Per third-party price trackers (Google's page
-   * does not list it) 3.5 Flash costs about twice 3.7 Flash's 2026 rate per
-   * token, and `estimateMinkCost` has no price for it, so a voice run's cost
-   * estimate is unknown (credits are band-based and unaffected).
+   * stays on the main model. ⚠ 3.5 Flash costs about twice 3.7 Flash's 2026
+   * rate per token, and `estimateMinkCost` prices it at Google's regional
+   * rate, $1.65 / $9.90 per million tokens at asia-south1 (credits are
+   * band-based and unaffected).
    */
   voiceStartsOnFallback: boolean;
   /**
@@ -183,8 +183,13 @@ export function getMinkConfig(): MinkConfig {
       process.env.GCP_LOCATION?.trim() ||
       "global",
     model: process.env.MINK_VERTEX_MODEL?.trim() || "gemini-3.7-flash",
+    // ★★ ONE IMAGE MODEL FOR EVERY PICTURE (owner, 25 Oct 2026): Nano Banana
+    // 2.1, as in Theme Studio (lib/theme-studio/image-models.ts). It was
+    // gemini-3.1-flash-image; MINK_IMAGE_MODEL (cloudbuild.yaml's
+    // _MINK_IMAGE_MODEL) can still name another model, which is then sent
+    // no thinking level (media-generation.ts requestMinkImage).
     imageModel:
-      process.env.MINK_IMAGE_MODEL?.trim() || "gemini-3.1-flash-image",
+      process.env.MINK_IMAGE_MODEL?.trim() || "gemini-nano-banana-2.1",
     // Gemini image generation is served at the global Vertex endpoint. Keep a
     // separate override so an operator can move it without moving chat.
     imageLocation: process.env.MINK_IMAGE_LOCATION?.trim() || "global",

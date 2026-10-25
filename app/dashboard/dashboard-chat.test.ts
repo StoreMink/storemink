@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
-import { createElement } from "react";
+import { createElement, Fragment } from "react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clampMinkPanelWidth,
@@ -101,6 +107,7 @@ const baseChatState = {
   retry: vi.fn(),
   reset: vi.fn(),
   startNewChat: vi.fn(),
+  addressOpens: 0,
   showSpotlight: vi.fn(),
   loadConversation: vi.fn(),
   deleteConversation: vi.fn(),
@@ -1223,5 +1230,377 @@ describe("★★ New chat and messages with attachments", () => {
       "Attach the file again to send it.",
     );
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+});
+
+describe("★★ a chat opened from the address opens at its newest message (B20)", () => {
+  const chatA = [
+    { id: "a-u1", role: "user" as const, text: "How are sales this week?" },
+    { id: "a-a1", role: "assistant" as const, text: "Up 12% on last week." },
+  ];
+  const chatB = [
+    { id: "b-u1", role: "user" as const, text: "Redesign my store" },
+    {
+      id: "b-a1",
+      role: "assistant" as const,
+      text: "Your storefront redesign is ready. You can review it here.",
+    },
+  ];
+
+  function chat(state: Record<string, unknown>) {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      ...state,
+    } as unknown as ReturnType<typeof useChat>);
+  }
+  const overlay = () => createElement(DashboardChat, { variant: "overlay" });
+  const jumpButton = () =>
+    screen.queryByRole("button", { name: "Jump to latest message" });
+
+  /** jsdom lays nothing out: give the scroller what a browser would measure. */
+  function sized(
+    scroller: HTMLElement,
+    scrollHeight: number,
+    scrollTop: number,
+  ) {
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: scrollHeight },
+      scrollTop: { configurable: true, value: scrollTop, writable: true },
+      clientHeight: { configurable: true, value: 600 },
+    });
+    return scroller;
+  }
+
+  /**
+   * One animation frame, run after every frame queued before it, as a browser
+   * runs them. ★ Waiting on a frame rather than on the jump button: the
+   * button can appear while a frame queued earlier is still pending, and that
+   * stale frame then decides what a test sees.
+   */
+  const nextFrame = () =>
+    act(
+      () =>
+        new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        }),
+    );
+
+  /** The full view on chat A, left scrolled up (it stops following). */
+  async function leftScrolledUp() {
+    chat({ messages: chatA });
+    const view = render(overlay());
+    const scroller = sized(
+      screen.getByTestId("mink-message-scroller"),
+      1600,
+      200,
+    );
+    fireEvent.scroll(scroller);
+    await screen.findByRole("button", { name: "Jump to latest message" });
+    return { view, scroller };
+  }
+
+  it("★★ opens a view last left scrolled up at the chat's newest message, and follows new output", async () => {
+    const { view } = await leftScrolledUp();
+    // The full view is closed; its scroll-follow state outlives it.
+    chat({ messages: chatA, isChatOpen: false });
+    view.rerender(overlay());
+    expect(screen.queryByTestId("mink-message-scroller")).toBeNull();
+
+    // The "redesign ready" notice: the address open is counted before the
+    // chat loads, and the full view opens on what it had...
+    chat({ messages: chatA, addressOpens: 1, isHistoryLoading: true });
+    view.rerender(overlay());
+    const reopened = sized(
+      screen.getByTestId("mink-message-scroller"),
+      2400,
+      0,
+    );
+    // ...then the named chat lands.
+    chat({ messages: chatB, addressOpens: 1 });
+    view.rerender(overlay());
+
+    await waitFor(() => expect(reopened.scrollTop).toBe(2400));
+    expect(jumpButton()).toBeNull();
+
+    // ★ And it follows what arrives next (the card a stopped reply kept).
+    sized(reopened, 3200, 2400);
+    chat({
+      messages: [
+        ...chatB,
+        { id: "b-a2", role: "assistant" as const, text: "Here is the card." },
+      ],
+      addressOpens: 1,
+    });
+    view.rerender(overlay());
+    await waitFor(() => expect(reopened.scrollTop).toBe(3200));
+    expect(jumpButton()).toBeNull();
+  });
+
+  it("★★ the chat already open, loaded again from the address, moves to its newest message too, its draft untouched", async () => {
+    chat({ messages: chatA });
+    const view = render(overlay());
+    const scroller = sized(
+      screen.getByTestId("mink-message-scroller"),
+      1600,
+      200,
+    );
+    // ★ The merchant reads scrolled up for a while: every frame the view
+    //   queued has run, so only the address open can hide the button. With a
+    //   frame from the view's mount still pending, that frame hid it and this
+    //   test passed without the address open's own hide.
+    await nextFrame();
+    scroller.scrollTop = 200;
+    fireEvent.scroll(scroller);
+    await nextFrame();
+    expect(jumpButton()).not.toBeNull();
+
+    chat({
+      messages: chatA,
+      addressOpens: 1,
+      isHistoryLoading: true,
+      input: "Make the colours warmer",
+    });
+    view.rerender(overlay());
+    // The button goes before the chat lands, as when History is used.
+    await nextFrame();
+    expect(jumpButton()).toBeNull();
+
+    sized(scroller, 2000, 200);
+    chat({
+      messages: [
+        ...chatA.map((message) => ({ ...message })),
+        {
+          id: "a-a2",
+          role: "assistant" as const,
+          text: "Your storefront redesign is ready. You can review it here.",
+        },
+      ],
+      addressOpens: 1,
+      input: "Make the colours warmer",
+    });
+    view.rerender(overlay());
+
+    await waitFor(() => expect(scroller.scrollTop).toBe(2000));
+    expect(jumpButton()).toBeNull();
+    expect(screen.getByLabelText("Message Mink AI")).toHaveValue(
+      "Make the colours warmer",
+    );
+    expect(baseChatState.setInput).not.toHaveBeenCalled();
+  });
+
+  it("★★ opens at the newest message after the full view was closed mid-reply, not at the question that reply anchored", async () => {
+    const asked = [
+      ...chatA,
+      { id: "a-u2", role: "user" as const, text: "Redesign my store" },
+    ];
+    const answered = [
+      ...asked,
+      {
+        id: "a-a2",
+        role: "assistant" as const,
+        text: "I have started your storefront redesign.",
+      },
+    ];
+    chat({ messages: chatA });
+    const view = render(overlay());
+    sized(screen.getByTestId("mink-message-scroller"), 1200, 600);
+    await nextFrame();
+
+    // A question: the reply runs with it anchored at the top of the view.
+    chat({ messages: asked, isReplying: true, statusText: "Thinking…" });
+    view.rerender(overlay());
+    await nextFrame();
+    expect(scrollIntoView).toHaveBeenCalled();
+
+    // The full view is closed while Mink is still answering, and the answer
+    // lands while it is closed, so nothing positions it.
+    chat({
+      messages: asked,
+      isReplying: true,
+      statusText: "Thinking…",
+      isChatOpen: false,
+    });
+    view.rerender(overlay());
+    chat({ messages: answered, isChatOpen: false });
+    view.rerender(overlay());
+    await nextFrame();
+    scrollIntoView.mockClear();
+
+    // The "redesign ready" notice opens the same chat from the address.
+    chat({ messages: answered, addressOpens: 1, isHistoryLoading: true });
+    view.rerender(overlay());
+    const reopened = sized(
+      screen.getByTestId("mink-message-scroller"),
+      2400,
+      0,
+    );
+    await nextFrame();
+    chat({
+      messages: [
+        ...answered.map((message) => ({ ...message })),
+        {
+          id: "a-a3",
+          role: "assistant" as const,
+          text: "Your storefront redesign is ready. You can review it here.",
+        },
+      ],
+      addressOpens: 1,
+    });
+    view.rerender(overlay());
+
+    // ★ The old question is not scrolled back into view: the card is.
+    await waitFor(() => expect(reopened.scrollTop).toBe(2400));
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(jumpButton()).toBeNull();
+  });
+
+  it("leaves a reader scrolled up where they are while no chat is opened from the address", async () => {
+    const { view, scroller } = await leftScrolledUp();
+    sized(scroller, 2000, 200);
+    chat({
+      messages: [
+        ...chatA,
+        { id: "a-a2", role: "assistant" as const, text: "And one more thing." },
+      ],
+    });
+    view.rerender(overlay());
+
+    await waitFor(() => expect(jumpButton()).not.toBeNull());
+    expect(scroller.scrollTop).toBe(200);
+  });
+
+  it("★ choosing a chat in History does the same, at once", async () => {
+    const { view, scroller } = await leftScrolledUp();
+    chat({
+      messages: chatA,
+      conversations: [
+        {
+          id: "chat-b",
+          title: "Storefront redesign",
+          lastMessageAt: "2026-10-24T10:00:00.000Z",
+          createdAt: "2026-10-24T09:00:00.000Z",
+        },
+      ],
+    });
+    view.rerender(overlay());
+    const history = await screen.findByRole("complementary", {
+      name: "Mink AI conversations",
+    });
+    fireEvent.click(
+      Array.from(history.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("Storefront redesign"),
+      )!,
+    );
+
+    expect(baseChatState.loadConversation).toHaveBeenCalledWith("chat-b");
+    expect(jumpButton()).toBeNull();
+    sized(scroller, 2400, 200);
+    chat({ messages: chatB });
+    view.rerender(overlay());
+    await waitFor(() => expect(scroller.scrollTop).toBe(2400));
+  });
+
+  // ★★ The thread's scroller is a new element each time the chat appears: the
+  //   panel opened again, or the switch between the side panel and the full
+  //   view (two instances, each with its own scroller). A new element starts
+  //   at its top, and nothing else moved it while the chat itself was
+  //   unchanged.
+  describe("★★ a scroller mounted over a chat in memory starts at its newest message", () => {
+    const panel = () => createElement(DashboardChat, { variant: "panel" });
+    const both = () =>
+      createElement(
+        Fragment,
+        null,
+        createElement(DashboardChat, { variant: "panel" }),
+        createElement(DashboardChat, { variant: "overlay" }),
+      );
+    const scroller = () => screen.getByTestId("mink-message-scroller");
+
+    /** The merchant scrolls up and reads: the view stops following. */
+    async function scrollUp(element: HTMLElement) {
+      element.scrollTop = 200;
+      fireEvent.scroll(element);
+      await nextFrame();
+      expect(jumpButton()).not.toBeNull();
+    }
+
+    it("★★ the panel opened again, even one left scrolled up", async () => {
+      chat({ messages: chatA, isExpanded: false });
+      const view = render(panel());
+      await nextFrame();
+      await scrollUp(sized(scroller(), 1600, 200));
+
+      chat({ messages: chatA, isExpanded: false, isChatOpen: false });
+      view.rerender(panel());
+      expect(screen.queryByTestId("mink-message-scroller")).toBeNull();
+
+      chat({ messages: chatA, isExpanded: false });
+      view.rerender(panel());
+      const reopened = sized(scroller(), 1600, 0);
+      await nextFrame();
+
+      expect(reopened.scrollTop).toBe(1600);
+      expect(jumpButton()).toBeNull();
+    });
+
+    it("★★ the side panel to the full view and back", async () => {
+      chat({ messages: chatA, isExpanded: false });
+      const view = render(both());
+      await nextFrame();
+      await scrollUp(sized(scroller(), 1600, 200));
+
+      chat({ messages: chatA });
+      view.rerender(both());
+      const full = sized(scroller(), 2400, 0);
+      await nextFrame();
+      expect(full.scrollTop).toBe(2400);
+      expect(jumpButton()).toBeNull();
+
+      await scrollUp(full);
+      chat({ messages: chatA, isExpanded: false });
+      view.rerender(both());
+      const side = sized(scroller(), 1600, 0);
+      await nextFrame();
+      expect(side.scrollTop).toBe(1600);
+      expect(jumpButton()).toBeNull();
+    });
+
+    it("★ while Mink is answering, the question stays anchored at the top, with its tail room", async () => {
+      const asked = [
+        ...chatA,
+        { id: "a-u2", role: "user" as const, text: "Redesign my store" },
+      ];
+      chat({ messages: chatA });
+      const view = render(overlay());
+      sized(scroller(), 1200, 600);
+      await nextFrame();
+      chat({ messages: asked, isReplying: true, statusText: "Thinking…" });
+      view.rerender(overlay());
+      await nextFrame();
+      expect(scrollIntoView).toHaveBeenCalledOnce();
+
+      // Closed and opened again before the answer lands.
+      chat({
+        messages: asked,
+        isReplying: true,
+        statusText: "Thinking…",
+        isChatOpen: false,
+      });
+      view.rerender(overlay());
+      chat({ messages: asked, isReplying: true, statusText: "Thinking…" });
+      view.rerender(overlay());
+      const reopened = sized(scroller(), 2400, 0);
+      await nextFrame();
+
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+      expect(scrollIntoView).toHaveBeenLastCalledWith({
+        block: "start",
+        behavior: "smooth",
+      });
+      expect(reopened.scrollTop).toBe(0);
+      expect(
+        screen.getByTestId("mink-turn-anchor-space").style.minHeight,
+      ).not.toBe("0px");
+    });
   });
 });

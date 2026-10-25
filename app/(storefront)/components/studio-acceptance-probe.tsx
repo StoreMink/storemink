@@ -222,19 +222,29 @@ function clippedOverflow(limit: number): { px: number; offenders: string[] } {
   return { px, offenders };
 }
 
-function clippedText(limit: number, root: ParentNode | null = document.body) {
-  const findings: { target: string; clippedX: number; clippedY: number }[] = [];
+type ClippedTextItem = { target: string; clippedX: number; clippedY: number };
+
+/**
+ * Text clipped by its own box, the largest clip first. Every element in the
+ * scan is measured before the list is cut to `limit`, so the cut can never
+ * drop a heading cut in half behind a grid of card titles clipped by a pixel
+ * or two: the server makes a clip of a pixel or two a warning and a larger
+ * one serious (lib/theme-studio/finding-severity.ts). `clippedTextFound` is
+ * how many there were before the cut; the server reads its presence as "this
+ * list holds the largest clips".
+ */
+function clippedText(
+  limit: number,
+  root: ParentNode | null = document.body,
+): { clippedText: ClippedTextItem[]; clippedTextFound: number } {
+  const findings: ClippedTextItem[] = [];
   const elements = root?.querySelectorAll("*") ?? [];
   for (let i = 0; i < elements.length && i < 6000; i += 1) {
     const element = elements[i];
     // querySelectorAll's type parameter does not filter SVG/MathML nodes.
     // Every storefront has SVG icons; they have no innerText and previously
     // crashed the entire automatic capture after all pictures were taken.
-    if (
-      findings.length >= limit ||
-      !(element instanceof HTMLElement) ||
-      !element.innerText?.trim()
-    )
+    if (!(element instanceof HTMLElement) || !element.innerText?.trim())
       continue;
     const style = getComputedStyle(element);
     if (
@@ -293,7 +303,14 @@ function clippedText(limit: number, root: ParentNode | null = document.body) {
       clippedY: Math.round(clippedY),
     });
   }
-  return findings;
+  const size = (item: ClippedTextItem) =>
+    Math.max(item.clippedX, item.clippedY);
+  // A stable sort: equal clips keep their page order.
+  findings.sort((a, b) => size(b) - size(a));
+  return {
+    clippedText: findings.slice(0, limit),
+    clippedTextFound: findings.length,
+  };
 }
 
 function smallTapTargets(limit: number, root: ParentNode = document) {
@@ -485,7 +502,7 @@ async function measure(perf: { lcp: number | null; cls: number }) {
 
   const page = await axeAudit({ exclude: [["nextjs-portal"]] });
   const pageFindings = {
-    clippedText: clippedText(40),
+    ...clippedText(40),
     smallTapTargets: smallTapTargets(60),
     imageCropIssues: imageCropIssues(40),
   };
@@ -548,7 +565,8 @@ async function axeAudit(context: ElementContext) {
 const EMPTY_STATE_AUDIT = {
   violations: [] as AxeAudit["violations"],
   contrastUnresolved: [] as AxeAudit["contrastUnresolved"],
-  clippedText: [] as ReturnType<typeof clippedText>,
+  clippedText: [] as ClippedTextItem[],
+  clippedTextFound: 0,
   smallTapTargets: [] as ReturnType<typeof smallTapTargets>,
 };
 
@@ -558,7 +576,7 @@ const EMPTY_STATE_AUDIT = {
 async function chromeStates() {
   const measured = await measureChromeStates(async (panel) => ({
     ...(await axeAudit(panel)),
-    clippedText: clippedText(20, panel),
+    ...clippedText(20, panel),
     smallTapTargets: smallTapTargets(30, panel),
   }));
   return measured.map(({ audit, ...rest }) => ({

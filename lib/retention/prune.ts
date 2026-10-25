@@ -225,6 +225,30 @@ function batchDeleter(
     });
 }
 
+/** `ai_quota_refunds` (migration 0237) has no Drizzle table: only
+ * `refund_ai_quota` writes it. One statement keyed on its primary key,
+ * `take_id`, the search-metrics shape below. ★ The page is chosen by
+ * `created_at` with no index of its own (the table's only other index leads
+ * with `store_id`), which is fine for a table that gains one row per refunded
+ * take; LIMIT stops the scan at the first `limit` old rows. */
+function aiQuotaRefundBatchDeleter(
+  floorIso: string,
+  limit: number,
+): Promise<number> {
+  return withService(async (db) => {
+    const result = await db.execute(sql`
+      DELETE FROM public.ai_quota_refunds
+       WHERE take_id IN (
+         SELECT take_id
+           FROM public.ai_quota_refunds
+          WHERE created_at < ${floorIso}::timestamptz
+          LIMIT ${limit}
+       )
+    `);
+    return result.rowCount ?? 0;
+  });
+}
+
 /** Search metrics use the meaningful composite bucket key rather than a
  * surrogate id. `ctid` is confined to this one statement, where it safely
  * identifies the bounded page selected and cannot survive a transaction. */
@@ -448,6 +472,21 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       billingWebhookEvents.eventId,
       billingWebhookEvents.receivedAt,
     ),
+  },
+  // ── Generate with AI refunds ───────────────────────────────────────────
+  // ★ AN EXACTLY-ONCE MARKER, like the webhook receipts above, and nothing
+  // cascades into it or out of it (it references only `stores`), so its place
+  // in this list is free.
+  {
+    table: "ai_quota_refunds",
+    days: 90,
+    reason:
+      "One row per Generate with AI take that was given back, kept so a second " +
+      "refund of the same take gives nothing. A take's id is minted for one " +
+      "request and refunded inside it (two tries, under a second apart), so 90 " +
+      "days is far past any repeat; a purchased credit's refund stays on the " +
+      "credit ledger as its grant row.",
+    deleteBatch: aiQuotaRefundBatchDeleter,
   },
   {
     table: "store_search_metrics",

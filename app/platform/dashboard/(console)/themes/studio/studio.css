@@ -1,0 +1,1287 @@
+/* ============================================================
+   Theme Studio's own classes (wave TS-2, plan section 4).
+
+   ★ LOADED ONCE, by app/platform/dashboard/(console)/themes/layout.tsx, so
+   every Themes and Theme Studio screen has it and no other file imports it.
+   Next.js keeps a global stylesheet after the operator navigates away, so
+   EVERY class here starts with `studio-` and nothing reaches another console
+   page: the frame rules below need `.studio-fullwidth` (set by the theme page
+   while it is open) or a `.studio-page` inside the frame.
+
+   ★ THE DASHBOARD'S DESIGN SYSTEM ONLY. Colours are the `--dash-*` tokens of
+   app/dashboard/dashboard.css (neutral plus indigo); no violet, no raw palette
+   colour, and nothing here edits dashboard.css. Words stay readable: the
+   dashboard's amber and green are 3.3 to 1 or less as text (under 2.9 on their
+   own tints, studio-ui.tsx), so a status keeps its tone in a soft tint, a
+   border and a dot, and its words in the dashboard's ink. Red words are 4.8 to
+   1 on white only, so `studio-error` goes on a white card or in a dialog.
+
+   ★ 44 PX ON PHONES AND ON TOUCH SCREENS OF ANY WIDTH. The dashboard's own
+   rule covers screens up to 767 px only (dashboard.css, the mobile block);
+   `(pointer: coarse)` adds a tablet or a touch laptop held at any width.
+   ============================================================ */
+
+/* ---------- The full-width theme page ----------
+   The analytics editor's pattern (dashboard-canvas.tsx toggles a class on
+   `.dashboard-frame`; dashboard.css hides `.dash-sidebar` for it). The class is
+   set by the theme page's workspace; `:has(.studio-page)` gives the same layout
+   in the server's first paint, before the page is interactive, so the sidebar
+   never flashes in and out. On phones the sidebar is already a drawer behind
+   the menu button, and it stays reachable there. */
+@media (min-width: 768px) {
+  .dashboard-frame.studio-fullwidth .dash-sidebar,
+  .dashboard-frame:has(.studio-page) .dash-sidebar {
+    display: none;
+  }
+
+  .dashboard-frame.studio-fullwidth .dash-main,
+  .dashboard-frame:has(.studio-page) .dash-main {
+    margin-left: 0 !important;
+  }
+}
+
+/* The theme page manages its own scrolling areas (the chat, the tab panel),
+   so the content column gives up its padding and its scroll while it is open. */
+.dashboard-frame.studio-fullwidth .dash-content,
+.dashboard-frame:has(.studio-page) .dash-content {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* ---------- Every Studio screen ---------- */
+.studio-root {
+  color: var(--dash-text);
+}
+
+/* `hidden` wins over a class that sets `display` (a folded chat, a closed
+   tab panel): an author rule otherwise beats the browser's own [hidden]. */
+.studio-root [hidden] {
+  display: none !important;
+}
+
+.studio-root
+  :is(button, a, [role="tab"], summary, textarea, input, select):focus-visible {
+  outline: 2px solid var(--dash-accent);
+  outline-offset: 2px;
+}
+
+/* A label drawn as a button around a hidden file field ("Upload a picture"):
+   the keyboard reaches the field, so the ring goes on the label it sits in. */
+.studio-root label.dash-btn:has(input:focus-visible) {
+  outline: 2px solid var(--dash-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .studio-root
+    :is(
+      button,
+      a.dash-btn,
+      a.studio-btn-link,
+      a.studio-crumb,
+      [role="tab"],
+      summary,
+      select,
+      input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])
+    ) {
+    min-height: 44px;
+  }
+
+  .studio-root .studio-check-label {
+    min-height: 44px;
+  }
+}
+
+/* ---------- Words ---------- */
+.studio-muted {
+  color: var(--dash-text-2);
+}
+
+/* The sentence under a disabled button: why it is disabled. Never a tooltip
+   (tooltips do not open on touch). */
+.studio-reason {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--dash-text-2);
+}
+
+/* A code or a build, copied for support: the Log tab and Technical details
+   only. The second ink reads 4.6 to 1 or more on the page, a card or a tint. */
+.studio-code {
+  font-family: var(--font-dash-mono), ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--dash-text-2);
+}
+
+/* What went wrong: on a white card or in a dialog only. */
+.studio-error {
+  color: var(--dash-red);
+}
+
+/* ---------- Status words ---------- */
+.studio-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 3px 10px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 999px;
+  background: var(--dash-surface-2);
+  color: var(--dash-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.studio-badge::before {
+  content: "";
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dash-text-2);
+}
+
+.studio-badge[data-tone="info"] {
+  border-color: color-mix(in srgb, var(--dash-accent) 30%, transparent);
+  background: var(--dash-accent-soft);
+}
+.studio-badge[data-tone="info"]::before {
+  background: var(--dash-accent);
+}
+
+.studio-badge[data-tone="success"] {
+  border-color: color-mix(in srgb, var(--dash-green) 35%, transparent);
+  background: var(--dash-green-soft);
+}
+.studio-badge[data-tone="success"]::before {
+  background: var(--dash-green);
+}
+
+.studio-badge[data-tone="warning"] {
+  border-color: color-mix(in srgb, var(--dash-amber) 40%, transparent);
+  background: var(--dash-amber-soft);
+}
+.studio-badge[data-tone="warning"]::before {
+  background: var(--dash-amber);
+}
+
+.studio-badge[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--dash-red) 35%, transparent);
+  background: var(--dash-red-soft);
+}
+.studio-badge[data-tone="danger"]::before {
+  background: var(--dash-red);
+}
+
+/* ---------- Notices: a banner or a boxed note ---------- */
+.studio-notice {
+  padding: 10px 14px;
+  border: 1px solid var(--dash-border-strong);
+  border-left-width: 4px;
+  border-radius: var(--dash-radius-sm);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.studio-notice[data-tone="info"] {
+  border-color: color-mix(in srgb, var(--dash-accent) 30%, transparent);
+  border-left-color: var(--dash-accent);
+  background: var(--dash-accent-soft);
+}
+
+.studio-notice[data-tone="success"] {
+  border-color: color-mix(in srgb, var(--dash-green) 35%, transparent);
+  border-left-color: var(--dash-green);
+  background: var(--dash-green-soft);
+}
+
+.studio-notice[data-tone="warning"] {
+  border-color: color-mix(in srgb, var(--dash-amber) 40%, transparent);
+  border-left-color: var(--dash-amber);
+  background: var(--dash-amber-soft);
+}
+
+.studio-notice[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--dash-red) 35%, transparent);
+  border-left-color: var(--dash-red);
+  background: var(--dash-red-soft);
+}
+
+.studio-notice a,
+.studio-notice .studio-link {
+  color: var(--dash-text);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A button that reads as a link, inside words. */
+.studio-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dash-text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* ---------- Tab bars (the theme page; the Themes page's two tabs) ---------- */
+.studio-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--dash-border);
+}
+
+.studio-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* A strip wider than its room (six tabs on a phone) shows no scroll bar, so
+   the side with more tabs fades out (studio-tabs.tsx sets the attributes as
+   it scrolls). A mask uses only the colour's opacity. */
+.studio-tabs[data-more-end] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    var(--dash-text) calc(100% - 32px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    var(--dash-text) calc(100% - 32px),
+    transparent
+  );
+}
+
+.studio-tabs[data-more-start] {
+  -webkit-mask-image: linear-gradient(
+    to left,
+    var(--dash-text) calc(100% - 32px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to left,
+    var(--dash-text) calc(100% - 32px),
+    transparent
+  );
+}
+
+.studio-tabs[data-more-start][data-more-end] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    var(--dash-text) 32px,
+    var(--dash-text) calc(100% - 32px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    var(--dash-text) 32px,
+    var(--dash-text) calc(100% - 32px),
+    transparent
+  );
+}
+
+.studio-tab {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--dash-text-2);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.studio-tab:hover {
+  color: var(--dash-text);
+}
+
+.studio-tab[aria-selected="true"] {
+  border-bottom-color: var(--dash-accent);
+  color: var(--dash-text);
+  font-weight: 600;
+}
+
+.studio-tab:focus-visible {
+  outline: 2px solid var(--dash-accent);
+  outline-offset: -2px;
+}
+
+.studio-tab-count {
+  display: inline-flex;
+  min-width: 20px;
+  height: 19px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--dash-surface-2);
+  color: var(--dash-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.studio-tabpanel {
+  min-width: 0;
+}
+
+.studio-tabpanel:focus-visible {
+  outline: 2px solid var(--dash-accent);
+  outline-offset: -2px;
+}
+
+/* ---------- Popovers and bottom sheets ----------
+   A list that drops below its button on a wide screen (the Design list, the
+   "..." menu, Screenshots) is a bottom sheet on a phone: at most 85% of the
+   screen's height, and it scrolls. */
+.studio-popover-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.studio-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 40;
+  min-width: 240px;
+  max-width: min(420px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: var(--dash-radius);
+  background: var(--dash-surface);
+  box-shadow: var(--dash-shadow-lg);
+}
+
+.studio-popover[data-align="end"] {
+  right: 0;
+}
+
+.studio-popover[data-align="start"] {
+  left: 0;
+}
+
+.studio-popover[data-place="above"] {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.studio-popover-backdrop {
+  display: none;
+}
+
+.studio-sheet-title {
+  display: none;
+}
+
+.studio-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--dash-radius-xs);
+  background: transparent;
+  color: var(--dash-text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-menu-item:hover:not(:disabled),
+.studio-menu-item:focus-visible {
+  background: var(--dash-surface-2);
+}
+
+.studio-menu-item:disabled {
+  color: var(--dash-text-2);
+  cursor: not-allowed;
+}
+
+.studio-menu-item[data-danger="true"]:not(:disabled) {
+  color: var(--dash-red);
+}
+
+.studio-menu-item + .studio-reason {
+  margin: 0 10px 6px;
+}
+
+@media (max-width: 767px) {
+  .studio-sheet,
+  .studio-popover {
+    position: fixed;
+    inset: auto 0 0 0;
+    top: auto;
+    z-index: 80;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    max-height: 85vh;
+    max-height: 85dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px 12px calc(12px + env(safe-area-inset-bottom));
+    border-radius: var(--dash-radius-lg) var(--dash-radius-lg) 0 0;
+    border-bottom: 0;
+  }
+
+  .studio-popover[data-place="above"] {
+    bottom: 0;
+  }
+
+  .studio-popover-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 79;
+    border: 0;
+    background: color-mix(in srgb, var(--dash-text) 25%, transparent);
+  }
+
+  .studio-sheet-title {
+    display: block;
+    padding: 8px 4px 10px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+}
+
+/* ---------- The theme page ---------- */
+.studio-page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--dash-bg);
+}
+
+.studio-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--dash-border);
+  background: var(--dash-surface);
+}
+
+.studio-head-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.studio-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dash-text-2);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.studio-crumb:hover {
+  color: var(--dash-text);
+}
+
+.studio-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+.studio-head-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.studio-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.studio-action {
+  display: flex;
+  flex-direction: column;
+  max-width: 320px;
+}
+
+.studio-notices {
+  display: grid;
+  gap: 8px;
+  padding: 10px 20px 0;
+}
+
+/* The chat on the left (it folds to a rail and keeps its width), the tabs on
+   the right. One DOM for every width: the tab bar first, then the chat, then
+   the panels; grid areas put the chat on the left on a wide screen. */
+.studio-body {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-columns: var(--studio-chat-w, 400px) 8px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "chat resizer tabs"
+    "chat resizer panel";
+}
+
+.studio-body[data-chat-folded="true"] {
+  grid-template-columns: 52px 0 minmax(0, 1fr);
+}
+
+.studio-tabbar {
+  grid-area: tabs;
+  min-width: 0;
+  padding: 0 12px;
+  background: var(--dash-surface);
+}
+
+.studio-tabbar .studio-tabs {
+  border-bottom: 0;
+}
+
+.studio-tab-chat {
+  display: none;
+}
+
+.studio-chat {
+  grid-area: chat;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--dash-border);
+  background: var(--dash-surface);
+}
+
+.studio-chat-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--dash-border);
+}
+
+.studio-chat-bar h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.studio-chat-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.studio-icon-btn {
+  display: inline-flex;
+  min-width: 36px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--dash-radius-sm);
+  background: transparent;
+  color: var(--dash-text-2);
+  cursor: pointer;
+}
+
+.studio-icon-btn:hover {
+  border-color: var(--dash-border-strong);
+  background: var(--dash-surface-2);
+  color: var(--dash-text);
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .studio-root .studio-icon-btn {
+    min-width: 44px;
+  }
+}
+
+.studio-resizer {
+  grid-area: resizer;
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.studio-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.studio-resizer:hover::after,
+.studio-resizer:focus-visible::after,
+.studio-resizer[data-dragging="true"]::after {
+  background: var(--dash-accent);
+}
+
+.studio-resizer:focus-visible {
+  outline: none;
+}
+
+.studio-panels {
+  grid-area: panel;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-top: 1px solid var(--dash-border);
+}
+
+.studio-panels > .studio-tabpanel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px 24px;
+}
+
+.studio-panels > .studio-tabpanel[hidden] {
+  display: none;
+}
+
+/* The preview fills the panel's height (the frame fits it); on a very short
+   screen the panel scrolls rather than cutting off the frame's words. */
+.studio-panels > .studio-tabpanel[data-tab="preview"] {
+  display: flex;
+  flex-direction: column;
+}
+
+.studio-panels > .studio-tabpanel[data-tab="preview"][hidden] {
+  display: none;
+}
+
+.studio-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dash-text-2);
+  font-size: 13.5px;
+}
+
+/* ---------- The chat ---------- */
+.studio-chat-log {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px;
+  background: var(--dash-surface-2);
+}
+
+.studio-bubble {
+  max-width: 92%;
+  padding: 12px 14px;
+  border: 1px solid var(--dash-border);
+  border-radius: var(--dash-radius);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  font-size: 13.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.studio-bubble[data-from="operator"] {
+  align-self: flex-end;
+  border-color: color-mix(in srgb, var(--dash-accent) 25%, transparent);
+  background: var(--dash-accent-soft);
+}
+
+.studio-bubble[data-from="studio"] {
+  align-self: flex-start;
+}
+
+.studio-bubble-meta {
+  margin-bottom: 4px;
+  color: var(--dash-text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.studio-bubble-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+}
+
+.studio-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.studio-thumb {
+  position: relative;
+  display: block;
+  width: 112px;
+  height: 80px;
+  overflow: hidden;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: var(--dash-radius-sm);
+  background: var(--dash-surface);
+}
+
+.studio-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.studio-thumb-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  min-width: 28px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 999px;
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  cursor: pointer;
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .studio-root .studio-thumb-remove {
+    min-width: 44px;
+    min-height: 44px;
+    top: -6px;
+    right: -6px;
+  }
+
+  /* The 44 px remove button hangs over the corner of an attachment, so the
+     attachment no longer clips it (a clipped one is about 38 px, its circle
+     cut); the picture keeps the round corners itself. */
+  .studio-root li.studio-thumb {
+    overflow: visible;
+  }
+
+  .studio-root li.studio-thumb img {
+    border-radius: inherit;
+  }
+}
+
+.studio-composer {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--dash-border);
+  background: var(--dash-surface);
+}
+
+.studio-composer textarea {
+  width: 100%;
+  min-height: 88px;
+  max-height: 40vh;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: var(--dash-radius-sm);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.studio-composer textarea:disabled {
+  background: var(--dash-surface-2);
+  color: var(--dash-text-2);
+}
+
+.studio-composer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.studio-composer select {
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: var(--dash-radius-xs);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.studio-library {
+  display: grid;
+  gap: 10px;
+  padding: 6px;
+}
+
+.studio-library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px;
+}
+
+.studio-library-item {
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--dash-border);
+  border-radius: var(--dash-radius-sm);
+}
+
+.studio-library-item img {
+  width: 100%;
+  height: 72px;
+  object-fit: contain;
+}
+
+.studio-check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+/* ---------- The progress card ---------- */
+.studio-progress {
+  align-self: stretch;
+  padding: 12px 14px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: var(--dash-radius);
+  background: var(--dash-surface);
+  font-size: 13.5px;
+}
+
+.studio-progress h3,
+.studio-progress summary {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.studio-progress summary {
+  cursor: pointer;
+}
+
+.studio-steps {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.studio-step {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 2px 8px;
+}
+
+.studio-step-icon {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--dash-text-3);
+}
+
+.studio-step[data-state="done"] .studio-step-icon {
+  color: var(--dash-green);
+}
+
+.studio-step[data-state="running"] .studio-step-icon {
+  color: var(--dash-accent);
+}
+
+.studio-step[data-state="failed"] .studio-step-icon {
+  color: var(--dash-red);
+}
+
+.studio-step-label {
+  font-weight: 500;
+}
+
+.studio-step[data-state="waiting"] .studio-step-label,
+.studio-step[data-state="skipped"] .studio-step-label {
+  color: var(--dash-text-2);
+  font-weight: 400;
+}
+
+.studio-step-time {
+  color: var(--dash-text-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.studio-step-detail {
+  grid-column: 2 / 4;
+  color: var(--dash-text-2);
+  font-size: 12.5px;
+}
+
+.studio-progress-foot {
+  margin-top: 10px;
+  color: var(--dash-text-2);
+  font-size: 12.5px;
+}
+
+.studio-plan {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dash-border);
+  font-size: 12.5px;
+}
+
+.studio-plan ul {
+  margin-top: 4px;
+  padding-left: 18px;
+  list-style: disc;
+  color: var(--dash-text-2);
+}
+
+.studio-spin {
+  animation: studio-spin 1s linear infinite;
+}
+
+@keyframes studio-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-spin {
+    animation: none;
+  }
+}
+
+/* ---------- The Design list ---------- */
+.studio-design-list {
+  display: grid;
+  gap: 4px;
+}
+
+.studio-design-item {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--dash-radius-sm);
+}
+
+.studio-design-item[data-viewing="true"] {
+  border-color: color-mix(in srgb, var(--dash-accent) 30%, transparent);
+  background: var(--dash-accent-soft);
+}
+
+.studio-design-item p {
+  font-size: 12.5px;
+  color: var(--dash-text-2);
+}
+
+.studio-design-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ---------- The preview ---------- */
+.studio-preview {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.studio-preview-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Wraps rather than running past its box: three screen sizes with their
+   pixel sizes are about 470 px, wider than a phone's panel or a tablet's
+   (preview-frame.tsx also leaves the sizes to screen readers below 600 px of
+   box). */
+.studio-segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--dash-border);
+  border-radius: var(--dash-radius-sm);
+  background: var(--dash-surface-2);
+}
+
+.studio-segmented button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dash-text-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.studio-segmented button[aria-pressed="true"] {
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  box-shadow: var(--dash-shadow-xs);
+}
+
+.studio-preview-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.studio-chip {
+  padding: 4px 12px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 999px;
+  background: var(--dash-surface);
+  color: var(--dash-text-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.studio-chip[aria-current="page"] {
+  border-color: var(--dash-text);
+  background: var(--dash-text);
+  color: var(--dash-surface);
+}
+
+/* The box the preview fits into: it takes the panel's remaining height, so
+   the frame scales to its width AND its height (preview-frame.tsx). */
+.studio-preview-holder {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 240px;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.studio-preview-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: var(--dash-radius);
+  background: var(--dash-surface);
+  box-shadow: var(--dash-shadow-sm);
+}
+
+.studio-preview-wait {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  background: color-mix(in srgb, var(--dash-surface) 80%, transparent);
+  color: var(--dash-text);
+  font-size: 13.5px;
+  text-align: center;
+}
+
+/* ---------- Phones (767 px and narrower) ---------- */
+.studio-phonebar {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .studio-head {
+    padding: 10px 14px;
+  }
+
+  .studio-head-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .studio-action {
+    max-width: none;
+  }
+
+  .studio-notices {
+    padding: 8px 14px 0;
+  }
+
+  .studio-body,
+  .studio-body[data-chat-folded="true"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "tabs"
+      "panel";
+  }
+
+  .studio-tab-chat {
+    display: inline-flex;
+  }
+
+  .studio-chat {
+    grid-area: panel;
+    border-right: 0;
+    border-top: 1px solid var(--dash-border);
+  }
+
+  .studio-chat-bar,
+  .studio-chat-rail,
+  .studio-resizer {
+    display: none;
+  }
+
+  .studio-body[data-phone-pane="chat"] .studio-panels {
+    display: none;
+  }
+
+  .studio-body[data-phone-pane="tab"] .studio-chat {
+    display: none;
+  }
+
+  .studio-panels > .studio-tabpanel {
+    padding: 12px 14px 20px;
+  }
+
+  .studio-phonebar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--dash-border);
+    background: var(--dash-surface);
+    font-size: 13.5px;
+  }
+
+  .studio-phonebar[hidden] {
+    display: none;
+  }
+}
+
+/* ★ ONE SCROLLING COLUMN ON A PHONE. A page of fixed height left the chat a
+   sliver under the header, the notices, the tab bar, the composer and the
+   phone bar (about 50 px at 360 by 640, and the composer's Send cut off when
+   the header carried a publish's reasons). On a phone the page scrolls as
+   one column: the header and the notices scroll away, the tab bar stays at
+   the top and the phone bar at the bottom, and the chat (or a tab's panel)
+   is the height of the screen left between them, so the chat keeps its own
+   scroll and its newest words in view. A locked composer folds to its
+   one-line reason (conversation.tsx `data-locked`), so the progress card
+   keeps the room. */
+@media (max-width: 767px) {
+  .dashboard-frame.studio-fullwidth .dash-content,
+  .dashboard-frame:has(.studio-page) .dash-content {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .studio-page {
+    /* The console's top bar is 56 px and the tab bar about 46 px. */
+    --studio-pane-h: max(320px, calc(100dvh - 56px - 46px));
+    flex: 0 0 auto;
+    height: auto;
+    min-height: 100%;
+  }
+
+  /* The phone bar, when it shows, takes about 68 px more. */
+  .studio-page:has(> .studio-phonebar:not([hidden])) {
+    --studio-pane-h: max(320px, calc(100dvh - 56px - 46px - 68px));
+  }
+
+  .studio-body {
+    flex: none;
+  }
+
+  .studio-tabbar {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    border-bottom: 1px solid var(--dash-border);
+  }
+
+  .studio-chat,
+  .studio-panels {
+    height: var(--studio-pane-h);
+  }
+
+  /* A swipe that reaches the end of the chat moves the page on. */
+  .studio-chat-log {
+    overscroll-behavior: auto;
+  }
+
+  .studio-composer[data-locked="true"] > :not(.studio-reason) {
+    display: none;
+  }
+
+  .studio-phonebar {
+    position: sticky;
+    bottom: 0;
+    z-index: 6;
+  }
+}

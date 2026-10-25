@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ThinkingLevel } from "@google/genai";
 import { and, eq, inArray } from "drizzle-orm";
 import { can } from "@/app/dashboard/lib/permissions";
 import { mediaAssets, minkActionToolAccess } from "@/drizzle/schema";
@@ -24,7 +25,10 @@ import {
   MINK_MEDIA_GENERATION_SCHEMA_VERSION,
   type MinkMediaPurpose,
 } from "./media-generation-contract";
-import { generateMinkMediaImage } from "./media-generation";
+import {
+  generateMinkMediaImage,
+  isUnbilledImageFailure,
+} from "./media-generation";
 import { minkPrefillBodyToHtml } from "./prefill-html";
 import {
   claimSpendLimits,
@@ -374,6 +378,9 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
       });
       return false;
     });
+    // The photo claim's own time: a give-back lands only in the windows that
+    // counted it (spend-limits.ts).
+    let photoClaimedAt: string | undefined;
     if (toDraw.length) {
       const photoClaim = await claimSpendLimits(
         photoLimits(actor, toDraw.length),
@@ -390,13 +397,29 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
             "Today's limit for new photos is reached, so the theme's photos stay. Ask again tomorrow for new ones.",
         });
         toDraw = [];
+      } else {
+        photoClaimedAt = photoClaim.claimedAt;
       }
     }
     const drawn = new Map<string, { url: string; alt: string; path: string }>();
     const photoWhere = new Map<string, string>();
+    // ★★ A PHOTO GOOGLE NEVER DREW GIVES ITS SHARE BACK (robustness audit B3,
+    //   the rule chat images and Refine follow). Counted per photo: every try
+    //   it sent answered 429, or none was sent (`isUnbilledImageFailure`;
+    //   `generateMinkMediaImage` throws those itself through
+    //   `requestMinkImage`), or the proposal's time ran out before its turn.
+    //   Never a timeout or a 5xx after sending, a filtered answer or a picture
+    //   that came back: Google may have billed those, and the platform's hour
+    //   is what bounds the bill. (Credits are charged only for drawn photos,
+    //   at card save, so "Nothing was charged" stays true either way.)
+    let unbilledPhotos = 0;
     await runPool(toDraw, PHOTO_CONCURRENCY, async (photo) => {
       const brief = copy.photos.get(photo.ref);
-      if (!brief || deadline.signal.aborted) return;
+      if (!brief || deadline.signal.aborted) {
+        unbilledPhotos += 1; // never sent
+        return;
+      }
+      let drew = false;
       try {
         const image = await generateMinkMediaImage(
           getMinkConfig(),
@@ -409,8 +432,16 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
             slotAspectRatio: PERSONALIZATION_PHOTO_ASPECT[photo.shape],
           },
           [],
-          { abortSignal: deadline.signal, rateLimitRetries: 2 },
+          {
+            abortSignal: deadline.signal,
+            rateLimitRetries: 2,
+            // ★★ Owner, 25 Oct 2026: "2K", so a full-width banner stays
+            //   sharp, with MINIMAL thinking.
+            imageSize: "2K",
+            thinkingLevel: ThinkingLevel.MINIMAL,
+          },
         );
+        drew = true;
         const extension = image.mimeType === "image/png" ? "png" : "jpg";
         const path = `stores/${actor.storeId}/${MINK_GENERATED_MEDIA_FOLDER}/${crypto.randomUUID()}.${extension}`;
         const url = await gcsUploadObject(path, image.bytes, image.mimeType);
@@ -430,6 +461,7 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
         drawn.set(photo.ref, { url, alt: brief.alt, path });
         photoWhere.set(photo.ref, photoLabel(photo, target));
       } catch (error) {
+        if (!drew && isUnbilledImageFailure(error)) unbilledPhotos += 1;
         if (
           !(
             error instanceof MinkRequestError ||
@@ -450,6 +482,15 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
         });
       }
     });
+    // ★ Once, after the pool, in one call: the store's day of photos and the
+    //   platform's image hour, one unit of each per unbilled photo, only in
+    //   the windows the claim was counted in. Best effort: it never throws.
+    if (unbilledPhotos > 0) {
+      await releaseSpendLimits(
+        photoLimits(actor, unbilledPhotos),
+        photoClaimedAt ? { claimedAt: photoClaimedAt } : {},
+      );
+    }
 
     // ---- Apply to each page and re-validate --------------------------------
     // ★★ COUNTED AFTER VALIDATION. A section `validatePage` puts back to the

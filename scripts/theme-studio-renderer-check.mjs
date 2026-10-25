@@ -905,6 +905,119 @@ try {
       if (problems.length)
         failures.push({ label, problems, ...m, ...measured });
     }
+    // ★ Shop by category (L2-K, live run 2026-10-22: three categories sat at
+    // the left of an empty row on every revamped homepage). A short row is
+    // centred and a long one starts at the left and scrolls (or, as a grid,
+    // fills its rows from the left), never clipping its first tile, for both
+    // tile shapes under both layouts; the list display's rows span the row.
+    // The markup mirrors shop-by-category-section.tsx.
+    for (const display of ["circles", "cards", "list"]) {
+      for (const layout of ["scroll", "grid"]) {
+        for (const count of [3, 12]) {
+          const label = `${width}px categories/${display}/${layout}/${count}`;
+          const names = Array.from(
+            { length: count },
+            (_, i) => `Everyday category ${i + 1}`,
+          );
+          const tile = (name) =>
+            `<a href="/collections/x" class="home-cat-tile"><div class="home-cat-img">${fill("home-cat-img-el", "square")}</div><span class="home-cat-name">${name}</span></a>`;
+          const cards = display === "cards" ? " is-cards" : "";
+          const body =
+            display === "list"
+              ? `<ul class="home-cat-list${layout === "grid" ? " is-two-up" : ""}">${names.map((name) => `<li class="home-cat-row"><a href="/collections/x" class="home-cat-row-link"><span class="home-cat-row-media">${fill("home-cat-img-el", "square")}</span><span class="home-cat-row-copy"><span class="home-cat-row-name">${name}</span><span class="home-cat-row-desc">${copy}</span></span><span class="home-cat-row-arrow" aria-hidden="true">→</span></a></li>`).join("")}</ul>`
+              : layout === "grid"
+                ? `<div class="home-cat-grid${cards}" style="--sm-cat-count:${count}">${names.map(tile).join("")}</div>`
+                : `<div class="home-cat-carousel"><button type="button" class="home-cat-arrow home-cat-arrow-prev" aria-label="Previous" disabled>‹</button><div class="home-cat-scroll${cards}">${names.map(tile).join("")}</div><button type="button" class="home-cat-arrow home-cat-arrow-next" aria-label="Next">›</button></div>`;
+          await page.setContent(
+            documentHtml(
+              `<section class="home-section"><div class="home-section-head"><h2 class="home-section-title">Shop by category</h2></div>${body}</section>`,
+            ),
+          );
+          const measured = await measureNative(page);
+          const m = await page.evaluate(async () => {
+            await Promise.all(
+              [...document.images].map((i) => i.decode().catch(() => {})),
+            );
+            const section = document.querySelector(".home-section");
+            const style = getComputedStyle(section);
+            const box = section.getBoundingClientRect();
+            // The content box the row sits in (the page gutter excluded).
+            const left = box.left + parseFloat(style.paddingLeft);
+            const right = box.right - parseFloat(style.paddingRight);
+            const items = [
+              ...document.querySelectorAll(".home-cat-tile, .home-cat-row"),
+            ].map((el) => el.getBoundingClientRect());
+            const row = items.filter((r) => Math.abs(r.top - items[0].top) < 1);
+            const scroller = document.querySelector(".home-cat-scroll");
+            let endReached = null;
+            if (scroller) {
+              // Every tile can be scrolled to: the last one's right edge
+              // reaches the row's at the far end of the scroll.
+              scroller.scrollLeft = scroller.scrollWidth;
+              endReached =
+                scroller.lastElementChild.getBoundingClientRect().right <=
+                scroller.getBoundingClientRect().right + 1;
+              scroller.scrollLeft = 0;
+            }
+            return {
+              left,
+              right,
+              firstLeft: items[0].left,
+              rowLeft: Math.min(...row.map((r) => r.left)),
+              rowRight: Math.max(...row.map((r) => r.right)),
+              rowCount: row.length,
+              overflows:
+                !!scroller && scroller.scrollWidth > scroller.clientWidth + 1,
+              endReached,
+            };
+          });
+          cases++;
+          const problems = [];
+          if (measured.overflow) problems.push("overflow");
+          if (measured.targets.length) problems.push("small targets");
+          if (measured.crop.length) problems.push("extreme crop");
+          if (measured.clipped.length) problems.push("clipped text");
+          // The first tile is never cut off at the start of the row.
+          if (m.firstLeft < m.left - 0.5) problems.push("first tile clipped");
+          const centred =
+            Math.abs(m.rowLeft - m.left - (m.right - m.rowRight)) <= 1;
+          const startsLeft = Math.abs(m.rowLeft - m.left) <= 0.5;
+          const fills = startsLeft && Math.abs(m.right - m.rowRight) <= 1;
+          if (display === "list") {
+            // A list's rows span the row: one column, or two from 768px
+            // under the grid layout. Nothing to centre.
+            if (!fills) problems.push("list rows do not span the row");
+            const columns = layout === "grid" && width >= 768 ? 2 : 1;
+            if (m.rowCount !== Math.min(columns, count))
+              problems.push(`list has ${m.rowCount} columns`);
+          } else if (layout === "scroll") {
+            if (m.overflows) {
+              if (!startsLeft)
+                problems.push("an overflowing row does not start at the left");
+              if (!m.endReached)
+                problems.push(
+                  "an overflowing row cannot be scrolled to its end",
+                );
+            } else if (!centred) {
+              problems.push(
+                `a row that fits is not centred (${Math.round(m.rowLeft - m.left)}px left, ${Math.round(m.right - m.rowRight)}px right)`,
+              );
+            }
+          } else if (m.rowCount === count) {
+            // Every tile on one row: centred under the heading.
+            if (!centred)
+              problems.push(
+                `a grid row that fits is not centred (${Math.round(m.rowLeft - m.left)}px left, ${Math.round(m.right - m.rowRight)}px right)`,
+              );
+          } else if (!fills) {
+            // A grid that wraps fills its rows from the left, as always.
+            problems.push("a wrapping grid does not fill its first row");
+          }
+          if (problems.length)
+            failures.push({ label, problems, ...m, ...measured });
+        }
+      }
+    }
     // The collection template: a row of filter popovers above the grid on
     // desktop (hidden under 1024px, where the Filter button's drawer serves),
     // an open popover floating over the grid rather than pushing it, a
@@ -918,7 +1031,7 @@ try {
         `<details class="shop-filter-group"><summary><span>${title}</span></summary><div class="shop-filter-group-body"><ul class="shop-filter-list">${["Small", "Medium", "Large"].map((v) => `<li><label class="shop-filter-check"><input type="checkbox"><span>${v}</span><span class="shop-filter-muted">(3)</span></label></li>`).join("")}</ul></div></details>`;
       await page.setContent(
         documentHtmlShop(
-          `<div class="shop-listing"><div class="shop-layout"><div class="shop-results"><div class="shop-topbar-filters"><div class="shop-facets">${["Availability", "Size", "Colour", "Price"].map(group).join("")}</div></div><div class="shop-grid">${card(1)}${card(2)}<a class="shop-promo-tile theme-light" href="/collections/summer" style="background:#2a211f"><div class="shop-promo-tile-copy"><h2>${heading}</h2><p>${copy}</p><span class="shop-promo-tile-cta">See the edit</span></div></a>${card(3)}${card(4)}${card(5)}</div><nav class="shop-pages" aria-label="Pages"><p class="shop-pages-count">Showing 1–24 of 160 products</p><button disabled>Previous</button><button aria-current="page" aria-label="Page 1">1</button><button aria-label="Page 2">2</button><button aria-label="Page 3">3</button><button aria-label="Page 4">4</button><span class="shop-pages-gap" aria-hidden="true">…</span><button aria-label="Page 7">7</button><button>Next</button></nav></div></div></div>`,
+          `<div class="shop-listing"><div class="shop-layout"><div class="shop-results"><div class="shop-topbar-filters"><div class="shop-facets">${["Availability", "Size", "Colour", "Price"].map(group).join("")}</div></div><div class="shop-grid">${card(1)}${card(2)}<a class="shop-promo-tile theme-light" href="/collections/summer" style="background:#2a211f"><div class="shop-promo-tile-copy"><h2>${heading}</h2><p>${copy}</p><span class="shop-promo-tile-cta">See the edit</span></div></a>${card(3)}${card(4)}${card(5)}</div><nav class="shop-pages" aria-label="Pages"><p class="shop-pages-count">Showing 1 to 24 of 160 products</p><button disabled>Previous</button><button aria-current="page" aria-label="Page 1">1</button><button aria-label="Page 2">2</button><button aria-label="Page 3">3</button><button aria-label="Page 4">4</button><span class="shop-pages-gap" aria-hidden="true">…</span><button aria-label="Page 7">7</button><button>Next</button></nav></div></div></div>`,
         ),
       );
       const measured = await measureNative(page);

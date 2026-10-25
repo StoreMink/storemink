@@ -82,6 +82,7 @@ describe("askHelpAssistant", () => {
 
     expect(searchPublishedHelpWithAi).toHaveBeenCalledWith(
       "I am processing a POS sale What should I tap next?",
+      { signal: expect.any(AbortSignal) },
     );
     expect(getPublishedHelpDocumentsForAssistant).toHaveBeenCalledWith([
       DOCUMENT.slug,
@@ -92,7 +93,18 @@ describe("askHelpAssistant", () => {
       expect.objectContaining({
         temperature: 0.2,
         responseMimeType: "application/json",
+        // ★ JSON Schema through responseJsonSchema, the shape lib/mink sends.
+        responseJsonSchema: expect.objectContaining({
+          type: "object",
+          additionalProperties: false,
+          properties: expect.objectContaining({
+            needsHuman: { type: "boolean" },
+          }),
+        }),
       }),
+    );
+    expect(vi.mocked(callGemini).mock.calls[0][2]).not.toHaveProperty(
+      "responseSchema",
     );
     expect(result).toEqual({
       success: true,
@@ -125,6 +137,7 @@ describe("askHelpAssistant", () => {
 
     expect(searchPublishedHelpWithAi).toHaveBeenCalledWith(
       "Is there a guide for connecting DNS?",
+      { signal: expect.any(AbortSignal) },
     );
     expect(searchHelpArticleChunksByMeaning).toHaveBeenCalledWith(
       "Is there a guide for connecting DNS?",
@@ -175,6 +188,64 @@ describe("askHelpAssistant", () => {
         ],
       },
     });
+  });
+
+  // ★★ ONE BUDGET FOR THE TURN: the search and the answer share one signal,
+  //    so a slow Google costs a visitor 45 s at most, not two calls' minutes.
+  it("gives the search and the answer one shared signal", async () => {
+    await askHelpAssistant({ message: "How do I take payment?" });
+    const searchSignal = vi.mocked(searchPublishedHelpWithAi).mock.calls[0][1]
+      ?.signal;
+    const answerSignal = vi.mocked(callGemini).mock.calls[0][2]?.signal;
+    expect(searchSignal).toBeInstanceOf(AbortSignal);
+    expect(answerSignal).toBe(searchSignal);
+    expect(searchSignal!.aborted).toBe(false);
+  });
+
+  it("★ ends the turn at its budget with the verified guides", async () => {
+    vi.useFakeTimers();
+    try {
+      // A search that takes as long as its signal lets it.
+      vi.mocked(searchPublishedHelpWithAi).mockImplementation(
+        (_query, options) =>
+          new Promise((resolve) => {
+            options?.signal?.addEventListener("abort", () =>
+              resolve({
+                results: [
+                  {
+                    title: DOCUMENT.title,
+                    url: "/help/point-of-sale/process-an-in-store-sale",
+                    excerpt: DOCUMENT.excerpt,
+                  },
+                ],
+                mode: "keyword",
+              }),
+            );
+          }),
+      );
+      // The answer call sees its signal already spent, as callGemini would.
+      vi.mocked(callGemini).mockImplementation(async (_s, _u, options) =>
+        options?.signal?.aborted
+          ? { error: "AI is busy right now." }
+          : { text: "{}" },
+      );
+      let settled = false;
+      const turn = askHelpAssistant({ message: "How do I take payment?" });
+      void turn.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(44_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(turn).resolves.toMatchObject({
+        success: true,
+        data: {
+          sources: [{ url: "/help/point-of-sale/process-an-in-store-sale" }],
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses a semantic-only article and puts its best section first", async () => {

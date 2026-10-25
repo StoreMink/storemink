@@ -63,7 +63,9 @@ vi.mock("@/lib/storage/gcs", () => ({
   gcsPathFromUrl: (url: string) =>
     url.startsWith(`${BUCKET}/`) ? url.slice(BUCKET.length + 1) : null,
 }));
-vi.mock("./media-generation", () => ({
+vi.mock("./media-generation", async (importOriginal) => ({
+  // The real `isUnbilledImageFailure`, which a failed photo is checked with.
+  ...(await importOriginal<typeof import("./media-generation")>()),
   generateMinkMediaImage: vi.fn(async () => ({
     bytes: Buffer.from("jpeg"),
     mimeType: "image/jpeg",

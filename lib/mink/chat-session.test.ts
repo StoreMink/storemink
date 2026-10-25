@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   clearMinkActiveChat,
   isMinkChatStale,
+  MINK_CHAT_PARAM,
   MINK_CHAT_RESUME_MS,
+  minkChatHref,
   readMinkActiveChat,
+  readMinkChatParam,
   writeMinkActiveChat,
 } from "./chat-session";
 
@@ -95,5 +98,41 @@ describe("when a Mink chat may be continued", () => {
     expect(() => clearMinkActiveChat(refusing)).not.toThrow();
     expect(readMinkActiveChat(refusing, NOW)).toBeNull();
     expect(readMinkActiveChat(null, NOW)).toBeNull();
+  });
+});
+
+describe("★★ the dashboard address that opens a chat (B20)", () => {
+  const ID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
+  it("builds one address for a chat, and plain /dashboard for none", () => {
+    expect(MINK_CHAT_PARAM).toBe("chat");
+    expect(minkChatHref(ID)).toBe(`/dashboard?chat=${ID}`);
+    expect(minkChatHref(ID.toUpperCase())).toBe(`/dashboard?chat=${ID}`);
+    expect(minkChatHref(null)).toBe("/dashboard");
+    expect(minkChatHref(undefined)).toBe("/dashboard");
+    expect(minkChatHref("")).toBe("/dashboard");
+  });
+
+  it("★ reads only a conversation id, in any case and with stray spaces", () => {
+    expect(readMinkChatParam(ID)).toBe(ID);
+    expect(readMinkChatParam(` ${ID.toUpperCase()} `)).toBe(ID);
+    expect(readMinkChatParam(null)).toBeNull();
+    expect(readMinkChatParam(undefined)).toBeNull();
+    // Anything else names no chat, so nothing is asked for.
+    for (const value of [
+      "",
+      "chat-1",
+      `${ID}x`,
+      `${ID}/../other`,
+      "javascript:alert(1)",
+      "00000000-0000-0000-0000-000000000000",
+    ]) {
+      expect(readMinkChatParam(value)).toBeNull();
+    }
+  });
+
+  it("★ an address that is not a chat id is never written into a link", () => {
+    expect(minkChatHref("https://evil.example/x")).toBe("/dashboard");
+    expect(minkChatHref(`${ID}&next=/admin`)).toBe("/dashboard");
   });
 });

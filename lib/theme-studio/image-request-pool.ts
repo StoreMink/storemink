@@ -10,18 +10,19 @@ export class ImageRequestPool {
   private cooldowns = new Set<Promise<unknown>>();
   private capacityEpoch = 0;
   private recoveringLimit: number;
-  private successes = 0;
 
   constructor(private readonly limit = 3) {
     this.recoveringLimit = limit;
   }
 
   /** Pause queued requests together after a provider 429. The wait belongs to
-   * its caller's abort signal and consumes no active request permit. */
+   * its caller's abort signal and consumes no active request permit.
+   * ★ Callers pass at most the shared ceiling (SHARED_RATE_LIMIT_PAUSE_MAX_MS,
+   *   15 s, image-vertex.ts): a refusal holds the others back that long and
+   *   no longer, the rule the shared capacity row follows. */
   coolDown(wait: Promise<unknown>): void {
     this.capacityEpoch++;
     this.recoveringLimit = 1;
-    this.successes = 0;
     this.cooldowns.add(wait);
     const resume = () => {
       this.cooldowns.delete(wait);
@@ -30,15 +31,14 @@ export class ImageRequestPool {
     void wait.then(resume, resume);
   }
 
-  /** Three successful probes restore one permit. Responses already in flight
-   * when the rate limit happened cannot prematurely declare recovery. */
+  /** ★ Each successful probe restores one permit (owner's decision,
+   * 2026-10-23; it took three, the same rule as the shared capacity row).
+   * Responses already in flight when the rate limit happened cannot
+   * prematurely declare recovery. */
   recovered(epoch: number): void {
     if (epoch !== this.capacityEpoch || this.recoveringLimit >= this.limit)
       return;
-    if (++this.successes >= 3) {
-      this.successes = 0;
-      this.recoveringLimit++;
-    }
+    this.recoveringLimit++;
   }
 
   private pump(): void {

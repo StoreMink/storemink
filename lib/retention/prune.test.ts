@@ -10,6 +10,8 @@
 // index on all three tables) is asserted in the SQL files, not here.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -30,6 +32,7 @@ import {
   sweepPolicy,
   type RetentionPolicy,
 } from "./prune";
+import { withService } from "@/lib/db/client";
 
 /** A policy whose batches return the given counts, in order. */
 function policyReturning(
@@ -273,6 +276,30 @@ describe("RETENTION_POLICIES", () => {
       RETENTION_POLICIES.map((policy) => [policy.table, policy.days]),
     );
     expect(byTable.get("whatsapp_conversations")).toBe(730);
+  });
+
+  it("★ forgets a Generate with AI refund after 90 days, one page of its own rows at a time", async () => {
+    // ai_quota_refunds (migration 0237) has no Drizzle table, so its deleter
+    // is raw SQL: the page is chosen by created_at, deleted by take_id.
+    const policy = RETENTION_POLICIES.find(
+      (entry) => entry.table === "ai_quota_refunds",
+    );
+    expect(policy?.days).toBe(90);
+    const execute = vi.fn<
+      (query: SQL) => Promise<{ rows: unknown[]; rowCount: number }>
+    >(async () => ({ rows: [], rowCount: 7 }));
+    vi.mocked(withService).mockImplementationOnce(async (fn) =>
+      fn({ execute } as never),
+    );
+
+    const floor = "2026-07-26T00:00:00.000Z";
+    expect(await policy!.deleteBatch(floor, 1000)).toBe(7);
+
+    const query = new PgDialect().sqlToQuery(execute.mock.calls[0][0]);
+    expect(query.sql.replace(/\s+/g, " ").trim()).toBe(
+      "DELETE FROM public.ai_quota_refunds WHERE take_id IN ( SELECT take_id FROM public.ai_quota_refunds WHERE created_at < $1::timestamptz LIMIT $2 )",
+    );
+    expect(query.params).toEqual([floor, 1000]);
   });
 
   it("documents why every window is what it is", () => {

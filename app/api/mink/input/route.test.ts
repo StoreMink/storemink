@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   validate: vi.fn(),
   extract: vi.fn(),
   log: vi.fn(),
+  logError: vi.fn(),
 }));
 vi.mock("@/lib/mink/actor-context", () => ({ getMinkActorContext: h.actor }));
 vi.mock("@/lib/mink/config", () => ({ getMinkConfig: h.config }));
@@ -15,7 +16,10 @@ vi.mock("@/lib/mink/input-validation", async (original) => ({
   validateMinkInput: h.validate,
 }));
 vi.mock("@/lib/mink/input-provider", () => ({ extractMinkInput: h.extract }));
-vi.mock("@/lib/observability/logger", () => ({ logInfo: h.log }));
+vi.mock("@/lib/observability/logger", () => ({
+  logInfo: h.log,
+  logError: h.logError,
+}));
 import { GET, POST } from "./route";
 import { MinkRequestError } from "@/lib/mink/errors";
 const url = "https://echos.dev.storemink.com/api/mink/input";
@@ -112,6 +116,127 @@ describe("multimodal endpoint authority", () => {
     const response = await POST(req());
     expect(response.status).toBe(503);
     expect(await response.text()).not.toContain("secret attachment");
-    expect(JSON.stringify(h.log.mock.calls)).not.toContain("secret attachment");
+    expect(allLogs()).not.toContain("secret attachment");
+  });
+});
+
+/** Every logger call, as one string: what may never carry content. An error
+ *  is written out the way logError reports it, its message and its cause's. */
+const allLogs = () =>
+  JSON.stringify([...h.log.mock.calls, ...h.logError.mock.calls], (_k, v) =>
+    v instanceof Error
+      ? {
+          message: v.message,
+          cause: v.cause instanceof Error ? v.cause.message : v.cause,
+        }
+      : v,
+  );
+/** What input-provider throws when no model could read it. */
+const readerUnavailable = () =>
+  Object.assign(
+    new Error("The attachment reader did not answer.", {
+      cause: new Error("secret attachment data"),
+    }),
+    {
+      name: "MinkReaderUnavailableError",
+      attempts: 3,
+      model: "gemini-3.5-flash",
+      location: "asia-south1",
+      status: 503,
+    },
+  );
+
+describe("★★ the reader's failures are visible (B12)", () => {
+  it("a reader that could not answer is logged as an error, with content-free facts", async () => {
+    h.extract.mockRejectedValue(readerUnavailable());
+    const response = await POST(req());
+    expect(response.status).toBe(503);
+    expect(h.logError).toHaveBeenCalledWith(
+      "mink.input.failed",
+      "no model could read the attachment (HTTP 503)",
+      expect.objectContaining({
+        requestId: expect.any(String),
+        providerAttempted: true,
+        attempts: 3,
+        model: "gemini-3.5-flash",
+        location: "asia-south1",
+        status: 503,
+      }),
+    );
+    expect(allLogs()).not.toMatch(/secret attachment|private\.png|YQ==/);
+  });
+
+  it("a database or other fault is an error too, named by its kind only", async () => {
+    h.reserve.mockRejectedValue(new Error("private database values"));
+    expect((await POST(req())).status).toBe(503);
+    expect(h.logError).toHaveBeenCalledWith(
+      "mink.input.failed",
+      "Error",
+      expect.objectContaining({ providerAttempted: false }),
+    );
+    expect(allLogs()).not.toContain("private database");
+  });
+
+  it("a verdict on the input stays information", async () => {
+    h.extract.mockRejectedValue(
+      new MinkRequestError("input_unreadable", "No readable result.", 422),
+    );
+    expect((await POST(req())).status).toBe(422);
+    expect(h.logError).not.toHaveBeenCalled();
+    expect(h.log).toHaveBeenCalledWith(
+      "mink.input.failed",
+      expect.objectContaining({ code: "input_unreadable" }),
+    );
+  });
+
+  it("a merchant who went away is not an error", async () => {
+    const controller = new AbortController();
+    h.extract.mockImplementation(async () => {
+      controller.abort();
+      throw new DOMException("The operation was aborted.", "AbortError");
+    });
+    const request = new Request(url, {
+      method: "POST",
+      headers: {
+        origin: new URL(url).origin,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    await POST(request);
+    expect(h.logError).not.toHaveBeenCalled();
+    expect(h.log).toHaveBeenCalledWith(
+      "mink.input.failed",
+      expect.objectContaining({ cancelled: true }),
+    );
+  });
+
+  it("the completed log names the model that read it", async () => {
+    h.extract.mockResolvedValue({
+      text: "Reviewed source",
+      usage: { promptTokenCount: 42 },
+      model: "gemini-3.5-flash",
+      location: "asia-south1",
+      attempts: 3,
+    });
+    expect((await POST(req())).status).toBe(200);
+    expect(h.log).toHaveBeenCalledWith(
+      "mink.input.completed",
+      expect.objectContaining({
+        model: "gemini-3.5-flash",
+        location: "asia-south1",
+        attempts: 3,
+      }),
+    );
+  });
+
+  it("★ every attempt shares the route's one deadline", async () => {
+    const before = Date.now();
+    await POST(req());
+    const [, , signal, , options] = h.extract.mock.calls[0];
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(options.deadlineAt).toBeGreaterThanOrEqual(before + 45_000);
+    expect(options.deadlineAt).toBeLessThanOrEqual(Date.now() + 45_000);
   });
 });

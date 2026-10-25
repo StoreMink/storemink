@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Inter } from "next/font/google";
 import { HELP_URL } from "@/lib/site";
 import { platformOrganizationSchema } from "@/lib/seo/brand-identity";
+import { serializeJsonLd } from "@/lib/seo/json-ld";
 import { SEARCH_INDEXABLE } from "@/lib/store/host";
 import { BrandMark } from "../platform/brand-mark";
 import { HelpAssistant } from "./components/help-assistant";
@@ -59,7 +60,7 @@ export default function HelpLayout({
     <div className={`hc ${helpFont.variable}`}>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(HELP_GRAPH) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(HELP_GRAPH) }}
       />
       <header className="hc-topbar">
         <div className="hc-topbar-inner">

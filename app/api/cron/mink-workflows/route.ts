@@ -5,6 +5,11 @@ import { logError } from "@/lib/observability/logger";
 import { purgeExpiredMinkMemories } from "@/lib/mink/memories";
 import { reconcileMinkRunCredits } from "@/lib/mink/run-credit-reconcile";
 import { getMinkConfig } from "@/lib/mink/config";
+import {
+  MINK_STALE_RUN_SWEEP_LIMIT,
+  closeStaleMinkRuns,
+} from "@/lib/mink/persistence";
+import { sweepStalledRevamps } from "@/lib/mink/revamp/jobs";
 import { sweepThemeStudioPreviews } from "@/lib/theme-studio/preview";
 import { runThemeStudioWorker } from "@/lib/theme-studio/worker";
 
@@ -92,6 +97,32 @@ async function handle(request: Request) {
     } catch (error) {
       logError("mink workflow cron: theme studio preview sweep failed", error);
     }
+    // ★ A chat run still "running" past the longest any run can live is dead
+    //   (its process went away mid-answer), and it blocks deleting its chat
+    //   from History for ever. Closed here as failed, through the stream
+    //   route's own failure record, at most MINK_STALE_RUN_SWEEP_LIMIT a tick;
+    //   a redesign it started is kept, with its card (robustness audit B7).
+    //   Isolated like the passes below, so it never touches `passError`.
+    let staleRuns: { closed: number; failed: number } | null = null;
+    try {
+      staleRuns = await closeStaleMinkRuns({
+        limit: MINK_STALE_RUN_SWEEP_LIMIT,
+      });
+    } catch (error) {
+      logError("mink workflow cron: stale run sweep failed", error);
+    }
+    // ★ Storefront revamps whose runner died get one kick each (at most five
+    //   a tick), and ones that ran out of attempts are failed, so a merchant
+    //   who closed the card still gets an answer (docs/mink-storefront-revamp.md
+    //   section 4.3). Isolated like Theme Studio: a revamp failure is logged and
+    //   never fails the merchant workflow worker above, which is why it does
+    //   not touch `passError`.
+    let revamps: { kicked: number; failed: number } | null = null;
+    try {
+      revamps = await sweepStalledRevamps(5);
+    } catch (error) {
+      logError("mink workflow cron: revamp sweep failed", error);
+    }
     if (passError) throw passError;
     if (!result) throw new Error("Workflow heartbeat returned no result.");
     return NextResponse.json({
@@ -102,6 +133,8 @@ async function handle(request: Request) {
       creditsSettled,
       themeStudio,
       themeStudioPreviewsRemoved,
+      staleRuns,
+      revamps,
     });
   } catch (error) {
     // 503, not an unhandled 500, so Cloud Scheduler's retries engage — the

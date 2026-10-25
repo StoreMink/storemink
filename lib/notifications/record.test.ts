@@ -1025,6 +1025,98 @@ describe("recordEvent", () => {
     });
   });
 
+  // ★★ NARROWING ONLY, AND LAST (TS-3B). A Theme Studio notice is about one
+  // operator's own theme, so only the operator who started it is told: the
+  // rest of the platform admins hear nothing, and naming somebody who is not
+  // an operator reaches nobody, never them.
+  describe("restrictToOperatorEmails", () => {
+    const platformEvent = (opts: {
+      operators: string[];
+      restrictToOperatorEmails?: string[];
+    }) => {
+      dbHolder.current = makeDbMock({
+        returning: [{ id: EVENT_ID }],
+        // Platform event: definitions, platform_admins, preferences.
+        selectQueue: [[], opts.operators.map((email) => ({ email })), []],
+      });
+      return recordEvent({
+        type: "platform.theme_studio_ready",
+        storeId: null,
+        actor: { type: "system", label: "Theme Studio" },
+        subject: {
+          type: "theme_studio_project",
+          id: "0f9b5c1e-4a7d-4c2b-9e1f-3a2b1c0d9e8f",
+          label: "Monsoon Market",
+        },
+        ...(opts.restrictToOperatorEmails
+          ? { restrictToOperatorEmails: opts.restrictToOperatorEmails }
+          : {}),
+      });
+    };
+
+    it("tells only the named operator, in the bell and by email", async () => {
+      await platformEvent({
+        operators: ["Starter@StoreMink.com", "other@storemink.com"],
+        restrictToOperatorEmails: [" STARTER@storemink.com "],
+      });
+      const mock = dbHolder.current;
+      expect(fannedOut(mock).map((r: any) => r.recipientId)).toEqual([
+        "starter@storemink.com",
+      ]);
+      expect(queuedEmails(mock).map((r: any) => r.email)).toEqual([
+        "starter@storemink.com",
+      ]);
+      expect(queuedEmails(mock)[0]).toMatchObject({
+        recipientType: "operator",
+        storeId: null,
+        eventKey: "platform.theme_studio_ready",
+        title: "Ready to publish · Monsoon Market",
+        url: "/dashboard/themes/studio/0f9b5c1e-4a7d-4c2b-9e1f-3a2b1c0d9e8f",
+      });
+    });
+
+    it("tells every operator when it is omitted", async () => {
+      // The unrestricted path must be untouched, or every platform event changes.
+      await platformEvent({
+        operators: ["a@storemink.com", "b@storemink.com"],
+      });
+      expect(
+        fannedOut(dbHolder.current)
+          .map((r: any) => r.recipientId)
+          .sort(),
+      ).toEqual(["a@storemink.com", "b@storemink.com"]);
+    });
+
+    it("cannot reach somebody who is not a platform operator", async () => {
+      await platformEvent({
+        operators: ["a@storemink.com"],
+        restrictToOperatorEmails: ["left-the-team@storemink.com"],
+      });
+      expect(fannedOut(dbHolder.current)).toHaveLength(0);
+      expect(queuedEmails(dbHolder.current)).toHaveLength(0);
+    });
+
+    it("reaches nobody when the list is empty", async () => {
+      await platformEvent({
+        operators: ["a@storemink.com"],
+        restrictToOperatorEmails: [],
+      });
+      expect(fannedOut(dbHolder.current)).toHaveLength(0);
+    });
+
+    it("never narrows a store's own team", async () => {
+      const mock = setupDb({ staff: [superadmin] });
+      await recordEvent({
+        type: "order.placed",
+        storeId: STORE,
+        restrictToOperatorEmails: ["nobody@storemink.com"],
+      });
+      expect(fannedOut(mock).map((r: any) => r.recipientId)).toEqual([
+        "uid-owner",
+      ]);
+    });
+  });
+
   it("never fans a store event out to operators", async () => {
     const mock = setupDb({ staff: [superadmin] });
     await recordEvent({ type: "order.placed", storeId: STORE });

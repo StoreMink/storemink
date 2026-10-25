@@ -160,4 +160,51 @@ describe("saving replacements", () => {
     ).rejects.toThrow(/no longer exists/);
     expect(withService).not.toHaveBeenCalled();
   });
+
+  // TS-1D: a picture saved with no alt text takes its slot's description, so
+  // a blank alt is not refused; alt text that is merely too short is the
+  // operator's own words and still is, before the database is opened.
+  it("lets a blank alt through to take the slot's description, and still refuses a short one", async () => {
+    const actor = {
+      id: "00000000-0000-4000-8000-000000000001",
+      email: "a@b.c",
+    };
+    const input = (alt: unknown) => ({
+      projectId: "00000000-0000-4000-8000-0000000000aa",
+      versionId: "00000000-0000-4000-8000-0000000000bb",
+      expectedRevision: 1,
+      expectedPackageDigest: "x",
+      replacements: [
+        {
+          slotId: "hero",
+          assetId: "00000000-0000-4000-8000-0000000000cc",
+          alt,
+          source: "operator-owned",
+          licenseNote: "Photographed by the merchant.",
+        },
+      ],
+    });
+    vi.mocked(withService).mockClear();
+    await expect(
+      replaceThemeStudioSlotImages(actor, input("ab")),
+    ).rejects.toThrow(/Describe the hero image in 3 to 200 characters/);
+    expect(withService).not.toHaveBeenCalled();
+    // A licence note is never filled in: blank is refused as before.
+    await expect(
+      replaceThemeStudioSlotImages(actor, {
+        ...input(""),
+        replacements: [{ ...input("").replacements[0], licenseNote: " " }],
+      }),
+    ).rejects.toThrow(/licence note/);
+    expect(withService).not.toHaveBeenCalled();
+    vi.mocked(withService).mockResolvedValue({
+      versionId: "v",
+      versionNumber: 2,
+      checking: true,
+    });
+    for (const blank of ["", "   ", undefined, null]) {
+      await replaceThemeStudioSlotImages(actor, input(blank));
+    }
+    expect(withService).toHaveBeenCalledTimes(4);
+  });
 });

@@ -19,6 +19,18 @@ const projectId =
   process.env.THEME_STUDIO_GCP_PROJECT_ID?.trim() ||
   process.env.GCP_PROJECT_ID?.trim();
 const location = process.env.THEME_STUDIO_VERTEX_LOCATION?.trim() || "global";
+// ★ The host follows the kind of location, the rule of vertexHost in
+//   lib/ai/gemini.ts (this script cannot import TypeScript, so it is written
+//   out here): `global` has no prefix, the multi-regions `us` and `eu` use
+//   the regional-endpoint host, and a region prefixes the host. The old
+//   `${location}-aiplatform` rule named a host that does not exist for a
+//   multi-region. The dry run prints it.
+const endpointHost =
+  location === "global"
+    ? "aiplatform.googleapis.com"
+    : location === "us" || location === "eu"
+      ? `aiplatform.${location}.rep.googleapis.com`
+      : `${location}-aiplatform.googleapis.com`;
 
 const selected = requested
   ? registry.filter((model) => model.key === requested)
@@ -61,6 +73,7 @@ if (dryRun) {
       key: model.key,
       providerModel: model.providerModel,
       location,
+      host: endpointHost,
       status: "not-probed",
     })),
   );
@@ -79,10 +92,6 @@ const auth = new GoogleAuth({
 });
 const client = await auth.getClient();
 const headers = await client.getRequestHeaders();
-const endpointHost =
-  location === "global"
-    ? "aiplatform.googleapis.com"
-    : `${location}-aiplatform.googleapis.com`;
 
 const results = [];
 for (const model of resolved) {

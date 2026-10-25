@@ -244,3 +244,92 @@ describe("renderNotification", () => {
     expect(r?.title).toContain("1,240");
   });
 });
+
+// ★ TS-3B (owner's decision 8): three operator notices for Theme Studio, in
+// the bell and by email, told only to the operator who started the theme.
+describe("Theme Studio operator notices", () => {
+  const PROJECT = "0f9b5c1e-4a7d-4c2b-9e1f-3a2b1c0d9e8f";
+  const KEYS = [
+    "platform.theme_studio_ready",
+    "platform.theme_studio_needs_fix",
+    "platform.theme_studio_questions",
+  ] as const;
+
+  it("are operator-only platform events, in the bell and by email, with no switch", () => {
+    for (const key of KEYS) {
+      const def = byKey(key);
+      expect(def.group).toBe("Platform");
+      expect(def.audiences).toEqual({
+        operators: { inApp: true, email: true },
+      });
+      // No operator has a settings page: nothing may switch them off.
+      expect(def.configurable).toBe(false);
+      expect(resolveChannels(def, "operators", null, { email: false })).toEqual(
+        { inApp: true, email: true, digest: "instant" },
+      );
+      expect(storeAdminEvents().some((e) => e.key === key)).toBe(false);
+    }
+  });
+
+  it("name the theme and link to its page in the operator console", () => {
+    const copy = (type: (typeof KEYS)[number]) =>
+      renderNotification(
+        { type, subjectId: PROJECT, subjectLabel: "Monsoon Market" },
+        "operators",
+      );
+    expect(copy("platform.theme_studio_ready")).toEqual({
+      title: "Ready to publish · Monsoon Market",
+      body: "Theme Studio finished building and checking this theme. Open it to look it over, read any warnings and publish it.",
+      url: `/dashboard/themes/studio/${PROJECT}`,
+    });
+    expect(copy("platform.theme_studio_needs_fix")).toEqual({
+      title: "Needs a fix · Monsoon Market",
+      body: "Theme Studio stopped before this theme was ready. Open it to see why and what to do next.",
+      url: `/dashboard/themes/studio/${PROJECT}`,
+    });
+    expect(copy("platform.theme_studio_questions")).toEqual({
+      title: "Questions about Monsoon Market",
+      body: "Theme Studio needs a few answers before it can design this theme. Open it to reply.",
+      url: `/dashboard/themes/studio/${PROJECT}`,
+    });
+  });
+
+  it("never links anywhere but a project page or the Theme Studio list", () => {
+    for (const key of KEYS) {
+      for (const subjectId of [
+        "../../settings",
+        "https://evil.example/x",
+        `${PROJECT}/../x`,
+        "",
+        null,
+      ]) {
+        expect(
+          renderNotification({ type: key, subjectId }, "operators")?.url,
+        ).toBe("/dashboard/themes/studio");
+      }
+      // Without a name the title still reads as a sentence.
+      expect(renderNotification({ type: key }, "operators")?.title).not.toMatch(
+        /·\s*$|undefined|null/,
+      );
+    }
+  });
+
+  it("carry no long dash and no Mink credit count", () => {
+    for (const key of KEYS) {
+      const def = byKey(key);
+      const copy = renderNotification(
+        { type: key, subjectId: PROJECT, subjectLabel: "Monsoon Market" },
+        "operators",
+      )!;
+      for (const text of [
+        def.label,
+        def.description,
+        copy.title,
+        copy.body ?? "",
+      ]) {
+        expect(text).not.toMatch(/[\u2013\u2014]/);
+        expect(text).not.toMatch(/credit/i);
+      }
+    }
+  });
+});

@@ -45,11 +45,11 @@ import {
 import { SESSION_COOKIE } from "@/lib/auth/constants";
 import { STOREMINK_ICONS } from "@/lib/brand-assets";
 import { buttonRootClasses } from "@/lib/themes/buttons";
-import { withThemeNewsletter } from "@/lib/themes/footer";
 import {
-  activeAnnouncement,
-  withThemeAnnouncement,
-} from "@/lib/themes/announcement";
+  themeChromeDefaults,
+  withThemeChromeDefaults,
+} from "@/lib/themes/footer";
+import { activeAnnouncement } from "@/lib/themes/announcement";
 import { pageRootClasses } from "@/lib/themes/page";
 import { motionRootClasses, revealsOnScroll } from "@/lib/themes/motion";
 import { ScrollReveal } from "@/app/(storefront)/components/scroll-reveal";
@@ -195,9 +195,13 @@ export default async function StorefrontLayout({
     previewing ? Promise.resolve(null) : getStorefrontWhatsAppChat(store),
   ]);
   const design = theme?.preset.design ?? null;
-  const chrome = withThemeAnnouncement(
-    withThemeNewsletter(draftChrome ?? publishedChrome, theme),
-    theme,
+  // ★★ The theme's bar and newsletter words, laid over the store's chrome by
+  //   the ONE function ChromeProvider also lays over chrome a preview frame
+  //   is sent (lib/themes/footer.ts), so the frame shows what goes live.
+  const themeChrome = themeChromeDefaults(theme);
+  const chrome = withThemeChromeDefaults(
+    draftChrome ?? publishedChrome,
+    themeChrome,
   );
   // ★★ THE PRESET'S OWN MAP, KEPT SEPARATE FROM THE MERGED ONE. The inline
   // style below wants the merchant's overrides ON TOP; ChromeProvider wants
@@ -307,6 +311,8 @@ export default async function StorefrontLayout({
             <BrandProvider brand={brand}>
               <ChromeProvider
                 chrome={chrome}
+                // Only a preview frame is ever sent chrome to lay it over.
+                themeChrome={previewing ? themeChrome : undefined}
                 themeLayout={design?.layout}
                 themeVars={presetVars}
                 live={previewing}

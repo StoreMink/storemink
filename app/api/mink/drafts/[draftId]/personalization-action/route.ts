@@ -156,10 +156,13 @@ export async function POST(
       //   sample products and the store's tagline and description. Their
       //   caches expire at once rather than serving the theme's for a minute.
       revalidateTag(TAGS.categories, { expire: 0 });
+      // ★ A revamp (plan version 2) also PUBLISHES the merchant's own
+      //   products, so the shop's listing must show them at once.
       revalidateTag(TAGS.products, { expire: 0 });
       revalidateTag(STORE_TAG, { expire: 0 });
       revalidatePath("/dashboard/categories");
       revalidatePath("/dashboard/products");
+      revalidatePath("/shop");
     }
     return privateJson({ result });
   } catch (error) {

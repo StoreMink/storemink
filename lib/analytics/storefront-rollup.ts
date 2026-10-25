@@ -1,7 +1,28 @@
 import "server-only";
 
 import { sql } from "drizzle-orm";
-import { withService } from "@/lib/db/client";
+import { type Db, withService } from "@/lib/db/client";
+
+/**
+ * ★★ THE ROLLUP'S OWN STATEMENT LIMIT, 5 MINUTES, NOT THE POOL'S 30 S
+ * (lib/db/client.ts). Each rebuild is ONE statement over every store's raw
+ * events in the window, so it grows with the platform, not with one store.
+ * Measured on storemink_local (2026-10-24, rolled back, the window widened to
+ * all 211,473 events): the bucket rebuild 2.2 s, the dimensions' DELETE 23 ms
+ * and INSERT 2.6 s, its sort spilling 39 MB to disk at the default 4 MB
+ * work_mem. A shared-core production database is several times slower, so a
+ * busy fortnight would pass 30 s and the rollup would never finish again;
+ * 5 minutes is over 100 times today's local cost and still ends a runaway.
+ * SET LOCAL lasts only for its transaction, so nothing else on the
+ * connection gets the longer limit.
+ * ⚠ The cron's attempt deadline is 300 s (docs/cron-jobs.md): a rebuild that
+ * needs minutes outlives the attempt, and the scheduler's retry starts a
+ * second one beside it. The primary keys keep the counts right (a
+ * dimensions rebuild that collides fails rather than doubling a row).
+ */
+async function setRollupStatementLimit(db: Db): Promise<void> {
+  await db.execute(sql`set local statement_timeout = '5min'`);
+}
 
 /**
  * Rebuild every raw bucket still inside the 14-day correction window.
@@ -9,8 +30,9 @@ import { withService } from "@/lib/db/client";
  * deterministic. The primary-key upsert is the cross-instance lock.
  */
 export async function runStorefrontAnalyticsRollup(): Promise<number> {
-  const result = await withService((db) =>
-    db.execute(sql`
+  const result = await withService(async (db) => {
+    await setRollupStatementLimit(db);
+    return db.execute(sql`
       WITH ordered AS (
         SELECT e.*,
                lag(e.occurred_at) OVER (
@@ -97,8 +119,8 @@ export async function runStorefrontAnalyticsRollup(): Promise<number> {
         purchases = EXCLUDED.purchases,
         updated_at = now()
       RETURNING store_id
-    `),
-  );
+    `);
+  });
   const dimensions = await runStorefrontDimensionRollup();
   return (result.rowCount ?? 0) + dimensions;
 }
@@ -119,6 +141,7 @@ export async function runStorefrontAnalyticsRollup(): Promise<number> {
  */
 export async function runStorefrontDimensionRollup(): Promise<number> {
   return withService(async (db) => {
+    await setRollupStatementLimit(db);
     await db.execute(sql`
       DELETE FROM storefront_daily_dimensions
        WHERE date >= (now() AT TIME ZONE 'UTC')::date - 12

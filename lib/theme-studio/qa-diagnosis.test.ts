@@ -1,13 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { gate } from "./acceptance-gates";
+import {
+  gate,
+  GATE_LABELS,
+  type GateFinding,
+  type GateId,
+  type GateResult,
+} from "./acceptance-gates";
 import {
   deterministicRepairs,
   qaProgress,
   qaImproved,
   parseQaRepairs,
 } from "./qa-diagnosis";
+
+/** A failed gate as stored before severity-v1: no severity, so every
+ * finding counts as serious, as it did when it was measured. */
+const legacy = (id: GateId, findings: GateFinding[]): GateResult => ({
+  id,
+  label: GATE_LABELS[id],
+  required: true,
+  status: "fail",
+  findings,
+});
 const crop = (fraction: number) => [
-  gate("browser.image_crops", [
+  legacy("browser.image_crops", [
     {
       code: "extreme_crop",
       where: "tablet768 · content",
@@ -33,7 +49,7 @@ describe("QA diagnosis and progress", () => {
           code: "color-contrast",
           where: "phone360 · home",
           message:
-            "Colour contrast (12 elements, serious) — first: .shop-card-base",
+            "Colour contrast (12 elements, serious); first: .shop-card-base",
           contrast: [{ target: ".shop-card-base", ratio, required: 4.5 }],
         },
       ]),
@@ -52,7 +68,7 @@ describe("QA diagnosis and progress", () => {
   });
   it("routes hit areas to the renderer, contrast and image frames to settings", () => {
     const r = deterministicRepairs([
-      gate("browser.tap_targets", [
+      legacy("browser.tap_targets", [
         { code: "small_target", message: "9×9px (button.home-carousel-dot)." },
       ]),
       gate("browser.accessibility", [
@@ -235,4 +251,109 @@ it("routes a failing performance gate to the renderer, never to a settings call"
       reason: "Performance: LCP 4216ms; the limit is 3000ms.",
     },
   ]);
+});
+
+describe("warnings in the repair loop (severity-v1)", () => {
+  const overflow = gate("browser.overflow", [
+    {
+      code: "horizontal_overflow",
+      where: "phone360 · home",
+      message: "The page is 40px wider than the viewport (div.hero).",
+    },
+  ]);
+  const tapTarget = gate("browser.tap_targets", [
+    {
+      code: "small_target",
+      where: "phone390 · home",
+      message:
+        "9×9px interactive target (button.home-carousel-dot); minimum is 24×24px.",
+    },
+  ]);
+  const tightCrop = gate("browser.image_crops", [
+    {
+      code: "extreme_crop",
+      where: "tablet768 · content",
+      message:
+        "Only 24% of the source frame remains visible (img.home-hero-img).",
+    },
+  ]);
+  const language = gate("routes.markup", [
+    { code: "lang", where: "/", message: "The page has no language." },
+  ]);
+
+  it("never turns a warning into paid work or a pattern that must not return", () => {
+    expect(deterministicRepairs([tapTarget, tightCrop, language])).toEqual([]);
+    expect(qaProgress([tapTarget, tightCrop, language]).patterns).toEqual([]);
+  });
+
+  it("does not let a renderer-only warning turn a repairable run into a renderer stop", () => {
+    expect(
+      deterministicRepairs([overflow, tapTarget, language]).map((r) => r.kind),
+    ).toEqual(["settings"]);
+  });
+
+  it("keeps security-like markup serious while it is filed as renderer work", () => {
+    const markup = gate("routes.markup", [
+      { code: "lang", where: "/", message: "The page has no language." },
+      {
+        code: "external_resource",
+        where: "/",
+        message: "Loads https://t.example/a.js from another origin.",
+      },
+    ]);
+    expect(markup.findings[0]).toMatchObject({
+      code: "external_resource",
+      severity: "serious",
+    });
+    expect(deterministicRepairs([markup])).toEqual([
+      {
+        kind: "renderer",
+        target: null,
+        reason:
+          "Rendered markup: Loads https://t.example/a.js from another origin.",
+      },
+    ]);
+  });
+
+  it("counts a fix as progress when a new warning appears beside it", () => {
+    const before = qaProgress([overflow]);
+    const after = qaProgress([
+      gate("browser.overflow", []),
+      tightCrop,
+      tapTarget,
+    ]);
+    expect(after.patterns).toEqual([]);
+    expect(qaImproved(after, before)).toBe(true);
+  });
+
+  it("reads the same selector from an axe finding written before and after severity-v1", () => {
+    const axe = (separator: string) =>
+      qaProgress([
+        gate("browser.accessibility", [
+          {
+            code: "button-name",
+            impact: "critical",
+            where: "phone360 · home",
+            message: `Buttons must have discernible text (1 element, critical)${separator}examples: button.cart-icon: Fix any of the following`,
+          },
+        ]),
+      ]).patterns;
+    const before = axe(` ${String.fromCharCode(0x2014)} `);
+    expect(before).toEqual([
+      "browser.accessibility:button-name:phone360 · home:button.cart-icon",
+    ]);
+    expect(axe("; ")).toEqual(before);
+  });
+
+  it("repairs a gate that stops the run with nothing to say as incomplete", () => {
+    const skipped = gate("routes.links", [], { status: "skipped" });
+    expect(deterministicRepairs([skipped])).toEqual([
+      {
+        kind: "settings",
+        target: null,
+        reason: "Navigation links: Required evidence is incomplete.",
+      },
+    ]);
+    expect(qaProgress([skipped]).patterns).toEqual(["routes.links:incomplete"]);
+  });
 });

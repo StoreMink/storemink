@@ -9,6 +9,14 @@ an operator uploads an image for each slot and saves them as a new version.
 It is operator-only: nothing a merchant, their staff or a shopper does
 changes, so there is no Help Centre migration.
 
+> **Since 25 Oct 2026 (wave TS-2)** a version's Images page is the theme page's
+> **Pictures** tab (`…/versions/<id>/images` redirects there). Drawing is
+> **Draw missing pictures** or **Redraw**, one click and a small confirm that
+> names how many and the list-price estimate; per-picture costs are in the Log
+> tab and that confirm only, and the catalogue pictures have no capture button
+> (every final check takes them). This record keeps the screen as built;
+> `docs/operator-console.md` describes today's.
+
 ## 1. What changes for an operator
 
 Every version row in a Studio project has an **Images** link. Its badge counts
@@ -27,6 +35,17 @@ slots that still have a placeholder.
    images. Its parent is the version edited, and it becomes current. The
    version edited never changes. A candidate goes back to `ready`, because its
    acceptance evidence covered different images.
+
+**Since 24 Oct 2026 (TS-1D), every save is checked.** With the automatic
+checks on and no placeholder left, the new version is hidden while it is
+checked: the project shows as working, keeps its current version, and one
+automatic final capture (fresh catalogue pictures, every page measured on
+today's build) and the design review run on it, at the repair ceiling, so
+never a paid redesign. The theme then returns to Ready to publish, or shows
+the edited version with its reason. A save that leaves a placeholder (or any
+save with the checks off) becomes current at once, as above. A picture saved
+with a blank alt text takes its slot's own description; the licence note is
+never filled in. Nothing is written to the chat.
 
 **★ A revision keeps the images.** A revision recompiles the whole package,
 and every slot would otherwise come back as a placeholder. Any slot the

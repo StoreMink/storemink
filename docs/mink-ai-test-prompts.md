@@ -1040,7 +1040,8 @@ per store per day, so a full pass through this section is a meaningful share of
 a day's allowance on one store. Do not loop it.
 
 ⚠ **The Gemini image model must be enabled on the Vertex project.**
-`MINK_IMAGE_MODEL` defaults to `gemini-3.1-flash-image` and
+`MINK_IMAGE_MODEL` defaults to `gemini-nano-banana-2.1` (since 25 Oct 2026;
+Cloud Build sets it from `_MINK_IMAGE_MODEL`) and
 `MINK_IMAGE_LOCATION` defaults to `global`. If a retired Imagen override remains
 in an environment, every prompt answers "The image service did not respond" —
 an operator problem wearing a merchant-facing message. Rule that out first with

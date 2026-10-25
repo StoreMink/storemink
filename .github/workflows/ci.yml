@@ -121,7 +121,22 @@ jobs:
       - name: Install Chromium
         run: node jobs/theme-studio-capture/node_modules/playwright-core/cli.js install --with-deps --no-shell chromium
       - name: Check native theme layouts
+        id: layouts
         run: node scripts/theme-studio-renderer-check.mjs
+
+      # ★ SHARED STOREFRONT CONTRAST. Replays every unreadable label the
+      # 2026-10-04 benchmark and the 2026-10-10 exemplar run found in our own
+      # storefront CSS, on every palette this build ships, each beside the
+      # rule that caused it (which must still fail), plus the card skins, the
+      # quick-add dialog, both product pages and light and dark phone
+      # drawers. A Theme Studio theme cannot publish with text below the AA
+      # line whatever the cause, so a shared regression has to fail here,
+      # before it reaches a theme or a store. Offline Chromium with the same
+      # setup as the step above; it runs even when that step fails, so one
+      # push reports both.
+      - name: Check shared storefront contrast
+        if: ${{ !cancelled() && (success() || steps.layouts.outcome == 'failure') }}
+        run: node scripts/theme-studio-contrast-check.mjs
 
   shuffle:
     name: Test order independence

@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
-import Link from "next/link";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useRouter } from "next/navigation";
-import { ImagePlus, Loader2, Send, Sparkles, X } from "lucide-react";
+import { ImagePlus, Loader2, Send, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   queueThemeStudioGenerationAction,
@@ -16,7 +22,30 @@ import type {
   ThemeStudioProjectDetail,
   ThemeStudioVersionView,
 } from "@/lib/theme-studio/repository";
-import { studioDate } from "../studio-ui";
+import {
+  checksOutcome,
+  plainText,
+  questionsOpen,
+  stopNeedsThemeChange,
+} from "../studio-ui";
+import { clockWords, designLabel, stopReasonWords } from "../studio-words";
+import { newIdempotencyKey } from "../new/new-theme-helpers";
+import { StudioPopover } from "./studio-tabs";
+
+// ---------------------------------------------------------------------------
+// The theme page's chat (wave TS-2): one timeline of the operator's messages
+// and Theme Studio's answers, the progress card at its end, and the composer.
+//
+// ★ THE COMPOSER IS THE ACTION FOR WORDS. A first brief is sent from here
+// ("Start building"), an answer to the AI's questions, or a change to one
+// design (each message makes a new design). The page fills it ("Describe a
+// fix" puts a draft here through `putInChat`), and it never sends by itself.
+//
+// ★ SCREENSHOTS: "+ Screenshots" uploads new ones and lists the earlier ones
+// to attach again; an upload no message has used yet can be deleted (a
+// project holds at most 100, repository.ts, so without it a full project is
+// stuck). Paste and drop on the message work too.
+// ---------------------------------------------------------------------------
 
 const ACCEPT = "image/jpeg,image/png,image/webp,image/avif";
 const referenceUrl = (id: string) =>
@@ -28,6 +57,17 @@ const SCOPE_TITLE: Record<ThemeStudioChangeView["scope"], string> = {
   recreate: "Starting over - building a new theme from scratch",
 };
 
+/** What the page can ask of the chat's composer. */
+export interface ComposerApi {
+  /** Put text in the message (below what is already there) and focus it.
+   * Never sends. */
+  fill(text: string): void;
+  focus(): void;
+  /** Send the message as if Send was pressed; `body` is used when the
+   * message is empty (the saved brief for "Start building"). */
+  send(body?: string): void;
+}
+
 function ChangeBubble({ change }: { change: ThemeStudioChangeView }) {
   const details: string[] = [];
   if (change.scope === "edit") {
@@ -38,7 +78,7 @@ function ChangeBubble({ change }: { change: ThemeStudioChangeView }) {
     if (change.redraws)
       details.push(
         change.redrawsDeferred
-          ? `Redraw ${change.redraws} picture${change.redraws === 1 ? "" : "s"} from Images to finish this change.`
+          ? `Redraw ${change.redraws} picture${change.redraws === 1 ? "" : "s"} from the Pictures tab to finish this change.`
           : `Redrawing ${change.redraws} picture${change.redraws === 1 ? "" : "s"} to match the theme’s existing art direction.`,
       );
   }
@@ -47,15 +87,15 @@ function ChangeBubble({ change }: { change: ThemeStudioChangeView }) {
       "The change couldn’t be made as a simple edit, so the theme was revised instead.",
     );
   if (change.scope === "recreate")
-    details.push("Your earlier versions stay available to preview or restore.");
+    details.push(
+      "Your earlier designs stay available to preview or make current.",
+    );
   return (
-    <div className="mr-auto max-w-[90%] break-words rounded-2xl rounded-bl-md border border-slate-200 bg-white p-4 text-sm text-slate-700">
-      <p className="mb-1 text-xs font-semibold text-indigo-700">
-        {SCOPE_TITLE[change.scope]}
-      </p>
-      {change.summary ? <p>{change.summary}</p> : null}
+    <div className="studio-bubble" data-from="studio">
+      <p className="studio-bubble-meta">{SCOPE_TITLE[change.scope]}</p>
+      {change.summary ? <p>{plainText(change.summary)}</p> : null}
       {details.length ? (
-        <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-500">
+        <ul className="studio-muted mt-2 list-disc space-y-1 pl-5 text-xs">
           {details.map((detail) => (
             <li key={detail}>{detail}</li>
           ))}
@@ -72,24 +112,50 @@ export function ThemeConversation({
   target,
   canRevise,
   onSelectVersion,
-  composerRef,
   initialBody,
+  now,
+  working,
+  lockedReason,
+  progressCard,
+  apiRef,
+  onViewDesign,
+  onOpenChecks,
+  onComposerActive,
 }: {
   project: ThemeStudioProjectDetail;
   generationEnabled: boolean;
   referenceLimit: number;
+  /** The design a change is made to. */
   target: ThemeStudioVersionView | null;
   canRevise: boolean;
   onSelectVersion: (id: string | null) => void;
-  composerRef: RefObject<HTMLTextAreaElement | null>;
   initialBody?: string;
+  /** The read time of the page's facts (ISO), for "10:05" times. */
+  now: string;
+  /** Theme Studio is working on this theme (building, checking or
+   * publishing), so nothing new can start. */
+  working: boolean;
+  /** Why a message can't be sent now, in a sentence (the page knows the
+   * status and the switches); shown only while the composer is locked, and
+   * a general sentence when absent. */
+  lockedReason?: string | null;
+  /** The progress card, shown at the end of the timeline. */
+  progressCard?: ReactNode;
+  apiRef?: RefObject<ComposerApi | null>;
+  /** Show a design in the Preview tab. */
+  onViewDesign?: (versionId: string) => void;
+  /** Open the Checks tab on a design. */
+  onOpenChecks?: (versionId: string) => void;
+  /** The composer has focus (true) or lost it (false): the phone bar hides
+   * while the composer is the action. */
+  onComposerActive?: (active: boolean) => void;
 }) {
   const router = useRouter();
-  const latestRun = project.runs[0];
-  const answering =
-    project.status === "blocked" && Boolean(latestRun?.questions.length);
+  // Waiting for answers only while the questions are open: a theme blocked
+  // by its checks (security) has none and takes a change instead, as the
+  // server allows (repository.ts questionsOpen, reviseThemeStudioVersion).
+  const answering = project.status === "blocked" && questionsOpen(project);
   const creating = project.status === "draft";
-  const working = project.status === "generating";
   const [body, setBody] = useState(
     creating ? project.draftBrief : (initialBody ?? ""),
   );
@@ -110,13 +176,21 @@ export function ThemeConversation({
   const [uploaded, setUploaded] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [focusTick, setFocusTick] = useState(0);
   const [submittedRevision, setSubmittedRevision] = useState<number | null>(
     null,
   );
-  const key = useRef(crypto.randomUUID());
+  // One key per message, made on its first send and kept for a retry of the
+  // same message (the server runs it once). Never crypto.randomUUID at
+  // render: it exists only in a secure context, and a phone reaching the dev
+  // server over the network is not one.
+  const key = useRef<string | null>(null);
   const busy = useRef(false);
   const input = useRef<HTMLInputElement>(null);
   const log = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const libraryButton = useRef<HTMLButtonElement>(null);
   const editable =
     generationEnabled &&
     (creating || answering || canRevise) &&
@@ -126,12 +200,23 @@ export function ThemeConversation({
   const library = [
     ...new Set([...project.references.map((ref) => ref.id), ...uploaded]),
   ];
+  const packaged = project.versions.filter((version) => version.hasPackage);
+  const hasVersions = packaged.length > 0;
+  const sendLabel = creating
+    ? "Start building"
+    : answering
+      ? "Send answer"
+      : "Send message";
 
   useEffect(() => {
-    // Keep the latest response in view without jumping the entire workspace.
+    // Keep the latest answer in view without jumping the whole page.
     const node = log.current;
     if (node) node.scrollTop = node.scrollHeight;
   }, [project.messages.length, project.versions.length, project.status]);
+
+  useEffect(() => {
+    if (focusTick > 0) composer.current?.focus();
+  }, [focusTick]);
 
   async function upload(files: File[]) {
     if (busy.current || disabled || files.length === 0) return;
@@ -175,7 +260,7 @@ export function ThemeConversation({
           setSelected((ids) => [...new Set([...ids, id])]);
         } catch (error) {
           toast.error(
-            `${file.name}: ${error instanceof Error ? error.message : "Upload failed. Try again."}`,
+            `${file.name}: ${error instanceof Error ? plainText(error.message) : "Upload failed. Try again."}`,
           );
         }
       }
@@ -187,17 +272,43 @@ export function ThemeConversation({
     }
   }
 
-  async function send() {
-    if (busy.current || disabled || !body.trim()) return;
+  async function removeUpload(id: string) {
+    if (busy.current) return;
+    busy.current = true;
+    setUploading(true);
+    try {
+      const result = await removeThemeStudioReferenceAction({
+        projectId: project.id,
+        assetId: id,
+      });
+      if (!result.ok) {
+        toast.error(result.error ?? "The screenshot couldn't be deleted.");
+        return;
+      }
+      setSelected((ids) => ids.filter((item) => item !== id));
+      setUploaded((ids) => ids.filter((item) => item !== id));
+      router.refresh();
+    } catch {
+      toast.error("The screenshot couldn't be deleted.");
+    } finally {
+      busy.current = false;
+      setUploading(false);
+    }
+  }
+
+  async function send(fallback?: string) {
+    const text = (body.trim() ? body : (fallback ?? "")).trim();
+    if (busy.current || disabled || !text) return;
     busy.current = true;
     setSending(true);
+    const idempotencyKey = (key.current ??= newIdempotencyKey());
     try {
       const common = {
         projectId: project.id,
         expectedRevision: project.revision,
-        body: body.trim(),
+        body: text,
         referenceAssetIds: selected,
-        idempotencyKey: key.current,
+        idempotencyKey,
       };
       const result = creating
         ? await queueThemeStudioGenerationAction(common)
@@ -209,15 +320,19 @@ export function ThemeConversation({
                 versionId: target.id,
                 expectedPackageDigest: target.packageDigest ?? "",
               })
-            : { ok: false, error: "Choose a version to change." };
+            : { ok: false, error: "Choose a design to change." };
       if (!result.ok) {
-        toast.error(result.error ?? "Your message couldn't be sent.");
+        toast.error(
+          result.error
+            ? plainText(result.error)
+            : "Your message couldn't be sent.",
+        );
         return;
       }
       setSubmittedRevision(project.revision);
       setBody("");
       setSelected([]);
-      key.current = crypto.randomUUID();
+      key.current = null;
       onSelectVersion(null);
       router.refresh();
     } catch {
@@ -230,6 +345,25 @@ export function ThemeConversation({
     }
   }
 
+  useImperativeHandle(apiRef, () => ({
+    fill(text: string) {
+      setBody((previous) => {
+        const current = previous.trimEnd();
+        if (!current) return text;
+        return current.includes(text.trim())
+          ? previous
+          : `${current}\n\n${text}`;
+      });
+      setFocusTick((tick) => tick + 1);
+    },
+    focus() {
+      setFocusTick((tick) => tick + 1);
+    },
+    send(fallback?: string) {
+      void send(fallback);
+    },
+  }));
+
   const timeline = [
     ...project.messages
       .filter((message) => message.kind !== "images" && !message.automatic)
@@ -237,15 +371,13 @@ export function ThemeConversation({
         id: message.id,
         createdAt: message.createdAt,
         content: (
-          <div className="ml-auto max-w-[90%] break-words rounded-2xl rounded-br-md bg-indigo-600 p-4 text-white">
-            <p className="mb-1 text-xs text-indigo-100">
-              You · {studioDate(message.createdAt)}
+          <div className="studio-bubble" data-from="operator">
+            <p className="studio-bubble-meta">
+              You, {clockWords(message.createdAt, now)}
             </p>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed">
-              {message.body}
-            </p>
+            <p className="whitespace-pre-wrap">{message.body}</p>
             {message.referenceAssetIds?.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="studio-thumbs">
                 {message.referenceAssetIds.map((id, index) => (
                   <a
                     key={id}
@@ -253,12 +385,12 @@ export function ThemeConversation({
                     target="_blank"
                     rel="noreferrer"
                     aria-label={`Open screenshot ${index + 1}`}
+                    className="studio-thumb"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element -- private reference route */}
                     <img
                       src={referenceUrl(id)}
                       alt={`Attached screenshot ${index + 1}`}
-                      className="h-20 w-28 rounded-lg border border-white/20 bg-white object-contain"
                       loading="lazy"
                     />
                   </a>
@@ -268,49 +400,63 @@ export function ThemeConversation({
           </div>
         ),
       })),
-    ...project.versions
-      .filter((version) => version.hasPackage)
-      .map((version) => ({
+    ...packaged.map((version) => {
+      const outcome = checksOutcome(version.id, project.events);
+      const stopped = outcome ? !outcome.passed : version.qaStatus === "failed";
+      const label = designLabel(version.versionNumber);
+      return {
         id: version.id,
         createdAt: version.createdAt,
         content: (
-          <div className="mr-auto max-w-[90%] break-words rounded-2xl rounded-bl-md border border-slate-200 bg-white p-4">
-            <p className="mb-1 flex items-center gap-2 text-xs font-semibold text-indigo-700">
-              <Sparkles className="h-3.5 w-3.5" />
-              Theme Studio · Version {version.versionNumber}
+          <div className="studio-bubble" data-from="studio">
+            <p className="studio-bubble-meta flex items-center gap-2">
+              <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+              Theme Studio, {label}
             </p>
-            <p className="text-sm leading-relaxed text-slate-700">
-              {version.summary}
-            </p>
-            {version.qaStatus === "failed" ? (
-              <p className="mt-2 text-xs text-amber-800">
-                This draft needs attention: automatic QA did not pass. Review it
-                and describe what to fix.
+            <p>{plainText(version.summary)}</p>
+            {stopped ? (
+              <p className="studio-muted mt-2 text-xs">
+                {stopNeedsThemeChange(outcome?.code)
+                  ? `The automatic checks stopped on ${label}. Read why in Checks, then describe what to fix.`
+                  : `The automatic checks stopped on ${label}. Read why in Checks; the theme itself does not need a change.`}
               </p>
             ) : null}
-            <div className="mt-3 flex flex-wrap gap-3 text-sm font-medium">
-              <Link
-                href={`/dashboard/themes/studio/${project.id}/versions/${version.id}`}
-                className="text-indigo-700 underline underline-offset-4"
-              >
-                Preview version {version.versionNumber}
-              </Link>
+            <div className="studio-bubble-actions">
+              {onViewDesign ? (
+                <button
+                  type="button"
+                  className="studio-link"
+                  onClick={() => onViewDesign(version.id)}
+                >
+                  Preview {label}
+                </button>
+              ) : null}
+              {stopped && onOpenChecks ? (
+                <button
+                  type="button"
+                  className="studio-link"
+                  onClick={() => onOpenChecks(version.id)}
+                >
+                  Open Checks
+                </button>
+              ) : null}
               {canRevise ? (
                 <button
                   type="button"
-                  className="text-slate-600 underline underline-offset-4"
+                  className="studio-link"
                   onClick={() => {
                     onSelectVersion(version.id);
-                    composerRef.current?.focus();
+                    setFocusTick((tick) => tick + 1);
                   }}
                 >
-                  Change this version
+                  Change this design
                 </button>
               ) : null}
             </div>
           </div>
         ),
-      })),
+      };
+    }),
     ...project.runs
       .filter((run) => run.change && run.status === "succeeded")
       .map((run) => ({
@@ -330,25 +476,26 @@ export function ThemeConversation({
         id: `response-${run.id}`,
         createdAt: run.finishedAt ?? run.createdAt,
         content: (
-          <div className="mr-auto max-w-[90%] break-words rounded-2xl rounded-bl-md border border-slate-200 bg-white p-4 text-sm text-slate-700">
-            <p className="mb-2 text-xs font-semibold text-indigo-700">
-              Theme Studio
-            </p>
+          <div className="studio-bubble" data-from="studio">
+            <p className="studio-bubble-meta">Theme Studio</p>
             {run.questions.length ? (
               <>
                 <p>I need a little more detail to continue:</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5">
                   {run.questions.map((question) => (
-                    <li key={question}>{question}</li>
+                    <li key={question}>{plainText(question)}</li>
                   ))}
                 </ul>
               </>
             ) : (
               <p>
-                {run.declineReason ??
-                  (run.status === "cancelled"
-                    ? "This request was cancelled. Your previous versions are still available."
-                    : "This request couldn't finish. Your previous versions are still available. See Runs below to retry or inspect the failure.")}
+                {run.declineReason
+                  ? plainText(run.declineReason)
+                  : run.status === "cancelled"
+                    ? hasVersions
+                      ? "This request was stopped. Your earlier designs are still available."
+                      : "This request was stopped before a design was made."
+                    : `${plainText(stopReasonWords(run.errorCode, "run"))}${hasVersions ? " Your earlier designs are still available." : ""}`}
               </p>
             )}
           </div>
@@ -356,52 +503,58 @@ export function ThemeConversation({
       })),
   ].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
+  const placeholder = working
+    ? "You can send changes when it finishes."
+    : answering
+      ? "Reply to the questions above. You can attach screenshots too."
+      : creating
+        ? "Describe what to build. Paste or drop screenshots here."
+        : "Describe a change. Small requests change only that; say “start over” to rebuild from scratch. Paste or drop screenshots here.";
+
   return (
-    <section
-      aria-label="Theme conversation"
-      className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
-    >
-      <div className="border-b border-slate-100 px-5 py-4">
-        <h2 className="flex items-center gap-2 font-semibold text-slate-900">
-          <Sparkles className="h-5 w-5 text-indigo-600" />
-          Build with Theme Studio
-        </h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Describe your theme, share screenshots, and keep refining it here.
-        </p>
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div
         ref={log}
-        className="max-h-[36rem] min-h-48 space-y-4 overflow-y-auto bg-slate-50/70 p-5"
+        className="studio-chat-log"
         role="log"
-        aria-label="Conversation history"
+        aria-label="Chat with Theme Studio"
       >
         {timeline.length ? (
           timeline.map((entry) => <div key={entry.id}>{entry.content}</div>)
         ) : (
-          <div className="max-w-lg rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-700">
-            Tell me what you want to build. You can attach inspiration
-            screenshots now, then send screenshots of anything you want changed
-            after the first version.
+          <div className="studio-bubble" data-from="studio">
+            Tell me what you want to build. You can attach screenshots of stores
+            you like now, then send screenshots of anything you want changed
+            after the first design.
           </div>
         )}
-        {working || submittedRevision === project.revision ? (
-          <p
-            role="status"
-            className="flex items-center gap-2 text-sm text-indigo-700"
-          >
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Creating your theme, generating missing images, running acceptance
-            and visual checks, and repairing theme issues automatically. You can
-            leave this page and come back.
+        {progressCard}
+        {!working && submittedRevision === project.revision ? (
+          <p role="status" className="studio-loading">
+            <Loader2 aria-hidden="true" className="h-4 w-4 studio-spin" />
+            Sent. Theme Studio is starting; this page updates by itself.
           </p>
         ) : null}
       </div>
       <form
-        className="space-y-3 border-t border-slate-200 p-4"
+        className="studio-composer"
+        aria-label="Message Theme Studio"
+        // Locked (Theme Studio works, publishes, or the theme takes no
+        // change): on a phone it folds to its one-line reason (studio.css),
+        // so the progress card above it keeps the room.
+        data-locked={
+          !editable && submittedRevision !== project.revision
+            ? "true"
+            : undefined
+        }
         onSubmit={(event) => {
           event.preventDefault();
           void send();
+        }}
+        onFocus={() => onComposerActive?.(true)}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+            onComposerActive?.(false);
         }}
         onDragOver={(event) => {
           if (event.dataTransfer.types.includes("Files"))
@@ -415,31 +568,26 @@ export function ThemeConversation({
         }}
       >
         {canRevise && target ? (
-          <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-            Editing
+          <label className="studio-muted flex flex-wrap items-center gap-2 text-xs">
+            Changing
             <select
-              aria-label="Version to change"
+              aria-label="Design to change"
               value={target.id}
               disabled={disabled}
               onChange={(event) => onSelectVersion(event.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-2 py-1"
             >
-              {project.versions
-                .filter((version) => version.hasPackage)
-                .map((version) => (
-                  <option key={version.id} value={version.id}>
-                    Version {version.versionNumber}
-                    {version.id === project.currentVersionId
-                      ? " (current)"
-                      : ""}
-                  </option>
-                ))}
+              {packaged.map((version) => (
+                <option key={version.id} value={version.id}>
+                  {designLabel(version.versionNumber)}
+                  {version.id === project.currentVersionId ? " (current)" : ""}
+                </option>
+              ))}
             </select>
-            <span>Each message creates a new version.</span>
+            <span>Each message makes a new design.</span>
           </label>
         ) : null}
         <textarea
-          ref={composerRef}
+          ref={composer}
           aria-label="Message Theme Studio"
           value={body}
           onChange={(event) => setBody(event.target.value)}
@@ -464,172 +612,185 @@ export function ThemeConversation({
               void send();
             }
           }}
-          placeholder={
-            answering
-              ? "Reply to the questions above. You can attach screenshots too."
-              : creating
-                ? "Describe what to build. Paste or drop screenshots here…"
-                : "Describe a change - small requests change only that; say “start over” to rebuild from scratch. Paste or drop screenshots here…"
-          }
-          className="block min-h-28 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50"
+          placeholder={placeholder}
         />
         {selected.length ? (
-          <ul className="flex flex-wrap gap-2" aria-label="Message attachments">
+          <ul className="studio-thumbs" aria-label="Message attachments">
             {selected.map((id, index) => (
-              <li key={id} className="relative">
+              <li key={id} className="studio-thumb">
                 {/* eslint-disable-next-line @next/next/no-img-element -- private reference route */}
                 <img
                   src={referenceUrl(id)}
                   alt={`Screenshot ${index + 1} to send`}
-                  className="h-20 w-28 rounded-lg border border-slate-200 bg-slate-50 object-contain"
                 />
                 <button
                   type="button"
                   disabled={disabled}
                   aria-label={`Remove screenshot ${index + 1} from message`}
-                  className="absolute -right-1 -top-1 rounded-full border border-slate-200 bg-white p-1 text-slate-600"
+                  className="studio-thumb-remove"
                   onClick={() =>
                     setSelected((ids) => ids.filter((item) => item !== id))
                   }
                 >
-                  <X className="h-3 w-3" />
+                  <X aria-hidden="true" className="h-3 w-3" />
                 </button>
               </li>
             ))}
           </ul>
         ) : null}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <input
-            ref={input}
-            type="file"
-            multiple
-            accept={ACCEPT}
-            aria-label="Upload screenshots"
-            className="sr-only"
-            disabled={disabled}
-            onChange={(event) =>
-              void upload(Array.from(event.target.files ?? []))
-            }
-          />
-          <button
-            type="button"
-            disabled={disabled || selected.length >= referenceLimit}
-            onClick={() => input.current?.click()}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {uploading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ImagePlus className="h-4 w-4" />
-            )}
-            Attach screenshots{" "}
-            <span className="text-xs text-slate-400">
-              {selected.length}/{referenceLimit}
-            </span>
-          </button>
+        {/* Reached through "Upload screenshots" in the Screenshots list, so
+            it is no invisible stop in the Tab order. */}
+        <input
+          ref={input}
+          type="file"
+          multiple
+          accept={ACCEPT}
+          aria-label="Upload screenshots"
+          className="sr-only"
+          tabIndex={-1}
+          disabled={disabled}
+          onChange={(event) =>
+            void upload(Array.from(event.target.files ?? []))
+          }
+        />
+        <div className="studio-composer-row">
+          <span className="studio-popover-anchor">
+            <button
+              ref={libraryButton}
+              type="button"
+              aria-expanded={libraryOpen}
+              aria-controls="studio-screenshots"
+              onClick={() => setLibraryOpen((open) => !open)}
+              className="dash-btn dash-btn-ghost dash-btn-sm"
+            >
+              {uploading ? (
+                <Loader2 aria-hidden="true" className="h-4 w-4 studio-spin" />
+              ) : (
+                <ImagePlus aria-hidden="true" className="h-4 w-4" />
+              )}
+              Screenshots
+              <span className="studio-muted">
+                <span className="sr-only">, attached: </span>
+                {selected.length}/{referenceLimit}
+              </span>
+            </button>
+            <StudioPopover
+              id="studio-screenshots"
+              open={libraryOpen}
+              onOpenChange={setLibraryOpen}
+              triggerRef={libraryButton}
+              label="Screenshots"
+              align="start"
+              place="above"
+            >
+              <div className="studio-library">
+                <button
+                  type="button"
+                  disabled={disabled || selected.length >= referenceLimit}
+                  onClick={() => input.current?.click()}
+                  className="dash-btn dash-btn-ghost dash-btn-sm"
+                >
+                  <ImagePlus aria-hidden="true" className="h-4 w-4" /> Upload
+                  screenshots
+                </button>
+                <p className="studio-muted text-xs">
+                  {selected.length} of {referenceLimit} attached to this
+                  message. JPEG, PNG, WebP or AVIF, up to 10 MB each and 40 MB
+                  per message. You can also paste or drop them on the message.
+                </p>
+                {library.length ? (
+                  <>
+                    <p className="text-sm font-semibold">
+                      Earlier screenshots ({library.length})
+                    </p>
+                    <ul className="studio-library-grid">
+                      {library.map((id, index) => {
+                        const unused = project.references.some(
+                          (ref) => ref.id === id && !ref.cited,
+                        );
+                        return (
+                          <li key={id} className="studio-library-item">
+                            {/* eslint-disable-next-line @next/next/no-img-element -- private reference route */}
+                            <img
+                              src={referenceUrl(id)}
+                              alt={`Earlier screenshot ${index + 1}`}
+                              loading="lazy"
+                            />
+                            <label className="studio-check-label">
+                              <input
+                                type="checkbox"
+                                checked={selected.includes(id)}
+                                disabled={
+                                  disabled ||
+                                  (!selected.includes(id) &&
+                                    selected.length >= referenceLimit)
+                                }
+                                onChange={(event) =>
+                                  setSelected((ids) =>
+                                    event.target.checked
+                                      ? [...ids, id]
+                                      : ids.filter((item) => item !== id),
+                                  )
+                                }
+                              />
+                              Attach screenshot {index + 1}
+                            </label>
+                            {unused ? (
+                              <button
+                                type="button"
+                                disabled={disabled}
+                                aria-label={`Delete screenshot ${index + 1}`}
+                                className="dash-btn dash-btn-ghost dash-btn-sm"
+                                onClick={() => void removeUpload(id)}
+                              >
+                                <Trash2
+                                  aria-hidden="true"
+                                  className="h-3.5 w-3.5"
+                                />
+                                Delete
+                              </button>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <p className="studio-muted text-xs">
+                      A screenshot a message used stays with the chat; one no
+                      message used yet can be deleted.
+                    </p>
+                  </>
+                ) : (
+                  <p className="studio-muted text-xs">
+                    No earlier screenshots yet.
+                  </p>
+                )}
+              </div>
+            </StudioPopover>
+          </span>
           <button
             type="submit"
             disabled={disabled || !body.trim()}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+            className="dash-btn dash-btn-primary"
           >
             {sending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 aria-hidden="true" className="h-4 w-4 studio-spin" />
             ) : (
-              <Send className="h-4 w-4" />
+              <Send aria-hidden="true" className="h-4 w-4" />
             )}
-            Send message
+            {sendLabel}
           </button>
         </div>
-        <p className="text-xs text-slate-500">
-          JPEG, PNG, WebP or AVIF · 10 MB each · 40 MB per message. Ctrl/⌘ +
-          Enter to send.
-        </p>
-        {!editable && !working && submittedRevision !== project.revision ? (
-          <p className="text-xs text-amber-800">
-            {!generationEnabled
-              ? "Generation is currently switched off."
-              : "This project cannot accept a new message right now. See Runs and Versions below for recovery options."}
+        {!editable && submittedRevision !== project.revision ? (
+          <p className="studio-reason">
+            {lockedReason ??
+              (!generationEnabled
+                ? "Building is switched off on this deployment, so messages can't be sent now."
+                : "Theme Studio can't take a message right now. Use the button at the top of the page.")}
           </p>
-        ) : null}
-        {library.length ? (
-          <details className="text-xs text-slate-600">
-            <summary className="cursor-pointer py-2">
-              Reuse screenshots from this conversation ({library.length})
-            </summary>
-            <ul className="mt-2 grid max-h-60 grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-4">
-              {library.map((id, index) => (
-                <li key={id} className="rounded-lg border border-slate-200 p-2">
-                  <label className="block cursor-pointer">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- private reference route */}
-                    <img
-                      src={referenceUrl(id)}
-                      alt={`Saved screenshot ${index + 1}`}
-                      loading="lazy"
-                      className="mb-2 h-20 w-full object-contain"
-                    />
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(id)}
-                      disabled={
-                        disabled ||
-                        (!selected.includes(id) &&
-                          selected.length >= referenceLimit)
-                      }
-                      onChange={(event) =>
-                        setSelected((ids) =>
-                          event.target.checked
-                            ? [...ids, id]
-                            : ids.filter((item) => item !== id),
-                        )
-                      }
-                    />{" "}
-                    Attach screenshot {index + 1}
-                  </label>
-                  {project.references.some(
-                    (ref) => ref.id === id && !ref.cited,
-                  ) ? (
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      className="mt-2 text-red-700 underline"
-                      onClick={async () => {
-                        if (busy.current) return;
-                        busy.current = true;
-                        setUploading(true);
-                        try {
-                          const result = await removeThemeStudioReferenceAction(
-                            { projectId: project.id, assetId: id },
-                          );
-                          if (!result.ok) {
-                            toast.error(
-                              result.error ?? "Could not delete screenshot.",
-                            );
-                            return;
-                          }
-                          setSelected((ids) =>
-                            ids.filter((item) => item !== id),
-                          );
-                          setUploaded((ids) =>
-                            ids.filter((item) => item !== id),
-                          );
-                          router.refresh();
-                        } catch {
-                          toast.error("Could not delete screenshot.");
-                        } finally {
-                          busy.current = false;
-                          setUploading(false);
-                        }
-                      }}
-                    >
-                      Delete unused upload
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
+        ) : (
+          <p className="studio-muted text-xs">Ctrl or ⌘ and Enter to send.</p>
+        )}
       </form>
-    </section>
+    </div>
   );
 }

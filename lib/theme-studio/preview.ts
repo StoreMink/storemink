@@ -16,6 +16,7 @@ import { revalidateTag } from "next/cache";
 import {
   stores,
   themeStudioAssets,
+  themeStudioCaptures,
   themeStudioPreviews,
   themeStudioProjects,
   themeStudioVersions,
@@ -59,7 +60,15 @@ import { isUuid, recordThemeStudioEvent, ThemeStudioError } from "./repository";
 //
 // ★ Images come from theme_studio_assets through a public, placeholder-only
 // route, because next/image fetches local images without the request's
-// cookies — a gated route would render every picture broken.
+// cookies, so a gated route would render every picture broken.
+//
+// ★ NEVER THE STORE A CAPTURE IS MEASURING (TS-1E). The capture job opens
+// the same per-version preview, so evicting the least recently opened preview
+// to make room, or sweeping one, could delete the store under a running
+// capture, which then fails its whole measurement. A preview whose version
+// has a queued capture, or a running one on a live lease, is never evicted or
+// swept; one project holds at most one active capture, so room is always
+// found among its other previews.
 // ---------------------------------------------------------------------------
 
 /** A preview lives this long after it was last opened. */
@@ -132,8 +141,8 @@ export function previewPagesFor(pkg: ThemePackageV2): PreviewPage[] {
 
 /**
  * Replace every `theme-asset://<slot>` string in a definition with the URL of
- * that slot's stored placeholder. A slot with no stored image becomes "" — the
- * value every image field already accepts for "no image" — rather than a URL
+ * that slot's stored placeholder. A slot with no stored image becomes "", the
+ * value every image field already accepts for "no image", rather than a URL
  * that would 404 inside the page.
  */
 export function rewriteThemeAssets(
@@ -159,6 +168,14 @@ export function rewriteThemeAssets(
 
 function newPreviewSlug(): string {
   return `${STUDIO_PREVIEW_SLUG_PREFIX}${randomBytes(6).toString("hex")}`;
+}
+
+/** A capture will open (queued) or is measuring (running on a live lease)
+ * its version's preview store. */
+function captureMeasuring(): SQL {
+  return sql`(${themeStudioCaptures.status} = 'queued'
+    OR (${themeStudioCaptures.status} = 'running'
+        AND ${themeStudioCaptures.leaseExpiresAt} > now()))`;
 }
 
 /** Remove a preview store and, by cascade, everything it seeded. Guarded on
@@ -364,14 +381,29 @@ export async function openThemeStudioPreview(
       .select({
         id: themeStudioPreviews.id,
         storeId: themeStudioPreviews.storeId,
+        versionId: themeStudioPreviews.versionId,
       })
       .from(themeStudioPreviews)
       .where(eq(themeStudioPreviews.projectId, project.id))
       .orderBy(asc(themeStudioPreviews.lastOpenedAt));
-    for (const sibling of siblings.slice(
-      0,
-      Math.max(0, siblings.length - (PREVIEWS_PER_PROJECT - 1)),
-    )) {
+    // ★ The least recently opened goes, but never one a capture is measuring.
+    const measuring = new Set(
+      (
+        await db
+          .select({ versionId: themeStudioCaptures.versionId })
+          .from(themeStudioCaptures)
+          .where(
+            and(
+              eq(themeStudioCaptures.projectId, project.id),
+              captureMeasuring(),
+            ),
+          )
+      ).map((capture) => capture.versionId),
+    );
+    const excess = Math.max(0, siblings.length - (PREVIEWS_PER_PROJECT - 1));
+    for (const sibling of siblings
+      .filter((preview) => !measuring.has(preview.versionId))
+      .slice(0, excess)) {
       if (await deletePreviewStore(db, sibling.storeId)) {
         evicted.push(sibling.id);
       }
@@ -384,7 +416,7 @@ export async function openThemeStudioPreview(
     const slug = newPreviewSlug();
     // The store row names the version, for anyone reading the database; the
     // storefront shows the theme's own name, as a merchant installing it would
-    // see it — and as the catalog pictures captured from it must (Track 3.6).
+    // see it, and as the catalog pictures captured from it must (Track 3.6).
     const name = `${definition.name} · v${version.versionNumber} preview`;
     const [store] = await db
       .insert(stores)
@@ -550,22 +582,29 @@ async function sweep(where: SQL | undefined, limit: number): Promise<number> {
 /**
  * The retention sweep, run on the existing heartbeat. Removes previews idle
  * past their expiry, materializations abandoned part-way, and every preview of
- * an archived project. Bounded per pass; a backlog drains over later passes.
+ * an archived project, except a store a capture is measuring (its claim
+ * refreshed the expiry, so this is a backstop). Bounded per pass; a backlog
+ * drains over later passes.
  */
 export async function sweepThemeStudioPreviews(
   limit = 10,
 ): Promise<{ removed: number }> {
   const removed = await sweep(
-    or(
-      lt(themeStudioPreviews.expiresAt, sql`now()`),
-      and(
-        eq(themeStudioPreviews.status, "materializing"),
-        lt(
-          themeStudioPreviews.updatedAt,
-          sql`now() - (${MATERIALIZE_STALE_MINUTES}::int * interval '1 minute')`,
+    and(
+      or(
+        lt(themeStudioPreviews.expiresAt, sql`now()`),
+        and(
+          eq(themeStudioPreviews.status, "materializing"),
+          lt(
+            themeStudioPreviews.updatedAt,
+            sql`now() - (${MATERIALIZE_STALE_MINUTES}::int * interval '1 minute')`,
+          ),
         ),
+        sql`${themeStudioPreviews.projectId} IN (SELECT id FROM theme_studio_projects WHERE status = 'archived')`,
       ),
-      sql`${themeStudioPreviews.projectId} IN (SELECT id FROM theme_studio_projects WHERE status = 'archived')`,
+      sql`NOT EXISTS (SELECT 1 FROM ${themeStudioCaptures}
+        WHERE ${themeStudioCaptures.versionId} = ${themeStudioPreviews.versionId}
+          AND ${captureMeasuring()})`,
     ),
     limit,
   );

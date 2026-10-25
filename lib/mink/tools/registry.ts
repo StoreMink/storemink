@@ -16,6 +16,59 @@ import type {
   MinkToolResponse,
 } from "../types";
 
+/**
+ * What a tool is given beside the actor and its arguments: its deadline.
+ *
+ * ★★ A TIMEOUT NOW STOPS THE WORK (B6, 2026-10-23). The registry used to race
+ *    a tool against a timer and walk away when the timer won, leaving the
+ *    tool running: an image could be drawn, saved and charged after the chat
+ *    had told the merchant it took too long, with no card to show for it, and
+ *    a redesign could start after "took too long". Now the timer fires
+ *    `signal`, which a tool hands to every provider call and checks before
+ *    every write, and `commit` keeps the last write and the chat's answer in
+ *    agreement.
+ */
+export interface MinkToolContext {
+  /**
+   * Fires when the tool's time is up (`timeoutMs`), or sooner when the run
+   * itself is stopped and its signal was passed to `execute`.
+   */
+  signal: AbortSignal;
+  /** The epoch millisecond at which `signal` fires at the latest. */
+  deadlineAt: number;
+  /**
+   * Run the tool's final write, the one that charges the merchant or keeps
+   * what they will be shown, only while time remains: once the time is up it
+   * throws `MinkToolTimeoutError` without running `write`. ★ A write already
+   *   under way when the time runs out holds the timeout (for at most
+   *   `TOOL_COMMIT_GRACE_MS` more), and the tool's result is returned, so the
+   *   chat never reports a timeout for a card that was saved and charged.
+   * ⚠ Keep it the LAST thing a tool does: work after it is still bounded by
+   *   the grace, but nothing else waits for it.
+   */
+  commit<T>(write: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * How long a write a tool began before its deadline may run past it before
+ * the registry reports the timeout anyway. Bounded so a stuck database cannot
+ * hold a run open.
+ *
+ * ★★ IT COVERS THE WRITE'S OWN BOUNDED WORST CASE, NOT A TYPICAL ONE (the
+ *   money review of B6). A commit is a few separate transactions (the image
+ *   tool's: the Media row, the credit cycle and allowance reads, then the
+ *   charged draft), and since B27 each may wait up to 5 s for a connection and
+ *   hold a statement up to 30 s on a lock. With 15 s a write still landing
+ *   after the grace charged the merchant for a card the chat had already
+ *   called a timeout, and a run that then failed could discard its drafts
+ *   before that one landed. A minute holds the realistic worst (a connection
+ *   wait per transaction and one statement waiting on a lock); a write that
+ *   outlives even that is logged (`mink.tool: write outlived its grace`) so an
+ *   operator can give the charge back. Measured writes take well under a
+ *   second, so the grace costs nothing on an ordinary run.
+ */
+export const TOOL_COMMIT_GRACE_MS = 60_000;
+
 export interface MinkTool {
   declaration: MinkToolDeclaration;
   /**
@@ -90,9 +143,16 @@ export interface MinkTool {
    * keeping them out of its context is the boundary, not the prompt.
    */
   modelOutput?: (output: Record<string, unknown>) => Record<string, unknown>;
+  /**
+   * ★ `context` is always given by the registry; it is optional only so a
+   *   test may call a tool directly. A tool that pays for or writes anything
+   *   honours `context.signal` and makes its last write through
+   *   `context.commit`.
+   */
   execute: (
     actor: MinkActorContext,
     args: Record<string, unknown>,
+    context?: MinkToolContext,
   ) => Promise<Record<string, unknown>>;
 }
 
@@ -147,6 +207,13 @@ export class MinkToolRegistry {
   async execute(
     actor: MinkActorContext,
     call: MinkToolCall,
+    options: {
+      /**
+       * The run's own stop (its deadline, the merchant leaving). ★ When given,
+       *   it fires the tool's signal too, so a stopped run stops its tools.
+       */
+      signal?: AbortSignal;
+    } = {},
   ): Promise<MinkToolResponse> {
     const tool = this.tools.get(call.name);
     if (!tool) {
@@ -163,9 +230,16 @@ export class MinkToolRegistry {
     }
 
     try {
-      const output = await executeWithTimeout(
-        () => tool.execute(actor, call.args),
+      const output = await executeWithDeadline(
+        (context) => tool.execute(actor, call.args, context),
         tool.timeoutMs,
+        options.signal,
+        {
+          requestId: actor.requestId,
+          storeId: actor.storeId,
+          adminId: actor.adminId,
+          tool: call.name,
+        },
       );
       const artifact = tool.artifact?.(output);
       return {
@@ -233,23 +307,86 @@ export class MinkToolRegistry {
   }
 }
 
-async function executeWithTimeout<T>(
-  operation: () => Promise<T>,
+/**
+ * Run one tool under its deadline. ★ The deadline is a STOP, not only a
+ * stopwatch: when it passes, the tool's signal fires (aborting its provider
+ * calls) and the registry answers `tool_timeout`. A write the tool began
+ * through `commit` before then is allowed to finish (up to
+ * `TOOL_COMMIT_GRACE_MS`), and its result is what the registry answers.
+ */
+async function executeWithDeadline<T>(
+  operation: (context: MinkToolContext) => Promise<T>,
   timeoutMs: number,
+  runSignal?: AbortSignal,
+  /** Content-free ids for the one log line below. */
+  logContext: Record<string, unknown> = {},
 ): Promise<T> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const stop = new AbortController();
+  const deadlineAt = Date.now() + timeoutMs;
+  // Set once the time is up: no write may start after it.
+  let expired = false;
+  // Writes under way, and whether one has completed.
+  let writing = 0;
+  let wrote = false;
+  let reportTimeout!: (error: MinkToolTimeoutError) => void;
+  const timedOut = new Promise<never>((_, reject) => {
+    reportTimeout = reject;
+  });
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  const halt = () => {
+    // ★ A write still under way when the grace runs out may yet land, and
+    //   charge for a card the chat is about to call a timeout: rare (see
+    //   TOOL_COMMIT_GRACE_MS), and never silent.
+    if (writing > 0) {
+      logError("mink.tool: write outlived its grace", undefined, {
+        ...logContext,
+        graceMs: TOOL_COMMIT_GRACE_MS,
+      });
+    }
+    // ★ The timeout is reported BEFORE the signal fires: aborting runs the
+    //   tool's listeners at once, and a tool that rejects on its signal would
+    //   otherwise settle the race first and read as "could not finish".
+    reportTimeout(new MinkToolTimeoutError());
+    if (!stop.signal.aborted) stop.abort(new MinkToolTimeoutError());
+  };
+  const expire = () => {
+    if (expired) return;
+    expired = true;
+    // ★ A write under way, or done, stands: the merchant must be shown what
+    //   they were charged for. It gets the grace, then the timeout regardless.
+    if (writing > 0 || wrote) {
+      grace = setTimeout(halt, TOOL_COMMIT_GRACE_MS);
+      return;
+    }
+    halt();
+  };
+  const timer = setTimeout(expire, timeoutMs);
+  const onRunStop = () => expire();
+  if (runSignal?.aborted) expire();
+  else runSignal?.addEventListener("abort", onRunStop, { once: true });
+
+  const context: MinkToolContext = {
+    signal: stop.signal,
+    deadlineAt,
+    async commit(write) {
+      if (expired || stop.signal.aborted) throw new MinkToolTimeoutError();
+      writing += 1;
+      try {
+        const result = await write();
+        wrote = true;
+        return result;
+      } finally {
+        writing -= 1;
+      }
+    },
+  };
   try {
-    return await Promise.race([
-      operation(),
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new MinkToolTimeoutError()),
-          timeoutMs,
-        );
-      }),
-    ]);
+    if (expired) await timedOut;
+    return await Promise.race([operation(context), timedOut]);
   } finally {
-    if (timeout) clearTimeout(timeout);
+    clearTimeout(timer);
+    if (grace) clearTimeout(grace);
+    runSignal?.removeEventListener("abort", onRunStop);
   }
 }
 

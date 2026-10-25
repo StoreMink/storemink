@@ -503,6 +503,30 @@ describe("useMinkVoiceMode", () => {
       expect(h.speech.sessions).toHaveLength(2);
     });
 
+    it("★ speech after the answer landed, while the reply is still closing, is a new question: nothing is cancelled or asked twice", async () => {
+      const h = makeHarness();
+      await act(async () => h.result.current.toggle());
+      await say(h, "Sales?");
+      const asked = [...h.input.messages, user("u1", "Sales?")];
+      h.rerender({ ...h.input, messages: asked, isReplying: true });
+      // The written answer is in the chat; the stream has not closed yet.
+      const answered = [...asked, assistant("a1", "Sales are up this week.")];
+      h.rerender({ ...h.input, messages: answered, isReplying: true });
+      expect(h.result.current.state).toBe("waiting");
+      const mic = h.mic.last();
+      act(() => {
+        mic.input.onSpeechStart();
+      });
+      expect(h.cancel).not.toHaveBeenCalled();
+      await act(async () => mic.resolve("And returns?"));
+      h.rerender({ ...h.input, messages: answered, isReplying: false });
+      expect(h.cancel).not.toHaveBeenCalled();
+      expect(h.send).toHaveBeenCalledTimes(2);
+      expect(h.send).toHaveBeenLastCalledWith("And returns?", {
+        voice: true,
+      });
+    });
+
     it("a transcript that is Mink's own voice coming back is not a question", async () => {
       vi.useFakeTimers();
       const h = makeHarness();

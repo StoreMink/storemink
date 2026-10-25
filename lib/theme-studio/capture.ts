@@ -1,27 +1,46 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt, max, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, max, sql } from "drizzle-orm";
 import { prepareVisualScreenshot } from "./visual-evidence";
 import {
   platformAdmins,
   themeStudioAssets,
   themeStudioCaptures,
+  themeStudioEvents,
   themeStudioProjects,
+  themeStudioPublications,
+  themeStudioRuns,
   themeStudioVersions,
   themeStudioVisualQaRuns,
 } from "@/drizzle/schema";
 import { withService, type Db } from "@/lib/db/client";
-import { logError } from "@/lib/observability/logger";
+import { logError, logWarn } from "@/lib/observability/logger";
 import type { ThemeStudioActor } from "./access";
 import {
   applyCapturedImages,
   AUTOMATIC_CAPTURE_MAX_ATTEMPTS,
   captureBlockers,
+  captureErrorKind,
+  captureRetryDecision,
   captureShots,
   type CaptureShot,
-  isEvidenceRecapture,
+  isReservedCaptureKey,
+  RECHECK_REASONS,
+  recheckIdempotencyKey,
+  remeasuresInPlace,
+  type ThemeStudioRecheckReason,
 } from "./capture-core";
+import {
+  startCaptureJobAfterCommit,
+  startCaptureJobForQueued,
+} from "./capture-start";
+import {
+  noteThemeStudioOperatorNotice,
+  withServiceAndNotices,
+} from "./automatic-work";
+import { settleThemeStudioLayoutCheck } from "./visual-qa";
+import { MAX_AUTOMATIC_QA_REPAIRS } from "./automatic-qa-policy";
 import { validateThemePackageV2, type ThemePackageV2 } from "./contracts";
 import { openThemeStudioPreview, previewPagesFor } from "./preview";
 import {
@@ -48,6 +67,7 @@ import {
   THEME_STUDIO_QA_VIEWPORTS,
   type BrowserEvidence,
   type GateResult,
+  gateBlocks,
   parseBrowserEvidence,
   evaluateBrowserGates,
 } from "./acceptance-gates";
@@ -76,6 +96,25 @@ import {
 // ★ A FAILED CAPTURE RETURNS THE PROJECT TO READY. Its current version is
 // untouched; `generating → candidate` is not a transition, so a candidate's
 // Checks must be run again, as after a failed image run.
+//
+// ★ WITH AUTOMATIC CHECKS ON, EVERY CAPTURE IS CHECKED (TS-1E). "Capture
+// catalogue pictures" used to make a manual capture whose result landed as
+// Ready with no design review, a version Publish could never take. It now
+// queues an automatic final capture: a new hidden version with fresh
+// catalogue pictures, then the full checks and the design review. A RE-CHECK
+// (`queueThemeStudioRecheck`) measures the same version again on today's
+// build; a visible version that passed is re-measured in place
+// (`remeasuresInPlace`, capture-core.ts). A capture nobody takes within
+// CAPTURE_STALE_MINUTES fails as `capture_not_started`
+// (`sweepStaleThemeStudioCaptures`), and Stop (stop.ts) ends one at once.
+//
+// ★ EACH STEP STARTS THE NEXT AT ONCE (TS-3A, plan optimisation 2). The job
+// starts right after a capture is queued (capture-start.ts), the layout check
+// is settled inside the capture's own finish (it needs no model call), and a
+// finish that leaves a design review queued says so, so the job wakes the
+// review route. A reported error that no retry can fix fails at once
+// (`captureErrorKind`, capture-core.ts). A failure that stops a theme tells
+// the operator who started it, once the transaction commits.
 // ---------------------------------------------------------------------------
 
 /** How long one claim holds a capture. Three shots take well under two
@@ -97,6 +136,17 @@ const CODE_RE = /^[a-z0-9_]{1,64}$/;
  * open the preview and commit the version. */
 const AUTOMATIC_ROUTE_BUDGET_MS = 150_000;
 const CAPTURE_STATES = ["ready", "candidate"] as const;
+/** Where a re-check may start: 0151 allows each of these to `generating`. */
+const RECHECK_STATES = ["ready", "candidate", "approved"] as const;
+/** A publish attempt younger than this is still running
+ * (publication.ts ABANDONED_ATTEMPT_MINUTES). */
+const PUBLISH_IN_PROGRESS_MINUTES = 15;
+
+/** A capture the job has not taken for this long is stuck: queued this long
+ * since it was queued or sent back, or running on a lease that lapsed this
+ * long ago. The job is started on demand within a minute or two of a capture
+ * appearing (capture-start.ts), so this is minutes past any healthy wait. */
+export const CAPTURE_STALE_MINUTES = 15;
 
 export interface ThemeStudioCaptureView {
   phase?: "layout" | "final";
@@ -148,13 +198,18 @@ export async function queueThemeStudioCapture(
   if (!isUuid(input.projectId) || !isUuid(input.versionId)) {
     throw new ThemeStudioError("not_found", "That version no longer exists.");
   }
-  if (!IDEMPOTENCY_RE.test(input.idempotencyKey)) {
+  if (
+    !IDEMPOTENCY_RE.test(input.idempotencyKey) ||
+    // Server-only prefixes: a manual capture must never pass for a re-check
+    // or a deploy re-capture, which are re-measured in place.
+    isReservedCaptureKey(input.idempotencyKey)
+  ) {
     throw new ThemeStudioError(
       "invalid_input",
       "The request is malformed. Reload and try again.",
     );
   }
-  return withService(async (db) => {
+  const queued = await withService(async (db) => {
     const [project] = await db
       .select()
       .from(themeStudioProjects)
@@ -231,6 +286,13 @@ export async function queueThemeStudioCapture(
     }
     const retryAutomaticQa =
       config.autoQaEnabled && version.qaStatus === "failed";
+    // ★ With automatic checks on, every capture is automatic. A retry of a
+    // failed automatic result keeps its repair rounds (iteration 0). Catalogue
+    // pictures for any other version are a CHECK: a new hidden version with
+    // fresh pictures, measured and reviewed at the repair ceiling, so a
+    // one-click capture can never buy a paid restyle. Only with the checks off
+    // (local development) does a manual capture land as Ready unchecked.
+    const automatic = config.autoQaEnabled;
     const phase =
       retryAutomaticQa && captureBlockers(pkg.value).length
         ? "layout"
@@ -248,11 +310,11 @@ export async function queueThemeStudioCapture(
         versionId: input.versionId,
         packageDigest: version.packageDigest,
         phase,
-        previousStatus: retryAutomaticQa ? "generating" : project.status,
-        ...(retryAutomaticQa
+        previousStatus: automatic ? "generating" : project.status,
+        ...(automatic
           ? {
               automatic: true,
-              qaIteration: 0,
+              qaIteration: retryAutomaticQa ? 0 : MAX_AUTOMATIC_QA_REPAIRS,
               maxAttempts: AUTOMATIC_CAPTURE_MAX_ATTEMPTS,
             }
           : {}),
@@ -272,6 +334,265 @@ export async function queueThemeStudioCapture(
     });
     return { captureId: capture.id, duplicate: false };
   });
+  // Committed: start the capture job now rather than at the next minute tick.
+  if (!queued.duplicate) await startCaptureJobForQueued();
+  return queued;
+}
+
+/** Is a capture, a design review or a run still queued or running here?
+ * Each has a one-active-per-project index, so a second would be refused. */
+async function holdsActiveWork(db: Db, projectId: string): Promise<boolean> {
+  const active = ["queued", "running"];
+  const [capture] = await db
+    .select({ id: themeStudioCaptures.id })
+    .from(themeStudioCaptures)
+    .where(
+      and(
+        eq(themeStudioCaptures.projectId, projectId),
+        inArray(themeStudioCaptures.status, active),
+      ),
+    )
+    .limit(1);
+  if (capture) return true;
+  const [review] = await db
+    .select({ id: themeStudioVisualQaRuns.id })
+    .from(themeStudioVisualQaRuns)
+    .where(
+      and(
+        eq(themeStudioVisualQaRuns.projectId, projectId),
+        inArray(themeStudioVisualQaRuns.status, active),
+      ),
+    )
+    .limit(1);
+  if (review) return true;
+  const [run] = await db
+    .select({ id: themeStudioRuns.id })
+    .from(themeStudioRuns)
+    .where(
+      and(
+        eq(themeStudioRuns.projectId, projectId),
+        inArray(themeStudioRuns.status, active),
+      ),
+    )
+    .limit(1);
+  return Boolean(run);
+}
+
+/**
+ * Measure the current version again on today's StoreMink build: "Check
+ * again", or Publish when the evidence is from an earlier build or has no
+ * design review bound to it (`publish_recheck`). This is the capture half of
+ * the re-check contract; visual-qa.ts holds the design-review half. Nothing
+ * is redrawn and nothing is redesigned.
+ *
+ * 1. The project is locked and moved to `generating` (0151 allows that from
+ *    ready, candidate and approved). The design review only runs for a
+ *    project that is generating; any other it closes unrun.
+ * 2. One automatic FINAL capture of the current version is queued with
+ *    `previous_status = 'generating'` (the live capture CHECK requires that
+ *    of every automatic capture), `qa_iteration = MAX_AUTOMATIC_QA_REPAIRS`
+ *    (at the ceiling `automaticQaDecision` never asks for a revision, so a
+ *    re-check can never buy a paid restyle) and the key
+ *    `recheck_<reason>_<uuid>`, which is how the settle tells it apart.
+ * 3. The capture settles in place for a visible version that passed, and
+ *    makes a new hidden version for any other (`remeasuresInPlace`).
+ *
+ * One short transaction of its own, so publication calls it before, and
+ * outside, the publish transaction. A second press finds the project
+ * `generating` (or its revision moved) and is refused: no second capture.
+ * The capture job is started as soon as that transaction commits.
+ */
+export async function queueThemeStudioRecheck(
+  actor: ThemeStudioActor,
+  input: ThemeStudioRecheckInput,
+): Promise<{ captureId: string; inPlace: boolean }> {
+  // Refused before any transaction opens.
+  assertRecheckInput(input);
+  const queued = await withService((db) => queueRecheck(db, actor, input));
+  await startCaptureJobForQueued();
+  return queued;
+}
+
+export interface ThemeStudioRecheckInput {
+  projectId: string;
+  versionId: string;
+  expectedRevision: number;
+  reason: ThemeStudioRecheckReason;
+}
+
+function assertRecheckInput(input: ThemeStudioRecheckInput): void {
+  const config = getThemeStudioConfig();
+  if (!config.captureEnabled || !config.autoQaEnabled) {
+    throw new ThemeStudioError(
+      "generation_disabled",
+      "Checking a theme again needs the automatic checks, and they are switched off here.",
+    );
+  }
+  if (!isUuid(input.projectId) || !isUuid(input.versionId)) {
+    throw new ThemeStudioError("not_found", "That version no longer exists.");
+  }
+  if (
+    !Number.isSafeInteger(input.expectedRevision) ||
+    input.expectedRevision < 0 ||
+    !RECHECK_REASONS.includes(input.reason)
+  ) {
+    throw new ThemeStudioError(
+      "invalid_input",
+      "The request is malformed. Reload and try again.",
+    );
+  }
+}
+
+/**
+ * `queueThemeStudioRecheck` inside a caller's own transaction, for a caller
+ * that has just changed the project in it (for example making a version
+ * current again): `expectedRevision` is the revision as that transaction now
+ * sees it. Never call it from inside the publish transaction. The capture job
+ * starts once the caller's transaction commits (`startCaptureJobAfterCommit`).
+ */
+export async function queueThemeStudioRecheckWithDb(
+  db: Db,
+  actor: ThemeStudioActor,
+  input: ThemeStudioRecheckInput,
+): Promise<{ captureId: string; inPlace: boolean }> {
+  const queued = await queueRecheck(db, actor, input);
+  startCaptureJobAfterCommit(queued.captureId);
+  return queued;
+}
+
+/** The re-check's rules and writes, inside the given transaction. */
+async function queueRecheck(
+  db: Db,
+  actor: ThemeStudioActor,
+  input: ThemeStudioRecheckInput,
+): Promise<{ captureId: string; inPlace: boolean }> {
+  assertRecheckInput(input);
+  const [project] = await db
+    .select()
+    .from(themeStudioProjects)
+    .where(eq(themeStudioProjects.id, input.projectId))
+    .for("update")
+    .limit(1);
+  if (!project) {
+    throw new ThemeStudioError("not_found", "That project no longer exists.");
+  }
+  if (project.revision !== input.expectedRevision) {
+    throw new ThemeStudioError(
+      "stale",
+      "This project changed in another tab. Reload to see it.",
+    );
+  }
+  if (!(RECHECK_STATES as readonly string[]).includes(project.status)) {
+    throw new ThemeStudioError(
+      "illegal_state",
+      project.status === "generating"
+        ? "This theme is already being built or checked. Wait for it to finish, or stop it."
+        : "This theme can't be checked again right now.",
+    );
+  }
+  if (project.currentVersionId !== input.versionId) {
+    throw new ThemeStudioError(
+      "illegal_state",
+      "Only the current design can be checked again. Make this design current first.",
+    );
+  }
+  if (await holdsActiveWork(db, project.id)) {
+    throw new ThemeStudioError(
+      "illegal_state",
+      "Something is still running on this theme. Stop it first, then check it again.",
+    );
+  }
+  if (project.status === "approved") {
+    // Moving a theme that is being published back to generating would pull
+    // it out from under its own publication.
+    const [publishing] = await db
+      .select({ id: themeStudioPublications.id })
+      .from(themeStudioPublications)
+      .where(
+        and(
+          eq(themeStudioPublications.projectId, project.id),
+          eq(themeStudioPublications.status, "publishing"),
+          sql`${themeStudioPublications.updatedAt} > now() - (${PUBLISH_IN_PROGRESS_MINUTES}::int * interval '1 minute')`,
+        ),
+      )
+      .limit(1);
+    if (publishing) {
+      throw new ThemeStudioError(
+        "illegal_state",
+        "This theme is being published right now. Wait for that to finish.",
+      );
+    }
+  }
+  const [version] = await db
+    .select({
+      packageJson: themeStudioVersions.packageJson,
+      packageDigest: themeStudioVersions.packageDigest,
+      origin: themeStudioVersions.origin,
+      visibility: themeStudioVersions.visibility,
+      qaStatus: themeStudioVersions.qaStatus,
+      editDetail: themeStudioVersions.editDetail,
+    })
+    .from(themeStudioVersions)
+    .where(
+      and(
+        eq(themeStudioVersions.id, input.versionId),
+        eq(themeStudioVersions.projectId, project.id),
+      ),
+    )
+    .limit(1);
+  if (!version?.packageJson || !version.packageDigest) {
+    throw new ThemeStudioError("not_found", "That version has no theme.");
+  }
+  const pkg = validateThemePackageV2(version.packageJson);
+  if (!pkg.ok) {
+    throw new ThemeStudioError(
+      "illegal_state",
+      "That version can no longer be read. Revise it or restore another.",
+    );
+  }
+  const blockers = captureBlockers(pkg.value, "final");
+  if (blockers.length > 0) {
+    throw new ThemeStudioError("illegal_state", blockers[0]);
+  }
+  const idempotencyKey = recheckIdempotencyKey(input.reason, randomUUID());
+  const [capture] = await db
+    .insert(themeStudioCaptures)
+    .values({
+      projectId: project.id,
+      versionId: input.versionId,
+      packageDigest: version.packageDigest,
+      phase: "final",
+      previousStatus: "generating",
+      automatic: true,
+      qaIteration: MAX_AUTOMATIC_QA_REPAIRS,
+      maxAttempts: AUTOMATIC_CAPTURE_MAX_ATTEMPTS,
+      idempotencyKey,
+      createdBy: actor.id,
+    })
+    .returning({ id: themeStudioCaptures.id });
+  await db
+    .update(themeStudioProjects)
+    .set({ status: "generating", revision: project.revision + 1 })
+    .where(eq(themeStudioProjects.id, project.id));
+  const inPlace = remeasuresInPlace(
+    { automatic: true, idempotencyKey },
+    version,
+  );
+  await recordThemeStudioEvent(db, {
+    projectId: project.id,
+    actor,
+    eventType: "capture_requested",
+    detail: {
+      captureId: capture.id,
+      versionId: input.versionId,
+      phase: "final",
+      automatic: true,
+      qaIteration: MAX_AUTOMATIC_QA_REPAIRS,
+      recheck: input.reason,
+      inPlace,
+    },
+  });
+  return { captureId: capture.id, inPlace };
 }
 
 // ── Claim ────────────────────────────────────────────────────────────────
@@ -281,7 +602,9 @@ type CaptureRow = typeof themeStudioCaptures.$inferSelect;
 /**
  * Settle a capture as failed and give the project back. The project returns
  * to `ready` only if the capture still holds it (generating, same current
- * version), so a failure can never undo work that happened after it.
+ * version), so a failure can never undo work that happened after it. When an
+ * automatic capture's failure does stop the theme, the operator who started
+ * it is told it needs them (decision 8).
  */
 async function failCapture(
   db: Db,
@@ -299,6 +622,7 @@ async function failCapture(
       leaseExpiresAt: null,
     })
     .where(eq(themeStudioCaptures.id, capture.id));
+  let stopped = false;
   if (capture.automatic) {
     await db
       .update(themeStudioVersions)
@@ -310,7 +634,7 @@ async function failCapture(
           eq(themeStudioVersions.qaStatus, "pending"),
         ),
       );
-    await db
+    const moved = await db
       .update(themeStudioProjects)
       .set({
         status: "ready",
@@ -322,7 +646,9 @@ async function failCapture(
           eq(themeStudioProjects.id, capture.projectId),
           eq(themeStudioProjects.status, "generating"),
         ),
-      );
+      )
+      .returning({ id: themeStudioProjects.id });
+    stopped = moved.length > 0;
   } else {
     await db
       .update(themeStudioProjects)
@@ -344,6 +670,12 @@ async function failCapture(
     eventType: "capture_failed",
     detail: { captureId: capture.id, errorCode: code },
   });
+  // Sent once the transaction commits (withServiceAndNotices).
+  if (stopped)
+    noteThemeStudioOperatorNotice({
+      projectId: capture.projectId,
+      kind: "needs_fix",
+    });
 }
 
 /**
@@ -352,7 +684,7 @@ async function failCapture(
  * Returns null when there is nothing to do.
  */
 export async function claimThemeStudioCapture(): Promise<ClaimedCapture | null> {
-  const claimed = await withService(async (db) => {
+  const claimed = await withServiceAndNotices(async (db) => {
     const exhausted = await db
       .select()
       .from(themeStudioCaptures)
@@ -417,7 +749,7 @@ export async function claimThemeStudioCapture(): Promise<ClaimedCapture | null> 
   if (!claimed) return null;
   const { capture, leaseToken, version, owner } = claimed;
   const fail = (code: string) =>
-    withService((db) => failCapture(db, capture, code));
+    withServiceAndNotices((db) => failCapture(db, capture, code));
 
   const pkg =
     version?.packageJson && version.packageDigest === capture.packageDigest
@@ -443,7 +775,10 @@ export async function claimThemeStudioCapture(): Promise<ClaimedCapture | null> 
     await fail("operator_not_superadmin");
     return null;
   }
-  const recapture = capture.automatic && isEvidenceRecapture(version!);
+  // In place (no catalogue shots): a re-measure of evidence a capture already
+  // produced, or a re-check of a visible version that passed. The finish
+  // makes the same decision from the same rows.
+  const recapture = remeasuresInPlace(capture, version!);
   let opened;
   try {
     opened = await openThemeStudioPreview(
@@ -497,13 +832,108 @@ export async function claimThemeStudioCapture(): Promise<ClaimedCapture | null> 
   };
 }
 
+// ── Stale captures ───────────────────────────────────────────────────────
+
+/**
+ * Fail every capture the job never took: queued for CAPTURE_STALE_MINUTES
+ * (since it was queued, or sent back after a failed attempt), or running on a
+ * lease that lapsed that long ago with nobody reclaiming it. Without this a
+ * capture whose job never starts (a refused start, an exhausted quota, a job
+ * that is not deployed) leaves its theme `generating` for ever, which also
+ * refuses Archive and Delete. The theme returns to where `failCapture` puts
+ * any failed capture, with the stop code `capture_not_started`.
+ *
+ * Bounded per pass and SKIP LOCKED, so it never waits on a claim or a finish
+ * holding one of these rows. Each one logs `theme_studio.capture_stale`
+ * (content-free), which an alert can watch. Never throws.
+ */
+export async function sweepStaleThemeStudioCaptures(
+  limit = 20,
+): Promise<{ failed: number }> {
+  try {
+    const stale = await withServiceAndNotices(async (db) => {
+      const rows = await db
+        .select()
+        .from(themeStudioCaptures)
+        .where(
+          sql`(${themeStudioCaptures.status} = 'queued'
+                AND ${themeStudioCaptures.updatedAt} <= now() - (${CAPTURE_STALE_MINUTES}::int * interval '1 minute'))
+              OR (${themeStudioCaptures.status} = 'running'
+                AND ${themeStudioCaptures.leaseExpiresAt} <= now() - (${CAPTURE_STALE_MINUTES}::int * interval '1 minute'))`,
+        )
+        .orderBy(themeStudioCaptures.createdAt)
+        .for("update", { skipLocked: true })
+        .limit(limit);
+      for (const capture of rows) {
+        await failCapture(db, capture, "capture_not_started");
+      }
+      return rows;
+    });
+    for (const capture of stale) {
+      logWarn("theme_studio.capture_stale", {
+        captureId: capture.id,
+        projectId: capture.projectId,
+        status: capture.status,
+        phase: capture.phase,
+        automatic: capture.automatic,
+        attempts: capture.attemptCount,
+        waitingSince:
+          capture.status === "running"
+            ? capture.leaseExpiresAt
+            : capture.updatedAt,
+      });
+    }
+    return { failed: stale.length };
+  } catch (error) {
+    logError("theme studio: stale capture sweep failed", error);
+    return { failed: 0 };
+  }
+}
+
 // ── Finish ───────────────────────────────────────────────────────────────
 
 export type CaptureFinish =
-  | { status: "succeeded"; versionId: string }
+  | {
+      status: "succeeded";
+      versionId: string;
+      /** A design-review row this finish left queued: the capture job wakes
+       * the review route for it when its captures are done (TS-3A). Absent
+       * when there is none, or the layout check was settled in the finish. */
+      designReview?: "waiting";
+    }
   | { status: "failed"; errorCode: string }
   | { status: "requeued" }
   | { status: "lost" };
+
+/**
+ * The code the try before this one reported, when it was sent back to the
+ * queue: each send-back records it on a worker `capture_requested` event
+ * (`attempt`, `retryAfter`), because a queued capture has no column for it
+ * (the lifecycle CHECK keeps `error_code` for a failed one). Null when the
+ * previous try was not sent back with a report (it lapsed, or there was none).
+ */
+async function previousTryError(
+  db: Db,
+  held: Pick<CaptureRow, "id" | "projectId" | "attemptCount">,
+): Promise<string | null> {
+  if (held.attemptCount < 2) return null;
+  const [event] = await db
+    .select({ detail: themeStudioEvents.detail })
+    .from(themeStudioEvents)
+    .where(
+      and(
+        eq(themeStudioEvents.projectId, held.projectId),
+        eq(themeStudioEvents.eventType, "capture_requested"),
+        sql`${themeStudioEvents.detail}->>'captureId' = ${held.id}`,
+        sql`${themeStudioEvents.detail}->>'attempt' = ${String(held.attemptCount - 1)}`,
+      ),
+    )
+    .orderBy(desc(themeStudioEvents.createdAt))
+    .limit(1);
+  const code = (event?.detail as { retryAfter?: unknown } | undefined)
+    ?.retryAfter;
+  return typeof code === "string" ? code : null;
+}
 
 /** Read a capture that this lease still holds, or null. */
 async function heldCapture(
@@ -530,8 +960,11 @@ async function heldCapture(
 
 /**
  * The job's answer for one capture: pictures, or an error code. A reported
- * error is retried while attempts remain (a navigation timeout on a cold
- * preview is ordinary); pictures that cannot be used fail the capture.
+ * error is retried while attempts remain only when another try can help
+ * (`captureErrorKind`, capture-core.ts): one that comes back identically
+ * fails on the first report, one that is the same on two tries in a row
+ * fails on the second, and a transient one (a timeout on a cold preview is
+ * ordinary) keeps every try. Pictures that cannot be used fail the capture.
  */
 export async function finishThemeStudioCapture(input: {
   captureId: string;
@@ -552,6 +985,10 @@ export async function finishThemeStudioCapture(input: {
     }[];
   };
   error?: string;
+  /** The preview surface a reported status error came from, when the job
+   * says so. Logged with the failed try (`surface`); it does not change how
+   * the error is retried (capture-core.ts `captureErrorKind`). */
+  errorSurface?: string;
 }): Promise<CaptureFinish> {
   if (!isUuid(input.captureId) || !isUuid(input.leaseToken)) {
     return { status: "lost" };
@@ -565,7 +1002,7 @@ export async function finishThemeStudioCapture(input: {
 
   // Terminal: the capture is failed now, whatever attempts it has left.
   const failNow = async (code: string): Promise<CaptureFinish> =>
-    withService(async (db) => {
+    withServiceAndNotices(async (db) => {
       const held = await heldCapture(db, capture.id, input.leaseToken, true);
       if (!held) return { status: "lost" } as const;
       await failCapture(db, held, code);
@@ -620,14 +1057,49 @@ export async function finishThemeStudioCapture(input: {
     const code = CODE_RE.test(input.error ?? "")
       ? input.error!
       : "capture_failed";
-    return withService(async (db) => {
+    const kind = captureErrorKind(code);
+    return withServiceAndNotices(async (db) => {
       const held = await heldCapture(db, capture.id, input.leaseToken, true);
       if (!held) return { status: "lost" } as const;
-      if (held.attemptCount < held.maxAttempts) {
+      const decision = captureRetryDecision({
+        code,
+        kind,
+        attemptCount: held.attemptCount,
+        maxAttempts: held.maxAttempts,
+        // Only an error of neither kind is judged by the try before it.
+        previousCode:
+          kind === "other" ? await previousTryError(db, held) : null,
+      });
+      // Content-free: the code, the try and what happened, for an alert.
+      logWarn("theme_studio.capture_attempt_failed", {
+        captureId: held.id,
+        phase: held.phase,
+        automatic: held.automatic,
+        errorCode: code,
+        errorKind: kind,
+        attempt: held.attemptCount,
+        maxAttempts: held.maxAttempts,
+        outcome: decision === "requeue" ? "requeued" : "failed",
+        // The preview page a status error came from, a name such as "home".
+        ...(input.errorSurface ? { surface: input.errorSurface } : {}),
+      });
+      if (decision === "requeue") {
         await db
           .update(themeStudioCaptures)
           .set({ status: "queued", leaseOwner: null, leaseExpiresAt: null })
           .where(eq(themeStudioCaptures.id, held.id));
+        // The next try's report is judged against this one's code.
+        await recordThemeStudioEvent(db, {
+          projectId: held.projectId,
+          actor: "worker",
+          eventType: "capture_requested",
+          detail: {
+            captureId: held.id,
+            versionId: held.versionId,
+            attempt: held.attemptCount,
+            retryAfter: code,
+          },
+        });
         return { status: "requeued" } as const;
       }
       await failCapture(db, held, code);
@@ -660,7 +1132,7 @@ export async function finishThemeStudioCapture(input: {
   if (captureBlockers(pkg, capture.phase as "layout" | "final").length)
     return failNow("capture_not_ready");
   const layout = capture.phase === "layout";
-  const recapture = capture.automatic && isEvidenceRecapture(version);
+  const recapture = remeasuresInPlace(capture, version);
   if (recapture && !version.packageDigest) return failNow("base_invalid");
 
   const qaEvidence = capture.automatic
@@ -681,7 +1153,7 @@ export async function finishThemeStudioCapture(input: {
     const gates = evaluateBrowserGates(evidence, surfaces, {
       performanceRequired: getThemeStudioConfig().performanceRequired,
     });
-    return withService(async (db) => {
+    const measured = await withServiceAndNotices(async (db) => {
       const [project] = await db
         .select()
         .from(themeStudioProjects)
@@ -717,24 +1189,27 @@ export async function finishThemeStudioCapture(input: {
           .where(eq(themeStudioCaptures.id, held.id));
         return { status: "requeued" } as const;
       }
-      await db.insert(themeStudioVisualQaRuns).values({
-        projectId: held.projectId,
-        versionId: held.versionId,
-        packageDigest: held.packageDigest,
-        qaIteration: held.qaIteration,
-        browserReport: {
-          phase: "layout",
-          buildId: input.qa!.buildId,
-          evidence,
-          surfaces,
-          gates,
-          timing: timing
-            ? { ...timing, finishMs: Date.now() - finishStarted }
-            : null,
-        },
-        screenshotAssetIds: [],
-        createdBy: held.createdBy,
-      });
+      const [layoutCheck] = await db
+        .insert(themeStudioVisualQaRuns)
+        .values({
+          projectId: held.projectId,
+          versionId: held.versionId,
+          packageDigest: held.packageDigest,
+          qaIteration: held.qaIteration,
+          browserReport: {
+            phase: "layout",
+            buildId: input.qa!.buildId,
+            evidence,
+            surfaces,
+            gates,
+            timing: timing
+              ? { ...timing, finishMs: Date.now() - finishStarted }
+              : null,
+          },
+          screenshotAssetIds: [],
+          createdBy: held.createdBy,
+        })
+        .returning({ id: themeStudioVisualQaRuns.id });
       await db
         .update(themeStudioCaptures)
         .set({
@@ -753,13 +1228,30 @@ export async function finishThemeStudioCapture(input: {
           captureId: held.id,
           versionId: held.versionId,
           phase: "layout",
-          failedGates: gates
-            .filter((g) => g.required && g.status !== "pass")
-            .map((g) => g.id),
+          // The checks that stop the run (severity-v1), as acceptance.ts
+          // records them: a gate holding only warnings is not one.
+          failedGates: gates.filter(gateBlocks).map((g) => g.id),
         },
       });
-      return { status: "succeeded", versionId: held.versionId } as const;
+      return {
+        status: "succeeded",
+        versionId: held.versionId,
+        layoutCheckId: layoutCheck.id,
+      } as const;
     });
+    if (measured.status !== "succeeded") return measured;
+    // ★ The layout check needs no model call, so it is settled here, in the
+    // capture's own finish, instead of waiting up to a minute for the
+    // design-review tick (TS-3A, plan optimisation 2): it queues the photo
+    // run, a repair, or the final capture, which this job claims next. If it
+    // cannot be settled now, it stays queued for the job's wake of the review
+    // route and the minute tick.
+    const settled = await settleThemeStudioLayoutCheck(measured.layoutCheckId);
+    return {
+      status: "succeeded",
+      versionId: measured.versionId,
+      ...(settled === null ? { designReview: "waiting" as const } : {}),
+    };
   }
   const qaScreenshots = input.qa?.screenshots ?? [];
   const expectedQaKeys =
@@ -891,7 +1383,7 @@ export async function finishThemeStudioCapture(input: {
     automatic = { actor: owner, gates, buildId: input.qa!.buildId! };
   }
 
-  return withService(async (db): Promise<CaptureFinish> => {
+  return withServiceAndNotices(async (db): Promise<CaptureFinish> => {
     const [project] = await db
       .select()
       .from(themeStudioProjects)
@@ -1103,9 +1595,7 @@ export async function finishThemeStudioCapture(input: {
           captureId: held.id,
           versionId: created.id,
           samples: evidence.samples.length,
-          failedGates: gates
-            .filter((gate) => gate.required && gate.status !== "pass")
-            .map((gate) => gate.id),
+          failedGates: gates.filter(gateBlocks).map((gate) => gate.id),
         },
       });
     } else {
@@ -1146,7 +1636,11 @@ export async function finishThemeStudioCapture(input: {
         },
       });
     }
-    return { status: "succeeded", versionId: created.id };
+    // An automatic capture leaves its design review queued: the job wakes
+    // the review route for it.
+    return held.automatic
+      ? { status: "succeeded", versionId: created.id, designReview: "waiting" }
+      : { status: "succeeded", versionId: created.id };
   });
 }
 

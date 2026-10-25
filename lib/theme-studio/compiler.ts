@@ -562,7 +562,8 @@ function withSeoDescriptions(
     }
     const lead = page.slug === "" ? themeName : `${page.title} · ${themeName}`;
     const body = themeDescription || `${themeName} storefront`;
-    let description = `${lead} — ${body}`.replace(/\s+/g, " ").trim();
+    // Shoppers read this (the page's meta description): no long dash.
+    let description = `${lead}: ${body}`.replace(/\s+/g, " ").trim();
     if (description.length > SEO_DESCRIPTION_MAX) {
       description = `${description.slice(0, SEO_DESCRIPTION_MAX - 1).trimEnd()}…`;
     }

@@ -13,10 +13,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const H = vi.hoisted(() => ({
   store: null as any,
   access: "open" as "open" | "unlocked" | "locked",
+  theme: null as any,
+  preview: false,
+  chromeProps: null as any,
 }));
 
 vi.mock("next/headers", () => ({
-  headers: vi.fn(async () => new Headers()),
+  headers: vi.fn(
+    async () => new Headers(H.preview ? { "x-sm-preview": "1" } : {}),
+  ),
   cookies: vi.fn(async () => ({ has: () => false })),
 }));
 vi.mock("next/navigation", () => ({
@@ -60,7 +65,7 @@ vi.mock("@/lib/site", () => ({
   getStoreUrl: vi.fn(async () => "https://acme.storemink.com"),
 }));
 vi.mock("@/lib/themes/runtime-registry", () => ({
-  resolveInstalledThemeDefinition: vi.fn(async () => null),
+  resolveInstalledThemeDefinition: vi.fn(async () => H.theme),
 }));
 vi.mock("@/lib/analytics/platform-feature-store", () => ({
   getPlatformAnalyticsFeatures: vi.fn(async () => ({})),
@@ -102,7 +107,10 @@ vi.mock("@/app/(storefront)/components/brand-provider", () => ({
   BrandProvider: ({ children }: any) => children,
 }));
 vi.mock("@/app/(storefront)/components/chrome-provider", () => ({
-  ChromeProvider: ({ children }: any) => children,
+  ChromeProvider: ({ children, ...props }: any) => {
+    H.chromeProps = props;
+    return children;
+  },
 }));
 vi.mock("@/app/(storefront)/components/merchant-tracking", () => ({
   MerchantTracking: ({ children }: any) => children,
@@ -119,6 +127,9 @@ vi.mock("./components/storefront-refresh", () => ({
 vi.mock("@/components/ui/sonner", () => ({ Toaster: () => null }));
 
 import StorefrontLayout from "./layout";
+import { studio } from "@/lib/themes/definitions/studio";
+import { themeChromeDefaults } from "@/lib/themes/footer";
+import { DEFAULT_CHROME } from "@/lib/chrome/types";
 
 function store(settings: Record<string, unknown>) {
   return {
@@ -151,6 +162,55 @@ function chromeIn(html: string): string[] {
 beforeEach(() => {
   H.store = null;
   H.access = "open";
+  H.theme = null;
+  H.preview = false;
+  H.chromeProps = null;
+});
+
+// P-1: a preview frame that is sent chrome must lay the theme's bar and
+// newsletter words over it exactly as the layout lays them over the page's
+// own chrome, so the layout hands ChromeProvider the same defaults it used.
+describe("StorefrontLayout theme chrome", () => {
+  function themed() {
+    const theme = structuredClone(studio);
+    theme.preset.announcement = { text: "Free delivery across Kochi" };
+    return theme;
+  }
+
+  it("★★ lays the theme's bar over the page's chrome and hands a preview frame the same defaults", async () => {
+    H.store = store({ theme: { presetId: "studio" } });
+    H.theme = themed();
+    H.preview = true;
+    const html = await render();
+    // The page's own chrome: the theme's bar on an enabled, empty bar.
+    expect(H.chromeProps.chrome.header.announcement).toEqual({
+      enabled: true,
+      text: "Free delivery across Kochi",
+      href: "",
+    });
+    expect(html).toContain("sm-announce");
+    // ★ The defaults a frame lays over chrome it is sent, read once.
+    const defaults = themeChromeDefaults(H.theme);
+    expect(H.chromeProps.themeChrome).toEqual(defaults);
+    expect(defaults.announcement?.text).toBe("Free delivery across Kochi");
+    expect(defaults.newsletter?.heading).toBeTruthy();
+    expect(H.chromeProps.chrome.footer.newsletter.heading).toBe(
+      defaults.newsletter?.heading,
+    );
+    expect(H.chromeProps.chrome.footer.newsletter.heading).not.toBe(
+      DEFAULT_CHROME.footer.newsletter.heading,
+    );
+  });
+
+  it("a shopper's page is never sent chrome, so it carries no defaults to lay over it", async () => {
+    H.store = store({ theme: { presetId: "studio" } });
+    H.theme = themed();
+    await render();
+    expect(H.chromeProps.themeChrome).toBeUndefined();
+    expect(H.chromeProps.chrome.header.announcement.text).toBe(
+      "Free delivery across Kochi",
+    );
+  });
 });
 
 describe("StorefrontLayout shell", () => {

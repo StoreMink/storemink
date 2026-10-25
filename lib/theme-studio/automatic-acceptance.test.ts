@@ -18,6 +18,7 @@ import {
   type GateResult,
 } from "./acceptance-gates";
 import { recordAutomaticAcceptance, renderedPreviewGates } from "./acceptance";
+import { recordThemeStudioEvent } from "./repository";
 import { themeStudioAcceptanceRuns } from "@/drizzle/schema";
 import type { Db } from "@/lib/db/client";
 const { fetchPage } = vi.hoisted(() => ({ fetchPage: vi.fn() }));
@@ -131,7 +132,11 @@ const evidence = (): BrowserEvidence => ({
 });
 
 async function record(
-  input: { missingSurface?: boolean; failedRoute?: boolean } = {},
+  input: {
+    missingSurface?: boolean;
+    failedRoute?: boolean;
+    warningRoute?: boolean;
+  } = {},
 ) {
   const { pkg, rows } = fixture();
   const writes: { table: unknown; values: Record<string, unknown> }[] = [];
@@ -155,8 +160,17 @@ async function record(
       gate(
         "routes.render",
         input.failedRoute
-          ? [{ code: "indexable", message: "Missing noindex" }]
-          : [],
+          ? // Serious under severity-v1: a page that lost the theme's design.
+            [
+              {
+                code: "unthemed",
+                message: "Rendered without the theme's design.",
+              },
+            ]
+          : input.warningRoute
+            ? // A warning under severity-v1: StoreMink's own preview markup.
+              [{ code: "indexable", message: "Missing noindex" }]
+            : [],
       ),
       gate("routes.links", []),
       gate("routes.markup", []),
@@ -196,6 +210,42 @@ describe("automatic acceptance persistence", () => {
   });
   it("does not allow passing browser measurements to override failed server routes", async () => {
     expect((await record({ failedRoute: true })).row.status).toBe("failed");
+    expect(vi.mocked(recordThemeStudioEvent).mock.calls[0][1]).toMatchObject({
+      eventType: "acceptance_failed",
+      detail: { failedGates: ["routes.render"] },
+    });
+  });
+
+  it("stamps both reports and the event with the severity rules (severity-v1)", async () => {
+    const { row, result } = await record();
+    expect(row.serverReport).toMatchObject({ severityRules: "severity-v1" });
+    expect(row.browserReport).toMatchObject({ severityRules: "severity-v1" });
+    expect(vi.mocked(recordThemeStudioEvent).mock.calls[0][1]).toEqual({
+      projectId: "project",
+      actor: "worker",
+      eventType: "acceptance_passed",
+      detail: {
+        runId: result.acceptanceRunId,
+        versionId: "final-version",
+        automatic: true,
+        failedGates: [],
+        severityRules: "severity-v1",
+        warnings: [],
+      },
+    });
+  });
+
+  it("passes a run whose only findings are warnings and records them as warnings, not failed gates", async () => {
+    const { row } = await record({ warningRoute: true });
+    expect(row.status).toBe("passed");
+    expect(vi.mocked(recordThemeStudioEvent).mock.calls[0][1]).toMatchObject({
+      eventType: "acceptance_passed",
+      detail: {
+        failedGates: [],
+        severityRules: "severity-v1",
+        warnings: ["routes.render:indexable"],
+      },
+    });
   });
 });
 

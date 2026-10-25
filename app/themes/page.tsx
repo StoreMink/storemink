@@ -12,6 +12,7 @@ import {
 import { BrandMark } from "@/app/platform/brand-mark";
 import { PLATFORM_URL, THEMES_URL } from "@/lib/site";
 import { ROOT_DOMAIN } from "@/lib/store/host";
+import { serializeJsonLd } from "@/lib/seo/json-ld";
 import {
   canPreviewTheme,
   isThemeSelectable,
@@ -127,9 +128,12 @@ export default async function ThemesPage({
 
   return (
     <>
+      {/* ★ Through serializeJsonLd, never a bare JSON.stringify: a theme
+          name is a Theme Studio release's text, any characters up to 100,
+          and a "</script>" in one would end this element. */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
 
       <aside className="themes-announcement">

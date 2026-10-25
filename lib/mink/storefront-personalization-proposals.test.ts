@@ -79,12 +79,15 @@ vi.mock("./config", () => ({
     model: "gemini-3.7-flash",
     fallbackModel: "gemini-3.5-flash",
     fallbackLocation: "asia-south1",
-    imageModel: "gemini-3.1-flash-image",
+    imageModel: "gemini-nano-banana-2.1",
     imageLocation: "global",
   }),
 }));
 vi.mock("./drafts", () => ({ createMinkDraftProposal: holder.createDraft }));
-vi.mock("./media-generation", () => ({
+vi.mock("./media-generation", async (importOriginal) => ({
+  // ★ The real `isUnbilledImageFailure` and error classes: which failures
+  //   give a photo's share back is the rule under test.
+  ...(await importOriginal<typeof import("./media-generation")>()),
   generateMinkMediaImage: holder.generate,
 }));
 vi.mock("./storefront-media-read", () => ({
@@ -134,6 +137,12 @@ vi.mock("./storefront-personalization-context", async (importOriginal) => ({
 }));
 
 import { createMinkStorefrontPersonalizationProposal } from "./storefront-personalization-proposals";
+import {
+  MinkImageRateLimitedError,
+  MinkRequestError,
+  MinkToolInputError,
+} from "./errors";
+import { MinkImageNotSentError } from "./media-generation";
 
 const actor: MinkActorContext = {
   storeId: STORE,
@@ -398,6 +407,18 @@ describe("a storefront personalisation proposal", () => {
     // ★ Every photo was saved as the store's own media before validation.
     expect(holder.inserted).toHaveLength(2);
     expect(holder.writer.mock.calls[0][0].brief.language).toBe("English");
+  });
+
+  it("★★ draws every photo at 2K with MINIMAL thinking (owner, 25 Oct 2026)", async () => {
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    expect(holder.generate.mock.calls.length).toBeGreaterThan(0);
+    for (const call of holder.generate.mock.calls) {
+      expect(call[3]).toMatchObject({
+        rateLimitRetries: 2,
+        imageSize: "2K",
+        thinkingLevel: "MINIMAL",
+      });
+    }
   });
 
   it("★★ never touches a photo the merchant uploaded", async () => {
@@ -703,5 +724,191 @@ describe("a storefront personalisation proposal", () => {
         args: args({ unpublish_sample_products: false, photos_only: true }),
       }),
     ).rejects.toThrow(/no theme photos left/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Robustness audit B3: a photo Google never drew gives back its share of the
+// store's day (mink-personalize-images, 36) and of the platform's image hour.
+// ---------------------------------------------------------------------------
+
+const CLAIMED_AT = "2026-10-24 09:30:00.123456+00";
+const NOT_DRAWN =
+  "The image service did not respond. Nothing was created; try again shortly.";
+const DRAWN = { bytes: Buffer.from("jpeg"), mimeType: "image/jpeg" };
+
+/** The attempt is claimed first, then the photos, at the database's time. */
+function photosClaimedAt(at = CLAIMED_AT) {
+  holder.claim
+    .mockResolvedValueOnce({ ok: true })
+    .mockResolvedValueOnce({ ok: true, claimedAt: at });
+}
+
+/** The releases that give photos back (the attempt's own are separate). */
+function photoReleases() {
+  return holder.release.mock.calls.filter(([limits]) =>
+    (limits as Array<{ key: string }>).some((limit) =>
+      limit.key.startsWith("mink-personalize-images:"),
+    ),
+  );
+}
+
+/** One release of `count` photos: the store's day and the platform's hour. */
+function givenBack(count: number, claimedAt: string | null = CLAIMED_AT) {
+  return [
+    [
+      expect.objectContaining({
+        key: `mink-personalize-images:${STORE}`,
+        max: 36,
+        cost: count,
+      }),
+      expect.objectContaining({ key: "mink-image-global", cost: count }),
+    ],
+    claimedAt ? { claimedAt } : {},
+  ];
+}
+
+/** Two more theme photos on About, so one card holds four. */
+function fourPhotos() {
+  const about = holder.target.pages.find((entry) => entry.slug === "about")!;
+  for (const id of ["story2", "story3"]) {
+    about.sections.push({
+      id,
+      type: "media_text",
+      enabled: true,
+      config: {
+        heading: `Our ${id}`,
+        body: "We bake every morning.",
+        image_url: `/themes/basket/${id}.webp`,
+        media_ratio: "portrait",
+      } as never,
+    });
+  }
+  about.themeSectionIds = about.sections.map((entry) => entry.id);
+}
+
+describe("personalisation photos Google never drew (B3)", () => {
+  it("★★ give back their share of the day and the platform's hour, once, in the claim's own windows", async () => {
+    photosClaimedAt();
+    holder.generate
+      .mockResolvedValueOnce(DRAWN)
+      // Every try answered 429: refused before the model ran, never billed.
+      .mockRejectedValueOnce(new MinkImageRateLimitedError(NOT_DRAWN));
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+
+    expect(photoReleases()).toEqual([givenBack(1)]);
+    // The card is unchanged: the drawn photo is charged, the other is not,
+    // and its note still says so.
+    const { plan } = storedPlan();
+    expect(plan.credits.photos).toBe(3);
+    expect(
+      plan.skipped.some((note: { reason: string }) =>
+        /Nothing was charged for it/.test(note.reason),
+      ),
+    ).toBe(true);
+  });
+
+  it("★★ a photo that may have been billed keeps its share: a timeout or a 5xx after the request was sent", async () => {
+    photosClaimedAt();
+    holder.generate
+      .mockResolvedValueOnce(DRAWN)
+      .mockRejectedValueOnce(
+        new MinkRequestError("image_provider_unavailable", NOT_DRAWN, 503),
+      );
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    expect(photoReleases()).toEqual([]);
+  });
+
+  it("★ a mix gives back exactly the photos never drawn, in one release", async () => {
+    fourPhotos();
+    photosClaimedAt();
+    holder.generate
+      .mockResolvedValueOnce(DRAWN)
+      .mockRejectedValueOnce(new MinkImageRateLimitedError(NOT_DRAWN))
+      // Stopped before it was sent.
+      .mockRejectedValueOnce(
+        new MinkImageNotSentError("image_provider_unavailable", NOT_DRAWN, 503),
+      )
+      // Sent, then no answer in time: possibly billed.
+      .mockRejectedValueOnce(
+        new MinkRequestError("image_provider_unavailable", NOT_DRAWN, 503),
+      );
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+
+    expect(holder.generate).toHaveBeenCalledTimes(4);
+    expect(photoReleases()).toEqual([givenBack(2)]);
+  });
+
+  it("★ a filtered picture keeps its share, and so does one that came back, whatever fails after it", async () => {
+    photosClaimedAt();
+    holder.generate.mockRejectedValueOnce(
+      new MinkToolInputError(
+        "The image service refused this description: SAFETY. Describe the scene differently and try again.",
+      ),
+    );
+    // The second picture was drawn; storing it fails. The error is shaped
+    // like an unbilled one on purpose: a picture that came back is never
+    // given back, whatever the later step throws.
+    holder.upload.mockRejectedValueOnce(
+      new MinkImageNotSentError("image_provider_unavailable", NOT_DRAWN, 503),
+    );
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+
+    expect(holder.generate).toHaveBeenCalledTimes(2);
+    expect(photoReleases()).toEqual([]);
+  });
+
+  it("★ photos the proposal's time ran out before are given back too: nothing was sent", async () => {
+    vi.useFakeTimers();
+    try {
+      photosClaimedAt();
+      // The 170 s proposal deadline passes while the writer works.
+      holder.writer.mockImplementationOnce(
+        async (input: PersonalizationWriterInput) => {
+          vi.advanceTimersByTime(170_000);
+          return fakeWriter(input);
+        },
+      );
+      await createMinkStorefrontPersonalizationProposal({
+        actor,
+        args: args(),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(holder.generate).not.toHaveBeenCalled();
+    expect(photoReleases()).toEqual([givenBack(2)]);
+  });
+
+  it("gives back without naming a window when the claim returned no time", async () => {
+    holder.generate.mockRejectedValue(new MinkImageRateLimitedError(NOT_DRAWN));
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    expect(photoReleases()).toEqual([givenBack(2, null)]);
+  });
+
+  it("★ nothing is given back when no photo was claimed", async () => {
+    // The day's photo limit refused the claim: nothing drawn, nothing owed.
+    holder.claim.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({
+      ok: false,
+      refusedKey: `mink-personalize-images:${STORE}`,
+    });
+    holder.generate.mockRejectedValue(new MinkImageRateLimitedError(NOT_DRAWN));
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    expect(holder.generate).not.toHaveBeenCalled();
+    expect(photoReleases()).toEqual([]);
+
+    // The writer described no photo: no claim at all.
+    holder.release.mockClear();
+    holder.claim.mockReset();
+    holder.claim.mockResolvedValue({ ok: true });
+    holder.writer.mockImplementationOnce(
+      async (input: PersonalizationWriterInput) => ({
+        ...fakeWriter(input),
+        photos: new Map(),
+      }),
+    );
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    expect(holder.claim).toHaveBeenCalledTimes(1);
+    expect(photoReleases()).toEqual([]);
   });
 });

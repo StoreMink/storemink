@@ -234,6 +234,7 @@ export function DashboardChat({
     cancel,
     retry,
     startNewChat,
+    addressOpens,
     loadConversation,
     deleteConversation,
     submitFeedback,
@@ -347,9 +348,60 @@ export function DashboardChat({
     }
   }, [isOverlay, panelWidth]);
 
+  /**
+   * A chat opened whole (chosen in History, opened from the address, a new
+   * one, or shown in a new scroller) starts at its newest message and follows
+   * new output. The caller hides the jump button too, at once or in a frame
+   * (`setShowJumpToLatest(false)`).
+   */
+  const followNewestMessage = useCallback(() => {
+    followLatestRef.current = true;
+    latestUserMessageIdRef.current = null;
+    anchoredUserMessageIdRef.current = null;
+    if (turnAnchorSpaceRef.current) {
+      turnAnchorSpaceRef.current.style.minHeight = "0px";
+    }
+  }, []);
+
+  // ★★ A chat opened from the address (`?chat=`, robustness audit B20: the
+  // "redesign ready" notice) opens as one chosen in History does. A view
+  // keeps its scroll-follow state while it is closed, so a view last left
+  // scrolled up opened the named chat at its top, the card it was opened for
+  // out of sight below. A view the address opens gets a new scroller, which
+  // the scroll effect also resets; this reset is what moves a view that was
+  // already open, whose scroller stays. ★ Declared before the scroll effect:
+  // when the count and the loaded chat land in one render, the reset comes
+  // first. The button waits for a frame, as state set in an effect body would
+  // cascade.
+  const seenAddressOpens = useRef(addressOpens);
+  useEffect(() => {
+    if (seenAddressOpens.current === addressOpens) return;
+    seenAddressOpens.current = addressOpens;
+    followNewestMessage();
+    const frame = window.requestAnimationFrame(() =>
+      setShowJumpToLatest(false),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [addressOpens, followNewestMessage]);
+
+  // ★★ A NEW SCROLLER STARTS AT THE NEWEST MESSAGE. The thread's scroller is
+  // a new element each time the chat appears: the panel opened again, the
+  // switch between the side panel and the full view (two instances, each with
+  // its own scroller), or a chat's first message. A new element starts at its
+  // top, and this effect ran only when the chat changed, so opening the panel
+  // over a chat in memory showed its oldest messages. A mount now counts as a
+  // chat opened whole, as one chosen in History. A reply still running loses
+  // nothing: its question is still the newest one, so it is anchored at the
+  // top again, tail room included. `isChatOpen` and `isExpanded` are in the
+  // dependencies for the mount alone.
+  const seenScrollerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const scroller = scrollRef.current;
     if (!scroller) return;
+    if (scroller !== seenScrollerRef.current) {
+      seenScrollerRef.current = scroller;
+      followNewestMessage();
+    }
     const latestUserId = latestMinkUserMessageId(messages);
     const receivedNewUserMessage =
       latestUserId !== null && latestUserId !== latestUserMessageIdRef.current;
@@ -405,7 +457,15 @@ export function DashboardChat({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, isReplying, error, statusText]);
+  }, [
+    messages,
+    isReplying,
+    error,
+    statusText,
+    isChatOpen,
+    isExpanded,
+    followNewestMessage,
+  ]);
 
   useEffect(() => {
     const composer = composerRef.current;
@@ -458,15 +518,10 @@ export function DashboardChat({
 
   /** New chat, from the header or the History sidebar. */
   const startFreshChat = useCallback(() => {
-    followLatestRef.current = true;
+    followNewestMessage();
     setShowJumpToLatest(false);
-    latestUserMessageIdRef.current = null;
-    anchoredUserMessageIdRef.current = null;
-    if (turnAnchorSpaceRef.current) {
-      turnAnchorSpaceRef.current.style.minHeight = "0px";
-    }
     startNewChat();
-  }, [startNewChat]);
+  }, [followNewestMessage, startNewChat]);
 
   const chooseSkill = useCallback(
     (skill: MinkSkill) => {
@@ -693,13 +748,8 @@ export function DashboardChat({
               if (!isOverlay) setHistoryOpen(false);
             }}
             onSelect={(conversation) => {
-              followLatestRef.current = true;
+              followNewestMessage();
               setShowJumpToLatest(false);
-              latestUserMessageIdRef.current = null;
-              anchoredUserMessageIdRef.current = null;
-              if (turnAnchorSpaceRef.current) {
-                turnAnchorSpaceRef.current.style.minHeight = "0px";
-              }
               void loadConversation(conversation.id);
               if (!isOverlay) setHistoryOpen(false);
             }}

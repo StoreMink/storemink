@@ -5,6 +5,7 @@ import {
   ZERO_IMAGE_USAGE,
   aspectValue,
   assertThemeImageRequest,
+  type ThemeImageAspectRatio,
   type ThemeStudioImageClient,
 } from "./image-provider";
 import { ZERO_USAGE, type ThemeStudioModelClient } from "./provider";
@@ -30,10 +31,44 @@ import { ZERO_USAGE, type ThemeStudioModelClient } from "./provider";
 /** The long edge of a fake image: the provider's 2K. */
 export const FAKE_IMAGE_LONG_EDGE = 2048;
 
+/**
+ * What the image model really returns at 2K, per ratio (Google's Gemini image
+ * table; measured live: 4:3 2400x1792, 4:5 1856x2304, 21:9 3168x1344). Wide
+ * ratios run past 2048, so a fake capped there is smaller than the real thing.
+ */
+export const FAKE_MODEL_IMAGE_SIZES: Readonly<
+  Record<ThemeImageAspectRatio, { width: number; height: number }>
+> = {
+  "1:1": { width: 2048, height: 2048 },
+  "2:3": { width: 1696, height: 2528 },
+  "3:2": { width: 2528, height: 1696 },
+  "3:4": { width: 1792, height: 2400 },
+  "4:3": { width: 2400, height: 1792 },
+  "4:5": { width: 1856, height: 2304 },
+  "5:4": { width: 2304, height: 1856 },
+  "9:16": { width: 1536, height: 2752 },
+  "16:9": { width: 2752, height: 1536 },
+  "21:9": { width: 3168, height: 1344 },
+};
+
+export interface FakeImageClientOptions {
+  /**
+   * "studio" (the default): the long edge is 2048, as Theme Studio's offline
+   * flow and its pinned digests expect. "model": the image model's own 2K
+   * sizes, for a caller whose later crops depend on the real pixel count
+   * (the revamp's phone crop is cut from the stored wide photo, and a
+   * 2048x878 hero leaves 702px, under the storefront's 800px floor).
+   */
+  size?: "studio" | "model";
+}
+
 /** Briefs a flaky hook has already failed once, per process. */
 const flakyFailed = new Set<string>();
 
-export function createFakeImageClient(): ThemeStudioImageClient {
+export function createFakeImageClient(
+  options: FakeImageClientOptions = {},
+): ThemeStudioImageClient {
+  const modelSizes = options.size === "model";
   return {
     provider: "fake",
     async generateImage(request, signal) {
@@ -64,14 +99,19 @@ export function createFakeImageClient(): ThemeStudioImageClient {
       }
 
       const aspect = aspectValue(request.aspectRatio);
+      const real = modelSizes
+        ? FAKE_MODEL_IMAGE_SIZES[request.aspectRatio]
+        : undefined;
       const width =
-        aspect >= 1
+        real?.width ??
+        (aspect >= 1
           ? FAKE_IMAGE_LONG_EDGE
-          : Math.round(FAKE_IMAGE_LONG_EDGE * aspect);
+          : Math.round(FAKE_IMAGE_LONG_EDGE * aspect));
       const height =
-        aspect >= 1
+        real?.height ??
+        (aspect >= 1
           ? Math.round(FAKE_IMAGE_LONG_EDGE / aspect)
-          : FAKE_IMAGE_LONG_EDGE;
+          : FAKE_IMAGE_LONG_EDGE);
       const digest = createHash("sha256")
         .update(
           [

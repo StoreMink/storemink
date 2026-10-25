@@ -266,6 +266,85 @@ describe("★★ withMinkFailover with a fallback", () => {
     ]);
   });
 
+  it("★★ a 400 from the fallback on the main model's conversation goes back to the main model, and keeps the fallback", async () => {
+    // The reverse of the case above: the turn started on the main model, so
+    // the history is the main model's; a 400 from the fallback on it is not a
+    // misconfigured fallback.
+    const attempt = answering()
+      .mockRejectedValueOnce(busy())
+      .mockRejectedValueOnce(Object.assign(new Error("bad"), { status: 400 }))
+      .mockRejectedValueOnce(busy());
+    const onFailure = vi.fn();
+
+    const result = await withMinkFailover({
+      attempt,
+      primary: MAIN,
+      fallback: FALLBACK,
+      maxRetries: 3,
+      baseDelayMs: 0,
+      onFailure,
+    });
+
+    // It stays on the main model for the rest of the turn, but stays usable.
+    expect(attempt.mock.calls.map(([target]) => target)).toEqual([
+      MAIN,
+      FALLBACK,
+      MAIN,
+      MAIN,
+    ]);
+    expect(result).toMatchObject({ target: MAIN, fallbackUsable: true });
+    expect(onFailure.mock.calls.map(([event]) => event.kind)).toEqual([
+      "retryable",
+      "history",
+      "retryable",
+    ]);
+  });
+
+  it("★ a 400 from the fallback on its own conversation is a rejected request, not a refusal", async () => {
+    const attempt = answering()
+      .mockRejectedValueOnce(Object.assign(new Error("bad"), { status: 400 }))
+      .mockRejectedValueOnce(busy());
+    const onFailure = vi.fn();
+
+    const result = await withMinkFailover({
+      attempt,
+      primary: MAIN,
+      fallback: FALLBACK,
+      start: FALLBACK,
+      maxRetries: 3,
+      baseDelayMs: 0,
+      onFailure,
+    });
+
+    expect(attempt.mock.calls.map(([target]) => target)).toEqual([
+      FALLBACK,
+      MAIN,
+      MAIN,
+    ]);
+    expect(result).toMatchObject({ target: MAIN, fallbackUsable: true });
+    expect(onFailure.mock.calls.map(([event]) => event.kind)).toEqual([
+      "rejected",
+      "retryable",
+    ]);
+  });
+
+  it("reports the main model's error when a fallback 400 used the last retry", async () => {
+    const mainError = busy();
+    const attempt = answering()
+      .mockRejectedValueOnce(mainError)
+      .mockRejectedValueOnce(Object.assign(new Error("bad"), { status: 400 }));
+
+    await expect(
+      withMinkFailover({
+        attempt,
+        primary: MAIN,
+        fallback: FALLBACK,
+        maxRetries: 1,
+        baseDelayMs: 0,
+      }),
+    ).rejects.toMatchObject({ originalError: mainError, retryCount: 1 });
+  });
+
   it("keeps the turn on the fallback once the main model has refused its history", async () => {
     const attempt = answering()
       .mockRejectedValueOnce(busy())
@@ -331,6 +410,173 @@ describe("★★ withMinkFailover with a fallback", () => {
   });
 });
 
+describe("★★ a main model that refuses outright (B9)", () => {
+  const refusal = (status: 403 | 404) =>
+    Object.assign(new Error("refused"), { status });
+
+  it.each([404, 403] as const)(
+    "a typed turn whose main model answers %i goes to the fallback, without the backoff",
+    async (status) => {
+      const attempt = answering().mockRejectedValueOnce(refusal(status));
+      const onFailure = vi.fn();
+      const started = Date.now();
+
+      const result = await withMinkFailover({
+        attempt,
+        primary: MAIN,
+        fallback: FALLBACK,
+        maxRetries: 2,
+        baseDelayMs: 2_000,
+        onFailure,
+      });
+
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(result).toMatchObject({
+        value: "ok",
+        retryCount: 1,
+        target: FALLBACK,
+        fallbackUsable: true,
+      });
+      expect(attempt.mock.calls).toEqual([
+        [MAIN, 0],
+        [FALLBACK, 1],
+      ]);
+      expect(onFailure.mock.calls.map(([event]) => event.kind)).toEqual([
+        "refused",
+      ]);
+    },
+  );
+
+  it("★ the fallback gets ONE attempt: when it fails too, the turn ends on the main model's refusal", async () => {
+    const notFound = refusal(404);
+    const attempt = answering()
+      .mockRejectedValueOnce(notFound)
+      .mockRejectedValueOnce(busy());
+
+    await expect(
+      withMinkFailover({
+        attempt,
+        primary: MAIN,
+        fallback: FALLBACK,
+        maxRetries: 3,
+        baseDelayMs: 0,
+      }),
+    ).rejects.toMatchObject({ originalError: notFound, retryCount: 1 });
+    // Never back to the main model that refused, never a second fallback try.
+    expect(attempt.mock.calls.map(([target]) => target)).toEqual([
+      MAIN,
+      FALLBACK,
+    ]);
+  });
+
+  it("both refusing ends the turn on the main model's refusal", async () => {
+    const notFound = refusal(404);
+    const attempt = answering()
+      .mockRejectedValueOnce(notFound)
+      .mockRejectedValueOnce(refusal(403));
+    const onFailure = vi.fn();
+
+    await expect(
+      withMinkFailover({
+        attempt,
+        primary: MAIN,
+        fallback: FALLBACK,
+        maxRetries: 2,
+        baseDelayMs: 0,
+        onFailure,
+      }),
+    ).rejects.toMatchObject({ originalError: notFound });
+    expect(onFailure.mock.calls.map(([event]) => event.kind)).toEqual([
+      "refused",
+      "fatal",
+    ]);
+  });
+
+  it("★★ a voice turn that started on the fallback goes back to it when the main model refuses", async () => {
+    // Voice starts on the fallback; a busy fallback sends the turn to the main
+    // model, and a main model that refuses sends it back, once.
+    const attempt = answering()
+      .mockRejectedValueOnce(busy())
+      .mockRejectedValueOnce(refusal(404));
+    const onFailure = vi.fn();
+
+    const result = await withMinkFailover({
+      attempt,
+      primary: MAIN,
+      fallback: FALLBACK,
+      start: FALLBACK,
+      maxRetries: 2,
+      baseDelayMs: 0,
+      onFailure,
+    });
+
+    expect(result).toMatchObject({ target: FALLBACK, retryCount: 2 });
+    expect(attempt.mock.calls.map(([target]) => target)).toEqual([
+      FALLBACK,
+      MAIN,
+      FALLBACK,
+    ]);
+    expect(onFailure.mock.calls.map(([event]) => event.kind)).toEqual([
+      "retryable",
+      "refused",
+    ]);
+  });
+
+  it("with no fallback, a refusal still ends the turn after one call", async () => {
+    const notFound = refusal(404);
+    const attempt = answering().mockRejectedValueOnce(notFound);
+    const onFailure = vi.fn();
+
+    await expect(
+      withMinkFailover({
+        attempt,
+        primary: MAIN,
+        fallback: null,
+        maxRetries: 2,
+        baseDelayMs: 0,
+        onFailure,
+      }),
+    ).rejects.toMatchObject({ originalError: notFound, retryCount: 0 });
+    expect(attempt).toHaveBeenCalledOnce();
+    expect(onFailure.mock.calls[0][0].kind).toBe("refused");
+  });
+
+  it("with no retries left, a refusal ends the turn after one call", async () => {
+    const notFound = refusal(404);
+    const attempt = answering().mockRejectedValueOnce(notFound);
+
+    await expect(
+      withMinkFailover({
+        attempt,
+        primary: MAIN,
+        fallback: FALLBACK,
+        maxRetries: 0,
+        baseDelayMs: 0,
+      }),
+    ).rejects.toMatchObject({ originalError: notFound, retryCount: 0 });
+    expect(attempt).toHaveBeenCalledOnce();
+  });
+
+  it("a 400 from the main model is still the end of the turn, not a refusal", async () => {
+    const badRequest = Object.assign(new Error("bad"), { status: 400 });
+    const attempt = answering().mockRejectedValueOnce(badRequest);
+    const onFailure = vi.fn();
+
+    await expect(
+      withMinkFailover({
+        attempt,
+        primary: MAIN,
+        fallback: FALLBACK,
+        maxRetries: 2,
+        baseDelayMs: 0,
+        onFailure,
+      }),
+    ).rejects.toMatchObject({ originalError: badRequest });
+    expect(attempt).toHaveBeenCalledOnce();
+    expect(onFailure.mock.calls[0][0].kind).toBe("fatal");
+  });
+});
+
 describe("isRetryableProviderError", () => {
   it.each([
     [Object.assign(new Error("x"), { status: 408 }), true],
@@ -355,6 +601,15 @@ describe("★★ leakedReasoningAt", () => {
     ["thought\r\nThe merchant asked", true],
     ["  thought  \nworking", true],
     ["thought\n", true],
+    // ★ B21: any case, "thinking" too, with or without a trailing colon.
+    ["Thought\nThe merchant wants a total.", true],
+    ["THOUGHT\nworking", true],
+    ["Thought:\nNow I need to reply.", true],
+    ["thinking\nThe merchant asked for stock.", true],
+    ["Thinking:\nI should call the sales tool.", true],
+    ["THINKING:  \r\nworking", true],
+    ["Thinking :\nworking", true],
+    ["\n\nThinking\nworking", true],
   ])("%j is leaked reasoning", (text, expected) => {
     expect(leakedReasoningAt(text)).toBe(expected);
   });
@@ -366,6 +621,15 @@ describe("★★ leakedReasoningAt", () => {
     ["thou", undefined],
     ["thought", undefined],
     ["thought  ", undefined],
+    ["T", undefined],
+    ["Th", undefined],
+    ["THI", undefined],
+    ["Think", undefined],
+    ["Thinking", undefined],
+    ["thinking:", undefined],
+    ["Thought: ", undefined],
+    // The first half of "\r\n" at the end of a chunk.
+    ["Thinking:\r", undefined],
   ])("%j cannot be judged yet", (text, expected) => {
     expect(leakedReasoningAt(text)).toBe(expected);
   });
@@ -378,6 +642,13 @@ describe("★★ leakedReasoningAt", () => {
     ["thought it through: twelve orders", false],
     ["Twelve orders.", false],
     ["आज 12 ऑर्डर आए।", false],
+    // ★ B21: a real sentence that opens with the word is never withheld.
+    ["Thought you might like these: the almond shake and the cookies.", false],
+    ["Thinking of a gift? The almond shake sells best.", false],
+    ["Thinking: we sold twelve today.\nMore below.", false],
+    ["Thought: twelve orders.", false],
+    ["Thoughts:\n- Raise the shake price.", false],
+    ["Thinking...\nworking", false],
   ])("%j is an ordinary answer", (text, expected) => {
     expect(leakedReasoningAt(text)).toBe(expected);
   });

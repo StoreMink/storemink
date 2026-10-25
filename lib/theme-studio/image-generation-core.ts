@@ -390,9 +390,15 @@ export function applyGeneratedImages(
 }
 
 /** List-price figures behind the "Generate images" cost statement: about
- *  $0.135 per 2K Pro image (cost.ts) and about a cent per review (a Flash call
- *  at high effort with up to three images read at ultra-high resolution). */
-export const IMAGE_LIST_PRICE_USD = 0.135;
+ *  $0.07 a photo (cost.ts, Nano Banana 2.1 since 25 Oct 2026) and about a
+ *  cent per review (a Flash call at high effort with up to three images read
+ *  at ultra-high resolution). A 2K photo at Theme Studio's HIGH thinking
+ *  with its ANCHOR and SET references is about $0.066 (1,680 picture tokens
+ *  at $30 a million, about 1,350 of thinking at $7.50 and 3,700 of input at
+ *  $1.50); a homepage hero slide is drawn at 4K, about $0.13; so a theme of
+ *  about 21 photos with 2 or 3 hero slides averages about $0.07 a photo.
+ *  (0.135 until 25 Oct: a 2K Pro picture.) */
+export const IMAGE_LIST_PRICE_USD = 0.07;
 export const IMAGE_REVIEW_LIST_PRICE_USD = 0.01;
 
 /**

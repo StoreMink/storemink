@@ -61,18 +61,21 @@ merge `staging` to `main` (auto-deploys prod).
 ## Release gate: schema before application
 
 **Theme Studio worker release (local changes, 4 October 2026):** after web
-deployment, `cloudbuild.yaml` deploys private generation and QA services from
-the serving image digest and acceptance build ID, then updates the Chromium
-capture job. Both workers use the runtime service account, two CPUs, 2 GiB,
-request concurrency one, maximum two instances and a single DB connection per
-instance. Merchant/payment/admin credentials are excluded. This uses existing
+deployment, `cloudbuild.yaml` updates the Chromium capture job (production
+only), then deploys private generation and QA services from the serving
+image digest and acceptance build ID. The capture job goes first since the
+Theme Studio release (plan P4), so a refused worker deploy cannot leave it
+on old code. Both workers use the runtime service account, two CPUs, 2 GiB,
+request concurrency one, maximum one instance (two until 2026-10-17) and a
+single DB connection per instance, and exist in production only.
+Merchant/payment/admin credentials are excluded. This uses existing
 Run deployment permissions; first scheduler routing additionally needs
 Scheduler administration and is deliberately separate from ordinary CI.
 
 Read [worker rollout and capacity gate](theme-studio-worker-rollout.md) before
-activating schedules. Current prod/dev web ceilings plus the planned workers
-total 34 steady connections. Routing reserves old/new revision overlap (68)
-plus five spare. Verify actual SQL capacity;
+activating schedules. Current prod/dev web ceilings plus the production
+workers total 28 steady connections. Routing reserves old/new revision
+overlap (56) plus five spare (61). Verify actual SQL capacity;
 this change does not upgrade the database or reduce merchant web capacity.
 Unrouted workers have minimum zero and do not claim work on their own. Local
 tests do not establish live timing, memory or quality; repeat the eight-theme
@@ -383,7 +386,11 @@ any `-peer-dev`) were deleted, and the dev trigger sets
 capture/auto-QA `false`, so nothing on dev can spend Vertex or Cloud Run
 money on a theme. Dev and production share the `storemink-prod` billing
 project: the every-minute dev capture schedule alone was half of Cloud Run's
-October bill. Do not recreate them.
+October bill. Do not recreate them. Since the Theme Studio release the dev
+build also no longer updates the dev capture job
+(`storemink-theme-studio-capture-dev`); it still builds the capture image, so
+a broken capture Dockerfile fails on dev first. Deleting the job is a
+separate live step with the owner's OK (step A6).
 
 **dev is never indexed and never provisions certificates**, with nothing to
 configure: `SEARCH_INDEXABLE` and `IS_PRODUCTION_PLATFORM`
@@ -437,6 +444,46 @@ gcloud builds triggers create github \
 >   --project=storemink-prod --region=global \
 >   --format='value(substitutions)'
 > ```
+
+### Production memory: 2 GiB, set on the service (2026-10-23)
+
+`storemink-web-prod` runs with **2 GiB** of memory (still 1 vCPU) since revision
+`storemink-web-prod-00151-b9r`, made on 23 Oct 2026 at about 19:15 IST with the
+owner's approval:
+
+```bash
+gcloud run services update storemink-web-prod --memory=2Gi \
+  --region=asia-south1 --project=storemink-prod
+```
+
+Why: Cloud Run logged "Memory limit of 1024 MiB exceeded" on 12 and 16 Oct,
+during `/_next/image` and upload bursts, and the busiest server sat at 90% or
+more of its 1 GiB in about a fifth of all minutes (robustness audit, 23 Oct).
+
+★ **Memory is not a trigger substitution, and must not become a flag in
+`cloudbuild.yaml`.** The deploy step there passes no `--memory`, and
+`gcloud run deploy` keeps a service's memory when the flag is absent, so every
+later production deploy keeps 2 GiB. That step is shared by dev and production,
+so adding `--memory` to it would either change dev too or put production back.
+Dev (`storemink-web-dev`) is unchanged at 512 MiB. Check the live value with:
+
+```bash
+gcloud run services describe storemink-web-prod --region=asia-south1 \
+  --project=storemink-prod \
+  --format='value(spec.template.spec.containers[0].resources.limits.memory)'
+```
+
+Not changed that day: the Cloud SQL tier (still `db-f1-micro`; the owner has
+not approved the upgrade).
+
+### Production alerting
+
+Production has alert policies, uptime checks and an email channel since
+23 Oct 2026. What each alert means, what to check first, its threshold, and how
+to re-create them with `scripts/prod-monitoring.py`:
+[`monitoring.md`](monitoring.md). The memory alerts there ("Web: memory above
+95%", "Web: a server ran out of memory") are the ones that say whether 2 GiB is
+enough.
 
 ---
 
@@ -495,18 +542,64 @@ inherits staging's database, Firebase project, bucket and every secret name.
 | `_MINK_AI_ENABLED`                          | `true` **←**                                                        | `true`                                                              | `true`                                                           |
 | `_MINK_VERTEX_MODEL`                        | `gemini-3.7-flash`                                                  | `gemini-3.7-flash`                                                  | `gemini-3.7-flash`                                               |
 | `_MINK_VERTEX_LOCATION`                     | `global`                                                            | `global`                                                            | `global`                                                         |
+| `_MINK_IMAGE_MODEL`                         | `gemini-nano-banana-2.1`                                            | `gemini-nano-banana-2.1`                                            | `gemini-nano-banana-2.1`                                         |
 | `_MINK_CHIRP_LOCATION`                      | `us`                                                                | `us`                                                                | `us`                                                             |
 | `_SARVAM_API_KEY`                           | `<SARVAM_API_KEY>` **←**                                            | _(empty unless configured)_                                         | _(empty unless configured)_                                      |
 | `_MINK_MAX_STEPS_PER_RUN`                   | `12`                                                                | `12`                                                                | `12`                                                             |
 | `_MINK_MAX_TOOL_CALLS_PER_RUN`              | `16`                                                                | `16`                                                                | `16`                                                             |
 | `_MINK_MAX_PARALLEL_READ_TOOLS`             | `4`                                                                 | `4`                                                                 | `4`                                                              |
 | `_MINK_MAX_OUTPUT_TOKENS`                   | `2048`                                                              | `2048`                                                              | `2048`                                                           |
-| `_MINK_MAX_MODEL_RETRIES`                   | `1`                                                                 | `1`                                                                 | `1`                                                              |
+| `_MINK_MAX_MODEL_RETRIES`                   | `2`                                                                 | `2`                                                                 | `2`                                                              |
 | `_MINK_RUN_TIMEOUT_SECONDS`                 | `180`                                                               | `180`                                                               | `180`                                                            |
 | `_THEME_STUDIO_PROVIDER`                    | `fake` **←** (2026-10-10)                                           | _(no staging service)_                                              | `vertex-gemini`                                                  |
 | `_THEME_STUDIO_GENERATION_ENABLED`          | `false` **←** (2026-10-10)                                          | _(no staging service)_                                              | `true`                                                           |
 | `_THEME_STUDIO_CAPTURE_ENABLED`             | `false` **←** (2026-10-10)                                          | _(no staging service)_                                              | `true`                                                           |
 | `_THEME_STUDIO_AUTO_QA_ENABLED`             | `false` **←** (2026-10-10)                                          | _(no staging service)_                                              | `true`                                                           |
+| `_THEME_STUDIO_IMAGE_MODEL`                 | `gemini-nano-banana-2.1` (dev's Mink redesign photos use it)        | _(no staging service)_                                              | `gemini-nano-banana-2.1`                                         |
+| `_THEME_STUDIO_DAILY_SPEND_USD`             | `50` (the file default; the offline provider is exempt)             | _(no staging service)_                                              | `50` (the file default; a trigger value overrides it)            |
+
+> **The `_MINK_*` rows are `cloudbuild.yaml`'s defaults.** That file sets
+> `_MINK_MAX_MODEL_RETRIES: "2"` (main model, fallback, main;
+> `lib/mink/retry.ts`), which this table listed as `1` until 24 Oct 2026. A
+> trigger may still override a default; the triggers' own values were not read
+> for this table (that needs a production read).
+
+> **THEME_STUDIO_BUILD_ID needs no trigger value.** The deploy step sets it to
+> Cloud Build's built-in `COMMIT_SHA` (Theme Studio plan P3), so a
+> settings-only revision, or a re-run of the same commit, no longer makes
+> passed theme checks old. Any new commit that deploys does, a docs-only or
+> baseline-only one included: a `schema-fingerprint.json` commit must land on
+> `main` (the drift trigger reads `main`), and a push to `main` deploys
+> production. Push such a commit before anyone starts Check again or a first
+> theme, and never while a theme is mid-check (each deploy then spends one of
+> its two re-captures), or put `[skip ci]` in its message so no build starts.
+> A manual `gcloud builds submit` has no commit and sets it empty, and the
+> app then uses the Cloud Run revision (`K_REVISION`). The workers copy the
+> web's value.
+
+> **The image model is one substitution away from a rollback.**
+> `_THEME_STUDIO_IMAGE_MODEL` and `_MINK_IMAGE_MODEL` (owner, 25 Oct 2026:
+> Nano Banana 2.1 for every picture) reach Cloud Run as
+> `THEME_STUDIO_IMAGE_MODEL` and `MINK_IMAGE_MODEL`. To switch back, set
+> `_THEME_STUDIO_IMAGE_MODEL=gemini-3-pro-image` (the only other family Theme
+> Studio accepts) and/or `_MINK_IMAGE_MODEL=gemini-3.1-flash-image` on BOTH
+> the dev and the prod trigger (describe, edit the JSON, then
+> `triggers import`, because `gcloud builds triggers update` fails on these
+> triggers), then deploy. Dev needs it too: the Mink redesign's photos read
+> `THEME_STUDIO_IMAGE_MODEL` whatever `THEME_STUDIO_PROVIDER` says
+> (`lib/mink/revamp/photos.ts` through `getThemeStudioImageConfig`), and dev
+> draws them in storemink-prod's Vertex project. A rollback model is sent no
+> thinking level.
+
+> **The daily spend cap is 50 dollars per operator.**
+> `_THEME_STUDIO_DAILY_SPEND_USD` (owner-approved 24 Oct 2026, 23:55 IST; it
+> was `unlimited`) is an ESTIMATED spend over any rolling 24 hours, per
+> operator. Past it, starting a theme, Retry, answering the AI's questions,
+> asking for a change and a photo run are refused; a build already running
+> is never stopped (its automatic repairs and fill rounds count but are never
+> refused, and design reviews are neither counted nor refused). A trigger
+> value overrides the file default; check the deployed
+> `THEME_STUDIO_DAILY_SPEND_USD` in the Cloud Run console after the release.
 
 > **SARVAM_API_KEY is deliberately not in Secret Manager.** At the operator's
 > direction it is a regular Cloud Build trigger substitution and becomes a

@@ -1,11 +1,11 @@
 import "server-only";
 
 import {
-  GoogleGenAI,
   HarmBlockThreshold,
   HarmCategory,
   Modality,
   ProminentPeople,
+  ThinkingLevel,
 } from "@google/genai";
 import { sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
@@ -28,7 +28,13 @@ import { logError } from "@/lib/observability/logger";
 import { getMinkConfig, type MinkConfig } from "./config";
 import { MinkRequestError } from "./errors";
 import { canAfford, imageCreditHeadroom } from "./image-credits";
-import { reserveMinkImageGeneration } from "./media-generation";
+import {
+  MINK_CHAT_IMAGE_RETRY,
+  isUnbilledImageFailure,
+  requestMinkImage,
+  reserveMinkImageGeneration,
+  type MinkImageAllowance,
+} from "./media-generation";
 import { assertMediaGenerationAuthority } from "./media-image-proposals";
 import type { MinkActorContext } from "./types";
 
@@ -52,6 +58,10 @@ import type { MinkActorContext } from "./types";
 //    provider call. Credits are charged only after an image exists and is
 //    stored, atomically and idempotently (consume_mink_refine_credits); a
 //    store that cannot pay is refused BEFORE the provider is called.
+// ★★ A 429 IS ASKED AGAIN, AND A REFUSAL SPENDS NO ALLOWANCE (B10, B3,
+//    2026-10-23): the chat image's rule (MINK_CHAT_IMAGE_RETRY) on this
+//    call's own 60 s try, and the store's hour and day given back whenever
+//    Google provably drew nothing.
 // ---------------------------------------------------------------------------
 
 const SAFETY_CATEGORIES = [
@@ -61,7 +71,23 @@ const SAFETY_CATEGORIES = [
   HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
 ] as const;
 
+/** One try's own clock: a retouch of a real photo takes longer than a draw. */
 const REFINE_TIMEOUT_MS = 60_000;
+
+/**
+ * How Refine asks again: the chat image's rule, two free 429 retries 5 to
+ * 15 s apart at the same location, each try on Refine's own 60 s clock.
+ */
+export const REFINE_RETRY = {
+  ...MINK_CHAT_IMAGE_RETRY,
+  attemptTimeoutMs: REFINE_TIMEOUT_MS,
+} as const;
+
+/**
+ * How long before the caller's deadline the model must have answered, so the
+ * resize, the upload and the charge fit before it.
+ */
+export const REFINE_POST_RESERVE_MS = 15_000;
 /** Source download ceiling; uploads are capped at 5 MiB, this allows headroom. */
 const SOURCE_MAX_BYTES = 12 * 1024 * 1024;
 /** The source is downscaled to this before it is sent: enough detail, bounded cost. */
@@ -111,6 +137,14 @@ export async function refineStoreImage(input: {
   actor: MinkActorContext;
   sourceUrl: string;
   specKey: ImageSpecKey;
+  /**
+   * The caller's stop (the route's deadline, the merchant leaving). ★ It
+   *   aborts the provider call in flight, and nothing is stored or charged
+   *   once it has fired.
+   */
+  signal?: AbortSignal;
+  /** When the caller stops waiting, in epoch milliseconds. */
+  deadlineAt?: number;
 }): Promise<RefinedImage> {
   const { actor, specKey } = input;
   const spec: ImageSpec = IMAGE_SPECS[specKey];
@@ -153,7 +187,7 @@ export async function refineStoreImage(input: {
   const planCap = headroom.planCap;
 
   const refinementId = crypto.randomUUID();
-  await reserveMinkImageGeneration(actor, refinementId);
+  const allowance = await reserveMinkImageGeneration(actor, refinementId);
 
   let source: Buffer;
   try {
@@ -169,6 +203,8 @@ export async function refineStoreImage(input: {
       .toBuffer();
   } catch (error) {
     logError("mink refine source read failed", error, { sourcePath });
+    // Nothing was sent: the allowance comes back (B3).
+    await allowance.giveBack();
     throw new MinkRequestError(
       "refine_source_unreadable",
       "That photo couldn't be read. Try uploading it again.",
@@ -176,7 +212,15 @@ export async function refineStoreImage(input: {
     );
   }
 
-  const generated = await callRefineModel(config, spec, source);
+  const generated = await callRefineModel(config, spec, source, {
+    allowance,
+    signal: input.signal,
+    deadlineAt: input.deadlineAt,
+  });
+  // ★ The merchant left, or the route stopped waiting, after the photo came
+  //   back: nothing is stored or charged. It may have been billed, so the
+  //   allowance stays spent.
+  if (input.signal?.aborted) throw stopped();
 
   // ★ EXACT SIZE, ALWAYS. The model honours the aspect ratio approximately
   //   (it rounds to its own tile grid), so the result is fitted to the slot's
@@ -208,6 +252,11 @@ export async function refineStoreImage(input: {
       "The refined photo couldn't be stored. Nothing was charged; try again.",
       503,
     );
+  }
+  // ★ Stopped during the upload: the copy goes, and nothing is charged.
+  if (input.signal?.aborted) {
+    await gcsDeletePaths([path]).catch(() => []);
+    throw stopped();
   }
 
   let chargeSource: string | undefined;
@@ -281,61 +330,84 @@ function insufficient(): MinkRequestError {
   );
 }
 
+/** Refining stopped before the result was kept: nothing stored or charged. */
+function stopped(): MinkRequestError {
+  return new MinkRequestError(
+    "refine_stopped",
+    "Refining took too long. Nothing was charged; try again.",
+    504,
+  );
+}
+
 async function callRefineModel(
   config: MinkConfig,
   spec: ImageSpec,
   source: Buffer,
+  options: {
+    allowance: MinkImageAllowance;
+    signal?: AbortSignal;
+    deadlineAt?: number;
+  },
 ): Promise<Buffer> {
-  const ai = new GoogleGenAI({
-    enterprise: true,
-    project: config.projectId ?? undefined,
-    location: config.imageLocation,
-    apiVersion: "v1",
-    // One attempt: a retry is a second provider charge.
-    httpOptions: { retryOptions: { attempts: 1 } },
-  });
-
   let response;
   try {
-    response = await ai.models.generateContent({
-      model: config.imageModel,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { text: refinePrompt(spec) },
-            {
-              inlineData: {
-                mimeType: "image/jpeg",
-                data: source.toString("base64"),
-              },
-            },
-          ],
-        },
-      ],
-      config: {
-        responseModalities: [Modality.TEXT, Modality.IMAGE],
-        candidateCount: 1,
-        safetySettings: SAFETY_CATEGORIES.map((category) => ({
-          category,
-          threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
-        })),
-        imageConfig: {
-          aspectRatio: spec.aspect,
-          imageSize: "2K",
-          personGeneration: "ALLOW_ADULT",
-          prominentPeople: ProminentPeople.BLOCK_PROMINENT_PEOPLE,
-          outputMimeType: "image/jpeg",
-          outputCompressionQuality: 95,
-        },
-        abortSignal: AbortSignal.timeout(REFINE_TIMEOUT_MS),
+    response = await requestMinkImage(
+      {
+        // Checked by the caller (refine_not_configured) before anything else.
+        projectId: config.projectId ?? "",
+        imageModel: config.imageModel,
+        imageLocation: config.imageLocation,
       },
-    });
+      {
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: refinePrompt(spec) },
+              {
+                inlineData: {
+                  mimeType: "image/jpeg",
+                  data: source.toString("base64"),
+                },
+              },
+            ],
+          },
+        ],
+        config: {
+          responseModalities: [Modality.TEXT, Modality.IMAGE],
+          candidateCount: 1,
+          safetySettings: SAFETY_CATEGORIES.map((category) => ({
+            category,
+            threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+          })),
+          imageConfig: {
+            aspectRatio: spec.aspect,
+            // ★★ Owner, 25 Oct 2026: "2K", which is larger than every
+            //   refinable slot (IMAGE_SPECS), so the fit below only shrinks.
+            imageSize: "2K",
+            personGeneration: "ALLOW_ADULT",
+            prominentPeople: ProminentPeople.BLOCK_PROMINENT_PEOPLE,
+            outputMimeType: "image/jpeg",
+            outputCompressionQuality: 95,
+          },
+          // ★★ Owner, 25 Oct 2026: MINIMAL thinking; sent to Nano Banana 2.1
+          //   only (requestMinkImage). One user turn, nothing earlier to keep.
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+        },
+      },
+      {
+        ...REFINE_RETRY,
+        abortSignal: options.signal,
+        ...(options.deadlineAt !== undefined
+          ? { deadlineAt: options.deadlineAt - REFINE_POST_RESERVE_MS }
+          : {}),
+        logLabel: "mink refine provider",
+      },
+    );
   } catch (error) {
-    logError("mink refine provider failed", error, {
-      model: config.imageModel,
-      location: config.imageLocation,
-    });
+    // ★★ A REFUSAL SPENDS NO ALLOWANCE (B3): every try answered 429, or none
+    //    was sent. A timeout or a 5xx after sending keeps it spent.
+    if (isUnbilledImageFailure(error)) await options.allowance.giveBack();
     throw new MinkRequestError(
       "refine_provider_unavailable",
       "Mink AI didn't respond. Nothing was charged; try again shortly.",
@@ -344,9 +416,11 @@ async function callRefineModel(
   }
 
   const candidate = response.candidates?.[0];
-  const data = candidate?.content?.parts?.find((part) =>
-    Boolean(part.inlineData?.data),
-  )?.inlineData?.data;
+  // ★ The final picture: the last image part that is not a thought, never a
+  //   1K draft sent ahead of it (media-generation.ts, the same rule).
+  const data = (candidate?.content?.parts ?? [])
+    .filter((part) => part.thought !== true && Boolean(part.inlineData?.data))
+    .at(-1)?.inlineData?.data;
   if (!data) {
     const reason =
       response.promptFeedback?.blockReasonMessage?.trim() ||

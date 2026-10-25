@@ -47,10 +47,18 @@ vi.mock("fs/promises", () => {
 vi.mock("@/lib/ai/brand-voice", () => ({
   getBrandSoulForStore: vi.fn(async () => "brand soul"),
 }));
-vi.mock("@/lib/ai/quota", () => ({
-  consumeAiQuota: vi.fn(async () => ({ allowed: true })),
+// What consumeAiQuota took; refundAiQuota must be handed exactly this back.
+const AI_TAKE = vi.hoisted(() => ({
+  source: "plan" as const,
+  takeId: "11111111-1111-4111-8111-111111111111",
+  period: "2026-10",
 }));
-vi.mock("@/lib/ai/gemini", () => ({
+vi.mock("@/lib/ai/quota", () => ({
+  consumeAiQuota: vi.fn(async () => ({ allowed: true, taken: AI_TAKE })),
+  refundAiQuota: vi.fn(async () => "refunded"),
+}));
+vi.mock("@/lib/ai/gemini", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ai/gemini")>()),
   callGemini: vi.fn(async () => ({ text: "A lovely description." })),
   brandSystemText: vi.fn((b: string) => b),
 }));
@@ -80,6 +88,7 @@ import {
   deleteProduct,
   toggleProductPublish,
   generateProductDescription,
+  generateProductSeo,
   bulkToggleProductPublish,
   bulkSetProductFeatured,
   bulkDeleteProducts,
@@ -88,8 +97,12 @@ import { getManagerIdentity } from "@/app/dashboard/lib/access";
 import { deleteStorageUrls } from "@/lib/storage/cleanup";
 import { productImagesSafeToDelete } from "@/lib/media/product-images";
 import { getBrandSoulForStore } from "@/lib/ai/brand-voice";
-import { consumeAiQuota } from "@/lib/ai/quota";
-import { callGemini } from "@/lib/ai/gemini";
+import { consumeAiQuota, refundAiQuota } from "@/lib/ai/quota";
+import {
+  AI_BUSY_MESSAGE,
+  AI_UNUSABLE_MESSAGE,
+  callGemini,
+} from "@/lib/ai/gemini";
 import { after } from "next/server";
 import { productVariants } from "@/drizzle/schema";
 
@@ -610,6 +623,152 @@ describe("product-actions", () => {
       expect(getBrandSoulForStore).toHaveBeenCalledWith(
         "a0000000-0000-4000-8000-000000000001",
       );
+      // ★ A delivered description keeps its credit.
+      expect(refundAiQuota).not.toHaveBeenCalled();
+    });
+
+    // ★★ B1: the credit is taken before the model runs, so every failure
+    // after that gives it back, exactly the take consumeAiQuota reported.
+    it("gives the credit back when the model fails", async () => {
+      vi.mocked(callGemini).mockResolvedValueOnce({ error: "AI is busy" });
+      const result = await generateProductDescription({ name: "Almonds" });
+      expect(result.error).toBe("AI is busy");
+      expect(refundAiQuota).toHaveBeenCalledTimes(1);
+      expect(refundAiQuota).toHaveBeenCalledWith(
+        "a0000000-0000-4000-8000-000000000001",
+        AI_TAKE,
+      );
+    });
+
+    it("gives the credit back for an empty reply", async () => {
+      vi.mocked(callGemini).mockResolvedValueOnce({ text: "" });
+      const result = await generateProductDescription({ name: "Almonds" });
+      expect(result.error).toBe(AI_UNUSABLE_MESSAGE);
+      expect(refundAiQuota).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives the credit back when something throws before the result", async () => {
+      vi.mocked(getBrandSoulForStore).mockRejectedValueOnce(
+        new Error("db down"),
+      );
+      await expect(
+        generateProductDescription({ name: "Almonds" }),
+      ).rejects.toThrow("db down");
+      expect(refundAiQuota).toHaveBeenCalledTimes(1);
+      expect(callGemini).not.toHaveBeenCalled();
+    });
+
+    it("refunds nothing when the quota refused the generation", async () => {
+      vi.mocked(consumeAiQuota).mockResolvedValueOnce({
+        allowed: false,
+        error: "You've used all 10 AI generations…",
+      });
+      await generateProductDescription({ name: "Almonds" });
+      expect(refundAiQuota).not.toHaveBeenCalled();
+    });
+
+    // ★ The rates are per store AND per admin, so the take names who asked.
+    it("takes the credit for the admin who asked", async () => {
+      await generateProductDescription({ name: "Almonds" });
+      expect(consumeAiQuota).toHaveBeenCalledWith(
+        "a0000000-0000-4000-8000-000000000001",
+        { actorId: "user-1" },
+      );
+    });
+
+    // ★★ A server action is reachable without its form: what reaches the
+    //    model is bounded here, never by the browser.
+    it("cuts every field to its bound before it reaches the model", async () => {
+      await generateProductDescription({
+        name: "N".repeat(1_000),
+        categoryName: "C".repeat(1_000),
+        variants: Array.from({ length: 300 }, (_, i) => `v${i}`),
+        notes: "a".repeat(10_000),
+      });
+      const [, userText] = vi.mocked(callGemini).mock.calls[0];
+      expect(userText).toContain(`Product name: ${"N".repeat(300)}\n`);
+      expect(userText).toContain(`Category: ${"C".repeat(300)}\n`);
+      expect(userText).toContain("v99");
+      expect(userText).not.toContain("v100");
+      expect(userText.match(/a{4000}/)).not.toBeNull();
+      expect(userText).not.toMatch(/a{4001}/);
+    });
+
+    // ★ Every busy/unavailable message says nothing was charged; when the
+    //   refund could not be written that is not true, so it is not said.
+    it("drops the nothing-charged claim when the credit could not be given back", async () => {
+      vi.mocked(callGemini).mockResolvedValueOnce({ error: AI_BUSY_MESSAGE });
+      vi.mocked(refundAiQuota).mockResolvedValueOnce("failed");
+      const result = await generateProductDescription({ name: "Almonds" });
+      expect(result.error).toBe("AI is busy right now. Try again in a minute.");
+    });
+  });
+
+  describe("generateProductSeo", () => {
+    const seoInput = { name: "Almonds", description: "Crunchy raw almonds." };
+
+    it("returns both fields and keeps the credit", async () => {
+      vi.mocked(callGemini).mockResolvedValueOnce({
+        text: JSON.stringify({
+          seo_title: " Raw Almonds ",
+          seo_description: " Crunchy, raw almonds. ",
+        }),
+      });
+      expect(await generateProductSeo(seoInput)).toEqual({
+        seo_title: "Raw Almonds",
+        seo_description: "Crunchy, raw almonds.",
+      });
+      expect(refundAiQuota).not.toHaveBeenCalled();
+    });
+
+    // ★ The schema is sent the way lib/mink sends one: JSON Schema, lowercase.
+    it("asks for JSON through responseJsonSchema", async () => {
+      vi.mocked(callGemini).mockResolvedValueOnce({
+        text: JSON.stringify({ seo_title: "T", seo_description: "D" }),
+      });
+      await generateProductSeo(seoInput);
+      const options = vi.mocked(callGemini).mock.calls[0][2]!;
+      expect(options.responseMimeType).toBe("application/json");
+      expect(options.responseJsonSchema).toMatchObject({
+        type: "object",
+        required: ["seo_title", "seo_description"],
+        additionalProperties: false,
+      });
+      expect(options).not.toHaveProperty("responseSchema");
+    });
+
+    it("gives the credit back when the model fails", async () => {
+      vi.mocked(callGemini).mockResolvedValueOnce({ error: "AI is busy" });
+      expect((await generateProductSeo(seoInput)).error).toBe("AI is busy");
+      expect(refundAiQuota).toHaveBeenCalledWith(
+        "a0000000-0000-4000-8000-000000000001",
+        AI_TAKE,
+      );
+    });
+
+    it("gives the credit back for a reply that is not JSON", async () => {
+      vi.mocked(callGemini).mockResolvedValueOnce({ text: "not json {{{" });
+      expect((await generateProductSeo(seoInput)).error).toBe(
+        AI_UNUSABLE_MESSAGE,
+      );
+      expect(refundAiQuota).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives the credit back for an incomplete reply", async () => {
+      vi.mocked(callGemini).mockResolvedValueOnce({
+        text: JSON.stringify({ seo_title: "Only a title" }),
+      });
+      expect((await generateProductSeo(seoInput)).error).toBe(
+        AI_UNUSABLE_MESSAGE,
+      );
+      expect(refundAiQuota).toHaveBeenCalledTimes(1);
+    });
+
+    it("never takes a credit without a description to work from", async () => {
+      const result = await generateProductSeo({ name: "Almonds" });
+      expect(result.error).toMatch(/description/i);
+      expect(consumeAiQuota).not.toHaveBeenCalled();
+      expect(refundAiQuota).not.toHaveBeenCalled();
     });
   });
 });

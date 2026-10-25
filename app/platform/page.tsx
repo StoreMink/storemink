@@ -16,6 +16,7 @@ import {
   platformOrganizationSchema,
   platformWebsiteSchema,
 } from "@/lib/seo/brand-identity";
+import { serializeJsonLd } from "@/lib/seo/json-ld";
 import { allowanceLabel, includedMinkCredits } from "@/lib/plans";
 import { getPlanPricing } from "@/lib/plans/pricing";
 import { getPlanAllowances } from "@/lib/plans/allowances";
@@ -247,7 +248,7 @@ export default async function StoreminkLanding() {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
       <div className="smh">
         <a className="smh-skip" href="#main-content">

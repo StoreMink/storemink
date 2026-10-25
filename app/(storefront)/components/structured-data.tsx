@@ -1,3 +1,4 @@
+import { JsonLd } from "@/app/(storefront)/components/json-ld";
 import { getStoreBrand } from "@/lib/store/brand";
 import { getStoreUrl } from "@/lib/site";
 
@@ -58,10 +59,8 @@ export default async function StructuredData() {
     ],
   };
 
-  return (
-    <script
-      type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(graph) }}
-    />
-  );
+  // ★ Through <JsonLd>, never a bare JSON.stringify: the blurb is text the
+  // merchant (or a Mink revamp's Apply) wrote, and unescaped it could close
+  // this script element and run markup on the store's origin.
+  return <JsonLd data={graph} />;
 }

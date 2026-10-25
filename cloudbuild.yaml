@@ -89,6 +89,8 @@ steps:
   # 1 Oct job against 3 Oct code and every automatic QA run failed on its first
   # step (Bubble, 2026-10-03). The two halves are now released together.
   # Runs in parallel with build-push (waitFor '-'); it is small.
+  # Dev builds it too although only production deploys it (capture-deploy,
+  # below), so a capture image that no longer builds fails on dev first.
   - id: capture-build
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
@@ -318,6 +320,28 @@ steps:
           exit 0
         fi
 
+        # ★ THEME STUDIO'S BUILD IS THE COMMIT, NOT THE REVISION (Theme Studio
+        # plan P3, 25 Oct 2026). Every passed theme check is bound to the build
+        # it ran on (currentAcceptanceBuildId in lib/theme-studio/acceptance.ts),
+        # and a check from another build is re-checked before it can publish.
+        # That build was Cloud Run's K_REVISION, which moves on ANY new
+        # revision: the 23 Oct memory change alone, with no code, made every
+        # passed check old. THEME_STUDIO_BUILD_ID below is the commit, so a
+        # settings-only revision or a re-run of the same commit no longer
+        # counts, but ANY new commit that deploys does, a docs-only or
+        # baseline-only one included (a schema-fingerprint commit to main
+        # deploys production too; [skip ci] in its message skips the deploy).
+        # A manual `gcloud builds submit` has no commit:
+        # COMMIT_SHA is empty, and an empty THEME_STUDIO_BUILD_ID makes the app
+        # fall back to K_REVISION, as before. The private workers copy this
+        # value from the web service (scripts/theme-studio-workers.py) and the
+        # capture job measures the build each claim names, so both follow it.
+        if [ -n "$COMMIT_SHA" ]; then
+          echo "Theme Studio checks are bound to commit $COMMIT_SHA."
+        else
+          echo "No commit (a manual build): Theme Studio checks are bound to the new Cloud Run revision."
+        fi
+
         # ⚠ EVERY secret named in --set-secrets must EXIST in Secret Manager
         # before the next deploy — Cloud Run fails the revision outright on a
         # missing one, so adding one here without creating the secret takes the
@@ -332,11 +356,56 @@ steps:
           --min-instances=${_MIN_INSTANCES} \
           --max-instances=${_MAX_INSTANCES} \
           --add-cloudsql-instances=${_DB_CONN} \
-          --set-env-vars=DOMAIN_ENV=${_DOMAIN_ENV},DOMAIN_CERT_MAP=${_DOMAIN_CERT_MAP},DOMAIN_LB_IP=${_DOMAIN_LB_IP},GCP_PROJECT_ID=${_GCP_PROJECT_ID},GCP_LOCATION=global,GCS_BUCKET=${_GCS_BUCKET},GCS_PRIVATE_BUCKET=${_GCS_PRIVATE_BUCKET},DB_HOST=/cloudsql/${_DB_CONN},DB_USER=app,DB_NAME=${_DB_NAME},DB_POOL_MAX=${_DB_POOL_MAX},FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID},FIREBASE_SERVICE_ACCOUNT_ID=${_FIREBASE_SA_ID},FIREBASE_API_KEY=${_NEXT_PUBLIC_FIREBASE_API_KEY},GOOGLE_SEARCH_CONSOLE_PROPERTY=${_GOOGLE_SEARCH_CONSOLE_PROPERTY},NEXT_PUBLIC_ROOT_DOMAIN=${_NEXT_PUBLIC_ROOT_DOMAIN},NEXT_PUBLIC_APP_URL=${_NEXT_PUBLIC_APP_URL},MINK_AI_ENABLED=${_MINK_AI_ENABLED},MINK_CHARGE_CREDITS=${_MINK_CHARGE_CREDITS},MINK_VERTEX_MODEL=${_MINK_VERTEX_MODEL},MINK_VERTEX_LOCATION=${_MINK_VERTEX_LOCATION},MINK_CHIRP_LOCATION=${_MINK_CHIRP_LOCATION},SARVAM_API_KEY=${_SARVAM_API_KEY},MINK_MAX_STEPS_PER_RUN=${_MINK_MAX_STEPS_PER_RUN},MINK_MAX_TOOL_CALLS_PER_RUN=${_MINK_MAX_TOOL_CALLS_PER_RUN},MINK_MAX_PARALLEL_READ_TOOLS=${_MINK_MAX_PARALLEL_READ_TOOLS},MINK_MAX_OUTPUT_TOKENS=${_MINK_MAX_OUTPUT_TOKENS},MINK_MAX_MODEL_RETRIES=${_MINK_MAX_MODEL_RETRIES},MINK_RUN_TIMEOUT_SECONDS=${_MINK_RUN_TIMEOUT_SECONDS},MINK_FALLBACK_MODEL=${_MINK_FALLBACK_MODEL},MINK_FALLBACK_LOCATION=${_MINK_FALLBACK_LOCATION},MINK_VOICE_ON_FALLBACK=${_MINK_VOICE_ON_FALLBACK},MINK_FIRST_CHUNK_SECONDS=${_MINK_FIRST_CHUNK_SECONDS},MINK_STREAM_IDLE_SECONDS=${_MINK_STREAM_IDLE_SECONDS},MINK_TOOL_ROUTING=${_MINK_TOOL_ROUTING},MINK_LITE_MODEL=${_MINK_LITE_MODEL},MINK_LITE_ROUTING=${_MINK_LITE_ROUTING},THEME_STUDIO_PROVIDER=${_THEME_STUDIO_PROVIDER},THEME_STUDIO_GENERATION_ENABLED=${_THEME_STUDIO_GENERATION_ENABLED},THEME_STUDIO_DAILY_SPEND_USD=${_THEME_STUDIO_DAILY_SPEND_USD},THEME_STUDIO_GCP_PROJECT_ID=${_THEME_STUDIO_GCP_PROJECT_ID},THEME_STUDIO_VERTEX_LOCATION=${_THEME_STUDIO_VERTEX_LOCATION},THEME_STUDIO_CAPTURE_ENABLED=${_THEME_STUDIO_CAPTURE_ENABLED},THEME_STUDIO_AUTO_QA_ENABLED=${_THEME_STUDIO_AUTO_QA_ENABLED},THEME_STUDIO_PERFORMANCE_REQUIRED=${_THEME_STUDIO_PERFORMANCE_REQUIRED},WHATSAPP_APP_ID=${_WHATSAPP_APP_ID},WHATSAPP_CONFIG_ID=${_WHATSAPP_CONFIG_ID},IMAGE_MATTING_URL=${_IMAGE_MATTING_URL} \
+          --set-env-vars=DOMAIN_ENV=${_DOMAIN_ENV},DOMAIN_CERT_MAP=${_DOMAIN_CERT_MAP},DOMAIN_LB_IP=${_DOMAIN_LB_IP},GCP_PROJECT_ID=${_GCP_PROJECT_ID},GCP_LOCATION=global,GCS_BUCKET=${_GCS_BUCKET},GCS_PRIVATE_BUCKET=${_GCS_PRIVATE_BUCKET},DB_HOST=/cloudsql/${_DB_CONN},DB_USER=app,DB_NAME=${_DB_NAME},DB_POOL_MAX=${_DB_POOL_MAX},FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID},FIREBASE_SERVICE_ACCOUNT_ID=${_FIREBASE_SA_ID},FIREBASE_API_KEY=${_NEXT_PUBLIC_FIREBASE_API_KEY},GOOGLE_SEARCH_CONSOLE_PROPERTY=${_GOOGLE_SEARCH_CONSOLE_PROPERTY},NEXT_PUBLIC_ROOT_DOMAIN=${_NEXT_PUBLIC_ROOT_DOMAIN},NEXT_PUBLIC_APP_URL=${_NEXT_PUBLIC_APP_URL},MINK_AI_ENABLED=${_MINK_AI_ENABLED},MINK_CHARGE_CREDITS=${_MINK_CHARGE_CREDITS},MINK_VERTEX_MODEL=${_MINK_VERTEX_MODEL},MINK_VERTEX_LOCATION=${_MINK_VERTEX_LOCATION},MINK_IMAGE_MODEL=${_MINK_IMAGE_MODEL},MINK_CHIRP_LOCATION=${_MINK_CHIRP_LOCATION},SARVAM_API_KEY=${_SARVAM_API_KEY},MINK_MAX_STEPS_PER_RUN=${_MINK_MAX_STEPS_PER_RUN},MINK_MAX_TOOL_CALLS_PER_RUN=${_MINK_MAX_TOOL_CALLS_PER_RUN},MINK_MAX_PARALLEL_READ_TOOLS=${_MINK_MAX_PARALLEL_READ_TOOLS},MINK_MAX_OUTPUT_TOKENS=${_MINK_MAX_OUTPUT_TOKENS},MINK_MAX_MODEL_RETRIES=${_MINK_MAX_MODEL_RETRIES},MINK_RUN_TIMEOUT_SECONDS=${_MINK_RUN_TIMEOUT_SECONDS},MINK_FALLBACK_MODEL=${_MINK_FALLBACK_MODEL},MINK_FALLBACK_LOCATION=${_MINK_FALLBACK_LOCATION},MINK_VOICE_ON_FALLBACK=${_MINK_VOICE_ON_FALLBACK},MINK_FIRST_CHUNK_SECONDS=${_MINK_FIRST_CHUNK_SECONDS},MINK_STREAM_IDLE_SECONDS=${_MINK_STREAM_IDLE_SECONDS},MINK_TOOL_ROUTING=${_MINK_TOOL_ROUTING},MINK_LITE_MODEL=${_MINK_LITE_MODEL},MINK_LITE_ROUTING=${_MINK_LITE_ROUTING},THEME_STUDIO_PROVIDER=${_THEME_STUDIO_PROVIDER},THEME_STUDIO_GENERATION_ENABLED=${_THEME_STUDIO_GENERATION_ENABLED},THEME_STUDIO_DAILY_SPEND_USD=${_THEME_STUDIO_DAILY_SPEND_USD},THEME_STUDIO_GCP_PROJECT_ID=${_THEME_STUDIO_GCP_PROJECT_ID},THEME_STUDIO_VERTEX_LOCATION=${_THEME_STUDIO_VERTEX_LOCATION},THEME_STUDIO_IMAGE_MODEL=${_THEME_STUDIO_IMAGE_MODEL},THEME_STUDIO_CAPTURE_ENABLED=${_THEME_STUDIO_CAPTURE_ENABLED},THEME_STUDIO_AUTO_QA_ENABLED=${_THEME_STUDIO_AUTO_QA_ENABLED},THEME_STUDIO_PERFORMANCE_REQUIRED=${_THEME_STUDIO_PERFORMANCE_REQUIRED},THEME_STUDIO_BUILD_ID=$COMMIT_SHA,WHATSAPP_APP_ID=${_WHATSAPP_APP_ID},WHATSAPP_CONFIG_ID=${_WHATSAPP_CONFIG_ID},IMAGE_MATTING_URL=${_IMAGE_MATTING_URL} \
           --set-secrets=DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest,CRON_SECRET=CRON_SECRET:latest,RESEND_API_KEY=RESEND_API_KEY:latest,RESEND_WEBHOOK_SECRET=${_RESEND_WEBHOOK_SECRET_SECRET}:latest,PAYMENT_CRED_KEY=${_PAYMENT_CRED_KEY_SECRET}:latest,RAZORPAY_KEY_ID=${_RAZORPAY_KEY_ID_SECRET}:latest,RAZORPAY_KEY_SECRET=${_RAZORPAY_KEY_SECRET_SECRET}:latest,RAZORPAY_WEBHOOK_SECRET=${_RAZORPAY_WEBHOOK_SECRET_SECRET}:latest,POS_SESSION_SECRET=${_POS_SESSION_SECRET_SECRET}:latest,WHATSAPP_APP_SECRET=${_WHATSAPP_APP_SECRET_SECRET}:latest,WHATSAPP_VERIFY_TOKEN=${_WHATSAPP_VERIFY_TOKEN_SECRET}:latest
 
-  # 5. Deploy isolated Theme Studio workers from the serving web image.
-  # Private workers use the serving web digest and its acceptance build ID.
+  # 5. Update the capture job from the same build, BEFORE the private workers.
+  #
+  # ★ The job is DERIVED from _SERVICE, like migrate derives its environment
+  # from _DB_NAME: a per-trigger setting that must be remembered is one that
+  # gets forgotten. Order against the web deploy is safe both ways: an older
+  # job answers a new web service through the final-phase path, and a newer
+  # job treats a claim without `qa.phase` as final.
+  #
+  # ★ IT RUNS BEFORE theme-workers-deploy (Theme Studio plan P4, 25 Oct 2026).
+  # The capture job measures every theme today, while the private workers do
+  # no work until schedules are routed to them, yet the worker deploy is the
+  # step more likely to be refused (a Cloud Run quota refused a deploy for
+  # memory on 17 Oct). When the capture job came after it, a refused worker
+  # deploy stopped the build with the capture job still on the old code.
+  #
+  # ★ PRODUCTION ONLY (owner's rule: nothing Theme Studio runs on dev). The
+  # dev build used to update storemink-theme-studio-capture-dev too; it no
+  # longer does, so every service but production skips with a message.
+  # Deleting that old dev job is a separate live step, with the owner's OK.
+  - id: capture-deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if [ -f /workspace/superseded ]; then
+          echo "Superseded build — not updating the capture job."
+          exit 0
+        fi
+        case "${_SERVICE}" in
+          storemink-web-prod) JOB=storemink-theme-studio-capture ;;
+          *)
+            echo "No Theme Studio capture job for ${_SERVICE}: themes are built in production only."
+            exit 0
+            ;;
+        esac
+        # `update` changes the image only; the job's env, secrets and limits
+        # (docs/theme-studio-capture-job.md) stay as deployed.
+        gcloud run jobs update "$${JOB}" \
+          --image="$$(cat /workspace/capture-image)" \
+          --region=${_RUN_REGION}
+
+  # 6. Deploy isolated Theme Studio workers from the serving web image, after
+  # the capture job (P4, above).
+  # Private workers use the serving web digest and its acceptance build ID
+  # (THEME_STUDIO_BUILD_ID, the commit since P3 in the deploy step).
   # Scheduler routing is a one-time step (scripts/theme-studio-workers.py),
   # requiring Scheduler admin; normal releases only need existing Run admin.
   #
@@ -359,39 +428,6 @@ steps:
             ;;
           *) echo "No Theme Studio workers for ${_SERVICE}: they run in production only." ;;
         esac
-
-  # 6. Update the capture job from the same build.
-  #
-  # ★ The job is DERIVED from _SERVICE, like migrate derives its environment
-  # from _DB_NAME: a per-trigger setting that must be remembered is one that
-  # gets forgotten. An environment with no capture job (the staging default)
-  # skips with a message. Order is safe both ways: an older job answers a new
-  # web service through the final-phase path, and a newer job treats a claim
-  # without `qa.phase` as final.
-  - id: capture-deploy
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        if [ -f /workspace/superseded ]; then
-          echo "Superseded build — not updating the capture job."
-          exit 0
-        fi
-        case "${_SERVICE}" in
-          storemink-web-prod) JOB=storemink-theme-studio-capture ;;
-          storemink-web-dev) JOB=storemink-theme-studio-capture-dev ;;
-          *)
-            echo "No Theme Studio capture job for ${_SERVICE}; skipping."
-            exit 0
-            ;;
-        esac
-        # `update` changes the image only; the job's env, secrets and limits
-        # (docs/theme-studio-capture-job.md) stay as deployed.
-        gcloud run jobs update "$${JOB}" \
-          --image="$$(cat /workspace/capture-image)" \
-          --region=${_RUN_REGION}
 
 # buildx --push uploads the image directly, so no `images:` block (it would make
 # Cloud Build try to re-push a non-existent local image).
@@ -454,6 +490,14 @@ substitutions:
   _MINK_BETA_REQUIRE_INVITE: ""
   _MINK_VERTEX_MODEL: gemini-3.7-flash
   _MINK_VERTEX_LOCATION: global
+  # ★★ ONE IMAGE MODEL FOR EVERY PICTURE (owner, 25 Oct 2026): Nano Banana 2.1
+  # draws Mink's chat images, storefront personalisation photos, the
+  # redesign's product re-shoots and Refine with Mink AI (it was
+  # gemini-3.1-flash-image). The code defaults to it as well; this makes the
+  # choice explicit, and switching back is this substitution on the trigger
+  # and a deploy. Any other model is sent no thinking level
+  # (lib/mink/media-generation.ts requestMinkImage).
+  _MINK_IMAGE_MODEL: gemini-nano-banana-2.1
   _MINK_CHIRP_LOCATION: us
   # Deliberately a regular trigger substitution, not Secret Manager, by
   # operator choice. Anyone who can inspect the trigger or Cloud Run revision
@@ -494,9 +538,28 @@ substitutions:
   # `--set-env-vars` replaces the complete Cloud Run environment on each deploy.
   _THEME_STUDIO_PROVIDER: vertex-gemini
   _THEME_STUDIO_GENERATION_ENABLED: "true"
-  _THEME_STUDIO_DAILY_SPEND_USD: "unlimited"
+  # ★ A SPEND CAP (owner-approved 24 Oct 2026, 23:55 IST): at most 50 US
+  # dollars of ESTIMATED Theme Studio spend per operator in any rolling 24
+  # hours (lib/theme-studio/config.ts parseDailySpendMicroUsd, repository.ts
+  # assertSpendHeadroom). Past it, starting a theme, Retry, answering the AI's
+  # questions, asking for a change and a photo run are refused with "You have
+  # reached today's Theme Studio spending limit. Try again tomorrow." It never
+  # stops a build already running: Theme Studio's own automatic repairs and
+  # fill rounds count toward the total but are never refused, and design
+  # reviews are neither counted nor refused. "unlimited" removes the cap.
+  # Dev builds no themes and its offline provider is exempt, so dev needs no
+  # override. A trigger that sets this substitution overrides this default.
+  _THEME_STUDIO_DAILY_SPEND_USD: "50"
   _THEME_STUDIO_GCP_PROJECT_ID: storemink-prod
   _THEME_STUDIO_VERTEX_LOCATION: global
+  # ★★ Theme Studio's photos and the Mink redesign's photos (owner, 25 Oct
+  # 2026): Nano Banana 2.1, as every picture is. The only other value the app
+  # accepts is the owner's rollback, the Pro family (gemini-3-pro-image or a
+  # published version of it); any other value stops photo runs and redesign
+  # photos with an error (lib/theme-studio/image-models.ts). Switching back is
+  # this substitution on the trigger and a deploy; the private Theme Studio
+  # workers copy it from the web service (scripts/theme-studio-workers.py).
+  _THEME_STUDIO_IMAGE_MODEL: gemini-nano-banana-2.1
   _THEME_STUDIO_CAPTURE_ENABLED: "true"
   _THEME_STUDIO_AUTO_QA_ENABLED: "true"
   # browser.performance fails a run (LCP ≤ 3 s, CLS < 0.1 at phone390 and

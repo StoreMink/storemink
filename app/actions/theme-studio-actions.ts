@@ -1,7 +1,7 @@
 "use server";
 
 // ---------------------------------------------------------------------------
-// Mink AI Theme Studio — operator mutations (Phase 2).
+// Mink AI Theme Studio: operator mutations (Phase 2).
 //
 // ★ EVERY EXPORT HERE IS A PUBLIC POST ENDPOINT. A server action can be called
 // without the page that renders its button, so each one re-derives the actor
@@ -9,8 +9,9 @@
 // anything. The page gate is a courtesy; this is the boundary.
 //
 // ★ These are thin adapters. Validation, locking, caps and idempotency live in
-// lib/theme-studio/repository.ts, which is deliberately NOT a "use server"
-// module — its reads are platform-wide and must not be reachable directly.
+// lib/theme-studio/repository.ts (and stop.ts, capture.ts, publication.ts),
+// which are deliberately NOT "use server" modules: their reads are
+// platform-wide and must not be reachable directly.
 //
 // ★ Nothing here accepts an actor id, a provider model id, a file path or a
 // run's inputs. The browser names a project, a run, a model KEY and an
@@ -29,7 +30,13 @@ import {
 } from "@/lib/theme-studio/deletion";
 import { THEME_REGISTRY_TAG } from "@/lib/themes/runtime-registry";
 import { STORE_TAG } from "@/lib/store/resolve";
-import { queueThemeStudioCapture } from "@/lib/theme-studio/capture";
+import {
+  queueThemeStudioCapture,
+  queueThemeStudioRecheck,
+} from "@/lib/theme-studio/capture";
+import { getThemeStudioConfig } from "@/lib/theme-studio/config";
+import type { ThemeStudioProjectState } from "@/lib/theme-studio/contracts";
+import { stopThemeStudioChecks } from "@/lib/theme-studio/stop";
 import {
   archiveThemeStudioProject,
   cancelThemeStudioRun,
@@ -44,6 +51,7 @@ import {
   ThemeStudioError,
   validateProjectInput,
   type CreateThemeStudioProjectInput,
+  type ThemeStudioRestoreOutcome,
 } from "@/lib/theme-studio/repository";
 import {
   discardProjectPreviews,
@@ -84,8 +92,15 @@ function failure(error: unknown, context: string): ThemeStudioActionResult {
 }
 
 /** Kick the in-process worker after the response. The per-minute heartbeat is
- * the durable backstop if this instance is recycled first. */
+ * the durable backstop if this instance is recycled first.
+ *
+ * ★ OFFLINE PROVIDER ONLY. The pass claims only runs queued against the fake
+ * provider, which finish at once. With a model provider configured, new runs
+ * are queued against that provider, so the pass would claim nothing and only
+ * cost a database round trip after every click; a model run is executed by
+ * the dedicated worker route instead. */
 function kickWorker() {
+  if (getThemeStudioConfig().provider !== "fake") return;
   after(async () => {
     try {
       // Offline runs only: they finish instantly. A model run takes minutes
@@ -400,30 +415,101 @@ export async function queueThemeStudioCaptureAction(input: {
   }
 }
 
-/** Make an earlier version current again. */
+/** Make an earlier version current again. With the automatic checks on, the
+ * outcome says where that left the theme: Ready to publish at once, checking
+ * again on today's build, checking a new hidden version, or just current. */
 export async function restoreThemeStudioVersionAction(input: {
   projectId: string;
   versionId: string;
   expectedRevision: number;
-}): Promise<ThemeStudioActionResult> {
+}): Promise<
+  ThemeStudioActionResult & {
+    changed?: boolean;
+    outcome?: ThemeStudioRestoreOutcome;
+  }
+> {
   const actor = await getThemeStudioActor();
   if (!actor) return NOT_AUTHORIZED;
   if (!Number.isInteger(input?.expectedRevision)) return MALFORMED;
   try {
-    await restoreThemeStudioVersion(actor, {
+    const { changed, outcome } = await restoreThemeStudioVersion(actor, {
       projectId: String(input.projectId),
       versionId: String(input.versionId),
       expectedRevision: input.expectedRevision,
     });
-    revalidatePath(`${STUDIO_PATH}/${input.projectId}`);
-    return { ok: true };
+    revalidatePath(STUDIO_PATH);
+    revalidatePath(`${STUDIO_PATH}/${input.projectId}`, "layout");
+    return { ok: true, changed, outcome };
   } catch (error) {
     return failure(error, "restore version");
   }
 }
 
+/**
+ * Stop whatever is working on a theme (lib/theme-studio/stop.ts): a capture
+ * or a design review at once, a build step within a few seconds, which keeps
+ * the pictures it already drew. `cancelling` means a build step is still
+ * finishing its stop, and the theme stays generating until it has.
+ */
+export async function stopThemeStudioChecksAction(input: {
+  projectId: string;
+  expectedRevision: number;
+}): Promise<
+  ThemeStudioActionResult & {
+    status?: ThemeStudioProjectState;
+    cancelling?: boolean;
+  }
+> {
+  const actor = await getThemeStudioActor();
+  if (!actor) return NOT_AUTHORIZED;
+  if (!Number.isInteger(input?.expectedRevision)) return MALFORMED;
+  try {
+    const result = await stopThemeStudioChecks(actor, {
+      projectId: String(input.projectId),
+      expectedRevision: input.expectedRevision,
+    });
+    revalidatePath(STUDIO_PATH);
+    revalidatePath(`${STUDIO_PATH}/${input.projectId}`, "layout");
+    return { ok: true, status: result.status, cancelling: result.cancelling };
+  } catch (error) {
+    return failure(error, "stop checks");
+  }
+}
+
+/**
+ * "Check again": measure the current version once more on today's StoreMink
+ * build in the capture job, with its design review (the re-check contract,
+ * capture.ts `queueThemeStudioRecheck`). Nothing is redrawn and no paid
+ * restyle can follow. `inPlace` is true for a version that passed before,
+ * which is measured as it is; any other gets fresh catalogue pictures in a
+ * new hidden version. The reason is the server's to choose: Publish starts
+ * its own re-check, so the browser can only ask for `check_again`.
+ */
+export async function recheckThemeStudioVersionAction(input: {
+  projectId: string;
+  versionId: string;
+  expectedRevision: number;
+}): Promise<ThemeStudioActionResult & { inPlace?: boolean }> {
+  const actor = await getThemeStudioActor();
+  if (!actor) return NOT_AUTHORIZED;
+  if (!Number.isInteger(input?.expectedRevision)) return MALFORMED;
+  try {
+    const { captureId, inPlace } = await queueThemeStudioRecheck(actor, {
+      projectId: String(input.projectId),
+      versionId: String(input.versionId),
+      expectedRevision: input.expectedRevision,
+      reason: "check_again",
+    });
+    revalidatePath(STUDIO_PATH);
+    revalidatePath(`${STUDIO_PATH}/${input.projectId}`, "layout");
+    return { ok: true, id: captureId, inPlace };
+  } catch (error) {
+    return failure(error, "check again");
+  }
+}
+
 /** Open a version's private preview, building it first if needed. Returns a
- * ten-minute token to enter it — never the grant itself, which is issued on
+ * ten-minute token to enter it, never the grant itself, which is issued on
  * the preview host so it can be host-only. */
 export async function openThemeStudioPreviewAction(input: {
   projectId: string;
@@ -519,6 +605,9 @@ export async function submitThemeStudioBrowserEvidenceAction(input: {
  * Save staged slot images as ONE new version of the project, parented to the
  * version edited. Uploads happen through the slot-image route; this names only
  * asset ids the project already holds, and the server re-checks each one.
+ * `checking`: with the automatic checks on and the pictures complete, the
+ * new version stays hidden while one capture and the design review check it
+ * (slot-images.ts), and the theme shows it when they finish.
  */
 export async function replaceThemeStudioSlotImagesAction(input: {
   projectId: string;
@@ -526,7 +615,9 @@ export async function replaceThemeStudioSlotImagesAction(input: {
   expectedRevision: number;
   expectedPackageDigest: string;
   replacements: unknown;
-}): Promise<ThemeStudioActionResult & { versionNumber?: number }> {
+}): Promise<
+  ThemeStudioActionResult & { versionNumber?: number; checking?: boolean }
+> {
   const actor = await getThemeStudioActor();
   if (!actor) return NOT_AUTHORIZED;
   try {
@@ -542,6 +633,7 @@ export async function replaceThemeStudioSlotImagesAction(input: {
       ok: true,
       id: result.versionId,
       versionNumber: result.versionNumber,
+      checking: result.checking,
     };
   } catch (error) {
     return failure(error, "replace slot images");
@@ -549,19 +641,28 @@ export async function replaceThemeStudioSlotImagesAction(input: {
 }
 
 /**
- * Publish a candidate in one step: store the release, seed and render its
- * live demo, then expose it in the catalog and signup. A failure after the
- * attempt starts is recorded and returned with its reasons; nothing becomes
- * public, and the same button retries.
+ * Publish a theme that is Ready to publish in one step: store the release,
+ * seed and render its live demo, then expose it in the theme catalog and
+ * every store's Theme library. A failure after the attempt starts is
+ * recorded and returned with its reasons; nothing becomes public, and the
+ * same button tries again.
+ *
+ * ★ `kind: "rechecking"` is not a failure. When the theme's checks are not
+ * from today's StoreMink build (or have no design review bound to them),
+ * Publish starts a re-check on today's build instead (owner decision 4) and
+ * says so in `message`; the operator publishes once it passes.
  */
 export async function publishThemeStudioProjectAction(input: {
   projectId: string;
   expectedRevision: number;
 }): Promise<
   ThemeStudioActionResult & {
+    kind?: "published" | "failed" | "rechecking";
     releaseVersion?: string;
     demoSlug?: string;
     problems?: string[];
+    message?: string;
+    inPlace?: boolean;
   }
 > {
   const actor = await getThemeStudioActor();
@@ -573,16 +674,29 @@ export async function publishThemeStudioProjectAction(input: {
     });
     revalidatePath(`${STUDIO_PATH}/${input.projectId}`, "layout");
     revalidatePath("/dashboard/themes");
+    if (result.kind === "rechecking") {
+      revalidatePath(STUDIO_PATH);
+      return {
+        ok: true,
+        kind: "rechecking",
+        id: result.captureId,
+        message: result.problems[0],
+        inPlace: result.inPlace,
+      };
+    }
     if (!result.ok) {
       return {
         ok: false,
+        kind: "failed",
         id: result.publicationId,
         error: result.problems[0],
         problems: result.problems,
       };
     }
+    revalidatePath(STUDIO_PATH);
     return {
       ok: true,
+      kind: "published",
       id: result.publicationId,
       releaseVersion: result.releaseVersion,
       demoSlug: result.demoSlug,

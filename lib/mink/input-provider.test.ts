@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const h = vi.hoisted(() => ({ count: vi.fn(), generate: vi.fn() }));
-vi.mock("@google/genai", () => ({
-  GoogleGenAI: class {
-    models = { countTokens: h.count, generateContent: h.generate };
-  },
+const h = vi.hoisted(() => ({
+  count: vi.fn(),
+  generate: vi.fn(),
+  client: vi.fn(),
 }));
+vi.mock("@google/genai", () => ({
+  ThinkingLevel: { LOW: "LOW", HIGH: "HIGH" },
+}));
+vi.mock("./vertex-clients", () => ({ minkVertexClient: h.client }));
 import {
   boundMinkReading,
+  extractMinkDesign,
   extractMinkInput,
+  MINK_READER_ATTEMPT_MIN_MS,
   minkReadingTokenCeiling,
 } from "./input-provider";
 import type { MinkConfig } from "./config";
@@ -16,24 +21,41 @@ const config = {
   location: "global",
   model: "configured-model",
 } as MinkConfig;
+/** The deployed shape: the Mink fallback in Mumbai (lib/mink/config.ts). */
+const withFallback = {
+  ...config,
+  fallbackModel: "gemini-3.5-flash",
+  fallbackLocation: "asia-south1",
+} as MinkConfig;
 const input = {
   kind: "audio" as const,
   mimeType: "audio/wav",
   bytes: Buffer.from("private"),
 };
+const pdf = {
+  kind: "pdf" as const,
+  mimeType: "application/pdf",
+  bytes: Buffer.from("%PDF-1.7 private"),
+};
 const run = () => extractMinkInput(config, input, new AbortController().signal);
+const status = (code: number) =>
+  Object.assign(new Error(`status ${code}`), { status: code });
+const reading = (text: string) => ({
+  candidates: [{ finishReason: "STOP", content: { parts: [{ text }] } }],
+  usageMetadata: { promptTokenCount: 100 },
+});
+/** Every attempt's model and location, as the provider saw them. */
+const targets = () =>
+  h.generate.mock.calls.map(
+    ([request], index) => `${request.model}@${h.client.mock.calls[index][1]}`,
+  );
 beforeEach(() => {
   vi.clearAllMocks();
+  h.client.mockImplementation(() => ({
+    models: { countTokens: h.count, generateContent: h.generate },
+  }));
   h.count.mockResolvedValue({ totalTokens: 100 });
-  h.generate.mockResolvedValue({
-    candidates: [
-      {
-        finishReason: "STOP",
-        content: { parts: [{ text: "Shop mein kya kam hai?" }] },
-      },
-    ],
-    usageMetadata: { promptTokenCount: 100 },
-  });
+  h.generate.mockResolvedValue(reading("Shop mein kya kam hai?"));
 });
 describe("isolated Vertex extraction", () => {
   it("uses configured Vertex model, no tools/history/memory and separate low-trust inline data", async () => {
@@ -44,7 +66,20 @@ describe("isolated Vertex extraction", () => {
     expect(request.config.systemInstruction).toContain("not an agent");
     expect(request.config.systemInstruction).not.toContain("private");
     expect(request.contents[0].parts[1].inlineData.mimeType).toBe("audio/wav");
+    // The main model's request is unchanged: no thinking setting of its own.
+    expect(request.config.thinkingConfig).toBeUndefined();
     expect(h.generate).toHaveBeenCalledTimes(1);
+  });
+  it("★ uses the shared client for the main model's location (B25)", async () => {
+    await run();
+    expect(h.client).toHaveBeenCalledWith("test", "global");
+  });
+  it("reports the model that read it", async () => {
+    await expect(run()).resolves.toMatchObject({
+      model: "configured-model",
+      location: "global",
+      attempts: 1,
+    });
   });
   it.each([undefined, -1, 0, 8193, 1.5])(
     "fails closed on invalid or excessive token count %s",
@@ -109,9 +144,203 @@ describe("isolated Vertex extraction", () => {
       minkReadingTokenCeiling(1500),
     );
   });
-  it("does not retry provider failures", async () => {
+  it("does not retry a failure that is not a busy pool", async () => {
     h.generate.mockRejectedValue(new Error("provider failed"));
-    await expect(run()).rejects.toThrow();
+    await expect(run()).rejects.toMatchObject({
+      name: "MinkReaderUnavailableError",
+      attempts: 1,
+    });
     expect(h.generate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("★★ the reader retries a busy model, then fails over (B12)", () => {
+  const read = (cfg = withFallback, options = {}) =>
+    extractMinkInput(cfg, pdf, new AbortController().signal, 3000, {
+      retryDelayMs: 0,
+      ...options,
+    });
+
+  it("★ a 429 is asked once more on the main model, which reads it", async () => {
+    h.generate.mockRejectedValueOnce(status(429));
+    await expect(read()).resolves.toMatchObject({
+      text: "Shop mein kya kam hai?",
+      model: "configured-model",
+      location: "global",
+      attempts: 2,
+    });
+    expect(targets()).toEqual([
+      "configured-model@global",
+      "configured-model@global",
+    ]);
+  });
+
+  it("★★ two busy answers go to gemini-3.5-flash in Mumbai, with the same PDF part", async () => {
+    h.generate
+      .mockRejectedValueOnce(status(429))
+      .mockRejectedValueOnce(status(503));
+    await expect(read()).resolves.toMatchObject({
+      model: "gemini-3.5-flash",
+      location: "asia-south1",
+      attempts: 3,
+    });
+    expect(targets()).toEqual([
+      "configured-model@global",
+      "configured-model@global",
+      "gemini-3.5-flash@asia-south1",
+    ]);
+    const [main, , fallback] = h.generate.mock.calls.map(([r]) => r);
+    // The attachment's parts are byte for byte what the main model was sent.
+    expect(fallback.contents).toEqual(main.contents);
+    expect(fallback.contents[0].parts[1].inlineData).toEqual({
+      mimeType: "application/pdf",
+      data: pdf.bytes.toString("base64"),
+    });
+    // Tokens are counted by the model that will read it.
+    expect(h.count.mock.calls[2][0].model).toBe("gemini-3.5-flash");
+    // The fallback thinks little, as the dashboard chat already sends it.
+    expect(fallback.config.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+    const { thinkingConfig: _t, ...rest } = fallback.config;
+    void _t;
+    expect(rest).toEqual(main.config);
+  });
+
+  it.each([404, 403])(
+    "a main model that answers %i goes straight to the fallback",
+    async (code) => {
+      h.generate.mockRejectedValueOnce(status(code));
+      await expect(read()).resolves.toMatchObject({
+        model: "gemini-3.5-flash",
+        attempts: 2,
+      });
+      expect(targets()).toEqual([
+        "configured-model@global",
+        "gemini-3.5-flash@asia-south1",
+      ]);
+    },
+  );
+
+  it("★ every model busy: the last busy attempt's facts, never its words", async () => {
+    h.generate
+      .mockRejectedValueOnce(status(429))
+      .mockRejectedValueOnce(status(429))
+      .mockRejectedValueOnce(status(503));
+    await expect(read()).rejects.toMatchObject({
+      name: "MinkReaderUnavailableError",
+      message: "The attachment reader did not answer.",
+      attempts: 3,
+      model: "gemini-3.5-flash",
+      location: "asia-south1",
+      status: 503,
+    });
+  });
+
+  it("a fallback that refuses reports the main model's own failure", async () => {
+    h.generate
+      .mockRejectedValueOnce(status(429))
+      .mockRejectedValueOnce(status(503))
+      .mockRejectedValueOnce(status(404));
+    await expect(read()).rejects.toMatchObject({
+      attempts: 3,
+      model: "configured-model",
+      status: 503,
+    });
+  });
+
+  it("a main model that refused stays the reported fault when the fallback is busy", async () => {
+    h.generate
+      .mockRejectedValueOnce(status(404))
+      .mockRejectedValueOnce(status(429));
+    await expect(read()).rejects.toMatchObject({
+      attempts: 2,
+      model: "configured-model",
+      status: 404,
+    });
+  });
+
+  it("with no fallback configured, two busy answers end it", async () => {
+    h.generate.mockRejectedValue(status(429));
+    await expect(read(config)).rejects.toMatchObject({
+      attempts: 2,
+      status: 429,
+    });
+    expect(h.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("★ a verdict on the input is final: an unreadable reading is not asked again", async () => {
+    h.generate.mockResolvedValue({
+      candidates: [{ finishReason: "SAFETY", content: { parts: [] } }],
+    });
+    await expect(read()).rejects.toMatchObject({ code: "input_unreadable" });
+    expect(h.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 400 from the main model is final, not a reason to fail over", async () => {
+    h.generate.mockRejectedValueOnce(status(400));
+    await expect(read()).rejects.toMatchObject({ attempts: 1, status: 400 });
+    expect(h.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ no retry is started with too little of the route's deadline left", async () => {
+    h.generate.mockRejectedValue(status(429));
+    await expect(
+      read(withFallback, {
+        deadlineAt: Date.now() + MINK_READER_ATTEMPT_MIN_MS - 1_000,
+      }),
+    ).rejects.toMatchObject({ attempts: 1 });
+    expect(h.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("with time left, the same deadline allows every attempt", async () => {
+    h.generate
+      .mockRejectedValueOnce(status(429))
+      .mockRejectedValueOnce(status(429));
+    await expect(
+      read(withFallback, { deadlineAt: Date.now() + 40_000 }),
+    ).resolves.toMatchObject({ attempts: 3 });
+  });
+
+  it("an aborted request is never retried, and its own error comes back", async () => {
+    const controller = new AbortController();
+    const busy = status(429);
+    h.generate.mockImplementationOnce(async () => {
+      controller.abort();
+      throw busy;
+    });
+    await expect(
+      extractMinkInput(withFallback, pdf, controller.signal, 3000, {
+        retryDelayMs: 0,
+      }),
+    ).rejects.toBe(busy);
+    expect(h.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ the screenshot (design) reader fails over the same way, schema and all", async () => {
+    const image = {
+      kind: "image" as const,
+      mimeType: "image/jpeg",
+      bytes: Buffer.from("jpeg"),
+    };
+    h.generate
+      .mockRejectedValueOnce(status(429))
+      .mockRejectedValueOnce(status(429))
+      .mockResolvedValueOnce(
+        reading(JSON.stringify({ palette: { cream: "#F5F1EA" } })),
+      );
+    const result = await extractMinkDesign(
+      withFallback,
+      image,
+      new AbortController().signal,
+      { retryDelayMs: 0 },
+    );
+    expect(result).toMatchObject({
+      reading: { palette: { cream: "#f5f1ea" } },
+      model: "gemini-3.5-flash",
+      attempts: 3,
+    });
+    const fallback = h.generate.mock.calls[2][0];
+    expect(fallback.config.responseMimeType).toBe("application/json");
+    expect(fallback.config.responseJsonSchema).toBeTruthy();
+    expect(fallback.config.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
   });
 });

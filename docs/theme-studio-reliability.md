@@ -106,7 +106,9 @@ mandatory not-found surface. Both are deterministic defects.
   two), and the workspace labels a terminal browser-capture error separately
   from a visual QA failure. An explicit **Retry automatic QA** from Images
   collects fresh browser evidence and re-enters visual review instead of
-  producing an unchecked manual capture. Current-version, revision, digest
+  producing an unchecked manual capture (since TS-2, 25 Oct 2026, that button
+  is gone: **Check again** on the theme page measures again, never buying a
+  repair). Current-version, revision, digest
   and idempotency checks apply to recovery too.
 - The compiler previously allowed categories without image slots, so an empty
   category tile could be absent from every placeholder count. Draft schema,
@@ -118,6 +120,28 @@ mandatory not-found surface. Both are deterministic defects.
 - The workspace polls through capture and QA and refreshes on tab visibility.
   Empty-version copy explains the private pipeline; summaries distinguish
   artwork from catalog pictures. Publication gates still reject placeholders.
+- (TS-1E, 2026-10-24) A lease renewal that throws (a 5-second pool wait
+  running out, a dropped connection) is retried at the next 30-second tick
+  instead of aborting paid work; paid work stops only when a renewal answers
+  that the lease is gone, or when the watchdog fires 5 s before the last
+  renewed lease could lapse. Each retry logs
+  `theme_studio.lease_renewal_retry`.
+- (TS-1E) A capture nobody takes within 15 minutes fails as
+  `capture_not_started` (log `theme_studio.capture_stale`), and Stop ends any
+  capture, design review, run or abandoned in-browser check on a theme, so no
+  theme stays "generating" for ever and Archive and Delete always work
+  afterwards.
+- (TS-1E) Opening a preview never evicts, and the retention sweep never
+  removes, the preview store of a version that a queued capture, or a running
+  capture on a live lease, is measuring.
+- (TS-1B) One design review that cannot settle can no longer stall the queue
+  for every theme on the platform: a review updates a version only while it
+  is hidden and pending, and each worn-out row is settled, or closed, on its
+  own. A deploy during a check still re-captures the same version, at most
+  twice per check.
+- (TS-1D) Every change an operator makes by hand (saved pictures, a photo run,
+  a Retry, Make current) is checked automatically before it can be published,
+  so no version is left that Publish can never take.
 
 ## Verification
 
@@ -144,6 +168,13 @@ mandatory not-found surface. Both are deterministic defects.
    complete browser evidence, queued visual verdict and eventual visible version.
    Keep publication blocked until the existing acceptance and human gates pass.
 
+These steps are the 29 September recovery as it was run. Since then the
+human gates are gone (one superadmin publishes, 3 Oct 2026), and since TS-1
+(24 Oct 2026), with automatic checks on, a catalog capture makes a hidden
+version that gets the full checks and the design review, and **Check again**
+re-measures a version on today's build; a version is published only on a
+check run with no serious finding left and a design review bound to it.
+
 No merchant-visible change, no Help Centre update. POS, inventory, locations
 and fulfilment behavior are unchanged, so their roadmap/acceptance docs do not
 change.
@@ -165,12 +196,18 @@ failures. Theme failures produce an exact-version repair prompt and repeat the
 pipeline, with at most three repairs (four attempts including the original,
 matching migration 0145's iteration constraint). Expensive vision is deferred
 until deterministic gates pass. A successful visual verdict then revalidates
-acceptance bindings and atomically reveals a candidate. Human review and
-publication remain separate. Exhausted repairs or runtime faults preserve the
-work with **Needs attention**; security faults block. The worker never calls an
-unsuccessful result a passed theme. Performance remains advisory.
+acceptance bindings and atomically reveals a candidate. One superadmin then
+publishes it; since 3 Oct 2026 there is no human review step, and since
+24 Oct only a serious finding stops a theme, smaller ones being warnings
+(`docs/theme-acceptance.md` §5). Exhausted repairs or runtime faults preserve
+the work: serious problems left after the repairs read **Needs a fix**
+(**Needs a StoreMink fix** when they are all StoreMink's own code), and checks
+that could not run read **Couldn't finish the checks**, with Check again;
+security faults block. The worker never
+calls an unsuccessful result a passed theme. Performance remains advisory.
 
-Browser capture measures two isolated viewport contexts concurrently and
+Browser capture measures two isolated viewport contexts concurrently (three
+since the Theme Studio release, `MAX_QA_CONTEXTS`) and
 preserves sample order. It avoids redundant catalog network-idle waits and
 includes launch in its deadline. A dedicated authenticated two-lane QA endpoint
 can run independently of the long model/image scheduler. Compatible images
@@ -194,6 +231,6 @@ Roll out the web app and rebuilt capture job together (`qa.buildId` is part of
 the automatic claim/finish protocol), add the independent minute QA scheduler,
 and shorten the capture schedule to one minute. Older queued visual-QA evidence
 without an acceptance binding fails closed and can be recovered with **Images →
-Retry automatic QA**. No schema migration is required. Verify a new generation
+Retry automatic QA** (since TS-2, **Check again** on the theme page). No schema migration is required. Verify a new generation
 and a revision in dev, including concurrent projects and a failed gate, before
 production rollout. No merchant-visible change, no Help Centre update.

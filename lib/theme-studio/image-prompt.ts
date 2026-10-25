@@ -3,7 +3,6 @@ import "server-only";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ThemeIntent } from "./contracts";
-import { referenceImagery } from "./image-generation-core";
 import {
   THEME_IMAGE_ASPECT_RATIOS,
   THEME_IMAGE_LIMITS,
@@ -19,7 +18,7 @@ import {
 // one asset brief, through the executable prompt in
 // docs/theme-studio-image-prompt.md.
 //
-// ★ ONE PASS OVER THE TEMPLATE. The five placeholders are filled by a single
+// ★ ONE PASS OVER THE TEMPLATE. The six placeholders are filled by a single
 // replace, so a brief that happens to contain "{{composition}}" is inserted as
 // text and never expanded again — the brief is model-written from operator
 // input, and a second pass would let it rewrite the prompt around it.
@@ -29,6 +28,12 @@ import {
 // category tile is cut to a circle), which the brief-writer cannot know. So the
 // composition paragraph is chosen by purpose here, and the brief supplies only
 // the subject and its art direction.
+//
+// ★★ THE GOODS RULE IS A PLACEHOLDER (B16), and only the Mink storefront
+// redesign ever fills it with anything but Theme Studio's own sentence. A
+// Theme Studio brief carries no `goods`, so its prompt, its references and
+// their order are byte for byte what they were (image-prompt.golden.json):
+// its paid checkpoints are keyed on the request.
 // ---------------------------------------------------------------------------
 
 const PROMPT_DOCUMENT_PATH = join(
@@ -43,18 +48,90 @@ export const THEME_IMAGE_PLACEHOLDERS = [
   "asset_brief",
   "composition",
   "reference_guidance",
+  "goods",
   "people",
 ] as const;
 
 export type ThemeImagePeople = "none" | "adults";
 
+/** One of the merchant's real products a picture shows (B16). */
+export interface ThemeImageGoodsProduct {
+  /** Its name, as the merchant wrote it: untrusted data. */
+  name: string;
+  /**
+   * Its own photograph, re-encoded as WebP by the caller: sent to the image
+   * model labelled PRODUCT, and shown to the photo check beside the picture.
+   */
+  reference: { mediaType: "image/webp"; base64: string };
+}
+
+/**
+ * ★★ REAL GOODS OR NO GOODS (owner's decision B16, 2026-10-23), the Mink
+ * storefront redesign's rule alone: a picture shows the merchant's own
+ * products, from their own photographs ("merchant"), or no products at all
+ * ("none"). Absent, as on every Theme Studio brief, the picture shows the
+ * fictional demonstration goods Theme Studio always drew.
+ */
+export type ThemeImageGoods =
+  | { kind: "none" }
+  | { kind: "merchant"; products: ThemeImageGoodsProduct[] };
+
+/**
+ * SET RULE 2 as Theme Studio renders it, word for word the sentence the
+ * prompt document carried before the rule became a placeholder.
+ */
+export const THEME_STUDIO_GOODS_RULE =
+  "The goods are fictional demonstration products for a theme preview. Invent believable, well-made, unbranded products that fit the store's industry. Never depict a real brand, a recognisable trademarked design, a celebrity product or a competitor's packaging.";
+
+/** SET RULE 2 for a redesign picture that shows no products (B16). */
+export const NO_GOODS_RULE =
+  "There are no products in this image at all. Show a setting, a surface, materials, ingredients or a still life of props, and nothing that could be taken for an item the store sells: no bottle, jar, tube, box, bag, package, garment, shoe or piece of jewellery. Never invent goods. Never depict a real brand, a recognisable trademarked design, a celebrity product or a competitor's packaging.";
+
+/**
+ * SET RULE 2, the goods this picture shows: Theme Studio's sentence unless a
+ * redesign brief names its goods. ★ A "merchant" picture names only the
+ * products whose photographs travel with the request (`buildAssetRequest`);
+ * with none of them it shows no products, never invented ones.
+ */
+export function goodsRule(goods?: ThemeImageGoods | null): string {
+  if (!goods) return THEME_STUDIO_GOODS_RULE;
+  if (goods.kind === "none" || goods.products.length === 0) {
+    return NO_GOODS_RULE;
+  }
+  const names = goods.products
+    .map(
+      (product) =>
+        `"${clean(product.name.replace(/"/g, ""), 80) || "the product"}"`,
+    )
+    .join("; ");
+  return `The goods in this image are the store's own real products, named here as data: ${names}. Each is shown in a reference image labelled PRODUCT. Show exactly these products and nothing else that could be taken for something the store sells: keep each one as it appears in its photograph, with the same shape, proportions, colour, material, packaging and label artwork, at a believable real size. Never restyle, recolour, rename or redesign them, and never invent another product, package or item. Add no text, lettering, logo or brand of your own. The products' own label artwork, any lettering printed on the real product included, stays exactly as photographed: that is the only exception to the output rule about text.`;
+}
+
+/**
+ * The output rule about people for a redesign picture that shows no products
+ * (B16). ★ Both of Theme Studio's rules centre a product ("show the product on
+ * its own instead", "the product stays the subject"), which a picture under
+ * NO_GOODS_RULE does not have, so with either one its prompt asked for a
+ * product and for none at once. No person either, because a person in a
+ * redesign photograph is there to wear or use a product (the planner's rule).
+ */
+export const NO_GOODS_PEOPLE_RULE =
+  "- No people, faces, hands or body parts, and no mannequins or forms with faces. If THIS IMAGE mentions a person, hands or someone at work, show the place, the tools and the materials on their own instead, with nobody in the picture and no product in it.";
+
 /**
  * The output rule about people, chosen by the brief (prompt v28). "none" is
  * the pre-v28 rule byte for byte, so an older brief renders the prompt it
  * always did; "adults" lets the picture show the product worn or used, with
- * the limits the provider also enforces (image-vertex.ts).
+ * the limits the provider also enforces (image-vertex.ts). ★ `goods` "none"
+ * (a redesign picture with no products, B16) is NO_GOODS_PEOPLE_RULE whatever
+ * `people` says; without `goods` (every Theme Studio brief) the rule is
+ * exactly what it was.
  */
-export function peopleRule(people: ThemeImagePeople = "none"): string {
+export function peopleRule(
+  people: ThemeImagePeople = "none",
+  goods?: ThemeImageGoods["kind"],
+): string {
+  if (goods === "none") return NO_GOODS_PEOPLE_RULE;
   return people === "adults"
     ? "- This image may include one or two adults where THIS IMAGE calls for them: a model wearing the garment, a hand holding the product, a person using it in the scene. Adults only, never a child. No real, famous or recognisable person and no celebrity likeness; faces are natural, calm and never a logo or brand mark; no nudity or suggestive posing. The product stays the subject and the person serves it. If THIS IMAGE does not call for a person, show none."
     : "- No people, faces, hands or body parts, and no mannequins or forms with faces. If THIS IMAGE mentions a model, a person, hands or someone wearing the product, show the product on its own instead: garments flat-lay, on a hanger, folded or draped; footwear and bags on a plinth or step; lifestyle scenes as empty, styled rooms and places where the products are the subject.";
@@ -156,26 +233,11 @@ export interface ThemeImageBrief {
   aspectRatio: string;
   /** Whether adults may appear (the Stage A brief's choice, prompt v28). */
   people?: ThemeImagePeople;
-}
-
-/** The theme-wide direction, read from the Stage A intent and the compiled
- *  palette. */
-export function themeImageDirection(
-  intent: ThemeIntent,
-  themeName: string,
-  palette: ThemeImageDirection["palette"],
-): ThemeImageDirection {
-  return {
-    themeName,
-    summary: intent.summary,
-    industries: [...intent.industries],
-    moodKeywords: [...intent.visual.moodKeywords],
-    paletteDirection: intent.visual.paletteDirection,
-    density: intent.visual.density,
-    shape: intent.visual.shape,
-    palette,
-    referenceImagery: referenceImagery(intent),
-  };
+  /**
+   * The goods this picture shows, set by the Mink storefront redesign only
+   * (B16); absent on every Theme Studio brief.
+   */
+  goods?: ThemeImageGoods;
 }
 
 // ── Text ────────────────────────────────────────────────────────────────────
@@ -249,11 +311,26 @@ function isWide(ratio: ThemeImageAspectRatio): boolean {
   return w / h >= 16 / 9;
 }
 
-/** Where the subject sits, by purpose — decided here, not by the brief. */
+/**
+ * Where the subject sits, by purpose — decided here, not by the brief. ★ With
+ * `goods` (the redesign's rule, B16) the anchor and a category picture leave
+ * out the "representative products" Theme Studio invents; without it every
+ * paragraph is Theme Studio's own.
+ */
 export function compositionFor(
   purpose: ThemeImagePurpose,
   ratio: ThemeImageAspectRatio,
+  goods?: ThemeImageGoods["kind"],
 ): string {
+  if (purpose === "anchor" && goods === "none") {
+    return "An art-direction anchor: one uncluttered still life that establishes the store's light direction and quality, palette, surfaces, materials, props, lens and colour grade, with no product in it: its signature surface, materials and props alone. This image is not shown in the store: every other image will be asked to match it, so make the look distinctive and easy to repeat.";
+  }
+  if (purpose === "category" && goods === "none") {
+    return "A scene that reads at a glance as this category without showing any product: its materials, ingredients, textures or setting. Centre it with generous space all around: category images are cropped to squares and circles.";
+  }
+  if (purpose === "category" && goods === "merchant") {
+    return "The named product or products, arranged so they read at a glance as this category. Centre them with generous space all around: category images are cropped to squares and circles.";
+  }
   switch (purpose) {
     case "anchor":
       return "An art-direction anchor: one uncluttered still life that establishes the theme's light direction and quality, palette, surfaces, materials, props, lens and colour grade. Show one or two representative products for this store on the theme's signature surface. This image is not shown in the store: every other image will be asked to match it, so make the look distinctive and easy to repeat.";
@@ -283,6 +360,12 @@ function referenceText(references: readonly ThemeImageReference[]): string {
   if (references.some((r) => r.role === "set")) {
     lines.push(
       "The image labelled SET is a validated earlier product shot from this theme. It takes precedence over ANCHOR and conflicting brief details for camera height, lens, framing, backdrop, light and subject scale. Keep that same photographic setup and replace its product with this one, showing the whole new product. Do not introduce a different platform, border or backdrop; ANCHOR supplies only the complementary palette and mood.",
+    );
+  }
+  // ★ Only a redesign picture of the merchant's own goods carries these (B16).
+  if (references.some((r) => r.role === "product")) {
+    lines.push(
+      "Each image labelled PRODUCT is the store's own photograph of one of the real products the goods rule names. Reproduce that product faithfully from it, and take nothing else from it: its background, light, framing and composition come from this image's brief and the ANCHOR.",
     );
   }
   lines.push(
@@ -327,6 +410,10 @@ export function buildAnchorRequest(
     artDirection: lead?.artDirection ?? "",
     aspectRatio: ANCHOR_ASPECT_RATIO,
   };
+  // ★ The anchor carries no references, so a redesign's anchor can show none
+  //   of the merchant's goods: it shows no products at all (B16).
+  const goods: ThemeImageGoods | null =
+    lead?.goods === "none" ? { kind: "none" } : null;
   const request: ThemeImageRequest = {
     purpose: "anchor",
     briefId: "anchor",
@@ -335,11 +422,13 @@ export function buildAnchorRequest(
       {
         theme_direction: directionText(direction),
         asset_brief: briefText("anchor", brief, retake),
-        composition: compositionFor("anchor", ANCHOR_ASPECT_RATIO),
+        composition: compositionFor("anchor", ANCHOR_ASPECT_RATIO, goods?.kind),
         reference_guidance: referenceText([]),
+        goods: goodsRule(goods),
         // The anchor is a still life that sets light and grade; it never
-        // needs a person, whatever the hero it follows asks for.
-        people: peopleRule("none"),
+        // needs a person, whatever the hero it follows asks for. ★ A
+        // redesign's anchor shows no products, so its people rule names none.
+        people: peopleRule("none", goods?.kind),
       },
       template,
     ),
@@ -353,6 +442,11 @@ export function buildAnchorRequest(
 export interface AnchorLead {
   subject: string;
   artDirection: string;
+  /**
+   * "none": the anchor shows no products (the Mink storefront redesign,
+   * B16, whose pictures never show invented goods). Absent on Theme Studio's.
+   */
+  goods?: "none";
 }
 
 /**
@@ -371,6 +465,24 @@ export function anchorSubject(
     : `A signature still life for ${list(direction.industries, 160) || "this store"}, in the theme's own look.`;
 }
 
+/**
+ * The goods a request shows once its references are fitted (B16): a
+ * "merchant" picture keeps the products whose photographs fit after the
+ * anchor and set shots, within the request's reference limit, and shows no
+ * products when none fits. Null for a brief with no goods (Theme Studio).
+ */
+function fittedGoods(
+  goods: ThemeImageGoods | undefined,
+  room: number,
+): ThemeImageGoods | null {
+  if (!goods) return null;
+  if (goods.kind === "none") return goods;
+  const products = goods.products.slice(0, Math.max(0, room));
+  return products.length > 0
+    ? { kind: "merchant", products }
+    : { kind: "none" };
+}
+
 /** A request for one asset brief, matched to the anchor (and, for a product,
  *  to an earlier product shot). */
 export function buildAssetRequest(
@@ -382,11 +494,32 @@ export function buildAssetRequest(
   retake?: ThemeImageRetake,
 ): ThemeImageRequest {
   const aspectRatio = supportedRatio(brief.aspectRatio);
-  const refs = orderedReferences(references);
+  const ordered = orderedReferences(references);
+  // ★★ A redesign picture of the merchant's goods sends each product's OWN
+  //   photograph after the anchor (B16), as many as the limit leaves room
+  //   for; the rule names exactly those.
+  const goods = fittedGoods(
+    brief.goods,
+    THEME_IMAGE_LIMITS.maxReferences - ordered.length,
+  );
+  const refs: ThemeImageReference[] =
+    goods?.kind === "merchant"
+      ? [
+          ...ordered,
+          ...goods.products.map((product) => ({
+            role: "product" as const,
+            mediaType: product.reference.mediaType,
+            base64: product.reference.base64,
+          })),
+        ]
+      : ordered;
   // A pack shot never shows a person, whatever its range brief says: the
-  // catalogue stays on-form, flat-lay or draped.
+  // catalogue stays on-form, flat-lay or draped. ★ Nor does a redesign
+  // picture with no products (B16): a person there wears or uses one.
   const people: ThemeImagePeople =
-    purpose !== "product" && brief.people === "adults" ? "adults" : "none";
+    purpose !== "product" && brief.people === "adults" && goods?.kind !== "none"
+      ? "adults"
+      : "none";
   const request: ThemeImageRequest = {
     purpose,
     briefId: brief.id,
@@ -395,9 +528,10 @@ export function buildAssetRequest(
       {
         theme_direction: directionText(direction),
         asset_brief: briefText(purpose, brief, retake),
-        composition: compositionFor(purpose, aspectRatio),
+        composition: compositionFor(purpose, aspectRatio, goods?.kind),
         reference_guidance: referenceText(refs),
-        people: peopleRule(people),
+        goods: goodsRule(goods),
+        people: peopleRule(people, goods?.kind),
       },
       template,
     ),

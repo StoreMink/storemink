@@ -20,9 +20,11 @@ import {
   acceptanceAssetsDigest,
   acceptanceEvidenceDigest,
   acceptanceOutcome,
+  acceptanceWarnings,
   evaluateBrowserGates,
   evaluatePackageGates,
   gate,
+  gateBlocks,
   internalLinks,
   linkFindings,
   markupFindings,
@@ -45,6 +47,7 @@ import { fetchInternalPageWithRetry } from "./acceptance-http";
 import type { CapturedRoute } from "./capture-profile";
 import { getThemeStudioConfig } from "./config";
 import { validateThemePackageV2, type ThemePackageV2 } from "./contracts";
+import { SEVERITY_RULES_VERSION } from "./finding-severity";
 import { openThemeStudioPreview, type PreviewPage } from "./preview";
 import {
   PREVIEW_COOKIE,
@@ -52,11 +55,16 @@ import {
   verifyPreviewToken,
 } from "./preview-token";
 import { isUuid, recordThemeStudioEvent, ThemeStudioError } from "./repository";
+import {
+  SCORECARD_DIMENSIONS,
+  type ReviewFinding,
+  type ReviewSeverity,
+} from "./scorecard";
 
 // ---------------------------------------------------------------------------
 // Theme Studio automated acceptance: the orchestration.
 //
-// A run judges ONE version and is bound to exactly what it judged — the
+// A run judges ONE version and is bound to exactly what it judged: the
 // version's package digest, a digest of every asset row the package renders,
 // and the application build that rendered it. It has two stages:
 //
@@ -64,16 +72,19 @@ import { isUuid, recordThemeStudioEvent, ThemeStudioError } from "./repository";
 //      acceptance-gates.ts); then the preview store is built from the version
 //      and its rendered pages are fetched through this same server to check
 //      status, theming, noindex, links and markup.
-//   2. BROWSER. Whenever a preview was built and the security scan is clean
-//      (a quality failure above does not skip it): the operator's browser loads
-//      each surface at each acceptance viewport and reports raw measurements
-//      (overflow, axe, broken images, LCP/CLS), bound to a one-time nonce.
-//      The thresholds are applied here, never by the client.
+//   2. BROWSER. The automatic capture job (capture.ts), or the operator's
+//      in-browser runner whenever a preview was built and the security scan
+//      is clean (a quality failure above does not skip it): each surface is
+//      loaded at each acceptance viewport and raw measurements are reported
+//      (overflow, axe, broken images, LCP/CLS). The thresholds are applied
+//      here, never by the client.
 //
 // ★ A PASS IS WHAT MAKES A CANDIDATE, AND THE DATABASE SAYS SO. The project
-// guard (migration 0131) refuses `candidate` unless the current version has a
-// passed run over its exact package digest, so no action written later can
-// skip this module.
+// guard (migration 0151) refuses `candidate`, and entry to `approved`, unless
+// the current version has a passed run over its exact package digest, so no
+// action written later can skip this module. A run passes when no serious
+// finding is left (severity-v1, finding-severity.ts); its warnings are kept
+// with it, stamped with the rule version, and go live with the theme.
 //
 // ★ FAILURE DOES NOT BLOCK UNLESS IT IS A SECURITY FAILURE. A quality failure
 // leaves the project `ready` (demoting a candidate) for a revision to fix; a
@@ -81,9 +92,12 @@ import { isUuid, recordThemeStudioEvent, ThemeStudioError } from "./repository";
 //
 // ★ EVIDENCE GOES STALE WITHOUT CHANGING. A new deploy renders the storefront
 // with different code, so a passing run made under another build no longer
-// describes what a merchant would get. verifyThemeStudioCandidateEvidence is
-// the check approval must make; the project is not demoted automatically,
-// because a deploy should not rewrite project state behind an operator.
+// describes what a merchant would get. `currentPublishEvidence` is what
+// Publish asks: the newest check run of the current version passed, on
+// today's build, with a passed final design review bound to that very run.
+// Anything else makes Publish measure the design again on today's build
+// first (publication.ts, owner decision 4, 24 Oct 2026). The project is never
+// demoted behind an operator's back: a deploy does not rewrite its state.
 // ---------------------------------------------------------------------------
 
 /** How long the browser stage may take before its nonce expires. */
@@ -433,6 +447,7 @@ export async function recordAutomaticAcceptance(
     status,
     serverReport: {
       version: ACCEPTANCE_REPORT_VERSION,
+      severityRules: SEVERITY_RULES_VERSION,
       gates: serverGates,
       surfaces: input.surfaces,
       automatic: true,
@@ -440,6 +455,7 @@ export async function recordAutomaticAcceptance(
     },
     browserReport: {
       version: ACCEPTANCE_REPORT_VERSION,
+      severityRules: SEVERITY_RULES_VERSION,
       gates: browserGates,
       evidence: input.evidence,
     },
@@ -456,22 +472,55 @@ export async function recordAutomaticAcceptance(
       runId: binding.runId,
       versionId: input.versionId,
       automatic: true,
+      ...verdictDetail(gates),
     },
   });
   return { acceptanceRunId: binding.runId, buildId: input.buildId, gates };
 }
 
+/** At most this many warning codes on an acceptance event: its detail is
+ * capped at 4 KiB (theme_studio_events_detail_check). */
+const EVENT_WARNING_CODES = 20;
+
+/**
+ * What an acceptance event records beside its verdict: the gates that stop
+ * the run (gateBlocks: a gate holding only warnings is not "failed"), the
+ * rule version, and the warnings it carries, as `gate:code` once each.
+ * Codes only: never a message, a selector or a path.
+ */
+function verdictDetail(gates: readonly GateResult[]): {
+  failedGates: string[];
+  severityRules: string;
+  warnings: string[];
+} {
+  const warnings = [
+    ...new Set(
+      acceptanceWarnings(gates).flatMap((g) =>
+        g.findings.map((f) => `${g.id}:${f.code}`.slice(0, 80)),
+      ),
+    ),
+  ];
+  return {
+    failedGates: gates.filter(gateBlocks).map((g) => g.id),
+    severityRules: SEVERITY_RULES_VERSION,
+    warnings: warnings.slice(0, EVENT_WARNING_CODES),
+  };
+}
+
 export type ManualVisualQaEvidence = "passed" | "required" | "not_configured";
 
 /**
- * The manual acceptance path (an operator's browser measurements) must not be
- * a way around the visual-QA scorecard. Once every gate passes, the project
- * becomes a candidate only when the automatic reviewer has ALSO passed this
- * exact package in its final phase. Where the capture/vision pipeline is not
- * deployed at all (a dev environment), the manual path is the only route and
- * still promotes, and the event records that the scorecard was unavailable so
- * a candidate made that way is identifiable. Pure, so the rule is testable
- * without a database.
+ * The manual acceptance path (the in-browser runner's measurements) must not
+ * be a way around the design review. Once the run passes, the project becomes
+ * a candidate only when the newest final design review of this exact package
+ * on the run's own build has passed (`finalVisualQaPassed`), so an older pass
+ * can never stand in for a newer review that failed. Even then the run has no
+ * review bound to it, so Publish measures the design again on today's build
+ * before it publishes (`currentPublishEvidence`). Where the capture and review
+ * pipeline is not deployed at all (local development), the manual path is
+ * the only route and still promotes, and the event records that no review was
+ * available, so a candidate made that way is identifiable. Pure, so the rule
+ * is testable without a database.
  */
 export function manualAcceptanceTransition(input: {
   outcome: AcceptanceOutcome;
@@ -501,26 +550,40 @@ export function manualAcceptanceTransition(input: {
   return { nextState: null, visualQa: null };
 }
 
-/** A final-phase visual QA pass over this exact package. The layout preflight
- * also stores `passed`, so the phase is read from the run's own report. */
+/** Final-phase design reviews only: the layout preflight also stores
+ * `passed`, so the phase is read from the row's own report. */
+const finalReview = () =>
+  sql`coalesce(${themeStudioVisualQaRuns.browserReport}->>'phase','final') = 'final'`;
+
+/**
+ * Whether the NEWEST final design review of this exact package on `buildId`
+ * passed. Only that one counts: a review from another build judged other
+ * code, and an older pass never stands in for a newer review that failed,
+ * was stopped, or is still waiting (re-check contract, item 4).
+ */
 async function finalVisualQaPassed(
   db: Db,
   versionId: string,
   packageDigest: string,
+  buildId: string,
 ): Promise<boolean> {
   const [row] = await db
-    .select({ id: themeStudioVisualQaRuns.id })
+    .select({ status: themeStudioVisualQaRuns.status })
     .from(themeStudioVisualQaRuns)
     .where(
       and(
         eq(themeStudioVisualQaRuns.versionId, versionId),
         eq(themeStudioVisualQaRuns.packageDigest, packageDigest),
-        eq(themeStudioVisualQaRuns.status, "passed"),
-        sql`coalesce(${themeStudioVisualQaRuns.browserReport}->>'phase','final') = 'final'`,
+        finalReview(),
+        sql`${themeStudioVisualQaRuns.browserReport}->>'buildId' = ${buildId}`,
       ),
     )
+    .orderBy(
+      desc(themeStudioVisualQaRuns.createdAt),
+      desc(themeStudioVisualQaRuns.id),
+    )
     .limit(1);
-  return Boolean(row);
+  return row?.status === "passed";
 }
 
 /**
@@ -588,7 +651,12 @@ async function finishRun(
       autoQaEnabled,
       finalVisualQaPassed:
         wouldPromote && autoQaEnabled
-          ? await finalVisualQaPassed(db, run.versionId, run.packageDigest)
+          ? await finalVisualQaPassed(
+              db,
+              run.versionId,
+              run.packageDigest,
+              run.buildId,
+            )
           : false,
     });
     nextState = transition.nextState;
@@ -609,9 +677,7 @@ async function finishRun(
         runId: run.id,
         versionId: run.versionId,
         evidenceDigest,
-        failedGates: input.gates
-          .filter((g) => g.required && g.status !== "pass")
-          .map((g) => g.id),
+        ...verdictDetail(input.gates),
         ...(nextState ? { projectStatus: nextState } : {}),
         ...(visualQa ? { visualQa } : {}),
       },
@@ -804,6 +870,7 @@ export async function startThemeStudioAcceptance(
 
     const serverReport = {
       version: ACCEPTANCE_REPORT_VERSION,
+      severityRules: SEVERITY_RULES_VERSION,
       gates,
       surfaces,
     };
@@ -977,6 +1044,7 @@ export async function submitThemeStudioBrowserEvidence(
       serverReport: run.serverReport as Record<string, unknown>,
       browserReport: {
         version: ACCEPTANCE_REPORT_VERSION,
+        severityRules: SEVERITY_RULES_VERSION,
         gates: browserGates,
         userAgent: parsed.value.userAgent,
       },
@@ -1058,10 +1126,11 @@ export type CandidateEvidence =
   | { ok: false; reason: string };
 
 /**
- * Is the candidate's evidence still true? Re-derives every binding — the
- * version is current, a PASSED run covers its package digest, that run was
- * rendered by this build, and the asset rows still hash to what it judged.
- * Approval (Phase 6) must call this; the candidate state alone is not enough.
+ * Is the candidate's check-run evidence still true? Re-derives every binding:
+ * the version is current, a PASSED run covers its package digest, that run
+ * was rendered by this build, and the asset rows still hash to what it
+ * judged. It says nothing about the design review; Publish asks
+ * `currentPublishEvidence`, which also needs the review bound to that run.
  */
 export async function verifyThemeStudioCandidateEvidence(
   projectId: string,
@@ -1080,10 +1149,12 @@ export async function verifyThemeStudioCandidateEvidence(
 
 /**
  * The same check inside a caller's transaction, over a project row it has
- * already read (usually locked). Phase 6 approval runs it with the candidate
- * row it holds; publication runs it for an APPROVED project and skips the
- * build binding — a deploy between approval and publication must not strand
- * an approved theme, and the published demo is rendered and checked again.
+ * already read (usually locked). The design review runs it before it marks a
+ * version passed and makes the project a candidate (visual-qa.ts), when the
+ * review that will be bound to the run is the one being settled, so no review
+ * is asked for here. Publish no longer calls it: it reads
+ * `publishEvidenceWithDb`, which holds a retry of a publish that did not
+ * finish to the same rule as a first publish (owner decision 4).
  */
 export async function verifyCandidateEvidenceWithDb(
   db: Db,
@@ -1121,8 +1192,8 @@ export async function verifyCandidateEvidenceWithDb(
         eq(themeStudioAcceptanceRuns.status, "passed"),
       ),
     )
-    // The same order the project guard reads (migration 0134): the latest
-    // passing run is the evidence reviews must bind to.
+    // Newest first: the latest passing run is the one a design review binds
+    // to (its `browser_report.acceptanceRunId`).
     .orderBy(
       desc(themeStudioAcceptanceRuns.completedAt),
       desc(themeStudioAcceptanceRuns.createdAt),
@@ -1159,4 +1230,266 @@ export async function verifyCandidateEvidenceWithDb(
     };
   }
   return { ok: true, runId: run.id, evidenceDigest: run.evidenceDigest };
+}
+
+// ------------------------------------------------------- publish evidence
+
+/**
+ * Why a theme cannot publish on its evidence as it stands (owner decision 4,
+ * 24 Oct 2026). Each one makes Publish measure the design again on today's
+ * build instead of publishing (publication.ts):
+ *   - `old_build`: the newest check ran on an earlier StoreMink build;
+ *   - `no_review`: no passed final design review is bound to that check (the
+ *     in-browser runner's checks never have one, and a review that failed,
+ *     was stopped or is still waiting is not a pass);
+ *   - `none`: no passing check describes the design as it stands (none ran,
+ *     the newest did not pass, or its package or pictures changed).
+ */
+export type PublishEvidenceGap = "old_build" | "no_review" | "none";
+
+/** `currentPublishEvidence`'s answer. Publish, Make current and the theme's
+ * status read it. */
+export type PublishEvidence =
+  | { ok: true; acceptanceRunId: string }
+  | { ok: false; reason: PublishEvidenceGap };
+
+/** The same answer with what Publish records and shows beside it. */
+export type PublishEvidenceDetail =
+  | {
+      ok: true;
+      acceptanceRunId: string;
+      evidenceDigest: string;
+      buildId: string;
+      /** Every gate the run measured, the server stage first, as stored. */
+      gates: GateResult[];
+      /** The severity rules its findings were measured under; null on a run
+       * from before them. */
+      severityRules: string | null;
+      /** The passed final design review bound to the run; null only where
+       * the automatic checks are off (local development), the labelled
+       * exception where a passed run alone may publish. */
+      review: { id: string; severity: ReviewSeverity | null } | null;
+    }
+  | { ok: false; reason: PublishEvidenceGap; detail: string };
+
+/** A check run that reached a verdict. `error` and `expired` never did. */
+const VERDICT_STATUSES = ["passed", "failed", "blocked"];
+
+const RECHECK_TIME = "which takes about 3 to 5 minutes";
+
+/**
+ * Can this project publish now, on its evidence as it stands?
+ *
+ *   1. The NEWEST check run of the current version that reached a verdict
+ *      passed, over the version's exact package and pictures. A newer check
+ *      that failed is never outweighed by an older pass.
+ *   2. It ran on today's StoreMink build (`currentAcceptanceBuildId`).
+ *   3. A passed final design review is bound to that very run (the review
+ *      row's `browser_report.acceptanceRunId`, written by the capture that
+ *      measured it) on the same build.
+ *
+ * Read-only and status-agnostic: the caller decides what the project's
+ * status allows. Stored findings are never judged again here; the run's own
+ * verdict, made when it was measured, is the pass. Where the automatic checks
+ * are off, (3) is not asked (the labelled exception).
+ */
+export async function currentPublishEvidence(
+  db: Db,
+  input: { projectId: string },
+): Promise<PublishEvidence> {
+  if (!isUuid(input.projectId)) return { ok: false, reason: "none" };
+  const [project] = await db
+    .select({
+      id: themeStudioProjects.id,
+      currentVersionId: themeStudioProjects.currentVersionId,
+    })
+    .from(themeStudioProjects)
+    .where(eq(themeStudioProjects.id, input.projectId))
+    .limit(1);
+  if (!project) return { ok: false, reason: "none" };
+  const evidence = await publishEvidenceWithDb(db, project);
+  return evidence.ok
+    ? { ok: true, acceptanceRunId: evidence.acceptanceRunId }
+    : { ok: false, reason: evidence.reason };
+}
+
+/** `currentPublishEvidence` over a project row the caller already holds
+ * (usually locked), with what Publish records and shows. */
+export async function publishEvidenceWithDb(
+  db: Db,
+  project: { id: string; currentVersionId: string | null },
+): Promise<PublishEvidenceDetail> {
+  const autoQaEnabled = getThemeStudioConfig().autoQaEnabled;
+  const gap = (
+    reason: PublishEvidenceGap,
+    detail: string,
+  ): PublishEvidenceDetail => ({ ok: false, reason, detail });
+  if (!project.currentVersionId) {
+    return gap("none", "The project has no current version.");
+  }
+  const [version] = await db
+    .select({
+      id: themeStudioVersions.id,
+      packageJson: themeStudioVersions.packageJson,
+      packageDigest: themeStudioVersions.packageDigest,
+    })
+    .from(themeStudioVersions)
+    .where(
+      and(
+        eq(themeStudioVersions.id, project.currentVersionId),
+        eq(themeStudioVersions.projectId, project.id),
+      ),
+    )
+    .limit(1);
+  const [run] = version
+    ? await db
+        .select()
+        .from(themeStudioAcceptanceRuns)
+        .where(
+          and(
+            eq(themeStudioAcceptanceRuns.projectId, project.id),
+            eq(themeStudioAcceptanceRuns.versionId, version.id),
+            inArray(themeStudioAcceptanceRuns.status, VERDICT_STATUSES),
+          ),
+        )
+        .orderBy(
+          sql`${themeStudioAcceptanceRuns.completedAt} desc nulls last`,
+          desc(themeStudioAcceptanceRuns.createdAt),
+        )
+        .limit(1)
+    : [];
+  if (!version?.packageDigest || !run) {
+    return gap("none", "No passing check covers this design.");
+  }
+  if (run.status !== "passed" || !run.evidenceDigest) {
+    return gap("none", "The newest check of this design did not pass.");
+  }
+  if (run.packageDigest !== version.packageDigest) {
+    return gap("none", "The newest check judged a different package.");
+  }
+  if (run.buildId !== currentAcceptanceBuildId()) {
+    return gap(
+      "old_build",
+      autoQaEnabled
+        ? `StoreMink was updated since these checks. Publish checks this design again on today's build first, ${RECHECK_TIME}.`
+        : "The evidence was rendered by an earlier build. Run the checks again.",
+    );
+  }
+  const parsed = validateThemePackageV2(version.packageJson);
+  if (!parsed.ok) {
+    return gap("none", "The version no longer passes its contract.");
+  }
+  const rows = await assetRowsFor(db, project.id, version.packageJson);
+  if (acceptanceAssetsDigest(parsed.value, rows) !== run.assetsDigest) {
+    return gap("none", "The design's pictures changed since it was checked.");
+  }
+  const server = readAcceptanceReport(run.serverReport);
+  const browser = readAcceptanceReport(run.browserReport);
+  const gates = [...server.gates, ...browser.gates];
+  const passed = {
+    ok: true as const,
+    acceptanceRunId: run.id,
+    evidenceDigest: run.evidenceDigest,
+    buildId: run.buildId,
+    gates,
+    severityRules:
+      server.severityRules ??
+      browser.severityRules ??
+      gates.find((g) => g.severityRules)?.severityRules ??
+      null,
+  };
+  if (!autoQaEnabled) return { ...passed, review: null };
+  const [review] = await db
+    .select({
+      id: themeStudioVisualQaRuns.id,
+      status: themeStudioVisualQaRuns.status,
+      packageDigest: themeStudioVisualQaRuns.packageDigest,
+      buildId: sql<
+        string | null
+      >`${themeStudioVisualQaRuns.browserReport}->>'buildId'`,
+      visionReport: themeStudioVisualQaRuns.visionReport,
+    })
+    .from(themeStudioVisualQaRuns)
+    .where(
+      and(
+        eq(themeStudioVisualQaRuns.projectId, project.id),
+        eq(themeStudioVisualQaRuns.versionId, version.id),
+        finalReview(),
+        sql`${themeStudioVisualQaRuns.browserReport}->>'acceptanceRunId' = ${run.id}`,
+      ),
+    )
+    .orderBy(
+      desc(themeStudioVisualQaRuns.createdAt),
+      desc(themeStudioVisualQaRuns.id),
+    )
+    .limit(1);
+  if (
+    !review ||
+    review.status !== "passed" ||
+    review.packageDigest !== version.packageDigest ||
+    review.buildId !== run.buildId
+  ) {
+    return gap(
+      "no_review",
+      `No passed design review belongs to the newest check of this design. Publish checks it again on today's build first, ${RECHECK_TIME}.`,
+    );
+  }
+  return {
+    ...passed,
+    review: {
+      id: review.id,
+      severity: readReviewSeverity(review.visionReport),
+    },
+  };
+}
+
+const REVIEW_FINDING_CODE = /^[a-z0-9_]{1,64}$/;
+const REVIEW_ROWS: ReadonlySet<string> = new Set(
+  SCORECARD_DIMENSIONS.map((d) => d.key),
+);
+
+/** The design review's own split of what it found (visual-qa.ts writes it as
+ * `vision_report.reviewSeverity`); null on a review from before it. Read
+ * defensively: anything malformed is dropped, never invented. */
+export function readReviewSeverity(
+  visionReport: unknown,
+): ReviewSeverity | null {
+  const record = (value: unknown): Record<string, unknown> | null =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const raw = record(record(visionReport)?.reviewSeverity);
+  if (!raw) return null;
+  const outcome = raw.outcome;
+  if (outcome !== "pass" && outcome !== "taste" && outcome !== "serious") {
+    return null;
+  }
+  const findings = (value: unknown): ReviewFinding[] =>
+    (Array.isArray(value) ? value : []).flatMap((item) => {
+      const finding = record(item);
+      const code = finding?.code;
+      if (typeof code !== "string" || !REVIEW_FINDING_CODE.test(code)) {
+        return [];
+      }
+      return [
+        {
+          code,
+          ...(typeof finding?.row === "string" && REVIEW_ROWS.has(finding.row)
+            ? { row: finding.row as ReviewFinding["row"] }
+            : {}),
+          ...(typeof finding?.score === "number" &&
+          Number.isFinite(finding.score)
+            ? { score: finding.score }
+            : {}),
+          ...(typeof finding?.slotId === "string"
+            ? { slotId: finding.slotId.slice(0, 80) }
+            : {}),
+        },
+      ];
+    });
+  return {
+    outcome,
+    serious: findings(raw.serious),
+    warnings: findings(raw.warnings),
+  };
 }
