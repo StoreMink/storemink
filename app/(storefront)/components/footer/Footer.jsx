@@ -8,6 +8,7 @@ import { useBrand } from "@/app/(storefront)/components/brand-provider";
 import { useChrome } from "@/app/(storefront)/components/chrome-provider";
 import { useRouter, usePathname } from "next/navigation";
 import { NewsletterForm } from "@/app/(storefront)/components/newsletter-form";
+import { readFooterCredit } from "@/lib/store/footer-credit";
 
 // All icons are local inline SVG (mail/phone/clock + the social brand marks
 // below) — no external image host. Only the social LINK URLs are per-store
@@ -55,7 +56,17 @@ function WhatsappIcon() {
   );
 }
 
-export default function Footer() {
+/**
+ * The store's footer.
+ *
+ * @param {{ credit?: import("@/lib/store/footer-credit").FooterCredit }} props
+ *   `credit` is the footer's last line, decided by the storefront layout on
+ *   the server from the store's effective plan: StoreMink's badge on Free, the
+ *   store's own line or nothing on Basic and Pro (lib/store/footer-credit.ts).
+ *   The footer only draws it, and never reads the plan or brand.creditLine
+ *   itself; with no answer it draws nothing there.
+ */
+export default function Footer({ credit }) {
   const currentYear = new Date().getFullYear();
   const router = useRouter();
   const pathname = usePathname();
@@ -79,7 +90,8 @@ export default function Footer() {
   ].filter((s) => s.href);
 
   const legalName = brand.legalName || brand.name;
-  const creditLine = brand.creditLine || "Powered by StoreMink";
+  const footerCredit = readFooterCredit(credit);
+  const creditEmpty = footerCredit.kind === "none";
 
   const handleLogoClick = (e) => {
     e.preventDefault();
@@ -277,9 +289,21 @@ export default function Footer() {
           </div>
         </div>
         {/* The page's last line: storefront-theme.css ("Floating controls")
-            pads it clear of what floats over the bottom edge. */}
-        <div className={styles.credit} data-sm="footer-credit">
-          {creditLine === "Powered by StoreMink" ? (
+            pads it clear of what floats over the bottom edge. ★ It renders in
+            EVERY case, the empty one included: that padding is what keeps the
+            footer's last links clear of the chat and privacy buttons and the
+            phone Add to cart bar. Empty, it draws no box of its own
+            (Footer.module.css .creditNone) and is hidden from screen readers. */}
+        <div
+          className={
+            creditEmpty
+              ? [styles.credit, styles.creditNone].filter(Boolean).join(" ")
+              : styles.credit
+          }
+          data-sm="footer-credit"
+          aria-hidden={creditEmpty ? true : undefined}
+        >
+          {footerCredit.kind === "storemink" ? (
             <>
               <strong>Powered by</strong>
               <img
@@ -293,9 +317,9 @@ export default function Footer() {
               />
               <strong>StoreMink</strong>
             </>
-          ) : (
-            <strong>{creditLine}</strong>
-          )}
+          ) : footerCredit.kind === "custom" ? (
+            <strong>{footerCredit.text}</strong>
+          ) : null}
         </div>
       </div>
     </footer>

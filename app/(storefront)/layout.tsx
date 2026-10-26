@@ -37,7 +37,8 @@ import { studioPreviewMarker } from "@/lib/theme-studio/preview-store";
 import { getPlatformAnalyticsFeatures } from "@/lib/analytics/platform-feature-store";
 import { analyticsFeatureAllowed } from "@/lib/analytics/features";
 import { resolveMerchantPixelSettings } from "@/lib/analytics/merchant-pixels";
-import { effectivePlan } from "@/lib/plans";
+import { effectivePlan, limitsFor } from "@/lib/plans";
+import { footerCreditFor } from "@/lib/store/footer-credit";
 import {
   GOOGLE_VERIFICATION_TOKEN_KEY,
   normalizeGoogleVerificationToken,
@@ -178,6 +179,23 @@ export default async function StorefrontLayout({
     !previewing &&
     analyticsFeatureAllowed(analyticsFeatures, "storefrontConversion", plan);
 
+  // The footer's last line: StoreMink's "Powered by" badge on a Free store,
+  // the store's own credit line (or nothing) on Basic and Pro. ★ Decided HERE,
+  // from the store row's EFFECTIVE plan (an expired timed plan reads as Free,
+  // a live comp as its plan), and handed to the footer as a plain object: the
+  // footer is a client component and only draws what it is given
+  // (lib/store/footer-credit.ts). The builder preview and Theme Studio preview
+  // stores render through this same layout, so they follow the same rule.
+  const footerCredit = footerCreditFor({
+    removeBadge: limitsFor(plan).removeBadge,
+    creditLine: brand.creditLine,
+  });
+  // ★ The browser gets the brand WITHOUT the saved credit line: the footer is
+  // handed its answer above and nothing in the browser reads the line itself,
+  // so a line the plan keeps off the page (a Free store's own words, or a paid
+  // store's copy of the badge's) never reaches it, not even its source.
+  const clientBrand = { ...brand, creditLine: null };
+
   // The visual skin: resolve the store's pinned theme release (falling back to
   // the legacy settings.template id) and flatten
   // its palette/fonts/shape into CSS custom properties written inline on
@@ -290,7 +308,7 @@ export default async function StorefrontLayout({
 
   if (bareShell) {
     return (
-      <BrandProvider brand={brand}>
+      <BrandProvider brand={clientBrand}>
         <div className={rootClass} style={themeVars as CSSProperties}>
           {children}
         </div>
@@ -308,7 +326,7 @@ export default async function StorefrontLayout({
           firstPartyEnabled={firstPartyEnabled}
         >
           <CartProvider>
-            <BrandProvider brand={brand}>
+            <BrandProvider brand={clientBrand}>
               <ChromeProvider
                 chrome={chrome}
                 // Only a preview frame is ever sent chrome to lay it over.
@@ -321,7 +339,7 @@ export default async function StorefrontLayout({
                   <Header />
                   <StorefrontRefresh />
                   {children}
-                  <Footer />
+                  <Footer credit={footerCredit} />
                   {whatsappChat ? (
                     <WhatsAppChatButton href={whatsappChat.href} />
                   ) : null}

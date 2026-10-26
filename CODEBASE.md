@@ -126,6 +126,60 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > Help's "purple Mink AI icon in the shared top header" still leads a
 > merchant to it, so no Help Centre update.
 
+### "Powered by StoreMink" on Free stores only (27 Oct 2026, owner)
+
+The footer's last line (`data-sm="footer-credit"`) shows StoreMink's badge
+("Powered by", the StoreMink mark, "StoreMink") only on a store whose effective
+plan keeps it (`PLAN_LIMITS.removeBadge` false, i.e. Free). Basic and Pro never
+show it: they show the store's own Credit line (Dashboard, Branding) or
+nothing. Before, any plan could replace the badge with its own line and no
+plan removed it, while the plans page sold removing it.
+★ ONE PURE RULE: `lib/store/footer-credit.ts` (import-free, client-safe)
+`footerCreditFor({ removeBadge, creditLine })` answers `{kind: "storemink"}`,
+`{kind: "custom", text}` or `{kind: "none"}`, and a line that is only the
+badge's words (`isDefaultCreditWords`: any case or spacing) counts as none, so
+a paid store cannot print StoreMink's name as its own text.
+★ THE SERVER DECIDES, THE FOOTER DRAWS: the storefront layout calls it with
+`limitsFor(effectivePlan(store)).removeBadge` (an expired timed plan reads as
+Free, a live comp as its plan; the store row carries every field
+`effectivePlan` reads) and the saved line, and passes the answer to
+`Footer.jsx`, a client component, as its `credit` prop; the footer only draws
+it through `readFooterCredit`, where anything missing or malformed draws
+nothing, never the badge. The client `BrandProvider` gets the brand with
+`creditLine: null`, so a line the plan keeps off the page never reaches the
+browser. The Website Builder preview and Theme Studio preview stores render
+through the same layout and follow the same rule (preview and demo stores are
+Free, so they keep the badge). The store row is memoized per request (§3), so
+a plan change shows on the next page load.
+★ SOFT DOWNGRADE: a Free store's saved line stays in
+`settings.brand.creditLine` and shows again on Basic or Pro; nothing deletes
+it.
+★ THE ELEMENT ALWAYS RENDERS, because the floating-controls room
+(storefront-theme.css, "Floating controls") is padded onto it: an empty line
+keeps the element, is `aria-hidden`, and gives up only its own spacing
+(`.credit.creditNone`, the last `.credit` rule in `Footer.module.css`, which
+wins over the compact variant's rule by order and loses to every
+floating-controls rule by specificity). The editorial footer's credit line now
+takes that footer's light text (it was ink on ink).
+Dashboard, Branding: the Credit line's hint and placeholder follow the plan,
+read with `getStorePlanContext` (null on a failed read, when the hint states
+both rules); on Basic or Pro a value that is only the badge's words gets a
+hint saying nothing shows, live as the merchant types, and the placeholder
+never suggests the badge.
+Tests: `lib/store/footer-credit.test.ts`;
+`app/(storefront)/components/footer/Footer.test.tsx` (render, plus a
+stylesheet guard: no credit rule paints a box, hides the line or takes it out
+of flow, and the empty rule's declarations are pinned exactly;
+mutation-checked); `app/(storefront)/layout.test.tsx` (effective plan, comps,
+both previews, the stripped client brand);
+`app/dashboard/branding/branding-form.test.tsx`;
+`app/dashboard/branding/page.test.tsx`. Checked offline in headless Chrome
+with the real stylesheets (five footer variants, three outcomes, the floating
+controls, 390 and 1280px). ⚠ `FooterConfig.showCredit` (lib/chrome/types.ts)
+is stored and normalised but read by nothing and edited by nothing. No
+migration and no Help Centre update: the published plan guide already says
+the badge is shown on Free and removed on Basic and Pro.
+
 ### Image-matting service (2026-10-17; deployed privately, called by Change background)
 
 The first piece of "keep the real product, replace the background": a
@@ -6451,7 +6505,7 @@ permission sections, which read the database. Pinned by `proxy.test.ts`.
 ### Tenant resolution — `lib/store/`
 
 - `host.ts` — pure host classification (`parseHost`, `isPlatformHost`, `isHelpHost`, `isPosHost`, `isThemesHost`, `cookieDomainForHost`). No Node imports; safe on edge. `ROOT_DOMAIN` from `NEXT_PUBLIC_ROOT_DOMAIN` (default `storemink.com`). Cookies are scoped to `.storemink.com` so a session spans platform + all store subdomains.
-- `resolve.ts` — DB-backed store lookup, cached with `unstable_cache` (tag `STORE_TAG = "stores"`, 300 s revalidate). **Only positive host resolutions are cached**: an unknown/ineligible store host is an internal rejected cache read and becomes an uncached `null`, so a slug claimed moments later is visible on the next request even when that request reaches a different Cloud Run instance. Caching negative resolutions made a successful signup land on the legacy WholeSip fallback for up to five minutes, producing both a WholeSip tab title and a false "No access" screen. Three resolvers: `getCurrentStoreOrNull()` (honest — null when the host maps to no active store); `getCurrentStore()`/`getCurrentStoreId()` (never-null — fall back to WholeSip; for dashboard/actions/internal callers that must always have a store id); **`requireStorefrontStore()`/`requireStorefrontStoreId()`** (render-only — `notFound()` on an unknown host). **Storefront PAGES must use the `require…` variants** (the `(storefront)` layout guards too, but a layout `notFound()` does NOT abort concurrently-rendering child pages, so each content page guards itself — otherwise an unclaimed subdomain streams the WholeSip fallback content into its HTML). Unknown store host → root `app/not-found.tsx` ("store doesn't exist"); missing page within a real store → `app/(storefront)/not-found.tsx` ("page not found", with store chrome). A page that THROWS inside a real store → `app/(storefront)/error.tsx` (client boundary with retry, styled off `--sm-*` tokens like the 404; logs the digest). Below that, every section on a sections-composed page is wrapped by `HomepageSectionRenderer` in `<Suspense>` + `SectionErrorBoundary` (`components/sections/section-error-boundary.tsx`), so a section whose stored config no longer matches its component renders nothing and logs its id/type instead of taking the page down.
+- `resolve.ts` — DB-backed store lookup, memoized for ONE request with React `cache()` (since 2026-10-05, "Catalog freshness"; it was `unstable_cache` with a 300 s revalidate before), so a change to a store row (plan, settings, domain) shows on the next request on every Cloud Run instance. ⚠ No cache carries `STORE_TAG = "stores"` any more, so the `revalidateTag`/`updateTag(STORE_TAG)` calls in store writes are harmless no-ops (a cross-request store cache brought back would need them, and the billing renewal cron does not call them). **A miss is never memoized as an answer**: an unknown/ineligible store host throws an internal `StoreHostMiss` and becomes an uncached `null`, so a slug claimed moments later is visible on the next request. Under the old cross-request cache, caching negative resolutions made a successful signup land on the legacy WholeSip fallback for up to five minutes, producing both a WholeSip tab title and a false "No access" screen. Three resolvers: `getCurrentStoreOrNull()` (honest — null when the host maps to no active store); `getCurrentStore()`/`getCurrentStoreId()` (never-null — fall back to WholeSip; for dashboard/actions/internal callers that must always have a store id); **`requireStorefrontStore()`/`requireStorefrontStoreId()`** (render-only — `notFound()` on an unknown host). **Storefront PAGES must use the `require…` variants** (the `(storefront)` layout guards too, but a layout `notFound()` does NOT abort concurrently-rendering child pages, so each content page guards itself — otherwise an unclaimed subdomain streams the WholeSip fallback content into its HTML). Unknown store host → root `app/not-found.tsx` ("store doesn't exist"); missing page within a real store → `app/(storefront)/not-found.tsx` ("page not found", with store chrome). A page that THROWS inside a real store → `app/(storefront)/error.tsx` (client boundary with retry, styled off `--sm-*` tokens like the 404; logs the digest). Below that, every section on a sections-composed page is wrapped by `HomepageSectionRenderer` in `<Suspense>` + `SectionErrorBoundary` (`components/sections/section-error-boundary.tsx`), so a section whose stored config no longer matches its component renders nothing and logs its id/type instead of taking the page down.
   **★★ AND THOSE 404s WERE ALL SOFT 404s UNTIL 2026-08-29.** `app/loading.tsx`
   existed at the ROOT, so one Suspense boundary wrapped the entire app; Next
   flushes the shell — with the HTTP status already committed as **200** — before
@@ -20478,8 +20532,9 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       merchant as Data Fiduciary with StoreMink as its Data Processor (Privacy
       §1). The Terms name the contracting party, STOREMINK LLP (registered
       office published as "Bala ji Colony, Faridkot, Punjab, India" in all
-      three policies, on the owner's instruction of 27 Oct 2026; migration
-      0255 was regenerated in place for it, same id, new checksums), and give
+      three policies, on the owner's instruction of 27 Oct 2026, a line the
+      lawyer also approved; migration 0255 was regenerated in place for it,
+      same id, new checksums), and give
       the courts at Faridkot, Punjab exclusive jurisdiction (Terms §25): the
       two clauses Terms v1 left open. Once a shared database has published a
       version, any change to its wording is a new version and needs the same
