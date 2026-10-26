@@ -64,7 +64,9 @@ const SHORT_TOPIC_WORDS = new Set([
   "products",
   "refund",
   "refunds",
+  // POS's old names: Help search reads them as POS (lib/help/queries.ts).
   "register",
+  "registers",
   "report",
   "reports",
   "return",
@@ -86,6 +88,8 @@ const SHORT_TOPIC_WORDS = new Set([
   "team",
   "theme",
   "themes",
+  "till",
+  "tills",
   "upi",
   "user",
   "users",

@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v32";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v33";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -52,5 +52,13 @@ export function themePromptFeatures(version: string) {
      * normalises into preset.templates, and design.layout.productDetail may
      * be "stacked". Earlier requests keep the shorter schema byte for byte. */
     templates: revision >= 32,
+    /** v32's templates object pushed the two revision schemas over Vertex's
+     * structured-output size limit: every operator change that reached
+     * Stage B was refused with 400 INVALID_ARGUMENT (25 Oct 2026). The draft
+     * schema was 16,733 bytes and the variety draft 15,893, where the
+     * largest one Vertex accepted was 14,240. So from v33 Stage B writes the
+     * same templates as one JSON string, `templatesJson`, which the compiler
+     * parses and checks; earlier requests keep their schema byte for byte. */
+    templatesJson: revision >= 33,
   };
 }

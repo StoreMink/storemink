@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  THEME_STUDIO_PROMPT_VERSION,
+  themePromptFeatures,
+} from "./prompt-features";
+import {
   STAGE_A_ENVELOPE_SCHEMA,
   STAGE_B_DRAFT_SCHEMA,
   STAGE_B_INITIAL_DRAFT_SCHEMA,
+  STAGE_B_VARIETY_DRAFT_SCHEMA,
+  STAGE_B_VARIETY_INITIAL_SCHEMA,
   THEME_STUDIO_SECTION_TYPES,
+  stageBSchemaFor,
 } from "./schemas";
 
 // Structured outputs reject a schema outright if any object is open, and
@@ -330,10 +337,12 @@ describe("the v31 layout variants in the Stage B schemas", () => {
   });
 });
 
-// Plan Phase 2e: the page templates and the stacked product page under v32;
-// every earlier request's twin has neither, built once per key.
-describe("the v32 templates in the Stage B schemas", () => {
-  it("admits them from v32 and removes them from every earlier twin", async () => {
+// Plan Phase 2e: the page templates and the stacked product page from v32;
+// every earlier request's twin has neither, built once per key. From v33 the
+// templates travel as one JSON string (prompt-features.ts), and the v32 twin
+// puts v32's closed object back in that string's place.
+describe("the page templates in the Stage B schemas", () => {
+  it("sends them as a JSON string from v33, as the v32 object in the v32 twin, and removes them from every earlier twin", async () => {
     const {
       stageBSchemaFor,
       PRODUCT_DETAIL_ENUM,
@@ -342,6 +351,7 @@ describe("the v32 templates in the Stage B schemas", () => {
       STAGE_B_INITIAL_DRAFT_SCHEMA,
       STAGE_B_VARIETY_DRAFT_SCHEMA,
       STAGE_B_VARIETY_INITIAL_SCHEMA,
+      TEMPLATES_SCHEMA,
     } = await import("./schemas");
     const { PRODUCT_BLOCK_TYPES, PRODUCT_GALLERIES } =
       await import("@/lib/themes/templates");
@@ -377,10 +387,49 @@ describe("the v32 templates in the Stage B schemas", () => {
       expect(stageBSchemaFor(schema, true, true, true, true, true)).toBe(
         schema,
       );
-      // The current schema carries the object, required, with the whole
-      // vocabulary of blocks and galleries.
-      expect(current.required).toContain("templates");
-      const product = current.properties.templates.properties!.product as {
+      expect(stageBSchemaFor(schema, true, true, true, true, true, true)).toBe(
+        schema,
+      );
+      // v33: one plain string, required, in the place v32's object held
+      // (straight after fontPairing).
+      const keys = Object.keys(current.properties);
+      expect(current.properties.templatesJson).toEqual({ type: "string" });
+      expect(keys[keys.indexOf("fontPairing") + 1]).toBe("templatesJson");
+      expect(current.required).toContain("templatesJson");
+      expect(current.properties.templates).toBeUndefined();
+      expect(current.required).not.toContain("templates");
+      // The v32 twin: v32's closed object at the same key position and the
+      // same place in required, and nothing else different.
+      const v32 = stageBSchemaFor(
+        schema,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+      ) as typeof current;
+      expect(stageBSchemaFor(schema, true, true, true, true, true, false)).toBe(
+        v32,
+      );
+      expect(v32).not.toBe(schema);
+      const asV32 = (key: string) =>
+        key === "templatesJson" ? "templates" : key;
+      expect(Object.keys(v32.properties)).toEqual(keys.map(asV32));
+      expect(v32.required).toEqual(current.required.map(asV32));
+      expect(v32.properties.templatesJson).toBeUndefined();
+      expect(v32.properties.templates).toEqual(TEMPLATES_SCHEMA);
+      const without = (properties: object, key: string) =>
+        Object.fromEntries(
+          Object.entries(properties).filter(([name]) => name !== key),
+        );
+      expect(without(v32.properties, "templates")).toEqual(
+        without(current.properties, "templatesJson"),
+      );
+      // The v32 object, required, with the whole vocabulary of blocks and
+      // galleries.
+      expect(v32.required).toContain("templates");
+      const product = v32.properties.templates.properties!.product as {
         properties: {
           gallery: { enum: string[] };
           blocks: { items: { properties: { type: { enum: string[] } } } };
@@ -392,7 +441,7 @@ describe("the v32 templates in the Stage B schemas", () => {
       ]);
       // Second slice: the blog and account pages, every block carrying its
       // size-guide columns and sizes beside its items, rows and html.
-      const templatesProps = current.properties.templates.properties!;
+      const templatesProps = v32.properties.templates.properties!;
       expect(Object.keys(templatesProps)).toEqual([
         "product",
         "collection",
@@ -404,8 +453,12 @@ describe("the v32 templates in the Stage B schemas", () => {
       ).toEqual(["type", "items", "rows", "columns", "sizes", "html"]);
       for (const list of productDetailEnums(schema))
         expect(list).toEqual([...PRODUCT_DETAIL_ENUM]);
-      // The pre-v32 twin has no templates and no stacked product page, and
-      // is otherwise the v31 schema (the initial schema has no layout enum).
+      for (const list of productDetailEnums(v32))
+        expect(list).toEqual([...PRODUCT_DETAIL_ENUM]);
+      // The pre-v32 twin has no templates in either shape and no stacked
+      // product page, and is otherwise the v31 schema (the initial schema has
+      // no layout enum). The JSON flag means nothing without templates, so a
+      // request without them has one twin.
       const v31 = stageBSchemaFor(
         schema,
         true,
@@ -415,26 +468,35 @@ describe("the v32 templates in the Stage B schemas", () => {
         false,
       ) as typeof current;
       expect(stageBSchemaFor(schema, true, true, true, true, false)).toBe(v31);
+      expect(
+        stageBSchemaFor(schema, true, true, true, true, false, false),
+      ).toBe(v31);
       expect(v31.properties.templates).toBeUndefined();
+      expect(v31.properties.templatesJson).toBeUndefined();
       expect(v31.required).not.toContain("templates");
+      expect(v31.required).not.toContain("templatesJson");
       // The announcement bar (plan Phase 2c's last chrome candidate) rides
-      // the same flag: a closed {text, href} object at the top level.
+      // the templates flag, a closed {text, href} object at the top level in
+      // both v32 and v33.
       expect(current.required).toContain("announcement");
       expect(Object.keys(current.properties.announcement.properties!)).toEqual([
         "text",
         "href",
       ]);
+      expect(v32.properties.announcement).toEqual(
+        current.properties.announcement,
+      );
       expect(v31.properties.announcement).toBeUndefined();
       expect(v31.required).toEqual(
         current.required.filter(
-          (key) => key !== "templates" && key !== "announcement",
+          (key) => key !== "templatesJson" && key !== "announcement",
         ),
       );
       const legacyLists = productDetailEnums(v31);
       expect(legacyLists).toHaveLength(productDetailEnums(schema).length);
       for (const list of legacyLists)
         expect(list).toEqual([...LEGACY_PRODUCT_DETAIL_ENUM]);
-      // Older twins drop it too, and stay distinct from the v31 twin.
+      // Older twins drop them too, and stay distinct from the v31 twin.
       const v30 = stageBSchemaFor(
         schema,
         true,
@@ -444,7 +506,50 @@ describe("the v32 templates in the Stage B schemas", () => {
         false,
       ) as typeof current;
       expect(v30.properties.templates).toBeUndefined();
+      expect(v30.properties.templatesJson).toBeUndefined();
       expect(v30).not.toBe(v31);
     }
+  });
+});
+
+// Vertex structured output refuses a schema past an undocumented size or
+// complexity ceiling with 400 INVALID_ARGUMENT, before the model runs. On 25
+// Oct 2026 (storemink-staging) the largest Stage B schema it accepted was
+// 14,240 bytes (v32's variety initial schema); v32's revision schemas, 15,893
+// (variety draft) and 16,733 bytes (draft), were refused, so every operator
+// change that reached Stage B failed until v33 moved the templates into a
+// string. At v33 the four measure: draft 14,161, initial 11,025, variety
+// draft 13,321 and variety initial 11,668 bytes.
+const LARGEST_ACCEPTED_SCHEMA_BYTES = 14_240;
+
+describe("the Stage B schemas stay within what Vertex accepted", () => {
+  const current = themePromptFeatures(THEME_STUDIO_PROMPT_VERSION);
+  const atCurrentVersion = (schema: Record<string, unknown>) =>
+    stageBSchemaFor(
+      schema,
+      current.fontPairings,
+      current.nestedBlocks,
+      current.moreSections,
+      current.moreVariants,
+      current.templates,
+      current.templatesJson,
+    );
+  it.each(
+    (
+      [
+        ["draft", STAGE_B_DRAFT_SCHEMA],
+        ["initial draft", STAGE_B_INITIAL_DRAFT_SCHEMA],
+        ["variety draft", STAGE_B_VARIETY_DRAFT_SCHEMA],
+        ["variety initial", STAGE_B_VARIETY_INITIAL_SCHEMA],
+      ] as const
+    ).map(([name, schema]) => {
+      const bytes = JSON.stringify(atCurrentVersion(schema)).length;
+      return [`${name} (${bytes.toLocaleString("en")} bytes)`, bytes] as const;
+    }),
+  )("%s", (_name, bytes) => {
+    expect(
+      bytes,
+      `The largest Stage B schema Vertex accepted on 25 Oct 2026 (storemink-staging) was ${LARGEST_ACCEPTED_SCHEMA_BYTES.toLocaleString("en")} bytes; the v32 revision schemas of 15,893 and 16,733 bytes were refused with 400 INVALID_ARGUMENT. A schema growing past it must be probed live against Vertex before it ships.`,
+    ).toBeLessThanOrEqual(LARGEST_ACCEPTED_SCHEMA_BYTES);
   });
 });

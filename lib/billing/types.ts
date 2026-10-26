@@ -3,7 +3,8 @@
 // can be shared by server components, actions, client editors, and tests.
 //
 // Scope: tax classes per product (+ store default), inclusive/exclusive prices,
-// and a per-store invoice template. See supabase/invoicing.sql for storage.
+// and a per-store invoice template. Stored in tax_classes, products.tax_class_id
+// and store_billing_settings (defaults, inclusive pricing, the invoice template).
 // ---------------------------------------------------------------------------
 
 /** A named tax rate bucket (row of public.tax_classes). */

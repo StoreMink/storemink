@@ -35,9 +35,7 @@ export const PLATFORM_URL = ((): string => {
     ? fromEnv.startsWith("http")
       ? fromEnv
       : `${schemeFor(fromEnv)}://${fromEnv}`
-    : process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : `${schemeFor(ROOT_DOMAIN)}://${ROOT_DOMAIN}`;
+    : `${schemeFor(ROOT_DOMAIN)}://${ROOT_DOMAIN}`;
   return raw.replace(/\/+$/, "");
 })();
 
@@ -103,13 +101,13 @@ export type HostKind =
   | { type: "platform" };
 
 // Map a raw Host header to what it refers to: a store subdomain, a merchant's
-// custom domain, or the Storemink platform itself (apex / app / local dev / preview).
+// custom domain, or the Storemink platform itself (apex / app / local dev).
 export function parseHost(host: string | null | undefined): HostKind {
   if (!host) return { type: "platform" };
   const hostname = host.split(":")[0].trim().toLowerCase();
   if (!hostname) return { type: "platform" };
 
-  // Local dev + Vercel previews render the platform, except `{slug}.localhost`,
+  // Local dev renders the platform, except `{slug}.localhost`,
   // which lets us test a store's storefront locally. `pos.localhost` is a
   // reserved public product host, so it must be classified before that generic
   // store escape hatch.
@@ -130,7 +128,6 @@ export function parseHost(host: string | null | undefined): HostKind {
     const slug = hostname.slice(0, -(LOCAL_DEV_ROOT.length + 1));
     return slug ? { type: "store-subdomain", slug } : { type: "platform" };
   }
-  if (hostname.endsWith(".vercel.app")) return { type: "platform" };
 
   // The apex and reserved platform hosts are not stores.
   if (
@@ -158,7 +155,7 @@ export function isPlatformHost(host: string | null | undefined): boolean {
   return parseHost(host).type === "platform";
 }
 
-// Cookie `Domain` so a Supabase session is shared across ALL *.storemink.com
+// Cookie `Domain` so the session cookie is shared across ALL *.storemink.com
 // subdomains (platform + every store) — lets an owner who signs up on
 // storemink.com land logged-in on their {slug}.storemink.com dashboard. Returns
 // undefined for localhost, previews, and custom domains (e.g. wholesip.com),

@@ -33,7 +33,7 @@ const POS_CAPABILITIES: { cap: PosCapability; label: string }[] = [
   { cap: "adjust_inventory", label: "Receive, count and transfer stock" },
   { cap: "open_close_shift", label: "Open and close cash drawer shifts" },
   { cap: "cash_drop", label: "Record cash drops and payouts" },
-  { cap: "edit_layout", label: "Arrange the register layout" },
+  { cap: "edit_layout", label: "Arrange the POS layout" },
   {
     cap: "discount_over_cap",
     label: "Approve a cashier's discount above the store limit",
@@ -117,8 +117,7 @@ export function RolesManagementView({ roles }: Props) {
           <div>
             <div className="dash-card-title">Roles</div>
             <div className="dash-card-sub">
-              {dashboard.length} for the dashboard, {register.length} for the
-              register
+              {dashboard.length} for the dashboard, {register.length} for POS
             </div>
           </div>
         </div>
@@ -146,7 +145,7 @@ export function RolesManagementView({ roles }: Props) {
                     {role.slug === "superadmin"
                       ? "Full access"
                       : role.kind === "pos"
-                        ? "Register only"
+                        ? "POS only"
                         : `${viewable} view · ${manageable} manage`}
                   </td>
                   <td className="dash-cell-sub mono">{countFor(role.slug)}</td>
@@ -200,7 +199,7 @@ export function RolesManagementView({ roles }: Props) {
       <div className="dash-card mt-3.5">
         <div className="dash-card-header">
           <div>
-            <div className="dash-card-title">At the register</div>
+            <div className="dash-card-title">In POS</div>
             <div className="dash-card-sub">
               Managers and cashiers sign in at /pos on an authorised device and
               never see the dashboard. Discounts, price overrides and

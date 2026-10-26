@@ -138,9 +138,7 @@ export function ReceiptOverlay({
                   <PackageCheck className="h-4 w-4" /> Sale
                 </div>
                 <div className="mt-2 text-sm font-semibold">
-                  {detail.kind === "pickup"
-                    ? "Collected in store"
-                    : "Register sale"}
+                  {detail.kind === "pickup" ? "Collected in store" : "POS sale"}
                 </div>
                 <div className="text-xs text-[var(--pos-ink-2)]">
                   {new Date(detail.completedAt).toLocaleString("en-IN")} ·{" "}

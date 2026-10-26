@@ -282,7 +282,7 @@ export const WIDGETS: Record<WidgetId, WidgetMeta> = {
   sales_by_channel: {
     id: "sales_by_channel",
     title: "Sales by channel",
-    description: "Recognized sales from the online store and point of sale.",
+    description: "Recognized sales from the online store and POS.",
     group: "Sales",
   },
   sales_by_location: {

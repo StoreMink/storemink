@@ -135,6 +135,10 @@ describe("★★ finding money", () => {
       expectedPaise: 500_000,
       observedPaise: 400_000,
     });
+    // A live store's item names its store; no deleted-store marker.
+    expect(flagged.detail).toEqual({
+      note: "captured amount differs from the attempt",
+    });
   });
 
   it("does not flag a matching amount", async () => {
@@ -156,6 +160,61 @@ describe("★★ finding money", () => {
     });
     expect(res.recovered).toBe(0);
     expect(collect.settleAttempt).not.toHaveBeenCalled();
+  });
+
+  it("★★ a payment captured for a DELETED store is recorded and flagged, not advanced", async () => {
+    // Migration 0243 keeps a deleted store's attempts with store_id NULL. The
+    // money is still recorded, but there is no plan to advance, and holding a
+    // payment for a store that no longer exists is a human question.
+    seed([attempt({ storeId: null })]);
+    const res = await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([CAPTURED]) as any,
+    });
+    expect(res.recovered).toBe(1);
+    expect(collect.settleAttempt).toHaveBeenCalledWith(
+      "att-1",
+      "captured",
+      expect.objectContaining({ providerPaymentId: "pay_1" }),
+    );
+    expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
+    expect(res.flagged).toBe(1);
+    const orphan = dbHolder.current.calls.values.find(
+      (v: any) => v.kind === "orphan_payment",
+    );
+    expect(orphan).toMatchObject({
+      storeId: null,
+      invoiceId: "inv-1",
+      attemptId: "att-1",
+      providerPaymentId: "pay_1",
+      expectedPaise: 500_000,
+      observedPaise: 500_000,
+    });
+    // ★ Marked, so the queue says "store deleted" rather than pointing the
+    //   operator at attributing a payment whose store is gone.
+    expect(orphan.detail).toEqual({
+      note: "payment captured for a deleted store",
+      storeDeleted: true,
+    });
+  });
+
+  it("★ a mismatch on a DELETED store's payment is marked the same way", async () => {
+    seed([attempt({ storeId: null })]);
+    const res = await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([{ ...CAPTURED, amount: 400_000 }]) as any,
+    });
+    expect(res.flagged).toBe(2);
+    const mismatch = dbHolder.current.calls.values.find(
+      (v: any) => v.kind === "amount_mismatch",
+    );
+    expect(mismatch).toMatchObject({
+      storeId: null,
+      detail: {
+        note: "captured amount differs from the attempt",
+        storeDeleted: true,
+      },
+    });
   });
 });
 
@@ -336,13 +395,28 @@ describe("★★ closing an item", () => {
     expect(res.error).toMatch(/already closed/i);
   });
 
-  it.each(["resolved", "manual_review", "ignored"] as const)(
-    "accepts the %s outcome",
-    async (status) => {
+  it.each([
+    ["resolved", NOW.toISOString()],
+    ["manual_review", null],
+    ["ignored", null],
+  ] as const)(
+    "★★ accepts the %s outcome, stamping resolved_at only when resolved",
+    async (status, resolvedAt) => {
+      // billing_reconciliation_resolved_shape: (status = 'resolved') =
+      // (resolved_at is not null). The mock evaluates no CHECK, so the shape
+      // is pinned here and the constraint itself in
+      // invoice-retention.local.test.ts.
       dbHolder.current = makeDbMock({ returning: [{ id: "item-1" }] });
       expect(
         (await resolveReconciliationItem({ ...base, status, now: NOW })).ok,
       ).toBe(true);
+      expect(dbHolder.current.calls.set[0]).toEqual({
+        status,
+        resolvedBy: "op@storemink.com",
+        resolvedAt,
+        resolutionNote: "Refunded the ₹100 difference",
+        updatedAt: NOW.toISOString(),
+      });
     },
   );
 

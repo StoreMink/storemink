@@ -27,10 +27,11 @@ function weightOf(cost: number): number {
 }
 
 /**
- * Shared, cross-instance rate limiter backed by Postgres (see
- * supabase/rate_limits.sql). Use this for abuse-prone endpoints — public
- * forms, uploads, image processing — where an in-memory limiter would be
- * useless because each serverless instance has its own memory.
+ * Shared, cross-instance rate limiter backed by Postgres (the rate_limits
+ * table and the check_rate_limit / check_rate_limit_cost functions). Use this
+ * for abuse-prone endpoints (public forms, uploads, image processing) where an
+ * in-memory limiter would be useless because each Cloud Run instance has its
+ * own memory.
  *
  * Fails OPEN: if the DB call errors we allow the request rather than locking
  * everyone out on a transient hiccup. The limiter is a guard rail, not the
@@ -58,15 +59,6 @@ export async function rateLimit(
   }
 }
 
-/**
- * Best-effort client IP from proxy headers. Vercel/most hosts set
- * `x-forwarded-for`; the first entry is the originating client.
- */
-export function clientIp(headers: Headers): string {
-  const xff = headers.get("x-forwarded-for");
-  if (xff) {
-    const first = xff.split(",")[0]?.trim();
-    if (first) return first;
-  }
-  return headers.get("x-real-ip") ?? "unknown";
-}
+// The per-IP key: the address that connected to our load balancer, read from
+// the right of X-Forwarded-For so a caller cannot choose it (lib/client-ip.ts).
+export { clientIp } from "@/lib/client-ip";

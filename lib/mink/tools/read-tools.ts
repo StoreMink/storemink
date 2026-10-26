@@ -772,7 +772,7 @@ const getSalesSummary: MinkTool = {
         channel: {
           type: "string",
           enum: [...SALES_CHANNELS],
-          description: "All sales, online store sales, or point-of-sale sales.",
+          description: "All sales, online store sales, or POS sales.",
           default: "all",
         },
       },

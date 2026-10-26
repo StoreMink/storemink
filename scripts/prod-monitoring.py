@@ -14,6 +14,18 @@
 #                                                              missing (idempotent by
 #                                                              display name), then
 #                                                              lists what exists
+#   python3 -I scripts/prod-monitoring.py --update "<name>"    reads that existing
+#                                                              policy and prints what
+#                                                              would change; writes
+#                                                              nothing
+#   python3 -I scripts/prod-monitoring.py --update "<name>" --apply
+#                                                              replaces that policy's
+#                                                              conditions, strategy,
+#                                                              text and severity
+#
+# --apply alone never changes an existing policy. --update is the only way it
+# does, one named policy at a time, keeping the policy's notification channels
+# and display name; it needs no --email because it creates nothing.
 #
 # Writes ONLY to storemink-prod: one email channel, three uptime checks, one
 # log-based counter, and the alert policies below. Reads only configuration we
@@ -39,9 +51,19 @@ def arg_value(name):
     return ""
 
 
+def arg_values(name):
+    return [
+        sys.argv[index + 1].strip()
+        for index, arg in enumerate(sys.argv)
+        if arg == name and index + 1 < len(sys.argv)
+    ]
+
+
 # The alert address is an argument, never committed: the channel is matched by
 # it, so re-running with the same address finds the channel already made.
 EMAIL = arg_value("--email")
+# Existing policies to change, by display name (repeatable).
+UPDATE_NAMES = arg_values("--update")
 WEB = "storemink-web-prod"
 DB_ID = "storemink-prod:storemink-prod-db"
 MON = f"https://monitoring.googleapis.com/v3/projects/{PROJECT}"
@@ -167,7 +189,20 @@ def log_match(display, filt):
     return {"displayName": display, "conditionMatchedLog": {"filter": filt}}
 
 
-def policy(name, severity, conditions, documentation, combiner="OR", log_based=False):
+def promql(display, query, duration, evaluation=60):
+    # A PromQL condition: one expression can hold a ratio AND a volume gate,
+    # so one policy opens one incident (two conditions opened two).
+    return {
+        "displayName": display,
+        "conditionPrometheusQueryLanguage": {
+            "query": query,
+            "duration": f"{duration}s",
+            "evaluationInterval": f"{evaluation}s",
+        },
+    }
+
+
+def policy(name, severity, conditions, documentation, combiner="OR", log_based=False, strategy=None):
     body = {
         "displayName": name,
         "severity": severity,
@@ -177,7 +212,9 @@ def policy(name, severity, conditions, documentation, combiner="OR", log_based=F
         "userLabels": LABELS,
         "enabled": True,
     }
-    if log_based:
+    if strategy is not None:
+        body["alertStrategy"] = strategy
+    elif log_based:
         # A log condition notifies per matching entry: at most one email an hour.
         body["alertStrategy"] = {"notificationRateLimit": {"period": "3600s"}, "autoClose": "1800s"}
     else:
@@ -197,8 +234,26 @@ def metric_types(policy_body):
     return types
 
 
-MODEL_CALLS = 'metric.type="aiplatform.googleapis.com/publisher/online_serving/model_invocation_count" AND resource.type="aiplatform.googleapis.com/PublisherModel"'
-MODEL_GROUP = ["resource.label.model_user_id", "resource.label.location"]
+# Vertex AI's model_invocation_count in PromQL (checked against storemink-prod's
+# data on 25 Oct 2026: these label names, and increase() over this DELTA counter).
+MODEL_CALLS_PROMQL = "aiplatform_googleapis_com:publisher_online_serving_model_invocation_count"
+MODEL_RESOURCE_PROMQL = 'monitored_resource="aiplatform.googleapis.com/PublisherModel"'
+
+
+def model_calls_promql(extra=""):
+    selector = MODEL_RESOURCE_PROMQL + (f",{extra}" if extra else "")
+    return f"sum by (model_user_id, location) (increase({MODEL_CALLS_PROMQL}{{{selector}}}[30m]))"
+
+
+# Over 30 minutes, per model and location: refused or cut-off calls (429,
+# 499) above 30% of all calls, counted only where there were at least 20.
+# The quieter rule the owner approved on 25 Oct 2026: the 15-minute, 10-call,
+# two-condition version flipped every few calls at ~20 image calls a window.
+REFUSED_CODES_PROMQL = 'response_code=~"429|499"'
+MODEL_REFUSALS_PROMQL = (
+    f"({model_calls_promql(REFUSED_CODES_PROMQL)} / {model_calls_promql()}) > 0.3"
+    f" and on (model_user_id, location) ({model_calls_promql()} >= 20)"
+)
 
 
 def policies(uptime_check_ids):
@@ -290,18 +345,13 @@ def policies(uptime_check_ids):
     ))
     found.append(policy(
         "Google AI: a model refusing more than 30% of calls", "WARNING",
-        [
-            threshold("Refused or held (429, 499) above 30% over 15 minutes",
-                      f'{MODEL_CALLS} AND metric.label.response_code=one_of("429","499")',
-                      "ALIGN_SUM", 900, "REDUCE_SUM", "COMPARISON_GT", 0.3, 0, MODEL_GROUP,
-                      denominator=MODEL_CALLS),
-            threshold("At least 10 calls in those 15 minutes",
-                      MODEL_CALLS, "ALIGN_SUM", 900, "REDUCE_SUM", "COMPARISON_GT", 9, 0, MODEL_GROUP),
-        ],
+        [promql("Refused or cut off (429, 499) above 30% over 30 minutes, at least 20 calls, for 15 minutes",
+                MODEL_REFUSALS_PROMQL, 900)],
         doc("StoreMink: Google is refusing one of our AI models",
-            "Over 15 minutes, more than 30% of calls to one Gemini model (at one location) came back refused (429) or abandoned after a stall (499), with at least 10 calls. Mink chat falls back to gemini-3.5-flash in Mumbai; redesign photos and Theme Studio wait and retry.",
-            "Vertex AI, Model Garden metrics for the model named in this alert. This is Google's shared pool being busy, not our quota; it usually passes within the hour."),
-        combiner="AND_WITH_MATCHING_RESOURCE",
+            "For 15 minutes in a row, more than 30% of the last 30 minutes' calls to one Gemini model (at one location) came back refused (429) or cut off by our side (499), with at least 20 calls. Mink chat falls back to gemini-3.5-flash in Mumbai; redesign photos and Theme Studio wait and retry. You get this email once when it starts, none when it clears.",
+            "Vertex AI, Model Garden metrics for the model named in this alert, split by response code. 429s are Google's shared pool being busy, not our quota, not billed, and usually pass within the hour. 499s are calls our side cut off (a per-try clock or a stopped job).",
+            "Set up 23 Oct 2026 and made quieter 25 Oct 2026 (both owner-approved)."),
+        strategy={"autoClose": "3600s", "notificationPrompts": ["OPENED"]},
     ))
     found.append(policy(
         "Mink chat: the fallback model refused", "ERROR",
@@ -522,8 +572,76 @@ def apply():
         sys.exit(2)
 
 
+# The fields --update replaces. notificationChannels and displayName are left
+# as they are: the channel list is whatever the owner's policy already sends
+# to, and a new display name would no longer match this script's definition.
+UPDATE_FIELDS = ["conditions", "combiner", "alertStrategy", "documentation", "severity", "userLabels", "enabled"]
+
+
+def owned(body):
+    # What --update compares: the fields above, with the ids Google gives each
+    # condition stripped (they change on every replacement).
+    out = {}
+    for field in UPDATE_FIELDS:
+        value = body.get(field)
+        if field == "conditions":
+            value = [{k: v for k, v in condition.items() if k != "name"} for condition in value or []]
+        out[field] = value
+    return out
+
+
+def update(names, write):
+    # Names are checked against this script's definitions before anything is
+    # read, so a typo never reaches Google.
+    defined = [body["displayName"] for body in policies(["<check-id>"])]
+    unknown = [name for name in names if name not in defined]
+    if unknown:
+        die(f"--update names no policy this script defines: {unknown}")
+
+    global ACCESS
+    ACCESS = token()
+    check_ids = []
+    if any(name.startswith("Uptime:") for name in names):
+        existing_checks = {c["displayName"]: c for c in list_all(f"{MON}/uptimeCheckConfigs", "uptimeCheckConfigs")}
+        missing = [check["displayName"] for check in UPTIME_CHECKS if check["displayName"] not in existing_checks]
+        if missing:
+            die(f"the uptime checks this policy watches do not exist yet {missing}: run --apply first")
+        check_ids = [existing_checks[check["displayName"]]["name"].rsplit("/", 1)[-1] for check in UPTIME_CHECKS]
+    wanted = {body["displayName"]: body for body in policies(check_ids or ["<check-id>"])}
+    existing = {p["displayName"]: p for p in list_all(f"{MON}/alertPolicies", "alertPolicies")}
+
+    for name in names:
+        current = existing.get(name)
+        if not current:
+            die(f"{name!r} does not exist in {PROJECT} yet: --apply --email <address> creates it")
+        before, after = owned(current), owned(wanted[name])
+        if before == after:
+            print("policy up to date:", name)
+            continue
+        print(f"## {name} ({current['name'].rsplit('/', 1)[-1]})")
+        for field in UPDATE_FIELDS:
+            if before[field] != after[field]:
+                print(f"- {field} now:\n" + json.dumps(before[field], indent=2))
+                print(f"+ {field} after:\n" + json.dumps(after[field], indent=2))
+        if not write:
+            print("(preview only: add --apply to replace these fields)")
+            continue
+        mask = ",".join(UPDATE_FIELDS)
+        api("PATCH", f"https://monitoring.googleapis.com/v3/{current['name']}?updateMask={mask}", wanted[name])
+        result = api("GET", f"https://monitoring.googleapis.com/v3/{current['name']}")
+        if owned(result) == after:
+            print("policy updated:", name)
+        else:
+            # The API accepted it but stores something we did not send: say so
+            # rather than report a clean update.
+            print("policy updated, but Google stores it differently from the script:", name)
+            print(json.dumps(owned(result), indent=2))
+
+
 if __name__ == "__main__":
-    if "--apply" in sys.argv:
+    if UPDATE_NAMES:
+        update(UPDATE_NAMES, write="--apply" in sys.argv)
+    elif "--apply" in sys.argv:
         if "@" not in EMAIL:
             die("--apply needs --email <address>: the address the alerts are sent to")
         apply()

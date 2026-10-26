@@ -102,6 +102,10 @@ export type ThemeImageResult = (
     durationMs: number;
     capacityWaitMs: number;
     providerAttempts: number;
+    /** A "cancelled" call whose last try was on the wire when it stopped, so
+     *  it may have been billed; set only for a client that asks for it
+     *  (image-vertex.ts `markStoppedInFlight`, the storefront redesign). */
+    stoppedInFlight?: true;
   };
 };
 

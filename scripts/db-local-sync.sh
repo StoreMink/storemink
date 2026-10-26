@@ -3,10 +3,9 @@
 #
 # Why a dump rather than replaying SQL: drizzle/migrations/manifest.json's
 # baseline is a VERIFICATION baseline (it asserts tables/columns exist), not a
-# constructive one, so `db:migrate` cannot build a database from scratch. The
-# 153 supabase/*.sql files can't either — CODEBASE.md documents their apply-order
-# traps (billing_03 before billing_02 is called) and files edited after being
-# applied, which re-run as silent no-ops. A dump is provably the real schema.
+# constructive one, so `db:migrate` cannot build a database from scratch, and
+# the schema before that baseline was applied by hand outside any ledger.
+# A dump is provably the real schema.
 #
 # Usage:  npm run db:local:sync           # schema + data
 #         npm run db:local:sync -- --schema-only

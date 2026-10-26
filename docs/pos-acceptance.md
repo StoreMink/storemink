@@ -85,7 +85,7 @@ request reaches the Next.js application.
 | Store on the **Pro** plan                                                                                                                                                                           | POS and Locations are Pro-gated                                                                   |
 | `POS_SESSION_SECRET` set                                                                                                                                                                            | Without it device authorization and PIN login refuse with a clear error rather than 500ing        |
 | `RESEND_*` configured                                                                                                                                                                               | Staff invitations and pickup emails go nowhere otherwise                                          |
-| `logistics_01_shiprocket.sql` applied + `PAYMENT_CRED_KEY` set                                                                                                                                      | Schema is ledger-verified on staging + prod (2026-08-14); the key is still needed for credentials |
+| `20260814_0001_logistics_shiprocket.sql` applied + `PAYMENT_CRED_KEY` set                                                                                                                           | Schema is ledger-verified on staging + prod (2026-08-14); the key is still needed for credentials |
 | `billing_09_attempt_mandate_ceiling.sql` applied before the autopay build                                                                                                                           | Confirmation otherwise cannot retain the exact ceiling the merchant authorised                    |
 
 **Status on local staging:** `pos_00`–`pos_11` and `locations_01`–`locations_09`
@@ -141,12 +141,12 @@ store remains usable.
 ## 1. Plan gating & enabling POS
 
 **PS-1.1 — A free store is told, not blocked from seeing it**
-Sidebar on a free/basic store → Point of Sale.
+Sidebar on a free/basic store → POS.
 **Expect:** an "Included in Pro" badge linking to `/dashboard/plans`. No POS
 pages reachable.
 
 **PS-1.2 — Pro store enables POS**
-Pro store → sidebar → Point of Sale → "Enable POS".
+Pro store → sidebar → POS → "Enable POS".
 **Expect:** the section expands to Overview + Settings + Staff + Devices.
 `pos.enabled` flips on.
 
@@ -1050,7 +1050,7 @@ nobody chose must never be imposed by a typo (invariant 6).
 
 ## 7c. Cancellation & refund flow (roadmap Step 2)
 
-⚠ Needs `supabase/orders_01_cancellation.sql` applied. PS-D.6–D.9 move real
+⚠ Needs `orders_01_cancellation.sql` applied. PS-D.6–D.9 move real
 money — use a **test-mode** gateway.
 
 **PS-D.1 — The merchant sets the rules**
@@ -1139,7 +1139,7 @@ it back on sale” must not strand money or a reservation.
 
 ## 7d. Collection codes & the role split (roadmap Step 3)
 
-`supabase/locations_11_pickup_code.sql` is applied (verified 2026-08-18).
+`locations_11_pickup_code.sql` is applied (verified 2026-08-18).
 
 **PS-E.1 — A collection gets a code; a delivery does not**
 Place a pickup order, then a delivery order.
@@ -1184,7 +1184,7 @@ orders must still reach everyone — `order.placed` is deliberately not narrowed
 
 ## 7e. Till-created customers & the signup claim (roadmap Step 4)
 
-⚠ Needs `supabase/pos_13_customer_claim.sql` applied (staging: ✅ 2026-08-14).
+⚠ Needs `pos_13_customer_claim.sql` applied (staging: ✅ 2026-08-14).
 The Checkout, customer and payment surfaces have been visually exercised in a
 local browser at desktop and 390px widths. The full flow has not been completed
 against a real till yet; focused unit tests cover the rules, claim statement,
@@ -3047,7 +3047,7 @@ Post a `gift_card` tender.
 
 ## 11c. Hold (park) a sale (§22)
 
-⚠ Needs `supabase/pos_14_parked_sales.sql` applied.
+⚠ Needs `pos_14_parked_sales.sql` applied.
 
 **PS-PK.1 — Hold and clear**
 Scan two items, tap **Hold sale**.
@@ -3488,8 +3488,8 @@ Park a cart, run the sweep.
 Let a collection lapse, then wait for the next run.
 **Expect:** it expires within the hour, not the next day — and the reminder for
 an order 48h from expiry lands in (47, 48] rather than anywhere in (24, 48].
-⚠ Requires the Cloud Scheduler job itself to be updated; `vercel.json` and
-`docs/cron-jobs.md` are records, not the running schedule.
+⚠ Requires the Cloud Scheduler job itself to be updated; `docs/cron-jobs.md` is
+the record, not the running schedule.
 
 ---
 

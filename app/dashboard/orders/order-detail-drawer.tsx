@@ -516,7 +516,7 @@ export function OrderDetailDrawer({
                           Walk-in
                         </div>
                         <div className="text-muted-foreground">
-                          No customer was attached at the register.
+                          No customer was attached to this POS sale.
                         </div>
                       </>
                     )}
@@ -746,7 +746,7 @@ export function OrderDetailDrawer({
             <div className="flex items-start gap-2 rounded-lg border border-border bg-background px-3 py-2.5 text-xs text-muted-foreground">
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
               <span>
-                This sale was handed over at the register. No fulfillment is
+                This POS sale was handed over in store. No fulfillment is
                 required.
               </span>
             </div>

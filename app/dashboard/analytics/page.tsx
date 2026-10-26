@@ -420,7 +420,7 @@ async function RegionWidget({
     <AnalyticsCard
       title="Sales by customer region"
       definition={definition("sales_by_region")}
-      footer="Online orders with a delivery address. Point of sale orders are not included."
+      footer="Online orders with a delivery address. POS orders are not included."
     >
       <RankedBars
         format="currency"

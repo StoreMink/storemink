@@ -19,24 +19,29 @@ import {
   revampSectionLabel,
 } from "../revamp/assemble";
 import {
+  ACTIVE_REVAMP_STATUSES,
   REVAMP_LIMITS,
   isFinishedRevampVersion,
   isRefinableRevamp,
   isRevampArtifact,
+  revampStateWord,
   type RevampArtifact,
   type RevampKind,
   type RevampRequest,
   type RevampSitePlan,
+  type RevampStatus,
 } from "../revamp/contract";
 import {
   FREE_HOLDING_STATUSES,
   cancelRevamp,
   countRefinements,
   createRevampJob,
+  findActiveRevampId,
   listConversationRevamps,
   readRevampForActor,
   readRevampJob,
   revampStartLimit,
+  type RevampConversationEntry,
   type RevampJobRow,
 } from "../revamp/jobs";
 import {
@@ -62,8 +67,16 @@ import type { MinkTool, MinkToolContext } from "./registry";
  *   writes a page, a product or a photo.
  * ★ EVERY REFUSAL IS DECIDED BEFORE THE JOB EXISTS, in the order the merchant
  *   could fix them, so a job that is queued can actually finish.
- * ★ THE MODEL NEVER SEES A CREDIT FIGURE: the budget goes to the job, and the
- *   model gets only whether it started.
+ * ★★ A CHAT THAT ALREADY HOLDS A REDESIGN GETS ITS CARD BACK, NOT A REFUSAL
+ *   (25 Oct 2026). A barged-in run started a redesign the screen never
+ *   showed, and the follow-up's start was refused with no card, so the
+ *   merchant was promised a card that never came. A redesign of this chat
+ *   still being made answers `already_started`, a ready one nobody applied
+ *   `already_ready`, each with that redesign's card.
+ * ★ THE MODEL NEVER SEES A CREDIT FIGURE: the budget goes to the job. A start
+ *   or refinement answers whether it started and whether a card is shown
+ *   (`cardShown`), never the card or an id it could recite; only the context
+ *   read lists ids, because refine_storefront_revamp takes one.
  */
 
 const available = (actor: MinkActorContext) => actor.draftingEnabled === true;
@@ -72,8 +85,16 @@ const START_INSTRUCTION =
   "Tell the merchant in one short sentence that the redesign has started and the card shows its progress. Do not describe the design.";
 const REFINE_INSTRUCTION =
   "Tell the merchant in one short sentence that the changes have started and the card shows their progress. Do not describe the design.";
+// ★ A refusal carries no card, so its instruction says so: the model used to
+//   relay a refusal and add that "the card shows the progress".
 const RELAY_INSTRUCTION =
-  "Tell the merchant this in one short sentence, in plain words.";
+  "Tell the merchant this in one short sentence, in plain words. Do not say a card is shown.";
+const ALREADY_STARTED_INSTRUCTION =
+  "A redesign started earlier in this chat is still being made, and its card is shown with this answer. Say that in one short sentence. Do not start another, do not describe the design and do not write any id.";
+const ALREADY_STARTED_REFINE_INSTRUCTION =
+  "A redesign in this chat is still being made, and its card is shown with this answer. Tell the merchant in one short sentence that they can ask for changes once it is ready. Do not describe the design and do not write any id.";
+const ALREADY_READY_INSTRUCTION =
+  "This chat already has a redesign ready to review, and its card is shown with this answer. Tell the merchant in one short sentence that they can apply it, publish it or ask for changes. Start a new redesign only if they say they want a new one, with replace_earlier true.";
 
 const THEME_FIRST =
   "Choose a theme for your store first, under Online store, Storefront.";
@@ -81,23 +102,27 @@ const NO_CATEGORIES =
   "Your role cannot change categories, so a redesign with category changes cannot start. Leave the category changes out or ask the store owner.";
 const NO_PRODUCTS =
   "Your role cannot add products, so a redesign with products cannot start. Leave the products out or ask the store owner.";
-const READY_WAITING = "This chat already has a redesign ready to review.";
-const POINT_AT_CARD =
-  "Point the merchant at the redesign card already in this chat: they can apply it, publish it or ask for changes. Start a new redesign only if they say they want a new one, with replace_earlier true.";
 const DAILY_LIMIT =
   "This store has started as many redesigns as it can today. Try again tomorrow.";
 const NO_CREDITS =
   "This store doesn't have enough Mink credits left for a redesign. Buy Mink credits or upgrade under Plans & Billing.";
-const ALREADY_BUILDING =
-  "A redesign is already being made for this store; its card shows the progress.";
+// ★ No card: the card's GET answers only its requester, so another admin's
+//   or another chat's redesign cannot be shown here.
+const ALREADY_BUILDING_ELSEWHERE =
+  "A redesign is already being made for this store in another chat, yours or a teammate's. A new one can start once that one is finished.";
 // ★ The active job is one the merchant asked to stop (Stop on its card, or a
 //   start this tool withdrew because the chat had already timed out) and its
 //   runner has not noticed yet. Since B4 a failed chat run no longer stops the
 //   redesign it started, so nothing here says "interrupted".
 const EARLIER_STOPPING =
   "The earlier redesign is still stopping. Try again in a minute.";
+// The store's active redesign ended between the refused insert and the read
+// of it, so the one place it held is free again.
+const EARLIER_ENDED = "The earlier redesign has just ended. Try again now.";
+// ★ Names no card: a redesign of this chat still being made answers with its
+//   card before this is reached, so here there is no card to wait for.
 const NO_PARENT =
-  "There is no finished redesign in this chat to change. Start a redesign first, or wait for the card to finish.";
+  "There is no finished redesign in this chat to change. Start a redesign first.";
 const TOO_MANY_REFINEMENTS =
   "This redesign has been changed as many times as it can be. Start a new redesign to keep going.";
 
@@ -125,12 +150,10 @@ const BRIEF_SCHEMA = {
         "True statements the merchant gave (where they are, how things are made). Never your guesses.",
     },
     avoid: { type: "string", maxLength: 300 },
-    language: {
-      type: "string",
-      maxLength: 40,
-      description:
-        "English unless the merchant insisted on another language after one reminder.",
-    },
+    // ★ No description: when to set another language is the prompt's revamp
+    //   rule (it names brief.language), sent whenever this tool is, so a
+    //   second copy here only cost every step (prompt-budget.test.ts).
+    language: { type: "string", maxLength: 40 },
   },
   required: ["business"],
   additionalProperties: false,
@@ -209,7 +232,7 @@ const getRevampContext: MinkTool = {
   declaration: {
     name: "get_storefront_revamp_context",
     description:
-      "Read what a redesign of the merchant's store works with: the pages and how much of each is still the theme's, the header and footer, the look, the categories, the products, the store's own facts, why a redesign cannot start now (blocker), and the redesigns already made in this chat (revamps, newest first, with their status). Call it before asking the merchant about a redesign, and before starting or changing one. Read-only.",
+      "Read what a redesign of the merchant's store works with: the pages and how much of each is still the theme's, the header and footer, the look, the categories, the products, the store's own facts, why a redesign cannot start now (blocker), and the redesigns already made in this chat (revamps, newest first, with their state). Call it before asking about, starting or changing a redesign. Read-only.",
     parametersJsonSchema: {
       type: "object",
       properties: {},
@@ -229,11 +252,14 @@ const getRevampContext: MinkTool = {
   },
 };
 
+// ★ The interview (what to ask, in one message) is the prompt's revamp rule,
+//   sent whenever this tool is: the declaration says what the tool does, and
+//   repeating the rule here cost every step (prompt-budget.test.ts).
 const startStorefrontRevamp: MinkTool = {
   declaration: {
     name: "start_storefront_revamp",
     description:
-      "Start ONE redesign of everything shoppers see: the pages a redesign may write (never the policy pages), the header and footer, the look, one set of new photographs, and the merchant's own products with studio photos. It runs in the background; the chat shows a card with its progress and then a review the merchant applies or publishes. Call get_storefront_revamp_context first, ask the merchant at most three short questions in ONE message (what they sell and who buys it, the look they want, their real products with prices), then call this once. Ask in the same message about categories that came with the theme or do not fit the business; categories holds only agreed changes. Use only what the merchant told you: never invent products, prices, facts or claims.",
+      "Start ONE redesign of everything shoppers see: the pages a redesign may write (never the policy pages), the header and footer, the look, one set of new photographs, and the merchant's own products with studio photos. It runs in the background; its card shows the progress, then a review to apply or publish. Call get_storefront_revamp_context first, then this once, with only what the merchant told you. When you ask your questions, ask in the same message about categories that came with the theme or do not fit the business; categories holds only agreed changes.",
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -254,9 +280,25 @@ const startStorefrontRevamp: MinkTool = {
   permission: { section: "builder", action: "manage" },
   available,
   timeoutMs: 30_000,
+  // ★ Its write is the job insert (`context.commit`), after a budget read the
+  //   run's stop should still be able to win.
+  effect: "commit",
   artifact: revampArtifact,
   modelOutput: withoutArtifact,
   async execute(actor, args, context) {
+    // ★★ THIS CHAT'S REDESIGN IS CHECKED BEFORE THE ARGUMENTS (25 Oct 2026):
+    //   while one is being made, or is ready and not applied, the model's
+    //   arguments do not matter, and a refusal over them would again leave
+    //   the merchant with no card. ★ `replace_earlier` passes a ready card,
+    //   never one still being made: the store holds one active job.
+    const conversationId = await conversationForRun(actor);
+    const revamps = await chatRevamps(actor, conversationId);
+    const building = answerForBuilding(revamps, "full");
+    if (building) return building;
+    const waiting =
+      args.replace_earlier === true ? undefined : revamps.find(isWaitingCard);
+    if (waiting) return alreadyReady(waiting);
+
     const read = readRevampRequest(args, "full");
     if (!read.ok) {
       throw new MinkToolInputError(
@@ -273,23 +315,6 @@ const startStorefrontRevamp: MinkTool = {
       newProducts: request.products.length,
     });
     if (blocked) return blocked;
-    const conversationId = await conversationForRun(actor);
-    if (args.replace_earlier !== true && conversationId) {
-      const revamps = await listConversationRevamps({
-        storeId: actor.storeId,
-        adminId: actor.adminId,
-        conversationId,
-      });
-      const waiting = revamps.find(
-        (revamp) => revamp.status === "ready" && !revamp.appliedAt,
-      );
-      if (waiting) {
-        return refused(READY_WAITING, {
-          existingRevampId: waiting.id,
-          instruction: POINT_AT_CARD,
-        });
-      }
-    }
     return queueRevamp(
       actor,
       {
@@ -308,7 +333,7 @@ const refineStorefrontRevamp: MinkTool = {
   declaration: {
     name: "refine_storefront_revamp",
     description:
-      'Change a redesign the merchant already has in this chat, from their words: "make it warmer", "redo the opening photo", "add my products". It builds a new version on top of the earlier one in the background and the card shows its progress. revamp_id defaults to the newest finished redesign of this chat. scope says what may change; everything else is kept. Add products or category changes only when the merchant gave them.',
+      'Change a redesign the merchant already has in this chat, from their own words ("add my products" too). It builds a new version on top of the earlier one in the background and the card shows its progress. revamp_id defaults to the newest finished redesign of this chat. scope says what may change; everything else is kept. Add products or category changes only when the merchant gave them.',
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -352,11 +377,17 @@ const refineStorefrontRevamp: MinkTool = {
   permission: { section: "builder", action: "manage" },
   available,
   timeoutMs: 30_000,
+  effect: "commit",
   artifact: revampArtifact,
   modelOutput: withoutArtifact,
   async execute(actor, args, context) {
     const conversationId = await conversationForRun(actor);
-    const parent = await resolveParent(actor, args.revamp_id, conversationId);
+    const revamps = await chatRevamps(actor, conversationId);
+    // ★ A redesign of this chat still being made shows its card: a change can
+    //   be asked for once it is ready (the store holds one active job).
+    const building = answerForBuilding(revamps, "refine");
+    if (building) return building;
+    const parent = await resolveParent(actor, args.revamp_id, revamps);
     if (!parent) return refused(NO_PARENT);
 
     // ★★ AN APPLIED VERSION'S PRODUCTS AND CATEGORY CHANGES ARE ON THE STORE
@@ -550,6 +581,13 @@ async function queueRevamp(
   context?: MinkToolContext,
 ): Promise<Record<string, unknown>> {
   if (context?.signal.aborted) throw new MinkToolTimeoutError();
+  // ★★ THE STORE'S ONE ACTIVE REDESIGN IS READ BEFORE ANYTHING IS CLAIMED
+  //   (25 Oct 2026). Found only by the refused insert, it came after the
+  //   day's start and, inside `commit`, the run's act claim: a Stop of that
+  //   refusal answered "acted" and the run was charged, though nothing had
+  //   started. The insert's own refusal below stays for a true race.
+  const activeId = await findActiveRevampId(actor.storeId);
+  if (activeId) return answerForStoreActive(actor, activeId, input);
   // ★ The same counter a failed redesign gives its start back to (B5),
   //   defined once beside the job code.
   const limit = revampStartLimit(actor.storeId);
@@ -570,10 +608,7 @@ async function queueRevamp(
       });
     const created = context ? await context.commit(insert) : await insert();
     if (!created.ok) {
-      if (await isStopping(actor, created.activeId)) {
-        return refused(EARLIER_STOPPING);
-      }
-      return refused(ALREADY_BUILDING, { existingRevampId: created.activeId });
+      return answerForStoreActive(actor, created.activeId, input);
     }
     if (context?.signal.aborted) {
       // ★★ The insert landed after the commit's grace ran out: the chat has
@@ -668,19 +703,64 @@ async function budgetFor(
 }
 
 /**
- * Whether the store's active revamp is one asked to stop that its runner has
- * not noticed yet. Best effort: an unreadable job reads as building.
+ * The answer when the store already has its one active redesign: found
+ * before anything was claimed, or when it refused the insert.
+ * ★★ TWO RUNS OF ONE CHAT CAN RACE TO THE INSERT (a barge-in, 25 Oct 2026):
+ *   the loser read the chat before the winner's job existed, so it learns of
+ *   it only here, and gets its card. Another chat's or another admin's
+ *   redesign gets no card: the card's GET answers only its requester.
+ * ★ One read answers both questions: a stopping job holds the store's place
+ *   whoever started it, and the card is attached only after the store, the
+ *   admin and the chat all match. Best effort: an unreadable job reads as
+ *   building elsewhere.
  */
-async function isStopping(
+async function answerForStoreActive(
   actor: MinkActorContext,
-  revampId: string,
-): Promise<boolean> {
+  activeId: string,
+  input: { kind: RevampKind; conversationId: string | null },
+): Promise<Record<string, unknown>> {
+  let job: RevampJobRow | null = null;
   try {
-    const job = await readRevampJob(revampId);
-    return job?.storeId === actor.storeId && job.cancelRequestedAt !== null;
+    job = await readRevampJob(activeId);
   } catch {
-    return false;
+    job = null;
   }
+  if (!job || job.storeId !== actor.storeId) {
+    return refused(ALREADY_BUILDING_ELSEWHERE);
+  }
+  if (job.cancelRequestedAt !== null) return refused(EARLIER_STOPPING);
+  const thisChat =
+    input.conversationId !== null &&
+    job.conversationId === input.conversationId &&
+    job.adminId === actor.adminId;
+  if (!thisChat) return refused(ALREADY_BUILDING_ELSEWHERE);
+  if (isBuilding(job.status)) return alreadyStarted(job, input.kind);
+  if (isWaitingCard(job)) return alreadyReady(job);
+  return refused(EARLIER_ENDED);
+}
+
+/** This chat's redesign still being made, answered before anything else. */
+function answerForBuilding(
+  revamps: RevampConversationEntry[],
+  asked: RevampKind,
+): Record<string, unknown> | null {
+  const building = revamps.find((entry) => isBuilding(entry.status));
+  if (!building) return null;
+  if (building.cancelRequested) return refused(EARLIER_STOPPING);
+  return alreadyStarted(building, asked);
+}
+
+function isBuilding(status: RevampStatus): boolean {
+  return ACTIVE_REVAMP_STATUSES.includes(status);
+}
+
+/** A ready card nobody has applied or undone: a new start shows it instead. */
+function isWaitingCard(entry: {
+  status: RevampStatus;
+  appliedAt: string | null;
+  undoneAt: string | null;
+}): boolean {
+  return entry.status === "ready" && !entry.appliedAt && !entry.undoneAt;
 }
 
 function kick(revampId: string) {
@@ -694,32 +774,68 @@ function kick(revampId: string) {
   });
 }
 
+// ★ The answers the model reads carry no id: `status` says what happened,
+//   `cardShown` whether a card goes with it, `instruction` what to say. The
+//   artifact keeps the redesign's real status, which only the card reads.
+
 function started(job: RevampJobRow, kind: RevampKind): Record<string, unknown> {
-  const artifact: RevampArtifact = {
-    type: "storefront_revamp",
-    revampId: job.id,
-    kind,
-    status: job.status,
-  };
   return {
     status: "started",
-    revampId: job.id,
+    cardShown: true,
     instruction: kind === "full" ? START_INSTRUCTION : REFINE_INSTRUCTION,
-    artifact,
+    artifact: revampArtifactOf({ id: job.id, kind, status: job.status }),
   };
 }
 
-function refused(
-  reason: string,
-  extra: { instruction?: string; existingRevampId?: string } = {},
+/** A redesign of this chat still being made: its card, never a second job. */
+function alreadyStarted(
+  revamp: { id: string; kind: RevampKind; status: RevampStatus },
+  asked: RevampKind,
 ): Record<string, unknown> {
   return {
+    status: "already_started",
+    cardShown: true,
+    instruction:
+      asked === "full"
+        ? ALREADY_STARTED_INSTRUCTION
+        : ALREADY_STARTED_REFINE_INSTRUCTION,
+    artifact: revampArtifactOf(revamp),
+  };
+}
+
+/** A ready redesign of this chat nobody applied: its card, to apply or change. */
+function alreadyReady(revamp: {
+  id: string;
+  kind: RevampKind;
+  status: RevampStatus;
+}): Record<string, unknown> {
+  return {
+    status: "already_ready",
+    cardShown: true,
+    instruction: ALREADY_READY_INSTRUCTION,
+    artifact: revampArtifactOf(revamp),
+  };
+}
+
+function refused(reason: string): Record<string, unknown> {
+  return {
     status: "not_started",
+    cardShown: false,
     reason,
-    instruction: extra.instruction ?? RELAY_INSTRUCTION,
-    ...(extra.existingRevampId
-      ? { existingRevampId: extra.existingRevampId }
-      : {}),
+    instruction: RELAY_INSTRUCTION,
+  };
+}
+
+function revampArtifactOf(revamp: {
+  id: string;
+  kind: RevampKind;
+  status: RevampStatus;
+}): RevampArtifact {
+  return {
+    type: "storefront_revamp",
+    revampId: revamp.id,
+    kind: revamp.kind,
+    status: revamp.status,
   };
 }
 
@@ -731,12 +847,18 @@ function revampArtifact(
   return isRevampArtifact(output.artifact) ? output.artifact : undefined;
 }
 
-/** ★ The model gets whether it started, never the card (or any figure on it). */
+/**
+ * ★ The model gets whether it started, never the card (or any figure on it).
+ * ★★ Nor an id it could recite: no answer above carries one, and these are
+ *   dropped anyway, defence in depth (a raw id reached a merchant, 25 Oct).
+ */
 function withoutArtifact(
   output: Record<string, unknown>,
 ): Record<string, unknown> {
   const forModel = { ...output };
   delete forModel.artifact;
+  delete forModel.revampId;
+  delete forModel.existingRevampId;
   return forModel;
 }
 
@@ -760,30 +882,44 @@ async function conversationForRun(
   return rows[0]?.conversationId ?? null;
 }
 
+/**
+ * This chat's redesigns (the requester's own, newest first), or none outside
+ * a chat run. ★ A failed read throws: a start or refinement never goes ahead
+ * on a list it could not read.
+ */
+async function chatRevamps(
+  actor: MinkActorContext,
+  conversationId: string | null,
+): Promise<RevampConversationEntry[]> {
+  if (!conversationId) return [];
+  return listConversationRevamps({
+    storeId: actor.storeId,
+    adminId: actor.adminId,
+    conversationId,
+  });
+}
+
 async function conversationRevamps(
   actor: MinkActorContext,
 ): Promise<Array<Record<string, unknown>>> {
   try {
-    const conversationId = await conversationForRun(actor);
-    if (!conversationId) return [];
-    const entries = await listConversationRevamps({
-      storeId: actor.storeId,
-      adminId: actor.adminId,
-      conversationId,
-    });
+    const entries = await chatRevamps(actor, await conversationForRun(actor));
     // ★ The photos of the redesign a refinement builds on by default, so the
     //   model can name the one the merchant means (chat-2).
     const refinable = entries.find(isRefinableRevamp);
     const photos = refinable ? await photosOf(actor, refinable.id) : null;
+    // ★ Plain words and yes/no flags, never the job's status or a timestamp.
+    //   The id stays only because refine_storefront_revamp takes one; the
+    //   prompt forbids writing it in an answer.
     return entries.map((entry) => ({
       id: entry.id,
       kind: entry.kind,
-      status: entry.status,
+      // ★★ What the model reads for a redesign's status (contract.ts).
+      state: revampStateWord(entry),
+      applied: Boolean(entry.appliedAt && !entry.undoneAt),
+      published: Boolean(entry.publishedAt),
+      undone: Boolean(entry.undoneAt),
       summary: entry.summary,
-      appliedAt: entry.appliedAt,
-      publishedAt: entry.publishedAt,
-      undoneAt: entry.undoneAt,
-      createdAt: entry.createdAt,
       ...(entry === refinable && photos ? { photos } : {}),
     }));
   } catch (error) {
@@ -843,19 +979,14 @@ async function freeRevampAvailable(storeId: string): Promise<boolean> {
 async function resolveParent(
   actor: MinkActorContext,
   rawId: unknown,
-  conversationId: string | null,
+  /** This chat's redesigns, already read (`chatRevamps`). */
+  revamps: RevampConversationEntry[],
 ): Promise<RevampJobRow | null> {
   if (rawId !== undefined && rawId !== null && rawId !== "") {
     if (typeof rawId !== "string") return null;
     const named = await readRevampForActor(actor, rawId.trim());
     return named && isFinishedRevampVersion(named) ? named : null;
   }
-  if (!conversationId) return null;
-  const revamps = await listConversationRevamps({
-    storeId: actor.storeId,
-    adminId: actor.adminId,
-    conversationId,
-  });
   const newest = revamps.find(isRefinableRevamp);
   if (!newest) return null;
   const row = await readRevampForActor(actor, newest.id);

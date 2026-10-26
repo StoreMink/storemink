@@ -131,7 +131,7 @@ describe("theme photos", () => {
     ["https://images.example.com/photo.jpg", false],
     ["http://storage.googleapis.com/b/theme-releases/x.webp", false],
     ["/themes/../uploads/x.webp", false],
-    ["https://abc.supabase.co/storage/v1/object/public/media/hero.jpg", false],
+    ["https://cdn.example.com/media/hero.jpg", false],
     ["", false],
   ])("%s is a theme photo: %s", (url, expected) => {
     expect(isThemePhotoUrl(url)).toBe(expected);

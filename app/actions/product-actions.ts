@@ -657,7 +657,7 @@ export async function createProduct(
         const created = await db
           .insert(products)
           // sku / sku_no are NOT NULL but owned by the BEFORE-INSERT trigger
-          // (identifiers_04_triggers.sql) — the app must never send them, so
+          // (products_set_sku) — the app must never send them, so
           // the insert type is asserted past those two columns.
           .values(row(slug) as typeof products.$inferInsert)
           .returning();

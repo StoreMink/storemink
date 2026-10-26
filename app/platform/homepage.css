@@ -480,14 +480,16 @@
   color: #000;
 }
 
-.smh-mega-tile b {
+/* The tile's own title and line only (direct children): the drawn POS in the
+   tile's picture has <b> labels of its own. */
+.smh-mega-tile > b {
   display: block;
   margin-top: 12px;
   font-size: 16px;
   font-weight: 500;
 }
 
-.smh-mega-tile small {
+.smh-mega-tile > small {
   display: block;
   margin-top: 3px;
   color: var(--smh-muted);
@@ -2700,7 +2702,9 @@
   margin-top: 20px !important;
 }
 
-.smh-pos ul {
+/* The copy column's list only: the drawn POS beside it (RegisterArt) has
+   lists of its own, which these rules would otherwise restyle. */
+.smh-pos-copy ul {
   display: grid;
   gap: 12px;
   margin: 28px 0 32px;
@@ -2708,7 +2712,7 @@
   list-style: none;
 }
 
-.smh-pos li {
+.smh-pos-copy li {
   display: flex;
   gap: 11px;
   color: #cfd0d8;
@@ -2716,13 +2720,13 @@
   line-height: 1.5;
 }
 
-.smh-pos li svg {
+.smh-pos-copy li svg {
   flex: none;
   margin-top: 3px;
   color: var(--smh-mint);
 }
 
-.smh-pos li b {
+.smh-pos-copy li b {
   color: #fff;
   font-weight: 500;
 }

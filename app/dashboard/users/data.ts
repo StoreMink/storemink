@@ -30,7 +30,7 @@ import type {
 
 // The `users` table is own-row-only under RLS, so every cross-customer read
 // here goes through the service scope. Listing is paginated and filtered/sorted
-// in SQL via the `customer_admin` view (see supabase/customer_admin_view.sql)
+// in SQL via the `customer_admin` view
 // so we never pull every user — or every review and blog — into memory.
 
 export const CUSTOMERS_PAGE_SIZE = 50;

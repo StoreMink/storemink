@@ -44,7 +44,7 @@ export const AUDIENCE_ROLES: {
   },
   {
     id: "pos",
-    label: "Till staff",
+    label: "POS staff",
     hint: "Cashiers and managers with a POS login.",
   },
 ];
@@ -129,7 +129,7 @@ export function decideRecipient(
     return {
       send: false,
       reason: "no_consent",
-      detail: "Till staff were never asked about product updates.",
+      detail: "POS staff were never asked about product updates.",
     };
   }
 

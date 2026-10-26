@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { uploadImage } from "@/lib/storage/uploads";
 import {
   UploadCloud,
@@ -18,7 +19,15 @@ import { ImageSourceMenu } from "./image-source-menu";
 import {
   useImageBackgroundAvailable,
   useImageRefineAvailable,
+  useImageRefineScope,
+  useImageRefineView,
 } from "./image-refine-context";
+import {
+  refineMatchKey,
+  releaseImageRefines,
+  settleImageRefine,
+  startImageRefine,
+} from "./image-refine-registry";
 import { BackgroundEditor } from "./background-editor";
 import {
   IMAGE_SPECS,
@@ -53,8 +62,6 @@ interface ImageUploadProps {
   onChooseFromLibrary?: () => void;
 }
 
-type RefineResult = { url: string };
-
 export function ImageUpload({
   onUploadSuccess,
   folder = "",
@@ -72,18 +79,64 @@ export function ImageUpload({
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
-  const [refining, setRefining] = useState(false);
-  const [refined, setRefined] = useState<RefineResult | null>(null);
   const [editingBackground, setEditingBackground] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // ★ A refine still running when this editor goes away (an in-app link,
-  //   a dialog closing, a gallery slot removed) is stopped. The route stops
-  //   the model on the request's own signal, and a refine stopped there
-  //   stores and charges nothing; leaving inside the app used to keep the
-  //   request open, so the photo was still made and charged for somebody
-  //   who had gone. Closing the tab already ended it.
-  const refineAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => () => refineAbortRef.current?.abort(), []);
+  // ★ The box follows its slot's photo (the caller's `defaultImage`): undo,
+  //   a moved block or another section of the same type hands it another
+  //   photo while it stays mounted. ★ Only a REAL change of photo resets the
+  //   box: the echo of its own upload or "Use refined photo" (the caller
+  //   writes back the URL the box already shows) must not wipe the measured
+  //   size, because that image has already loaded and fires no second load.
+  const [seenDefault, setSeenDefault] = useState(defaultImage);
+  if (defaultImage !== seenDefault) {
+    setSeenDefault(defaultImage);
+    if (!pendingPreview && (defaultImage || null) !== previewUrl) {
+      setPreviewUrl(defaultImage || null);
+      setNatural(null);
+      setEditingBackground(false);
+    }
+  }
+  // ★★ A REFINE BELONGS TO ITS PAGE AND SLOT, NOT TO THIS BOX
+  //   (image-refine-registry.ts). Unmounting the box (a collapsed group,
+  //   another builder section, a dialog's tab) only detaches it; the page
+  //   sends the refine's stop when it goes away, and the server decides
+  //   whether the stop or the charge came first. A box shows the refine of
+  //   its scope, slot size and the photo it shows now, wherever it mounts.
+  const pathname = usePathname() ?? "";
+  const scope = useImageRefineScope() ?? `route:${pathname}`;
+  const matchKey =
+    previewUrl && spec ? refineMatchKey(scope, spec, previewUrl) : null;
+  const view = useImageRefineView(matchKey);
+  const refining = view?.status === "running";
+  const refined = view?.status === "done" ? { url: view.resultUrl } : null;
+  const refineError = view?.status === "failed" ? view.message : null;
+  // ★ The slot's size changed under its photo (a section's ratio, the hero's
+  //   layout): a photo made for the old size would be the wrong size here,
+  //   so that refine is stopped (nothing charged unless its charge came
+  //   first) or, finished, dropped (it stays in the Media Library).
+  const lastSlot = useRef<{
+    scope: string;
+    spec?: ImageSpecKey;
+    previewUrl: string | null;
+  } | null>(null);
+  useEffect(() => {
+    const previous = lastSlot.current;
+    lastSlot.current = { scope, spec, previewUrl };
+    if (
+      previous?.spec &&
+      previewUrl &&
+      previous.scope === scope &&
+      previous.previewUrl === previewUrl &&
+      previous.spec !== spec
+    ) {
+      releaseImageRefines(
+        (refine) =>
+          refine.scope === previous.scope &&
+          refine.spec === previous.spec &&
+          refine.sourceUrl === previewUrl,
+      );
+    }
+  }, [scope, spec, previewUrl]);
   const refineAvailable = useImageRefineAvailable();
   const backgroundAvailable = useImageBackgroundAvailable();
   const slot = spec ? IMAGE_SPECS[spec] : null;
@@ -116,7 +169,6 @@ export function ImageUpload({
     try {
       const uploadedUrl = await uploadImage(pendingFile, { folder });
       setPreviewUrl(uploadedUrl);
-      setRefined(null);
       onUploadSuccess(uploadedUrl);
       setPendingFile(null);
       setPendingPreview(null);
@@ -143,7 +195,6 @@ export function ImageUpload({
   const handleRemoveUploaded = (e: React.MouseEvent) => {
     e.stopPropagation();
     setPreviewUrl(null);
-    setRefined(null);
     setEditingBackground(false);
     setNatural(null);
     onUploadSuccess("");
@@ -153,37 +204,10 @@ export function ImageUpload({
     if (!pendingPreview) fileInputRef.current?.click();
   };
 
-  const handleRefine = async () => {
+  const handleRefine = () => {
     if (!previewUrl || !spec || refining) return;
-    const stop = new AbortController();
-    refineAbortRef.current = stop;
-    setRefining(true);
     setError(null);
-    try {
-      const res = await fetch("/api/mink/image-refine", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: previewUrl, spec }),
-        signal: stop.signal,
-      });
-      const body = (await res.json().catch(() => ({}))) as {
-        url?: string;
-        error?: string;
-      };
-      // Nobody is here to read an answer that lands after the stop.
-      if (stop.signal.aborted) return;
-      if (!res.ok || !body.url) {
-        setError(body.error ?? "Refining failed. Nothing was charged.");
-        return;
-      }
-      setRefined({ url: body.url });
-    } catch {
-      if (stop.signal.aborted) return;
-      setError("Refining failed. Check your connection and try again.");
-    } finally {
-      if (refineAbortRef.current === stop) refineAbortRef.current = null;
-      if (!stop.signal.aborted) setRefining(false);
-    }
+    startImageRefine({ scope, pathname, spec, sourceUrl: previewUrl });
   };
 
   const replaceWith = (nextUrl: string) => {
@@ -195,9 +219,10 @@ export function ImageUpload({
   };
 
   const acceptRefined = () => {
-    if (!refined) return;
+    if (!refined || !matchKey) return;
+    const settled = matchKey;
     replaceWith(refined.url);
-    setRefined(null);
+    settleImageRefine(settled);
   };
 
   const sizeLine = slot && (
@@ -309,11 +334,7 @@ export function ImageUpload({
           </figure>
           <figure className="min-w-0">
             <div className="relative h-48 overflow-hidden rounded-lg border-2 border-primary/60 bg-muted/30">
-              <img
-                src={refined.url}
-                alt="Refined with Mink AI"
-                className="absolute inset-0 h-full w-full object-contain"
-              />
+              <RefinedImage key={refined.url} url={refined.url} />
             </div>
             <figcaption className="mt-1 text-xs text-muted-foreground">
               Refined · {slot?.width} × {slot?.height} px
@@ -338,7 +359,9 @@ export function ImageUpload({
             type="button"
             size="sm"
             variant="outline"
-            onClick={() => setRefined(null)}
+            onClick={() => {
+              if (matchKey) settleImageRefine(matchKey);
+            }}
           >
             Keep original
           </Button>
@@ -424,7 +447,11 @@ export function ImageUpload({
             )}
           </div>
         )}
-        {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+        {(error ?? refineError) && (
+          <p className="mt-2 text-sm text-destructive">
+            {error ?? refineError}
+          </p>
+        )}
       </div>
     );
   }
@@ -471,6 +498,40 @@ export function ImageUpload({
       {sizeLine}
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
     </div>
+  );
+}
+
+/**
+ * The refined photo in the compare view. ★ It retries a failed load, up to
+ * five times two seconds apart: a refine whose answer was lost can come back
+ * as `too_late` in the moment between its charge and its publish. The retry
+ * asks for `?retry=n`; "Use refined photo" still writes the clean URL.
+ */
+function RefinedImage({ url }: { url: string }) {
+  const [attempt, setAttempt] = useState(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+  const src = attempt
+    ? `${url}${url.includes("?") ? "&" : "?"}retry=${attempt}`
+    : url;
+  return (
+    <img
+      src={src}
+      alt="Refined with Mink AI"
+      onError={() => {
+        if (attempt >= 5 || timer.current) return;
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          setAttempt((n) => n + 1);
+        }, 2_000);
+      }}
+      className="absolute inset-0 h-full w-full object-contain"
+    />
   );
 }
 

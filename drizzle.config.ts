@@ -5,8 +5,8 @@ import { defineConfig } from "drizzle-kit";
 //
 // Connects over the Cloud SQL Auth Proxy (localhost) for local/dev work; point
 // DB_HOST/DB_PORT/DB_* at each environment when applying migrations
-// (local → staging → prod). Only the `public` schema is managed here — the
-// `auth` shim lives in a hand-written migration.
+// (local → staging → prod). Only the `public` schema is managed here; the
+// `auth` shim (auth.uid() / auth.email()) exists only in the databases.
 export default defineConfig({
   dialect: "postgresql",
   schema: "./drizzle/schema.ts",

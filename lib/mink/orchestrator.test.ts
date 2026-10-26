@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MinkConfig } from "./config";
+import { MinkRunStoppedError } from "./errors";
 import { runMinkAgent } from "./orchestrator";
 import type {
   MinkActorContext,
@@ -533,6 +534,190 @@ describe("★★ the run's stop reaches its tools (B6)", () => {
       { signal: run.signal },
     );
     expect(seen.context).toBeUndefined();
+  });
+});
+
+// ★★ The stop handshake (lib/mink/run-stop.ts, 25 Oct 2026): a stop the
+//    merchant asked for wins only while the run has not acted, and a stopped
+//    run asks the model nothing more, so no answer is written for it.
+describe("★★ a stop the merchant asked for", () => {
+  function writeRegistry(execute = vi.fn(async () => ({ saved: true }))) {
+    return new MinkToolRegistry([
+      {
+        declaration: {
+          name: "propose_blog_draft",
+          description: "Draft a blog.",
+          parametersJsonSchema: { type: "object", properties: {} },
+        },
+        permission: { section: "dashboard", action: "view" },
+        timeoutMs: 5_000,
+        execute,
+      },
+    ]);
+  }
+
+  function session(): MinkModelSession {
+    return {
+      sendUserMessage: vi.fn(async () =>
+        turn({
+          functionCalls: [
+            { id: "call-1", name: "propose_blog_draft", args: {} },
+          ],
+        }),
+      ),
+      sendToolResponses: vi.fn(async () => turn({ text: "Drafted." })),
+    };
+  }
+
+  it("★ hands the claim to every tool call", async () => {
+    const registry = writeRegistry();
+    const execute = vi.spyOn(registry, "execute");
+    const claimAct = vi.fn(async () => undefined);
+    const result = await runMinkAgent({
+      actor: ACTOR,
+      message: "Write a blog",
+      config: config(),
+      registry,
+      session: session(),
+      claimAct,
+    });
+    expect(result.text).toBe("Drafted.");
+    expect(execute).toHaveBeenCalledWith(
+      ACTOR,
+      expect.objectContaining({ name: "propose_blog_draft" }),
+      { signal: undefined, claimAct },
+    );
+    expect(claimAct).toHaveBeenCalledOnce();
+  });
+
+  it("★★ a refused claim ends the run as stopped, with no further model call", async () => {
+    const execute = vi.fn(async () => ({ saved: true }));
+    const chat = session();
+    const onEvent = vi.fn();
+    await expect(
+      runMinkAgent({
+        actor: ACTOR,
+        message: "Write a blog",
+        config: config(),
+        registry: writeRegistry(execute),
+        session: chat,
+        onEvent,
+        claimAct: vi.fn(async () => {
+          throw new MinkRunStoppedError();
+        }),
+      }),
+    ).rejects.toBeInstanceOf(MinkRunStoppedError);
+    expect(execute).not.toHaveBeenCalled();
+    expect(chat.sendToolResponses).not.toHaveBeenCalled();
+    // The refused call is still recorded, as stopped.
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "tool_result",
+        name: "propose_blog_draft",
+        ok: false,
+        errorCode: "run_stopped",
+      }),
+    );
+  });
+
+  it("★★ a stop seen while a read runs ends the run before the model is asked again", async () => {
+    const run = new AbortController();
+    const chat: MinkModelSession = {
+      sendUserMessage: vi.fn(async () =>
+        turn({
+          functionCalls: [
+            { id: "call-1", name: "get_store_profile", args: {} },
+          ],
+        }),
+      ),
+      sendToolResponses: vi.fn(async () => turn({ text: "Your store." })),
+    };
+    const registry = new MinkToolRegistry([
+      {
+        declaration: {
+          name: "get_store_profile",
+          description: "Read store.",
+          parametersJsonSchema: { type: "object", properties: {} },
+        },
+        permission: { section: "dashboard", action: "view" },
+        timeoutMs: 5_000,
+        effect: "read",
+        execute: vi.fn(async () => {
+          // The stop arrives while the read is answering; the read finishes.
+          run.abort(new MinkRunStoppedError());
+          return { name: "Acme" };
+        }),
+      },
+    ]);
+    await expect(
+      runMinkAgent({
+        actor: ACTOR,
+        message: "How is my store?",
+        config: config(),
+        registry,
+        session: chat,
+        abortSignal: run.signal,
+      }),
+    ).rejects.toBeInstanceOf(MinkRunStoppedError);
+    expect(chat.sendToolResponses).not.toHaveBeenCalled();
+  });
+
+  it("★ a stop seen with nothing refused still asks the model nothing more", async () => {
+    // The second turn repeats a pure read, served from the memo, so no tool
+    // answers run_stopped: only the check before the next send can stop it.
+    const run = new AbortController();
+    const read = { id: "call-1", name: "get_store_profile", args: {} };
+    const sendToolResponses = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        run.abort(new MinkRunStoppedError());
+        return turn({ functionCalls: [{ ...read, id: "call-2" }] });
+      })
+      .mockImplementation(async () => turn({ text: "Your store." }));
+    const registry = new MinkToolRegistry([
+      {
+        declaration: {
+          name: "get_store_profile",
+          description: "Read store.",
+          parametersJsonSchema: { type: "object", properties: {} },
+        },
+        permission: { section: "dashboard", action: "view" },
+        timeoutMs: 5_000,
+        repeatSafe: true,
+        execute: vi.fn(async () => ({ name: "Acme" })),
+      },
+    ]);
+    await expect(
+      runMinkAgent({
+        actor: ACTOR,
+        message: "How is my store?",
+        config: config(),
+        registry,
+        session: {
+          sendUserMessage: vi.fn(async () => turn({ functionCalls: [read] })),
+          sendToolResponses,
+        },
+        abortSignal: run.signal,
+      }),
+    ).rejects.toBeInstanceOf(MinkRunStoppedError);
+    expect(sendToolResponses).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ a run stopped before it began asks the model nothing", async () => {
+    const run = new AbortController();
+    run.abort(new MinkRunStoppedError());
+    const chat = session();
+    await expect(
+      runMinkAgent({
+        actor: ACTOR,
+        message: "Write a blog",
+        config: config(),
+        registry: writeRegistry(),
+        session: chat,
+        abortSignal: run.signal,
+      }),
+    ).rejects.toBeInstanceOf(MinkRunStoppedError);
+    expect(chat.sendUserMessage).not.toHaveBeenCalled();
   });
 });
 

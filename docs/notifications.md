@@ -279,8 +279,8 @@ a checkout's code path. Instant mail kicks the worker as soon as the enqueue
 transaction commits; hourly/daily rows wait for their clock-aligned window and
 are grouped into one digest per person.
 
-**In-app is polling, not push.** Supabase Realtime went with the Cloud SQL
-migration. A LISTEN/NOTIFY → SSE service is the upgrade path.
+**In-app is polling, not push.** Cloud SQL has no push channel to the browser;
+a LISTEN/NOTIFY → SSE service is the upgrade path.
 
 On a phone, opening the merchant dashboard bell fixes the inbox between 12 px
 viewport gutters and caps it to the visible dynamic viewport. Its notification
@@ -386,6 +386,6 @@ through it.
 | `app/actions/notification-actions.ts`          | Console + staff inbox                          |
 | `app/actions/customer-notification-actions.ts` | Shopper inbox                                  |
 
-SQL: `supabase/notifications_01_schema.sql` (events, inbox, preferences),
+SQL: `notifications_01_schema.sql` (events, inbox, preferences),
 `_02_email_queue.sql`, `_03_console.sql` (definitions + store settings),
 `_04_email_cc.sql`.

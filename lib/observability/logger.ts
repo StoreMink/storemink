@@ -1,5 +1,4 @@
-// Structured logging for Google Cloud (Phase 2 of the GCP migration — see
-// docs/gcp-migration-phase5-6.md and CODEBASE.md §7).
+// Structured logging for Google Cloud (see CODEBASE.md §7).
 //
 // WHY THIS SHAPE: Google Cloud Logging ingests structured logs with ZERO SDK,
 // key, or network call — it parses JSON written to stdout/stderr and promotes
@@ -7,8 +6,8 @@
 // (Phase 4) that ingestion is automatic; ERROR-severity entries that carry a
 // stack trace are additionally surfaced in Cloud Error Reporting. So instead of
 // a heavyweight client library we just emit the right JSON:
-//   * production  -> single-line JSON (Vercel captures it now; Cloud Logging
-//                    auto-ingests it once we're on Cloud Run — no rework).
+//   * production  -> single-line JSON (Cloud Logging ingests it automatically
+//                    on Cloud Run).
 //   * development -> a readable "[SEVERITY] message {context}" line.
 //
 // Edge-safe: uses only `console` + `JSON.stringify` (no Node APIs), so it works

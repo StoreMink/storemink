@@ -19,13 +19,13 @@ describe("upgrade summary", () => {
     expect(lines).toContain("50 products");
     expect(lines).toContain("Online payments through your own Razorpay");
     // Pro-only features are NOT advertised for Basic.
-    expect(lines).not.toContain("Point of Sale");
+    expect(lines).not.toContain("POS");
     expect(lines).not.toContain("Your own domain");
     expect(PLAN_LIMITS.basic.customDomain).toBe(false);
 
     const toPro = upgradeUnlocks("basic", "pro");
     expect(toPro).toContain("Unlimited products");
-    expect(toPro).toContain("Point of Sale");
+    expect(toPro).toContain("POS");
     expect(toPro).toContain("Your own domain");
     expect(upgradeUnlocks("pro", "pro")).toEqual([]);
   });

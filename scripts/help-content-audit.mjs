@@ -11,7 +11,11 @@
  *
  * This reads the published rows and reports the same banned vocabulary, plus
  * the two shape numbers that flag a guide turning back into a changelog:
- * length and section count.
+ * length and section count. Every field the Help console edits is read: title,
+ * excerpt, body, SEO title and SEO description, and the category titles and
+ * descriptions; so are the platform roles' names and descriptions, which a
+ * merchant reads when choosing a role. Categories and roles get the copy rules
+ * only (em dash, POS wording).
  *
  * NOT IN CI, for the reason `db:drift` is not: it needs database credentials,
  * and a pull request cannot cause published-content drift. Run it after a
@@ -26,11 +30,21 @@
 
 import process from "node:process";
 import pg from "pg";
-import { HELP_LINT_RULES, LONG_DASH_RULE } from "./help-content-lint.mjs";
+import {
+  HELP_LINT_RULES,
+  LONG_DASH_RULE,
+  POS_WORDING_RULE,
+} from "./help-content-lint.mjs";
 
-// Published rows are held to the em dash rule too: a guide edited in the Help
-// console never passes through a migration, so only this can catch one.
-const AUDIT_RULES = [...HELP_LINT_RULES, LONG_DASH_RULE];
+// Published rows are held to the em dash rule and the POS wording rule too: a
+// guide edited in the Help console never passes through a migration, so only
+// this can catch one.
+const AUDIT_RULES = [...HELP_LINT_RULES, LONG_DASH_RULE, POS_WORDING_RULE];
+
+// Operators also edit the Help categories (title, description) and the
+// platform roles a merchant picks from (name, description: storemink.com/
+// dashboard/roles). Neither is a guide, so only the copy rules apply.
+const COPY_RULES = [LONG_DASH_RULE, POS_WORDING_RULE];
 
 const { Client } = pg;
 
@@ -67,13 +81,25 @@ async function main() {
   const client = new Client(config());
   await client.connect();
   let rows;
+  let categories;
+  let roles;
   try {
+    // The SEO title and description are what a search engine shows for the
+    // guide, and the Help console edits them like the body.
     ({ rows } = await client.query(
-      `select a.slug, a.title, a.excerpt, a.body, c.title as category
+      `select a.slug, a.title, a.excerpt, a.body, a.seo_title,
+              a.seo_description
          from public.help_articles a
-         left join public.help_categories c on c.id = a.category_id
         where a.status = 'published'
         order by a.slug`,
+    ));
+    ({ rows: categories } = await client.query(
+      `select slug, title, description from public.help_categories
+        order by slug`,
+    ));
+    ({ rows: roles } = await client.query(
+      `select slug, name, description from public.platform_roles
+        order by slug`,
     ));
   } finally {
     await client.end();
@@ -83,7 +109,9 @@ async function main() {
   const warnings = [];
   for (const row of rows) {
     const text = renderedText(
-      `${row.title}\n${row.excerpt ?? ""}\n${row.body ?? ""}`,
+      [row.title, row.excerpt, row.body, row.seo_title, row.seo_description]
+        .map((field) => field ?? "")
+        .join("\n"),
     );
     for (const rule of AUDIT_RULES) {
       const hit = text.match(rule.pattern);
@@ -100,9 +128,25 @@ async function main() {
       warnings.push({ slug: row.slug, chars, sections });
     }
   }
+  const copy = [
+    ...categories.map((c) => ({
+      slug: `category ${c.slug}`,
+      text: `${c.title}\n${c.description ?? ""}`,
+    })),
+    ...roles.map((r) => ({
+      slug: `role ${r.slug}`,
+      text: `${r.name}\n${r.description ?? ""}`,
+    })),
+  ];
+  for (const { slug, text } of copy) {
+    for (const rule of COPY_RULES) {
+      const hit = text.match(rule.pattern);
+      if (hit) failures.push({ slug, rule: rule.name, sample: hit[0].trim() });
+    }
+  }
 
   console.log(
-    `Audited ${rows.length} published guides in ${process.env.DB_NAME}.`,
+    `Audited ${rows.length} published guides, ${categories.length} categories and ${roles.length} platform roles in ${process.env.DB_NAME}.`,
   );
   if (warnings.length) {
     console.log(`\n${warnings.length} oversized guide(s) — split by task:`);
@@ -120,7 +164,7 @@ async function main() {
     return;
   }
   console.error(
-    `\n${failures.length} published guide(s) contain content a merchant cannot act on:`,
+    `\n${failures.length} finding(s) in published content a merchant cannot act on or should not read:`,
   );
   const byRule = new Map();
   for (const f of failures) {

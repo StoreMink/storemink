@@ -15,8 +15,8 @@
 // different GCP project (per-env pairing — see CODEBASE.md §7). On Cloud Run the
 // runtime SA can't cross projects, so pair GCP_PROJECT_ID=<infra> with explicit
 // FIREBASE_* creds for the auth project.
-// When none is available, getFirebaseAdminAuth() returns null so callers can
-// gracefully fall back to the still-live Supabase path during the migration.
+// When none is available, getFirebaseAdminAuth() returns null and callers treat
+// auth as unavailable (sign-in answers 401, requests read as signed out).
 
 import {
   initializeApp,
@@ -77,7 +77,7 @@ function initApp(): App | null {
 
 /**
  * The Firebase Admin Auth instance, or null when Identity Platform isn't
- * configured yet (migration-safe: callers fall back to Supabase). Memoised —
+ * configured. Memoised —
  * including the null result, so we don't retry init on every call.
  */
 export function getFirebaseAdminAuth(): Auth | null {

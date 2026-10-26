@@ -18,10 +18,11 @@ import {
 // SECURITY MODEL — do not weaken:
 //  • Live sections use sandbox="allow-scripts allow-popups"; strict Mink
 //    previews use only "allow-scripts". NEVER add "allow-same-origin".
-//    Supabase auth cookies are httpOnly:false with Domain=.storemink.com, so
-//    same-origin merchant JS could read a visitor's session that is valid on
-//    EVERY store subdomain and the platform. The srcDoc iframe gets an opaque
-//    origin instead: no cookies, no storage, no parent DOM.
+//    The session cookie (sm_session) is httpOnly but scoped to
+//    Domain=.storemink.com, so same-origin merchant JS could still act as the
+//    visitor (credentialed requests and server actions, the parent DOM, this
+//    origin's storage) on EVERY store subdomain and the platform. The srcDoc
+//    iframe gets an opaque origin instead: no cookies, no storage, no parent DOM.
 //  • No allow-top-navigation: a section must not be able to redirect visitors.
 //    <base target="_blank"> keeps merchant links working (new tab).
 //  • The only channel out is postMessage; the parent accepts ONLY a height

@@ -2,7 +2,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MinkArtifact } from "@/lib/mink/types";
-import { MinkArtifacts } from "./mink-artifacts";
+import type { RevampArtifact } from "@/lib/mink/revamp/contract";
+import { MinkArtifacts, revampCardElementId } from "./mink-artifacts";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -1047,5 +1048,81 @@ describe("Mink catalogue artifact", () => {
     expect(
       screen.getByRole("button", { name: /apply to website builder draft/i }),
     ).toBeEnabled();
+  });
+});
+
+describe("★★ one card per storefront redesign in a thread (25 Oct 2026)", () => {
+  const REVAMP_ID = "44444444-4444-4444-8444-444444444444";
+  const card: RevampArtifact = {
+    type: "storefront_revamp",
+    revampId: REVAMP_ID,
+    kind: "full",
+    status: "running",
+  };
+  const POINTER = "Your storefront redesign card is above.";
+  const cards = () =>
+    screen.queryAllByRole("heading", { name: "Your store redesign" });
+
+  // The card reads its job on mount; held here, it shows what the answer said.
+  function holdRevampReads() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+  }
+
+  it("shows a redesign's card the first time, under an id a later mention can go to", () => {
+    holdRevampReads();
+    render(<MinkArtifacts artifacts={[card]} />);
+    expect(cards()).toHaveLength(1);
+    expect(document.getElementById(revampCardElementId(REVAMP_ID))).toContain(
+      cards()[0],
+    );
+    expect(screen.queryByText(POINTER)).toBeNull();
+  });
+
+  it("★★ a redesign shown above is one line with Show it, which goes to its card", () => {
+    holdRevampReads();
+    // The answer that started it, then a later answer that met it still
+    // being made (`already_started`) and carries the same card.
+    render(
+      <>
+        <MinkArtifacts artifacts={[card]} />
+        <MinkArtifacts
+          artifacts={[{ ...card, status: "queued" }]}
+          shownRevampIds={new Set([REVAMP_ID])}
+        />
+      </>,
+    );
+    expect(cards()).toHaveLength(1);
+    expect(screen.getByText(POINTER)).toBeVisible();
+    const first = document.getElementById(revampCardElementId(REVAMP_ID));
+    expect(first).not.toBeNull();
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(first!, "scrollIntoView", { value: scrollIntoView });
+    fireEvent.click(screen.getByRole("button", { name: "Show it" }));
+    expect(scrollIntoView).toHaveBeenCalledWith(
+      expect.objectContaining({ block: "start" }),
+    );
+    expect(first).toHaveFocus();
+  });
+
+  it("the same redesign twice in one answer shows one card and one line", () => {
+    holdRevampReads();
+    render(<MinkArtifacts artifacts={[card, card]} />);
+    expect(cards()).toHaveLength(1);
+    expect(screen.getAllByText(POINTER)).toHaveLength(1);
+  });
+
+  it("another redesign shown above leaves this one its own card", () => {
+    holdRevampReads();
+    render(
+      <MinkArtifacts
+        artifacts={[card]}
+        shownRevampIds={new Set(["55555555-5555-4555-8555-555555555555"])}
+      />,
+    );
+    expect(cards()).toHaveLength(1);
+    expect(screen.queryByText(POINTER)).toBeNull();
   });
 });

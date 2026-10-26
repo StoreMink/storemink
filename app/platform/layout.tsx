@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { STOREMINK_LOGO } from "@/lib/brand-assets";
 import { brandOgImageUrl } from "@/lib/seo/og-card";
-import { BRAND_DESCRIPTION, BRAND_TAGLINE } from "@/lib/seo/brand-identity";
+import {
+  BRAND_DESCRIPTION,
+  BRAND_TAGLINE,
+  BRAND_TAGLINE_DETAIL,
+} from "@/lib/seo/brand-identity";
 import { getPlanPricing } from "@/lib/plans/pricing";
 import { PLAN_IDS } from "@/lib/plans";
 import "./platform.css";
@@ -13,7 +17,8 @@ import "./platform.css";
 // depend on a network fetch while a crawler waits.
 const OG_IMAGE = brandOgImageUrl({
   title: "StoreMink",
-  subtitle: BRAND_TAGLINE,
+  // Both lines of the lockup: 66 characters, inside the route's 90 clamp.
+  subtitle: `${BRAND_TAGLINE} ${BRAND_TAGLINE_DETAIL}`,
   color: "#17130f",
   logo: STOREMINK_LOGO,
   footer: "storemink.com",
@@ -29,7 +34,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const cheapestPaid = Math.min(
     ...PLAN_IDS.map((id) => pricing[id].monthlyInr).filter((n) => n > 0),
   );
-  const DESCRIPTION = `${BRAND_DESCRIPTION} Paid plans start at ₹${cheapestPaid.toLocaleString("en-IN")}/month with 0% StoreMink transaction fees.`;
+  const DESCRIPTION = `${BRAND_TAGLINE_DETAIL} ${BRAND_DESCRIPTION} Paid plans start at ₹${cheapestPaid.toLocaleString("en-IN")}/month with 0% StoreMink transaction fees.`;
 
   return {
     title: `StoreMink: ${BRAND_TAGLINE}`,

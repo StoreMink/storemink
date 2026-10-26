@@ -7,12 +7,16 @@ import {
   GRANDFATHERED_WITNESS,
   HELP_LINT_RULES,
   INDEX_TIMESTAMP_RULE,
+  DASH_LOOKALIKE_CLEANUP_ID,
   LONG_DASH_CLEANUP_ID,
+  POS_WORDING_ID,
+  POS_WORDING_RULE,
   extractReplacements,
   lintHelpSql,
   lintIndexTimestamps,
   lintLongDashes,
   lintManifest,
+  lintPosWording,
   lintStaleQuotes,
   lintUnwitnessedEdits,
   lintVerifyContract,
@@ -76,7 +80,7 @@ describe("help content lint", () => {
       "<p>Choose <strong>Refund</strong>, enter the amount, and confirm.</p>",
       "<p>GST is charged at the rate of the product's tax class. COD orders are collected by the courier.</p>",
       "<p>Send an SMS only after your DLT templates are approved. Check the AWB, and handle NDR or RTO in Shiprocket.</p>",
-      "<p>Only the store owner can give a discount at the till. Ask your manager for a PIN.</p>",
+      "<p>Only the store owner can give a discount in POS. Ask your manager for a PIN.</p>",
       "<p>Your plan includes 2 locations. Extra locations are billed monthly.</p>",
       "<p>Pressing Refund twice cannot send the money twice.</p>",
       "<p>StoreMink support must separately enable this for your store.</p>",
@@ -513,6 +517,34 @@ describe("help content lint", () => {
       ).toEqual([]);
     });
 
+    // An en dash, or either dash as an HTML entity, renders the same dash.
+    test.each([
+      "<p>Realtime data can take 10\u201330 minutes.</p>",
+      "<p><strong>Card</strong> &mdash; renewals are debited.</p>",
+      "<p>Card &#8212; renewals.</p>",
+      "<p>Mon &ndash; Fri</p>",
+      "<p>Card &#x2014; renewals.</p>",
+    ])("flags a dash in another spelling: %s", (content) => {
+      expect(rules(lintLongDashes(mig(HELP(content))))).toEqual(["long-dash"]);
+    });
+
+    test("quoting an entity or an en dash to remove it passes: some are still live", () => {
+      const cleanup = `UPDATE public.help_articles SET body = replace(body, $old$<strong>Card</strong> &mdash; renewals$old$, $new$<strong>Card</strong>: renewals$new$), updated_at = now() WHERE slug = 'x';`;
+      expect(lintLongDashes(mig(cleanup))).toEqual([]);
+    });
+
+    test("migrations before the lookalike cleanup are held to the em dash only", () => {
+      const entity = mig(HELP("<p>Card &mdash; renewals.</p>"));
+      expect(lintLongDashes(entity, { lookalikes: false })).toEqual([]);
+      expect(
+        rules(
+          lintLongDashes(mig(HELP("<p>Save it \u2014 then publish.</p>")), {
+            lookalikes: false,
+          }),
+        ),
+      ).toEqual(["long-dash"]);
+    });
+
     test("the cleanup is in the manifest, so the rule actually switches on", async () => {
       const { failures } = await lintManifest();
       expect(failures.filter((f) => f.rule === "long-dash")).toEqual([]);
@@ -529,6 +561,118 @@ describe("help content lint", () => {
       expect(
         ids.indexOf("20261012_0186_help_no_long_dashes_after_whatsapp"),
       ).toBeGreaterThan(ids.indexOf("20261008_0176_whatsapp_notify_help"));
+      // The en dash and entity spellings switch on after 0254 removed the
+      // last of them, so 0254 itself may quote them in $old$.
+      expect(ids.indexOf(DASH_LOOKALIKE_CLEANUP_ID)).toBeGreaterThan(
+        ids.indexOf(LONG_DASH_CLEANUP_ID),
+      );
+    });
+  });
+
+  // ★ POS, never "register" or "till", once 0253 has rewritten the guides
+  // (owner's rule, 26 Oct 2026).
+  describe("pos wording", () => {
+    const mig = (sql, id = "20261027_0300_next_help") => ({
+      id,
+      file: `sql/${id}.sql`,
+      sql,
+    });
+    const flagged = (sentence) => rules(lintPosWording(mig(HELP(sentence))));
+
+    test.each([
+      "<p>Take the return at the register.</p>",
+      "<p>Invite register staff from Settings.</p>",
+      "<p>Pro includes 2 locations, 5 tills per location.</p>",
+      "<p>Every paired till must be authorised again.</p>",
+      "<p>Lock the cash register before you leave.</p>",
+      "<p>Open Point of Sale in the dashboard.</p>",
+      "<p>Use the quick counter login.</p>",
+      "<p>Website + counter, always in sync.</p>",
+      // Banned by default: the 6 of 0253's 136 removed sentences that a list
+      // of phrase shapes missed, and the old word on its own.
+      "<p>Learn how to authorise a StoreMink till.</p>",
+      "<p>It is valid only for that store, location, till, operator and cart.</p>",
+      "<p>The cashier explains the issue; there is no till override.</p>",
+      "<p>A sale rung at this same register stays open.</p>",
+      "<h2>POS opens the product page instead of my register</h2>",
+      "<p>Later claiming a till-created profile does not create a second balance.</p>",
+      "<h2>Register</h2>",
+      "<p>Select Open register to start.</p>",
+    ])("flags %s", (sentence) => {
+      expect(flagged(sentence)).toEqual(["pos-wording"]);
+    });
+
+    // The other meanings the owner kept: signing up, GST and DLT
+    // registration, a WhatsApp template or number, the registered office,
+    // "till" as until, the counter.
+    test.each([
+      "<p>Coupon emails go to registered customers.</p>",
+      "<p>Finish your DLT registration first, then register its sender header.</p>",
+      "<p>Ask an adviser to confirm the business's GST registration.</p>",
+      "<p>Our registered office is in Faridkot.</p>",
+      "<p>The email carries a registration link. Choose Complete registration.</p>",
+      "<p>The offer is valid till 31 March.</p>",
+      "<p>Pay at the counter. Counter returns are taken at the counter device.</p>",
+      "<p>StoreMink POS (point of sale) is how you sell in person.</p>",
+      '<p><a href="/help/point-of-sale/process-an-in-store-sale">Sell</a> in POS.</p>',
+      '<p>See <a href="/help/point-of-sale/configure-pos-register-settings">POS settings</a>.</p>',
+      "<p>Register the SMS wording on the DLT portal before you paste its template ID.</p>",
+      "<p>StoreMink mirrors that approved record; it does not register or change the portal template.</p>",
+      "<p>StoreMink registers one for each order update when you connect WhatsApp.</p>",
+      "<p>If Meta refused to register the number, try again.</p>",
+    ])("leaves %s alone", (sentence) => {
+      expect(flagged(sentence)).toEqual([]);
+    });
+
+    // A title is shorter than the 30 characters publishedText reads in
+    // single quotes, so the value given to a reader's field is read anyway.
+    test.each([
+      "UPDATE public.help_categories SET title = 'Point of Sale', updated_at = now() WHERE slug = 'point-of-sale';",
+      "UPDATE public.help_categories SET title = replace(title, $old$POS$old$, 'Point of Sale'), updated_at = now() WHERE slug = 'point-of-sale';",
+      "UPDATE public.help_articles SET seo_title = 'Open the till', updated_at = now() WHERE slug = 'x';",
+      "UPDATE public.help_categories SET description = 'Choose where the till goes' WHERE slug = 'x';",
+      "INSERT INTO public.help_categories (slug, title, description) VALUES ('pos', 'Point of Sale', 'Sell in person.');",
+    ])("flags a short value a statement publishes: %s", (sql) => {
+      expect(rules(lintPosWording(mig(sql)))).toEqual(["pos-wording"]);
+    });
+
+    test.each([
+      "UPDATE public.help_categories SET title = 'POS', updated_at = now() WHERE slug = 'point-of-sale' AND title = 'Point of Sale';",
+      "UPDATE public.help_categories SET title = replace(title, 'Point of Sale', 'POS') WHERE slug = 'point-of-sale';",
+      "INSERT INTO public.help_categories (slug, title, description) VALUES ('point-of-sale', 'POS', 'Sell in person.');",
+    ])("leaves the old title alone where it is only looked up: %s", (sql) => {
+      expect(lintPosWording(mig(sql))).toEqual([]);
+    });
+
+    test("text being removed is not published, so a cleanup passes", () => {
+      const cleanup = `UPDATE public.help_articles SET body = replace(body, $old$at the register$old$, $new$in POS$new$), updated_at = now() WHERE slug = 'x';`;
+      expect(lintPosWording(mig(cleanup))).toEqual([]);
+    });
+
+    test("an allow marker needs a reason, like every other rule", () => {
+      const allowed = `-- help-lint: allow pos-wording -- quotes a customer's own words\n${HELP("<p>They said: the till froze.</p>")}`;
+      expect(lintPosWording(mig(allowed))).toEqual([]);
+    });
+
+    test("★ applies only AFTER 0253: applied guides that said register are not re-litigated", async () => {
+      const { failures } = await lintManifest();
+      expect(failures.filter((f) => f.rule === "pos-wording")).toEqual([]);
+      const { loadManifest } = await import("./db-migrations-core.mjs");
+      const manifest = await loadManifest();
+      const ids = manifest.migrations.map((m) => m.id);
+      expect(ids).toContain(POS_WORDING_ID);
+      // Earlier migrations really did publish the old words; the rule would
+      // flag them, which is why it switches on only after the rename.
+      const earlier = manifest.migrations.slice(0, ids.indexOf(POS_WORDING_ID));
+      expect(earlier.some((m) => lintPosWording(m).length > 0)).toBe(true);
+      // The rename itself publishes none of them.
+      const rename = manifest.migrations[ids.indexOf(POS_WORDING_ID)];
+      expect(lintPosWording(rename)).toEqual([]);
+    });
+
+    test("the rule has a name and an actionable message", () => {
+      expect(POS_WORDING_RULE.name).toBe("pos-wording");
+      expect(POS_WORDING_RULE.message).toMatch(/Write POS/);
     });
   });
 });

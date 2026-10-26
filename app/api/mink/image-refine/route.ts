@@ -4,6 +4,7 @@ import { readMinkBoundedJson } from "@/lib/mink/bounded-json";
 import { getMinkConfig } from "@/lib/mink/config";
 import { MinkRequestError, MinkToolInputError } from "@/lib/mink/errors";
 import { refineStoreImage } from "@/lib/mink/image-refine";
+import { REFINE_STOP_TOKEN_PATTERN } from "@/lib/mink/refine-stop-types";
 import { rejectForeignMinkOrigin } from "@/lib/mink/request-origin";
 import { isImageSpecKey } from "@/lib/media/image-specs";
 import { logError, logWarn } from "@/lib/observability/logger";
@@ -37,6 +38,10 @@ const json = (body: unknown, status = 200) =>
  * ★ The browser names a photo and a slot KEY, never a size: width, height and
  *   ratio come from the server's own catalogue, and the actor, store and
  *   permissions are derived here, never sent.
+ * ★ And a random stop token (`stopToken`), which it sends to
+ *   /api/mink/image-refine/stop when the merchant leaves: the refine's own
+ *   row decides between that stop and the charge (lib/mink/refine-stop.ts).
+ *   A tab loaded before the token existed sends none; the server makes one.
  */
 export async function POST(request: Request) {
   const foreign = rejectForeignMinkOrigin(request);
@@ -53,20 +58,36 @@ export async function POST(request: Request) {
       request,
       4096,
       AbortSignal.timeout(5_000),
-    )) as { url?: unknown; spec?: unknown };
+    )) as { url?: unknown; spec?: unknown; stopToken?: unknown };
     if (typeof body.url !== "string" || body.url.length > 2048) {
       return json({ error: "Choose a photo to refine." }, 400);
     }
     if (!isImageSpecKey(body.spec)) {
       return json({ error: "This image slot can't be refined." }, 400);
     }
-    // ★ The merchant leaving, or the deadline, stops the provider call in
-    //   flight, and nothing is stored or charged after it.
+    if (
+      body.stopToken !== undefined &&
+      (typeof body.stopToken !== "string" ||
+        !REFINE_STOP_TOKEN_PATTERN.test(body.stopToken))
+    ) {
+      return json(
+        {
+          error:
+            "This refine couldn't be started. Reload the page and try again.",
+        },
+        400,
+      );
+    }
+    // ★ The deadline stops the provider call in flight, and nothing is
+    //   stored or charged after it. A merchant leaving is the stop token's
+    //   job: behind the load balancer `request.signal` never fires (it still
+    //   does locally).
     const deadlineAt = Date.now() + REFINE_DEADLINE_MS;
     const refined = await refineStoreImage({
       actor,
       sourceUrl: body.url,
       specKey: body.spec,
+      stopToken: body.stopToken,
       signal: AbortSignal.any([
         request.signal,
         AbortSignal.timeout(REFINE_DEADLINE_MS),

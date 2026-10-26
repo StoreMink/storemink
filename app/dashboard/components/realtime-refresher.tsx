@@ -18,8 +18,8 @@ const DEFAULT_POLL_MS = 20_000 * DEV_SLOWDOWN;
  * updates SPA-style (no full page reload).
  *
  * MECHANISM (GCP migration Phase 5): polls on an interval and refreshes when the
- * tab regains focus. This replaced Supabase Realtime, which has no Cloud SQL
- * equivalent — plain Postgres can't push row-change events to the browser. The
+ * tab regains focus. Plain Postgres can't push row-change events to the
+ * browser. The
  * poll runs ONLY while the tab is visible (no wasted refreshes / DB load in the
  * background), and the focus refresh makes returning to the tab feel instant.
  * (A future Postgres LISTEN/NOTIFY → SSE service could restore true push.)

@@ -10,7 +10,11 @@
 system for independent brands. It brings commerce, operations and intelligence
 together on one foundation. It competes in commerce software and retail
 technology, while the broader space is entrepreneurship infrastructure. Its
-public positioning is **"Build what's yours."** Every store gets:
+public positioning is the lockup **StoreMink / "Build What's Yours." /
+"AI-Powered Commerce, Made Simple with Mink AI."** (owner, 26 Oct 2026;
+`BRAND_TAGLINE` and `BRAND_TAGLINE_DETAIL` in `lib/seo/brand-identity.ts`,
+shown in the platform footer, the share card, the homepage hero and the meta
+description). Every store gets:
 
 - A **storefront** on its own subdomain (`{slug}.storemink.com`) or a verified custom domain.
 - A full **admin dashboard** (`/dashboard`) to manage products, orders,
@@ -60,8 +64,8 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Framework | Next.js 16 (App Router; dev uses Webpack on ≤12 GB RAM, Turbopack above) — **breaking-changes version; read `node_modules/next/dist/docs/` before writing code** (see AGENTS.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | UI        | React 19, Tailwind CSS v4, shadcn/ui (`components/ui/`), Base UI, lucide-react, sonner (toasts), recharts (charts), TipTap (rich-text editor), CodeMirror 6 (`@uiw/react-codemirror` — website-builder code editor, lazy-loaded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Backend   | Supabase (Postgres + Auth + Storage + RLS), server actions in `app/actions/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Email     | Resend (`lib/email/`), authenticated `/api/cron/send-emails` queue heartbeat (Cloud Scheduler every minute after Phase 5E rollout; `vercel.json` is non-production documentation)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Backend   | Cloud SQL for PostgreSQL via Drizzle (`lib/db/`, RLS through the `app.current_user_id` GUC), Identity Platform auth (`lib/auth/`), Cloud Storage media (`lib/storage/`), server actions in `app/actions/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Email     | Resend (`lib/email/`), authenticated `/api/cron/send-emails` queue heartbeat (Cloud Scheduler every minute after Phase 5E rollout)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | AI        | Gemini (`lib/ai/gemini.ts`: Generate with AI asks `gemini-3.5-flash-lite`, then `gemini-3.5-flash` once, 30 s per attempt; it is rate-limited per store and per admin before a credit is taken, long fields are cut, and a request that fails gives its Mink credit back through `refundAiQuota` (`lib/ai/credited-copy.ts`)); per-store brand voice (`lib/ai/brand-voice.ts` + `store_brand_profiles`) with plan-capped usage metering (`lib/ai/quota.ts`); task prompts in `brand/tasks/`. The dashboard Mink drawer has a default-on Vertex/Gemini 3.7 agent available to every store in `lib/mink/` + `app/api/mink/`: its marked runtime system prompt is `docs/mink-ai-system-prompt.md`, validated and rendered by `lib/mink/system-prompt.ts`; its storefront image-provider prompt is `docs/mink-ai-image-prompt.md`, validated and rendered by `lib/mink/image-prompt.ts`. Phase 2 streams permission/location-aware store, catalogue, sales, order, inventory and Help reads; vague multi-location catalogue-stock questions now produce permission-safe multiple-choice clarification instead of silently using a combined total, while explicit comparison returns shelf-level counts. Phase 3 adds private proposals. Phase 4A adds independently gated product description/SEO actions; 4B adds unpublished, untracked draft-product creation; 4C adds disabled/hidden coupon create/update; and 4D adds customer-group metadata create/update. Phase 5A adds an independently gated, human-approved adjustment for one exact tracked SKU at one exact active accessible location; Phase 5B adds a separate 5-credit, maximum-20-line bulk inventory proposal and atomic approval; Phase 5C adds a separate one-credit, one-order, one-forward-step online-delivery status proposal/approval for pending → processing → shipped → delivered; Phase 5D adds a separate immediate/scheduled publication approval for one exact saved blog proposal plus a bounded conflict-safe worker; Phase 5E adds independently gated coupon-email audience selection, exact non-PII preview, final confirmation and immediate/scheduled queueing; Phase 5F adds an independently gated 1–20 exact-SKU bulk price proposal, one-unit basket impact review and atomic conflict-safe execution. Phase 6A adds a durable leased workflow runtime and an idempotent, read-only weekly trading report with persisted steps/events, safe cancellation, token-free waiting and background completion notification. Phase 6B adds a bounded, read-only 7/30/90-day revenue-decline investigation across exact channels, locations and leading products; Phase 6C adds a private exact-SKU product-launch readiness package covering catalogue, media, SEO, valid pricing, scoped inventory and shipping without live changes; Phase 6D adds a bounded location-aware slow-inventory workflow and a private, margin-guarded promotion recommendation that cannot create or activate an offer; Phase 6E adds a bounded PII-minimized delayed-pickup review, staff-confirmed preparation-delay copy and duplicate-safe handoff to the existing one-time reminder sweep. Phase 7A adds permission-gated current-store Website Builder page/section/design readers and strict code validation; Phase 7B adds one immutable 5-credit exact-section proposal with an isolated desktop/mobile preview; Phase 7C adds a separate default-off, human-only five-minute exact-diff approval that transactionally saves only that reviewed replacement to the private Builder draft with idempotency, conflict checks and audit. Every live action uses exact short-lived human approval, tenant/permission/tool/version rechecks, idempotent transactional execution and append-only outcomes; Phase 4 supports checkpointed safe rollback, while inventory, order-status, blog-publication, campaign, price and Builder corrections use fresh/manual domain workflows. Gemini receives checkpoint/proposal tools but no live execute tool; its durable workflow tools queue deterministic internal read work only. Transfers, cancellation/refunds/payment/shipment changes, pickup/POS lifecycle mutations, model-side product/bulk publication (human-approved CSV imports use the ordinary importer), arbitrary customer contact/group membership, unbounded catalogue repricing and arbitrary repository coding remain unavailable; Phase 7D adds separately gated human publication checks, approval and exact rollback after a completed Phase 7C save. The complete Website Builder tools add exact navigation/header/footer, appearance, page lifecycle/SEO, section creation/removal and checked publication proposals; authenticated humans approve each change. Mink cannot access shell/repository or deploy. Operators control every gate and inspect redacted metrics at `/dashboard/mink`; the live harness is `npm run mink:eval`, and the phase-wise manual catalogue is `docs/mink-ai-test-prompts.md`. An explicit global disable or missing invite retains the canned coming-soon response. Architecture and phased rollout are tracked in `docs/mink-ai-dashboard-plan.md`. |
 | Testing   | Vitest + Testing Library + jsdom, coverage via v8 (`coverage/` is generated output — never edit)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Browsers  | **`browserslist` in package.json is the stated floor: Chrome/Edge 111, Firefox 128, Safari/iOS 16.4.** Not a preference — Tailwind v4 depends on `@property` and `color-mix()` and does not work below it, so this records a constraint a dependency already imposed rather than inventing one. Two authored CSS features sit BELOW that floor and so are always available: `:has()` (Chrome 105+/Safari 15.4+/Firefox 121+) and container queries (Chrome 105+/Safari 16+/Firefox 110+), both used by the dashboard table compaction, which is nonetheless wrapped in `@supports selector(:has(+ *)) and (container-type: inline-size)` so the dependency is stated where it is used and stays graceful if the floor is ever lowered. **⚠ There is NO cross-browser test infrastructure** — vitest runs in jsdom, which renders nothing. Chrome is the only browser this has been exercised in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -91,6 +95,90 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > the flow and saved-data limitation. `docs/mink-ai-test-prompts.md` uses
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
+
+> **★★ The builder's top bar was hidden for two months (fixed 2026-10-25):**
+> the builder is a fixed overlay mounted inside `.dash-content`, which is
+> `relative z-10` (a stacking context), and the dashboard topbar has been
+> `relative z-40` since 2026-08-23, so the topbar painted over the builder's
+> whole 56px top bar (Back, Save, undo, Publish) at every width. The owner
+> found it on production as "no publish/unpublish buttons on website
+> builder". `dashboard.css` now drops the topbar to `z-index: auto` while a
+> `.sm-builder` is mounted (`.dashboard-frame:has(.sm-builder) .dash-topbar`),
+> so the canvas covers it; the Mink panel (z-45) and dialogs (z-50) stay
+> above. Checked in headless Chrome with the real stylesheets at 1440, 1024
+> and 390px (before: the topbar was the element at the Publish button; after:
+> Publish), and guarded by `app/dashboard/builder/builder-stacking.test.ts`
+> (mutation-checked). No merchant step changes, so no Help Centre update.
+> ★★ The canvas covers the topbar's Mink AI button as well, which was the
+> only way to open Mink there, so the builder's top bar carries its own
+> (2026-10-26, release check): `.sm-builder-mink` in `builder-client.tsx`,
+> the same purple mark and `useChat().toggleChat`, first in the right-hand
+> group and shown whether or not a page is open. Guarded by
+> `app/dashboard/builder/builder-mink-button.test.tsx` (mutation-checked) and
+> re-checked offline in headless Chrome with the real stylesheets: at 1440,
+> 1024 and 390px the builder's Mink button and Publish are each the element
+> at their own centre, and from 768px up the open panel starts below the
+> builder's top bar (on a phone it covers the screen and closes itself).
+> ⚠ From 640 to 767px the builder's top bar wraps to two rows (117px) while
+> the panel still starts at 56px, so an open panel covers the right of the
+> second row, Publish included, until it is closed; the builder's Mink button
+> (first in that row) and the panel's close stay clear. The
+> Help's "purple Mink AI icon in the shared top header" still leads a
+> merchant to it, so no Help Centre update.
+
+### "Powered by StoreMink" on Free stores only (27 Oct 2026, owner)
+
+The footer's last line (`data-sm="footer-credit"`) shows StoreMink's badge
+("Powered by", the StoreMink mark, "StoreMink") only on a store whose effective
+plan keeps it (`PLAN_LIMITS.removeBadge` false, i.e. Free). Basic and Pro never
+show it: they show the store's own Credit line (Dashboard, Branding) or
+nothing. Before, any plan could replace the badge with its own line and no
+plan removed it, while the plans page sold removing it.
+★ ONE PURE RULE: `lib/store/footer-credit.ts` (import-free, client-safe)
+`footerCreditFor({ removeBadge, creditLine })` answers `{kind: "storemink"}`,
+`{kind: "custom", text}` or `{kind: "none"}`, and a line that is only the
+badge's words (`isDefaultCreditWords`: any case or spacing) counts as none, so
+a paid store cannot print StoreMink's name as its own text.
+★ THE SERVER DECIDES, THE FOOTER DRAWS: the storefront layout calls it with
+`limitsFor(effectivePlan(store)).removeBadge` (an expired timed plan reads as
+Free, a live comp as its plan; the store row carries every field
+`effectivePlan` reads) and the saved line, and passes the answer to
+`Footer.jsx`, a client component, as its `credit` prop; the footer only draws
+it through `readFooterCredit`, where anything missing or malformed draws
+nothing, never the badge. The client `BrandProvider` gets the brand with
+`creditLine: null`, so a line the plan keeps off the page never reaches the
+browser. The Website Builder preview and Theme Studio preview stores render
+through the same layout and follow the same rule (preview and demo stores are
+Free, so they keep the badge). The store row is memoized per request (§3), so
+a plan change shows on the next page load.
+★ SOFT DOWNGRADE: a Free store's saved line stays in
+`settings.brand.creditLine` and shows again on Basic or Pro; nothing deletes
+it.
+★ THE ELEMENT ALWAYS RENDERS, because the floating-controls room
+(storefront-theme.css, "Floating controls") is padded onto it: an empty line
+keeps the element, is `aria-hidden`, and gives up only its own spacing
+(`.credit.creditNone`, the last `.credit` rule in `Footer.module.css`, which
+wins over the compact variant's rule by order and loses to every
+floating-controls rule by specificity). The editorial footer's credit line now
+takes that footer's light text (it was ink on ink).
+Dashboard, Branding: the Credit line's hint and placeholder follow the plan,
+read with `getStorePlanContext` (null on a failed read, when the hint states
+both rules); on Basic or Pro a value that is only the badge's words gets a
+hint saying nothing shows, live as the merchant types, and the placeholder
+never suggests the badge.
+Tests: `lib/store/footer-credit.test.ts`;
+`app/(storefront)/components/footer/Footer.test.tsx` (render, plus a
+stylesheet guard: no credit rule paints a box, hides the line or takes it out
+of flow, and the empty rule's declarations are pinned exactly;
+mutation-checked); `app/(storefront)/layout.test.tsx` (effective plan, comps,
+both previews, the stripped client brand);
+`app/dashboard/branding/branding-form.test.tsx`;
+`app/dashboard/branding/page.test.tsx`. Checked offline in headless Chrome
+with the real stylesheets (five footer variants, three outcomes, the floating
+controls, 390 and 1280px). ⚠ `FooterConfig.showCredit` (lib/chrome/types.ts)
+is stored and normalised but read by nothing and edited by nothing. No
+migration and no Help Centre update: the published plan guide already says
+the badge is shown on Free and removed on Basic and Pro.
 
 ### Image-matting service (2026-10-17; deployed privately, called by Change background)
 
@@ -247,7 +335,12 @@ the dashboard, POS, actions, components and the Mink/media/WhatsApp server
 code and fails on a literal with a number of credits in it or a rendered
 `expectedCredits` / `chargedCredits` / `*_CREDITS` (SQL tagged templates,
 model-facing tool declarations and Plans & Billing are exempt). ⚠ The Help
-Centre still states prices; it is not part of the dashboard.
+Centre still states prices; it is not part of the dashboard. Since
+`20261026_0252` (release check, 26 Oct) the Mink guide no longer says the
+proposal card shows an expected credit weight or the amount it charged (it
+never showed either), nor that asking questions spends no credits (false
+since 0122): every request uses credits, and a reply that does not finish
+uses none.
 
 ### AI product photos, the Sidekick way: in the chat, never the editor (2026-10-18)
 
@@ -392,35 +485,302 @@ the photo pool (see "A PHOTO GOOGLE NEVER DREW GIVES ITS SHARE BACK" under
 storefront personalisation).
 ★ REFINE (`lib/mink/image-refine.ts`, `POST /api/mink/image-refine`) uses the
 same loop and the same allowance: `maxDuration` 180, `REFINE_DEADLINE_MS`
-150 s, a stop that fires when the merchant leaves (`request.signal`), the
-model's answer due 15 s before the deadline (`REFINE_POST_RESERVE_MS`), and
-`refine_stopped` (504, "Refining took too long. Nothing was charged; try
-again.") when the stop fires after the model answered: nothing is stored or
-charged, and a copy already uploaded is deleted. ★ LEAVING INSIDE THE APP IS
-LEAVING TOO (the review): `ImageUpload` keeps the Refine request's
-`AbortController` and aborts it when the editor unmounts (an in-app link, a
-dialog closing, a gallery slot removed), so the request ends the way closing
-the tab ends it; an answer that lands after that is ignored. Before, an
-in-app move kept the request open and the photo was made and charged for
-somebody who had gone. ⚠ Change background's editor (`background-editor.tsx`)
-does not abort its request on unmount yet.
+150 s, the model's answer due 15 s before the deadline
+(`REFINE_POST_RESERVE_MS`), and `refine_stopped` (504, "Refining took too
+long. Nothing was charged; try again.") when the deadline fires after the
+model answered. ★★ LEAVING MID-REFINE CHARGES NOTHING (owner, 26 Oct 2026):
+behind Google's load balancer an aborted browser fetch never reaches Cloud
+Run, so `request.signal` (still the deadline's partner, and live locally)
+never told the server the merchant had left. Now the browser gives every
+refine a random stop token (`stopToken` in the body; a tab without one gets a
+server token) and, when the page goes away, sends it to
+`POST /api/mink/image-refine/stop`. The refine's own row in
+`mink_refine_requests` (migration 0247, `lib/mink/refine-stop.ts`) decides:
+the stop sets `stop_requested_at` only while `charge_claimed_at` is null, and
+the charge transaction's FIRST statement sets `charge_claimed_at` only while
+no stop is recorded, so exactly one wins (READ COMMITTED row locks; a CHECK is
+the backstop). The refine watches its row (`lib/mink/stop-watch.ts`, shared
+with the chat run stop: about every second for 15 s, then every two), checks
+once more right before the paid call (`checkNow()`, which gives the allowance
+back), and closes the watch and waits for its read (`settled()`) before the
+charge, so a request never holds two pooled connections. A failed refine
+query is logged by its database reason (`loggableError`), never by Drizzle's
+own message, whose parameters include the stop token. A stop recorded on the
+same instance reaches it at once (live registry on `globalThis`).
+★★ NO UNPAID PICTURE IS EVER PUBLIC: the result is staged in the PRIVATE
+bucket (`refine-stage/{DB_NAME}/{store}/{refine}.webp`,
+`lib/mink/refine-stages.ts`), charged, and only then published from memory to
+`stores/{id}/refined/` (three tries). Every branch that does not charge
+deletes only the private stage. A publish that fails three times answers
+`refine_saving` (503, "Your refined photo was made and is still being saved.
+It will appear in your Media Library in a few minutes.") and keeps the stage;
+an error from the charge transaction is decided by `abandonRefineStage` (a
+conditional write that waits for that transaction to end): charged (publish,
+answer success), provably not charged (`refine_charge_failed`), or unknown
+(`refine_charge_unknown`, 503, "We couldn't confirm whether your refined photo
+was saved. Check your Media Library before you try again.", stage kept). The
+per-minute workflow heartbeat sweeps this database's stages older than five
+minutes with the same arbiter (publish when charged, delete when it never can
+be); a charged photo the merchant has since deleted from the Media Library is
+not published again, only its stage is deleted. The sweep is the heartbeat's
+last pass, and its ten-second budget covers every storage call, the listing's
+included, each cut at what is left of it. So after the charge commits the
+route's catch-all 500 ("Nothing was charged") can only answer an uncharged
+refine. New refusals: `refine_cancelled` (409, "Refining was stopped. Nothing
+was charged."), `refine_duplicate` (409), `refine_unavailable` (503, the begin
+failed, before anything is reserved), and a malformed token (400, "This refine
+couldn't be started. Reload the page and try again."). No private bucket:
+`refine_not_configured`, and the button is not offered (below).
+★★ A REFINE BELONGS TO ITS PAGE AND SLOT, NOT TO A REACT INSTANCE
+(`components/ui/image-refine-registry.ts`, driven by `ImageRefineProvider`):
+every `pagehide` sends the stop (as a beacon, `lib/http/page-exit-request.ts`;
+the fetch is aborted only when the page is discarded, and `pageshow` asks what
+became of it), a dashboard route change stops refines started on another path,
+the layout unmounting and sign-out (`topbar-profile.tsx`, before `endSession`,
+waiting up to 1.5 s only while one runs) stop them all, a dialog scope
+(`ImageRefineScope releaseOnUnmount`: category dialog, blog cover picker,
+product editor) stops its own, and a changed slot size stops the refine of
+that photo. An unmount caused only by layout (another tab, a collapsed group,
+another builder section or page) neither stops it nor shows it elsewhere: a
+box finds its refine by (scope, slot size, the photo it shows now), and
+`ImageUpload` now follows `defaultImage`. A request that dies while the page
+stays open (a rejected fetch, an edge 502 page, `refine_duplicate`, or the
+200 s watchdog) is not shown as a failure: the editor asks the stop route,
+which is also a stop, and shows the photo (`too_late` with its URL, so nobody
+is charged twice) or "The connection dropped, so refining was stopped. Nothing
+was charged; try again." (watchdog: "Refining took too long, so it was
+stopped. Nothing was charged; try again."); `recorded` shows "Refining failed.
+Check your connection and try again." (no promise: during a deploy an old
+instance may still charge) and an unknown outcome says to check the Media
+Library. A refine that finishes with no box watching shows a toast ("Your
+refined photo is ready. Go back to that image to compare it with the original,
+or find it in your Media Library."). The compare view retries a refined photo
+that is not readable yet (`?retry=1` to 5, 2 s apart; Use writes the clean
+URL). ⚠ Known gaps: exits that fire no page event (closing a tab from the iOS
+tab switcher, iOS evicting a background tab, Android discarding a frozen tab,
+a crash) still charge (owner decision D1, 26 Oct 2026); a stop that cannot
+leave the browser (offline at `pagehide`); a stop that arrives after the claim
+is charged (the photo is in the Media Library and shown if the page is still
+there); a phone app switch without `pagehide` continues, and the merchant sees
+the outcome on return. During the deploy window a new browser's refine on an
+old instance ignores the token. ⚠ Change background (`background-editor.tsx`)
+does not use this yet (owner decision D2: not this build); old public refined
+copies the earlier code left after a failed delete are not swept (D3).
 ★ THE RUN'S STOP REACHES ITS TOOLS (wave 2, 2026-10-24): `runMinkAgent`
 takes `abortSignal` and calls `registry.execute(actor, call, { signal })`,
 and the stream route hands it its run controller, which fires at the run
-deadline and when the merchant leaves. So a stopped run stops its tools'
-paid work at once, and a tool not yet started never starts. The storefront
-revamp's start and refine tools queue their job through `commit` (see the
-storefront revamp section); `orchestrator.test.ts` and the stream route's
-test check that the run deadline and a client disconnect reach a real
-registry tool's `context.signal`. ⚠ Not run against live Vertex: the request
-shapes are the verified 9E ones. Tests:
+deadline, on the merchant's Stop (see "Mink stop handshake" below) and when
+the platform reports the merchant left. ⚠ That last one (`request.signal`,
+the stream's `cancel()`) fires locally and on a direct run.app URL, never
+behind the production load balancer, which does not pass a browser's aborted
+fetch on to Cloud Run (25 Oct 2026): in production the explicit stop routes
+are the only path (`POST /api/mink/runs/[runId]/stop` for a chat run, and
+`POST /api/mink/image-refine/stop` for a Refine, above). So a stopped run
+stops its tools' paid work at once, and a tool not yet started never starts.
+The storefront revamp's start and refine tools queue their job through
+`commit` (see the storefront revamp section); `orchestrator.test.ts` and the
+stream route's test check that the run deadline and a client disconnect reach
+a real registry tool's `context.signal`. ⚠ Not run against live Vertex: the
+request shapes are the verified 9E ones. Tests:
 `media-generation`, `media-image-proposals`, `tools/registry`,
 `tools/media-tools` (the real registry, tool, proposal and generation over a
 mocked SDK), `image-refine`, `spend-limits`,
-`app/api/mink/image-refine/route` and `components/ui/image-upload` (the
-unmount stop). No merchant step changes, so no Help
-Centre update: the published Refine wording ("taken only when a refined
-photo comes back") still holds.
+`app/api/mink/image-refine/route`, `app/api/mink/image-refine/stop/route`,
+`lib/mink/refine-stop` (with the CI pins of 0247's SQL and manifest entry),
+`refine-stop-types`, `refine-stages`, `stop-watch`,
+`components/ui/image-refine-registry`, `components/ui/image-refine-context`
+(the route-change, unmount and `releaseOnUnmount` stops),
+`components/ui/image-upload` (with a Strict Mode remount),
+`app/dashboard/topbar-profile` (the stop before `endSession`),
+`app/dashboard/builder/inspector-panel` and `builder-client` (the scopes the
+sweep reads; the release effect), the product editor's gallery release,
+`lib/storage/gcs` (the private download and the listing, against a stand-in
+SDK), `lib/http/page-exit-request`, `app/dashboard/builder/image-refine-sweep`,
+and the opt-in `lib/mink/refine-stop.local.test.ts`
+(`MINK_REFINE_STOP_LOCAL_TEST=1`, local database on 5544, 0247 applied: the
+stop, the claim, the begin and the abandon raced on held transactions over a
+committed throwaway store that afterAll deletes; the CHECK, grant and cascade
+probes are rolled back). No merchant step changes (merchant-visible messages
+added, no flow change), so no Help Centre update: the published Refine
+wording ("taken only when a refined photo comes back") still holds, and is
+now also true in production when the merchant leaves.
+
+### Mink stop handshake: a Stop the server decides (2026-10-25)
+
+★★ BEHIND THE PRODUCTION LOAD BALANCER AN ABORTED BROWSER FETCH NEVER
+REACHES CLOUD RUN, so a reply the merchant stopped, or a voice barge-in
+dropped, kept going on the server: on 25 Oct one started a storefront
+redesign and stored its card after the browser had let go of it, and the
+card never showed. A Stop is now a request the run's own row decides.
+
+- `POST /api/mink/runs/[runId]/stop` (`app/api/mink/runs/[runId]/stop/route.ts`):
+  same-origin only (403), the body is never read (over 1 KB is 413), the
+  actor from `getMinkActorContext` but NOT gated on `MINK_AI_ENABLED` (a
+  run must stay stoppable while Mink is being switched off),
+  `mink-stop:{store}:{admin}` 30 a minute. It answers
+  `200 { outcome, status? }` (`MinkStopResult` in the client-safe
+  `lib/mink/run-stop-types.ts`, read strictly by `readMinkStopResult`:
+  anything unrecognised is `unknown`, never `stopped`): `stopped`, `acted`
+  or `finished` with the run's status; another admin's run, another
+  store's run, a malformed id and no run at all are one 404. On `stopped`
+  it calls `stopLiveMinkRun`. Logs `mink.stop: requested` (ids and the
+  outcome).
+- `lib/mink/run-stop.ts` (server-only). ★★ EXACTLY ONE OF {THE STOP, THE
+  RUN'S FIRST SIDE EFFECT} WINS: `requestMinkRunStop` locks the run row
+  (FOR UPDATE, scoped by id, store and `requested_by`) and sets
+  `stop_requested_at` only while the run is running and `acted_at` is
+  null; `claimMinkRunAct` sets `acted_at = coalesce(acted_at, now())` only
+  while the run is running and `stop_requested_at` is null, else throws
+  `MinkRunStoppedError` (`lib/mink/errors.ts`). Both are conditional
+  writes of one row in their own short transactions, so the re-check
+  after a lock wait (READ COMMITTED) leaves no window, and the claim never
+  holds the run row while a tool takes its own locks.
+  `watchMinkRunStop` wraps `watchForStop` (`lib/mink/stop-watch.ts`, shared
+  with Refine since 26 Oct): one primary-key read per tick in its own
+  `withService`, chained timers (1 s for 15 s, then 2 s, 15% jitter), never
+  two reads at once, a failed tick skipped and logged once
+  (`mink.stop: watch read skipped`), unref'd, and a throwing `onStop`
+  logged (`mink.stop: watch stop failed`), never an unhandled rejection.
+  `registerLiveMinkRun` / `stopLiveMinkRun`: the same-instance fast path,
+  `createLiveStopRegistry` on `globalThis[Symbol.for("storemink.mink.liveRuns")]`
+  (a module map would be one per server chunk). `closeStoppedMinkRuns`: a
+  run still running three minutes after its stop lost its instance; closed
+  through `failMinkRun` as cancelled with code `stopped`, at most 20 a
+  pass, from `/api/cron/mink-workflows` (isolated, before
+  `closeStaleMinkRuns`, `stoppedRuns` in its answer).
+- Migration `20261025_0244_mink_run_stop`: `mink_runs.stop_requested_at`
+  and `mink_runs.acted_at` (nullable timestamptz) and two NULL-safe
+  CHECKs, `mink_runs_stop_or_act_check` (never both) and
+  `mink_runs_stopped_never_succeeds_check` (a stopped run never
+  succeeds). Expand only; no grant (table-level UPDATE since 0035); no
+  index (by primary key; the sweep reads `mink_runs_running_idx`).
+- Tool effects (`lib/mink/tools/registry.ts`): `MinkTool.effect` is
+  `read`, `write` or `commit`; `effectOf` takes the explicit value, else
+  `read` for a `repeatSafe` or `restartSafe` tool, else `write` (an
+  unmarked tool claims, the safe side).
+  `execute(actor, call, { signal, claimAct })`: a `write` tool claims
+  before it starts (not when the run has already stopped: the deadline
+  then refuses to start it); a `commit`
+  tool claims inside `context.commit`, just before the writes that stay:
+  `generate_storefront_image` and the two redesign tools after their paid
+  work (a Stop during an image draw or a redesign's budget read still
+  wins, and StoreMink absorbs that draw, owner 25 Oct), and the 18
+  proposals of `draft-tools.ts` after every argument, limit and checkpoint
+  has been read (`commitProposal`; their Media copies are made inside the
+  same commit), so a proposal refused over its arguments claims nothing
+  and a later Stop still wins (26 Oct: claimed before they started, a
+  refused proposal made the Stop answer "acted" and the corrected retry
+  was drafted and charged). ⚠ A refusal inside the write
+  (`createMinkDraftProposal`'s content limits, too few credits) and the 11
+  `write` tools (the four builder proposals, the six `start_*` workflows,
+  `correct_product_csv`) still claim before their own checks: the safe
+  side, a needless claim only makes a later Stop answer "acted". A `read`
+  never claims. A refused claim, or a tool ended by the merchant's stop,
+  answers `run_stopped` ("This reply was stopped."), never `tool_failed`
+  or `tool_timeout`. The eight checkpoint reads (`get_category_for_draft`,
+  `get_coupon_for_draft`, `get_customer_group_for_draft`,
+  `get_inventory_item_for_adjustment`,
+  `get_inventory_items_for_bulk_adjustment`,
+  `get_order_for_status_transition`, `get_products_for_bulk_price_update`,
+  `inspect_product_csv`) are marked `read`. `tools/tool-effects.test.ts`
+  pins every tool's class by name, reads too (a writer marked repeat- or
+  restart-safe cannot pass as a read), and fails any `propose_`, `start_`,
+  `generate_`, `refine_` or `correct_` tool read as a read;
+  `tools/draft-tools.test.ts` pins the proposals' claim order.
+- `runMinkAgent` (`orchestrator.ts`) passes `claimAct` to every tool
+  call, ends the run with `MinkRunStoppedError` when a batch holds a
+  `run_stopped` result (after the results are recorded, before the model
+  is asked again), and sends the model nothing once the signal's reason
+  is a `MinkRunStoppedError` (a deadline ends as before).
+- The stream route starts the watcher and the live registration after
+  its `status` event (which carries the `runId` the browser stops by) and
+  hands the agent one shared claim per run (a parallel batch asks once;
+  once made the watcher closes, because a stop can no longer win; a
+  failed claim is asked again by the next tool). A claim the stop won
+  aborts the run controller at once (`via: claim`), so a tool beside it in
+  the same batch (an image about to be drawn) never starts its paid work,
+  while a database error stops nothing; the watcher and the live map abort
+  it with a `MinkRunStoppedError` too. A stopped run (`via` watch, local,
+  claim or complete) is recorded by `failMinkRun` as cancelled with code
+  `stopped`, is never settled or charged, stores no answer and sends the
+  `stopped` SSE event (`{ runId }`) instead of `error`; it logs
+  `mink.run: stopped`. `completeMinkRun` asks `stop_requested_at is null`
+  in the write that stores the answer and throws `MinkRunStoppedError`
+  when a stop came first, so a run that never acted can be stopped until
+  its answer is stored.
+- The per-turn redesign reference (`renderRevampReference`) names no id
+  and no job status: "- Redesign 1 (newest): being made; applied no;
+  published no", with the redesign tools' own words (`revampStateWord`
+  and `REVAMP_STATE_WORDS` in `lib/mink/revamp/contract.ts`, one map for
+  both: being made, ready to review, replaced by a newer version, did not
+  finish, stopped, and stopping while a Stop is under way).
+- Rollout overlap: an old revision never claims, so a new browser's Stop
+  can win against an old run that already acted; that run's
+  `completeMinkRun` then fails the second CHECK and closes through its
+  failure record, which keeps a redesign card (B4). One deploy window.
+
+★★ STOP ASKS THE SERVER BEFORE IT LETS GO (browser half, 25 Oct 2026).
+`useMinkAi().cancel()` (`app/dashboard/mink-ai.ts`) no longer aborts the
+stream: it returns `Promise<MinkStopResult>` (`lib/mink/run-stop-types.ts`)
+and keeps reading the stream while it asks. Each reply has a `LiveRun` (its
+controller, whether the stream request went, the run id from the stream's
+first `status` event, and one shared stop, so Stop pressed twice, or the
+voice loop and the button together, ask once). A reply still reading its
+attachments never reached the server and stops locally (`stopped`; the
+message goes back to the box). Otherwise the status line reads "Stopping…"
+(`stopStatus`, which outranks the stream's own status), the run id is
+awaited for up to `MINK_STOP_RUN_ID_WAIT_MS` (10 s), and
+`POST /api/mink/runs/{runId}/stop` is sent (`{}`, same-origin, `no-store`,
+`MINK_STOP_REQUEST_TIMEOUT_MS` 8 s per request, one retry on a network
+error; 404 is `finished`, anything else unreadable is `unknown`;
+`readMinkStopResult`). Only `stopped` aborts the stream; its run id goes
+into `stoppedRuns`, so B4's kept-card fetch never runs for it. `acted`,
+`finished` and `unknown` read the reply to its end: `stopRefused` hides
+Stop (the composer shows a disabled Send in its place, the voice bar shows
+none) and the status line says "Mink has already started this, so it will
+finish." (`acted`) or "Finishing…" (owner's words). ★ An `unknown` answer
+(no answer in 8 s, a second network failure, a server error, no run id in
+10 s) is not the server's last word: the status line and the hidden Stop
+show at once, but `cancel()` resolves only when the reply ends, with how it
+ended (`LiveRun.ended`): `stopped` when the stream sent `stopped` (the
+server recorded the stop after the browser gave up), `finished` when the
+answer came, else `unknown`. So the voice loop still asks a late-stopped
+question again, joined and in its own place; it holds the merchant's words
+until the reply ends in any case. The stream's `stopped` event (the
+server's own word) ends the reply like an abort, with no error and no
+Retry, and turns a lost or failed stop answer into `stopped`. ★ Leaving a
+chat (New chat, `reset()`, closing the tab, unmounting) only stops reading
+and never asks the server to stop (owner's decision): the reply finishes
+and lands in that chat's History. A stopped question stays in its chat:
+History shows a stopped run's own message (the one visibility rule, see
+"Mink chat history"), so a chat whose only question was stopped no longer
+opens empty, and one asked again joined to more words shows only as the
+joined question. Voice barge-in: see "LOUDNESS HOLDS MINK'S VOICE; THE
+TRANSCRIPT DECIDES" under the second Sidekick-parity pass.
+
+Tests: `run-stop` (the predicates compiled from the real queries, the
+watcher on fake timers, the live map across module copies,
+`completeMinkRun`'s refusal, the sweep), `stop-watch`, `run-stop-types`,
+`tools/registry`, `tools/tool-effects`, `tools/draft-tools`, `orchestrator`,
+the stream, stop and cron routes, `app/dashboard/mink-ai.test.ts` ("Stop
+asks the server before it lets go"), `mink-voice-mode.test.ts` ("a barge-in
+waits for the server's word on the stop"), `chat-context.test.tsx`,
+`dashboard-chat.test.ts`, `mink-voice-view.test.tsx`, and the opt-in
+`run-stop.local` (`MINK_RUN_STOP_LOCAL_TEST=1` on storemink_local: the
+CHECKs in a rolled-back transaction, then 200 stop-versus-claim pairs on
+committed rows of a throwaway store deleted afterwards, half queued behind
+a held row lock, exactly one winner every time as each side saw it and as
+the row holds it; mutation-checked by dropping each predicate and the
+lock). ⚠ Each watcher tick holds a pool connection for a few
+milliseconds; with production's pool of five per instance, watch the
+`mink.stop: watch read skipped` rate after deploy. Help:
+`20261026_0246_mink_stop_help` rewrites the Mink guide's two Stop sentences
+in place (Stop stops a reply that has not started anything, and nothing is
+created; a reply that has already started something finishes with its
+card; only a reply that fails, no longer one that is stopped, discards an
+unseen proposal), and `20261026_0251` adds that the stopped question stays
+in the conversation and is answered only if asked again. The redesign and
+Talk with Mink sentences still hold.
 
 ### Mink Sidekick parity: streaming, navigation, skills, charts, memories, categories (2026-10-17)
 
@@ -595,7 +955,96 @@ the merchant sees, not a verified fact: resolve "this" and "these" with it,
 verify with a tool before any figure or proposal. Password, hidden and file
 inputs, and any field whose label names a key, token, secret, OTP or PIN,
 never leave the page; the Mink panel itself is excluded from the read.
-Nothing is persisted (mink_runs keeps only `current_path`).
+Nothing is persisted (mink_runs keeps only `current_path`, whose query string
+is masked like the screen, below). ⚠ Paths stored before that masking
+shipped (production before the 26 Oct release) keep their query strings as
+they were, and the operator console's Mink page shows them; no migration
+rewrites them. They go when their chat is deleted, or reduced (the retire
+sets `current_path` to null), or after 90 days without use.
+★★ CONTACT DETAILS NEVER LEAVE THE PAGE EITHER (owner's decision, 25 Oct
+2026). `lib/mink/screen-redaction.ts` (pure, client-safe, no imports) hides
+email addresses ("[email hidden]"), phone numbers ("[phone hidden]") and
+postal addresses ("[address hidden]") in every string the screen carries:
+title, headings, address-bar filters (keys and values; a search box can hold
+an email), the dialog title, the notice, every row and every field label and
+value. Names, order references, SKUs, prices, dates and statuses stay.
+`readMinkScreen` masks in the browser (`redactScreenText`,
+`redactScreenField`) and `normalizeMinkScreenContext` masks again on the
+server, because a tab opened before this shipped, or a hand-written request,
+sends the screen unmasked. ★ ONE PASS HIDES WHAT A SECOND WOULD (masking is
+idempotent), so the server's pass changes nothing the browser's made:
+numbers joined to each other ("9876543210/9123456789", or by ":", "+", "-",
+"."), emails joined by "+" and a PIN beside a phone all go in the first
+pass; `hidePhones` judges each number as if the phone it hid last already
+read as its placeholder. ⚠ Never make masking loop until nothing changes:
+the server masks before it bounds, a request may carry 64 KB, and such a
+loop took about 18 seconds on a 66 KB chain (a test guards the time).
+★ MASK, THEN CUT: every string is masked whole before it is bounded (each
+cell before its 60-character cut), on both ends, because a cut through an
+email or a phone leaves a fragment no rule recognises. The path is masked too
+(`redactScreenPath`, in `minkBrowserContext()` and `normalizeMinkPageContext`):
+it reaches the system prompt (`current_dashboard_page`) and the screen
+reference with its query string; values are decoded before they are judged,
+and a path with nothing to hide comes back unchanged. ★ The browser reads
+text with a space at every element boundary (`textOf`), not `textContent`,
+which glued a cell's parts ("PSPriya Sharmapriya@example.com", "Rahul
+Singh9876543210"). Rules, each documented in the module: an email is a
+local part, "@" and a domain with a letter (top-level domain optional, so a
+cut-short address is still hidden), or a local part with nothing after its
+"@" at the end of a value (a search still being typed). A phone is a run of
+digit groups joined by spaces, dots, dashes (spaced or not, including the
+dash characters a word processor types) or brackets: 10 to 15 digits with
+"+" or with a country code joined by a dash ("977-9812345678",
+"0091-9876543210"), 10 to 12 without, judged group by group so a quantity or
+year beside it stays ("Qty 120 [phone hidden]"), and with no group of it
+left behind ("Receipt 123456 98765 43210" becomes "Receipt [phone
+hidden]"); digits typed in an Indian script, Arabic-Indic or full width
+count. A run joined to a letter, or attached by a hyphen or slash to a code,
+is never a phone (ORD..., SKU..., waybills, UUIDs, "DEL-..." receipts)
+unless the word says one follows (Mob, Phone, Tel, Cell, Contact, Call,
+WhatsApp, WA: "Mob-9876543210"), nor is an amount (after ₹, or with a 1 or 2
+digit fraction), a date or a time. ★ A BARE RUN OF 10 TO 12 DIGITS IS HIDDEN
+AS A PHONE, deliberately: on Customers and Orders it nearly always is one; an
+all-digit waybill or barcode of that length is hidden too, and 13 digits or
+longer is kept. A form field whose label reads as an address (address,
+street, line 1/2, landmark, locality, pincode, postal code, postcode, zip,
+flat, house, building, area; not an email, web or link address) has its whole
+value replaced, unless the value is a web address (a path or anchor is one
+word, so "#12, 3rd Cross" is an address) or a checkbox's on/off; "City" and
+"State" alone stay. In free text a segment (split where readMinkScreen joins
+cells, " · ") is hidden whole when it holds a 6-digit PIN next to a word in
+any script ("Bengaluru 560038", "PIN: 560038"), looked for before phones are
+hidden (a phone written in groups straight after the PIN used to take the PIN
+with it and leave the street); six digits beside a count, price or reference
+word ("Order 100234", "Invoice No. 100045", "Total 125000", "123456 views")
+are not a PIN. Without a PIN, a line is an address when it has a comma and
+either an address word next to its number ("12 MG Road", "Flat 4B", "Sector
+18", "H.No. 12", "Tower B", "3rd Cross", "12, Rajajinagar") or, with a
+number anywhere, a word only addresses use (nagar, colony, enclave, vihar,
+marg, chowk, apartments, mohalla) or a road named at the end of a part.
+Product names whose number sits elsewhere stay ("Street Food Masala, 100 g",
+"Floor Mat, Pack of 2", "perfect for street wear, in 3 colours"), and so do
+city lines ("Bengaluru, Karnataka"). Text over 160 characters (a note, a
+message) is judged sentence by sentence and only the address sentence goes
+("[address hidden]. Please call first. ..."); a dot after a capitalised word
+of up to four letters ("H.No.", "MG Rd.") or before a number does not end a
+sentence. ⚠ Patterns, not a guarantee. Not hidden: a phone typed straight
+after any other word ("Number9876543210"), "00" with no separator
+("00919876543210"), a PIN joined by a hyphen ("Bengaluru-560038"), and an
+address line with neither PIN nor number ("Near the temple, Station Road")
+or without a comma. Hidden by mistake, costing Mink a value but never
+privacy: six digits beside any other word ("Batch 100234"), a place named
+with its number ("Sector 18, Noida", which in the POS orders cell takes the
+cashier's name with it), and an all-digit code of 10 to 12 digits. ⚠ Notes
+on screen are still read (only their contact details are masked), although
+the Mink guide's privacy line also names notes, which holds for tool results
+(order reads omit them): owner's call whether screen notes go too. No prompt
+or prompt version changed. No Help Centre update: the Mink guide already says
+email addresses, phone numbers and addresses are not sent to the dashboard
+agent, and this makes it true for screen reading. Tests: `screen-redaction`
+(table-driven, a one-pass check over every hidden case, a 66 KB timing
+guard), `mink-screen` (jsdom, browser then server), `page-context`,
+`mink-ai`.
 ★ SPOTLIGHT ("show me where"). `lib/mink/guide-targets.ts` is a closed
 registry of dashboard controls (New product, New offer, New category, New
 blog, Invite user, Go live, Edit dashboard, Upload, Connect Razorpay, Use
@@ -743,13 +1192,28 @@ editors (`offers/offer-form.tsx`, `categories/categories-management-view`
   speaker) resumes it where it paused, however many times. Before this, a
   sound loud enough to pass the barge-in gate stopped the rest of the
   answer's audio before any transcript existed. Speech while Mink is
-  THINKING about a plain spoken question cancels that reply (not charged)
-  and carries its words into the next transcript, which is sent with
-  `replaceUnanswered` so the combined question replaces the unanswered half
-  in the thread (only answered turns are in the model's history); a burst
-  that turns out to hold no words asks the cancelled question again. A typed
-  question, or one that went out with a draft or attachments, is never
-  cancelled by speech; its answer's voice is held like any other, and words
+  THINKING about a plain spoken question asks the server to stop that reply
+  (`useMinkAi().cancel()`, see "STOP ASKS THE SERVER BEFORE IT LETS GO"
+  under "Mink stop handshake") and holds its voice until the answer comes;
+  a transcript that lands meanwhile is parked, never sent (`deciding`).
+  ★★ Only `stopped` (the stop won before the run did anything, so nothing
+  was done or charged) carries the question's words into the next
+  transcript, sent with `replaceUnanswered` so the combined question
+  replaces the unanswered half in the thread (only answered turns are in
+  the model's history; after a reload or from History the stopped half
+  stays hidden too, `askedAgainLater` in "Mink chat history"); a burst that
+  holds no words then asks the stopped question again. Any other answer
+  (`acted`, `finished`, `unknown`, a failed or unreadable one) keeps the
+  reply (`unknown` comes only once the reply has ended): its answer and
+  cards land, words said over its held voice end that voice, a burst with
+  no words gives it back, and the new words go after the reply as an
+  ordinary turn, with "Mink is finishing what it already started. Your
+  words go next." on the bar once they have waited
+  `MINK_VOICE_WAIT_NOTICE_MS` (3 s). A late answer to an earlier stop is
+  ignored (`stopToken`). (25 Oct 2026: a barge-in dropped a reply that had
+  already started a storefront redesign, and its card never showed.) A
+  typed question, or one that went out with a draft or attachments, is
+  never stopped by speech; its answer's voice is held like any other, and words
   spoken over it end that voice and wait for the reply. A transcript that lands
   while a reply is still closing is parked and sent once `isReplying` falls;
   `send` returns whether it took the message (a promise when it went through
@@ -909,7 +1373,9 @@ Media Library (needs Media view; file names can name suppliers) and Product
 images (Products view). Already-added photos are shown and not pickable. The
 picker only returns URLs: the product save's `firstForeignStoreImageUrl` stays
 the boundary. Mount it only while open. The primary `ImageUpload` is keyed by
-the URL, because it reads its preview once on mount.
+the URL; since 26 Oct 2026 the box also follows its `defaultImage` (a real
+change of photo resets it, the echo of its own upload does not), so the key
+is harmless rather than needed.
 Tests: `media-actions.test.ts`, `product-actions.test.ts` (the sweep guard),
 `media-library-picker.test.tsx`, `product-editor-form.test.tsx`, the composer
 test (the purpose label), and the opt-in rollback-only
@@ -1127,7 +1593,9 @@ what a TEAM needs once more than one person works the inbox. Migration
 GIN index over message bodies; `0210` edits the inbox guide in place.
 `lib/whatsapp/inbox-workspace.ts` is the pure vocabulary (label and saved-
 reply validators the dialog and the action both run, `fillCannedReply`,
-`inboxSearchQuery`, `splitSnippet`); `inbox-team.ts` the writes; `inbox-read.ts`
+`inboxSearchQuery`, and `splitSnippet`, re-exported from
+`lib/search/prefix-search.ts` since 26 Oct 2026); `inbox-team.ts` the writes;
+`inbox-read.ts`
 gained the lists, the filters and the search; `inbox-gate.ts` is the view/
 manage/send gate the actions and the media route share, so a photo and a text
 cannot differ about who may send or how fast.
@@ -2167,29 +2635,64 @@ each section and photo theme, mink or merchant (in doubt, the merchant's):
 the first two are replaced, a merchant's is kept by id, and the policy pages
 (`REVAMP_SKIPPED_SLUGS`), custom code and the installed theme are never
 written.
-★ THE CHAT. Three drafting tools (`lib/mink/tools/storefront-revamp-tools.ts`,
-results sent to the model without the card): `get_storefront_revamp_context`
-(Builder view), `start_storefront_revamp` and `refine_storefront_revamp`
-(Builder manage; photos named by the parent plan's ids or "opening", an
-unknown id refused with the valid ones); `request.ts` (pure) names every
-argument issue at once. Refusals, in the order a merchant can act: no theme
-yet, Categories or Products manage missing for what was asked, a photo the
-store does not own (never fetched), the product cap, a ready unapplied card
-in the chat (unless `replace_earlier`), ten refinements of one revamp, six
-starts a day (given back when no job comes of it, and once by a redesign that
-fails, to the window that counted it: `revampStartLimit` in `jobs.ts`,
-robustness audit B5), a paid budget below `revampFixedCreditCeiling`, a job
-already active (or an earlier one still stopping: "try again in a minute").
-The `revamp` group
-(`lib/mink/tool-routing.ts`) comes on wording that asks to redesign the
-store, for `INTERVIEW_TURNS` (3) merchant messages after one that did, and,
-while the chat holds a ready or building redesign, for a follow-up, a pages
-or photos message or a catalogue change; a ready card brings refine, not
-start, and one being built neither. Each turn of such a chat carries a
-flags-only reference to its revamps (status, applied, published, undone),
-never their text. Prompt
-versions `read-beta-v38` / `draft-action-beta-v61`, registries
-`read-beta-v28` / `draft-beta-v47`.
+★ THE CHAT. Three drafting tools (`lib/mink/tools/storefront-revamp-tools.ts`):
+`get_storefront_revamp_context` (Builder view; the chat's redesigns with a
+plain `state` ("being made", "stopping", "ready to review", "replaced by a
+newer version", "did not finish", "stopped") and yes/no `applied`,
+`published`, `undone`, never the job's status or a timestamp; the id stays
+only because refine takes one), `start_storefront_revamp` and
+`refine_storefront_revamp` (Builder manage, `effect: "commit"`: the run's act
+claim is made inside `commit` after the budget read, just before the job
+insert, so a Stop recorded first leaves no job, gives the day's start back
+and answers `run_stopped`; photos named by the parent plan's ids or
+"opening", an unknown id refused with the valid ones); `request.ts` (pure)
+names every argument issue at once. ★★ The model reads only `status`
+(`started`, `already_started`, `already_ready`, `not_started`), `cardShown`,
+an `instruction` and a refusal's `reason`: never the card, a credit figure or
+an id (`withoutArtifact` also drops `revampId` and `existingRevampId`).
+★★ THE SAFETY NET (25 Oct 2026: a voice barge-in left a run that had
+started a redesign the screen never showed, and the follow-up's start was
+refused with no card). Before its arguments are read, a start or refinement
+in a chat whose redesign (this admin's, `listConversationRevamps`, which also
+reads `cancelRequested`) is still being made answers `already_started` with
+that card (the "still stopping" refusal when its Stop was asked), and a start
+in a chat with a ready card nobody applied or undid answers `already_ready`
+with it (unless `replace_earlier`). The store's one active job is read
+before anything is claimed (`findActiveRevampId`, exported from `jobs.ts`,
+then `answerForStoreActive`), so a start refused for it uses no day's start
+and makes no act claim (26 Oct: it claimed both, and a Stop of that refusal
+answered "acted"); the insert's own refusal still decides a true race (two
+runs of one chat). Either way: one asked to stop, anyone's, is "still
+stopping"; this admin's in this chat answers with its card; any other is
+refused with no card ("A redesign is already being made for this store in
+another chat, yours or a teammate's. A new one can start once that one is
+finished."), since the card's GET answers only its requester. Refusals
+(`not_started`, `cardShown: false`, told not to say a card is shown), in the
+order a merchant can act: no theme yet, Categories or Products manage
+missing for what was asked, the product cap, no finished redesign to
+refine, ten refinements of one revamp, six starts a day (given back when no
+job comes of it, and once by a redesign that fails, to the window that
+counted it: `revampStartLimit` in `jobs.ts`, robustness audit B5), a paid
+budget below `revampFixedCreditCeiling`, a job active in another chat (or an
+earlier one still stopping: "try again in a minute"). A photo the store does
+not own is an input error the model must fix (`invalid_tool_input`); it is
+never fetched. The `revamp` group (`lib/mink/tool-routing.ts`) comes on
+wording that asks to redesign the store, for `INTERVIEW_TURNS` (3) merchant
+messages after one that did, and, while the chat holds a ready or building
+redesign, for a follow-up, a pages or photos message or a catalogue change;
+a ready card brings refine, not start, and one being built neither (only an
+"all" route, such as a message in a script the router cannot read, declares
+start beside a building redesign, and the safety net answers it). Each turn
+of such a chat carries a flags-only reference to its revamps (plain state,
+applied, published, undone, no id), never their text. The prompt's revamp
+rule follows the tool's `status` and `cardShown`, and its answer-style rule
+bans internal ids (unless the merchant asks for one) and internal job
+statuses from a tool result; the older separate id rule was folded into it
+(26 Oct). Prompt versions `read-beta-v39` / `draft-action-beta-v62`,
+registries `read-beta-v28` / `draft-beta-v48` (`read-beta-v29` /
+`draft-beta-v49` since the POS wording, 26 Oct 2026: `get_sales_summary`'s
+channel description says "All sales, online store sales, or POS sales.";
+prompt versions unchanged).
 ★★ THE JOB is a `mink_revamps` row (`jobs.ts`, service-only).
 `createRevampJob` takes a per-store advisory lock and decides ONE ACTIVE JOB
 PER STORE (`mink_revamps_one_active_idx` is the backstop) and THE FREE FIRST
@@ -2197,8 +2700,12 @@ REVAMP: free while no other free full revamp is queued, running, ready or
 superseded, so a failed or stopped one gives it back
 (`FREE_HOLDING_STATUSES`; `mink_revamps_free_check` lets only a full revamp
 be free). ★ `mink_revamps_ready_check` (a ready revamp has its draft) is why
-History refuses to delete a chat holding a live revamp
-(`MINK_LIVE_REVAMP_STATUSES`, 409 `conversation_has_redesign`).
+retiring a chat turns a ready card it strips into `superseded` (its draft
+goes with the chat); since 26 Oct 2026 History refuses to delete a chat
+only while its redesign, or a refinement of one, is queued or running
+(`buildingRevampOfConversation`, 409 `conversation_has_redesign`; see "Mink
+chat history"). `MINK_LIVE_REVAMP_STATUSES` (queued, running, ready) is
+what the failure record's kept card reads (B4).
 `mink_revamp_images` holds one row per stored photo, unique per (revamp,
 role, slot), so a resumed run reuses every paid photo.
 ★★ THE RUNNER (`runner.ts`) runs in `/api/internal/mink/revamps/run`
@@ -2226,8 +2733,26 @@ to the window that counted it (`claimedAt` = the job's creation time); a job
 someone asked to stop keeps its start, as a cancelled one does. Authority is
 rebuilt at every claim (`actor.ts`). At 18 minutes it drains (no new paid
 call; a photo draw, or a check of a shoot photo, still waiting for its turn
-stops waiting, the shared capacity's `admission` signal) and hands over to the next invocation once
-the calls in flight end, at most 90 s later; a transient failure parks the lease; a closed
+stops waiting, the shared capacity's `admission` signal) and hands over to
+the next invocation once the calls in flight end, at most 90 s later
+(`REVAMP_LIMITS.deadlineGraceMs`). ★★ No IMAGE call the hard stop could
+cut off is admitted (D2, 26 Oct 2026): a shoot photo, a photo check or a
+studio photo is admitted only while its per-try clock plus
+`REVAMP_LIMITS.hardStopMarginMs` (5 s) fits before the hard stop, so checks
+and studio photos (75 s) are admitted until the drain and a shoot photo
+(180 s) until 95 s before it (`revampAdmissionDrain` in photos.ts; the shoot
+then hands over as at the drain, once its draws in flight end and any
+parked photo's checks finish, which can take until the drain). ⚠ The
+planner and its compile repairs are not held to it yet: admitted until the
+drain on a 6 minute cap (`REVAMP_PLANNER_TIMEOUT_MS`), one admitted late can
+still be cut off by the hard stop. ★★ A lease renewal that THROWS is
+retried at the next tick (D1, Theme Studio's P2 rule): a watchdog from the
+start of the last successful renewal (or from just before the claim) stops
+the run 5 s before the lease could lapse (`REVAMP_LEASE_MARGIN_MS`), parked
+and counted as before, and a renewal answering false still stops it at
+once; its log carries a closed code, never the SQL, and a renewal that
+answers after the run ended arms nothing. A transient failure parks the
+lease; a closed
 `step-error.ts` code fails the job (every closed code, when it is used and
 the sentence the card shows for it: `docs/mink-storefront-revamp.md`
 section 4.3). Paid calls are counted as they return
@@ -2546,7 +3071,28 @@ adopt fails is it stored again with the marker. ★ The phone crop is cut from
 the picture as drawn, sharper than a cut of the stored copy (which only a
 resumed run uses). `photo-hold.ts` keeps the allowance a step
 claimed (120 a store a day, 400 a platform hour) so a dead runner's undrawn
-photos are given back. `image-store.ts` stores each photo once, ★ hidden
+photos are given back.
+★★ A draw the run's own stop cut off after it was sent keeps its photo
+spent and counts as an image in `usage` (D3, robustness audit B3), as
+products.ts counts the same case: the redesign's photo client asks
+`image-vertex.ts` to mark such a call (`markStoppedInFlight`,
+`timing.stoppedInFlight`), and on a stop the step waits for the draws still
+in flight (`drawsInFlight`; no real wait, the client ends each at the stop)
+before it counts what was drawn. This holds while the stopping run still
+owns the job (Stop, the hard stop, the lease watchdog) and its clear of the
+claim lands: after a lost lease, a crash or a failed clear the next run
+settles the claim from the stored photos, so a cut-off draw is given back,
+and after a lost lease or a crash its usage is not recorded. A draw never
+sent, refused with 429 on every try, or refused by the model on every
+attempt gives its photo back. ⚠ In StoreMink's own cost record an
+unanswered draw (cut off or timed out) is priced at 0, where products.ts
+prices every draw at its flat estimate
+(`PRODUCT_PHOTO_ESTIMATED_COST_MICRO_USD`), and a draw whose last try got a
+429 that the stop or a drain then kept from being retried loses that 429
+from `usage.calls.rateLimited` (`drawCallCounts`; products.ts counts each
+429 as it comes). The merchant is never charged for a cut-off draw: the
+card charges only photographs a page shows.
+`image-store.ts` stores each photo once, ★ hidden
 (`mink_prepared`) until Apply reveals the ones its card shows, since a
 stopped revamp charges nothing. `products.ts` makes a studio photo of each
 new product from the merchant's own, reviewed against it (theirs kept when
@@ -2564,6 +3110,11 @@ photos' clocks and route (the US first, then global, TS-3D): 75 s per try,
 re-asks after about 15, 30 and 60 s and a four-minute budget per invocation
 (`PRODUCT_PHOTO_CHECK_BUDGET_MS`), after which the merchant's own photo is
 kept and the card says so.
+★★ A try refused with 429, or never sent, stays unbilled with its photo
+given back even when the run's stop lands while its 429 is being shared
+(`defaultGenerate` keeps how the try itself ended, D3); a try the stop cut
+off on the wire stays spent and counted while the run still owns the job
+(the photos' lost-lease caveat above applies).
 ★★ No check is started once the deadline drain has begun: the studio
 reviewer's capacity at both locations is drain-aware
 (`revampDrainingCapacity`; a turn still waiting is never sent and comes back
@@ -2590,6 +3141,17 @@ progress with Stop, then lists what goes live at Apply before **Apply to
 Website Builder draft**, **Publish to your store** and **Undo**.
 `app/dashboard/mink-revamp-preview.tsx` is a modal before/after at 390 and
 1280 px on the storefront's own renderer (`?preview=1&review=1`).
+★ ONE CARD PER REDESIGN IN A THREAD (25 Oct 2026). One redesign can reach a
+thread twice (the answer that started it, and a later start or refine
+answered `already_started` or `already_ready` with the same card; History
+shows both). `revampIdsShownBefore` (`dashboard-chat.tsx`) gives each
+message the redesigns an earlier message already shows, and
+`MinkArtifacts` renders a repeat (also one inside a single answer) as one
+line, "Your storefront redesign card is above.", with **Show it**, which
+scrolls to the first card and focuses it (its wrapper's id is
+`revamp-card-<revampId>`, `revampCardElementId`; only one chat surface
+renders at a time, so the id is unique). So a thread has one set of Apply,
+Publish and Undo buttons and one status poll per redesign.
 ★★ APPLY is `/api/mink/drafts/[draftId]/personalization-action` →
 `storefront-personalization-actions.ts` → `apply-v2.ts` for a version 2
 plan, rechecking Categories, Products and Branding manage for their parts.
@@ -2625,18 +3187,22 @@ under a plain line ("Your storefront redesign is being made. You can follow
 it here." or "Your storefront redesign is ready. You can review it here."),
 marked `interrupted: true` (`MINK_KEPT_ANSWER_MARKER`) and dated just after
 the run's own messages. History (`getMinkConversation`) shows a failed or
-stopped run only when it carries that marker. The model's replay stays
+stopped run's answer only when it carries that marker (and, since 26 Oct, a
+stopped run's own question: see "Mink chat history"). The model's replay stays
 succeeded-only; it learns of the redesign from the flags-only reference.
 The stream route sends the saved card as a `message` before its `error`. A
 run that succeeded is refused (`Mink failed-run record scope rejected`).
 The merchant stops a redesign from its card, which gives the free one back
-as before. ★ Stop pressed in the same tab (or a reply cut off) means the tab
-stopped reading before the card was sent, so `useMinkAi` (`awaitKeptCard`),
+as before. ★ A reply cut off by the network (or one whose Stop the server
+refused and which then broke) means the tab stopped reading before the card
+was sent, so `useMinkAi` (`awaitKeptCard`),
 when that reply called the start or refine tool and no answer came, asks for
 the chat again after 1.5, 4, 10, 30 and 70 s (`KEPT_CARD_CHECK_DELAYS_MS`; the
 record can wait a minute for a tool's write) until a card saved under that
 run is there, and adds it after the question it answers, once; the checks
-end when the chat is left. Opening the ready notification loads the chat
+end when the chat is left. Never after a Stop the server confirmed
+(`stoppedRuns`): that stop won before the run's first side effect, so no
+redesign exists to keep. Opening the ready notification loads the chat
 again even when it is the one open (B20 below).
 ★★ A STOPPED RUN NEVER STARTS ONE (B6). The start and refine tools take the
 registry's context. `queueRevamp` refuses before claiming the day's start
@@ -2656,10 +3222,13 @@ first. ★ The sweep asks every store at once, so it reads the partial index
 migration `20261024_0240`), in its own order, rather than every run ever
 recorded; the one-chat close keeps `mink_runs_status_idx`. It runs from the
 per-minute `/api/cron/mink-workflows` (isolated,
-`staleRuns` in its answer) and from the History delete of that one chat
+`staleRuns` in its answer; `closeStoppedMinkRuns` runs just before it, so
+a run both stopped and dead is recorded as the stop it was) and from the
+History delete of that one chat
 (dev has no scheduler). So a chat a dead run blocked can be deleted again,
-or is refused for its live redesign. ⚠ Drizzle writes a select list's
-columns without their table, so a correlated subquery in a select list must
+or is refused while its redesign is still being made. ⚠ Drizzle writes a
+select list's columns without their table, so a correlated subquery in a
+select list must
 name the outer table by hand (`${table}.column`) or be a separate read; the
 first card check compared `mink_revamps` with itself. Tests:
 `persistence-revamp`, `conversation-history`, `tools/storefront-revamp-tools`,
@@ -2761,7 +3330,7 @@ render). ★ THE RELEASE FOLLOW-UPS (2026-10-24, working tree) closed the rest
 of what was open here, each above. Migration `20261024_0240` grants
 `app_service` the holder run's DELETE on `mink_runs` and UPDATE of `run_id`
 alone on `mink_draft_credit_usage`; until then only
-`drizzle/manual/0000_compat_setup.sql`'s default privileges gave them, and a
+the default privileges set when the database was first created gave them, and a
 refusal kept those proposals, charged, and logged them. It also adds the
 dead-run sweep's partial index `mink_runs_running_idx` on
 `(started_at, id) where status = 'running'` (on 200,083 runs locally: 15.7
@@ -3109,9 +3678,8 @@ titled a Hindi question in English; on its own line, first, it answers in
 Devanagari while English and Hinglish stay as they were.
 ★★ THE SIDEBAR SAYS "NEW CHAT" UNTIL THE TITLE ARRIVES, NOT THE EXCERPT.
 `useMinkAi` lists a chat it created at the top of History the moment the
-`status` event names it (capped at `MINK_CONVERSATION_LIMIT`, which moved to
-`lib/mink/chat-session.ts` beside `MINK_NEW_CHAT_TITLE` so the client can
-mirror the server's prune), takes the `title` event into the list and the
+`status` event names it (above every chat already loaded: there is no cap,
+see "Mink chat history"), takes the `title` event into the list and the
 header, and masks that chat as "New chat" in any list refresh until its title
 arrives, so the stored excerpt never flashes. When no title came with the
 answer (a fast answer, a busy model, a stopped run), History asks once more
@@ -3297,6 +3865,188 @@ comes in its own block.
   and a forced mid-turn failover was not reproduced live (the model switch
   itself was probed on 2026-10-19). No merchant-visible change in what anyone
   does, so no Help Centre update.
+
+### Mink chat history: 90 days after last use, paged and searchable (2026-10-26)
+
+Owner's decision (25 Oct 2026), informed by the roughly 3-month window Shopify
+gives Sidekick's memory (not a copy of a documented Shopify rule): a chat is
+kept 90 days after it was last used and then retired; every chat from that
+period is listed and searchable; any chat can be deleted at any time; there is
+no count cap. Migrations `20261026_0248` to `20261026_0250`; Help:
+`20261026_0251` edits the two Mink guides in place.
+★★ LAST USE = A MESSAGE SENT IN THE CHAT, OR OPENING IT (owner decision D1).
+`mink_conversations.expires_at` is the SLIDING deletion time, last use +
+`MINK_CONVERSATION_RETENTION_DAYS` (90, `lib/mink/chat-session.ts`):
+`startMinkRun` sets it at every run start and `getMinkConversation` at every
+open, at most once an hour (`minkRetentionDeadline()`,
+`conversation-history.ts`). Every reader in both revisions already filters
+`expires_at > now()`, so an unused chat leaves History at once. Migration
+`20261026_0248` backfilled `expires_at = last_message_at + 90 days` and added
+`retention_failed_at`, `mink_conversations_retention_idx (expires_at, id)
+WHERE status = 'active'` and DELETE on `mink_messages`, `mink_feedback` and
+`mink_action_approvals` for `app_service` (0035, 0039 and 0042 granted
+SELECT, INSERT and UPDATE only; DELETE came from the compat setup's default
+privileges, the gap 0240 closed for `mink_runs`).
+★★ NO CAP. The ten-chat prune in `startMinkRun`, its per-admin advisory lock
+and `minkConversationPrunePredicate` are gone (the prune had twice broken every
+run for the heaviest users, before a run row existed); `MINK_CONVERSATION_LIMIT`
+no longer exists.
+★★ RETIRING A CHAT (`lib/mink/conversation-retire.ts`,
+`retireMinkConversation`), one function for the merchant's delete and the
+sweep: lock the chat's approvals, drafts and redesigns in the order every Mink
+execution takes them (approval, draft, redesign row); STRIP every redesign that
+was never applied (owner decision D7, one SET list, `STRIP_REDESIGN`: request
+reduced to `{kind}`, no email, snapshot, plan, raw error, draft or origin run,
+a ready one becomes `superseded`; billing facts, links and an unsettled
+`result.photoHold` stay, so the free redesign stays used and a refinement's
+parent survives); then one records check: an approval acted on (audited, or
+any status but `pending`), a blog publication, an approval an email campaign
+names, or a redesign that was applied (or, as a guard, is still live). No
+record: DELETE in a savepoint (a foreign key the check does not know makes it
+reduce instead, logged `mink.retire: delete refused, reducing`). Records:
+REDUCE in place: messages, feedback, unconfirmed previews (pending, never
+audited, named by nothing: owner decision D3), drafts that back nothing kept,
+runs that hold nothing, every `current_path`, the title (`Deleted chat`) and
+the summary go; the row stays with status `deleted`, which every list, open,
+continue and search hides. Kept while the store exists: approvals acted on and
+their audit rows, publications, campaigns, applied redesigns whole, and the
+runs and drafts behind them (so the record of a change also keeps the run
+status, tool names and token counts of the reply that made it, and an applied
+redesign keeps the merchant's interview answers, as the Help says). ★ A
+redesign whose chat was already gone (deleted before this change, or by the
+revision being replaced: the foreign key is ON DELETE SET NULL) is out of the
+chat's reach, so every sweep batch also strips up to a batch of those that
+were never applied (`stripOrphanedRedesignsQuery`, `for update skip locked`).
+⚠ Pictures attached to a chat or made in it are not deleted with it: they
+stay with the store's files, and a picture Mink added to the Media Library
+stays there until the merchant deletes it (the Help says so).
+★★ THE SWEEP (`lib/mink/conversation-retention.ts`,
+`pruneIdleMinkConversations`; `RETENTION_POLICIES` entry `mink_conversations`,
+90 days, batch 50, run by `prune-logs`). Two clocks, because a revision without
+this change moves only `last_message_at`: a chat is a candidate only when
+`expires_at` has passed AND its last message is 90 days old, and each batch
+first heals listed chats expiring within 2 days whose expiry sits more than
+an hour below last message + 90 days (the hour is this revision's own skew: a
+run start sets the expiry a moment before the answer moves the last message),
+the condition repeated on the row being updated so an open that moved the
+expiry meanwhile is left alone, in up to `MINK_RETENTION_MAX_HEAL_ROUNDS` (10)
+statements a batch while each heals a full batch. Never a chat with a reply
+running or a redesign (or a refinement of one) still being made
+(`buildingRevampOfConversation`). Each chat in its own savepoint, after
+`pg_try_advisory_xact_lock('mink-conversation:<id>')` and a `FOR UPDATE`
+re-read; a failure marks `retention_failed_at` (skipped for 7 days) and logs
+`mink.retention: chat not retired` with ids only; one `mink.retention: batch`
+line per batch (healed, stripped, deleted, reduced, skipped, failed). The cron
+response's `deleted` counts chats retired (deleted or reduced). Dev has no
+scheduler: there expired chats stay hidden, not deleted.
+★★ THE MERCHANT'S DELETE (`deleteMinkConversation`) is refused only while a
+reply runs (409 `conversation_busy`) or a redesign of the chat, or a
+refinement of one, is queued or running (409 `conversation_has_redesign`, "A
+storefront redesign from this chat is still being made. ..."). A ready card
+no longer refuses (owner decision D2): it goes with the chat, stripped if
+never applied; applied work stays. Before, the delete cascaded away the audit
+rows of changes approved in the chat, answered 503 for a chat whose draft
+became a blog post, and refused for ever a chat holding a ready (even
+applied) card. The dialog says "Changes you approved or published from this
+chat stay in your store." and names the redesign card when the row's
+`hasRedesignCard` is set. ★ Opening the dialog reads History's first page
+again (`refreshConversations`, merged as after an answer), and the dialog
+takes the flag from the chat's row as History now has it, so a card that
+became ready after the list was last read is named (release check, 26 Oct;
+`dashboard-chat.test.ts`). A chat beyond page 1 keeps the flag it was listed
+with. The DELETE route still answers the first page for a
+browser on the previous bundle; the current client removes the chat itself.
+★★ D6: a Mink AI approval naming a product, and its audit row, outlive the
+product. Migration `20261026_0250` dropped the products foreign key and keeps
+its NAME `mink_action_approvals_product_store_fkey` as an always-true CHECK
+(`product_id IS NULL OR store_id IS NOT NULL`), because 0042's durable verify
+names that constraint and the runner can retire a durable query but never a
+constraint. `getLatestMinkProductAction` answers null when the product is gone
+(the replaced revision answered 404 there during the deploy window).
+★★ HISTORY PAGES (`listMinkConversations(actor, { cursor })`,
+`GET /api/mink/conversations?cursor=`): 30 a page (`MINK_HISTORY_PAGE_SIZE`),
+newest activity first `(last_message_at, id) desc`, an opaque keyset cursor
+(base64url of Postgres's own timestamp text and the id, so microseconds
+survive; anything else is 400 `invalid_cursor`), `hasRedesignCard` per row.
+The sidebar (`app/dashboard/mink-history-sidebar.tsx`, moved out of
+`dashboard-chat.tsx`, reading `useChat()` itself) loads more on scroll or
+"Show more chats"; after every answer page 1 is MERGED into what is loaded
+(`lib/mink/chat-history-list.ts`), never replacing it. History's own failures
+live in `historyStatus`, shown in the sidebar with Try again, never as the
+chat's error. The tab's own chat is restored whether or not it is on page 1.
+Rows are memoised with one shared date formatter; the history actions keep
+their identities (the mount effect's cleanup stops reading the reply). On a
+phone the full view closes History after a choice.
+★★ SEARCH (`POST /api/mink/conversations/search`, body `{ q, cursor? }` read
+bounded at 2 KB, never a GET, so the words never reach request logs). A word
+is what sits between spaces, kept whole (`searchWords`,
+`lib/search/prefix-search.ts`, shared by the browser and the server with
+`normaliseSearchQuery`: at most six words of at least two letters or numbers
+in any script, 80 characters); Postgres's own 'simple' parser, the one that
+built the index, makes each word's lexemes (`searchLexemesQuery`), so an
+email, a phone with its "+", "98765-43210", "DIWALI-20" or an Indic word with
+a zero-width joiner is cut as it was in the messages; `prefixTsQuery` quotes
+each lexeme as a prefix item (never an operator of the merchant's making),
+every word required. Titles match by ILIKE (any script); messages through the
+store-scoped GIN expression index `mink_messages_search_idx` (migration
+`20261026_0249`) over WHAT THE CHAT SHOWS: `public.mink_message_search_text`
+keeps a merchant's message up to its first attachment marker (the file card's
+hidden JSON is never searched) and an answer whole, its first 4,000
+characters, and `public.mink_message_search_vector` adds the message's store
+as a lexeme no text makes ("mink store <id>", queried with
+`public.mink_message_search_store`), so the index alone finds one store's
+matches and a search costs what those cost (a two-letter prefix read and
+parsed every message of a 20,000-message store, over a second, with an index
+on the text alone). `mink_messages_kept_answer_idx` serves the visibility
+rule's kept-answer test (a literal, `KEPT_ANSWER`, so the planner can use it).
+The search's transaction turns sequential scans and JIT off (the planner
+prices the index wrongly for a common word). Newest first; a `«»` snippet
+(`ts_headline` over the visible text) and `matchMessageId` from each chat's
+newest matching VISIBLE message. One search per admin at a time
+(`pg_try_advisory_xact_lock`, 409 `history_search_busy`, which the client asks
+again up to 3 times, 400 ms apart), a 5 s statement timeout (503
+`history_search_timeout`), its own 60-a-minute bucket
+(`mink-history-search:`); logs carry codes only.
+★★ EARLIER MESSAGES (`GET /api/mink/conversations/[id]?before=`,
+`earlierCursor`; `app/dashboard/mink-earlier-messages.tsx`, the first child of
+the thread's scroller): "Show earlier messages" adds 50 above without moving
+the reader; opening a search result reads back, up to
+`MINK_REVEAL_MAX_PAGES` (10), until the match and, for an answer, its run's
+question are loaded (`revealTargetIn`) before the thread renders, then
+scrolls to it; a result whose match is not reached opens at the newest
+message, and a page that fails opens the chat with what loaded (Show earlier
+messages continues from it), never a chat error.
+★★ ONE VISIBILITY RULE (`visibleMinkRun(message)`) for the thread, search
+matches and snippets: a run that succeeded; a failed or stopped run whose
+record kept a redesign card (B4); and the merchant's OWN message of a run they
+stopped (`stop_requested_at`), so a chat whose only question was stopped never
+opens empty (owner, "like ChatGPT"), unless that question was asked again
+(`askedAgainLater`: the chat's next question begins with its words and was
+answered or stopped, as a voice barge-in's joined question is), when only the
+question asked again shows. The model's replay still reads only runs that
+succeeded: a stopped question is shown, never sent to Mink again.
+Help (`20261026_0251`, nine replacements in place, none appended): the
+dashboard guide says chats are kept 90 days after last use (sending or
+opening counts) and only their owner sees them; scrolling, **Search chats**
+and **Show earlier messages**; deleting removes the messages and every
+unapproved proposal, never undoes what was approved or published, keeps that
+record while the store exists, and keeps pictures attached to or made in the
+chat; the record's run details; a stopped question stays in the conversation
+and is answered only if asked again; the ten-chat sentences go, and the credit
+sentence loses "at the rate shown before you confirm it" (no credit prices on
+the dashboard); the website guide's redesign-card sentence follows D2.
+Tests: `conversation-retire` (compiled SQL), `conversation-retention`,
+`conversation-history`, `persistence`, `product-actions`, `chat-history-list`,
+`search/prefix-search`, the three conversation route tests, `mink-ai`,
+`mink-history-sidebar`, `mink-earlier-messages`, `dashboard-chat`,
+`chat-context`, `retention/prune`; opt-in, rollback-only
+`conversation-retention.local` (`MINK_HISTORY_LOCAL_TEST=1`; it freezes the 34
+foreign keys in and out of the Mink record tables, and proves the search
+words, the visible text, the orphan strip and the heal on real Postgres) and
+`persistence.local`. ⚠ Open: the replaced revision hides stopped questions,
+records no open and still cascades audit rows on its delete during the deploy
+window; measure the search on staging's busiest store before `main` (stop
+above 500 ms); the dashboard guide is over the Help size line (pre-existing).
 
 ### Mink chats like ChatGPT: which chat, page links, instant attachments (2026-10-19)
 
@@ -3720,8 +4470,10 @@ refine: an AI "retouch" of a brand mark is a different logo.
 `POST /api/mink/image-refine`) is a FULL AI retouch (owner's choice over
 background-extension only): Gemini image (`MINK_IMAGE_MODEL`) re-renders the
 merchant's own photo with better lighting and background at the slot's aspect,
-then sharp fits it to the exact pixels and stores a NEW WebP under
-`stores/{id}/refined/` plus a Media Library row; the original is untouched.
+then sharp fits it to the exact pixels; the NEW WebP is staged in the
+private bucket, charged, and only then published under
+`stores/{id}/refined/` with a Media Library row (see the REFINE paragraph
+under "Mink image calls"); the original is untouched.
 ★ The merchant compares original and result and must choose **Use refined
 photo**; `onReplace` swaps a gallery image in place (a gallery's
 `onUploadSuccess` appends). ★ The prompt forbids changing the goods, but a
@@ -3735,18 +4487,26 @@ image generation's: Mink enabled, Media manage, the store's
 unreadable source, a stop before the send) gives that allowance back. ★ A 429
 is asked again twice, 5 to 15 s apart, each try on its own 60 s clock
 (`REFINE_RETRY`, 2026-10-23). The route gives the whole refine 150 s
-(`REFINE_DEADLINE_MS`, inside `maxDuration` 180) and a stop that fires when
-the merchant leaves; the model must answer 15 s before that deadline
+(`REFINE_DEADLINE_MS`, inside `maxDuration` 180); a merchant leaving is the
+browser's stop token (`POST /api/mink/image-refine/stop`), because behind
+the load balancer the request's own signal never fires; the model must
+answer 15 s before that deadline
 (`REFINE_POST_RESERVE_MS`). A refine stopped after the model answered stores
 and charges nothing (`refine_stopped`, 504: "Refining took too long. Nothing
 was charged; try again."). ★ It costs `IMAGE_REFINE_CREDITS` (2; was 3 at launch, owner repriced it the same day, Help corrected by 0166). A store
 that cannot pay is refused BEFORE the paid provider call. Credits are taken
-only after an image exists and is stored, by `consume_mink_refine_credits`:
-plan allowance, then top-ups, all-or-nothing, idempotent per refinement id. A
-lost race deletes the stored copy. This does not reuse `consumeAiQuota`, which
+only after an image exists and is staged privately, by
+`consume_mink_refine_credits`, in a transaction whose first statement claims
+the charge on the refine's `mink_refine_requests` row (a recorded stop makes
+the claim, and so the charge, impossible): plan allowance, then top-ups,
+all-or-nothing, idempotent per refinement id. A refine that is not charged
+(a stop won, or the store could not pay after all) deletes only its private
+stage, so nothing unpaid is ever readable or listable. This does not reuse
+`consumeAiQuota`, which
 takes one credit and fails OPEN, which is wrong for a paid image call.
 The button appears only inside `ImageRefineProvider` (the dashboard layout sets
-it from Mink enabled + Media manage), so the storefront and platform console
+it from Mink enabled + a configured private bucket (`gcsPrivateConfigured`) +
+Media manage), so the storefront and platform console
 never show one. Migration `20261006_0164_mink_image_refinements` adds the
 service-only ledger and function; `0165` edits the product-images Help steps in
 place. A route, not a server action, so a ~20-second image call never queues
@@ -4737,7 +5497,10 @@ merchant saw only the route's catch-all, "Mink AI couldn't start this
 request." The absence of a run row is itself the diagnostic — it places the
 failure above `startMinkRun`'s insert.
 ★ The fix parenthesises both fragments explicitly. `persistence-prune-sql.test.ts`
-is the guard and asserts the COMPILED text (a mocked driver cannot tell valid
+was the guard (the prune, its predicate and that test went with the ten-chat
+cap on 2026-10-26, see "Mink chat history"; `conversation-retire.test.ts`
+now asserts the same compiled parentheses for the retire's records check)
+and asserted the COMPILED text (a mocked driver cannot tell valid
 SQL from invalid), mutation-checked by restoring `notExists`; the repaired
 statement was then EXECUTED against a real PostgreSQL inside a rolled-back
 transaction. **The rule generalises: a Drizzle helper that interpolates
@@ -5159,7 +5922,7 @@ them truncates (the merchant types these at a registrar); on touch screens the
 copy icon stays visible and each copy line is 44px tall. Customer-group colour
 chips are 44px tall on touch screens. Every product thumbnail that can come from
 an old host passes `unoptimized={!canOptimizeImage(url)}`, because next/image
-throws on a host outside `remotePatterns` (a store with legacy Supabase photos
+throws on a host outside `remotePatterns` (a store with photos on an older external host
 took the Media Library's Product images tab down). ⚠ Found, not fixed: on
 `http://*.localtest.me` (not a secure context) `crypto.randomUUID` is undefined,
 so `/dashboard/mink-memories` crashes in local dev; production is HTTPS.
@@ -5689,7 +6452,7 @@ Every request belongs to exactly one store, resolved from the **Host header**.
 | `help.storemink.com` / `help.localhost`              | Rewritten to `/help/*`                                                                                            |
 | `pos.storemink.com` / `pos.localhost`                | **Public POS product site** — rewritten to `/platform/pos/*`; reserved from merchant slugs                        |
 | `themes.storemink.com` / `themes.localhost`          | **Public theme catalog** — rewritten to `/themes/*`; reserved from merchant slugs                                 |
-| `storemink.com`, `app.`, `localhost`, `*.vercel.app` | **Platform** — all paths rewritten into `/platform/*` (landing, signup, platform login, platform admin dashboard) |
+| `storemink.com`, `app.`, `localhost`, `localtest.me` | **Platform** — all paths rewritten into `/platform/*` (landing, signup, platform login, platform admin dashboard) |
 | `www.storemink.com`                                  | Permanent 308 to the same path/query on canonical `storemink.com`                                                 |
 | `{slug}.storemink.com`, `{slug}.localhost`           | **Store subdomain** — storefront + `/dashboard` + `/auth` served directly                                         |
 | Anything else                                        | **Custom domain** — must have `settings.custom_domain_verified === true` to resolve                               |
@@ -5742,7 +6505,7 @@ permission sections, which read the database. Pinned by `proxy.test.ts`.
 ### Tenant resolution — `lib/store/`
 
 - `host.ts` — pure host classification (`parseHost`, `isPlatformHost`, `isHelpHost`, `isPosHost`, `isThemesHost`, `cookieDomainForHost`). No Node imports; safe on edge. `ROOT_DOMAIN` from `NEXT_PUBLIC_ROOT_DOMAIN` (default `storemink.com`). Cookies are scoped to `.storemink.com` so a session spans platform + all store subdomains.
-- `resolve.ts` — DB-backed store lookup, cached with `unstable_cache` (tag `STORE_TAG = "stores"`, 300 s revalidate). **Only positive host resolutions are cached**: an unknown/ineligible store host is an internal rejected cache read and becomes an uncached `null`, so a slug claimed moments later is visible on the next request even when that request reaches a different Cloud Run instance. Caching negative resolutions made a successful signup land on the legacy WholeSip fallback for up to five minutes, producing both a WholeSip tab title and a false "No access" screen. Three resolvers: `getCurrentStoreOrNull()` (honest — null when the host maps to no active store); `getCurrentStore()`/`getCurrentStoreId()` (never-null — fall back to WholeSip; for dashboard/actions/internal callers that must always have a store id); **`requireStorefrontStore()`/`requireStorefrontStoreId()`** (render-only — `notFound()` on an unknown host). **Storefront PAGES must use the `require…` variants** (the `(storefront)` layout guards too, but a layout `notFound()` does NOT abort concurrently-rendering child pages, so each content page guards itself — otherwise an unclaimed subdomain streams the WholeSip fallback content into its HTML). Unknown store host → root `app/not-found.tsx` ("store doesn't exist"); missing page within a real store → `app/(storefront)/not-found.tsx` ("page not found", with store chrome). A page that THROWS inside a real store → `app/(storefront)/error.tsx` (client boundary with retry, styled off `--sm-*` tokens like the 404; logs the digest). Below that, every section on a sections-composed page is wrapped by `HomepageSectionRenderer` in `<Suspense>` + `SectionErrorBoundary` (`components/sections/section-error-boundary.tsx`), so a section whose stored config no longer matches its component renders nothing and logs its id/type instead of taking the page down.
+- `resolve.ts` — DB-backed store lookup, memoized for ONE request with React `cache()` (since 2026-10-05, "Catalog freshness"; it was `unstable_cache` with a 300 s revalidate before), so a change to a store row (plan, settings, domain) shows on the next request on every Cloud Run instance. ⚠ No cache carries `STORE_TAG = "stores"` any more, so the `revalidateTag`/`updateTag(STORE_TAG)` calls in store writes are harmless no-ops (a cross-request store cache brought back would need them, and the billing renewal cron does not call them). **A miss is never memoized as an answer**: an unknown/ineligible store host throws an internal `StoreHostMiss` and becomes an uncached `null`, so a slug claimed moments later is visible on the next request. Under the old cross-request cache, caching negative resolutions made a successful signup land on the legacy WholeSip fallback for up to five minutes, producing both a WholeSip tab title and a false "No access" screen. Three resolvers: `getCurrentStoreOrNull()` (honest — null when the host maps to no active store); `getCurrentStore()`/`getCurrentStoreId()` (never-null — fall back to WholeSip; for dashboard/actions/internal callers that must always have a store id); **`requireStorefrontStore()`/`requireStorefrontStoreId()`** (render-only — `notFound()` on an unknown host). **Storefront PAGES must use the `require…` variants** (the `(storefront)` layout guards too, but a layout `notFound()` does NOT abort concurrently-rendering child pages, so each content page guards itself — otherwise an unclaimed subdomain streams the WholeSip fallback content into its HTML). Unknown store host → root `app/not-found.tsx` ("store doesn't exist"); missing page within a real store → `app/(storefront)/not-found.tsx` ("page not found", with store chrome). A page that THROWS inside a real store → `app/(storefront)/error.tsx` (client boundary with retry, styled off `--sm-*` tokens like the 404; logs the digest). Below that, every section on a sections-composed page is wrapped by `HomepageSectionRenderer` in `<Suspense>` + `SectionErrorBoundary` (`components/sections/section-error-boundary.tsx`), so a section whose stored config no longer matches its component renders nothing and logs its id/type instead of taking the page down.
   **★★ AND THOSE 404s WERE ALL SOFT 404s UNTIL 2026-08-29.** `app/loading.tsx`
   existed at the ROOT, so one Suspense boundary wrapped the entire app; Next
   flushes the shell — with the HTTP status already committed as **200** — before
@@ -5765,7 +6528,7 @@ permission sections, which read the database. Pinned by `proxy.test.ts`.
   noindex, so making it indexable fails rather than silently regressing). Use `updateTag(STORE_TAG)` after a user-facing Server Action that must immediately read its own store mutation (notably signup); use `revalidateTag(STORE_TAG, "max")` only where stale-while-revalidate is acceptable.
 - `brand.ts` — per-store branding (colors/logo) consumed by `app/(storefront)/components/brand-provider.tsx`.
 
-**Rule: every DB read/write for store data must be scoped by `store_id`** (RLS also enforces this — see `supabase/multitenant_03_rls.sql`).
+**Rule: every DB read/write for store data must be scoped by `store_id`** (RLS also enforces this — see `multitenant_03_rls.sql`).
 
 ## 4. Directory structure
 
@@ -5773,6 +6536,7 @@ permission sections, which read the database. Pinned by `proxy.test.ts`.
 wholesip/
 ├── AGENTS.md / CLAUDE.md      # Agent instructions (CLAUDE.md just imports AGENTS.md)
 ├── CODEBASE.md                # ← this file
+├── former-providers-coverage.test.ts # ★ guard: neither former provider is named anywhere (§5, convention 42)
 ├── proxy.ts                   # Edge middleware: host routing + auth gates (see §3)
 ├── next.config.ts             # output:"standalone" (Cloud Run), image formats, runtime
 │                              # Markdown prompt tracing, optimizePackageImports
@@ -5797,10 +6561,10 @@ wholesip/
 │                              # postcondition contracts and the two mistakes that have
 │                              # each jammed the queue, the troubleshooting table, and the
 │                              # stated gaps — above all that there is NO reproducible
-│                              # fresh-database build, because drizzle/manual is a
-│                              # 43-table Phase-5 snapshot (no billing_*, no
-│                              # store_locations) and the manifest baseline is far later,
-│                              # so CI cannot replay the ledger from scratch.
+│                              # fresh-database build, because the schema before the
+│                              # manifest baseline was applied by hand and lives only in
+│                              # the databases and git history, so CI cannot replay the
+│                              # ledger from scratch.
 ├── docs/monitoring.md         # ★ Production alerting (2026-10-23, owner-approved): the
 │                              # 15 alert policies applied on 23 Oct, the five Theme
 │                              # Studio alert definitions (plan P6, applied after the
@@ -5904,11 +6668,6 @@ wholesip/
 │                              # "File cloudbuild-drift.yaml not found". Full contract,
 │                              # verification evidence and the resume commands are in
 │                              # docs/cron-jobs.md.
-├── vercel.json                # INERT schedule record (prod = Cloud Scheduler):
-│                              # send-emails, plan-expiry, expire-pending-payments,
-│                              # seo-refresh, search-metrics, domain-reconcile, prune-logs,
-│                              # analytics-rollup, import-worker, billing, help-embeddings
-│                              # (authoritative deployment state: docs/cron-jobs.md)
 ├── vitest.config.ts / vitest.setup.ts / vitest.server-only-stub.ts
 ├── eslint.config.mjs / postcss.config.mjs / tsconfig.json / components.json
 ├── tsconfig.typecheck.json     # Strict CLI/build checks extend tsconfig.json, exclude
@@ -6063,16 +6822,24 @@ wholesip/
 │   │   │                      # location/enquiry/store chrome reads run concurrently
 │   │   │                      # so local Cloud SQL latency is paid once, not serially;
 │   │   │                      # topbar Search/⌘K is a keyboard/touch command palette
-│   │   │                      # built only from the viewer's permission-filtered nav
+│   │   │                      # built only from the viewer's permission-filtered nav;
+│   │   │                      # a section's searchAliases apply to its children too
+│   │   │                      # (searchItemsFor in dashboard-topbar.tsx), so
+│   │   │                      # "register settings" finds POS settings (the pos
+│   │   │                      # section's aliases: "point of sale", "register",
+│   │   │                      # "till")
 │   │   ├── mink-ai.ts         # ★ Flag-selected drawer client: disabled → canned reply;
-│   │   │                      # enabled → abortable SSE, restores/loads the actor's last
-│   │   │                      # ten conversations, deletes scoped threads, tool progress,
+│   │   │                      # enabled → abortable SSE, restores the tab's chat, loads
+│   │   │                      # History a page at a time (POST search, earlier messages,
+│   │   │                      # no count cap), deletes scoped threads, tool progress,
 │   │   │                      # proposal/read artifacts, safe errors, Stop + Retry;
 │   │   │                      # openConversationFromAddress opens a ?chat=<id> chat
 │   │   │                      # quietly (404/400 starts a new one, B20; the open one
 │   │   │                      # is loaded again, draft kept), counting each open in
 │   │   │                      # addressOpens before the load; awaitKeptCard fetches
 │   │   │                      # the redesign card a stopped reply kept (B4).
+│   │   │                      # cancel() asks the server to stop the run and lets go
+│   │   │                      # only on `stopped`; else stopRefused + a status line.
 │   │   ├── mink-artifact-parser.ts # Restores every bounded card type, including private
 │   │   │                      # proposal review cards, from live SSE and saved history.
 │   │   ├── chat-context.tsx   # Shares the same Mink thread between Home, drawer and
@@ -6085,7 +6852,11 @@ wholesip/
 │   │   │                      # mink-speech-session.ts plays its sentences on one
 │   │   │                      # playhead; mink-voice-view.tsx is its bar (MinkVoiceBar),
 │   │   │                      # docked under the thread while voice chat is on.
+│   │   │                      # Barge-in while thinking asks the server (decide): only
+│   │   │                      # `stopped` replaces the question; else words follow it.
 │   │   ├── dashboard-chat.tsx # Mink panel/full-view renderer: Codex-style history sidebar
+│   │   │                      # (mink-history-sidebar.tsx: pages, Search chats, Try again;
+│   │   │                      # mink-earlier-messages.tsx: Show earlier messages)
 │   │   │                      # with confirmed deletion, persisted drag/keyboard width,
 │   │   │                      # Help-matched robot identity and auto-growing composer;
 │   │   │                      # maximize is a shell-level viewport takeover above the
@@ -6096,6 +6867,8 @@ wholesip/
 │   │   │                      # anchor) serves a chat chosen in History, New chat, an
 │   │   │                      # open from the address (addressOpens) and a new scroller
 │   │   │                      # (panel opened, side panel to full view and back).
+│   │   │                      # revampIdsShownBefore: one card per redesign; Stop is
+│   │   │                      # hidden while stopRefused.
 │   │   ├── mink-answer.tsx    # Safe React-rendered headings/lists/tables/emphasis/code plus
 │   │   │                      # allowlisted dashboard/Help links; no model HTML is executed.
 │   │   ├── mink-artifacts.tsx # Permission-safe metric/catalog/order/product/inventory/source cards
@@ -6108,6 +6881,8 @@ wholesip/
 │   │   │                      # code, target state and escaped source into an isolated preview;
 │   │   │                      # mink-storefront-publication-controls.tsx owns Phase 7D's
 │   │   │                      # browser-check, publish and exact-rollback human workflow.
+│   │   │                      # A repeated redesign card is one 'card is above' line with
+│   │   │                      # Show it (revamp-card-<id>, shownRevampIds).
 │   │   ├── mink-revamp-card.tsx # ★ The storefront revamp card (§ Mink storefront revamp):
 │   │   │                      # polls /api/mink/revamps/[revampId] for progress and the
 │   │   │                      # review, Stop, then its three buttons; mink-revamp-preview.tsx
@@ -6370,6 +7145,28 @@ wholesip/
 │   │   │                      # customise cards, steps and mega-menu rail are
 │   │   │                      # gone; what remains is photography, drawn UI,
 │   │   │                      # type and a few 16px inline check/arrow marks.
+│   │   │                      # ★ POS WORDS AND THE POS PICTURE (owner, 26 Oct
+│   │   │                      # 2026): marketing keeps "Point of Sale" ("Point
+│   │   │                      # of Sale (POS)" where it introduces the short
+│   │   │                      # name), never "register" or "till", and says
+│   │   │                      # "counter" only for the physical counter: the
+│   │   │                      # feature is "POS sales" and "Website + POS", and
+│   │   │                      # the POS JSON-LD description says "in-store
+│   │   │                      # sales" (§5 #22).
+│   │   │                      # public/brand/storemink-pos-multidevice.png
+│   │   │                      # shows "Register" on its screens and is not
+│   │   │                      # used: this page's POS card, the header's POS
+│   │   │                      # tile and the pos.storemink.com hero show the
+│   │   │                      # drawn POS (RegisterArt compact,
+│   │   │                      # product-art.tsx) and the dashboard upsell has
+│   │   │                      # no picture. To bring one back, replace the file
+│   │   │                      # (same name and size, screens reading "Sell"),
+│   │   │                      # then drop the PROMO_PICTURE check in
+│   │   │                      # app/pos-wording-coverage.test.ts and the
+│   │   │                      # no-picture assertions in
+│   │   │                      # app/platform/homepage.test.ts,
+│   │   │                      # app/platform/pos/host-routing.test.ts and
+│   │   │                      # app/dashboard/pos/pos-overview-client.test.tsx.
 │   │   │                      # ★ NO LONG DASHES in any public marketing copy
 │   │   │                      # or page title (owner's rule): titles use a
 │   │   │                      # colon or middle dot, sentences a full stop or
@@ -6427,7 +7224,7 @@ wholesip/
 │   │   │                      # hosts and are linked, not duplicated.
 │   │   ├── site-header.tsx    # Shared dark header: Why StoreMink + Products
 │   │   │                      # (rail tiles are a two-line Mink chat and the
-│   │   │                      # POS photograph, not icons)
+│   │   │                      # drawn POS, RegisterArt compact, not icons)
 │   │   │                      # are full-width hover/focus-within CSS mega
 │   │   │                      # menus (no JS) — photo cards / link columns
 │   │   │                      # plus a "Built into every store" rail (Mink,
@@ -6525,7 +7322,7 @@ wholesip/
 │   │                          # and images/, compare/ and release/ are redirects into
 │   │                          # their tab. theme-studio-tile.tsx is the Overview's
 │   │                          # superadmin-only Theme Studio tile.
-│   │                          # (guarded by supabase/multitenant_07_platform_admins.sql)
+│   │                          # (guarded by multitenant_07_platform_admins.sql)
 │   │                          # (the OAuth callback route was removed in Phase 6 —
 │   │                          # Google now uses signInWithPopup)
 │   │
@@ -6738,12 +7535,19 @@ wholesip/
 │       │                      # tool/message/usage/done events to the dashboard client;
 │       │                      # a voice turn's <spoken> block goes out as `spoken` /
 │       │                      # `spoken_end` events and stays out of the stored text.
-│       │                      # The run's own stop (deadline, client gone) reaches every
-│       │                      # tool (runMinkAgent abortSignal); a failed run's kept
+│       │                      # The run's own stop (deadline, the merchant's Stop seen by
+│       │                      # the run-stop watcher or this instance's stop route, a
+│       │                      # client gone where the platform reports it) reaches every
+│       │                      # tool (runMinkAgent abortSignal); a stopped run sends
+│       │                      # `stopped`, stores and charges nothing; a failed run's kept
 │       │                      # redesign card goes out as a `message` before `error`.
-│       ├── mink/conversations/ # ★ No-store, rate-limited recent-history API: list the
-│       │   └── [conversationId]/ # actor/store's last ten; load or same-origin delete one
-│       │                      # (a dead run of that chat is closed first, B7).
+│       ├── mink/conversations/ # ★ No-store, rate-limited History API: GET ?cursor= one
+│       │   │                  # page of the actor/store's chats used in the last 90 days
+│       │   ├── search/        # POST { q, cursor? }: words in the body, never the URL;
+│       │   │                  # one search per admin, 5 s, its own bucket
+│       │   └── [conversationId]/ # GET ?before= (earlier messages) or same-origin
+│       │                      # delete through the retire (a dead run of that chat is
+│       │                      # closed first, B7); see "Mink chat history".
 │       ├── mink/media/discard/ # ★ Same-origin, actor-resolved `keepalive` transport
 │       │                  # for an image the composer uploaded and never sent. It
 │       │                  # exists ONLY because a Server Action cannot be keepalive:
@@ -6759,10 +7563,18 @@ wholesip/
 │       │                  # the same event on an ordinary mobile tab switch and that
 │       │                  # page comes BACK with the previews on screen, where deleting
 │       │                  # would leave Send citing a URL we had destroyed.
+│       │                  # Sent through sendPageExitRequest (lib/http/page-exit-
+│       │                  # request.ts): the beacon first, a same-origin keepalive
+│       │                  # fetch when the beacon is refused or throws, so one
+│       │                  # throwing beacon no longer skips the uploads after it.
 │       ├── mink/feedback/    # ★ Authenticated same-origin rating/issue endpoint; accepts
 │       │                      # only the actor's own tenant run and stores redacted detail.
 │       ├── mink/workflows/[workflowId]/ # ★ Phase 6A no-store owner/tenant-scoped status,
 │       │                      # strict same-origin cancellation and approval-resume boundary.
+│       ├── mink/runs/[runId]/stop/ # ★ The merchant's Stop: same-origin POST,
+│       │                      # actor-scoped (another admin's run is 404), not gated on
+│       │                      # Mink being on; the run's row decides stopped / acted /
+│       │                      # finished (lib/mink/run-stop.ts); no-store, 30 a minute.
 │       ├── mink/revamps/[revampId]/ # ★ The revamp card's requester-only GET (progress,
 │       │                      # review; kicks a stalled job) and POST (cancel, publish,
 │       │                      # undo); same-origin, rate-limited, no-store.
@@ -6863,8 +7675,15 @@ wholesip/
 │       ├── cron/mink-workflows/ # ★ Every minute: CRON_SECRET-gated Phase 6A lease worker;
 │       │                      # bounded deterministic steps, retries, cancellation and completion.
 │       │                      # Also sweeps idle Theme Studio preview stores, stalled
-│       │                      # storefront revamps (five kicks a tick) and chat runs a dead
-│       │                      # server left running (twenty a tick), each isolated.
+│       │                      # storefront revamps (five kicks a tick), chat runs whose
+│       │                      # Stop their dead server never saw (closed as stopped) and
+│       │                      # chat runs a dead server left running (twenty a tick each),
+│       │                      # each isolated. Last, it publishes paid Refine stages whose
+│       │                      # publish failed and deletes unpaid ones (only this database's
+│       │                      # refine-stage/{DB_NAME}/, five minutes old, twenty a
+│       │                      # tick, ten seconds for every storage call; a paid photo
+│       │                      # deleted from the Media Library since is not republished;
+│       │                      # `refineStages`).
 │       ├── theme-studio/preview/enter/ # ★ On a PREVIEW STORE's host: swaps a 10-min entry
 │       │                      # token for a 1h host-only grant cookie; relative redirect.
 │       ├── theme-studio/placeholders/[assetId]/ # ★ PUBLIC, placeholder-purpose-only
@@ -6909,6 +7728,9 @@ wholesip/
 │       │                      # activity_events 365d, email_logs 90d (+ closed
 │       │                      # whatsapp_conversations 730d, pos_parked_sales 7d,
 │       │                      # ai_quota_refunds 90d, raw SQL: no Drizzle model,
+│       │                      # mink_refine_requests 30d, raw SQL keyed on its composite
+│       │                      # primary key, mink_conversations 90d after last use,
+│       │                      # retired: deleted, or reduced when it holds approved work,
 │                              # Step 15 — the 20-per-counter CAP is what runs
 │                              # out, not the disk) — windows
 │       │                      # that were documented for months and enforced by
@@ -6926,7 +7748,7 @@ wholesip/
 │       │                      # for signup's Plan step; never returns keys
 │       ├── storefront/search/ # ★ Predictive header search (§11, 1.7): GET, store
 │       │                      # from the Host, cached catalogue, shared matching rule
-│       ├── og-image/          # OG image proxy (compresses Supabase images only)
+│       ├── og-image/          # OG image proxy (shrinks images from our own GCS bucket only)
 │       ├── og/                # Dynamic branded OG card (ImageResponse; ?d=JSON
 │       │                      # {title,subtitle,color}) — default share image for
 │       │                      # homepage/custom pages/platform (lib/seo/og-card.ts)
@@ -6942,6 +7764,11 @@ wholesip/
 │       │                  # message's own store, inline only for WhatsApp's
 │       │                  # types, nosniff + sandbox CSP, one byte range
 │       ├── mink/image-refine/ # ★ Refine with Mink AI: retouch + exact resize, 2 credits
+│       │   └── stop/          # ★ POST: the browser's stop for one refine (its stop
+│       │                      # token), decided on mink_refine_requests: stopped /
+│       │                      # recorded / too_late (+ the photo's URL). Viewer
+│       │                      # context only, not gated on Mink enabled, 30 a minute
+│       │                      # per admin; reads a text/plain beacon body.
 │       ├── mink/image-background/ # ★ Change background: the real product cut out by the
 │       │                  # image-matting service onto white, a colour or
 │       │                  # transparency; 1 credit per photo, then free
@@ -6977,8 +7804,8 @@ wholesip/
 │           │                  # still import it at the top level: the packaging fix covers
 │           │                  # them, but their failure mode is still a bare 500.
 │           └── sign-video/    # v4 signed-URL minting for VIDEO uploads (≤50MB, GCS;
-│                              # client PUTs DIRECTLY to storage — serverless routes
-│                              # can't proxy large bodies)
+│                              # client PUTs DIRECTLY to storage; Cloud Run caps a
+│                              # request at 32 MiB)
 │
 ├── lib/
 │   ├── announcements/         # ★ §38 platform → merchant broadcast:
@@ -7148,6 +7975,15 @@ wholesip/
 │   ├── http/byte-range.ts     # PURE: one HTTP Range header against a size (single
 │   │                          # range, suffix; several ranges → the whole file;
 │   │                          # "unsatisfiable" → 416). Used by the inbox media route
+│   ├── http/page-exit-request.ts # client-safe: sendPageExitRequest, a POST that must
+│   │                          # outlive the page (beacon first, keepalive same-origin
+│   │                          # fetch when refused or throwing; never throws). The
+│   │                          # Refine stop and the composer's discard use it
+│   ├── search/prefix-search.ts # PURE, client-safe: a search box's words as a prefix
+│   │                          # text search (searchWords cuts at spaces only, prefixTsQuery
+│   │                          # quotes the lexemes Postgres's parser made of each word,
+│   │                          # normaliseSearchQuery, splitSnippet, splitTitleMatches);
+│   │                          # Mink History search and the WhatsApp inbox's snippets
 │   ├── csv/                   # ★ §31: PURE RFC 4180 codec. parse.ts (BOM, CRLF/LF/CR,
 │   │                          # quoted fields w/ embedded delimiters+newlines, quote-
 │   │                          # aware delimiter sniffing for Excel's semicolons, ragged
@@ -7206,7 +8042,8 @@ wholesip/
 │   │                          # targets.ts + insights.ts = target maths and rule-based
 │   │                          # insights (pure, tested); explore.ts = custom report
 │   │                          # whitelist, normalizer and report library (pure, tested)
-│   ├── store/                 # ★ Tenancy (see §3): host.ts, resolve.ts, brand.ts.
+│   ├── store/                 # ★ Tenancy (see §3): host.ts (+ host.test.ts:
+│   │                          # PLATFORM_URL), resolve.ts, brand.ts.
 │   │                          # ★ launch-state.ts (pure predicates: isStoreLaunched /
 │   │                          # isDemoStore / isStorefrontGated / isThemePending —
 │   │                          # import-free so the resolver can read them; the last
@@ -7314,9 +8151,12 @@ wholesip/
 │   │                          # incl. a guard that the two catalogs stay in step
 │   ├── retention/             # ★ §32: prune.ts — the log-retention sweep.
 │   │                          # RETENTION_POLICIES is the registry (add a table
-│   │                          # = add an entry; ai_quota_refunds, which has no
-│   │                          # Drizzle model, has a raw-SQL deleter,
-│   │                          # aiQuotaRefundBatchDeleter); batches are 1000 rows, EACH ITS
+│   │                          # = add an entry; ai_quota_refunds and
+│   │                          # mink_refine_requests, written by raw SQL only, have
+│   │                          # raw-SQL deleters: aiQuotaRefundBatchDeleter, and
+│   │                          # refineRequestBatchDeleter on the composite primary key;
+│   │                          # mink_conversations retires through
+│   │                          # pruneIdleMinkConversations); batches are 1000 rows, EACH ITS
 │   │                          # OWN withService transaction. NOT a "use server"
 │   │                          # file, deliberately — the version that lived in
 │   │                          # app/actions was an ungated public endpoint that
@@ -7331,32 +8171,34 @@ wholesip/
 │   ├── settings/              # ★ Feature-settings framework (see convention #9):
 │   │   ├── registry.ts        #   catalog: every per-store toggle (key, default, plan gate)
 │   │   └── resolve.ts         #   getStoreSettings()/getStoreSetting() for the host store
-│   ├── storage/               # ★ Google Cloud Storage media backend (GCS-only —
-│   │                          # lib/supabase/ removed, Supabase fully out of code):
+│   ├── storage/               # ★ Google Cloud Storage media backend (GCS-only):
 │   │                          # gcs.ts — gcsConfigured/gcsUploadObject/gcsSignUploadUrl/
 │   │                          # gcsDownloadObject/gcsDeletePaths/gcsDeletePrefix/
 │   │                          # gcsPublicUrl/gcsPathFromUrl, plus the PRIVATE bucket
 │   │                          # (GCS_PRIVATE_BUCKET: gcsPrivateConfigured/
 │   │                          # gcsPrivateUploadObject/gcsObjectInfo/gcsObjectStream;
-│   │                          # delete helpers take a bucket kind) for WhatsApp chat
-│   │                          # media, which is never public
+│   │                          # delete helpers and gcsDownloadObject take a bucket kind;
+│   │                          # gcsListObjects lists one prefix of a bucket) for WhatsApp chat
+│   │                          # media and Refine's unpaid stages (refine-stage/{DB_NAME}/),
+│   │                          # which are never public
 │   │                          # (ADC or
 │   │                          # GCP_SA_KEY; public bucket; lazy SDK import). uploads.ts —
 │   │                          # client helpers (uploadImage POSTs /api/upload; uploadVideo
 │   │                          # PUTs to a signed GCS URL). cleanup.ts — deleteStorageUrls/
-│   │                          # extractMediaUrlsFromHtml orphan cleanup (legacy Supabase
-│   │                          # URLs ignored). paths.ts — immutable tenant/platform object
+│   │                          # extractMediaUrlsFromHtml orphan cleanup (URLs outside
+│   │                          # our bucket ignored). paths.ts — immutable tenant/platform object
 │   │                          # prefixes. upload-owner.ts — proves the Firebase caller is
 │   │                          # a member of the host store or a platform operator before
 │   │                          # assigning that prefix. process-image.ts — shared validate+optimize
 │   │                          # (sharp→WebP, SVG rasterize) used by BOTH /api/upload and
 │   │                          # the media-library action. Tested.
-│   ├── db/                    # ★ Cloud SQL data layer (GCP Phase 5, IN PROGRESS — NOT yet
-│   │                          # the active path; app still on Supabase). client.ts: Drizzle
+│   ├── db/                    # ★ Cloud SQL data layer (the only data path).
+│   │                          # client.ts: Drizzle
 │   │                          # over pg Pool w/ the 2A tenancy model — withService (BYPASSRLS),
 │   │                          # withUser({uid,email}) (SET LOCAL ROLE app_user + app.current_user_id
 │   │                          # GUC → auth.uid() shim), withAnon (no GUC). Schema in drizzle/
-│   │                          # (introspected). See docs/gcp-migration-phase5-6.md.
+│   │                          # (introspected). SET LOCAL is transaction-scoped, so
+│   │                          # identity cannot leak across pooled connections.
 │   │                          # ★★ ONE POOL PER PROCESS (2026-10-23, robustness audit B26):
 │   │                          # the pool lives on globalThis[Symbol.for("storemink.db.pool")],
 │   │                          # because a Next build carries this module in several server
@@ -7410,12 +8252,12 @@ wholesip/
 │   │                          # lib/ai/quota.ts), store-domain, payment-provider,
 │   │                          # customers (customer-actions + customer-profile +
 │   │                          # dashboard/users/data.ts — customer_admin view; auth
-│   │                          # admin ops stay on Supabase till Phase 6), user-groups
+│   │                          # admin ops via lib/auth/firebase-users.ts), user-groups
 │   │                          # (+ dashboard data), roles (+ roles/admins pages),
 │   │                          # account-settings + set-password + user-management +
 │   │                          # invite-user (own-row admin updates → withUser,
 │   │                          # superadmin guards → withService; auth createUser/
-│   │                          # deleteUser/pw/session on Supabase till Ph6),
+│   │                          # deleteUser/pw/session via firebase-admin),
 │   │                          # subscriptions, ai-credits, platform (operator
 │   │                          # console; getPlatformViewer via getServerUser +
 │   │                          # platform_admins email allowlist), store-signup,
@@ -7434,13 +8276,12 @@ wholesip/
 │   ├── auth/                  # ★ Identity Platform auth (GCP Phase 6 — Firebase):
 │   │                          # server-user.ts — getServerUser() identity seam (the ONE
 │   │                          # place server code reads the authed user; feeds withUser),
-│   │                          # now verifies the Firebase SESSION COOKIE (no Supabase).
+│   │                          # verifies the Firebase SESSION COOKIE.
 │   │                          # firebase-admin.ts (lazy Admin SDK), session-cookie.ts
 │   │                          # (mint/verify + .storemink.com cookie), constants.ts
 │   │                          # (dependency-free shared session-cookie name),
 │   │                          # firebase-claims.ts
-│   │                          # (role/force_password_reset custom claims — replaces the
-│   │                          # custom_access_token_hook), firebase-users.ts (admin
+│   │                          # (role/force_password_reset custom claims), firebase-users.ts (admin
 │   │                          # create/delete/update + REST password reverify + reset link),
 │   │                          # firebase-client.ts (Web SDK: getCurrentFirebaseUser awaits
 │   │                          # authStateReady, since currentUser is null until the saved
@@ -7673,6 +8514,23 @@ wholesip/
 │   │                          # database's claimedAt) and the best-effort
 │   │                          # releaseSpendLimits, which takes `claimedAt` to give back only
 │   │                          # to the window that counted the claim; MINK_IMAGE_GLOBAL_LIMIT
+│   ├── mink/stop-watch.ts     # server-only: the stop watcher shared by a chat run
+│   │                          # (run-stop.ts) and a Refine request: watchForStop (one
+│   │                          # read a tick, 1 s for 15 s then 2 s, ±15%, never two
+│   │                          # reads at once; close(), settled(), checkNow()) and
+│   │                          # createLiveStopRegistry (on globalThis, per symbol)
+│   ├── mink/refine-stop.ts    # server-only: the Refine stop handshake on
+│   │                          # mink_refine_requests (0247): begin, stop, claim (the
+│   │                          # charge transaction's first statement), abandon (the
+│   │                          # stage arbiter), watch, live registry; statements
+│   │                          # exported for the opt-in local race test
+│   ├── mink/refine-stop-types.ts # client-safe: RefineStopAnswer, the token pattern,
+│   │                          # the strict reader
+│   ├── mink/refine-stages.ts  # server-only: private stage paths per DB_NAME, the
+│   │                          # publish (three tries, never throws), and the
+│   │                          # per-minute stage sweep (abandon decides; a paid
+│   │                          # photo deleted from the Media Library is not
+│   │                          # republished; every storage call within 10 s)
 │   ├── mink/vertex-clients.ts # server-only: the one Mink Vertex client per project and
 │   │                          # location (session, storefront writer, chat namer, image
 │   │                          # generation, Refine, WhatsApp Mink, the attachment reader)
@@ -7721,19 +8579,33 @@ wholesip/
 │   │                          # vague multi-location stock asks return bounded quick choices.
 │   │                          # Order/customer output is role-gated and masks direct PII;
 │   │                          # selected IDs are revalidated against the trusted tenant.
-│   │                          # conversation-history.ts owns actor-scoped conversation
-│   │                          # list/detail/delete and successful message/feedback history
-│   │                          # (plus a failed run's kept redesign card), and the dead-run
+│   │                          # conversation-history.ts owns actor-scoped History: keyset
+│   │                          # pages, POST search, earlier messages, the open's 90-day bump,
+│   │                          # the one visibility rule (successful runs, a failed run's kept
+│   │                          # redesign card, a stopped run's own question) and the delete
+│   │                          # through conversation-retire.ts (retire = strip unapplied
+│   │                          # redesigns, then delete or reduce); conversation-retention.ts is
+│   │                          # the 90-day sweep (prune-logs); chat-history-list.ts merges a
+│   │                          # refreshed page 1 (client-safe); and the dead-run
 │   │                          # rule (staleMinkRunCondition) the delete and the sweep share;
 │   │                          # history APIs avoid draft execution and email dependencies
 │   │                          # (the delete imports persistence.ts only for a dead run).
 │   │                          # persistence.ts owns runs, redacted tool records, extractive
 │   │                          # history compaction, answer artifacts and append-only partial
 │   │                          # usage + versioned shadow cost/credits, the failure record
-│   │                          # that keeps a redesign (B4) and closeStaleMinkRuns (B7);
-│   │                          # re-exports history.
+│   │                          # that keeps a redesign (B4) and closeStaleMinkRuns (B7), and moves the
+│   │                          # chat's 90-day expiry at run start (no count cap); re-exports history.
+│   │                          # run-stop.ts (server-only) is the stop handshake: the stop
+│   │                          # route's requestMinkRunStop, the tools' claimMinkRunAct,
+│   │                          # the stream route's watcher and same-instance live map (both
+│   │                          # on stop-watch.ts), and the cron's closeStoppedMinkRuns;
+│   │                          # run-stop-types.ts is its client-safe answer (MinkStopResult,
+│   │                          # readMinkStopResult).
 │   │                          # feedback.ts accepts only actor-owned runs and redacts private
 │   │                          # detail; request-origin.ts is the shared Cloud Run CSRF boundary.
+│   │                          # screen-redaction.ts hides emails, phones and postal addresses
+│   │                          # in the screen context and path, in the browser and again on
+│   │                          # the server (masked before any length cut, in one linear pass).
 │   │                          # drafts.ts + draft-types.ts and tools/draft-tools.ts implement
 │   │                          # the separately opted-in Phase 3 proposal boundary: five
 │   │                          # brand-voice draft kinds, atomic weighted plan/credit use,
@@ -8156,231 +9028,46 @@ wholesip/
 │   │                          # `cost` spends that many units in one call
 │   │                          # (check_rate_limit_cost, 0229); a key is counted
 │   │                          # or weighted, never both
+│   ├── client-ip.ts           # ★ clientIp/clientIpOrNull: the address that connected
+│   │                          # to our load balancer, read from the RIGHT of
+│   │                          # X-Forwarded-For (the entry before the rightmost
+│   │                          # DOMAIN_LB_IP; without it, the FIRST entry, so a wrong
+│   │                          # anchor never shares one key); x-real-ip never read. rate-limit.ts
+│   │                          # re-exports clientIp; lib/legal consent records use
+│   │                          # clientIpOrNull. On Cloud Run, logs one ERROR per
+│   │                          # instance when the header does not end in
+│   │                          # DOMAIN_LB_IP. Tested (client-ip.test.ts, §7).
 │   ├── blog-taxonomy.ts   # fetchBlogTaxonomy(): per-store blog categories/tags reader
 │   ├── blog-reactions.ts / phone-labels.ts / use-otp-throttle.ts
 │   ├── site.ts / utils.ts     # Canonical platform/help/themes origins + cn() etc.
 │
 ├── components/
 │   ├── ui/                    # shadcn/ui primitives (button, dialog, table, sidebar…)
+│   │                          # ★ ui/image-refine-registry.ts: the tab's Refine
+│   │                          # registry (one entry per scope + slot size + photo,
+│   │                          # stop token, page exits, dead-request outcome, the
+│   │                          # "ready" toast); ui/image-refine-context.tsx: the
+│   │                          # tool flags, the page-exit listeners, ImageRefineScope
+│   │                          # and useImageRefineView
 │   ├── invoice/               # ★ Print-styled InvoiceDocument (server) + PrintButton
 │   │                          # (client) + invoice.css (@media print isolation) — §17
 │   └── customer-multiselect.tsx
 ├── hooks/use-mobile.ts
-│
-├── supabase/                  # ★ SQL — schema, migrations, RLS (run against Supabase manually/MCP)
-│   ├── multitenant_01_schema.sql        # stores table + store_id columns (+ rollback)
-│   ├── multitenant_03_rls.sql           # store-scoped RLS policies (+ rollback)
-│   ├── multitenant_04_admin_views.sql / _05_count_rpcs.sql / _06_drop_store_defaults.sql
-│   ├── multitenant_07_platform_admins.sql  # platform_admins table (+ rollback)
-│   ├── *_table.sql            # blogs, coupons, enquiries, roles, users, user_groups,
-│   │                          # product_reviews, email_campaigns, rate_limits, card_colors,
-│   │                          # blog_comments/likes… (homepage_sections DEPRECATED — Phase 4a)
-│   ├── orders_table.sql       # ★ orders + order_items (+ RLS + updated_at trigger). NO
-│   │                          # customer INSERT policy by design — placeOrder writes with
-│   │                          # the service role; customers/admins get SELECT/manage (convention #12).
-│   ├── logistics_01_shiprocket.sql # ★ §35 physical product/order snapshots plus
-│   │                          # fulfilment orders, parcels, events, credentials and pickup maps;
-│   │                          # all logistics tables are service-role only
-│   ├── shipping_01_checkout_rates.sql # ★ §35 merchant rate policy + immutable
-│   │                          # orders.shipping_option checkout promise
-│   ├── locations_04_reservations.sql  # ★ stock_reservations + hold/commit/release
-│   │                          # RPCs; available = on_hand - reserved
-│   ├── locations_10_default_online_fulfil.sql  # ★ auto-created Main locations
-│   │                          # fulfil online; repairs bare capability rows
-│   ├── locations_03_fulfilment.sql  # ★ store_fulfilment_rules + products.online_stock
-│   │                          # (sellable-online total, trigger-maintained)
-│   ├── locations_02_admin_scope.sql  # ★ admin_locations — location scope for
-│   │                          # dashboard admins (NO ROWS = unrestricted)
-│   ├── locations_01_capabilities.sql  # ★ store_locations.capabilities (jsonb) —
-│   │                          # what a location may DO; registry in lib/locations/
-│   ├── pos_13_customer_claim.sql  # ★ §36 users.claimed_at + ON UPDATE CASCADE on
-│   │                          # all SIX FKs to users.id, so adopting a till-
-│   │                          # created customer is ONE statement. ⚠ Three of
-│   │                          # those constraints are NAMED …_customer_id_fkey
-│   │                          # but sit on `user_id` — read pg_constraint.conkey
-│   ├── pos_11_transfer_stock.sql  # ★ transfer_stock(): move stock between two of
-│   │                          # a store's locations, atomically (one plpgsql txn)
-│   ├── pos_10_shifts.sql      # ★ pos_shifts + pos_cash_movements + orders.shift_id
-│   │                          # (one open shift per LOCATION, partial unique index)
-│   ├── pos_09_register_layout.sql  # ★ pos_layouts: manager-arranged till grid
-│   │                          # per location (no row = show the whole catalogue)
-│   ├── pos_08_customer_order_store_scope.sql  # ★ store-scopes the CUSTOMER order
-│   │                          # SELECT policies (were uid-only) + auth_customer_store_id()
-│   ├── coupons_storefront_visibility.sql  # coupons.show_on_storefront flag (§storefront coupons)
-│   ├── customer_addresses.sql # ★ saved shipping addresses (own-row RLS) — checkout book
-│   ├── coupon_usage_rpc.sql   # ★ increment_/decrement_coupon_usage: atomic used_count
-│   │                          # reserve/release (enforces max_uses under concurrency)
-│   ├── blog_taxonomy.sql      # per-store blog_categories + blog_tags (+ RLS + seed)
-│   ├── store_menus.sql        # ★ per-store header/footer nav (+ RLS + WholeSip seed) — §11
-│   ├── themes_01_newsletter_subscribers.sql # ★ host-scoped email consent rows for
-│   │                          # footer/section newsletter forms; admin-read RLS (§11)
-│   ├── notifications_01_schema.sql  # ★ the event spine (§22): activity_events
-│   │                          # (append-only audit) + notifications (per-recipient
-│   │                          # inbox, UNIQUE on event+recipient) + notification_
-│   │                          # preferences (store defaults ← user overrides). READ-
-│   │                          # ONLY RLS by design — every write is service-role
-│   │                          # (no client can forge an audit row or push a bell)
-│   ├── notifications_03_console.sql  # ★ §22 console: notification_definitions
-│   │                          # (platform-global, operator-managed) +
-│   │                          # notification_settings (per store: channels,
-│   │                          # recipients, templates, digest, on/off)
-│   ├── email_logs.sql         # ★ §22 Email Logs: every message sent, per store
-│   │                          # (platform rows = store_id NULL). Service-role
-│   │                          # only; bodies redacted for credential mailers
-│   ├── import_export_01_jobs.sql # ★ §31: data_jobs (one row per CSV import or
-│   │                          # export; `partial` is a real status) + data_job_issues
-│   │                          # (one row per PROBLEM, carrying the ORIGINAL file
-│   │                          # line — the error log). Service-role only, the
-│   │                          # email_logs pattern: the rows quote raw cells, which
-│   │                          # for an orders export means customer addresses
-│   ├── import_export_02_background.sql # ★ §31: what makes an import a REAL
-│   │                          # background job — data_jobs.cursor/lease_until/
-│   │                          # attempts + data_job_payloads (the uploaded file,
-│   │                          # in Postgres NOT the public media bucket). Its own
-│   │                          # file because _01 is a CREATE TABLE IF NOT EXISTS
-│   │                          # that prod has already run (§15b)
-│   ├── notifications_07_routing_scope.sql # ★ notification_settings.routing_scope
-│   │                          # — 'store' (default) | 'event_location'
-│   ├── notifications_05_suppressions.sql # ★ §22 delivery: email_suppressions
-│   │                          # (GLOBAL — no store_id, by design: a hard bounce
-│   │                          # bounces for everyone and the shared sending
-│   │                          # domain's reputation is the platform's) + the
-│   │                          # failed-row index behind the delivery panel
-│   ├── notifications_02_email_queue.sql  # ★ §22 email channel:
-│   │                          # notification_email_queue + claim/requeue RPCs
-│   │                          # (FOR UPDATE SKIP LOCKED, the email_campaigns
-│   │                          # pattern). Worker-only: RLS on, NO policies
-│   ├── media_assets.sql       # ★ per-store Media Library table (RLS is_store_admin; NOT
-│   │                          # public — object URLs are public, the listing is admin-only)
-│   │                          # `source` column added by migration 20261016_0213
-│   ├── invoicing.sql          # ★ tax_classes + products.tax_class_id + order_items tax
-│   │                          # cols + orders.tax_inclusive + store_billing_settings — §17
-│   ├── billing_01_foundation.sql   # ★ §34 platform_billing_settings (operator GST
-│   │                          # singleton; tax OFF until a GSTIN exists) +
-│   │                          # billing_accounts + billing_mandates (one ACTIVE
-│   │                          # per store; max_amount copied from billing_09's
-│   │                          # durable authorisation attempt)
-│   ├── billing_02_subscriptions.sql # ★ §34 billing_subscriptions (OUR state
-│   │                          # machine, not Razorpay's) + billing_claim_downgrade()
-│   │                          # — ONE statement that re-checks state, deadline,
-│   │                          # comp exemption AND payment inside the UPDATE
-│   ├── billing_03_invoices.sql # ★ §34 billing_invoices + items + the gapless FY
-│   │                          # series (allocated ON FINALIZE by trigger, via
-│   │                          # sm_pad) + immutability triggers. ⚠ APPLY BEFORE
-│   │                          # billing_02's function is ever CALLED — plpgsql
-│   │                          # resolves table names at call time, so the wrong
-│   │                          # order succeeds and then fails at runtime
-│   ├── billing_06_migrate_legacy.sql # ★ §34 the CUTOVER: moves live
-│   │                          # store_subscriptions rows onto the new tables
-│   │                          # (one in prod). ⚠ The mandate CANNOT come with
-│   │                          # them — a Razorpay Subscription's mandate is a
-│   │                          # different product from a recurring token — so
-│   │                          # they re-authorise or pay manually next cycle.
-│   │                          # No invoice for the already-paid cycle (it would
-│   │                          # burn a GST number for a document never sent),
-│   │                          # comped stores skipped, and ⚠ the gateway
-│   │                          # subscription must be cancelled SEPARATELY or
-│   │                          # Razorpay's timer bills alongside our worker
-│   ├── billing_05_tax_mode.sql # ★ §34 platform_billing_settings.tax_inclusive.
-│   │                          # ⚠ Its OWN file because billing_01 is APPLIED —
-│   │                          # editing an applied CREATE TABLE IF NOT EXISTS
-│   │                          # is a silent no-op (§15b's subscriptions_02)
-│   ├── billing_verify.sql     # ★ §34 adversarial check of the APPLIED schema
-│   │                          # (26 checks). Mutations run in a plpgsql
-│   │                          # SUBTRANSACTION that is rolled back, so nothing
-│   │                          # persists — not even a burned invoice number —
-│   │                          # while the results survive in plpgsql ARRAYS,
-│   │                          # which are memory rather than transactional
-│   │                          # state. Asserts 26-of-26 RAN, so an empty or
-│   │                          # half-dead run can never render as green.
-│   │                          # No psql meta-commands: runs in Cloud SQL Studio
-│   ├── billing_04_payments.sql # ★ §34 billing_payment_attempts (ONE in flight per
-│   │                          # invoice, partial unique) + billing_credits +
-│   │                          # billing_reconciliation_items + the additive
-│   │                          # billing_webhook_events extension
-│   ├── billing_09_attempt_mandate_ceiling.sql # ★ §34 exact token.max_amount
-│   │                          # persisted on the attempt BEFORE authorisation;
-│   │                          # copied into the mandate after verified payment,
-│   │                          # never browser-supplied or recomputed after drift
-│   ├── plans_02_basic_and_expiry.sql # ★ starter→basic rename + plan_expires_at — §15
-│   ├── ai_credits.sql         # ★ credit balances/ledger/purchases + add_ai_credits/
-│   │                          # try_spend_ai_credit RPCs (service-role only) — §16
-│   ├── payment_providers.sql  # ★ store_payment_providers (BYO Razorpay creds,
-│   │                          # service-role only, app-layer encrypted secret) — §18
-│   ├── payments_01_orders.sql # ★ orders.razorpay_order_id/payment_id + indexes — §18
-│   ├── identifiers_05_no_truncate.sql # ★★ CRITICAL (§14): Postgres lpad()
-│   │                          # TRUNCATES, so every sm_* formatter silently lost a
-│   │                          # digit past 9999 — the 10,000th product FAILED to
-│   │                          # insert ((store_id,sku) is UNIQUE) and order #1000 and
-│   │                          # #10000 shared an order_ref. lib/identifiers.ts was
-│   │                          # always right; only the SQL mirror was wrong. Adds
-│   │                          # sm_pad() + a self-check. Backward compatible: at
-│   │                          # ≤ 9999 the two forms are byte-identical
-│   ├── store_credit_01_schema.sql # ★ §29: customer_credit_balances +
-│   │                          # append-only customer_credit_ledger + the two
-│   │                          # RPCs (spend is a conditional UPDATE, so a race
-│   │                          # can't overdraw) + orders.store_credit_used
-│   ├── returns_04_credit_notes.sql # ★ §28: GST credit notes — store_counters.
-│   │                          # credit_note_seq + next_credit_note_no() +
-│   │                          # sm_credit_note_ref() + a TRIGGER that allocates the
-│   │                          # serial on SETTLEMENT (a gap is what an audit flags)
-│   ├── returns_03_exchanges.sql # ★ §28: order_returns.exchange_order_id + per-line
-│   │                          # exchange_product/variant/price/hold. An exchange is a
-│   │                          # return PLUS a new order, never a third entity
-│   ├── returns_02_requests.sql # ★ §28: the order_returns LIFECYCLE (requested →
-│   │                          # approved → received → completed) + channel/reason_code/
-│   │                          # photos/fee snapshots/review fields, and customer SELECT
-│   │                          # RLS. status DEFAULTS 'completed' — every existing row
-│   │                          # is a finished till return
-│   ├── returns_01_product_policy.sql # ★ §28: products.returnable (backfilled TRUE
-│   │                          # — nothing was final-sale before) + return_window_days
-│   │                          # (NULLABLE override, never a copy of the store value)
-│   ├── refunds_01_gateway.sql # ★ §26: order_refunds.idempotency_key (UNIQUE)/reason/
-│   │                          # reference + orders.delivered_at (backfilled). Its OWN
-│   │                          # file — pos_12 has run, so editing it is a silent no-op
-│   ├── homepage_to_store_pages.sql  # Phase 4a data migration: homepage_sections → slug ""
-│   ├── wholesip_static_pages_seed.sql  # Phase 4b: seed the 17 legacy static pages
-│   │                          # (our-story, faqs, privacy-policy…) as published
-│   │                          # store_pages rows for the WholeSip fallback store
-│   ├── homepage_hero_seed.sql  # ★ WholeSip hero carousel as a leading custom_code section
-│   │                          # on the homepage row (the "one-time hero seed" — §11). Idempotent,
-│   │                          # keyed on a fixed section id. Regen: homepage_hero_seed.gen.py
-│   ├── store_pages.sql        # ★ merchant custom pages (draft + published_sections jsonb;
-│   │                          # RLS via is_store_admin; anon SELECT REVOKED then GRANTed on
-│   │                          # named cols WITHOUT draft `sections` — see §11) (+ rollback)
-│   ├── phase6_01_uid_columns_to_text.sql # ★ Phase 6: retype the 25 uid-holding columns
-│   │                          # (admins.id/users.id + every created_by/updated_by/user_id/
-│   │                          # customer_id/submitted_by/added_by/invited_by) uuid→text AND
-│   │                          # the auth.uid() shim →text — Firebase uids are STRINGS, not
-│   │                          # uuids. Entity PKs + store_id + platform_admins.invited_by
-│   │                          # stay uuid. Drops/recreates 7 FKs + 25 policies + 2 admin
-│   │                          # views. RUN AS postgres (owner of the tables + auth schema;
-│   │                          # `app` can't). (+ rollback)
-│   ├── phase6_02_adjust_stock_actor_text.sql # ★ Phase 6 follow-up: adjust_stock's
-│   │                          # p_actor PARAMETER was still uuid (phase6_01 retyped the
-│   │                          # created_by COLUMN but not the RPC arg) → every manual/bulk
-│   │                          # stock edit failed "invalid input syntax for type uuid".
-│   │                          # Drops the uuid overload, recreates p_actor text. RUN AS
-│   │                          # postgres. (+ rollback)
-│   ├── phase6_03_drop_custom_access_token_hook.sql # ★ Phase 6 follow-up: drops the dead
-│   │                          # Supabase-era JWT hook (superseded by firebase-claims.ts;
-│   │                          # never invoked, and stale after phase6_01) + its
-│   │                          # supabase_auth_admin grants + admins RLS policy. RUN AS
-│   │                          # postgres. (+ rollback embedded)
-│   ├── platform_admin_01_order_policies.sql # ★ routes the orders/order_items
-│   │                          # admin policies through is_store_admin() so platform
-│   │                          # operators pass them (they inlined the admins lookup and
-│   │                          # silently blanked the orders dashboard for operators —
-│   │                          # convention #2). Ends with a guard that FAILS if any
-│   │                          # policy still inlines `FROM admins`. RUN AS postgres.
-│   │                          # Applied to staging + prod 2026-07-22. (+ rollback)
-│   └── perf_*.sql             # index / RLS performance migrations
 │
 ├── drizzle/migrations/        # ★ Existing-DB migration ledger manifest. A verified
 │   ├── manifest.json          # legacy baseline + ordered immutable SQL references,
 │                              # SHA-256 checksums and object-level postconditions.
 │                              # `schema_migrations` itself is bootstrapped by the
 │                              # admin-only runner; it is not an application table.
+│                              # ★ EVERY ENROLLED FILE IS IN sql/ (2026-10-26). The
+│                              # first three ledger migrations (20260814_0001,
+│                              # 20260818_0005, 20260819_0006) were moved there byte
+│                              # for byte from the removed pre-ledger SQL folder; the
+│                              # runner leaves `file` out of the checksum, so every
+│                              # ledger row still matches. Docs cite pre-ledger files
+│                              # by bare name (e.g. pos_12_returns.sql): they live in
+│                              # git history only. 0206 and 0207 still name the old
+│                              # folder in a comment and stay byte-for-byte.
 │                              # ★★ TWO CONTRACT-AUTHORING RULES, both learned from
 │                              # entries that jammed the adopt queue (2026-09-07):
 │                              # (1) A FUNCTION NAME NEEDS ITS ARGUMENT TYPES.
@@ -8744,7 +9431,91 @@ wholesip/
 │                              # model within the 45 s, and a safety or
 │                              # too-complex refusal is reported as it is
 │                              # (robustness B12, input-provider.ts).
-│                              # Next free: 0243.
+│                              # 0243 keeps StoreMink's own invoices when a
+│                              # store is deleted (owner, 25 Oct 2026):
+│                              # billing_invoices.store_id and
+│                              # billing_payment_attempts.store_id nullable,
+│                              # ON DELETE SET NULL (the only two direct
+│                              # stores(id) keys that do not cascade);
+│                              # billing_invoices_guard_immutable lets an issued
+│                              # invoice lose its store only while that store is
+│                              # being deleted and freezes `parties` once set;
+│                              # billing_invoices.parties, a write-once record
+│                              # of both parties stamped by the
+│                              # billing_invoices_parties_snapshot trigger from
+│                              # billing_invoice_parties(uuid,text,text,text),
+│                              # backfilled for every issued invoice from the
+│                              # settings at migration time. Supersedes 0014's
+│                              # "every direct store foreign key cascades on
+│                              # deletion" with "every other direct store
+│                              # foreign key cascades on deletion". Pinned by
+│                              # lib/billing/invoice-retention.local.test.ts.
+│                              # 0244 is the Mink stop handshake: mink_runs
+│                              # .stop_requested_at and .acted_at (nullable) and
+│                              # two NULL-safe CHECKs (never both set; a stopped
+│                              # run never succeeds); lib/mink/run-stop.ts.
+│                              # 0245 closes three gaps in 0243's guards (its
+│                              # review, 26 Oct 2026): the BEFORE DELETE
+│                              # trigger billing_invoices_keep_issued
+│                              # (billing_invoices_guard_delete()) refuses
+│                              # deleting an issued invoice, live or kept, and
+│                              # lets a draft go;
+│                              # billing_invoices_snapshot_parties() records
+│                              # the parties on the transition to issued and
+│                              # replaces any value carried in;
+│                              # billing_invoices_guard_immutable also freezes
+│                              # finalized_at, fy_label, supplier_gstin,
+│                              # customer_gstin and place_of_supply.
+│                              # applyVerify only. Pinned by
+│                              # lib/billing/invoice-retention.local.test.ts.
+│                              # 0246 rewrites the Mink guide's two Stop
+│                              # sentences in place (Help, after 0244).
+│                              # 0247 adds service-only mink_refine_requests (one
+│                              # row per Refine request keyed by store, admin and
+│                              # the browser's stop token; refinement_id unique;
+│                              # stop_requested_at and charge_claimed_at each set
+│                              # only while the other is null, a CHECK the
+│                              # backstop; store FK cascades; RLS on, no policy,
+│                              # app_service only); pinned by
+│                              # lib/mink/refine-stop.test.ts, raced by the opt-in
+│                              # refine-stop.local.test.ts.
+│                              # 0248 Mink chat history retention (sliding
+│                              # expires_at backfill, retention_failed_at, the
+│                              # retention index, DELETE on mink_messages,
+│                              # mink_feedback and mink_action_approvals for
+│                              # app_service); 0249 the store-scoped message
+│                              # search GIN index over the text a chat shows
+│                              # (three IMMUTABLE functions) and the kept-answer
+│                              # index (its own transaction); 0250 approvals
+│                              # outlive their product (FK dropped, the name
+│                              # kept as an always-true CHECK for 0042's durable
+│                              # verify); 0251 the Mink guides' chat history Help
+│                              # edits. 0252 the Mink guide's credit sentences
+│                              # (Help, release check): asking questions is not
+│                              # free, a reply that does not finish uses none,
+│                              # and the proposal card shows no credit figure.
+│                              # 0253 the POS wording (owner, 26 Oct 2026): 139
+│                              # UPDATE statements, the two POS role descriptions
+│                              # (platform_roles, guarded on the seeded text), the
+│                              # POS category title and description, 134 guide
+│                              # edits in 37 guides and one updated_at bump on
+│                              # every published guide in the category (136 Help
+│                              # edits counting the two category edits);
+│                              # help:lint's pos-wording rule holds every later
+│                              # Help migration to it. 0254 the POS review's Help
+│                              # follow-ups: the staff guide's Manager and Cashier
+│                              # sentence, the POS troubleshooting heading
+│                              # (pos.storemink.com) and the GA4 guide's two en
+│                              # dashes; no Help migration after it may publish an
+│                              # en dash or a dash written as an HTML entity.
+│                              # 0255 publishes Terms v2, Privacy v4 and
+│                              # Acceptable Use v2 together (one guarded DO block,
+│                              # all three or none; retire then insert per kind,
+│                              # created_by 'script'; refuses a stored version
+│                              # with another text; nothing where the version or a
+│                              # later one is current); pinned by
+│                              # lib/legal/terms-v2-privacy-v4-aup-v2-migration.test.ts.
+│                              # Next free: 0256.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -8920,7 +9691,18 @@ wholesip/
 │   │                          # scripts/prod-monitoring.py` is a dry run that prints every
 │   │                          # body; `--apply --email <address>` creates only what is
 │   │                          # missing (idempotent by display name) with the caller's gcloud
-│   │                          # login. The address is an argument, never committed. Writes
+│   │                          # login. The address is an argument, never committed.
+│   │                          # `--update "<name>"` reads one existing policy and prints
+│   │                          # what would change; with `--apply` it PATCHes that
+│   │                          # policy's conditions, combiner, strategy, documentation,
+│   │                          # severity, labels and on/off flag (channels and name kept,
+│   │                          # no --email) and reads it back; a name the script does not
+│   │                          # define is refused before any read. ★ The Google AI
+│   │                          # refusal alert is ONE PromQL condition since 25 Oct 2026
+│   │                          # (owner-approved): 429+499 above 30% of a 30-minute window
+│   │                          # with at least 20 calls, held 15 minutes, email on open
+│   │                          # only; the 15-minute, 10-call, two-condition version
+│   │                          # flapped at ~20 image calls a window. Writes
 │   │                          # only to storemink-prod; reads configuration and metric
 │   │                          # descriptors, never time series, logs or secrets.
 │   ├── whatsapp-media-to-private.mjs # `npm run whatsapp:media-to-private`: move
@@ -9090,6 +9872,13 @@ wholesip/
 │   │                          # timestamp, so a replace() that leaves it alone
 │   │                          # updates the page and never the index. Eight
 │   │                          # WhatsApp edits did; 0204 moved their timestamps.
+│   │                          # ★ AND THE OWNER'S WORD RULES, in manifest order: no
+│   │                          # em dash after 0184 (published or quoted); no en
+│   │                          # dash or dash entity (&mdash;, &ndash;, &#8212;)
+│   │                          # published after 0254; no "register" or "till" for
+│   │                          # POS after 0253 (pos-wording,
+│   │                          # scripts/pos-wording.mjs), short title, description,
+│   │                          # excerpt and SEO values included (shortHelpValues).
 │   ├── help-content-audit.mjs # ★ The same rules against the rows a DATABASE serves —
 │   │                          # catches Help-console operator edits and the ASSEMBLED
 │   │                          # result of many migrations appending to one guide, which
@@ -9098,6 +9887,20 @@ wholesip/
 │   │                          # `npm run help:audit:local|:staging|:prod`; NOT in CI,
 │   │                          # for db:drift's reason — needs credentials, and a PR
 │   │                          # cannot cause published-content drift.
+│   │                          # Reads each guide's title, excerpt, body and SEO
+│   │                          # fields, and applies the copy rules (long-dash,
+│   │                          # pos-wording) to the category titles and
+│   │                          # descriptions and the platform roles' names and
+│   │                          # descriptions.
+│   ├── pos-wording.mjs        # ★ POS, never "register" or "till" (owner,
+│   │                          # 26 Oct 2026): the ONE word list (OLD_POS_WORD,
+│   │                          # banned by default with the kept meanings spelled
+│   │                          # out; POINT_OF_SALE; COUNTER_AS_FEATURE;
+│   │                          # findOldPosWording) shared by
+│   │                          # app/pos-wording-coverage.test.ts and the
+│   │                          # pos-wording rule of help-content-lint.mjs (Help
+│   │                          # migrations after 0253) and help-content-audit.mjs,
+│   │                          # so the two guards cannot drift (§5 #22).
 │   ├── dev-server.mjs         # ★ resource-aware Next dev runner: 2 GB heap on ≤12 GB
 │   │                          # machines, 3 GB on ≤20 GB, uncapped above; rotates
 │   │                          # generated .next/dev caches over 3 GB, ALWAYS reclaims
@@ -9187,16 +9990,26 @@ wholesip/
 │   │                          # the port looks free). Sets LC_ALL, without which
 │   │                          # the postmaster dies "became multithreaded during
 │   │                          # startup". start/stop/status/psql.
+│   ├── billing-verify.sql     # ★ §34 adversarial check of the APPLIED billing schema
+│   │                          # (26 checks; moved from the pre-ledger SQL folder).
+│   │                          # Mutations run in a plpgsql SUBTRANSACTION that is
+│   │                          # rolled back, so nothing persists (not even a burned
+│   │                          # invoice number) while the results survive in plpgsql
+│   │                          # ARRAYS. Asserts 26-of-26 RAN, so an empty or half-dead
+│   │                          # run can never render as green. No psql meta-commands:
+│   │                          # runs in Cloud SQL Studio against storemink_staging,
+│   │                          # never production.
 │   ├── db-local-sync.sh       # ★ rebuild storemink_local from staging by dump +
-│                              # restore. ★★ pg_dump runs --role=app_service: the
-│                              # `app` login has rolbypassrls=false, so a dump as
-│                              # `app` returns ZERO rows for every RLS-protected
+│                              # restore. ★★ pg_dump runs as the postgres admin
+│                              # user, no --role: a superuser bypasses RLS, while
+│                              # the `app` login has rolbypassrls=false, so a dump
+│                              # as `app` returns ZERO rows for every RLS-protected
 │                              # (service-only) table with no error. A dump rather
 │                              # than replayed SQL because manifest.json's baseline
 │                              # is a VERIFICATION baseline (asserts tables exist)
-│                              # and creates nothing, and the 153 supabase/*.sql
-│                              # files carry apply-order traps + post-apply edits
-│                              # that re-run as silent no-ops. Refuses on expired
+│                              # and creates nothing, and the schema before it was
+│                              # applied by hand and survives only in git history.
+│                              # Refuses on expired
 │                              # ADC, a dead proxy, or pg_dump older than the server.
 │   └── help-content-migrations.test.mjs # static contract for the 0019–0024 public Help
 │                              # baseline: exact file/order/article counts, unique slugs,
@@ -9204,7 +10017,7 @@ wholesip/
 │                              # and explicit rejection of unshipped Promotions/Returns-settings docs
 │
 ├── brand/tasks/               # AI copy TASK prompts (product-desc.md, seo-meta.md), read at
-│                              # runtime by product actions + traced into the serverless bundle via
+│                              # runtime by product actions + traced into the standalone server bundle via
 │                              # next.config.ts. brand.md + the file-based /product-desc & /seo-meta
 │                              # skills were retired — brand voice is per-store in the DB (§16).
 ├── brand/assets/              # Owner's original StoreMink master logo (not served)
@@ -9237,7 +10050,7 @@ wholesip/
     DB side, admin policies must delegate to `is_store_admin(store_id)` — never
     inline `FROM admins WHERE id = auth.uid()` (that recreates the operator
     blind spot; the two orders policies that did are fixed by
-    `supabase/platform_admin_01_order_policies.sql`, which also FAILS if any
+    `platform_admin_01_order_policies.sql`, which also FAILS if any
     policy reintroduces the inline pattern).
     A pooled connection that fails transiently during `BEGIN` or this role/GUC
     setup is destroyed and retried before the callback starts. Never broaden
@@ -9249,6 +10062,20 @@ wholesip/
     statement limit and a 60 s idle-in-transaction limit (§4 `lib/db/`), so a
     transaction that needs a longer statement must `SET LOCAL
 statement_timeout` itself.
+    **★★ NEVER OPEN A SCOPE INSIDE ANOTHER SCOPE'S CALLBACK.** Each scope
+    holds its own pooled connection until its callback returns, so a nested
+    one holds two for one request; with 5 connections per process and a 5 s
+    wait, a few such requests at once take them all and wait on each other
+    until every one fails as `DatabaseBusyError`. Let the first scope return
+    what the second needs and close, or pass the open `db` to the helper (the
+    `db ? run(db) : withService(run)` shape in `lib/credit/store-credit.ts`).
+    `getMyOrder` (the shopper's order page) read its shipments through
+    `withService` inside its `withUser` callback until 2026-10-25.
+    `lib/db/nested-scope-coverage.test.ts` fails on the direct shape (a scope
+    written inside another scope's callback; one inside an `after()` callback
+    runs later and does not count). It cannot see the indirect shape, a
+    helper that opens its own scope called from inside one: a type-checked
+    scan on 25 Oct found none, every such call passing the open `db` down.
 3.  **Route groups**: `(storefront)` = customer site, `dashboard/` = store admin,
     `platform/` = StoreMink itself. Don't put platform pages in the storefront group —
     the proxy rewrite depends on this separation.
@@ -9507,7 +10334,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     against the registry and busts `STORE_TAG`. Enforce settings **server-side**
     (in the action), not just in the UI. If RLS blocks a setting-dependent write
     (e.g. customers may only insert `pending_review` blogs), do the privileged
-    step with the service-role client AFTER checking the setting — see
+    step under withService AFTER checking the setting — see
     **★ THREE TYPES: `boolean`, `number` and `select`.** `select` carries
     `options` — and that list IS the validation, not a UI hint:
     `resolveStoreSettings` refuses a stored value that is not in it and falls
@@ -9528,13 +10355,13 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     all active coupons; otherwise only those with `coupons.show_on_storefront`.
     **⚠ `stores.settings` (which holds `features`) is ANON-READABLE** — the
     "Read stores" RLS policy (`multitenant_03_rls.sql`) grants `SELECT` on every
-    active store to `anon`, and the storefront reads it with the public client.
+    active store to `anon`, and the storefront reads it under withAnon.
     So NEVER put a secret (API key, token, webhook secret) in `stores.settings`;
-    it would be world-readable via PostgREST. Secrets belong in env, or in a
+    it would be world-readable through every anonymous storefront read. Secrets belong in env, or in a
     separate column/table that is NOT granted to `anon` (mirror the `store_pages`
     draft-column pattern: revoke anon, grant only named non-sensitive columns).
 10. **Blog categories & tags are per-store data**, not code: `blog_categories` /
-    `blog_tags` tables (`supabase/blog_taxonomy.sql`), managed in
+    `blog_tags` tables (`blog_taxonomy.sql`), managed in
     `/dashboard/blogs/settings` via `blog-taxonomy-actions.ts`. Blogs store
     plain names in their `text[]` columns, so rename/delete propagates into
     affected blog rows; customer submissions are validated server-side against
@@ -9597,7 +10424,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     by `(pages)/[pageSlug]`; App Router matches static sibling dirs first, and
     every static (pages) dir slug is in `RESERVED_PAGE_SLUGS` (a drift unit test
     `fs.readdir`s the dir and asserts coverage). Published reads are cached
-    (`getPublishedPage`, tag `TAGS.pages`, cached nulls for cheap 404s). - **Draft column is sealed from PostgREST**: anon `SELECT` is REVOKEd then
+    (`getPublishedPage`, tag `TAGS.pages`, cached nulls for cheap 404s). - **Draft column is sealed from the anon role**: anon `SELECT` is REVOKEd then
     GRANTed only on named columns WITHOUT `sections`, so drafts can never leak
     via the API — cached storefront queries therefore select named columns,
     never `*`. The builder + preview read drafts with the **service-role
@@ -9642,7 +10469,15 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     {background,padding_y,width,anchor} applied by `section-shell.tsx` —
     strict color validation because it renders into an inline style attr;
     Advanced = anchor/duplicate/delete; an idle state with a shortcut
-    cheatsheet when nothing is selected). Page settings (title/slug/SEO/
+    cheatsheet when nothing is selected). The Content tab's `SectionForm` is
+    keyed by section and wrapped in an `ImageRefineScope`
+    (`builder:{pageId}:{sectionId}`; the header, footer and brand forms in
+    `builder:chrome`), both built in `image-refine-sweep.ts`
+    (`builderSectionRefineScope`, `BUILDER_CHROME_REFINE_SCOPE`), which also
+    reads them, and the builder's one release effect (over the draft, the
+    page list, the chrome and the brand) stops a Refine only when its slot
+    is destroyed: on the open page when its section or photo is gone, on
+    another page only when that page is deleted. Page settings (title/slug/SEO/
     delete) moved to a topbar-triggered z-50 dialog (`PageSettingsForm`).
     **Instant preview**: preview mode renders sections CLIENT-side in
     `draft-canvas.tsx` — the builder posts `sm-draft {sections}` on every
@@ -9698,7 +10533,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     blocks. The two halves also had different safety models: a page edit sat in
     draft until Publish, while `saveStoreMenus` wrote straight to LIVE — on the
     chrome that appears on every page of the store.
-    `supabase/builder_01_store_chrome.sql` gives chrome the exact `store_pages`
+    `builder_01_store_chrome.sql` gives chrome the exact `store_pages`
     contract: one row per store, `draft` + `published` jsonb, anon SELECT
     revoked and re-granted WITHOUT `draft`. `lib/chrome/types.ts` is the pure
     schema — `normalizeChrome` (reads) fills defaults so a storefront is never
@@ -10458,7 +11293,12 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     sends one before every picture, 25 Oct 2026). A refusal is
     a normal result carrying its reason; no image and no reason is a
     failure, never an empty success. 180 s per request
-    (`IMAGE_REQUEST_TIMEOUT_MS`). ★ Each answer writes one
+    (`IMAGE_REQUEST_TIMEOUT_MS`). ★ A caller may ask (`markStoppedInFlight`;
+    only the storefront redesign's photos do) that a call ending "cancelled"
+    while its last try was on the wire (sent, not refused with 429) be
+    marked `timing.stoppedInFlight`, since that try may have been billed;
+    Theme Studio never asks, so its results and journalled checkpoints are
+    unchanged. ★ Each answer writes one
     `theme_studio.image_answer` info line: its image parts and thought
     drafts (`themeImageAnswerParts`), the kept picture's width and height
     read from its JPEG, PNG or WebP header (`imageDimensions`, never a
@@ -12705,7 +13545,35 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `templates` object (every block with every field, a closed schema) the
     compiler normalises into `preset.templates`, the Stage B layout enum
     admits `stacked`, and `stageBSchemaFor`'s sixth flag gives every earlier
-    revision a twin without either; Stage A text does not move. The renderer
+    revision a twin without either; Stage A text does not move. ★★ PROMPT
+    v33 (2026-10-26): THE SAME TEMPLATES AS ONE JSON STRING. v32's
+    `templates` object pushed the two revision schemas over Vertex's
+    structured-output size limit (the draft schema 16,733 bytes, the variety
+    draft 15,893; the largest Vertex accepted was 14,240), so every operator
+    change that reached Stage B was refused with 400 INVALID_ARGUMENT in
+    production (Bubble, 25 Oct 2026). From v33 Stage B writes
+    `templatesJson`, a string in the `templates` key's place (feature
+    `templatesJson`, `prompt-features.ts`; `stageBSchemaFor`'s seventh flag,
+    whose v32 twin puts the object back), and the compiler parses it
+    (`parseTemplatesJson`) and checks it (`templatesJsonIssues`: at most
+    eight problems named, then how many more; a promo tile's link must be a
+    site path; `stickyBarIssue`: the `sticky_bar` block and
+    `design.layout.stickyAddToCart` must agree, a rule the v32 object path
+    still does not hold) into the same `preset.templates` the object path
+    makes. The v33 prompt bullet is built from the vocabulary constants with
+    one complete example (`TEMPLATES_JSON_EXAMPLE`); a revision's current
+    theme shows its stored templates and announcement in the draft's own
+    spelling (`templatesForDraft`, `announcementForDraft`), so a revision
+    that copies them changes nothing; `claims.ts` reads the templates' and
+    the announcement's copy too. The four v33 schemas measure 11,025 to
+    14,161 bytes, under the accepted 14,240 (`schemas.test.ts` fails a
+    current-version schema above it), and earlier versions keep their
+    requests byte for byte: `stage-b-request.golden.json` pins every Stage B
+    schema and prompt from v19 to the current version against frozen inputs
+    (`__fixtures__/stage-b-request-inputs.json.gz`), and a version with no
+    pin fails. A live staging probe of the exact v33 request was accepted.
+    ⚠ An operator change refused before this ships is asked again with
+    Retry. No Help Centre change (operator-only). The renderer
     check loads shop.css for its product and collection fixtures (the five
     gallery shapes at five widths, the stacked layout, the filter bar's
     popover floating over the grid, the tile, the page buttons; 1,128 cases
@@ -14634,7 +15502,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
       `validateCoupon` (min-order/date/usage/group checks) and the discount is
       recomputed + rounded to match the cart. A coupon use is then **reserved
       atomically BEFORE the order is created** via the `increment_coupon_usage`
-      RPC (`supabase/coupon_usage_rpc.sql`) — a single conditional UPDATE that
+      RPC (`coupon_usage_rpc.sql`) — a single conditional UPDATE that
       returns false when `max_uses` is already hit, so the cap can never be
       exceeded under concurrent checkouts. The reservation is released
       (`decrement_coupon_usage`) if the order then fails to persist; a transient
@@ -14676,14 +15544,14 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
       would let `best` discount from a much higher base (docs/offers-plan.md
       §14).
     - **Service-role writes**: `orders`/`order_items` have **no customer INSERT
-      RLS policy** by design; the writes run with `createAdminClient()` (service
-      role) _after_ all the above validation. Customers get RLS `SELECT` on their
+      RLS policy** by design; the writes run under `withService` (the
+      `app_service` role) _after_ all the above validation. Customers get RLS `SELECT` on their
       own orders; store admins get `FOR ALL`. On an items-insert failure the
-      order row is deleted (best-effort rollback — no cross-statement txn over
-      PostgREST). **If you ever move checkout off the service-role client, add a
+      order row is deleted (best-effort rollback; no cross-statement transaction
+      across the pool). **If you ever move checkout off `withService`, add a
       customer INSERT policy first** (see the note in `orders_table.sql`).
     - **Customer order reads are store-scoped in the DB**
-      (`supabase/pos_08_customer_order_store_scope.sql`). The customer SELECT
+      (`pos_08_customer_order_store_scope.sql`). The customer SELECT
       policies on `orders`/`order_items` were `customer_id = auth.uid()` with
       NO store predicate — and a Firebase uid is global, so any order anywhere
       carrying that uid was readable. They now also require
@@ -14702,11 +15570,11 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
       convention #2 for why the email is load-bearing.
     - **Checkout UX**: the `/checkout` page opens the auth modal IN PLACE when
       signed out (no redirect) so a signed-in shopper lands straight on the form.
-      Saved addresses (`address-actions.ts` + `supabase/customer_addresses.sql`,
+      Saved addresses (`address-actions.ts` + `customer_addresses.sql`,
       own-row RLS) prefill the default and are picked from cards so the address
       isn't retyped each order.
 
-13. **Inventory System**. Per-store stock tracking. Products and variants have `track_inventory` (bool), `stock` (int), `low_stock_threshold` (int), `allow_backorder` (bool), and `sku` (text, products only). Stock edits go through `supabase/inventory_rpc.sql` (`reserve_stock`, `release_stock`, `adjust_stock`) to ensure atomic correctness and generate an append-only ledger in the `stock_movements` table. `lib/inventory/status.ts` is the SINGLE source of truth for turning stock fields into a display status (`isSoldOut`/`lowStockLeft`/`inventoryStatus` + product-level aggregation) — shared by the dashboard list, its optimistic UI, and the storefront so the per-SKU threshold override and the store-wide default (`inventory.lowStockThreshold`) resolve identically everywhere. The storefront reads these fields to display 'Sold Out' or 'Only X left!' badges on product cards and detail pages (the store default is resolved per request in the shop/product pages + section resolver and threaded down as `storeLowStockThreshold`), and the quick-add button disables itself for out-of-stock items. Checkout (`checkout-actions.ts`) creates the order row **before** calling `reserve_stock` per line (the `stock_movements.order_id` FK requires the order to exist first), and rolls back stock→order→coupon in reverse on any failure. Each order carries a `stock_status` (`none`/`reserved`/`released`) tracking its reservation lifecycle: checkout sets `reserved`; `order-actions.ts` restocks on cancellation by atomically claiming the `reserved`→`released` transition (a single conditional UPDATE), so cancellation restocks **exactly once** and never touches legacy orders (`none`) — reinstating a cancelled order does NOT auto re-reserve. Store admins manage inventory at `/dashboard/inventory` (list view, history drawer, bulk adjustments) and settings at `/dashboard/inventory/settings`. **Cart-side enforcement (layered defense above the DB guarantee).** `reserve_stock` makes overselling impossible at order time, but the cart must not let a shopper pile quantity past stock in the first place. `lib/inventory/status.ts` adds `cartLineMax(snapshot, ceiling=99)` — the camelCase cart counterpart of `maxPurchasable` — and a `CartStockSnapshot` shape. Every `CartItem` (`CartProvider`) carries an optional `{trackInventory, stock, allowBackorder}` snapshot captured at add time (all optional, so older persisted carts parse as untracked/unlimited); `addItem` and `setQuantity` clamp centrally to `cartLineMax`, so ONE choke-point caps every surface: the quick-add button (`quick-add-button.tsx`, toasts at the cap), the PDP quantity selector + Buy Now (`product-detail-client.tsx`), and all three cart steppers (`CartDrawer.tsx`, classic `cart-client.tsx`, `grocery-cart.tsx`) — each disables "+" and shows a "Max available: N" hint at the cap. **Stale carts are reconciled at checkout**: `getCartStock(lines)` (`checkout-actions.ts`, service-role, store-scoped, uncached) re-reads live per-line stock and marks vanished products/variants `exists:false`; `CartProvider.reconcileStock(updates)` refreshes each line's snapshot, clamps over-stock quantities, drops sold-out/vanished lines, and returns a `{removed, reduced}` summary the `/checkout` page toasts on mount. If a reserve still fails at order time, `placeOrder` re-reads the SKU and returns the exact shortfall ("only N left" / "just sold out"), not a generic error.
+13. **Inventory System**. Per-store stock tracking. Products and variants have `track_inventory` (bool), `stock` (int), `low_stock_threshold` (int), `allow_backorder` (bool), and `sku` (text, products only). Stock edits go through `inventory_rpc.sql` (`reserve_stock`, `release_stock`, `adjust_stock`) to ensure atomic correctness and generate an append-only ledger in the `stock_movements` table. `lib/inventory/status.ts` is the SINGLE source of truth for turning stock fields into a display status (`isSoldOut`/`lowStockLeft`/`inventoryStatus` + product-level aggregation) — shared by the dashboard list, its optimistic UI, and the storefront so the per-SKU threshold override and the store-wide default (`inventory.lowStockThreshold`) resolve identically everywhere. The storefront reads these fields to display 'Sold Out' or 'Only X left!' badges on product cards and detail pages (the store default is resolved per request in the shop/product pages + section resolver and threaded down as `storeLowStockThreshold`), and the quick-add button disables itself for out-of-stock items. Checkout (`checkout-actions.ts`) creates the order row **before** calling `reserve_stock` per line (the `stock_movements.order_id` FK requires the order to exist first), and rolls back stock→order→coupon in reverse on any failure. Each order carries a `stock_status` (`none`/`reserved`/`released`) tracking its reservation lifecycle: checkout sets `reserved`; `order-actions.ts` restocks on cancellation by atomically claiming the `reserved`→`released` transition (a single conditional UPDATE), so cancellation restocks **exactly once** and never touches legacy orders (`none`) — reinstating a cancelled order does NOT auto re-reserve. Store admins manage inventory at `/dashboard/inventory` (list view, history drawer, bulk adjustments) and settings at `/dashboard/inventory/settings`. **Cart-side enforcement (layered defense above the DB guarantee).** `reserve_stock` makes overselling impossible at order time, but the cart must not let a shopper pile quantity past stock in the first place. `lib/inventory/status.ts` adds `cartLineMax(snapshot, ceiling=99)` — the camelCase cart counterpart of `maxPurchasable` — and a `CartStockSnapshot` shape. Every `CartItem` (`CartProvider`) carries an optional `{trackInventory, stock, allowBackorder}` snapshot captured at add time (all optional, so older persisted carts parse as untracked/unlimited); `addItem` and `setQuantity` clamp centrally to `cartLineMax`, so ONE choke-point caps every surface: the quick-add button (`quick-add-button.tsx`, toasts at the cap), the PDP quantity selector + Buy Now (`product-detail-client.tsx`), and all three cart steppers (`CartDrawer.tsx`, classic `cart-client.tsx`, `grocery-cart.tsx`) — each disables "+" and shows a "Max available: N" hint at the cap. **Stale carts are reconciled at checkout**: `getCartStock(lines)` (`checkout-actions.ts`, service-role, store-scoped, uncached) re-reads live per-line stock and marks vanished products/variants `exists:false`; `CartProvider.reconcileStock(updates)` refreshes each line's snapshot, clamps over-stock quantities, drops sold-out/vanished lines, and returns a `{removed, reduced}` summary the `/checkout` page toasts on mount. If a reserve still fails at order time, `placeOrder` re-reads the SKU and returns the exact shortfall ("only N left" / "just sold out"), not a generic error.
 
     **Location-first inventory workspace.** A multi-location store now lands on
     its default/first accessible shelf; every edit and bulk confirmation names
@@ -14733,7 +15601,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `lib/identifiers.ts` (pure, tested) is the **client-display authority**
     (`luhnCheckDigit`/`isValidCode`/`formatSku`/`formatVariantSku`/`formatOrderRef`/
     `formatStoreCode`/`refKind`). **Generation is at the DB layer** so no insert
-    path can produce a code-less row: `supabase/identifiers_01_schema.sql` adds
+    path can produce a code-less row: `identifiers_01_schema.sql` adds
     `stores.store_no` (global `store_no_seq`, from 1000), `orders.order_no`/
     `order_ref`, `products.sku_no`, `product_variants.variant_no`, a per-store
     `store_counters` table (anon-revoked; a live counter leaks order volume) and
@@ -14753,7 +15621,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     routes are UNCHANGED. Supersedes the "sku (text, products only)" note in #13.
 
     **★ THE SQL MIRROR TRUNCATED PAST 9999** (found 2026-08-03, fixed by
-    `supabase/identifiers_05_no_truncate.sql`). Postgres `lpad('12345',4,'0')`
+    `identifiers_05_no_truncate.sql`). Postgres `lpad('12345',4,'0')`
     returns `'1234'` — it truncates as well as pads, and every `sm_*` formatter
     padded each field to exactly 4. So `sm_order_ref(1001,1000)` and
     `sm_order_ref(1001,10000)` produced **the identical string**. Consequences,
@@ -14807,7 +15675,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     (`plans_02_basic_and_expiry.sql` renamed starter→basic) and paired with
     `stores.plan_source` (`comp`/`paid`/`trial`); every change is recorded in
     the append-only `plan_events` audit table (service-role only, like
-    `store_counters`) — schema in `supabase/plans_01_schema.sql`.
+    `store_counters`) — schema in `plans_01_schema.sql`.
     - **★ A COMP IS A FLOOR, NOT A CEILING** (`billingMayApplyPlan`,
       `lib/payments/plan-change.ts`, pure + tested). The rule used to be "an
       operator comp must never be overwritten by a billing webhook", and its
@@ -14846,7 +15714,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
       every gate resolves the plan via **`effectivePlan(store)`** (expired ⇒
       free; threaded through `lib/ai/quota.ts`, `lib/settings/resolve.ts`,
       `store-settings.ts`, checkout's gateway gate, credit purchases), and
-      (2) durable — `/api/cron/plan-expiry` (daily, vercel.json,
+      (2) durable — `/api/cron/plan-expiry` (daily Cloud Scheduler job,
       CRON_SECRET-protected) flips expired rows to free, clears the expiry,
       writes a `plan_events` row (source `system`) and busts `STORE_TAG`.
       The platform stores console sets plans via `setStorePlan`
@@ -14904,7 +15772,7 @@ running subscription is how you get chargebacks.
 16. **Per-store brand voice + AI quota.** Every AI copy feature (product
     description, SEO, coupon email, brand-voice setup) speaks in the STORE's
     voice: `lib/ai/brand-voice.ts` `getBrandSoulForStore(storeId)` reads
-    `store_brand_profiles` (`supabase/brand_voice_01_schema.sql`; service-role
+    `store_brand_profiles` (`brand_voice_01_schema.sql`; service-role
     only — a brand guide is internal content, so no anon/authenticated grants,
     the store_pages-draft pattern) and NEVER returns null — stores without a
     saved guide get a safe generic default folded from their name/tagline/blurb,
@@ -15003,7 +15871,7 @@ running subscription is how you get chargebacks.
     spent, `consumeAiQuota` falls back to the store's credit balance
     (never-expiring integers) via `try_spend_ai_credit` — the expiring
     resource burns before the permanent one. Storage in
-    `supabase/ai_credits.sql`: `ai_credit_balances` (one row/store, CHECK
+    `ai_credits.sql`: `ai_credit_balances` (one row/store, CHECK
     ≥ 0), append-only `ai_credit_ledger` (`purchase`/`grant`/`spend`; a
     UNIQUE partial index on purchase refs makes crediting idempotent per
     Razorpay payment id) and `ai_credit_purchases` (pending→paid/failed) —
@@ -15037,7 +15905,7 @@ running subscription is how you get chargebacks.
 
 17. **Invoices & tax (per-store, Shopify-style).** Managed at `/dashboard/billing`
     (permission section `billing`, group Administration). Storage in
-    `supabase/invoicing.sql`: `tax_classes` (named rate buckets, public-read /
+    `invoicing.sql`: `tax_classes` (named rate buckets, public-read /
     admin-write RLS), `products.tax_class_id` (ON DELETE SET NULL), per-line tax
     snapshot on `order_items` (`tax_rate`/`tax_amount`/`tax_class_name`),
     `orders.tax_inclusive` (`orders.tax` already existed), and a single-row
@@ -15084,7 +15952,7 @@ InvoiceDocument` (server, presentational) + `invoice.css` (`@media print`
     connects their OWN Razorpay account at **`/dashboard/channels`** (section
     `channels`, group Administration); order money settles directly with them
     — the platform never touches order funds and takes no fee. - **Credentials** live in `store_payment_providers`
-    (`supabase/payment_providers.sql`) — SERVICE-ROLE ONLY (**never** in
+    (`payment_providers.sql`) — SERVICE-ROLE ONLY (**never** in
     anon-readable `stores.settings`, §5.9), with the key secret
     ADDITIONALLY encrypted at the app layer: `lib/payments/crypto.ts`
     (AES-256-GCM, env `PAYMENT_CRED_KEY` = 32-byte base64; rotation =
@@ -15108,7 +15976,7 @@ InvoiceDocument` (server, presentational) + `invoice.css` (`@media print`
     `lib/payments/razorpay-client.ts` is the CLIENT-side checkout.js
     loader + typed modal wrapper shared by the storefront checkout and the
     AI-credits buy panel. - **Checkout flow** (extends convention #12; `orders.razorpay_order_id`/
-    `razorpay_payment_id` added by `supabase/payments_01_orders.sql`):
+    `razorpay_payment_id` added by `payments_01_orders.sql`):
     `getCheckoutConfig()` tells the client whether to render the method
     selector (COD default | "Pay online"). `placeOrder(..., "razorpay")`
     runs the IDENTICAL validation/repricing/coupon/stock machinery, inserts
@@ -15123,9 +15991,8 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     ("Retry payment"; any cart/coupon change invalidates the retry). - **No merchant webhooks in v1 — reconcile-on-read:** the success page
     (`?pm=rzp`) fires `reconcileMyOrderPayment` (owner-gated, asks Razorpay
     directly), and the reaper `/api/cron/expire-pending-payments`
-    (vercel.json, CRON_SECRET; DAILY on the Vercel Hobby plan, which caps
-    crons at once/day — bump to hourly on Pro; it's only a backstop since the
-    success page reconciles instantly) sweeps razorpay orders pending > 45 min:
+    (Cloud Scheduler, hourly at :30, CRON_SECRET; it's only a backstop since
+    the success page reconciles instantly) sweeps razorpay orders pending > 45 min:
     captured at Razorpay ⇒ mark paid (never lose a paid order); otherwise
     claim pending→failed, restock via the reserved→released conditional
     claim (exactly-once, order-actions pattern), release the coupon use,
@@ -15143,7 +16010,7 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     ARE DIFFERENT PROBLEMS**: a captured payment stays captured, so
     re-presenting one verifies perfectly every time; only
     `order_payments.reference` uniqueness stops it settling two sales, in the
-    action AND in `supabase/pos_15_gateway_tender.sql`'s partial unique index
+    action AND in `pos_15_gateway_tender.sql`'s partial unique index
     (applied, verified 2026-08-18). **★★ A ONE-TAP TENDER IS STAGED BEFORE
     COMPLETION** — manager approval and retryable completion errors therefore
     reuse the same tender, including the same captured gateway reference,
@@ -15195,7 +16062,7 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     land on the sell counter first and must earn its place here on its own. ⚠ A gateway clash at the collection counter CANNOT
     unwind the way the sell counter's does — the claim has committed and the
     parcel is gone — so it is logged distinctly for a human to reconcile. - **★★ THERE IS A MERCHANT WEBHOOK NOW** (`/api/webhooks/payments/[storeId]`,
-    `lib/payments/store-webhook.ts`, `supabase/payments_02_store_webhook.sql`).
+    `lib/payments/store-webhook.ts`, `payments_02_store_webhook.sql`).
     Reconcile-on-read left a real hole: close the tab on the Razorpay screen
     and the money is captured while the order sits `pending` until the hourly
     reaper — the merchant sees nothing and the shopper is thanked for nothing.
@@ -15533,7 +16400,7 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     DndContext. Saved sections still render as the responsive four-column
     viewing grid; editor units collapse to 8 columns on tablets and one card
     per row on mobile. - **Phase 2a persistence (2026-08-18):**
-    `supabase/analytics_01_dashboard_layouts.sql` and the matching
+    `drizzle/migrations/sql/20260818_0005_analytics_dashboard_layouts.sql` and the matching
     `analyticsDashboardLayouts` Drizzle model store a bounded, versioned
     preference by `(store_id, admin_user_id)`; migration id
     `20260818_0005_analytics_dashboard_layouts` is enrolled in the checksummed
@@ -15576,8 +16443,8 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     `stock_movements(reason='sale')` rows tied to recognized orders and obeys
     the selected stock location. Untouched layouts
     now also receive the Customers section; customized layouts remain stable. - **Search Console Phase 3a foundation (2026-08-19; migration applied):**
-    `supabase/search_metrics_01_schema.sql` and migration
-    `20260819_0006_search_metrics` add service-only origin epochs, complete
+    migration `20260819_0006_search_metrics`
+    (`drizzle/migrations/sql/20260819_0006_search_metrics.sql`) adds service-only origin epochs, complete
     metric buckets, leased `(source, PT date, dimension)` work and a
     database-serialized per-property rate limiter. `lib/seo/search-performance.ts`
     owns the anchored tenant page filter, PT dates, row caps and weighted
@@ -15852,7 +16719,8 @@ backend-services update` REPLACES the whole custom-header list, so
     migration). `lib/legal/content.ts` privacy section 8 (v3) describes the
     same. A lawyer approved v3 on 24 Oct 2026, and migration
     `20261024_0241` publishes it with the release (§25), so every dashboard
-    account accepts it again on its next visit. - **Live View, Targets and Insights (2026-10-12):** - _Live View_ (`/dashboard/analytics/live`, every plan; header button
+    account accepts it again on its next visit. Privacy v4 (lawyer-approved
+    26 Oct 2026, migration `20261026_0255`) keeps the disclosure in section 8. - **Live View, Targets and Insights (2026-10-12):** - _Live View_ (`/dashboard/analytics/live`, every plan; header button
     with a pulsing dot). `live/data.ts` reads RAW `storefront_events`
     (current to the second, Pro collection only): visitors right now
     (5 min), visitors today, Shopify's customer behaviour (furthest step
@@ -16134,22 +17002,22 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
      Migration `20260829_0035_mink_dashboard_alpha` creates service-only,
      RLS-enabled `mink_conversations`, `mink_runs`, `mink_messages`,
      `mink_tool_calls` and append-only `mink_usage_ledger`. Conversations are
-     owned by `(store_id, admin_id)`, expire after 90 days, and history replay
+     owned by `(store_id, admin_id)`, are kept 90 days after their last use
+     (since `20261026_0248`, see "Mink chat history"), and history replay
      includes only successful prior runs. Tool arguments/results stay redacted
      in telemetry; raw prompt/output/thought/total token counts are recorded
      with `charged_credits=0` for shadow costing. Migration
-     `20260829_0036_mink_conversation_ux` caps the visible history at the newest
-     ten conversations per actor/store, with serialized creation and cascading
-     deletion of old overflow conversations. Overflow pruning excludes any
-     conversation whose source draft is retained by the blog-publication ledger
-     or append-only action audit, so scheduled/published or completed-action
-     evidence cannot make a new Mink run fail;
-     protected older rows remain outside the bounded visible list. Migration
+     `20260829_0036_mink_conversation_ux` capped the visible history at the
+     newest ten conversations per actor/store and pruned the overflow whenever
+     a chat was created; the cap and the prune were removed on 2026-10-26 (see
+     "Mink chat history": chats now leave 90 days after their last use,
+     through the `prune-logs` sweep). Migration
      `20260920_0119_retire_mink_conversation_cap_verify` immutably retires
      0036's obsolete physical-row-count query without deleting that evidence;
-     the newer visible-list contract remains the product guarantee. The UI
+     the 90-day rule of "Mink chat history" is the product guarantee now. The UI
      continues the tab's own recent chat after a refresh (see "Mink chats
-     like ChatGPT"), exposes all ten in a dedicated
+     like ChatGPT"), lists every chat used in the last 90 days, paged and
+     searchable, in a dedicated
      responsive sidebar, allows confirmed same-origin deletion, renders
      supported Markdown without raw HTML, remembers a bounded drag/keyboard
      panel width, and grows the multiline composer to a scrollable cap. The
@@ -16366,7 +17234,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
      prefix until 2026-08-23, so a legacy cover cannot be proven ours and
      holding an existing blog to the new rule would make its title uneditable
      over an image nobody is touching; a URL outside our bucket (a legacy
-     Supabase cover) is already unmanaged by the sweep and passes through.
+     cover on an older external host) is already unmanaged by the sweep and passes through.
      `isStoreOwnedObjectPath` (`lib/storage/paths.ts`) is the shared predicate.
      ★★ THE ARTICLE BODY IS THE SAME HOLE AND IS GUARDED THE SAME WAY.
      `extractMediaUrlsFromHtml` feeds every `<img>` in the stored HTML to the
@@ -16466,7 +17334,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
      proposal time cannot be refused at approval; resolving it through the
      image-model reference path was strictly narrower (a per-collection View
      permission, a PNG/JPEG/WebP content type and an object inside our bucket)
-     and locked a store still serving legacy Supabase media out of using its
+     and locked a store still serving older externally hosted media out of using its
      own catalogue photograph. ★ The `media:manage` check runs BEFORE the
      download, which needs no image data and costs real CPU.
      **★★ AND THE TOLERANCE ASKS WHAT WOULD BE LOST, NOT WHETHER THE RATIO IS
@@ -16832,7 +17700,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       text reaches search. Exact copy belongs in `applyVerify` (once, at apply
       time); `verify` is for tables, columns, constraints and indexes. StoreMink's OWN product docs, NOT per-store data, so
       there is **no `store_id`** anywhere — the model mirrors `platform_admins` (a
-      global, operator-managed table). Two tables in `supabase/help_centre.sql`
+      global, operator-managed table). Two tables in `help_centre.sql`
       (run as `postgres` via the Cloud SQL proxy, like every migration):
       `help_categories` + `help_articles` (sanitized HTML `body`, `status`
       draft/published, weighted **generated `search` tsvector** column + GIN index
@@ -17075,6 +17943,15 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       articles with no category and therefore no URL. Storefront reads
       (`searchHelpArticles`/`getPopularHelpArticles`) inner-join the category so
       any legacy orphan stays invisible rather than showing an unlinkable hit.
+      ★ OLD POS WORDS STILL FIND POS (26 Oct 2026): `searchHelpArticles` also
+      searches the POS reading of "register", "till" and "point of sale"
+      (`withPosSynonym` in `lib/help/queries.ts`: the typed words OR the same
+      query with those words as "POS"), so the search box, the search page,
+      `suggestHelpArticles`, the Help assistant and Mink's Help tool find POS
+      guides by the old words; "registered" and "registration" are not matched.
+      The Help assistant accepts register, registers, till and tills as one-word
+      questions (`SHORT_TOPIC_WORDS` in `lib/help/assistant-input.ts`,
+      `SELF_CONTAINED_HELP_TOPIC`).
       Plus **AI drafting** — `runHelpAiCommand`
       (Gemini via `lib/ai/gemini.ts`, a fixed technical-writer system prompt in
       `brand/tasks/help-article.md`; output sanitized) is one flexible command
@@ -17202,6 +18079,41 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
     price included), so the product host resolves to StoreMink's shared company
     identity instead of presenting as an unrelated site. The old
     `storemink.com/pos` URL remains a canonicalized compatibility alias.
+    ★★ POS WORDING (owner, 26 Oct 2026). The in-person selling feature is "POS"
+    in every merchant-, staff- and shopper-facing text: dashboard (sidebar
+    section "POS"), POS screens (tab titles such as "Sell · POS", "Lock POS",
+    the fallback device name "POS device"), storefront, emails, Mink, operator
+    console and Help (category title "POS", migration 0253). Never "register" or
+    "till" for it ("in POS", "a POS sale", "POS staff", "POS device", "sign in
+    to POS", "open a shift", "count the drawer and close the shift"); "counter"
+    only for the physical counter, on every site. The marketing site and search
+    metadata keep "Point of Sale", written "Point of Sale (POS)" where it
+    introduces the abbreviation. Identifiers, routes (`/pos/register`), database
+    values (the sale kind `register`), the settings group key "Point of Sale"
+    and log labels are unchanged. Both guards share one word list,
+    `scripts/pos-wording.mjs`: every whole word register(s) or till(s) is POS
+    and fails unless it is a kept meaning (registering an entity, sender,
+    number, template, domain or business; signing up; "till" before a date or
+    time; paths, classes and identifiers); "Point of Sale" fails except as "POS
+    (point of sale)" and the `/point-of-sale/` URL; "counter" fails only as the
+    feature's name ("counter sale", "Website + counter").
+    `app/pos-wording-coverage.test.ts` applies it to string literals, whole
+    template literals and joined JSX text in `app/`, `components/`, `lib/` and
+    `hooks/`, to the runtime prompt files (`docs/mink-ai-*-prompt.md`,
+    `brand/tasks/*.md`) and to CSS (the multidevice picture, §4
+    `platform/page.tsx`); a code value is recognised by its place, never by its
+    words (the sale kind when compared, typed or outside JSX; `searchAliases`,
+    `HELP_SEARCH_ALIASES`, `SHORT_TOPIC_WORDS`; logger calls and `devFallback`;
+    SQL comments inside a `sql` tagged template). "Point of Sale" is allowed
+    outside the marketing site only as the settings group key and the /pricing
+    matrix row (`planFeatureMatrix`), each pinned to its exact text and place.
+    Legal text has no exception: the old "register" sentences left
+    `lib/legal/content.ts` with the 0255 publish, and `LEGAL_PENDING` is empty
+    (a lawyer-approved version is the only way legal words change). The Help
+    lint rule `pos-wording` (Help migrations after 0253, manifest order) uses
+    the same list and also reads short title, description, excerpt and SEO
+    values; `help:audit` reads every guide field, the category titles and
+    descriptions and the platform roles' names and descriptions.
     Full technical design + phased plan: **`docs/pos-plan.md`** (authoritative).
     Pro-only; 2 locations included, extra locations ₹1,000/mo — **metered
     billing is BUILT (Phase 7, see below); the v1 hard gate at 2 is gone**.
@@ -17210,7 +18122,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
     - **Multi-location inventory.** `store_locations` (per-store shops/warehouses;
       every store auto-gets one `is_default` "Main" location) +
       `inventory_levels` (the per-location source of truth: `on_hand`/`reserved`
-      per (location, product, variant-or-null)). SQL: `supabase/pos_00_locations.sql`,
+      per (location, product, variant-or-null)). SQL: `pos_00_locations.sql`,
       `pos_01_inventory_levels.sql`, `pos_02_rpc_location.sql` (run as `postgres`,
       in order). `products.stock` / `product_variants.stock` become a
       **trigger-maintained AGGREGATE** = `SUM(on_hand)` across locations
@@ -17326,7 +18238,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       - **Self-service reset** ("Forgot PIN or password?" on the login screen):
         `requestPosCredentialReset` mails a single-use, 1-hour link to
         `/pos/reset?token=…` (`reset_token`/`reset_expires_at`, added by
-        `supabase/pos_04_staff_reset.sql`). It is **enumeration-safe** — always
+        `pos_04_staff_reset.sql`). It is **enumeration-safe** — always
         returns success and is rate-limited per IP AND per address, so only the
         inbox differs. The reset page offers two modes: a new 8-digit PIN
         (hashed server-side) or a new password (written to Identity Platform via
@@ -17338,7 +18250,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       - **`/pos/login`, `/pos/register` and `/pos/reset` are public** in
         `proxy.ts` (`POS_PUBLIC_PATHS`) — a new or locked-out staff member has
         no credential by definition, and the emailed token is the authorization.
-      - **Hardening (`supabase/pos_05_device_hardening.sql`).** Four invariants
+      - **Hardening (`pos_05_device_hardening.sql`).** Four invariants
         the register depends on:
         1. **The operator cookie is never trusted for authorisation.**
            `resolvePosOperator` re-reads `pos_staff` on EVERY resolve (active,
@@ -17444,7 +18356,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
         (`posCan` — cashier=sell, manager=+refund/inventory/shift, owner=all),
         `lib/pos/devices.ts`, `lib/pos/operator.ts` (`resolvePosOperator`:
         owner → PIN operator → staff Firebase session). SQL:
-        `supabase/pos_03_staff_devices.sql` — `pos_staff` (email, role,
+        `pos_03_staff_devices.sql` — `pos_staff` (email, role,
         `user_id`, scrypt `pin_hash`, `status`, single-use `invite_token`),
         `pos_staff_locations` (managers are location-bound, auto-scoped at
         login), `pos_devices` (revocable), `pos_pairing_codes`. Actions:
@@ -17802,7 +18714,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
         manager-approval cap together with the order-level discount (so a
         cashier can't stay under it by splitting the giveaway).
         Persisted in `order_items.line_discount`
-        (`supabase/pos_07_line_discount.sql`) — `total` stays net of it, so
+        (`pos_07_line_discount.sql`) — `total` stays net of it, so
         existing readers are unaffected, and the thermal receipt prints
         "2 × ₹100 … ₹200 / Less −₹30 = ₹170" instead of arithmetic that
         doesn't add up. Recording it also makes markdowns auditable per
@@ -17938,7 +18850,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
           unrelated product edit. `layoutCoverage` still counts SKUs, which is
           still the right figure — every option behind a tile is reachable.
       - **★★ HOLD A SALE** (`lib/pos/park.ts` pure, `pos-park-actions.ts`,
-        `supabase/pos_14_parked_sales.sql`, applied). Suspend the
+        `pos_14_parked_sales.sql`, applied). Suspend the
         cart, serve the next customer, bring it back.
         - **★ A TABLE, NOT localStorage.** A park has to survive the thing it
           exists for: the till IDLE-LOCKS after ten minutes and `posLock` clears
@@ -18064,7 +18976,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
         which products the till shows and in what order — `/pos/sell` →
         "Edit layout" (`layout-editor.tsx`: searchable catalogue on the left,
         dnd-kit sortable grid on the right), stored per LOCATION in
-        `pos_layouts` (`supabase/pos_09_register_layout.sql`,
+        `pos_layouts` (`pos_09_register_layout.sql`,
         `app/actions/pos-layout-actions.ts`). Three rules: **no row = show the
         whole catalogue**, so the feature could not blank a register that
         predates it and a failed read degrades to everything rather than an
@@ -18141,7 +19053,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
         counting the shelf isn't silently erased. A count that matches writes
         nothing, so confirming a figure doesn't litter the history.
       - **★ `transfer_stock` is ONE RPC because it touches TWO locations**
-        (`supabase/pos_11_transfer_stock.sql`). The app has no cross-statement
+        (`pos_11_transfer_stock.sql`). The app has no cross-statement
         transaction over the pool — that's why placeOrder/placePosSale carry
         manual rollback chains — so doing this as two adjustments could
         decrement the source, fail to credit the destination, and the units
@@ -18657,7 +19569,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
         The migration's guard FAILS if `online_stock > stock`, which can only
         mean the capability filter is wrong.
     - **Stock can be HELD as well as sold (Phase E).**
-      `supabase/locations_04_reservations.sql` puts
+      `locations_04_reservations.sql` puts
       `inventory_levels.reserved` to work — it had been carried since pos_01
       and never read — so **`available = on_hand − reserved`**, and every
       existing guard (`reserve_stock_at`, `transfer_stock`) now subtracts it.
@@ -18668,7 +19580,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       `sweepExpiredHolds`. Purely ADDITIVE: nothing that existed changed
       behaviour, because a store with no holds has `reserved = 0` everywhere.
     - **Pick up in store (Phase F).** A shopper buys online and collects at a
-      shop. `supabase/locations_05_pickup.sql` adds `fulfilment_type` /
+      shop. `locations_05_pickup.sql` adds `fulfilment_type` /
       `pickup_location_id` / `pickup_status` / `pickup_expires_at` /
       `collected_at` / `collected_by` to `orders` — columns, not a side table,
       because a pickup IS an order (same money, items, invoice, history) and a
@@ -19094,7 +20006,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
     - **★ METERED EXTRA LOCATIONS (Phase 7, done).** Pro includes 2; more are
       ₹1,000/mo (₹10,000/yr) by default, and **a platform operator sets the
       live price from the console** — `plan_prices`, key `extra_location`
-      (`supabase/plans_05_extra_location_price.sql`), edited in the same
+      (`plans_05_extra_location_price.sql`), edited in the same
       Pricing panel as the tiers. `EXTRA_LOCATION_PRICE` in `lib/plans.ts` is
       only the fallback until one is set, the way `PLAN_META` is for tiers.
       **★ IT IS PRICED LIKE A TIER BUT IS NOT ONE.** `resolvePricing` keys off
@@ -19130,7 +20042,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
         unaltered — **buying prorates now, releasing waits for the cycle end** —
         which keeps refunds out of the system (§15b's reasoning, reused).
       - **★ `store_subscriptions.billed_locations` IS ADDITIVE, NEVER A TOTAL**
-        (`supabase/subscriptions_03_billed_locations.sql` — its OWN file, per
+        (`subscriptions_03_billed_locations.sql` — its OWN file, per
         §15b's never-edit-an-applied-`CREATE TABLE IF NOT EXISTS` rule). The
         allowance is `included + billed`, so if Pro's included count ever rises,
         a merchant paying for one gains headroom rather than being billed for
@@ -19331,7 +20243,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
     - **EMAIL LOGS** at `/dashboard/logs/email-logs` (a child of Activity
       Logs, same `activity` permission): To / From / Type / Provider / Status /
       Sent at, filterable, with the body in a **sandboxed iframe** (no
-      `allow-same-origin`, no `allow-scripts`). `supabase/email_logs.sql`,
+      `allow-same-origin`, no `allow-scripts`). `email_logs.sql`,
       service-role only, pruned at 90 days. `lib/email/mailers.ts` is the
       mail-TYPE catalog and marks `password_reset`, `staff_invite`,
       `pos_staff_invite` and `pos_credential_reset` **sensitive** — their bodies
@@ -19451,7 +20363,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       frame on "Blog approved" would look broken. - **THE ITEMS RIDE THEIR OWN FIELD, NOT THE PAYLOAD.** `EmitEventInput.email`
       is display-only data for the email channel, snapshotted onto
       `notification_email_queue.line_items`
-      (`supabase/notifications_06_email_items.sql`) at enqueue. It is separate
+      (`notifications_06_email_items.sql`) at enqueue. It is separate
       from `payload` because that one is the AUDIT record — kept small and
       scalar on purpose (`sanitizePayload` drops objects and arrays) and read by
       the bell, the activity feed and merchant `{{tokens}}`. Snapshotting (like
@@ -19541,8 +20453,8 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       `/api/cron/send-emails`. A Resend round-trip must never sit on a
       checkout's code path. Retries back off (5/15/45 min, 3 attempts).
       **Digests** date each row to the END of its window (clock-aligned, so one
-      window is one email); `DAILY_DIGEST_HOUR_UTC` is 23:00 and the Phase 5E
-      minute heartbeat drains it on the next tick.
+      window is one email); `DAILY_DIGEST_HOUR_UTC` is 23:00 UTC (04:30 IST)
+      and the Phase 5E minute heartbeat drains it on the next tick.
 
 25. **Legal & consent — versioned policies, and consent as evidence.**
     - **TWO LAYERS, DIFFERENT HOMES.** StoreMink's OWN policies (Terms,
@@ -19571,14 +20483,20 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       `createStore` (for a wizard resumed past the account step) is a no-op when
       the first one landed.
     - **CONTENT LIVES IN CODE, TRUTH LIVES IN THE DB.** `lib/legal/content.ts`
-      holds the policy text so it is reviewable in a diff (v1 at first; on 24
-      Oct 2026 Privacy v3 and an unpublished v2 of the Terms and the
-      Acceptable Use Policy); `scripts/seed-legal.ts` publishes
+      holds the policy text so it is reviewable in a diff (v1 at first; Privacy
+      v3 on 24 Oct 2026; since 26 Oct 2026 Terms of Service v2, Privacy Policy
+      v4 and Acceptable Use Policy v2, all three published by migration
+      `20261026_0255`); `scripts/seed-legal.ts` publishes
       it idempotently (the `ensureHomepage` pattern). Once published the DB row
       is authoritative and immutable — editing the file changes what the NEXT
       version says, never what anyone already accepted. `/legal/[slug]` renders
       the DB row with its version and effective date, because an acceptance
-      references a version and the reader must see which one.
+      references a version and the reader must see which one. The date is
+      India's (`timeZone: "Asia/Kolkata"`: Cloud Run formats in UTC, so a
+      version published before 05:30 IST would show the day before), and
+      `legal.module.css` gives the body's lists their bullets, indent and
+      spacing, which Tailwind's preflight and `.smh` strip;
+      `app/platform/legal/[slug]/page.test.tsx` pins both under `TZ=UTC`.
     - **THE TWO BOXES ARE DIFFERENT THINGS.** The mandatory tick names and links
       the actual documents and gates BOTH signup paths (email and Google start
       from the same screen). The optional product-updates box is unticked,
@@ -19603,16 +20521,24 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       every merchant behind a consent screen they cannot pass. But a consent
       write that finds no published documents logs an ERROR: an account created
       with no recorded agreement is exactly what this exists to prevent.
-    - **⚠ ONLY THE PRIVACY POLICY IS LAWYER-APPROVED.** The text covers the
-      shields this product structurally needs — platform-not-seller, funds
-      settling directly to merchants (§18), merchant-as-controller, "as is",
-      liability capped at 12 months' fees, merchant indemnity — and carries
-      `⚠ REVIEW` markers on the clauses where wording most affects exposure.
-      A lawyer approved Privacy Policy v3 exactly as written (owner, 24 Oct
-      2026). The Terms and the Acceptable Use Policy have no such approval
-      recorded, and their v2 also waits for the company's registered name and
-      address and a governing-law clause: get counsel on them before taking
-      real money.
+    - **★ ALL THREE POLICIES ARE LAWYER-APPROVED.** A lawyer reviewed Terms of
+      Service v2, Privacy Policy v4 and Acceptable Use Policy v2 and approved
+      them for publication exactly as written (owner, 26 Oct 2026), as Privacy
+      Policy v3 was on 24 Oct 2026. The text covers the shields this product
+      structurally needs: platform-not-seller (Terms §2), funds settling
+      directly to merchants (Terms §3), "as is" (Terms §15), liability capped
+      at the fees actually paid in the 12 months before the event giving rise
+      to the claim (Terms §16), merchant indemnity (Terms §17), and the
+      merchant as Data Fiduciary with StoreMink as its Data Processor (Privacy
+      §1). The Terms name the contracting party, STOREMINK LLP (registered
+      office published as "Bala ji Colony, Faridkot, Punjab, India" in all
+      three policies, on the owner's instruction of 27 Oct 2026, a line the
+      lawyer also approved; migration 0255 was regenerated in place for it,
+      same id, new checksums), and give
+      the courts at Faridkot, Punjab exclusive jurisdiction (Terms §25): the
+      two clauses Terms v1 left open. Once a shared database has published a
+      version, any change to its wording is a new version and needs the same
+      review.
     - **EDITING A POLICY MEANS PUBLISHING A NEW VERSION.** There is no other
       way, and three things enforce it: the DB trigger rejects an UPDATE to a
       published body, `ensureLegalSeeded` skips a kind that already has a
@@ -19647,12 +20573,34 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       later is current (a no-op on `storemink_local`, which has had v3 since
       13 Oct), and it stops the deploy with a plain RAISE on a v3 row that is
       not current. It never names the Terms or the Acceptable Use Policy,
-      whose v2 stays unpublished. `lib/legal/privacy-v3-migration.test.ts`
-      holds the file to content.ts while content.ts is at v3. ⚠ A migration
-      cannot bust `LEGAL_TAG`, so on a revision already running the 60 s
-      `getSignupDocsCached` lets the re-acceptance gate lag by up to a
-      minute; `/legal/privacy` and signup read uncached and change at the
-      commit. The script stays the tool for any later version.
+      whose v2 came later with 0255 (next bullet).
+      `lib/legal/privacy-v3-migration.test.ts` holds the file to content.ts
+      while content.ts is at v3 (that comparison skips since content.ts moved
+      to v4). ⚠ A migration cannot bust `LEGAL_TAG`, so on a revision already
+      running the 60 s `getSignupDocsCached` lets the re-acceptance gate lag
+      by up to a minute; `/legal/privacy` and signup read uncached and change
+      at the commit. The script still works for a later version, but the next
+      three versions went out by migration too (next bullet).
+    - **★ TERMS v2, PRIVACY v4 AND ACCEPTABLE USE v2 ARE PUBLISHED TOGETHER BY
+      MIGRATION `20261026_0255`** (owner, 26 Oct 2026: all three approved by a
+      lawyer exactly as written; one publish, so every merchant re-accepts
+      once). The 0241 pattern for three kinds in one guarded DO block, all
+      three or none: every body is checked against its checksum literal
+      first; a version already stored with another text (body or checksum),
+      or stored but not current while an older version is, is refused with a
+      plain RAISE and nothing changes; a kind whose new version or a later
+      one is already current is left alone; otherwise its current row is
+      retired by id and the new version inserted as current, `created_by`
+      'script'. applyVerify (same transaction) checks one current row per
+      kind, the approved checksum and an intact body, and, by xmin, that the
+      migration wrote no other kind, made current only the three approved
+      versions and retired only older ones.
+      `lib/legal/terms-v2-privacy-v4-aup-v2-migration.test.ts` holds the file
+      to content.ts (each body in a test of its own while content.ts is at
+      that version) and pins "Version" to each body's first line. ⚠ A refusal
+      stops a deploy's migrate step after the migrations before it have
+      committed, so check `legal_documents` for these three versions, read
+      only, before the main push. The same `LEGAL_TAG` lag as 0241 applies.
     - **THE RE-ACCEPTANCE GATE LIVES IN THE DASHBOARD LAYOUT, NOT `proxy.ts`.**
       The proxy reads its claims straight from the verified session cookie and
       does no DB query at all — that is its design — and "which documents has
@@ -19721,7 +20669,7 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       to a blank page, so `PolicyConsent` returns null and the caller must not
       gate its button on a box that isn't there.
     - **AN ACCEPTANCE IS ANCHORED TO EXACTLY ONE THING**
-      (`supabase/legal_02_store_consent.sql`): a platform `document_id`
+      (`legal_02_store_consent.sql`): a platform `document_id`
       (immutable, versioned) or a `policy_slug` + `policy_checksum`, enforced by
       a CHECK — a row anchored to nothing records agreement to something
       unspecified, which is worth less than no row. The checksum, not a
@@ -20647,7 +21595,7 @@ way — an entry there is a deliberate act, not a way to silence the guard.
     - **Only EXACT hosts are added** — the custom domain's apex AND www
       (`domainHosts`), never its registrable domain. ★ The registrable entry
       the old popup model added was a hole: tldts' ICANN list makes
-      `acme.eu.org` → `eu.org` and `shop.vercel.app` → `vercel.app`, which
+      `acme.eu.org` → `eu.org` and `shop.github.io` → `github.io`, which
       would authorise Google popups on every site under the suffix. Removal
       still clears that legacy entry (`legacyRegistrableEntry`) so lists
       written before the change are cleaned up on detach.
@@ -20925,7 +21873,7 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       someone wrote it down, but it is routine enough that emailing would train
       people to ignore it). 2,000 per-row events would bury every other thing
       that happened that day.
-    - **The error log is `data_job_issues`** (`supabase/import_export_01_jobs.sql`,
+    - **The error log is `data_job_issues`** (`import_export_01_jobs.sql`,
       service-role only, the email_logs pattern — the rows quote raw cells,
       which for an orders export means customer addresses). Issues carry the
       **1-based ORIGINAL FILE LINE**, not the row index: blank lines and
@@ -20944,10 +21892,15 @@ way — an entry there is a deliberate act, not a way to silence the guard.
     `activity_events` 365, `email_logs` 90, closed `whatsapp_conversations`
     730 (by last message; media first, see the inbox section),
     `ai_quota_refunds` 90 (by `created_at`; a raw-SQL deleter, since the table
-    has no Drizzle model). Full operational detail —
+    has no Drizzle model), `mink_refine_requests` 30 (by `created_at`; a
+    raw-SQL deleter on its composite primary key), and Mink AI chats
+    (`mink_conversations`) 90 days after their last use, retired through
+    `lib/mink/conversation-retention.ts` (a chat that holds the record of an
+    approved or published change is reduced, not deleted; see "Mink chat
+    history"). Full operational detail —
     the schedule, the `gcloud` command, how to read a response — is in
     `docs/cron-jobs.md`.
-    - **★ IT WAS DOCUMENTED, INDEXED, AND DEAD.** `supabase/email_logs.sql`
+    - **★ IT WAS DOCUMENTED, INDEXED, AND DEAD.** `email_logs.sql`
       states the 90-day intent and ships `email_logs_created_idx` built "for
       retention sweeps"; `pruneNotifications` had the right windows and a
       docstring saying it was "called by the daily cron". **Nothing called it.**
@@ -21017,7 +21970,7 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       notifications→events. Their `(store_id, created_at)` composite indexes
       cannot serve a sweep filtering on `created_at` ALONE, so each has a
       plain `created_at` index in its own file,
-      `supabase/retention_01_prune_indexes.sql` (not an edit to the applied
+      `retention_01_prune_indexes.sql` (not an edit to the applied
       `import_export_01_jobs.sql`). (Until 2026-10-25 this bullet said they
       were not swept yet, long after `RETENTION_POLICIES` gained both.)
     - **⚠ The Cloud Scheduler job did not exist when this shipped** — created
@@ -21485,7 +22438,7 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       resumed on its original rail and reported truthfully. Pinned in all three
       directions, and both guards mutation-tested.
     - **★★ EXTRA LOCATIONS ARE BOUGHT ON THE NEW SYSTEM** (`lib/billing/locations.ts`,
-      `supabase/billing_07_addon_invoices.sql`). The old path called
+      `billing_07_addon_invoices.sql`). The old path called
       `rzpUpdateSubscription`, which Razorpay does not support for UPI or
       e-mandate mandates — so for most Indian merchants buying a location silently
       did not work at all, and could not be made to. Here StoreMink prices it: the
@@ -21653,8 +22606,34 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         invoice stored NULL. The document would then have had to name a GSTIN from
         LIVE settings — so an operator correcting one in September would rewrite
         what April's invoice claims. `loadInvoiceParties` + a stamp at all four
-        creation sites fixes it. ⚠ The NAMES and ADDRESSES are still read live,
-        because no column stores them; closing that needs a `parties jsonb`.
+        creation sites fixes it. ★★ The NAMES and ADDRESSES are recorded too
+        (migration 0243): `billing_invoices.parties`, written once by the
+        `billing_invoices_parties_snapshot` trigger in the statement that issues
+        the invoice, from `billing_invoice_parties()`, which copies the row's
+        own GSTINs and place of supply, reads the supplier from
+        `platform_billing_settings`, and names the customer from the billing
+        account, then the store's Taxes & invoices identity (legal name,
+        business name, address, contact email), then the store's name. A
+        trigger rather than app code because finalize is reached from renewal,
+        enrolment, add-ons, AI credits and manual payment through two
+        functions, and the replaced revision keeps finalizing during a rollout.
+        `getInvoiceDocument` prints the record (`parseInvoiceParties`); only a
+        missing or unreadable one (logged `billing.invoice_parties_unreadable`)
+        falls back to today's settings through the same SQL function. ⚠
+        Invoices issued before 0243 were backfilled from the settings as they
+        stood at migration time: the best available record, not what was true
+        at issue (`capturedAt` says when). ★ Since 0245 the trigger records the
+        parties on the transition to issued and replaces whatever the row
+        carried, so a value written on a draft, or in the issuing statement
+        itself, never becomes the record; and the guard also freezes what the
+        document prints from the row: `finalized_at` (the issue date),
+        `fy_label`, both GSTINs and `place_of_supply`. ⚠ DEPLOY PRECONDITION:
+        the backfill and the trigger copy `platform_billing_settings` as they
+        stand, NULLs included, and the record is write-once. Before the build
+        that applies 0243 to staging and to production, confirm (or fill in, in
+        the operator console) StoreMink's legal name, address and state code;
+        an invoice issued or backfilled while they are empty prints
+        "StoreMink" with no address for good.
       - **★★ A NO-TAX INVOICE IS A VALID INVOICE** and must not pretend otherwise:
         titled "Invoice" not "Tax Invoice", NO GST line at all (a "GST ₹0" row on a
         document naming no GSTIN reads as a claim), and a footer saying why. It is
@@ -21717,7 +22696,13 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         - **★ THREE OUTCOMES**, since "resolved" alone is a lie in two common
           cases: genuinely settled, needs chasing (`manual_review`), and turned
           out not to matter (`ignored`). Collapsing them loses the difference
-          between "dealt with" and "decided not to".
+          between "dealt with" and "decided not to". ★ ONLY `resolved` STAMPS
+          `resolved_at`: the CHECK `billing_reconciliation_resolved_shape` is
+          (status = 'resolved') = (resolved_at is not null), and until 26 Oct
+          2026 the action stamped it on every outcome, so "Needs chasing" and
+          "Doesn't matter" always failed with "Couldn't save that". Who stays
+          in `resolved_by`, when in `updated_at`. Pinned against the real CHECK
+          in `invoice-retention.local.test.ts`.
         - **★ A NOTE IS REQUIRED**, in the UI and again in the action. The row
           records that a human looked; without what they FOUND it is an
           audit trail that proves only that somebody clicked.
@@ -21727,15 +22712,65 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         - **★ ANY OPERATOR MAY CLOSE, not just a superadmin.** This records a
           judgement rather than moving money, and a queue only the owner can
           clear is a queue nobody clears. Who did it is stored either way.
-        - **★ A NULL STORE IS ITSELF THE PROBLEM** — an orphan payment nobody
-          can attribute — so the row says "needs attributing" rather than
-          rendering a blank that reads as a bug.
+        - **★ A NULL STORE IS ITSELF THE PROBLEM**, so the row says which:
+          "<name> (store deleted)" or "store deleted" when
+          `detail.storeDeleted` is set (`deleteStore`'s detached items, the
+          sweep's payment captured for a deleted store, a mismatch on a
+          store-less attempt), else "no store - needs attributing", rather
+          than a blank that reads as a bug. The sweep's `detail.note` is shown
+          under it.
         - ⚠ **TEST GAP**: the db mock does not evaluate WHERE clauses, so the
           `status = 'open'` predicate is argued rather than pinned; the
           behaviour that depends on it (a zero-row claim reported as
           already-closed) IS covered.
+    - **★★ STOREMINK'S OWN INVOICES OUTLIVE THE STORE** (owner, 25 Oct 2026;
+      migrations 0243 and 0245). GST requires StoreMink to keep its tax
+      invoices and the series is gapless, so `billing_invoices.store_id` and
+      `billing_payment_attempts.store_id` are nullable with ON DELETE SET NULL:
+      deleting a store leaves every issued invoice, its lines (which hang off
+      the invoice) and its payment attempts in place with `store_id` NULL and
+      the parties it recorded. The guard still refuses every money, number and
+      kind change and refuses moving an invoice to another store; it lets the
+      store become NULL only while that store is being deleted (the SET NULL
+      action runs after the store row is gone, the 0014 `legal_acceptances`
+      pattern), so a direct UPDATE blanking a live store's invoice is refused.
+      ★★ AN ISSUED INVOICE CANNOT BE DELETED (`billing_invoices_keep_issued`,
+      migration 0245), live or kept. Before it, `deleteStore`'s draft predicate
+      was all that kept one, and `paid_at` in place of `finalized_at` there
+      passed every test while deleting every issued but unpaid invoice;
+      `platform.test.ts` now renders that predicate with PgDialect, so the
+      column is pinned. ★ A draft is not a document: `deleteStore` deletes the
+      store's drafts in its own transaction, before the store row, except one
+      with a payment that may have reached the gateway (an order id, not
+      failed or cancelled), kept detached as the only record of that money.
+      `reconcile.ts` records a payment it then finds captured for a deleted
+      store and flags it `orphan_payment` instead of advancing a plan.
+      ★ OPEN MONEY QUESTIONS ARE KEPT TOO: in the same transaction
+      `deleteStore` detaches the store's `open` and `manual_review`
+      reconciliation items (store_id NULL, `detail.storeDeleted` and
+      `detail.storeName`), because an amount mismatch's observed amount lives
+      nowhere else; closed items go with the store. ★ A PAID AI CREDIT
+      PURCHASE WHOSE RECEIPT IS STILL A DRAFT is filed first as an open
+      `orphan_payment` item (payment and order ids, amount, credits; note "AI
+      credit purchase paid, receipt never issued"), and the delete's result
+      tells the operator. ⚠ OWNER DECISION PENDING: every
+      `ai_credit_purchases` row still cascades, so a kept AI-credit invoice no
+      longer links to its Razorpay ids, and a pending purchase (never reaped,
+      so not filed) leaves nothing. Keeping them needs
+      `ai_credit_purchases.store_id` nullable with ON DELETE SET NULL, 0243's
+      durable "every other direct store foreign key cascades on deletion"
+      query superseded, and the purchase types widened. Still deleted with the
+      store: `billing_credits`, closed reconciliation items, and the
+      subscription, mandate and billing account. ⚠ Nothing reads a kept
+      invoice yet: every merchant read is store-scoped and there is no
+      operator screen for a deleted store's invoices. ⚠ DEPLOY PRECONDITION:
+      `platform_billing_settings` filled before 0243 runs (see the parties
+      note above). Tests: `invoice-history.test.ts`, `reconcile.test.ts`,
+      `platform.test.ts`, `queue.test.tsx` and the opt-in rollback-only
+      `invoice-retention.local.test.ts`
+      (`BILLING_INVOICE_RETENTION_LOCAL_TEST=1`, storemink_local).
     - **★★ AI CREDIT PURCHASES NOW PRODUCE AN INVOICE**
-      (`lib/billing/credit-invoice.ts`, `supabase/billing_08_ai_credit_invoice.sql`).
+      (`lib/billing/credit-invoice.ts`, `billing_08_ai_credit_invoice.sql`).
       `kind = 'ai_credits'` has existed since billing_03 and
       `buildAiCreditsInvoice` / `createAiCreditsInvoice` were written, tested and
       NEVER CALLED — a credit purchase produced no document at all. Survivable
@@ -22033,7 +23068,7 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       released slots free). Ten live in code this rebuild deletes.
 
 35. **Logistics — Shopify-shaped fulfilment, Shiprocket first.**
-    `supabase/logistics_01_shiprocket.sql` deliberately separates four facts:
+    `drizzle/migrations/sql/20260814_0001_logistics_shiprocket.sql` deliberately separates four facts:
     `orders` are what a customer bought; `fulfilment_orders` are warehouse work
     assigned to a location; `shipments` are physical parcels/AWBs; and
     `shipment_events` are the append-only carrier history. This is the same
@@ -22124,7 +23159,7 @@ way — an entry there is a deliberate act, not a way to silence the guard.
 
 36. **Till-created customers, and the claim that adopts them** (roadmap Step 4).
     `lib/pos/customer-claim.ts` (pure) + `lib/pos/claim-customer.ts`
-    (server-only) + `supabase/pos_13_customer_claim.sql`. - **★★ AND FOR MONTHS THE PHONE WAS STORED IN TWO SHAPES, so none of the
+    (server-only) + `pos_13_customer_claim.sql`. - **★★ AND FOR MONTHS THE PHONE WAS STORED IN TWO SHAPES, so none of the
     machinery below could fire** (found in prod 2026-09-11 from a merchant
     report). `upsertCustomerProfile` wrote Identity Platform's **E.164**
     (`+919877542162`) straight through, while the till writes and searches for
@@ -22394,7 +23429,7 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
     - **★ BYO PER STORE, decided 2026-08-15** (owner). Merchants connect their
       own Twilio account in **Channels → Twilio SMS**; StoreMink never fronts
       the carrier bill and never carries their spam risk. Schema in
-      `supabase/sms_01_schema.sql` (applied, incl. the separately-appended
+      `sms_01_schema.sql` (applied, incl. the separately-appended
       `sms_suppressions` block): `store_sms_providers`
       (the `store_payment_providers` shape — service-role only, auth token
       AES-256-GCM under `PAYMENT_CRED_KEY`, encrypted rather than hashed
@@ -23433,7 +24468,13 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       DELETE.** Every direct `stores(id)` foreign key is `ON DELETE CASCADE`
       (pinned by migration `20260823_0014_store_deletion_cascade`; this includes
       reconciliation rows, store-policy acceptances and announcement-recipient
-      snapshots that formerly survived with `store_id = NULL`). Before the
+      snapshots that formerly survived with `store_id = NULL`) except two:
+      since 0243 StoreMink's own `billing_invoices` and
+      `billing_payment_attempts` are ON DELETE SET NULL, so issued invoices are
+      kept for GST (§34), and `deleteStore` first deletes the store's draft
+      invoices in the cascade's own transaction, detaches its open
+      reconciliation items, and files any paid AI credit purchase whose
+      receipt never issued (§34). Before the
       cascade, `deleteStore` collects uploaded-media references, the custom
       domain, and every linked Identity Platform UID from `admins.id`,
       `users.id`, and `pos_staff.user_id`. Afterward it purges both referenced
@@ -23485,7 +24526,7 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       writes a platform row, because there is no platform Twilio account.
     - **★★ ANNOUNCEMENTS — StoreMink telling its MERCHANTS something**
       (`/dashboard/announcements`, `lib/announcements/`,
-      `supabase/announcements_01_schema.sql`, applied — it needs the
+      `announcements_01_schema.sql`, applied — it needs the
       `postgres` role). Distinct from every other messaging table
       here: `notification_email_queue` is an EVENT fanned out to identified
       recipients, `email_campaigns` is a MERCHANT mailing THEIR shoppers, this
@@ -23581,10 +24622,12 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       checksum changed. Nothing reaches a reader until
       `scripts/publish-legal.ts --publish` runs, which still asks every
       merchant to accept again (§25),
-      and the two blocked v1 clauses at the top of that file are unchanged.
+      and the two blocked v1 clauses at the top of that file were left alone.
       (Privacy has since moved to v3, which a lawyer approved and migration
-      `20261024_0241` publishes with the release, §25; the Terms and
-      Acceptable Use v2 stay unpublished.)
+      `20261024_0241` published; on 26 Oct 2026 a lawyer approved rewritten
+      Terms v2, Privacy v4 and Acceptable Use v2, which replaced these drafts
+      and settle both clauses, and migration `20261026_0255` publishes all
+      three together, §25.)
     - **★ THE HELP CENTRE IS CLEANED BY MIGRATION 0184**, one generic pass
       over every article and category, published or draft, including console
       edits: a table cell of only a dash becomes "-", a dash in a heading or
@@ -23603,6 +24646,14 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       `20261012_0186_help_no_long_dashes_after_whatsapp` removes again on
       production, where 0176 lands after 0184); `help:audit` reports one in
       published rows, which is the only check that sees a console edit.
+      Since 0254 the rule also sees an en dash and either dash written as an
+      HTML entity (`&mdash;`, `&ndash;`, `&#8212;`, `&#8211;`, `&#x2014;`,
+      `&#x2013;`, `DASH_LOOKALIKE_CLEANUP_ID`): no Help migration after 0254 may
+      publish one (quoting one as `$old$` to remove it stays legal), and
+      `help:audit` reports them in served rows. 0254 rewrote the GA4 guide's two
+      en dashes; the plan guide's five `&mdash;` (0079, 0080) wait for the Help
+      edit that rewrites its billing paragraphs, so until then `help:audit`
+      reports that one guide.
     - **⚠ Not changed, deliberately:** code comments and internal docs (not
       product text), CLI output in `scripts/`, and other content already
       stored in the database (pages, product descriptions, theme content).
@@ -23713,13 +24764,47 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       `platform_roles`, swaps the admins CHECK for the foreign key, redefines
       the two store-admin RLS helpers, and edits
       four Help guides in place (roles, staff invite, POS staff, plan). ⚠ The
-      per-store `roles` table and `supabase/roles_table.sql` are NOT dropped
-      here — the revision being replaced still reads the table during the
-      rollout — and need a follow-up contract migration. Four retired files
+      per-store `roles` table is NOT dropped here — the revision being replaced
+      still reads the table during the rollout — and needs a follow-up contract
+      migration (its pre-ledger `roles_table.sql` is in git history; 0207's own
+      comment still names the old folder and stays byte-for-byte). Four retired files
       the tooling could not delete are `export {}` stubs to `git rm`:
       `app/actions/role-actions.ts` (+ `.test.ts`),
       `app/dashboard/roles/role-editor-dialog.tsx`,
       `app/dashboard/pos/staff/staff-client.tsx`.
+
+42. **No former provider names in the codebase (owner's rule, 2026-10-26).**
+    StoreMink runs entirely on Google Cloud (Cloud SQL via Drizzle, Cloud
+    Storage, Identity Platform, Cloud Run, Cloud Build, Cloud Scheduler, Cloud
+    DNS). The database host and the web host it moved off are named nowhere in
+    the repository: not in code, comments, tests, docs, config or file names.
+    - **`former-providers-coverage.test.ts` (repo root) is the guard.** It
+      tests the NAME of every file and folder it meets, before any skip (so a
+      root link folder a hosting CLI writes fails it), then reads every file we
+      own: text line by line, `.gz` gunzipped, UTF-16 decoded, binary files
+      (images, fonts) as raw bytes. A `*.dump` anywhere fails it. It never
+      reads `node_modules`, `.next`, `.git` or `__pycache__` (anywhere), the
+      root `coverage`, `out` and `build`, root dot-folders other than
+      `.github`, `.vscode` and `.claude` (dot-folders below the root are
+      read), Claude Code's local state in `.claude` (`worktrees/`,
+      `settings.local.json` and the runtime files git excludes), `.env*`
+      except `.env.example` / `.env.sample` (reported by file and line only),
+      `.mcp*`, `.DS_Store`, `*.tsbuildinfo` or the gitignored `db-data.sql`.
+      It builds the names from fragments so it never matches itself, and
+      checks `package-lock.json` by parsing it.
+    - **Two allowed hits, both frozen:** comments in the applied migrations
+      `20261014_0206` and `20261014_0207` name the removed pre-ledger SQL
+      folder; editing an applied migration changes its checksum and stops
+      every deploy. `package-lock.json` lists one provider's Postgres driver
+      among drizzle-orm's optional peer dependencies, which npm writes; nothing
+      installs it.
+    - **⚠ A new migration that names either provider is frozen the moment the
+      dev build applies it**, so run the guard before every push.
+    - **Kept on purpose:** the `anon` / `authenticated` / `service_role` roles
+      and the `auth.uid()` / `auth.email()` shim (RLS policies call them),
+      `CRON_SECRET` sent as `Authorization: Bearer` (Cloud Scheduler sends it),
+      `GET` + `POST` on every cron route (Cloud Scheduler uses both), and
+      route `maxDuration` exports (a Next.js API our code reads as a budget).
 
 ## 6. Commands
 
@@ -23854,14 +24939,10 @@ npm run revamp:priority-test -- --out=<dir> # Priority PayGo A/B plan and cost f
 
 ## 7. Environments / external services
 
-- **Supabase** — **fully out of the codebase.** Postgres → Cloud SQL (Phase 5),
-  Auth → Identity Platform (Phase 6), Storage `media` bucket → GCS (Phase 3, now
-  GCS-only — the Supabase Storage fallback + `@supabase/*` deps + `lib/supabase/`
-  were removed; uploads require `GCS_BUCKET`). No `SUPABASE_*` env is read anymore.
-  Existing Supabase-hosted media URLs still serve (and are proxied by
-  `api/og-image`) until the prod media backfill + Supabase-project deletion (see
-  the cutover checklist). App-side password floor is 8 chars
-  (`app/platform/signup/page.tsx`).
+- **Google Cloud is the whole backend**: Postgres on Cloud SQL (`lib/db`), auth
+  on Identity Platform (`lib/auth`), media on Cloud Storage (`lib/storage`,
+  GCS-only), hosting on Cloud Run, schedules in Cloud Scheduler. App-side
+  password floor is 8 chars (`app/platform/signup/page.tsx`).
 - **Identity Platform (Firebase Auth) — the auth provider (GCP Phase 6).** All
   auth goes through `lib/auth/*` (see §4). **ENV:**
   - **One Identity Platform project PER ENVIRONMENT, paired with that env's Cloud
@@ -23900,7 +24981,7 @@ npm run revamp:priority-test -- --out=<dir> # Priority PayGo A/B plan and cost f
     - **Providers**: enable **Email/Password**, **Email link (passwordless)** (the
       operator login uses it), **Google**, and **Phone**. Phone requires
       **reCAPTCHA** (the app uses an invisible `RecaptchaVerifier`) — this also
-      covers the anti-abuse / SMS-pumping hardening (the old Supabase CAPTCHA item).
+      covers the anti-abuse / SMS-pumping hardening.
     - **Google**: a Google Cloud OAuth **Web** client; put its client id/secret on
       the Google provider. Sign-in uses `signInWithPopup` (no callback route), so
       no app redirect URIs go into Google — only Firebase's own auth handler does.
@@ -23914,17 +24995,42 @@ npm run revamp:priority-test -- --out=<dir> # Priority PayGo A/B plan and cost f
       domain's apex + www from go-live, and an hourly repair pass (§30,
       `lib/auth/authorized-domains.ts`). Without them, phone sign-in fails on
       that store and "Continue with Google" is dead on a merchant's own
-      domain while email+password still works. Unlike Supabase there is NO
-      per-path Redirect-URL matrix; popup / email-link just need the domain
+      domain while email+password still works. There is NO per-path
+      redirect-URL list; popup / email-link just need the domain
       authorized. Cross-subdomain session cookies still span `.storemink.com`
       (set by `/api/auth/session`), so the signup→dashboard handoff works across
       subdomains on real domains (flaky on `localhost`, as before).
-  - **User import**: bring existing Supabase users into Identity Platform
-    preserving the same **uid** — `admin.auth().importUsers()` with the
-    `auth.users` dump (bcrypt hashes carry over → no password resets). uids stay
-    identical, so every `admins`/`users` FK + the `app.current_user_id` GUC keep
-    working with zero remapping.
-- **Vercel**: hosting + cron. Wildcard domain `*.storemink.com` → store subdomains.
+  - **User import (done once, at the move to Identity Platform)**: users were
+    imported with `admin.auth().importUsers()`, preserving each **uid** and
+    bcrypt hash (no password resets), so an `admins.id` / `users.id` holds
+    either an imported uuid-shaped uid or a Firebase uid (both `text`); every
+    FK and the `app.current_user_id` GUC work with zero remapping.
+- **Cloud Run + Cloud Scheduler**: hosting on Cloud Run behind the External
+  Application Load Balancer, whose certificate map serves `storemink.com`, the
+  `*.storemink.com` store subdomains and verified custom domains (§3 Host
+  routing); cron jobs in Cloud Scheduler (`docs/cron-jobs.md`); deploys in
+  `docs/gcp-ci-cd.md`. ★ CLIENT IP: the load balancer APPENDS
+  `<client-ip>,<lb-ip>` to any `X-Forwarded-For` a caller sends, so
+  `lib/client-ip.ts` reads that header from the RIGHT: it finds the rightmost
+  `DOMAIN_LB_IP` (the forwarding-rule address cloudbuild.yaml sets on every web
+  revision; searching keeps the rule right if Google adds a hop after it) and
+  takes the entry before it, the address the load balancer saw; a single entry
+  (local dev, a direct `*.run.app` request) is used as it is.
+  Every per-IP rate limit (`clientIp` re-exported by `lib/rate-limit.ts`), the
+  POS audit trail, the consent records (`lib/legal/store.ts`,
+  `lib/legal/store-consent.ts`) and the storefront visitor key use it;
+  `x-real-ip` is never read. `lib/client-ip.test.ts` pins forged headers and
+  that the deploy still passes `DOMAIN_LB_IP`. ⚠ `DOMAIN_LB_IP` is the
+  anchor: if it is empty or wrong, or the request came through another
+  frontend (an IPv6 forwarding rule), the FIRST entry is used, the rule before
+  26 Oct 2026: forgeable, but every visitor keeps a key of their own (taking
+  the rightmost would give everyone the frontend's address as ONE key and let
+  one busy store lock every visitor out). On Cloud Run the first such request
+  per instance logs `client-ip: X-Forwarded-For does not end in DOMAIN_LB_IP`
+  (ERROR). So DNS stays A-record only until the code accepts an IPv6 frontend. A visitor
+  behind a proxy that adds its own entry (a data-saver browser, an office
+  proxy, a CDN in front of a merchant's domain) is keyed by that proxy's
+  address, shared with everyone behind it.
 - **Cloud Monitoring (production alerting, 2026-10-23, owner-approved)**: 15
   alert policies (plus five Theme Studio log alerts defined in the script,
   plan P6, applied after the Theme Studio release with the owner's OK, step
@@ -23956,23 +25062,33 @@ npm run revamp:priority-test -- --out=<dir> # Priority PayGo A/B plan and cost f
 - **Google Cloud Storage** (media, GCP migration Phase 3 — `lib/storage/gcs.ts`):
   when **`GCS_BUCKET`** is set, new image/video uploads go to that GCS bucket
   (public, uniform bucket-level access) and public URLs are
-  `https://storage.googleapis.com/<bucket>/<path>`. Uploads are **GCS-only** now
-  (require `GCS_BUCKET`; no Supabase fallback). Auth via ADC (Cloud Run default
-  SA, or local `gcloud auth application-default login`); optional base64 SA JSON
-  **`GCP_SA_KEY`** for hosts without ADC (Vercel) — and REQUIRED to sign video
-  upload URLs off Cloud Run. Existing Supabase-hosted URLs keep serving; the
-  OG-proxy (`api/og-image` SSRF allowlist), its gate (`lib/og-image.ts`) and
-  `next.config.ts` image `remotePatterns` still recognise BOTH URL formats so
-  legacy media renders until the backfill. Bucket needs CORS (PUT from the app
-  origin) for direct video uploads. No bulk migration of existing objects yet (a
-  pre-decommission backfill copies old objects + rewrites DB URLs).
+  `https://storage.googleapis.com/<bucket>/<path>`. Uploads are **GCS-only**
+  (require `GCS_BUCKET`). Auth via ADC (Cloud Run default SA, or local
+  `gcloud auth application-default login`); optional base64 SA JSON
+  **`GCP_SA_KEY`** for hosts without ADC, and REQUIRED to sign video upload URLs
+  off Cloud Run. A few rows written before the move to GCS still name an older
+  external image host: they render unoptimised (`lib/media/image-hosts.ts`), the
+  storage sweep never deletes them, the OG proxy (`api/og-image`, gated by
+  `lib/og-image.ts`) accepts only our own bucket, and `next.config.ts`
+  `remotePatterns` lists only `storage.googleapis.com` and `images.unsplash.com`.
+  Copying those files into GCS and rewriting the rows is an open data task, not a
+  code change. Bucket needs CORS (PUT from the app origin) for direct video uploads.
   **`GCS_PRIVATE_BUCKET`** names a SECOND, private bucket (public access
   prevention on, uniform access, the runtime service account with object
   admin on it) for WhatsApp chat media, which is never written to the public
   one and is read only through `/api/dashboard/inbox/media/[messageId]`.
   Cloud Build passes `_GCS_PRIVATE_BUCKET` (empty by default, so a trigger
   without it stores no chat media rather than storing it publicly);
-  `docs/gcp-ci-cd.md` names the bucket per environment.
+  `docs/gcp-ci-cd.md` names the bucket per environment. It also stages Refine
+  with Mink AI results until they are paid for, under `refine-stage/{DB_NAME}/`
+  (one prefix per database, because dev and staging share one database and
+  one bucket, and local development uses that bucket with `storemink_local`);
+  each environment's stage sweep lists only its own database's prefix.
+  Without it Refine is not offered and the route refuses
+  (`refine_not_configured`). Local development sets it to
+  `storemink-chat-media` to test Refine, which is safe for the same reason;
+  two laptops whose databases are both `storemink_local` must not run the
+  stage sweep against that bucket at the same time.
 - **Image matting** (Change background): **`IMAGE_MATTING_URL`** is the
   private `storemink-image-matting` Cloud Run service (https, or plain http to
   localhost for `node services/image-matting/server.mjs`). Unset = the button
@@ -24015,7 +25131,7 @@ model refused`, logError); the fallback is final, so the worst case is about
   description, one SEO reply and one coupon email on Vertex and read the
   `ai.generate: ok` line's model and location. Vertex needs `google-auth-library` +
   `roles/aiplatform.user` on the runtime credentials (see
-  `docs/gcp-migration-phase5-6.md`). Mink AI embeddings use the same backend
+  `docs/gcp-migration-phase4-cloud-run.md` §3). Mink AI embeddings use the same backend
   precedence, credentials and Vertex address rule (`vertexHost`: us and eu
   through their regional-endpoint hosts, `global` through
   aiplatform.googleapis.com) through `lib/help/embeddings.ts`, with
@@ -24168,8 +25284,8 @@ model refused`, logError); the fallback is final, so the worst case is about
   **`PAYMENT_CRED_KEY`** — 32-byte base64; generate with
   `openssl rand -base64 32`). The PLATFORM's own account (AI-credit purchases
   only) is env **`RAZORPAY_KEY_ID`** / **`RAZORPAY_KEY_SECRET`**. Cron routes
-  (`/api/cron/*`) require **`CRON_SECRET`** (Vercel Cron sends it as a Bearer
-  header).
+  (`/api/cron/*`) require **`CRON_SECRET`** (Cloud Scheduler sends it as an
+  `Authorization: Bearer` header).
 - **WhatsApp** (docs/whatsapp-commerce-plan.md; Phase 0 as of 2026-10-08):
   the webhook reads **`WHATSAPP_VERIFY_TOKEN`** (ours — a high-entropy string
   pasted into the Meta console, used only for the GET handshake) and
@@ -24287,7 +25403,7 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   **`app/sitemap.ts` emits no fabricated `lastmod`.** Each URL derives it from a
   real content timestamp or omits it, guarded by `app/sitemap.test.ts`. Products
   use `products.content_updated_at`
-  (`supabase/seo_01_product_content_timestamp.sql`), a trigger-maintained column
+  (`seo_01_product_content_timestamp.sql`), a trigger-maintained column
   that moves only when a visitor-visible field changes. `updated_at` is bumped
   by `_recompute_stock_aggregate` on every sale and would claim a content change
   per purchase. Pages use `published_at`, not `updated_at`, because draft
@@ -24499,7 +25615,7 @@ Legacy WholeSip fallback remains until all traffic moves to real store hosts.
   one storefront with per-store branding.
 - **Checkout (COD, built)**: a signed-in shopper places a Cash-on-Delivery order
   from `/checkout` → `placeOrder` (`app/actions/checkout-actions.ts`), stored in
-  `orders`/`order_items` (`supabase/orders_table.sql`) and listed at
+  `orders`/`order_items` (`orders_table.sql`) and listed at
   `/dashboard/orders`. See convention #12 for the checkout security model.
 - **Deliberately later phases** (not built yet, by choice): online **payments**
   (BYO gateway — merchant connects own Razorpay/Cashfree; checkout is COD-only

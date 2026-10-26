@@ -86,7 +86,7 @@ export const admins = pgTable(
   "admins",
   {
     // The optional product-updates box at signup — a preference, not a
-    // contract (see supabase/legal_01_schema.sql).
+    // contract.
     marketingOptIn: boolean("marketing_opt_in").default(false).notNull(),
     id: text().primaryKey().notNull(),
     email: text().notNull(),
@@ -147,11 +147,6 @@ export const admins = pgTable(
       as: "permissive",
       for: "select",
       to: ["public"],
-    }),
-    pgPolicy("Auth admin can read admins for token hook", {
-      as: "permissive",
-      for: "select",
-      to: ["supabase_auth_admin"],
     }),
     // A DASHBOARD role from platform_roles (migration 0207). The old CHECK
     // admitted only superadmin|member; roles are operator-defined now, so the
@@ -407,7 +402,9 @@ export const billingInvoices = pgTable(
   "billing_invoices",
   {
     id: uuid().defaultRandom().primaryKey().notNull(),
-    storeId: uuid("store_id").notNull(),
+    /** Null only on an issued invoice whose store was deleted: StoreMink keeps
+     *  its own invoices for GST (migration 0243, ON DELETE SET NULL). */
+    storeId: uuid("store_id"),
     /** 'subscription' | 'ai_credits' | 'addon' — never mixed (spec §1). */
     kind: text().notNull(),
     status: text().default("draft").notNull(),
@@ -436,6 +433,9 @@ export const billingInvoices = pgTable(
     placeOfSupply: text("place_of_supply"),
     supplierGstin: text("supplier_gstin"),
     customerGstin: text("customer_gstin"),
+    /** Who the invoice is from and to, recorded when it is issued (0243):
+     *  stamped by trigger, written once, read by the printable document. */
+    parties: jsonb(),
     finalizedAt: timestamp("finalized_at", {
       withTimezone: true,
       mode: "string",
@@ -474,7 +474,7 @@ export const billingInvoices = pgTable(
       columns: [table.storeId],
       foreignColumns: [stores.id],
       name: "billing_invoices_store_id_fkey",
-    }).onDelete("cascade"),
+    }).onDelete("set null"),
     check(
       "billing_invoices_kind_check",
       sql`kind = ANY (ARRAY['subscription'::text, 'ai_credits'::text, 'addon'::text])`,
@@ -585,7 +585,8 @@ export const billingPaymentAttempts = pgTable(
   {
     id: uuid().defaultRandom().primaryKey().notNull(),
     invoiceId: uuid("invoice_id").notNull(),
-    storeId: uuid("store_id").notNull(),
+    /** Null once the store is deleted: a kept invoice keeps its payments (0243). */
+    storeId: uuid("store_id"),
     /** OURS, minted BEFORE the gateway call — you cannot key on a provider id
      *  you do not have yet, and a timeout looks like a success you never read. */
     idempotencyKey: text("idempotency_key").notNull(),
@@ -651,7 +652,7 @@ export const billingPaymentAttempts = pgTable(
       columns: [table.storeId],
       foreignColumns: [stores.id],
       name: "billing_payment_attempts_store_id_fkey",
-    }).onDelete("cascade"),
+    }).onDelete("set null"),
     foreignKey({
       columns: [table.mandateId],
       foreignColumns: [billingMandates.id],
@@ -882,7 +883,7 @@ export const billingSubscriptions = pgTable(
     // ⚠ `<> ALL`, not `NOT (… = ANY …)`: Postgres NORMALISES the latter into the
     // former, so writing it the other way makes every future `drizzle-kit
     // introspect` report spurious drift on this constraint. Verified against the
-    // applied schema — see supabase/billing_verify.sql.
+    // applied schema by scripts/billing-verify.sql.
     check(
       "billing_subscriptions_cycle_present",
       sql`(state <> ALL (ARRAY['active'::text, 'past_due'::text, 'grace'::text])) OR ((current_period_start IS NOT NULL) AND (current_period_end IS NOT NULL))`,
@@ -902,7 +903,7 @@ export const billingWebhookEvents = pgTable(
     receivedAt: timestamp("received_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
-    // ── billing_04_payments.sql: what makes the marker row a QUEUE row. ──
+    // ── What makes the marker row a QUEUE row. ──
     /** Without the payload an event can be re-received but never REPLAYED. */
     payload: jsonb().default({}).notNull(),
     signatureVerified: boolean("signature_verified").default(false).notNull(),
@@ -1793,7 +1794,7 @@ export const orderItems = pgTable(
       .default(0)
       .notNull(),
     taxClassName: text("tax_class_name"),
-    // Per-line markdown (supabase/pos_07_line_discount.sql). `total` is
+    // Per-line markdown. `total` is
     // already net of it — this records WHY the line is cheaper, so the
     // receipt adds up and markdowns stay auditable.
     lineDiscount: numeric("line_discount", {
@@ -1951,7 +1952,7 @@ export const orderPayments = pgTable(
 export const orders = pgTable(
   "orders",
   {
-    // Which cash-drawer period this sale belongs to (pos_10_shifts.sql).
+    // Which cash-drawer period this sale belongs to.
     // Explicit rather than inferred from a time window: a sale rung a second
     // before midnight must not land in tomorrow's drawer.
     shiftId: uuid("shift_id"),
@@ -1994,7 +1995,7 @@ export const orders = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
-    // Pick up in store (supabase/locations_05_pickup.sql). fulfilment_type is
+    // Pick up in store. fulfilment_type is
     // TEXT, not a boolean — ship-from-store and lockers are on the roadmap.
     // pickupLocationId is where the shopper COLLECTS, distinct from locationId
     // (where stock came from); for a pickup they match, for ship-from-store
@@ -2011,8 +2012,8 @@ export const orders = pgTable(
       mode: "string",
     }),
     collectedBy: text("collected_by"),
-    // How much of `total` was settled with store credit
-    // (store_credit_01_schema.sql). `total` stays the FULL goods value —
+    // How much of `total` was settled with store credit. `total` stays the
+    // FULL goods value —
     // credit is a PAYMENT, not a discount, so netting it off would understate
     // the sale on the invoice and compute GST on the wrong base.
     storeCreditUsed: numeric("store_credit_used", {
@@ -2035,7 +2036,7 @@ export const orders = pgTable(
       .default(0),
     /** The offer name, snapshotted for the ledger note. */
     cashbackNote: text("cashback_note"),
-    // When the parcel actually LANDED (refunds_01_gateway.sql). The return
+    // When the parcel actually LANDED. The return
     // window starts here — measured from created_at, a 7-day window on a
     // 10-day delivery expires before the customer has the goods.
     deliveredAt: timestamp("delivered_at", {
@@ -2045,7 +2046,7 @@ export const orders = pgTable(
     // The collection code a customer shows at the counter (locations_11).
     // A LOOKUP key, not a bearer token — see lib/fulfilment/collection-code.ts.
     pickupCode: text("pickup_code"),
-    // ── Cancellation (orders_01_cancellation.sql) ──────────────────────────
+    // ── Cancellation ─────────────────────────────────────────────────────────
     // WHOLE-ORDER only: there is deliberately no per-item equivalent, because
     // this system has no partial fulfilment. Lifecycle in
     // lib/orders/cancellation.ts. NULL status = nobody has ever asked.
@@ -2068,8 +2069,7 @@ export const orders = pgTable(
     /** ★ INTERNAL. Never rendered to a customer, anywhere. */
     cancelStaffNote: text("cancel_staff_note"),
     cancelRefundDestination: text("cancel_refund_destination"),
-    // Claimed by the reminder job so the nudge fires exactly once
-    // (locations_06_pickup_reminder.sql).
+    // Claimed by the reminder job so the nudge fires exactly once.
     // When the shop expects it ready (locations_09). The hold window is
     // measured FROM this, not from order time.
     pickupReadyAt: timestamp("pickup_ready_at", {
@@ -2107,14 +2107,14 @@ export const orders = pgTable(
     whatsappUpdates: boolean("whatsapp_updates"),
     stockStatus: text("stock_status").default("none").notNull(),
     // NOT NULL because the DATABASE always has them: a BEFORE INSERT trigger
-    // (identifiers_04_triggers.sql) allocates both. No caller supplies them —
+    // (orders_set_ref) allocates both. No caller supplies them —
     // see `OrderInsert` below for why that distinction has teeth.
     orderNo: integer("order_no").notNull(),
     orderRef: text("order_ref").notNull(),
     taxInclusive: boolean("tax_inclusive").default(false).notNull(),
     razorpayOrderId: text("razorpay_order_id"),
     razorpayPaymentId: text("razorpay_payment_id"),
-    // POS Phase 2 (pos_06_sell_path.sql). In-person sales share this table,
+    // POS Phase 2. In-person sales share this table,
     // tagged sales_channel='pos'. shippingAddress stays null for POS;
     // customerId remains nullable in storage for legacy rows and other channels.
     salesChannel: text("sales_channel").default("online").notNull(),
@@ -2833,7 +2833,7 @@ export const platformBillingSettings = pgTable(
     taxEnabled: boolean("tax_enabled").default(false).notNull(),
     /**
      * true = listed plan prices already include GST (carve it out);
-     * false = GST is added on top. billing_05_tax_mode.sql.
+     * false = GST is added on top.
      *
      * ★ Under INCLUSIVE, enabling GST later changes nothing a merchant pays.
      * Under EXCLUSIVE the same switch raises every bill 18%, which is why
@@ -3018,7 +3018,7 @@ export const productVariants = pgTable(
     name: text().notNull(),
     stock: integer().default(0).notNull(),
     // Stock at locations that fulfil ONLINE orders — what the storefront may
-    // promise (supabase/locations_03_fulfilment.sql). `stock` stays the
+    // promise. `stock` stays the
     // all-locations total, which the dashboard and POS want. Both are
     // maintained by _recompute_stock_aggregate; never write either directly.
     onlineStock: integer("online_stock").default(0).notNull(),
@@ -3166,8 +3166,8 @@ export const products = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
-    // Moves only when a visitor-visible column changes — NOT on a sale. See
-    // supabase/seo_01_product_content_timestamp.sql: updated_at is bumped by
+    // Moves only when a visitor-visible column changes — NOT on a sale (the
+    // products_touch_content_updated_at trigger): updated_at is bumped by
     // _recompute_stock_aggregate on every inventory movement, so it cannot be
     // used as the sitemap's lastmod. Trigger-maintained; never written by app code.
     contentUpdatedAt: timestamp("content_updated_at", {
@@ -3201,7 +3201,7 @@ export const products = pgTable(
     trackInventory: boolean("track_inventory").default(false).notNull(),
     stock: integer().default(0).notNull(),
     // Stock at locations that fulfil ONLINE orders — what the storefront may
-    // promise (supabase/locations_03_fulfilment.sql). `stock` stays the
+    // promise. `stock` stays the
     // all-locations total, which the dashboard and POS want. Both are
     // maintained by _recompute_stock_aggregate; never write either directly.
     onlineStock: integer("online_stock").default(0).notNull(),
@@ -3214,7 +3214,7 @@ export const products = pgTable(
     // lib/products/options.ts. `[]` = the product has plain named variants.
     options: jsonb().default([]).notNull(),
     taxClassId: uuid("tax_class_id"),
-    // Return policy (returns_01_product_policy.sql). `returnable` FALSE = final
+    // Return policy. `returnable` FALSE = final
     // sale; `returnWindowDays` NULL = use the store's returns.windowDays.
     returnable: boolean().notNull().default(true),
     returnWindowDays: integer("return_window_days"),
@@ -3599,7 +3599,7 @@ export const storeShippingSettings = pgTable(
   ],
 );
 
-// POS Phase 0: physical/warehouse locations per store (supabase/pos_00_locations.sql).
+// POS Phase 0: physical/warehouse locations per store.
 export const storeLocations = pgTable(
   "store_locations",
   {
@@ -3611,7 +3611,7 @@ export const storeLocations = pgTable(
     gstin: text(),
     stateCode: text("state_code"),
     receiptPrefix: text("receipt_prefix"),
-    // What this location may DO (supabase/locations_01_capabilities.sql).
+    // What this location may DO.
     // jsonb rather than one boolean per capability so a new capability is a
     // registry entry in lib/locations/capabilities.ts, not a migration plus a
     // check to forget in every consumer. Read it through
@@ -3659,9 +3659,9 @@ export const storeLocations = pgTable(
 
 // POS Phase 0: per-location stock — the source of truth; products.stock /
 // product_variants.stock are a trigger-maintained aggregate (SUM of on_hand).
-// Writes go only through the location-aware RPCs (supabase/pos_02_rpc_location.sql).
+// Writes go only through the location-aware stock RPCs.
 // Note: the single-row-per-SKU-per-location UNIQUE index uses a COALESCE
-// expression on variant_id (see pos_01_inventory_levels.sql) — not modelled here.
+// expression on variant_id — not modelled here.
 export const inventoryLevels = pgTable(
   "inventory_levels",
   {
@@ -3832,7 +3832,7 @@ export const posDevices = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
-    // Rotation state for clone detection (pos_05_device_hardening.sql).
+    // Rotation state for clone detection.
     tokenNonce: text("token_nonce"),
     prevNonce: text("prev_nonce"),
     prevNonceUntil: timestamp("prev_nonce_until", {
@@ -3869,13 +3869,13 @@ export const posDevices = pgTable(
   ],
 );
 
-// Append-only POS security trail (pos_05_device_hardening.sql). Admin-readable;
+// Append-only POS security trail. Admin-readable;
 // written only via the service role.
-// Manager-arranged register grid, per location (supabase/pos_09_register_layout.sql).
+// Manager-arranged register grid, per location.
 // NO ROW = NO LAYOUT = show the whole catalogue, so adding this feature could
 // not blank an existing register. `items` is deliberately not FK-checked —
 // a deleted product drops out at render rather than wedging the layout.
-// Restricts a dashboard admin to specific locations (locations_02_admin_scope.sql).
+// Restricts a dashboard admin to specific locations.
 // NO ROWS = UNRESTRICTED — absence is not restriction, so this changes nothing
 // until a merchant deliberately assigns someone. Read through
 // lib/locations/scope.ts getViewerLocations(), never inline.
@@ -3920,7 +3920,7 @@ export const adminLocations = pgTable(
   ],
 );
 
-// Where online orders ship from (supabase/locations_03_fulfilment.sql).
+// Where online orders ship from.
 // `strategy` names a resolver in lib/fulfilment/strategies.ts, so adding
 // "nearest" later needs no schema change. `priority` is an ordered array of
 // location ids, deliberately not FK-checked: a deleted location drops out of
@@ -3946,7 +3946,7 @@ export const storeFulfilmentRules = pgTable(
   ],
 );
 
-// Units held but not sold (supabase/locations_04_reservations.sql).
+// Units held but not sold.
 // available = inventory_levels.on_hand - reserved. `owner_type` is text rather
 // than a column per kind so pickup, marketplace and anything later need no
 // migration. Every read/write goes through the atomic RPCs in
@@ -4022,7 +4022,7 @@ export const posLayouts = pgTable(
   ],
 );
 
-// Personal Analytics dashboard preferences (analytics_01_dashboard_layouts.sql).
+// Personal Analytics dashboard preferences (migration 20260818_0005).
 // No row means "follow the current product default". The JSON remains bounded
 // and validated in app/actions/analytics-layout.ts; it is never authorization.
 export const analyticsDashboardLayouts = pgTable(
@@ -4292,7 +4292,7 @@ export const storefrontDaily = pgTable(
   ],
 );
 
-// Google Search Console Phase 3a (search_metrics_01_schema.sql). Source epochs
+// Google Search Console Phase 3a (migration 20260819_0006). Source epochs
 // preserve origin history; metrics are complete replaceable PT-day buckets;
 // jobs are the durable cursor used by the self-chaining cron.
 export const storeSearchSources = pgTable(
@@ -4480,7 +4480,7 @@ export const storeSearchRateLimits = pgTable(
   ],
 );
 
-// Per-location receipt numbers (supabase/pos_06_sell_path.sql). Allocated
+// Per-location receipt numbers. Allocated
 // ONLY through the next_pos_receipt_no() RPC — a single atomic UPDATE, the
 // same allocator pattern as next_order_no — so nothing reads or writes this
 // table through Drizzle. Declared for completeness: a live counter leaks sales
@@ -4501,8 +4501,8 @@ export const posLocationCounters = pgTable(
   ],
 );
 
-// POS Phase 3 — one cash-drawer accounting period per location
-// (supabase/pos_10_shifts.sql). At most one open at a time, enforced by a
+// POS Phase 3 — one cash-drawer accounting period per location. At most one
+// open at a time, enforced by a
 // partial unique index rather than by application logic.
 export const posShifts = pgTable(
   "pos_shifts",
@@ -4616,7 +4616,7 @@ export const posAuditLog = pgTable(
     actor: text(),
     ip: text(),
     detail: text(),
-    // Money events (pos_16_money_audit.sql). Rupees given away or moved; who
+    // Money events. Rupees given away or moved; who
     // authorised it when that differs from the actor; and what it concerns.
     amount: numeric({ precision: 12, scale: 2, mode: "number" }),
     approver: text(),
@@ -4711,7 +4711,7 @@ export const storeCounters = pgTable(
     storeId: uuid("store_id").primaryKey().notNull(),
     orderSeq: integer("order_seq").default(999).notNull(),
     productSeq: integer("product_seq").default(0).notNull(),
-    /** GST credit note serial (returns_04_credit_notes.sql). */
+    /** GST credit note serial (allocated by the order_refunds_credit_note trigger). */
     creditNoteSeq: integer("credit_note_seq").default(0).notNull(),
   },
   (table) => [
@@ -4724,7 +4724,7 @@ export const storeCounters = pgTable(
 );
 
 // The site-wide header + footer, with the same draft/published contract as
-// store_pages (supabase/builder_01_store_chrome.sql). Supersedes store_menus,
+// store_pages. Supersedes store_menus,
 // which is left in place unread until the builder has shipped a release.
 // `draft` is REVOKED from anon at the DB layer — storefront reads must select
 // named columns and never `*`.
@@ -4755,7 +4755,7 @@ export const storeChrome = pgTable(
 );
 
 // Store-scoped mailing-list consent captured by the footer and newsletter
-// page section (supabase/themes_01_newsletter_subscribers.sql). Public forms
+// page section. Public forms
 // write through a validated, rate-limited server action using service scope;
 // RLS exposes rows only to the owning store's admins.
 export const newsletterSubscribers = pgTable(
@@ -4842,8 +4842,8 @@ export const storeMenus = pgTable(
   ],
 );
 
-// Per-store media library (images uploaded via /dashboard/media). See
-// supabase/media_assets.sql. The object URL is public (public GCS bucket); the
+// Per-store media library (images uploaded via /dashboard/media). The object
+// URL is public (public GCS bucket); the
 // listing is admin-only (RLS: is_store_admin).
 // `source` says where a row came from (lib/media/sources.ts); the Library page
 // hides chat attachments and resized copies, but every row still proves the
@@ -4967,8 +4967,7 @@ export const storePaymentProviders = pgTable(
     keyId: text("key_id").notNull(),
     keySecretEnc: text("key_secret_enc").notNull(),
     // Razorpay HMACs the request body, so this must be reversible (encrypted)
-    // rather than hashed like the logistics webhook token. See
-    // supabase/payments_02_store_webhook.sql.
+    // rather than hashed like the logistics webhook token.
     webhookSecretEnc: text("webhook_secret_enc"),
     enabled: boolean().default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
@@ -4993,7 +4992,7 @@ export const storePaymentProviders = pgTable(
 
 // Logistics credentials are separate from payment credentials: a merchant can
 // pause Shiprocket without touching Razorpay, and every provider connection has
-// its own webhook identity. Service-role only (logistics_01_shiprocket.sql).
+// its own webhook identity. Service-role only (migration 20260814_0001).
 export const storeLogisticsProviders = pgTable(
   "store_logistics_providers",
   {
@@ -5634,6 +5633,14 @@ export const minkDrafts = pgTable(
       columns: [table.storeId],
       foreignColumns: [stores.id],
       name: "mink_drafts_store_id_fkey",
+    }).onDelete("cascade"),
+    // In the database since migration 0040 and never declared here until the
+    // chat-history work (26 Oct 2026): a draft goes with the run that made it.
+    // minkRuns is declared further down; this callback runs lazily.
+    foreignKey({
+      columns: [table.runId, table.storeId],
+      foreignColumns: [minkRuns.id, minkRuns.storeId],
+      name: "mink_drafts_run_store_fkey",
     }).onDelete("cascade"),
     check(
       "mink_drafts_builder_target_check",
@@ -6279,11 +6286,15 @@ export const minkActionApprovals = pgTable(
       foreignColumns: [minkDrafts.id, minkDrafts.storeId],
       name: "mink_action_approvals_draft_store_fkey",
     }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.productId, table.storeId],
-      foreignColumns: [products.id, products.storeId],
-      name: "mink_action_approvals_product_store_fkey",
-    }).onDelete("cascade"),
+    // ★ NOT A FOREIGN KEY ANY MORE (migration 20261026_0250, owner decision
+    // D6): product_id is a plain reference, so an approval and its audit row
+    // outlive the product they changed. The name survives as an always-true
+    // CHECK only because migration 0042's durable verify names it, and a
+    // constraint named in a durable verify can never be retired.
+    check(
+      "mink_action_approvals_product_store_fkey",
+      sql`product_id IS NULL OR store_id IS NOT NULL`,
+    ),
     foreignKey({
       columns: [table.sourceApprovalId, table.storeId],
       foreignColumns: [table.id, table.storeId],
@@ -6449,11 +6460,14 @@ export const minkActionAudit = pgTable(
     index("mink_action_audit_storefront_publish_idx")
       .on(table.storeId, table.resourceId, table.createdAt.desc())
       .where(sql`${table.toolName} = 'publish_storefront_code'`),
+    // ON DELETE CASCADE, as migration 0042 created it (this file said
+    // "restrict" until 26 Oct 2026, which the database never was): deleting
+    // an approval deletes its audit row. Append-only is a rule of the code.
     foreignKey({
       columns: [table.approvalId, table.storeId],
       foreignColumns: [minkActionApprovals.id, minkActionApprovals.storeId],
       name: "mink_action_audit_approval_store_fkey",
-    }).onDelete("restrict"),
+    }).onDelete("cascade"),
     check(
       "mink_action_audit_builder_target_check",
       sql`tool_name <> 'manage_website_builder' OR (resource_type = 'website_builder' AND resource_id = store_id AND resource_id IS NOT NULL AND product_id IS NULL AND location_id IS NULL AND variant_id IS NULL AND operation = 'apply')`,
@@ -6605,6 +6619,9 @@ export const minkConversations = pgTable(
     })
       .defaultNow()
       .notNull(),
+    // The chat's deletion time: last use + 90 days, moved forward on every use
+    // (migration 20261026_0248, Mink chat history). The default, first use +
+    // 90 days, is what an insert starts with.
     expiresAt: timestamp("expires_at", {
       withTimezone: true,
       mode: "string",
@@ -6621,6 +6638,13 @@ export const minkConversations = pgTable(
     summarizedMessageCount: integer("summarized_message_count")
       .default(0)
       .notNull(),
+    // When the retention sweep last failed to retire this chat (migration
+    // 20261026_0248, the shape of whatsapp_conversations.retention_failed_at);
+    // the sweep leaves it out for 7 days.
+    retentionFailedAt: timestamp("retention_failed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
   },
   (table) => [
     unique("mink_conversations_id_store_key").on(table.id, table.storeId),
@@ -6630,6 +6654,13 @@ export const minkConversations = pgTable(
       table.lastMessageAt,
     ),
     index("mink_conversations_expiry_idx").on(table.expiresAt),
+    // The retention sweep and its heal read listed chats only, in expiry
+    // order (migration 20261026_0248). The message search index of migration
+    // 20261026_0249 (GIN on to_tsvector('simple', ...)) is not declared here,
+    // as whatsapp_messages_body_search_idx is not.
+    index("mink_conversations_retention_idx")
+      .on(table.expiresAt, table.id)
+      .where(sql`${table.status} = 'active'`),
     foreignKey({
       columns: [table.storeId],
       foreignColumns: [stores.id],
@@ -6692,6 +6723,14 @@ export const minkRuns = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
+    // ★ The stop handshake (migration 0244, lib/mink/run-stop.ts): a stop the
+    // merchant asked for, and the run's first side effect. Each is set only
+    // while the other is null, so at most one ever is.
+    stopRequestedAt: timestamp("stop_requested_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    actedAt: timestamp("acted_at", { withTimezone: true, mode: "string" }),
   },
   (table) => [
     unique("mink_runs_id_store_key").on(table.id, table.storeId),
@@ -6740,6 +6779,14 @@ export const minkRuns = pgTable(
     check(
       "mink_runs_context_check",
       sql`(current_path IS NULL OR (current_path LIKE '/dashboard%' AND char_length(current_path) <= 500)) AND ((selected_resource_type IS NULL AND selected_resource_id IS NULL) OR (selected_resource_type IN ('product', 'order') AND selected_resource_id IS NOT NULL))`,
+    ),
+    check(
+      "mink_runs_stop_or_act_check",
+      sql`stop_requested_at IS NULL OR acted_at IS NULL`,
+    ),
+    check(
+      "mink_runs_stopped_never_succeeds_check",
+      sql`stop_requested_at IS NULL OR status <> 'succeeded'`,
     ),
   ],
 );
@@ -7149,11 +7196,6 @@ export const users = pgTable(
       for: "insert",
       to: ["public"],
     }),
-    pgPolicy("Auth admin can read users for token hook", {
-      as: "permissive",
-      for: "select",
-      to: ["supabase_auth_admin"],
-    }),
   ],
 );
 
@@ -7376,8 +7418,7 @@ export const enquiryAdmin = pgView("enquiry_admin", {
 
 // ─── Help Centre (platform-global; help.storemink.com) ──────────────────────
 // StoreMink's own product docs — NOT per-store data, so no store_id (mirrors
-// platform_admins). Managed by operators, read publicly. Schema + RLS +
-// FTS vector + seed live in supabase/help_centre.sql. The generated `search`
+// platform_admins). Managed by operators, read publicly. The generated `search`
 // tsvector column is intentionally absent here (GENERATED ALWAYS, never
 // written by the app; search uses a raw sql`` predicate against it).
 export const helpCategories = pgTable(
@@ -7561,7 +7602,7 @@ export const helpArticleChunks = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// Notifications & activity (supabase/notifications_01_schema.sql).
+// Notifications & activity.
 // `storeId` is NULLABLE on all three: NULL means a PLATFORM-level row (an
 // operator event / an operator's preferences), mirroring platform_admins.
 // Writes are service-role only — see the migration's header for why.
@@ -7737,11 +7778,11 @@ export const notificationPreferences = pgTable(
   ],
 );
 
-// Notification EMAIL queue (supabase/notifications_02_email_queue.sql).
+// Notification EMAIL queue.
 // Worker-only: RLS is enabled with NO policies, so only the service scope can
 // touch it — the rows hold recipients' addresses.
-// StoreMink's OWN policies, versioned and immutable once published — see
-// supabase/legal_01_schema.sql. Platform-global: no store_id.
+// StoreMink's OWN policies, versioned and immutable once published.
+// Platform-global: no store_id.
 export const legalDocuments = pgTable("legal_documents", {
   id: uuid().defaultRandom().primaryKey().notNull(),
   kind: text().notNull(),
@@ -7802,7 +7843,7 @@ export const legalAcceptances = pgTable(
   ],
 );
 
-// Every email the platform sends — see supabase/email_logs.sql. A LOG, not a
+// Every email the platform sends. A LOG, not a
 // queue: nothing reads it to decide what to do next.
 export const emailLogs = pgTable("email_logs", {
   id: uuid().defaultRandom().primaryKey().notNull(),
@@ -7823,7 +7864,8 @@ export const emailLogs = pgTable("email_logs", {
     .notNull(),
 });
 
-// Global, NOT tenant-scoped, on purpose — see supabase/notifications_05_suppressions.sql.
+// Global, NOT tenant-scoped, on purpose: a hard bounce hurts the shared sending
+// domain, so one store's dead address is suppressed for every store.
 export const emailSuppressions = pgTable("email_suppressions", {
   email: text().primaryKey().notNull(),
   reason: text().notNull(),
@@ -7855,11 +7897,11 @@ export const notificationEmailQueue = pgTable(
     body: text(),
     url: text(),
     severity: text().default("info").notNull(),
-    // Snapshotted at enqueue, like subject/body — see notifications_04_email_cc.sql.
+    // Snapshotted at enqueue, like subject/body.
     cc: text(),
     bcc: text(),
-    // Display-only order summary, snapshotted at enqueue — see
-    // supabase/notifications_06_email_items.sql for why it isn't in the payload.
+    // Display-only order summary, snapshotted at enqueue. Not in the event
+    // payload, which stays small and scalar because it is an audit trail.
     lineItems: jsonb("line_items"),
     status: text().default("pending").notNull(),
     sendAfter: timestamp("send_after", {
@@ -7908,7 +7950,7 @@ export const notificationEmailQueue = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// Notification CONSOLE (supabase/notifications_03_console.sql).
+// Notification CONSOLE.
 // notification_definitions is PLATFORM-GLOBAL (no store_id — the
 // platform_admins model); notification_settings is per store.
 // Resolution: code registry ← definition ← store settings.
@@ -7966,7 +8008,7 @@ export const notificationSettings = pgTable(
     channels: jsonb().default({}).notNull(),
     /** permission | roles | admins. Targeting NARROWS, never widens. */
     routing: text().default("permission").notNull(),
-    // Location axis for routing (supabase/notifications_07_routing_scope.sql).
+    // Location axis for routing.
     // 'store' (default) = today's behaviour; 'event_location' = only staff
     // assigned where the event happened. See lib/notifications/routing.ts.
     routingScope: text("routing_scope").default("store").notNull(),
@@ -8011,7 +8053,7 @@ export const notificationSettings = pgTable(
   ],
 );
 
-// Operator-editable plan pricing (supabase/plans_03_pricing.sql). Platform-
+// Operator-editable plan pricing. Platform-
 // global — no store_id, like platformAdmins and legalDocuments.
 export const planPrices = pgTable("plan_prices", {
   plan: text().primaryKey().notNull(),
@@ -8142,7 +8184,7 @@ export const minkPlanAllowances = pgTable(
   ],
 );
 
-// ---- Returns & refunds (supabase/pos_12_returns.sql) ----------------------
+// ---- Returns & refunds -----------------------------------------------------
 // Two tables because they are two facts: a return can be refunded across
 // several tenders, and a refund can happen with no return (a cancellation).
 
@@ -8165,7 +8207,7 @@ export const orderReturns = pgTable(
       withTimezone: true,
       mode: "string",
     }).defaultNow(),
-    // ── Request lifecycle (returns_02_requests.sql) ─────────────────────────
+    // ── Request lifecycle ───────────────────────────────────────────────────
     /** requested → approved → received → completed, or rejected/cancelled.
      *  DEFAULTS to 'completed': every pre-existing row is a finished till
      *  return, and pos-return-actions still doesn't set it. */
@@ -8202,7 +8244,7 @@ export const orderReturns = pgTable(
       withTimezone: true,
       mode: "string",
     }),
-    /** The replacement order (returns_03_exchanges.sql). An exchange is a return
+    /** The replacement order. An exchange is a return
      *  PLUS a new order, never a third entity. NULL until the goods arrive. */
     exchangeOrderId: uuid("exchange_order_id"),
     /** A till return's retry key (0185). A second submit with the same key
@@ -8232,7 +8274,7 @@ export const orderReturnItems = pgTable("order_return_items", {
     withTimezone: true,
     mode: "string",
   }).defaultNow(),
-  // ── Exchange target (returns_03_exchanges.sql) ──────────────────────────
+  // ── Exchange target ─────────────────────────────────────────────────────
   /** What they want instead. Per LINE, so one return can mix exchanged and
    *  refunded items. */
   exchangeProductId: uuid("exchange_product_id"),
@@ -8248,7 +8290,7 @@ export const orderReturnItems = pgTable("order_return_items", {
   exchangeHoldId: uuid("exchange_hold_id"),
 });
 
-// Store credit (store_credit_01_schema.sql). A balance a store owes a
+// Store credit. A balance a store owes a
 // customer, spendable at checkout. The LEDGER is the truth; this is a cached
 // sum of it, kept non-negative by a CHECK.
 export const customerCreditBalances = pgTable(
@@ -8305,7 +8347,7 @@ export const orderRefunds = pgTable("order_refunds", {
   reason: text(),
   /** Proof for money moved outside a gateway — a typed UPI transaction id. */
   reference: text(),
-  // ── GST credit note (returns_04_credit_notes.sql) ───────────────────────
+  // ── GST credit note ─────────────────────────────────────────────────────
   /** Per-store serial, allocated by a TRIGGER on settlement — never by app
    *  code, because a gap in a GST series is what an audit flags. */
   creditNoteNo: integer("credit_note_no"),
@@ -8316,8 +8358,7 @@ export const orderRefunds = pgTable("order_refunds", {
   }),
   status: text().notNull(),
   actor: text(),
-  // `supabase/pos_12_returns.sql` declares this `timestamptz NOT NULL DEFAULT
-  // now()` and that migration has run, so the column is non-null in every
+  // The database declares this `timestamptz NOT NULL DEFAULT now()` in every
   // environment. The introspected type was missing `.notNull()` — drift, not a
   // real nullable — which made every reader carry a null branch that cannot
   // happen.
@@ -8330,8 +8371,7 @@ export const orderRefunds = pgTable("order_refunds", {
 });
 
 // ---------------------------------------------------------------------------
-// CSV import/export jobs + their per-row error log
-// (supabase/import_export_01_jobs.sql, CODEBASE.md §31).
+// CSV import/export jobs + their per-row error log (CODEBASE.md §31).
 //
 // Service-role only, like email_logs: the rows quote raw cells from the
 // merchant's file, and for an orders export that means customer names and
@@ -8376,7 +8416,7 @@ export const dataJobs = pgTable("data_jobs", {
   }),
   /** Claims so far — bounded retries, so a job that reliably dies gives up. */
   attempts: integer().default(0).notNull(),
-  /** Firebase uid — TEXT, not UUID (phase6_01_uid_columns_to_text.sql). */
+  /** Firebase uid — TEXT, not UUID. */
   createdBy: text("created_by"),
   actorEmail: text("actor_email"),
   startedAt: timestamp("started_at", { withTimezone: true, mode: "string" }),
@@ -8390,8 +8430,8 @@ export const dataJobs = pgTable("data_jobs", {
 });
 
 /** The uploaded file, held server-side so the import survives a closed tab.
- *  In Postgres rather than the media bucket because that bucket is public —
- *  see supabase/import_export_02_background.sql. Service-role only. */
+ *  In Postgres rather than the media bucket because that bucket is public.
+ *  Service-role only. */
 export const dataJobPayloads = pgTable("data_job_payloads", {
   jobId: uuid("job_id").primaryKey().notNull(),
   storeId: uuid("store_id").notNull(),
@@ -8423,8 +8463,7 @@ export const dataJobIssues = pgTable("data_job_issues", {
 });
 
 // ---------------------------------------------------------------------------
-// SMS (§37). Hand-added rather than introspected — supabase/sms_01_schema.sql
-// is not applied yet, so drizzle-kit has nothing to read.
+// SMS (§37). Hand-added rather than introspected.
 // ---------------------------------------------------------------------------
 
 export const storeSmsProviders = pgTable("store_sms_providers", {
@@ -8523,7 +8562,7 @@ export const smsSuppressions = pgTable("sms_suppressions", {
 
 // ---------------------------------------------------------------------------
 // Platform announcements (§38) — StoreMink telling its MERCHANTS something.
-// Schema + rationale: supabase/announcements_01_schema.sql. Service-role only.
+// Service-role only.
 // ---------------------------------------------------------------------------
 
 export const platformAnnouncements = pgTable("platform_announcements", {
@@ -8592,8 +8631,7 @@ export const platformAnnouncementRecipients = pgTable(
   ],
 );
 
-/** Suspended till transactions (§22). Hand-added: supabase/pos_14_parked_sales.sql
- *  is not applied yet, so drizzle-kit has nothing to introspect. */
+/** Suspended till transactions (§22). Hand-added rather than introspected. */
 export const posParkedSales = pgTable("pos_parked_sales", {
   id: uuid().defaultRandom().primaryKey().notNull(),
   storeId: uuid("store_id").notNull(),
@@ -9384,3 +9422,58 @@ export const minkRevampImages = pgTable("mink_revamp_images", {
     .defaultNow()
     .notNull(),
 });
+
+// Refine with Mink AI: a stop the browser sends and the charge claim, of which
+// exactly one wins (migration 20261026_0247, lib/mink/refine-stop.ts). One row
+// per refine, keyed by what both requests know: the store, the admin and the
+// browser's stop token. stop_requested_at and charge_claimed_at are each set
+// only while the other is NULL. Service-only: RLS on, no policies, app_user
+// has no grants. The Refine code reads and writes it with raw SQL, like
+// mink_image_refinements; this declaration records its shape and constraints.
+export const minkRefineRequests = pgTable(
+  "mink_refine_requests",
+  {
+    storeId: uuid("store_id").notNull(),
+    adminId: text("admin_id").notNull(),
+    stopToken: uuid("stop_token").notNull(),
+    // The server's refine id (mink_image_refinements.id); NULL only on a row a
+    // stop created before its refine arrived.
+    refinementId: uuid("refinement_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    stopRequestedAt: timestamp("stop_requested_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    chargeClaimedAt: timestamp("charge_claimed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.storeId, table.adminId, table.stopToken],
+      name: "mink_refine_requests_pkey",
+    }),
+    unique("mink_refine_requests_refinement_key").on(table.refinementId),
+    index("mink_refine_requests_created_idx").on(table.createdAt),
+    foreignKey({
+      columns: [table.storeId],
+      foreignColumns: [stores.id],
+      name: "mink_refine_requests_store_id_fkey",
+    }).onDelete("cascade"),
+    check(
+      "mink_refine_requests_stop_or_charge_check",
+      sql`stop_requested_at IS NULL OR charge_claimed_at IS NULL`,
+    ),
+    check(
+      "mink_refine_requests_charge_has_refinement_check",
+      sql`charge_claimed_at IS NULL OR refinement_id IS NOT NULL`,
+    ),
+    check(
+      "mink_refine_requests_started_or_stopped_check",
+      sql`refinement_id IS NOT NULL OR stop_requested_at IS NOT NULL`,
+    ),
+  ],
+);

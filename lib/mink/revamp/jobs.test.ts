@@ -2392,6 +2392,7 @@ describe("reads", () => {
             undoneAt: null,
             createdAt: "2026-10-21 06:00:00+00",
             summary: `  Warmer\n colours ${"z".repeat(400)}`,
+            cancelRequested: false,
           },
           {
             id: OTHER_ID,
@@ -2403,6 +2404,7 @@ describe("reads", () => {
             undoneAt: null,
             createdAt: "2026-10-21 05:00:00+00",
             summary: null,
+            cancelRequested: false,
           },
         ],
       ],
@@ -2418,10 +2420,61 @@ describe("reads", () => {
       kind: "refine",
       status: "ready",
       draftId: DRAFT_ID,
+      cancelRequested: false,
     });
     expect(entries[0].summary?.startsWith("Warmer colours")).toBe(true);
     expect(entries[0].summary?.length).toBe(280);
     expect(holder.db.calls.limit).toEqual([5]);
+  });
+
+  it("★ says whether a conversation's revamp was asked to stop, read with the list", async () => {
+    holder.db = makeDbMock({
+      selectQueue: [
+        [
+          {
+            id: REVAMP_ID,
+            kind: "full",
+            status: "running",
+            draftId: null,
+            appliedAt: null,
+            publishedAt: null,
+            undoneAt: null,
+            createdAt: "2026-10-25 10:30:25+00",
+            summary: null,
+            cancelRequested: true,
+          },
+          {
+            id: OTHER_ID,
+            kind: "full",
+            status: "queued",
+            draftId: null,
+            appliedAt: null,
+            publishedAt: null,
+            undoneAt: null,
+            createdAt: "2026-10-25 10:00:00+00",
+            summary: null,
+            // A driver that answers anything but true is not a stop.
+            cancelRequested: "t",
+          },
+        ],
+      ],
+    });
+    const entries = await listConversationRevamps({
+      storeId: STORE_ID,
+      adminId: "owner-1",
+      conversationId: CONVERSATION_ID,
+    });
+    expect(entries.map((entry) => entry.cancelRequested)).toEqual([
+      true,
+      false,
+    ]);
+    // One read: the flag is computed in SQL beside the row, never a second query.
+    // (Rendered as Postgres receives it: `sqlText` drops column references.)
+    expect(holder.db.calls.select).toHaveLength(1);
+    const flag = new PgDialect().sqlToQuery(
+      holder.db.calls.select[0].cancelRequested,
+    ).sql;
+    expect(flag).toBe('"mink_revamps"."cancel_requested_at" is not null');
   });
 
   it("returns no entries for malformed ids without querying", async () => {

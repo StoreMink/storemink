@@ -1,10 +1,17 @@
 import "server-only";
 
-import { and, desc, eq, gt, inArray, or, sql, type SQL } from "drizzle-orm";
 import {
-  minkBlogPublications,
-  minkActionApprovals,
-  minkActionAudit,
+  and,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
+import {
   minkConversations,
   minkDraftCreditUsage,
   minkDrafts,
@@ -20,7 +27,7 @@ import { logError, logWarn } from "@/lib/observability/logger";
 import { basePromptTokens, cachedPromptTokens, estimateMinkCost } from "./cost";
 import { historyWithCompaction } from "./compaction";
 import { provisionalMinkConversationTitle } from "./conversation-title";
-import { MinkRequestError } from "./errors";
+import { MinkRequestError, MinkRunStoppedError } from "./errors";
 import { minkShadowMeter } from "./metering";
 import { discardFailedMinkRunDrafts, getMinkRunDraftUsage } from "./drafts";
 import { isRevampArtifact, type RevampArtifact } from "./revamp/contract";
@@ -33,16 +40,14 @@ import type {
 import type { MinkThinkingLevel } from "./thinking";
 
 import {
-  MINK_CONVERSATION_LIMIT,
   MINK_HISTORY_MESSAGE_LIMIT,
   MINK_KEPT_ANSWER_MARKER,
   MINK_LIVE_REVAMP_STATUSES,
-  liveRevampOfConversation,
+  minkRetentionDeadline,
   staleMinkRunCondition,
   type MinkStoredMessage,
 } from "./conversation-history";
 export {
-  MINK_CONVERSATION_LIMIT,
   listMinkConversations,
   getMinkConversation,
   deleteMinkConversation,
@@ -53,79 +58,6 @@ export type {
   MinkConversationMessage,
   MinkConversationDetail,
 } from "./conversation-history";
-
-/**
- * Keep publication and executed-action evidence alive when pruning the
- * conversation sidebar.
- *
- * A conversation cascades through runs to drafts, while the publication ledger
- * deliberately restricts deletion of its source draft. Keeping this guard in
- * the DELETE itself also closes the race where a publication is created after
- * the overflow list is read but before pruning runs.
- *
- * ★★ THE PARENTHESES AROUND EACH SUBQUERY ARE OURS, AND DRIZZLE'S `notExists`
- * DOES NOT ADD THEM. It is literally `sql`not exists ${subquery}``, which is
- * correct for a subquery BUILDER (that renders its own parentheses) and
- * produces `not exists select 1 ...` for a raw `sql` fragment like these two —
- * a plain syntax error, `syntax error at or near "select"`.
- * ⚠ IT FAILED ONLY ONCE AN ACTOR HELD MORE THAN TEN CONVERSATIONS, because the
- * prune is skipped when there is no overflow. So it shipped green, worked for
- * every new store, and then broke EVERY Mink run for the heaviest users — and
- * it broke them in `startMinkRun`, before any run row exists, so the failure
- * left no telemetry at all and surfaced only as "Mink AI couldn't start this
- * request." ⚠ A unit test cannot catch this: the db mock never parses SQL, so
- * the invalid string is indistinguishable from a valid one. `persistence-prune-sql.test.ts`
- * therefore asserts the COMPILED query text, the way sql-array-binding.test.ts does.
- *
- * ★★ AND A CONVERSATION WHOSE STOREFRONT REVAMP IS STILL LIVE IS KEPT
- * (`liveRevampOfConversation`, the History delete's own test). Its runs cascade
- * to the revamp card's draft, and a ready revamp that loses its draft breaks
- * `mink_revamps_ready_check`: the DELETE failed, and with it this whole
- * `startMinkRun`, so once such a chat was the eleventh, every new chat answered
- * "Mink AI couldn't start this request." A revamp still being made would lose
- * the run its card is drafted under and could only fail.
- */
-export function minkConversationPrunePredicate(
-  actor: Pick<MinkActorContext, "storeId" | "adminId">,
-  conversationIds: string[],
-): SQL {
-  const hasBlogPublication = sql`
-    select 1
-    from ${minkRuns}
-    inner join ${minkDrafts}
-      on ${minkDrafts.runId} = ${minkRuns.id}
-      and ${minkDrafts.storeId} = ${minkRuns.storeId}
-    inner join ${minkBlogPublications}
-      on ${minkBlogPublications.draftId} = ${minkDrafts.id}
-      and ${minkBlogPublications.storeId} = ${minkDrafts.storeId}
-    where ${minkRuns.conversationId} = ${minkConversations.id}
-      and ${minkRuns.storeId} = ${actor.storeId}
-  `;
-  const hasActionAudit = sql`
-    select 1
-    from ${minkRuns}
-    inner join ${minkDrafts}
-      on ${minkDrafts.runId} = ${minkRuns.id}
-      and ${minkDrafts.storeId} = ${minkRuns.storeId}
-    inner join ${minkActionApprovals}
-      on ${minkActionApprovals.draftId} = ${minkDrafts.id}
-      and ${minkActionApprovals.storeId} = ${minkDrafts.storeId}
-    inner join ${minkActionAudit}
-      on ${minkActionAudit.approvalId} = ${minkActionApprovals.id}
-      and ${minkActionAudit.storeId} = ${minkActionApprovals.storeId}
-    where ${minkRuns.conversationId} = ${minkConversations.id}
-      and ${minkRuns.storeId} = ${actor.storeId}
-  `;
-
-  return and(
-    eq(minkConversations.storeId, actor.storeId),
-    eq(minkConversations.adminId, actor.adminId),
-    inArray(minkConversations.id, conversationIds),
-    sql`not exists (${hasBlogPublication})`,
-    sql`not exists (${hasActionAudit})`,
-    sql`not exists (${liveRevampOfConversation(actor.storeId, minkConversations.id)})`,
-  )!;
-}
 
 export interface MinkStartedRun {
   conversationId: string;
@@ -178,11 +110,12 @@ export async function startMinkRun(input: {
         );
       }
     } else {
-      // Serialise first-message creation for this actor/store so two tabs
-      // cannot both observe ten rows and leave eleven after committing.
-      await db.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`mink-conversations:${actor.storeId}:${actor.adminId}`}, 0))`,
-      );
+      // ★★ NO CAP: a new chat deletes nothing, however many chats exist
+      //   (owner's decision, 25 Oct 2026). Chats leave 90 days after their
+      //   last use, through the nightly retention sweep
+      //   (conversation-retention.ts), never here: the ten-chat prune that
+      //   ran here twice broke every run for the heaviest users, before any
+      //   run row existed to tell anyone.
       // A short excerpt until a model names the chat (conversation-namer.ts),
       // and what stays if it cannot.
       createdTitle = provisionalMinkConversationTitle(message);
@@ -197,30 +130,6 @@ export async function startMinkRun(input: {
       conversationId = created[0]?.id;
       if (!conversationId)
         throw new Error("Mink conversation insert returned no id");
-
-      const overflow = await db
-        .select({ id: minkConversations.id })
-        .from(minkConversations)
-        .where(
-          and(
-            eq(minkConversations.storeId, actor.storeId),
-            eq(minkConversations.adminId, actor.adminId),
-          ),
-        )
-        .orderBy(
-          desc(minkConversations.lastMessageAt),
-          desc(minkConversations.createdAt),
-          desc(minkConversations.id),
-        )
-        .offset(MINK_CONVERSATION_LIMIT);
-      if (overflow.length) {
-        await db.delete(minkConversations).where(
-          minkConversationPrunePredicate(
-            actor,
-            overflow.map((row) => row.id),
-          ),
-        );
-      }
     }
 
     const previous = await db
@@ -276,11 +185,11 @@ export async function startMinkRun(input: {
         model,
         thinkingLevel: input.thinkingLevel ?? "low",
         promptVersion: actor.draftingEnabled
-          ? "draft-action-beta-v61"
-          : "read-beta-v38",
+          ? "draft-action-beta-v62"
+          : "read-beta-v39",
         toolRegistryVersion: actor.draftingEnabled
-          ? "draft-beta-v47"
-          : "read-beta-v28",
+          ? "draft-beta-v49"
+          : "read-beta-v29",
         riskTier: actor.draftingEnabled ? "R1" : "R0",
         currentPath: actor.currentPath ?? null,
         selectedResourceType: actor.selectedResource?.type ?? null,
@@ -298,9 +207,16 @@ export async function startMinkRun(input: {
       contentJson: { text: message },
       model: null,
     });
+    // ★ Sending a message is using the chat: it is kept 90 days from now
+    //   (conversation-history.ts). The answer landing minutes later is not a
+    //   separate use (completeMinkRun leaves the expiry alone).
     await db
       .update(minkConversations)
-      .set({ lastMessageAt: now, updatedAt: now })
+      .set({
+        lastMessageAt: now,
+        updatedAt: now,
+        expiresAt: minkRetentionDeadline(),
+      })
       .where(
         and(
           eq(minkConversations.id, conversationId),
@@ -382,10 +298,28 @@ export async function completeMinkRun(input: {
           eq(minkRuns.storeId, actor.storeId),
           eq(minkRuns.requestedBy, actor.adminId),
           eq(minkRuns.status, "running"),
+          // ★★ A run the merchant stopped stores no answer (run-stop.ts): the
+          //   stop may land while the final text streams, after every tool.
+          //   Migration 0244's CHECK holds the same rule for any other writer.
+          isNull(minkRuns.stopRequestedAt),
         ),
       )
       .returning({ id: minkRuns.id });
-    if (!updated[0]) throw new Error("Mink run was not in a completable state");
+    if (!updated[0]) {
+      // Nothing was written: say whether a stop is why.
+      const stopped = await db
+        .select({ stopRequestedAt: minkRuns.stopRequestedAt })
+        .from(minkRuns)
+        .where(
+          and(
+            eq(minkRuns.id, started.runId),
+            eq(minkRuns.storeId, actor.storeId),
+          ),
+        )
+        .limit(1);
+      if (stopped[0]?.stopRequestedAt) throw new MinkRunStoppedError();
+      throw new Error("Mink run was not in a completable state");
+    }
 
     await db.insert(minkMessages).values({
       storeId: actor.storeId,

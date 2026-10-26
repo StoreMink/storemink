@@ -1,18 +1,35 @@
 // @vitest-environment jsdom
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ImageUpload } from "./image-upload";
 import { ImageRefineProvider } from "./image-refine-context";
+import { resetImageRefinesForTests } from "./image-refine-registry";
+import { sendPageExitRequest } from "@/lib/http/page-exit-request";
+import type { ImageSpecKey } from "@/lib/media/image-specs";
 
 vi.mock("@/lib/storage/uploads", () => ({ uploadImage: vi.fn() }));
+vi.mock("@/lib/http/page-exit-request", () => ({
+  sendPageExitRequest: vi.fn(),
+}));
+vi.mock("sonner", () => ({ toast: vi.fn() }));
 
 const original = "https://storage.googleapis.com/b/stores/s/uploads/a.jpg";
 const refinedUrl = "https://storage.googleapis.com/b/stores/s/refined/r.webp";
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  resetImageRefinesForTests();
 });
 
 describe("ImageUpload size guidance", () => {
@@ -142,6 +159,7 @@ describe("Refine with Mink AI", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
       url: original,
       spec: "product",
+      stopToken: expect.stringMatching(UUID_RE),
     });
     // Nothing changes until the merchant chooses.
     expect(onReplace).not.toHaveBeenCalled();
@@ -175,15 +193,13 @@ describe("Refine with Mink AI", () => {
   });
 
   it("shows the server's reason when refining is refused", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ error: "Not enough Mink credits." }), {
-            status: 402,
-          }),
-      ),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "Not enough Mink credits." }), {
+          status: 402,
+        }),
     );
+    vi.stubGlobal("fetch", fetchMock);
     render(
       <ImageRefineProvider available>
         <ImageUpload
@@ -195,35 +211,200 @@ describe("Refine with Mink AI", () => {
     );
     fireEvent.click(screen.getByText(/Refine with Mink AI/));
     expect(await screen.findByText("Not enough Mink credits.")).toBeTruthy();
+    // ★ A definitive refusal (a plain-string body, so text/plain: the type
+    //   is never consulted) asks no outcome and sends no stop.
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(sendPageExitRequest).not.toHaveBeenCalled();
   });
 
-  // ★ Leaving the editor inside the app (a link, a closed dialog, a removed
-  //   gallery slot) must end the request the way closing the tab does: the
-  //   route stops the model on the request's signal and charges nothing.
-  it("★ stops the refine when the editor goes away mid-request", async () => {
-    const signals: AbortSignal[] = [];
+  /** A refine whose answer the test sends by hand. */
+  function heldRefine() {
+    const held: {
+      signal?: AbortSignal;
+      body?: { url: string; spec: string; stopToken: string };
+      answer?: (response: Response) => void;
+    } = {};
     vi.stubGlobal(
       "fetch",
-      vi.fn<typeof fetch>((_input, init) => {
-        if (init?.signal) signals.push(init.signal);
-        return new Promise<Response>(() => {});
+      vi.fn<typeof fetch>((input, init) => {
+        if (String(input) !== "/api/mink/image-refine") {
+          return Promise.resolve(new Response(null, { status: 503 }));
+        }
+        held.signal = init?.signal ?? undefined;
+        held.body = JSON.parse(String(init?.body));
+        return new Promise<Response>((resolve) => {
+          held.answer = resolve;
+        });
       }),
     );
-    const { unmount } = render(
+    return held;
+  }
+
+  function Editor({
+    show = true,
+    image = original,
+    spec = "product",
+    onUploadSuccess = () => {},
+  }: {
+    show?: boolean;
+    image?: string;
+    spec?: ImageSpecKey;
+    onUploadSuccess?: (url: string) => void;
+  }) {
+    return (
       <ImageRefineProvider available>
-        <ImageUpload
-          spec="product"
-          defaultImage={original}
-          onUploadSuccess={() => {}}
-        />
-      </ImageRefineProvider>,
+        {show ? (
+          <ImageUpload
+            spec={spec}
+            defaultImage={image}
+            onUploadSuccess={onUploadSuccess}
+          />
+        ) : null}
+      </ImageRefineProvider>
     );
+  }
+
+  // ★★ A refine belongs to its page and slot, not to the box: a box that
+  //    unmounts on ordinary editing (a collapsed group, another builder
+  //    section) neither stops it nor loses it.
+  it("★★ unmounting the box alone neither aborts the fetch nor sends a stop, and the box finds it again", async () => {
+    const held = heldRefine();
+    const { rerender } = render(<Editor />);
     fireEvent.click(screen.getByText(/Refine with Mink AI/));
     expect(await screen.findByRole("status")).toBeTruthy();
-    expect(signals).toHaveLength(1);
-    expect(signals[0].aborted).toBe(false);
-    unmount();
-    expect(signals[0].aborted).toBe(true);
+    rerender(<Editor show={false} />);
+    expect(held.signal?.aborted).toBe(false);
+    expect(sendPageExitRequest).not.toHaveBeenCalled();
+    rerender(<Editor />);
+    expect(screen.getByRole("status").textContent).toMatch(/Refining/);
+    await act(async () => {
+      held.answer!(new Response(JSON.stringify({ url: refinedUrl })));
+    });
+    expect(await screen.findByAltText("Refined with Mink AI")).toBeTruthy();
+  });
+
+  it("★ a refusal that came while the box was away is shown when it comes back, under Strict Mode too", async () => {
+    const held = heldRefine();
+    // ★ Strict Mode mounts a box, unmounts it and mounts it again at once:
+    //   the message must survive that.
+    const App = ({ show }: { show: boolean }) => (
+      <StrictMode>
+        <Editor show={show} />
+      </StrictMode>
+    );
+    const { rerender } = render(<App show />);
+    fireEvent.click(screen.getByText(/Refine with Mink AI/));
+    await screen.findByRole("status");
+    rerender(<App show={false} />);
+    await act(async () => {
+      held.answer!(
+        new Response(JSON.stringify({ error: "Not enough Mink credits." }), {
+          status: 402,
+        }),
+      );
+    });
+    rerender(<App show />);
+    await act(async () => {});
+    expect(screen.getByText("Not enough Mink credits.")).toBeTruthy();
+  });
+
+  it("★★ pagehide sends the stop with the SAME token as the refine", async () => {
+    const held = heldRefine();
+    render(<Editor />);
+    fireEvent.click(screen.getByText(/Refine with Mink AI/));
+    await screen.findByRole("status");
+    expect(held.body?.stopToken).toMatch(UUID_RE);
+    fireEvent(
+      window,
+      Object.assign(new Event("pagehide"), { persisted: false }),
+    );
+    expect(sendPageExitRequest).toHaveBeenCalledWith(
+      "/api/mink/image-refine/stop",
+      JSON.stringify({ stopToken: held.body?.stopToken }),
+    );
+    expect(held.signal?.aborted).toBe(true);
+  });
+
+  it("★ a changed defaultImage shows the new photo and moves the box off the refine", async () => {
+    heldRefine();
+    const other = "https://storage.googleapis.com/b/stores/s/uploads/b.jpg";
+    const { rerender } = render(<Editor />);
+    fireEvent.click(screen.getByText(/Refine with Mink AI/));
+    await screen.findByRole("status");
+    rerender(<Editor image={other} />);
+    expect((screen.getByAltText("Uploaded") as HTMLImageElement).src).toBe(
+      other,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    // Moving off is not a stop: the slot may move back (undo).
+    expect(sendPageExitRequest).not.toHaveBeenCalled();
+    rerender(<Editor image={original} />);
+    expect(screen.getByRole("status")).toBeTruthy();
+  });
+
+  it("★ a slot whose size changes under a running refine stops it, and the box is idle", async () => {
+    const held = heldRefine();
+    const { rerender } = render(<Editor />);
+    fireEvent.click(screen.getByText(/Refine with Mink AI/));
+    await screen.findByRole("status");
+    rerender(<Editor spec="product_square" />);
+    expect(sendPageExitRequest).toHaveBeenCalledWith(
+      "/api/mink/image-refine/stop",
+      JSON.stringify({ stopToken: held.body?.stopToken }),
+    );
+    expect(held.signal?.aborted).toBe(true);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText(/Refine with Mink AI/)).toBeTruthy();
+  });
+
+  it("★ the echo of the box's own photo keeps the crop warning measured from the loaded image", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ url: refinedUrl }))),
+    );
+    const onUploadSuccess = vi.fn();
+    const { rerender } = render(<Editor onUploadSuccess={onUploadSuccess} />);
+    fireEvent.click(screen.getByText(/Refine with Mink AI/));
+    fireEvent.click(await screen.findByText("Use refined photo"));
+    expect(onUploadSuccess).toHaveBeenCalledWith(refinedUrl);
+    const img = screen.getByAltText("Uploaded") as HTMLImageElement;
+    expect(img.src).toBe(refinedUrl);
+    Object.defineProperty(img, "naturalWidth", { value: 1080 });
+    Object.defineProperty(img, "naturalHeight", { value: 1080 });
+    fireEvent.load(img);
+    expect(screen.getByText(/crop about 25% from the sides/)).toBeTruthy();
+    // The caller writes back the URL the box already shows.
+    rerender(<Editor image={refinedUrl} onUploadSuccess={onUploadSuccess} />);
+    expect(screen.getByText(/crop about 25% from the sides/)).toBeTruthy();
+  });
+
+  it("★ the compare view retries a refined photo that is not readable yet; Use writes the clean URL", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ url: refinedUrl }))),
+    );
+    const onUploadSuccess = vi.fn();
+    render(<Editor onUploadSuccess={onUploadSuccess} />);
+    fireEvent.click(screen.getByText(/Refine with Mink AI/));
+    const refinedImg = (await screen.findByAltText(
+      "Refined with Mink AI",
+    )) as HTMLImageElement;
+    vi.useFakeTimers();
+    try {
+      fireEvent.error(refinedImg);
+      act(() => vi.advanceTimersByTime(1_999));
+      expect(
+        (screen.getByAltText("Refined with Mink AI") as HTMLImageElement).src,
+      ).toBe(refinedUrl);
+      act(() => vi.advanceTimersByTime(1));
+      expect(
+        (screen.getByAltText("Refined with Mink AI") as HTMLImageElement).src,
+      ).toBe(`${refinedUrl}?retry=1`);
+    } finally {
+      vi.useRealTimers();
+    }
+    fireEvent.click(screen.getByText("Use refined photo"));
+    expect(onUploadSuccess).toHaveBeenCalledWith(refinedUrl);
   });
 
   it("leaves a refine that already finished alone when the editor goes away", async () => {

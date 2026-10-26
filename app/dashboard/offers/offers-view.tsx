@@ -51,7 +51,7 @@ function rewardLabel(o: OfferRow): string {
  */
 function channelNote(channels: OfferRow["channels"]): string | null {
   if (channels.length === 0 || channels.length === 2) return null;
-  return channels[0] === "pos" ? "Point of sale only" : "Online store only";
+  return channels[0] === "pos" ? "POS only" : "Online store only";
 }
 
 /**
@@ -150,7 +150,7 @@ export function OffersView({
           <h1>Offers</h1>
           <p>
             Discount codes and automatic offers, across your online store and
-            your point of sale.
+            POS.
           </p>
         </div>
         {/* ★ NO SETTINGS BUTTON HERE. It was the fix for settings being
@@ -189,8 +189,8 @@ export function OffersView({
               place a merchant can find out. */}
           <p className="mt-1">
             They are set to apply automatically, but this store has automatic
-            offers switched off, so no discount is given online or at the till.
-            Turn on{" "}
+            offers switched off, so no discount is given online or in POS. Turn
+            on{" "}
             <Link
               href="/dashboard/offers/settings"
               className="font-medium underline"
@@ -417,9 +417,10 @@ export function OffersView({
 
       {locationCount > 1 && (
         <p className="mt-4 text-xs text-[var(--dash-ink-2)]">
-          An offer limited to particular locations applies at those tills only.
-          Online orders are never location-limited - the shop that fulfils a web
-          order is chosen by your routing rules, not by the customer.
+          An offer limited to particular locations applies in POS at those
+          locations only. Online orders are never location-limited - the shop
+          that fulfils a web order is chosen by your routing rules, not by the
+          customer.
         </p>
       )}
 

@@ -1,7 +1,8 @@
 import "server-only";
 
-// Stock reservations — holding units without selling them (roadmap Phase E,
-// supabase/locations_04_reservations.sql).
+// Stock reservations — holding units without selling them (roadmap Phase E:
+// the stock_reservations table and hold_stock_at / commit_stock_hold /
+// release_stock_hold).
 //
 //   available = on_hand - reserved
 //

@@ -213,7 +213,7 @@ export const DEFAULT_STAFF_ROLES: readonly StaffRole[] = [
     slug: "manager",
     name: "Manager",
     description:
-      "Works the register at their shops: sells, takes returns, moves stock, runs the cash drawer and approves cashier discounts.",
+      "Uses POS at their shops: sells, takes returns, moves stock, runs the cash drawer and approves cashier discounts.",
     color: "amber",
     kind: "pos",
     permissions: {},
@@ -224,7 +224,7 @@ export const DEFAULT_STAFF_ROLES: readonly StaffRole[] = [
     slug: "cashier",
     name: "Cashier",
     description:
-      "Works the register at their shops: rings up sales, takes payments and hands over pickup orders.",
+      "Uses POS at their shops: rings up sales, takes payments and hands over pickup orders.",
     color: "grey",
     kind: "pos",
     permissions: {},

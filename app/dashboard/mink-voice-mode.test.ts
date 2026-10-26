@@ -6,11 +6,14 @@ import {
   MAX_EMPTY_TRANSCRIPTS,
   MINK_BARGE_IN_GRACE_MS,
   MINK_ECHO_NOTICE,
+  MINK_VOICE_FINISHING_NOTICE,
   MINK_VOICE_NOTICE_MS,
+  MINK_VOICE_WAIT_NOTICE_MS,
   useMinkVoiceMode,
   voiceChatSupport,
   type MinkVoiceModeInput,
 } from "./mink-voice-mode";
+import type { MinkStopResult } from "@/lib/mink/run-stop-types";
 import {
   MINK_BARGE_IN_GATE,
   MINK_SPEECH_GATE,
@@ -174,6 +177,27 @@ function makeHarness(overrides: Partial<MinkVoiceModeInput> = {}) {
   const send = input.send as ReturnType<typeof vi.fn>;
   const cancel = input.cancel as ReturnType<typeof vi.fn>;
   return { ...hook, input, mic, speech, send, cancel };
+}
+
+/**
+ * A `cancel` whose answer the test gives: the server's word on a stop
+ * (`useMinkAi().cancel`), which may come before or after a transcript.
+ */
+function deferredStop() {
+  let answer: ((result: MinkStopResult) => void) | null = null;
+  let fail: ((error: unknown) => void) | null = null;
+  const cancel = vi.fn(
+    () =>
+      new Promise<MinkStopResult>((resolve, reject) => {
+        answer = resolve;
+        fail = reject;
+      }),
+  );
+  return {
+    cancel,
+    resolve: (result: MinkStopResult) => answer?.(result),
+    reject: (error: unknown) => fail?.(error),
+  };
 }
 
 /** Toggle on, open the mic, say `text`, and let the transcript land. */
@@ -467,8 +491,9 @@ describe("useMinkVoiceMode", () => {
       expect(h.result.current.state).toBe("speaking");
     });
 
-    it("★ while Mink is still thinking: cancels the reply, and asks the whole question once the chat is free", async () => {
-      const h = makeHarness();
+    it("★★ while Mink is still thinking: asks the server to stop, and only on `stopped` asks the whole question in the unanswered one's place", async () => {
+      const stop = deferredStop();
+      const h = makeHarness({ cancel: stop.cancel });
       await act(async () => h.result.current.toggle());
       await say(h, "Sales?");
       const first = h.speech.last();
@@ -481,9 +506,13 @@ describe("useMinkVoiceMode", () => {
       });
       expect(accepted).toBe(true);
       expect(h.cancel).toHaveBeenCalledOnce();
-      expect(first.cancel).toHaveBeenCalledOnce();
+      // ★ Asked, not assumed: until the server answers, the reply is only held.
+      expect(first.pause).toHaveBeenCalledOnce();
+      expect(first.cancel).not.toHaveBeenCalled();
       expect(h.result.current.state).toBe("listening");
-      // The cancelled run is still closing when the transcript lands.
+      await act(async () => stop.resolve({ outcome: "stopped" }));
+      expect(first.cancel).toHaveBeenCalledOnce();
+      // The stopped run is still closing when the transcript lands.
       await act(async () => mic.resolve("Actually, show returns."));
       expect(h.send).toHaveBeenCalledOnce();
       expect(h.result.current.state).toBe("sending");
@@ -722,8 +751,14 @@ describe("useMinkVoiceMode", () => {
       });
     });
 
-    it("★ a barge-in that said nothing asks the cancelled question again, instead of losing it", async () => {
-      const h = makeHarness();
+    it("★ a barge-in that said nothing asks the stopped question again, instead of losing it", async () => {
+      const h = makeHarness({
+        cancel: vi.fn(
+          async (): Promise<MinkStopResult> => ({
+            outcome: "stopped",
+          }),
+        ),
+      });
       await act(async () => h.result.current.toggle());
       await say(h, "Sales?");
       h.rerender({ ...h.input, isReplying: true });
@@ -757,6 +792,333 @@ describe("useMinkVoiceMode", () => {
       await act(async () => mic.resolve("And returns?"));
       h.rerender({ ...h.input, isReplying: false });
       expect(h.send).toHaveBeenLastCalledWith("And returns?", { voice: true });
+    });
+  });
+
+  describe("★★ a barge-in waits for the server's word on the stop (25 Oct 2026)", () => {
+    /** A spoken question Mink is thinking about, interrupted by speech. */
+    async function interrupted() {
+      const stop = deferredStop();
+      const h = makeHarness({ cancel: stop.cancel });
+      await act(async () => h.result.current.toggle());
+      await say(h, "Redesign my store");
+      const first = h.speech.last();
+      const asked = [...h.input.messages, user("u1", "Redesign my store")];
+      h.rerender({ ...h.input, messages: asked, isReplying: true });
+      const mic = h.mic.last();
+      act(() => {
+        mic.input.onSpeechStart();
+      });
+      expect(h.cancel).toHaveBeenCalledOnce();
+      return { h, stop, first, mic, asked };
+    }
+
+    it("★★ words that land before the answer wait for it, then go joined in the unanswered question's place", async () => {
+      const { h, stop, mic } = await interrupted();
+      await act(async () => mic.resolve("with a blue theme"));
+      // Parked, never sent, while the server decides.
+      expect(h.send).toHaveBeenCalledOnce();
+      expect(h.result.current.state).toBe("sending");
+      expect(h.result.current.heard).toBe("with a blue theme");
+      // ★ Even once the chat is free: only the answer says whether they
+      // replace the question.
+      h.rerender({ ...h.input, isReplying: false });
+      expect(h.send).toHaveBeenCalledOnce();
+      await act(async () => stop.resolve({ outcome: "stopped" }));
+      expect(h.result.current.heard).toBe(
+        "Redesign my store with a blue theme",
+      );
+      expect(h.send).toHaveBeenCalledTimes(2);
+      expect(h.send).toHaveBeenLastCalledWith(
+        "Redesign my store with a blue theme",
+        { voice: true, replaceUnanswered: true },
+      );
+    });
+
+    it("★★ `acted`: the reply stands, its answer lands, and the words go after it as an ordinary turn, with the owner's notice while they wait", async () => {
+      vi.useFakeTimers();
+      const { h, stop, first, mic, asked } = await interrupted();
+      await act(async () => stop.resolve({ outcome: "acted" }));
+      // Held, not dropped: its answer and its card are still coming.
+      expect(first.pause).toHaveBeenCalledOnce();
+      expect(first.cancel).not.toHaveBeenCalled();
+      await act(async () => mic.resolve("And make it blue"));
+      // Words over the held voice end that voice; the reply carries on.
+      expect(first.cancel).toHaveBeenCalledOnce();
+      expect(h.send).toHaveBeenCalledOnce();
+      expect(h.result.current.state).toBe("sending");
+      expect(h.result.current.heard).toBe("And make it blue");
+      expect(h.result.current.notice).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MINK_VOICE_WAIT_NOTICE_MS);
+      });
+      // The owner's words (25 Oct 2026).
+      expect(MINK_VOICE_FINISHING_NOTICE).toBe(
+        "Mink is finishing what it already started. Your words go next.",
+      );
+      expect(h.result.current.notice).toBe(MINK_VOICE_FINISHING_NOTICE);
+      h.rerender({
+        ...h.input,
+        messages: [
+          ...asked,
+          assistant("a1", "Your storefront redesign has started."),
+        ],
+        isReplying: false,
+      });
+      expect(h.send).toHaveBeenCalledTimes(2);
+      expect(h.send).toHaveBeenLastCalledWith("And make it blue", {
+        voice: true,
+      });
+      // The notice goes with the words.
+      expect(h.result.current.notice).toBeNull();
+    });
+
+    it("`acted` after the words came: they still wait for the reply, and never replace it", async () => {
+      vi.useFakeTimers();
+      const { h, stop, first, mic, asked } = await interrupted();
+      await act(async () => mic.resolve("And make it blue"));
+      expect(h.send).toHaveBeenCalledOnce();
+      await act(async () => stop.resolve({ outcome: "acted" }));
+      expect(first.cancel).toHaveBeenCalledOnce();
+      expect(h.send).toHaveBeenCalledOnce();
+      // Waiting behind the reply: the bar says why after a moment.
+      expect(h.result.current.notice).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MINK_VOICE_WAIT_NOTICE_MS);
+      });
+      expect(h.result.current.notice).toBe(MINK_VOICE_FINISHING_NOTICE);
+      h.rerender({
+        ...h.input,
+        messages: [...asked, assistant("a1", "Started.")],
+        isReplying: false,
+      });
+      expect(h.send).toHaveBeenCalledTimes(2);
+      expect(h.send).toHaveBeenLastCalledWith("And make it blue", {
+        voice: true,
+      });
+      expect(h.result.current.notice).toBeNull();
+    });
+
+    it("★ an answer to an earlier stop never decides a later one", async () => {
+      const answers: Array<(result: MinkStopResult) => void> = [];
+      const cancel = vi.fn(
+        () =>
+          new Promise<MinkStopResult>((resolve) => {
+            answers.push(resolve);
+          }),
+      );
+      const h = makeHarness({ cancel });
+      await act(async () => h.result.current.toggle());
+      await say(h, "Redesign my store");
+      h.rerender({ ...h.input, isReplying: true });
+      act(() => {
+        h.mic.last().input.onSpeechStart();
+      });
+      expect(cancel).toHaveBeenCalledTimes(1);
+      // Voice chat ended and began again before that stop was answered, and
+      // the next spoken question is interrupted in turn.
+      await act(async () => h.result.current.toggle());
+      await act(async () => h.result.current.toggle());
+      h.rerender({ ...h.input, isReplying: false });
+      await say(h, "Show sales");
+      expect(h.send).toHaveBeenCalledTimes(2);
+      const second = h.speech.last();
+      h.rerender({ ...h.input, isReplying: true });
+      const mic = h.mic.last();
+      act(() => {
+        mic.input.onSpeechStart();
+      });
+      expect(cancel).toHaveBeenCalledTimes(2);
+      // The first stop's answer is about a reply long gone.
+      await act(async () => answers[0]?.({ outcome: "stopped" }));
+      expect(second.cancel).not.toHaveBeenCalled();
+      await act(async () => mic.resolve("for last week"));
+      expect(h.send).toHaveBeenCalledTimes(2);
+      // Its own answer decides: the reply stands, the words follow it.
+      await act(async () => answers[1]?.({ outcome: "acted" }));
+      h.rerender({
+        ...h.input,
+        messages: [...h.input.messages, assistant("a2", "Sales are up.")],
+        isReplying: false,
+      });
+      expect(h.send).toHaveBeenCalledTimes(3);
+      expect(h.send).toHaveBeenLastCalledWith("for last week", {
+        voice: true,
+      });
+    });
+
+    it("a burst with no words: `stopped` asks the question again; `acted` gives the held voice back, whichever came first", async () => {
+      // `stopped`, the burst first.
+      let run = await interrupted();
+      await act(async () => run.mic.resolve(null));
+      expect(run.h.send).toHaveBeenCalledOnce();
+      await act(async () => run.stop.resolve({ outcome: "stopped" }));
+      run.h.rerender({ ...run.h.input, isReplying: false });
+      expect(run.h.send).toHaveBeenCalledTimes(2);
+      expect(run.h.send).toHaveBeenLastCalledWith("Redesign my store", {
+        voice: true,
+        replaceUnanswered: true,
+      });
+      run.h.unmount();
+
+      // `acted`, the burst first.
+      run = await interrupted();
+      await act(async () => run.mic.resolve(null));
+      await act(async () => run.stop.resolve({ outcome: "acted" }));
+      expect(run.first.resume).toHaveBeenCalledOnce();
+      expect(run.first.cancel).not.toHaveBeenCalled();
+      expect(run.h.result.current.state).toBe("waiting");
+      expect(run.h.send).toHaveBeenCalledOnce();
+      run.h.unmount();
+
+      // `acted`, the answer first.
+      run = await interrupted();
+      await act(async () => run.stop.resolve({ outcome: "acted" }));
+      await act(async () => run.mic.resolve(null));
+      expect(run.first.resume).toHaveBeenCalledOnce();
+      expect(run.first.cancel).not.toHaveBeenCalled();
+      expect(run.h.result.current.state).toBe("waiting");
+      expect(run.h.send).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      [
+        "`finished`",
+        (s: ReturnType<typeof deferredStop>) =>
+          s.resolve({ outcome: "finished" }),
+      ],
+      [
+        "`unknown`",
+        (s: ReturnType<typeof deferredStop>) =>
+          s.resolve({ outcome: "unknown" }),
+      ],
+      [
+        "a stop that failed",
+        (s: ReturnType<typeof deferredStop>) => s.reject(new Error("offline")),
+      ],
+      [
+        "an answer it cannot read",
+        (s: ReturnType<typeof deferredStop>) =>
+          s.resolve({ outcome: "nope" } as unknown as MinkStopResult),
+      ],
+    ])("%s keeps the reply, as `acted` does", async (_case, give) => {
+      const { h, stop, mic, asked } = await interrupted();
+      await act(async () => give(stop));
+      await act(async () => mic.resolve("And make it blue"));
+      expect(h.send).toHaveBeenCalledOnce();
+      h.rerender({
+        ...h.input,
+        messages: [...asked, assistant("a1", "Started.")],
+        isReplying: false,
+      });
+      expect(h.send).toHaveBeenCalledTimes(2);
+      expect(h.send).toHaveBeenLastCalledWith("And make it blue", {
+        voice: true,
+      });
+    });
+
+    it.each(["finished", "unknown"] as const)(
+      "`%s` and a burst with no words: the held voice comes back, as for `acted`",
+      async (outcome) => {
+        const { h, stop, first, mic } = await interrupted();
+        await act(async () => mic.resolve(null));
+        await act(async () => stop.resolve({ outcome }));
+        expect(first.resume).toHaveBeenCalledOnce();
+        expect(first.cancel).not.toHaveBeenCalled();
+        expect(h.result.current.state).toBe("waiting");
+        expect(h.send).toHaveBeenCalledOnce();
+      },
+    );
+
+    it("a stop answered after voice chat ended does nothing", async () => {
+      const { h, stop } = await interrupted();
+      await act(async () => h.result.current.toggle());
+      expect(h.result.current.enabled).toBe(false);
+      await act(async () => stop.resolve({ outcome: "stopped" }));
+      h.rerender({ ...h.input, isReplying: false });
+      expect(h.send).toHaveBeenCalledOnce();
+      expect(h.result.current.state).toBe("idle");
+    });
+
+    // ★★ A stop request that failed or ran out of time is not the last word:
+    //   `useMinkAi().cancel()` then answers with how the reply ended, and a
+    //   run the server stopped all the same ends with no answer and
+    //   `stopped`. That answer comes as the reply ends, a moment before or
+    //   after this loop sees the chat free.
+    it.each(["before", "after"] as const)(
+      "★★ a stop the server recorded late: the question is still asked whole, in its own place (the answer lands %s the chat is free)",
+      async (when) => {
+        const { h, stop, mic, asked } = await interrupted();
+        await act(async () => mic.resolve("with a blue theme"));
+        expect(h.send).toHaveBeenCalledOnce();
+        if (when === "before") {
+          await act(async () => stop.resolve({ outcome: "stopped" }));
+          // The chat still reads as replying: nothing goes yet.
+          expect(h.send).toHaveBeenCalledOnce();
+          h.rerender({ ...h.input, messages: asked, isReplying: false });
+        } else {
+          h.rerender({ ...h.input, messages: asked, isReplying: false });
+          expect(h.send).toHaveBeenCalledOnce();
+          await act(async () => stop.resolve({ outcome: "stopped" }));
+        }
+        expect(h.send).toHaveBeenCalledTimes(2);
+        expect(h.send).toHaveBeenLastCalledWith(
+          "Redesign my store with a blue theme",
+          { voice: true, replaceUnanswered: true },
+        );
+      },
+    );
+
+    it("★ a typed question sent while a stop is undecided: that stop's late answer neither cuts the new reply's voice nor carries the old question", async () => {
+      const { h, stop, asked } = await interrupted();
+      // The reply ended before the answer came, and the merchant typed the
+      // next question at once.
+      h.rerender({ ...h.input, messages: asked, isReplying: false });
+      act(() => h.result.current.noteSend());
+      const typedTurn = h.speech.last();
+      const typed = [...asked, user("u2", "How many orders today?")];
+      h.rerender({ ...h.input, messages: typed, isReplying: true });
+      await act(async () => stop.resolve({ outcome: "stopped" }));
+      expect(typedTurn.cancel).not.toHaveBeenCalled();
+      // The typed reply's answer lands; the next words go on their own.
+      h.rerender({
+        ...h.input,
+        messages: [...typed, assistant("a2", "Twelve orders.")],
+        isReplying: false,
+      });
+      await say(h, "and yesterday");
+      expect(h.send).toHaveBeenLastCalledWith("and yesterday", {
+        voice: true,
+      });
+    });
+
+    it("★ a refused stop belongs to its own reply: words waiting behind the next one get no finishing notice", async () => {
+      vi.useFakeTimers();
+      const { h, stop, mic, asked } = await interrupted();
+      await act(async () => stop.resolve({ outcome: "acted" }));
+      await act(async () => mic.resolve(null));
+      const answered = [
+        ...asked,
+        assistant("a1", "Your storefront redesign has started."),
+      ];
+      h.rerender({ ...h.input, messages: answered, isReplying: false });
+      // A typed question next, and the merchant speaks over its reply.
+      act(() => h.result.current.noteSend());
+      const typed = [...answered, user("u2", "How many orders today?")];
+      h.rerender({ ...h.input, messages: typed, isReplying: true });
+      const next = h.mic.last();
+      act(() => {
+        next.input.onPhase?.("open");
+      });
+      act(() => {
+        next.input.onSpeechStart();
+      });
+      await act(async () => next.resolve("and yesterday"));
+      expect(h.result.current.state).toBe("sending");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MINK_VOICE_WAIT_NOTICE_MS + 50);
+      });
+      expect(h.result.current.notice).not.toBe(MINK_VOICE_FINISHING_NOTICE);
     });
   });
 

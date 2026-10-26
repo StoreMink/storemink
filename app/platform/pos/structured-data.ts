@@ -2,15 +2,15 @@ import { platformOrganizationSchema } from "@/lib/seo/brand-identity";
 import { PLATFORM_URL, POS_URL } from "@/lib/site";
 
 export const POS_PRODUCT_DESCRIPTION =
-  "StoreMink Point of Sale connects counter sales with the same catalogue, location-level stock, customers and orders as a StoreMink website.";
+  "StoreMink Point of Sale connects in-store sales with the same catalogue, location-level stock, customers and orders as a StoreMink website.";
 
 // Every item is stated visibly on the POS page. Structured data must describe
 // the page users actually see; adding roadmap promises here would be misleading
 // even if the JSON-LD remained technically valid.
 export const POS_FEATURES = [
   "Barcode scanning with a scanner or phone camera",
-  "Staff PIN sign-in and authorised till devices",
-  "Register shifts, cash float, drops, counts and variance",
+  "Staff PIN sign-in and authorised POS devices",
+  "POS shifts, cash float, drops, counts and variance",
   "Location-level inventory, stock counts and transfers",
   "GST receipts with CGST, SGST and HSN details",
   "Buy online and collect in store",

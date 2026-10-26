@@ -54,9 +54,15 @@ export async function getLatestMinkProductAction(
     if (!rows[0]) return null;
     const approval = validateApprovalRow(rows[0]);
     const [product, audit] = await Promise.all([
-      readProduct(db, actor.storeId, approval.productId),
+      readProductOrNull(db, actor.storeId, approval.productId),
       readApprovalAudit(db, actor.storeId, approval.id),
     ]);
+    // ★ D6 (migration 0250): the approval outlives a deleted product, so the
+    //   card's read of its last change finds no product. It answers "no
+    //   change yet", exactly what it got while the product's delete still
+    //   cascaded the approval away, instead of failing the whole draft read
+    //   (drafts.ts getMinkDraft) with readProduct's 404.
+    if (!product) return null;
     return {
       approval: toApproval(approval, product),
       auditId: audit?.id ?? null,
@@ -600,6 +606,18 @@ async function readSavedProductDraft(
 }
 
 async function readProduct(db: Db, storeId: string, productId: string) {
+  const product = await readProductOrNull(db, storeId, productId);
+  if (!product) {
+    throw new MinkRequestError(
+      "mink_action_product_not_found",
+      "The linked product is no longer available in this store.",
+      404,
+    );
+  }
+  return product;
+}
+
+async function readProductOrNull(db: Db, storeId: string, productId: string) {
   const rows = await db
     .select({
       id: products.id,
@@ -615,14 +633,7 @@ async function readProduct(db: Db, storeId: string, productId: string) {
     .from(products)
     .where(and(eq(products.id, productId), eq(products.storeId, storeId)))
     .limit(1);
-  if (!rows[0]) {
-    throw new MinkRequestError(
-      "mink_action_product_not_found",
-      "The linked product is no longer available in this store.",
-      404,
-    );
-  }
-  return rows[0];
+  return rows[0] ?? null;
 }
 
 async function readOwnedApproval(

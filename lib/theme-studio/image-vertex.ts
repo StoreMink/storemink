@@ -258,6 +258,15 @@ export interface ImageClientOptions {
   /** ★★ How long Nano Banana 2.1 thinks before it draws, stated by the
    *  caller; sent to 2.1 only (image-models.ts imageRequestConfig). */
   thinkingLevel: ThinkingLevel;
+  /**
+   * ★★ Say when a call our own stop ended while its last try was on the wire
+   * (`timing.stoppedInFlight`, robustness audit B3): sent, not refused with
+   * 429, and unanswered when `outer` aborted, so Google may have drawn and
+   * billed it. For a caller that keeps its own account of every call (the
+   * storefront redesign's photos); Theme Studio's own runs never ask, so the
+   * results they return and journal are as they were.
+   */
+  markStoppedInFlight?: boolean;
   /** Test seams; production uses real timers and Math.random. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<boolean>;
   random?: () => number;
@@ -356,12 +365,21 @@ export function createVertexImageClient(
     const started = Date.now();
     let capacityWaitMs = 0;
     let providerAttempts = 0;
+    // ★ The last try left and Google has not refused it with 429. The safe
+    //   side: an answer that came back as the call stopped counts too.
+    let onTheWire = false;
     const timed = (result: ThemeImageResult): ThemeImageResult => ({
       ...result,
       timing: {
         durationMs: Date.now() - started,
         capacityWaitMs,
         providerAttempts,
+        ...(options.markStoppedInFlight &&
+        onTheWire &&
+        result.kind === "error" &&
+        result.code === "cancelled"
+          ? { stoppedInFlight: true as const }
+          : {}),
       },
     });
     for (let retry = 0; ; retry++) {
@@ -387,10 +405,10 @@ export function createVertexImageClient(
                 // key's next start, then resumes at the reduced probe limit.
                 providerAttempts++;
                 try {
-                  const response = await abortable(
-                    () => send(request, signal, sent),
-                    signal,
-                  );
+                  const response = await abortable(() => {
+                    onTheWire = true;
+                    return send(request, signal, sent);
+                  }, signal);
                   const result = parseThemeImageResponse(
                     response,
                     config.providerModel,
@@ -406,6 +424,8 @@ export function createVertexImageClient(
                     !signal.aborted &&
                     classifyProviderError(error) === "rate_limited"
                   ) {
+                    // Refused before the model ran: nothing on the wire.
+                    onTheWire = false;
                     // ★ The pause the others see and this call's own wait
                     //   before it queues again: never past the shared ceiling.
                     const delay = Math.min(

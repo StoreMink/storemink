@@ -1611,7 +1611,7 @@ export async function placePosSale(
         }),
       ),
       // This till: where it is, and which drawer is open.
-      batch("Couldn't read this till's settings.", () =>
+      batch("Couldn't read the POS settings for this location.", () =>
         withService(async (db) => {
           // ★ THE RECEIPT PREFIX RIDES ALONG WITH THE STATE CODE — same row. It
           // was being fetched by its own `withService` further down: a whole
@@ -2166,7 +2166,7 @@ export async function placePosSale(
       db
         .insert(orders)
         // order_no / order_ref are filled by the BEFORE-INSERT trigger
-        // (identifiers_04_triggers.sql), so the insert type is asserted past them.
+        // (orders_set_ref), so the insert type is asserted past them.
         .values({
           id: orderId,
           storeId: op.storeId,
@@ -2737,7 +2737,7 @@ export async function getPosReceipt(orderId: string): Promise<{
       };
     });
 
-    if (!data) return { error: "That sale isn't available on this register." };
+    if (!data) return { error: "That sale isn't available at this location." };
 
     const brand = await getStoreBrandById(op.storeId).catch(() => null);
     const payments =

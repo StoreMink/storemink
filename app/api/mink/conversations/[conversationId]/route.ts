@@ -16,8 +16,13 @@ export const runtime = "nodejs";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * One of the viewer's chats, newest 50 messages, or the 50 before `?before=`
+ * (an opaque position from `earlierCursor`). ★ Opening a chat is using it:
+ * this keeps it 90 days from now (conversation-history.ts, at most hourly).
+ */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ conversationId: string }> },
 ) {
   const config = getMinkConfig();
@@ -51,7 +56,10 @@ export async function GET(
         { status: 429 },
       );
     }
-    const conversation = await getMinkConversation(actor, conversationId);
+    const before = new URL(request.url).searchParams.get("before");
+    const conversation = await getMinkConversation(actor, conversationId, {
+      before,
+    });
     return NextResponse.json(
       { conversation },
       { headers: { "Cache-Control": "no-store, private" } },
@@ -119,11 +127,13 @@ export async function DELETE(
       );
     }
     await deleteMinkConversation(actor, conversationId);
-    const conversations = await listMinkConversations(actor);
-    return NextResponse.json(
-      { conversations },
-      { headers: { "Cache-Control": "no-store, private" } },
-    );
+    // ★ The first page, for a browser still running the previous bundle,
+    //   which replaces its list with it. The current client removes the chat
+    //   itself and ignores this; drop it in a later release.
+    const page = await listMinkConversations(actor);
+    return NextResponse.json(page, {
+      headers: { "Cache-Control": "no-store, private" },
+    });
   } catch (error) {
     if (error instanceof MinkRequestError) {
       logWarn("mink.history: deletion rejected", {

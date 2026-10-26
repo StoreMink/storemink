@@ -31,7 +31,7 @@ export const PLAN_RANK: Record<Plan, number> = {
 
 // Retired plan ids that may linger in un-migrated rows (or cached store
 // objects) during a rollout — they degrade to their nearest live plan, never
-// to a crash. "starter" was renamed to "basic" in plans_02_basic_and_expiry.sql.
+// to a crash. "starter" was renamed to "basic".
 const LEGACY_PLAN_ALIASES: Record<string, Plan> = {
   starter: "basic",
 };
@@ -622,7 +622,7 @@ export function planFeatureMatrix(
           basic: PLAN_LIMITS.basic.shippingIntegration,
           pro: PLAN_LIMITS.pro.shippingIntegration,
         },
-        { label: "Point of Sale", free: false, basic: false, pro: true },
+        { label: "Point of Sale (POS)", free: false, basic: false, pro: true },
         {
           label: "Multi-location stock, transfers and store pickup",
           free: false,
@@ -636,7 +636,7 @@ export function planFeatureMatrix(
           pro: String(PLAN_LIMITS.pro.posLocationsIncluded),
         },
         {
-          label: "Authorised tills per location",
+          label: "Authorised POS devices per location",
           free: false,
           basic: false,
           pro: String(PLAN_LIMITS.pro.posDevicesPerLocation),

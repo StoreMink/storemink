@@ -719,6 +719,163 @@ describe("the Vertex client", () => {
     ).toMatchObject({ kind: "error", code: "cancelled" });
   });
 
+  describe("★★ a call stopped with its last try on the wire (B3, D3)", () => {
+    type Options = Parameters<typeof createVertexImageClient>[1];
+    /** A client that asks for the mark, as the storefront redesign does. */
+    const marking = (projectId: string, over: Partial<Options>) =>
+      createVertexImageClient(
+        { ...CONFIG, projectId },
+        { ...OPTIONS, markStoppedInFlight: true, ...over },
+      );
+    /** A send Google never answers, so only the stop ends it. */
+    const drawing = () => vi.fn(() => new Promise<never>(() => {}));
+
+    it("★★ is marked when the stop lands while Google is drawing: it may have been billed", async () => {
+      const controller = new AbortController();
+      const send = drawing();
+      const pending = marking("stopped-on-the-wire", { send }).generateImage(
+        REQUEST,
+        controller.signal,
+      );
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      controller.abort(new Error("revamp halted: cancelled"));
+      expect(await pending).toMatchObject({
+        kind: "error",
+        code: "cancelled",
+        timing: { providerAttempts: 1, stoppedInFlight: true },
+      });
+    });
+
+    it("★★ is not marked when the last try was refused with 429 and the stop ended its wait: nothing was billed", async () => {
+      const controller = new AbortController();
+      const send = vi.fn().mockRejectedValue(status(429));
+      const result = await marking("stopped-in-a-429-wait", {
+        send,
+        random: () => 0,
+        sleep: async () => {
+          controller.abort(new Error("revamp halted: cancelled"));
+          return false;
+        },
+      }).generateImage(REQUEST, controller.signal);
+      expect(result).toMatchObject({ kind: "error", code: "cancelled" });
+      expect(result.timing?.providerAttempts).toBe(1);
+      expect(result.timing?.stoppedInFlight).toBeUndefined();
+    });
+
+    /** A capacity whose shared pause after a 429 runs `pause`. */
+    const sharing = (pause: () => Promise<void>): Options["capacity"] => ({
+      run: (operation, runSignal) =>
+        operation({ signal: runSignal, succeeded() {}, rateLimited: pause }),
+    });
+
+    it("★★ is not marked when the stop lands as its 429 is shared with the others: nothing was billed", async () => {
+      const controller = new AbortController();
+      const send = vi.fn().mockRejectedValue(status(429));
+      const result = await marking("stopped-sharing-a-429", {
+        send,
+        random: () => 0,
+        capacity: sharing(async () => {
+          controller.abort(new Error("revamp halted: cancelled"));
+        }),
+      }).generateImage(REQUEST, controller.signal);
+      expect(result).toMatchObject({ kind: "error", code: "cancelled" });
+      expect(send).toHaveBeenCalledOnce();
+      expect(result.timing?.providerAttempts).toBe(1);
+      expect(result.timing?.stoppedInFlight).toBeUndefined();
+    });
+
+    it("★ nor while that shared pause is still being written", async () => {
+      const controller = new AbortController();
+      const send = vi.fn().mockRejectedValue(status(429));
+      const result = await marking("stopped-writing-the-pause", {
+        send,
+        random: () => 0,
+        // The stop lands 10 ms into a 60 ms write of the pause.
+        capacity: sharing(async () => {
+          setTimeout(
+            () => controller.abort(new Error("revamp halted: cancelled")),
+            10,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 60));
+        }),
+      }).generateImage(REQUEST, controller.signal);
+      expect(result).toMatchObject({ kind: "error", code: "cancelled" });
+      expect(send).toHaveBeenCalledOnce();
+      expect(result.timing?.providerAttempts).toBe(1);
+      expect(result.timing?.stoppedInFlight).toBeUndefined();
+    });
+
+    it("★ is not marked when a 429's retry is refused at its turn (the redesign's drain): nothing was billed", async () => {
+      const send = vi.fn().mockRejectedValue(status(429));
+      let turns = 0;
+      const result = await marking("retry-not-admitted", {
+        send,
+        random: () => 0,
+        sleep: async () => true,
+        capacity: {
+          run: (operation, runSignal) => {
+            turns += 1;
+            if (turns > 1) {
+              throw Object.assign(new Error("Not sent."), {
+                name: "AbortError",
+              });
+            }
+            return operation({
+              signal: runSignal,
+              succeeded() {},
+              async rateLimited() {},
+            });
+          },
+        },
+      }).generateImage(REQUEST, signal());
+      expect(result).toMatchObject({ kind: "error", code: "cancelled" });
+      expect(send).toHaveBeenCalledOnce();
+      expect(result.timing?.stoppedInFlight).toBeUndefined();
+    });
+
+    it("is not marked when the stop lands before anything was sent", async () => {
+      const controller = new AbortController();
+      const send = drawing();
+      const pending = marking("stopped-in-the-queue", {
+        send,
+        // No turn ever comes: only the stop ends the wait.
+        capacity: {
+          run: (_operation, runSignal) =>
+            new Promise((_resolve, reject) => {
+              runSignal.addEventListener(
+                "abort",
+                () => reject(runSignal.reason),
+                { once: true },
+              );
+            }),
+        },
+      }).generateImage(REQUEST, controller.signal);
+      controller.abort(new Error("revamp halted: cancelled"));
+      const result = await pending;
+      expect(result).toMatchObject({ kind: "error", code: "cancelled" });
+      expect(send).not.toHaveBeenCalled();
+      expect(result.timing?.stoppedInFlight).toBeUndefined();
+    });
+
+    it("★★ Theme Studio, which never asks, gets exactly the timing it always had", async () => {
+      const controller = new AbortController();
+      const send = drawing();
+      const pending = createVertexImageClient(
+        { ...CONFIG, projectId: "theme-studio-unmarked" },
+        { ...OPTIONS, send },
+      ).generateImage(REQUEST, controller.signal);
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      controller.abort();
+      const result = await pending;
+      expect(result).toMatchObject({ kind: "error", code: "cancelled" });
+      expect(Object.keys(result.timing ?? {}).sort()).toEqual([
+        "capacityWaitMs",
+        "durationMs",
+        "providerAttempts",
+      ]);
+    });
+  });
+
   it("★★ sends each request the size and thinking its caller states: 2K, a wide homepage hero 4K, HIGH, and never a sampling parameter", async () => {
     const cases: [Partial<ThemeImageRequest>, string][] = [
       [{}, "2K"],

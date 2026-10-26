@@ -84,7 +84,7 @@ async function portrait() {
 }
 
 const OWN = "https://storage.googleapis.com/bkt/stores/store-1/media/a.webp";
-const LEGACY = "https://xyz.supabase.co/storage/v1/object/public/m/old.webp";
+const LEGACY = "https://cdn.example.com/m/old.webp";
 
 function actor(overrides: Partial<MinkActorContext> = {}): MinkActorContext {
   return {
@@ -122,7 +122,7 @@ describe("prepared image contract", () => {
   });
 
   // The ownership question is the one `assertOwnedCover` re-asks inside the
-  // publication transaction, so a legacy Supabase cover it accepts must not
+  // publication transaction, so a legacy cover outside our bucket it accepts must not
   // be refused here.
   it("passes a legacy object outside our bucket straight through", async () => {
     const result = await prepareMinkImageForDestination(

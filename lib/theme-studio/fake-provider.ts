@@ -228,6 +228,7 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
     // v25 drafts name the pairing they chose.
     fontPairing: pairingForFonts(fonts),
     // v32: the page templates (plan Phase 2e), every block with every field.
+    // A v33 answer writes this same object as its templatesJson string.
     templates: {
       product: {
         gallery: "thumbs-left",
@@ -829,14 +830,14 @@ export function createFakeModelClient(
             section.style.width ??= "contained";
           }
       }
-      // A pre-v32 request's schema has no templates and no announcement;
-      // the answer must not.
-      if (
-        !Object.hasOwn(
-          (request.schema?.properties ?? {}) as object,
-          "templates",
-        )
-      ) {
+      // A v33 request's schema carries the templates as one JSON string, a
+      // v32 one as the object; a pre-v32 request's schema has neither and no
+      // announcement, and the answer must not either.
+      const answerFields = (request.schema?.properties ?? {}) as object;
+      if (Object.hasOwn(answerFields, "templatesJson")) {
+        draft.templatesJson = JSON.stringify(draft.templates);
+        delete draft.templates;
+      } else if (!Object.hasOwn(answerFields, "templates")) {
         delete draft.templates;
         delete draft.announcement;
       }

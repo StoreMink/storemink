@@ -30,6 +30,10 @@ import {
 } from "@/lib/mink/voice-turn";
 import type { MinkMessage } from "./mink-ai";
 import {
+  readMinkStopResult,
+  type MinkStopResult,
+} from "@/lib/mink/run-stop-types";
+import {
   createMinkSpeechSession,
   type MinkSpeechSession,
 } from "./mink-speech-session";
@@ -75,12 +79,16 @@ export { speechWatchdogMs } from "./mink-speech-session";
  * its drafts still land in the chat. If it has none (a cough, a door, Mink's
  * own voice through the speaker), the voice carries on from where it paused,
  * and nothing was lost. Speech while Mink is still THINKING about a spoken
- * question cancels that reply (not charged) and carries its words into the
- * next transcript, so a question split by a pause ("show me sales for",
- * "last week") is asked whole and replaces the unanswered half in the thread;
- * a burst with no words asks the question again. A typed question, or one
- * that carried a draft or attachments, is never cancelled by speech: its
- * answer's voice is held like any other.
+ * question asks the server to stop that reply (`decide`). ★★ Only when the
+ * server confirms it stopped (nothing was done, nothing is charged) are its
+ * words carried into the next transcript, so a question split by a pause
+ * ("show me sales for", "last week") is asked whole and replaces the
+ * unanswered half in the thread; a burst with no words asks the question
+ * again. When the run had already started something (25 Oct 2026: a
+ * storefront redesign), the reply stands: its answer and cards land, and the
+ * new words go after it as an ordinary turn, with a notice if they wait. A
+ * typed question, or one that carried a draft or attachments, is never
+ * stopped by speech: its answer's voice is held like any other.
  * ★ ONLY SPEECH OVER MINK CAN BE MINK'S OWN VOICE. A transcript is compared
  * with what Mink said this turn only when the speech began while Mink was
  * talking; a reply that reuses Mink's words after it finished is an answer.
@@ -138,6 +146,14 @@ export const MINK_VOICE_NOTICE_MS = 5_000;
 /** Said once, when Mink is caught interrupting itself through the speaker. */
 export const MINK_ECHO_NOTICE =
   "Mink heard its own voice through your speaker, so it will finish speaking before it listens. Use headphones to interrupt Mink.";
+/**
+ * How long new words wait behind a reply the server would not stop before
+ * the bar says why.
+ */
+export const MINK_VOICE_WAIT_NOTICE_MS = 3_000;
+/** Owner's words (25 Oct 2026); shown until the waiting words are sent. */
+export const MINK_VOICE_FINISHING_NOTICE =
+  "Mink is finishing what it already started. Your words go next.";
 
 export type MinkVoiceSupport = { ok: true } | { ok: false; reason: string };
 
@@ -189,9 +205,9 @@ const noSubscription = () => () => {};
 export type MinkVoiceSendOptions = {
   voice: true;
   /**
-   * The question carries the words of one cancelled while Mink was thinking:
-   * it replaces that unanswered question in the thread instead of following
-   * it.
+   * The question carries the words of one the server stopped while Mink was
+   * thinking (`decide`): it replaces that unanswered question in the thread
+   * instead of following it.
    */
   replaceUnanswered?: boolean;
 };
@@ -220,8 +236,12 @@ export type MinkVoiceModeInput = {
     text: string,
     options: MinkVoiceSendOptions,
   ) => boolean | Promise<boolean>;
-  /** Stop the reply in progress; the chat keeps the merchant's message only. */
-  cancel: () => void;
+  /**
+   * Ask the server to stop the reply in progress, resolving with its answer
+   * (`useMinkAi().cancel`): only `stopped` means the reply is gone and the
+   * chat keeps the merchant's message alone.
+   */
+  cancel: () => Promise<MinkStopResult>;
   /** BCP-47 tag for Latin-script answers; the browser's own language in the dashboard. */
   langFallback?: string;
   /** Injected in tests. */
@@ -302,13 +322,29 @@ type Live = {
   /** A send went out and the chat has not yet shown it replying. */
   replyPending: boolean;
   /**
-   * The spoken question in flight, while speech may still cancel it: only a
-   * plain voice question the loop sent itself. Null for a typed question and
-   * for one that went out with a draft or attachments.
+   * The spoken question in flight, while speech may still ask to stop it:
+   * only a plain voice question the loop sent itself. Null for a typed
+   * question and for one that went out with a draft or attachments.
    */
   asked: string | null;
-  /** The words of a question cancelled while Mink was thinking, asked again with the next transcript. */
+  /** The words of a question the server stopped while Mink was thinking, asked again with the next transcript. */
   carry: string | null;
+  /**
+   * Speech while Mink was thinking asked the server to stop the reply, and
+   * the answer has not come: the question that was asked, and the token that
+   * lets a late answer from an earlier stop be ignored.
+   */
+  deciding: { asked: string; token: number } | null;
+  /** Bumped by every stop asked for. */
+  stopToken: number;
+  /** A burst with no words arrived while the stop was being decided. */
+  parkedEmpty: boolean;
+  /** The server would not stop the reply: it finishes, and new words wait. */
+  unstoppable: boolean;
+  /** The wait before MINK_VOICE_FINISHING_NOTICE shows. */
+  waitTimer: ReturnType<typeof setTimeout> | null;
+  /** That notice is the one on screen. */
+  waitNoticeShown: boolean;
   captureAbort: AbortController | null;
   /** Bumped on every arm and stop, so a late transcript is inert. */
   captureId: number;
@@ -389,6 +425,12 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     replyPending: false,
     asked: null,
     carry: null,
+    deciding: null,
+    stopToken: 0,
+    parkedEmpty: false,
+    unstoppable: false,
+    waitTimer: null,
+    waitNoticeShown: false,
     captureAbort: null,
     captureId: 0,
     speechStarted: false,
@@ -409,12 +451,38 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   };
 
   const notice = (text: string) => {
+    l.waitNoticeShown = false;
     set.notice(text);
     if (l.noticeTimer) clearTimeout(l.noticeTimer);
     l.noticeTimer = setTimeout(() => {
       l.noticeTimer = null;
       set.notice(null);
     }, MINK_VOICE_NOTICE_MS);
+  };
+
+  /**
+   * New words wait behind a reply the server would not stop: after a moment
+   * the bar says why (MINK_VOICE_FINISHING_NOTICE), until they are sent.
+   */
+  const scheduleWaitNotice = () => {
+    if (l.waitTimer || l.waitNoticeShown) return;
+    l.waitTimer = setTimeout(() => {
+      l.waitTimer = null;
+      if (!l.enabled || l.pendingSend === null) return;
+      if (l.noticeTimer) clearTimeout(l.noticeTimer);
+      l.noticeTimer = null;
+      l.waitNoticeShown = true;
+      set.notice(MINK_VOICE_FINISHING_NOTICE);
+    }, MINK_VOICE_WAIT_NOTICE_MS);
+  };
+
+  /** The waiting words went (or were dropped): the notice goes with them. */
+  const clearWaitNotice = () => {
+    if (l.waitTimer) clearTimeout(l.waitTimer);
+    l.waitTimer = null;
+    if (!l.waitNoticeShown) return;
+    l.waitNoticeShown = false;
+    set.notice(null);
   };
 
   /**
@@ -451,6 +519,11 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     l.replyPending = false;
     l.asked = null;
     l.carry = null;
+    // A stop's answer that lands after this does nothing (`decide`).
+    l.deciding = null;
+    l.parkedEmpty = false;
+    l.unstoppable = false;
+    clearWaitNotice();
     l.speechStarted = false;
     l.speechFrom = null;
     releaseAudio();
@@ -490,30 +563,92 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
    * The merchant started talking over Mink. Its voice is held; the reply
    * keeps writing, and its answer, cards and drafts land in the chat as usual.
    *
-   * ★★ ONLY A QUESTION MINK IS STILL THINKING ABOUT IS CANCELLED. Talking over
+   * ★★ ONLY A QUESTION MINK IS STILL THINKING ABOUT IS STOPPED. Talking over
    * Mink's voice used to cancel the run too, and with the browser voice the
    * spoken block plays while the written answer is still being produced: one
    * "okay" over Mink, or Mink's own voice through the speaker, threw away the
-   * answer and every draft it had prepared. While Mink is thinking, a spoken
-   * question is cancelled (nothing is charged) and its words are carried into
-   * the next transcript, because the merchant was usually not finished: a
-   * pause mid-question ends a turn. A typed question, or one that went out
-   * with a draft or attachments, is never cancelled by speech; the new words
-   * wait for it to finish.
+   * answer and every draft it had prepared. While Mink is thinking about a
+   * spoken question, the server is asked to stop the reply, because the
+   * merchant was usually not finished: a pause mid-question ends a turn.
+   * ★★ AND ONLY THE SERVER'S ANSWER DROPS IT (`decide`). Letting go here, the
+   * way this used to, lost a storefront redesign's card on 25 Oct 2026: the
+   * run kept going on the server, started the redesign, and its card never
+   * reached the screen. Until the answer comes, the reply's voice is held
+   * like any other and a transcript is parked. A typed question, or one that
+   * went out with a draft or attachments, is never stopped by speech; the
+   * new words wait for it to finish.
    */
   const interrupt = () => {
     const thinking =
       l.state === "waiting" && (latest.current.isReplying || l.replyPending);
     const asked = l.asked;
     l.asked = null;
-    if (thinking && asked !== null) {
+    // Nothing plays while thinking, but a spoken block arriving now must wait.
+    hold();
+    if (!thinking || asked === null) return;
+    const token = ++l.stopToken;
+    l.deciding = { asked, token };
+    let answer: Promise<unknown>;
+    try {
+      answer = Promise.resolve(latest.current.cancel());
+    } catch (error) {
+      answer = Promise.reject(error);
+    }
+    void answer.then(
+      // Read strictly: anything but an explicit `stopped` keeps the reply.
+      (result) => decide(token, readMinkStopResult(result)),
+      () => decide(token, { outcome: "unknown" }),
+    );
+  };
+
+  /**
+   * The server answered the stop `interrupt` asked for. ★ `stopped`: the
+   * reply is gone and nothing was done, so the question is joined to the new
+   * words and replaces the unanswered half in the thread, as before. Any
+   * other answer (`acted`, `finished`, `unknown`): the reply stands, and the
+   * new words go after it as an ordinary turn. Words said over its held voice
+   * end that voice for good (the written answer and cards still land); a
+   * burst with no words gives it back where it paused.
+   */
+  const decide = (token: number, result: MinkStopResult) => {
+    const deciding = l.deciding;
+    if (!l.enabled || !deciding || deciding.token !== token) return;
+    const { asked } = deciding;
+    l.deciding = null;
+    const empty = l.parkedEmpty;
+    l.parkedEmpty = false;
+    if (result.outcome === "stopped") {
       dropTurn();
-      l.carry = asked;
       l.replyPending = false;
-      latest.current.cancel();
+      if (l.pendingSend !== null) {
+        // The transcript came while this was decided: it goes joined.
+        l.pendingSend = `${asked} ${l.pendingSend}`.trim();
+        l.pendingReplaces = true;
+        set.heard(l.pendingSend);
+        trySend();
+        return;
+      }
+      // A burst with no words asks the stopped question again, not nothing.
+      if (empty) {
+        queueSend(asked, true);
+        return;
+      }
+      // Still being transcribed: `onTranscript` joins it.
+      l.carry = asked;
       return;
     }
-    hold();
+    l.carry = null;
+    l.unstoppable = true;
+    if (l.pendingSend !== null) {
+      if (l.held) dropTurn();
+      trySend();
+      if (l.pendingSend !== null) scheduleWaitNotice();
+      return;
+    }
+    if (empty && l.held) {
+      release();
+      arm();
+    }
   };
 
   const enqueue = (turn: Turn, pieces: string[]) => {
@@ -535,6 +670,8 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     dropTurn();
     l.empties = 0;
     l.replyPending = true;
+    // A refusal belonged to the reply before this one.
+    l.unstoppable = false;
     l.gate.current = MINK_BARGE_IN_GATE;
     // An echo is judged against this answer's words only: an earlier
     // answer's are not what is coming out of the speaker now.
@@ -603,12 +740,17 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   };
 
   const trySend = () => {
+    // ★ While a stop is decided, a parked transcript waits for the answer
+    // even when the chat is free: only `decide` knows whether it replaces the
+    // question (the run may have closed on its own before the answer came).
+    if (l.deciding) return;
     if (!l.enabled || !l.pendingSend || l.sending) return;
     if (latest.current.isReplying) return;
     const text = l.pendingSend;
     const replace = l.pendingReplaces;
     l.pendingSend = null;
     l.pendingReplaces = false;
+    clearWaitNotice();
     const session = l.session;
     const settle = (taken: boolean, asked: string | null) => {
       if (!l.enabled || session !== l.session) return;
@@ -679,6 +821,8 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     set.heard(text);
     setPhase("sending");
     trySend();
+    // Waiting behind a reply the server would not stop: say so if it lasts.
+    if (l.unstoppable && l.pendingSend !== null) scheduleWaitNotice();
   };
 
   const onTranscript = (text: string | null, id: number) => {
@@ -698,6 +842,23 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     if (echo && !l.echoProne) {
       l.echoProne = true;
       notice(MINK_ECHO_NOTICE);
+    }
+    // ★★ The server has not yet said whether the stop won: park, never send.
+    // Words wait in `pendingSend` (shown as the caption); a burst with none
+    // is remembered, and the microphone listens on. `decide` takes it from
+    // here, joining or replacing only on `stopped`.
+    if (l.deciding) {
+      if (!heard || echo) {
+        l.parkedEmpty = true;
+        arm();
+        return;
+      }
+      l.empties = 0;
+      l.pendingSend = heard;
+      l.pendingReplaces = false;
+      set.heard(heard);
+      setPhase("sending");
+      return;
     }
     const carried = l.carry;
     l.carry = null;
@@ -808,6 +969,12 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     l.replyPending = false;
     l.asked = null;
     l.carry = null;
+    l.deciding = null;
+    l.parkedEmpty = false;
+    l.unstoppable = false;
+    if (l.waitTimer) clearTimeout(l.waitTimer);
+    l.waitTimer = null;
+    l.waitNoticeShown = false;
     l.echoProne = false;
     l.held = false;
     l.heldFrom = null;
@@ -848,6 +1015,10 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     l.pendingSend = null;
     l.pendingReplaces = false;
     l.carry = null;
+    // A stop still being decided belonged to the reply this send replaced.
+    l.deciding = null;
+    l.parkedEmpty = false;
+    clearWaitNotice();
     set.heard(null);
     beginTurn();
     l.asked = null;
@@ -1017,6 +1188,8 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     stop("unmount");
     if (l.noticeTimer) clearTimeout(l.noticeTimer);
     l.noticeTimer = null;
+    if (l.waitTimer) clearTimeout(l.waitTimer);
+    l.waitTimer = null;
   };
 
   const setInput = (input: MinkVoiceModeInput) => {

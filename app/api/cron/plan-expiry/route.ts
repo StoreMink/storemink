@@ -21,10 +21,10 @@ import {
 // Durably flips expired timed plans to free (see lib/plans.ts effectivePlan —
 // the read-time guard already treats them as free the moment they lapse; this
 // job makes the row itself honest and writes the audit trail). Driven by
-// Vercel Cron daily (vercel.json).
+// Cloud Scheduler daily at 00:15 UTC (docs/cron-jobs.md).
 //
-// Auth: requires `Authorization: Bearer <CRON_SECRET>`. Vercel Cron is
-// configured to send this header. Set CRON_SECRET in the environment.
+// Auth: requires `Authorization: Bearer <CRON_SECRET>`. The Cloud Scheduler
+// job sends this header. Set CRON_SECRET in the environment.
 
 export const runtime = "nodejs";
 export const maxDuration = 60;

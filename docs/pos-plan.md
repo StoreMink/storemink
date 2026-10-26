@@ -58,8 +58,8 @@
 
 | Area         | Today                                                                                                                                                                                                                                                                                | POS reuse                                                                                                           |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| Inventory    | `products`/`product_variants`: `track_inventory`, `stock` (single int), `low_stock_threshold`, `allow_backorder`, `sku`. Append-only `stock_movements`. Atomic `reserve_stock`/`release_stock`/`adjust_stock` (`supabase/inventory_rpc.sql`). `lib/inventory/status.ts` pure status. | Add `p_location` to RPCs; `inventory_levels` becomes truth; keep `stock` as aggregate.                              |
-| Orders       | `orders`/`order_items` (`supabase/orders_table.sql`). `customer_id` **NOT NULL** (FK `users`), `shipping_address` **NOT NULL**. Single `payment_method`/`payment_status`. `stock_status` restock-once claim. `order_no`/`order_ref` via triggers (`identifiers_04_triggers.sql`).    | Relax nullability; add channel/location/register/shift/cashier + GST cols; add `order_payments`.                    |
+| Inventory    | `products`/`product_variants`: `track_inventory`, `stock` (single int), `low_stock_threshold`, `allow_backorder`, `sku`. Append-only `stock_movements`. Atomic `reserve_stock`/`release_stock`/`adjust_stock` (hand-run `inventory_rpc.sql`). `lib/inventory/status.ts` pure status. | Add `p_location` to RPCs; `inventory_levels` becomes truth; keep `stock` as aggregate.                              |
+| Orders       | `orders`/`order_items` (`orders_table.sql`). `customer_id` **NOT NULL** (FK `users`), `shipping_address` **NOT NULL**. Single `payment_method`/`payment_status`. `stock_status` restock-once claim. `order_no`/`order_ref` via triggers (`identifiers_04_triggers.sql`).             | Relax nullability; add channel/location/register/shift/cashier + GST cols; add `order_payments`.                    |
 | Checkout     | `placeOrder` (`app/actions/checkout-actions.ts`): re-price store-scoped, coupon+stock reserve, tax via `computeTax`, service-role writes, full reverse rollback.                                                                                                                     | `placePosSale` mirrors it exactly.                                                                                  |
 | Order admin  | `getOrders`/`getOrderDetail`/`updateOrderStatus` (`app/actions/order-actions.ts`), gated `getManagerIdentity("orders")`.                                                                                                                                                             | POS orders show here, filtered by `sales_channel`.                                                                  |
 | Tax/billing  | `computeTax` pure (`lib/billing/tax.ts`), `tax_classes`, `store_billing_settings` (public-read; NO secrets). Printable `InvoiceDocument`.                                                                                                                                            | GST split layer on top of `computeTax`; new thermal receipt.                                                        |
@@ -213,7 +213,7 @@ operator, never from a client flag. Manager location-scoping is enforced against
 
 All tables are `store_id`-scoped, RLS via `is_store_admin(store_id)` for reads,
 **writes via `SECURITY DEFINER` RPCs** (mirroring `inventory_rpc.sql`). SQL in
-`supabase/pos_*.sql` with rollbacks; Drizzle tables in `drizzle/schema.ts`.
+`pos_*.sql` files with rollbacks; Drizzle tables in `drizzle/schema.ts`.
 
 ```sql
 -- Phase 0 ---------------------------------------------------------------
@@ -518,7 +518,7 @@ analytics alongside online orders.
 
 ### Phase 3 — Shifts & cash reconciliation — **DONE**
 
-`pos_shifts` + `pos_cash_movements` (supabase/pos_10_shifts.sql) +
+`pos_shifts` + `pos_cash_movements` (pos_10_shifts.sql) +
 `orders.shift_id`; open/close (float → expected vs counted → variance), cash
 drop/payout/paid-in, live X-report and the closed Z-report at `/pos/shift`.
 `pos-shift-actions.ts`, gated on `open_close_shift` / `cash_drop`. Pure math in
@@ -529,7 +529,7 @@ index. Settings: `pos.requireOpenShift`, `pos.cashVarianceTolerance`.
 
 `/pos/inventory` scoped to the operator's location: search/scan, low-stock
 filter, receive/correct (`adjust_stock_at`), count (stored as a delta), and
-`transfer_stock` between locations (supabase/pos_11_transfer_stock.sql — one
+`transfer_stock` between locations (pos_11_transfer_stock.sql — one
 RPC, so both legs of a transfer commit or neither does).
 `app/actions/pos-inventory-actions.ts`, gated on `adjust_inventory`.
 Location-scope enforced server-side from the session.

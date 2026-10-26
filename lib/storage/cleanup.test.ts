@@ -43,12 +43,12 @@ describe("extractMediaUrlsFromHtml", () => {
     ]);
   });
 
-  // Non-GCS URLs (external CDNs, legacy Supabase) are ignored — we only manage
+  // Non-GCS URLs (external CDNs, older hosts) are ignored — we only manage
   // our own GCS bucket now.
-  it("ignores non-GCS URLs (external + legacy Supabase)", () => {
+  it("ignores non-GCS URLs (external and older hosts)", () => {
     const html = `
       <img src="https://cdn.other.com/img.png" />
-      <img src="https://x.example.com/storage/v1/object/public/media/s.png" />
+      <img src="https://x.example.com/media/s.png" />
     `;
     expect(extractMediaUrlsFromHtml(html)).toEqual([]);
   });
@@ -68,12 +68,12 @@ describe("deleteStorageUrls", () => {
     expect(gcsDeletePaths).not.toHaveBeenCalled();
   });
 
-  // Non-GCS URLs (external + legacy Supabase) are filtered out.
+  // Non-GCS URLs (external and older hosts) are filtered out.
   it("ignores non-GCS URLs", async () => {
     await expect(
       deleteStorageUrls([
         "https://cdn.other.com/x.png",
-        "https://x.example.com/storage/v1/object/public/media/s.png",
+        "https://x.example.com/media/s.png",
       ]),
     ).resolves.toEqual({
       attempted: 0,
@@ -167,7 +167,7 @@ describe("deleteStorageUrls tenant scope", () => {
     const result = await deleteStorageUrls(
       [
         url(`stores/${OTHER}/a.webp`),
-        "https://xyz.supabase.co/storage/v1/object/public/media/b.webp",
+        "https://cdn.example.com/media/b.webp",
         url(`stores/${STORE}/c.webp`),
       ],
       { ownedByStoreId: STORE },

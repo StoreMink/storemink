@@ -479,7 +479,7 @@ export async function issueRefund(
     return {
       code: "no_captured_payment",
       error:
-        "This sale was paid with more than one online payment, so it can't tell which one to refund. Take the return at the till, which refunds each payment to its own card.",
+        "This sale was paid with more than one online payment, so it can't tell which one to refund. Take the return in POS, which refunds each payment to its own card.",
     };
   }
   if (!paymentId && order.razorpay_order_id) {

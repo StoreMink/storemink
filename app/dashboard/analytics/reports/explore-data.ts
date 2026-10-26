@@ -517,7 +517,7 @@ async function trafficByKey(
 
 const CHANNEL_LABELS: Record<string, string> = {
   online: "Online store",
-  pos: "Point of sale",
+  pos: "POS",
 };
 
 export async function runExploration(input: {

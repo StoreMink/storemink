@@ -129,7 +129,8 @@ export async function reconcileStrandedAttempts(
 
   let rows: {
     id: string;
-    storeId: string;
+    /** Null once the store is deleted: its attempts are kept (migration 0243). */
+    storeId: string | null;
     invoiceId: string;
     providerOrderId: string | null;
     amountPaise: number;
@@ -194,10 +195,37 @@ export async function reconcileStrandedAttempts(
             storeId: row.storeId,
             invoiceId: row.invoiceId,
           });
-          // ★ The plan follows the money. Without this a merchant who really did
-          // pay stays in grace — and is downgraded — because the only thing that
-          // advances a cycle is a paid invoice being NOTICED.
-          await advanceAfterPayment(row.storeId, now);
+          if (row.storeId) {
+            // ★ The plan follows the money. Without this a merchant who really
+            // did pay stays in grace — and is downgraded — because the only
+            // thing that advances a cycle is a paid invoice being NOTICED.
+            await advanceAfterPayment(row.storeId, now);
+          } else {
+            // ★★ THE STORE WAS DELETED WHILE THIS PAYMENT WAS IN FLIGHT. Its
+            // attempt and invoice are kept (migration 0243), so the money is
+            // recorded, but there is no plan to advance and nobody to send a
+            // receipt to. Money StoreMink holds for a store that no longer
+            // exists is a human question: whether, and to whom, to refund it.
+            await flag({
+              storeId: null,
+              kind: "orphan_payment",
+              invoiceId: row.invoiceId,
+              attemptId: row.id,
+              providerPaymentId: paid.id,
+              providerOrderId: row.providerOrderId,
+              expectedPaise: row.amountPaise,
+              observedPaise:
+                typeof paid.amount === "number" ? paid.amount : null,
+              // storeDeleted: the queue says "store deleted", not "needs
+              // attributing" (deleteStore marks the items it detaches alike).
+              detail: {
+                note: "payment captured for a deleted store",
+                storeDeleted: true,
+              },
+              now,
+            });
+            summary.flagged += 1;
+          }
 
           // ★★ AMOUNT MISMATCH IS A HUMAN QUESTION, not something to auto-fix.
           // We recorded the payment either way — the merchant paid — but if the
@@ -216,7 +244,10 @@ export async function reconcileStrandedAttempts(
               providerOrderId: row.providerOrderId,
               expectedPaise: row.amountPaise,
               observedPaise: paid.amount,
-              detail: { note: "captured amount differs from the attempt" },
+              detail: {
+                note: "captured amount differs from the attempt",
+                ...(row.storeId ? {} : { storeDeleted: true }),
+              },
               now,
             });
             summary.flagged += 1;
@@ -408,7 +439,12 @@ export async function resolveReconciliationItem(input: {
         .set({
           status: input.status,
           resolvedBy: input.actor,
-          resolvedAt: now.toISOString(),
+          // ★★ ONLY A RESOLVED ITEM HAS A RESOLVED_AT. The CHECK
+          // billing_reconciliation_resolved_shape requires (status =
+          // 'resolved') = (resolved_at is not null), so stamping it on "Needs
+          // chasing" or "Doesn't matter" failed every such close with
+          // "Couldn't save that". Who is resolved_by; when is updated_at.
+          resolvedAt: input.status === "resolved" ? now.toISOString() : null,
           resolutionNote: note,
           updatedAt: now.toISOString(),
         })

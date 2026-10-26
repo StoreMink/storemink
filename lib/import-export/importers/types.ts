@@ -4,8 +4,11 @@ import "server-only";
 //
 // Every importer follows one contract: it NEVER throws, it reports one outcome
 // per source row, and a failure on row 12 says nothing about row 13. That
-// row-level atomicity is the whole design — see the header of
-// supabase/import_export_01_jobs.sql for why file-level would be worse.
+// row-level atomicity is the whole design: a 500-row file with 3 bad rows
+// imports 497 and reports 3. Failing the whole file would make a merchant fix
+// one typo and re-upload, and failing silently would mean they never learn, so
+// `partial` is a first-class job status and created + updated + skipped +
+// failed always equals processed_rows.
 
 import type { UserIdentity } from "@/lib/db/client";
 import type { RowIssue, RowOutcome } from "../types";

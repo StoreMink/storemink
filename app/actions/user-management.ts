@@ -109,9 +109,9 @@ export async function deleteUser(userId: string): Promise<Result> {
     }
   }
 
-  // Delete the Cloud SQL profile row, then the Identity Platform account. The
-  // old `auth.users` ON DELETE CASCADE is gone (auth + profile now live in
-  // separate systems), so both must be removed explicitly. The row goes first:
+  // Delete the Cloud SQL profile row, then the Identity Platform account. Auth
+  // and profile live in separate systems with no cascade between them, so both
+  // must be removed explicitly. The row goes first:
   // it IS this store's access, so removing it is the revocation.
   try {
     await withService((db) =>
@@ -267,7 +267,7 @@ export async function changeOwnPassword(newPassword: string): Promise<Result> {
 
 export async function triggerPasswordReset(email: string): Promise<Result> {
   // Generate an Identity Platform reset link and deliver it via our own email
-  // transport (Resend), mirroring the old resetPasswordForEmail. Always report
+  // transport (Resend). Always report
   // success so the endpoint can't be used to enumerate which emails exist.
   const link = await generatePasswordResetLink(email.trim()).catch(() => null);
   if (!link) return { success: true };

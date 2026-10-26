@@ -459,7 +459,7 @@ once, which is where these get broken.
 The money-out capability. A dashboard refund now moves real money and records
 it; nothing else in this doc is built yet.
 
-**Migration** `supabase/refunds_01_gateway.sql` — its own file, because
+**Migration** `refunds_01_gateway.sql` — its own file, because
 `pos_12_returns.sql` has already run and editing a
 `CREATE TABLE IF NOT EXISTS` is a silent no-op (§15b). Adds
 `order_refunds.idempotency_key` (UNIQUE), `.reason`, `.reference`, a partial
@@ -600,7 +600,7 @@ cases: PS-12.13 – PS-12.20.
 The whole configuration surface, plus the two pure modules Steps 3–5 are built
 on. **No return can be STARTED yet** — that is Step 3.
 
-**Migration** `supabase/returns_01_product_policy.sql` — `products.returnable`
+**Migration** `returns_01_product_policy.sql` — `products.returnable`
 (backfilled TRUE, because nothing is final-sale today and a migration may not
 change what a live store does) and `products.return_window_days` (nullable
 override, CHECK 0–365).
@@ -676,7 +676,7 @@ A return can now be **asked for, reviewed, and booked in**. It still never
 moves money by itself — approving says what is owed and a human presses Refund
 on the order, the same rule cancellation follows (§2.2).
 
-**Migration** `supabase/returns_02_requests.sql` — a lifecycle on
+**Migration** `returns_02_requests.sql` — a lifecycle on
 `order_returns`: `requested → approved → received → completed`, plus
 `rejected`/`cancelled`, with `channel`, `requested_by`, `reason_code`,
 `photos`, the two fee snapshots, and the review fields.
@@ -763,7 +763,7 @@ Exchanges. A shopper can swap a line for another variant of the same product,
 the units are held from the moment they ask, and the replacement order is
 raised when the goods arrive.
 
-**Migration** `supabase/returns_03_exchanges.sql` —
+**Migration** `returns_03_exchanges.sql` —
 `order_returns.exchange_order_id` plus, per line,
 `exchange_product_id` / `exchange_variant_id` / `exchange_price` /
 `exchange_hold_id`.
@@ -999,7 +999,7 @@ paths were waiting on it — COD refunds (§3.3), where nothing was captured and
 there is no instrument to reverse, and exchanges where the replacement costs
 less.
 
-**Migration** `supabase/store_credit_01_schema.sql` — `customer_credit_balances`
+**Migration** `store_credit_01_schema.sql` — `customer_credit_balances`
 (one row per store+customer, `CHECK (balance >= 0)`), the append-only
 `customer_credit_ledger`, two RPCs, and `orders.store_credit_used`.
 

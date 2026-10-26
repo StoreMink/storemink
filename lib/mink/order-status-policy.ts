@@ -79,7 +79,7 @@ export function evaluateMinkOrderTransition(
   if (order.salesChannel !== "online") {
     return denied(
       "mink_order_channel_unsupported",
-      "Mink order-status transitions are limited to online orders. POS sales use the register lifecycle.",
+      "Mink order-status transitions are limited to online orders. POS sales are completed in store.",
     );
   }
   if (order.fulfilmentType !== "delivery") {

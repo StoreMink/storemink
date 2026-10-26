@@ -42,7 +42,16 @@ export const BRAND_SAME_AS: readonly string[] = [
 
 export const SUPPORT_EMAIL = "support@storemink.com";
 
-export const BRAND_TAGLINE = "Build what's yours.";
+export const BRAND_TAGLINE = "Build What's Yours.";
+
+/**
+ * The descriptive line that follows the tagline wherever the brand is
+ * introduced: the footer, the share card, the homepage hero and the meta
+ * description. The owner's lockup (26 Oct 2026) reads StoreMink / tagline /
+ * this line; keep the three together and in that order.
+ */
+export const BRAND_TAGLINE_DETAIL =
+  "AI-Powered Commerce, Made Simple with Mink AI.";
 
 export const BRAND_DESCRIPTION =
   "StoreMink is the AI-native business operating system for independent brands, bringing commerce, operations and intelligence together in one platform.";
@@ -62,7 +71,7 @@ const ALTERNATE_NAMES = [
   "storemink",
   "store mink",
   "Store Mink",
-  "storemink.com | Build what's yours.",
+  "storemink.com | Build What's Yours.",
 ];
 
 /**

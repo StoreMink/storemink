@@ -395,7 +395,7 @@ const RECIPIENT_INSERT_CHUNK = 1000;
  * write one row per recipient to email_campaign_recipients, then return
  * immediately — the worker (app/api/cron/send-emails) does the actual sending.
  * This is what lets a 100k-recipient campaign work at all: doing it inline
- * would exceed the serverless function timeout.
+ * would outlast the request timeout.
  */
 export async function sendCouponEmail(
   input: SendEmailInput,
@@ -451,8 +451,7 @@ export async function sendCouponEmail(
   } catch (err) {
     console.error("Failed to create email campaign:", err);
     return {
-      error:
-        "Could not queue the campaign. Apply supabase/email_campaigns.sql, then try again.",
+      error: "Could not queue the campaign. Please try again.",
     };
   }
 

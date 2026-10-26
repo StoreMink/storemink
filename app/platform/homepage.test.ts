@@ -21,8 +21,10 @@ describe("StoreMink public homepage", () => {
     expect(page).toContain('id="platform"');
     expect(page).toContain('id="pricing"');
     expect(page).toContain('id="faq"');
-    expect(page).toContain("Build <em>what&apos;s yours.</em>");
-    expect(page).toContain("AI-native</span> business platform");
+    expect(page).toContain("Build <em>What&apos;s Yours.</em>");
+    expect(page).toContain(
+      "AI-Powered</span> Commerce, Made Simple with Mink AI.",
+    );
     expect(page).toContain("One business operating system");
     expect(page).toContain("operations and intelligence together");
     expect(page).toContain("StoreMink Point of Sale");
@@ -62,11 +64,14 @@ describe("StoreMink public homepage", () => {
     }
   });
 
-  it("uses the current multidevice POS product image", () => {
-    expect(page).toContain('src="/brand/storemink-pos-multidevice.png"');
-    expect(page).toContain(
-      'alt="StoreMink Point of Sale running on a desktop, tablet and phone"',
-    );
+  // ★ The multidevice product picture shows "Register" on its screens and the
+  // product says POS (owner, 26 Oct 2026), so the homepage card and the header
+  // tile show the drawn POS until a new picture exists.
+  it("shows the drawn POS, not the picture that says Register", () => {
+    for (const source of [page, header]) {
+      expect(source).not.toContain("storemink-pos-multidevice.png");
+      expect(source).toContain("<RegisterArt compact />");
+    }
   });
 
   it("keeps the redesign isolated, responsive and motion-safe", () => {

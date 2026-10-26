@@ -1,6 +1,6 @@
 "use server";
 
-// POS Phase 2 — the manager-arranged register layout (supabase/pos_09_register_layout.sql).
+// POS Phase 2 — the manager-arranged register layout (the pos_layouts table).
 //
 // Which products appear on the till's grid, and in what order, per location.
 // Reads are open to anyone who can sell (the cashier's grid depends on it);
@@ -110,7 +110,7 @@ export async function getPosLayout(): Promise<PosLayoutResult> {
       items: [],
       configured: false,
       canEdit,
-      error: dbErrorMessage(err, "Couldn't load the register layout."),
+      error: dbErrorMessage(err, "Couldn't load the POS layout."),
     };
   }
 }

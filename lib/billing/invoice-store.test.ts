@@ -6,7 +6,7 @@
 // creation is the billing_invoices_one_per_cycle UNIQUE index, immutability is
 // a trigger, and the document number comes from another trigger. None of that
 // is verifiable against a mock — it is proved against a real database by
-// supabase/billing_verify.sql (26/26 on staging).
+// scripts/billing-verify.sql (26/26 on staging).
 //
 // So what IS proved here is the layer around them: that a lost race reads the
 // winner's invoice instead of creating a second obligation, that lines are

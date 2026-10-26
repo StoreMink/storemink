@@ -79,6 +79,7 @@ import {
 import { revampReadyEvent } from "./ready-notice";
 import {
   REVAMP_DEADLINE_GRACE_MS,
+  REVAMP_LEASE_MARGIN_MS,
   REVAMP_PLAN_RETRY_MIN_LEFT_MS,
   REVAMP_READY_URL,
   REVAMP_RETRY_AFTER_MS,
@@ -2346,23 +2347,235 @@ describe("runRevampJob", () => {
     expect(deps.card).not.toHaveBeenCalled();
   });
 
-  it("gives the lease back with a wait when a renewal throws", async () => {
-    vi.useFakeTimers();
-    const jobs = makeJobs(jobAt("photos"), {
-      renew: vi.fn(async () => {
-        throw new Error("db down");
-      }),
+  describe("★★ a renewal that throws is not a lost lease (D1)", () => {
+    /** Drizzle's failure: its message carries the SQL and its parameters. */
+    const failedQuery = () =>
+      Object.assign(
+        new Error(
+          'Failed query: update "mink_revamps" set "lease_until" = now() where "lease_token" = $1\nparams: lease-token',
+        ),
+        {
+          cause: Object.assign(new Error("canceling statement"), {
+            code: "57014",
+          }),
+        },
+      );
+    /** The pool had no connection to give within its 5 s wait. */
+    const poolBusy = () =>
+      Object.assign(new Error("No database connection came free."), {
+        name: "DatabaseBusyError",
+        reason: "pool_wait_timeout",
+      });
+    /** When the watchdog stops a run whose renewals never succeed. */
+    const LAPSE = REVAMP_LIMITS.leaseMs - REVAMP_LEASE_MARGIN_MS;
+    /** A photos step that is stopped only by the run's own stop. */
+    const watched = () => {
+      const seen = { abortedAt: null as number | null };
+      const photos = vi.fn((ctx: RevampStepContext) => {
+        const started = Date.now();
+        ctx.signal.addEventListener(
+          "abort",
+          () => {
+            seen.abortedAt = Date.now() - started;
+          },
+          { once: true },
+        );
+        return untilAborted(ctx);
+      });
+      return { seen, photos };
+    };
+    const logged = () => JSON.stringify(log.warn.mock.calls);
+
+    it("★★ logs it with a closed code, asks again at the next tick, and the paid work in flight goes on", async () => {
+      vi.useFakeTimers();
+      const jobs = makeJobs(jobAt("photos"), {
+        renew: vi
+          .fn(async () => ({ ok: true, cancelRequested: false }))
+          .mockRejectedValueOnce(poolBusy()),
+      });
+      let aborted = false;
+      const deps = makeDeps([], {
+        // Google is drawing for two and a half minutes across both ticks.
+        photos: vi.fn(async (ctx: RevampStepContext) => {
+          ctx.signal.addEventListener("abort", () => {
+            aborted = true;
+          });
+          await new Promise<void>((resolve) => setTimeout(resolve, 150_000));
+          return { images: [], outcomes: [OUTCOME], usage: ZERO_REVAMP_USAGE };
+        }),
+      });
+      const run = runRevampJob({ revampId: ID, deps, jobs });
+      await vi.advanceTimersByTimeAsync(150_000);
+      expect(await run).toEqual({ outcome: "ready" });
+      expect(aborted).toBe(false);
+      // The throw at the first tick, the answer at the second, and the
+      // card's own renewal before its charge.
+      expect(jobs.renew).toHaveBeenCalledTimes(3);
+      expect(jobs.release).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        "mink.revamp: lease renewal failed",
+        {
+          revampId: ID,
+          attempt: 1,
+          code: "pool_wait_timeout",
+        },
+      );
+      expect(deps.card).toHaveBeenCalledTimes(1);
     });
-    const deps = makeDeps([], {
-      photos: vi.fn((ctx: RevampStepContext) => untilAborted(ctx)),
+
+    it("★★ renewals that keep throwing stop the work a few seconds before the lease could lapse, parked and counted as before", async () => {
+      vi.useFakeTimers();
+      const jobs = makeJobs(jobAt("photos"), {
+        renew: vi.fn(async () => {
+          throw failedQuery();
+        }),
+      });
+      const { seen, photos } = watched();
+      const deps = makeDeps([], { photos });
+      const run = runRevampJob({ revampId: ID, deps, jobs });
+      await vi.advanceTimersByTimeAsync(LAPSE - 1);
+      // Four ticks have thrown, and Google is still drawing.
+      expect(jobs.renew).toHaveBeenCalledTimes(4);
+      expect(seen.abortedAt).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await run).toEqual({ outcome: "handover" });
+      expect(seen.abortedAt).toBe(LAPSE);
+      // ★ The halt a throw used to make at once: parked and counted.
+      expect(jobs.release).toHaveBeenCalledWith(ID, LEASE, {
+        retryAfterMs: REVAMP_RETRY_AFTER_MS,
+      });
+      expect(jobs.kick).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        "mink.revamp: lease could lapse, stopping",
+        { revampId: ID, failures: 4 },
+      );
+      for (const attempt of [1, 2, 3, 4]) {
+        expect(log.warn).toHaveBeenCalledWith(
+          "mink.revamp: lease renewal failed",
+          { revampId: ID, attempt, code: "57014" },
+        );
+      }
+      // ★ Content-free: neither the SQL nor its parameters reach the log.
+      expect(logged()).not.toMatch(/Failed query|params|lease-token/);
     });
-    const run = runRevampJob({ revampId: ID, deps, jobs });
-    await vi.advanceTimersByTimeAsync(REVAMP_LIMITS.leaseRenewMs);
-    expect(await run).toEqual({ outcome: "handover" });
-    expect(jobs.release).toHaveBeenCalledWith(ID, LEASE, {
-      retryAfterMs: REVAMP_RETRY_AFTER_MS,
+
+    it("★★ a renewal that succeeds moves the watchdog: it counts from that renewal's start, not its answer", async () => {
+      vi.useFakeTimers();
+      const jobs = makeJobs(jobAt("photos"), {
+        renew: vi
+          .fn(async (): Promise<{ ok: boolean; cancelRequested: boolean }> => {
+            throw failedQuery();
+          })
+          // ★ It answers 10 s after it was asked, and the lease it wrote runs
+          //   from the database's now() inside it, near when it was asked:
+          //   counting from the answer would stop the work after the lease
+          //   had lapsed, when another invocation may pay for it again.
+          .mockImplementationOnce(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 10_000));
+            return { ok: true, cancelRequested: false };
+          }),
+      });
+      const { seen, photos } = watched();
+      const deps = makeDeps([], { photos });
+      const run = runRevampJob({ revampId: ID, deps, jobs });
+      const renewedAt = REVAMP_LIMITS.leaseRenewMs;
+      await vi.advanceTimersByTimeAsync(renewedAt + LAPSE - 1);
+      expect(seen.abortedAt).toBeNull();
+      // Past the moment counted from the answer too.
+      await vi.advanceTimersByTimeAsync(10_000 + 1);
+      expect(await run).toEqual({ outcome: "handover" });
+      expect(seen.abortedAt).toBe(renewedAt + LAPSE);
+      expect(jobs.release).toHaveBeenCalledWith(ID, LEASE, {
+        retryAfterMs: REVAMP_RETRY_AFTER_MS,
+      });
     });
-    expect(jobs.kick).not.toHaveBeenCalled();
+
+    it("★★ with no renewal to go by, it counts from before the claim, whose own write starts the lease", async () => {
+      vi.useFakeTimers();
+      const job = jobAt("photos");
+      const CLAIM_MS = 10_000;
+      const jobs = makeJobs(job, {
+        // The claim's write answers 10 s after it was sent.
+        claim: vi.fn(async () => {
+          await new Promise((resolve) => setTimeout(resolve, CLAIM_MS));
+          return { job, leaseToken: LEASE };
+        }),
+        renew: vi.fn(async () => {
+          throw failedQuery();
+        }),
+      });
+      const { seen, photos } = watched();
+      const deps = makeDeps([], { photos });
+      const run = runRevampJob({ revampId: ID, deps, jobs });
+      await vi.advanceTimersByTimeAsync(LAPSE - 1);
+      expect(seen.abortedAt).toBeNull();
+      // Past the moment counted from the claim's answer too.
+      await vi.advanceTimersByTimeAsync(CLAIM_MS + 1);
+      expect(await run).toEqual({ outcome: "handover" });
+      // The step started once the claim answered.
+      expect(seen.abortedAt).toBe(LAPSE - CLAIM_MS);
+    });
+
+    it("★ a renewal that answers after the run has ended arms nothing", async () => {
+      vi.useFakeTimers();
+      const jobs = makeJobs(jobAt("photos"), {
+        renew: vi
+          .fn(async () => ({ ok: true, cancelRequested: false }))
+          // The first tick's renewal answers 5 s late, into a finished run.
+          .mockImplementationOnce(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 5_000));
+            return { ok: true, cancelRequested: false };
+          }),
+      });
+      const deps = makeDeps([], {
+        // The step fails for good a second after the first tick.
+        photos: vi.fn(async () => {
+          await new Promise((resolve) =>
+            setTimeout(resolve, REVAMP_LIMITS.leaseRenewMs + 1_000),
+          );
+          throw new RevampStepError("internal", "broken", false);
+        }),
+      });
+      const run = runRevampJob({ revampId: ID, deps, jobs });
+      await vi.advanceTimersByTimeAsync(REVAMP_LIMITS.leaseRenewMs + 1_000);
+      expect(await run).toEqual({ outcome: "failed" });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(jobs.renew).toHaveBeenCalledOnce();
+      // ★ No watchdog left behind to stop a run that already ended.
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(REVAMP_LIMITS.leaseMs);
+      expect(log.warn).not.toHaveBeenCalledWith(
+        "mink.revamp: lease could lapse, stopping",
+        expect.anything(),
+      );
+    });
+
+    it("★★ a renewal that throws right before the card's charge makes no card: parked and counted as before", async () => {
+      const jobs = makeJobs(jobAt("card"), {
+        renew: vi.fn(async () => {
+          throw failedQuery();
+        }),
+      });
+      const deps = makeDeps([]);
+      expect(await runRevampJob({ revampId: ID, deps, jobs })).toEqual({
+        outcome: "handover",
+      });
+      expect(deps.card).not.toHaveBeenCalled();
+      expect(jobs.finish).not.toHaveBeenCalled();
+      expect(jobs.release).toHaveBeenCalledWith(ID, LEASE, {
+        retryAfterMs: REVAMP_RETRY_AFTER_MS,
+      });
+    });
+  });
+
+  it("★★ D2: the hard stop leaves half a minute to hand over inside the route's 1,200 s", () => {
+    // app/api/internal/mink/revamps/run/route.ts `maxDuration` (its own test
+    // pins 1200), and Cloud Run's --timeout=1200s.
+    const ROUTE_MS = 1_200_000;
+    expect(REVAMP_DEADLINE_GRACE_MS).toBe(REVAMP_LIMITS.deadlineGraceMs);
+    expect(
+      REVAMP_LIMITS.runnerDeadlineMs + REVAMP_DEADLINE_GRACE_MS + 30_000,
+    ).toBeLessThanOrEqual(ROUTE_MS);
   });
 
   it.each([

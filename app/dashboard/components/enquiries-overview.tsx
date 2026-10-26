@@ -34,8 +34,8 @@ function formatDate(value: string) {
 
 /**
  * Dashboard-home enquiry tracker: a status-count strip (each tile deep-links to
- * the filtered list) plus the most recent enquiries. Reads through the
- * service-role admin client (enquiries RLS is own-row only); renders nothing if
+ * the filtered list) plus the most recent enquiries. Reads through withService
+ * (BYPASSRLS; enquiries RLS is own-row only); renders nothing if
  * the table isn't migrated yet so the home page still loads.
  */
 export async function EnquiriesOverview() {

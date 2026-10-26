@@ -518,8 +518,8 @@ presses Publish or Check again on an existing production theme. Record:
     how a send with no log ships.
 - **Phase 4 — Announcements ✅**
   `/dashboard/announcements` — draft, check the reach, test-send, send, and a
-  per-recipient log. Schema: `supabase/announcements_01_schema.sql` (⚠ **not
-  applied** — run it as `postgres` before deploying).
+  per-recipient log. Schema: `announcements_01_schema.sql` (applied by hand as
+  `postgres` before the migration ledger; read it in git history).
   - **★ RECIPIENTS ARE MATERIALISED AT SEND, NOT RESOLVED AT DELIVERY.** The
     audience is a query over a moving target — stores sign up, staff leave,
     plans lapse. Writing a row per person makes the send idempotent (a retried

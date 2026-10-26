@@ -23,7 +23,10 @@ import {
   MinkRequestError,
   MinkToolInputError,
 } from "../errors";
-import type { MinkGeneratedImage } from "../media-generation";
+import {
+  MinkImageNotSentError,
+  type MinkGeneratedImage,
+} from "../media-generation";
 import type { MinkMediaGenerationRequest } from "../media-generation-contract";
 import type { MinkMediaReferenceImage } from "../media-reference-images";
 import type { MinkActorContext } from "../types";
@@ -173,13 +176,19 @@ vi.mock("../media-reference-images", async () => {
     },
   };
 });
-vi.mock("../media-generation", () => ({
-  generateMinkMediaImage: async (...args: unknown[]) => {
-    h.mediaGenerateCalls.push(args);
-    if (!h.mediaGenerate) throw new Error("no network in tests");
-    return h.mediaGenerate(...args);
-  },
-}));
+vi.mock("../media-generation", async (importOriginal) => {
+  // ★ The real B3 rule and the error it reads (D3); only the call is faked.
+  const real = await importOriginal<typeof import("../media-generation")>();
+  return {
+    MinkImageNotSentError: real.MinkImageNotSentError,
+    isUnbilledImageFailure: real.isUnbilledImageFailure,
+    generateMinkMediaImage: async (...args: unknown[]) => {
+      h.mediaGenerateCalls.push(args);
+      if (!h.mediaGenerate) throw new Error("no network in tests");
+      return h.mediaGenerate(...args);
+    },
+  };
+});
 // The default reviewer's wiring: no Vertex settings unless a test sets them,
 // so a test that names no reviewer draws unchecked, as before L2-H. The
 // check clock is the real module's (TS-3D).
@@ -1178,6 +1187,74 @@ describe("★★ a busy image service (429)", () => {
     // Nothing was drawn while it waited, so nothing stays claimed.
     expect(h.claims).toEqual([1]);
     expect(sum(h.releases)).toBe(1);
+  });
+
+  describe("★★ a try that billed nothing stays unbilled when the run's stop lands on it (B3, D3)", () => {
+    const reported = () => {
+      const reports: RevampUsage[] = [];
+      return {
+        reports,
+        onUsage: (usage: RevampUsage) => reports.push(usage),
+        total: () => reports.reduce(addRevampUsage, { ...ZERO_REVAMP_USAGE }),
+      };
+    };
+
+    it("★★ a 429 the stop lands on is no draw: the photo goes back and only the 429 is counted", async () => {
+      h.owned.set(url("p1"), "media");
+      const controller = new AbortController();
+      const reason = new Error("lease lost");
+      const { generate } = makeGenerate(() => {
+        // The stop lands as the 429 comes back.
+        controller.abort(reason);
+        throw new MinkImageRateLimitedError("busy");
+      });
+      const usage = reported();
+      await expect(
+        makeRevampProductPhotos(
+          roomyCtx(controller.signal),
+          {
+            request: request([product("p1")]),
+            stored: [],
+            only: null,
+            onUsage: usage.onUsage,
+          },
+          { provider: "vertex", generate, prepare, wait: async () => true },
+        ),
+      ).rejects.toBe(reason);
+      expect(h.claims).toEqual([1]);
+      expect(sum(h.releases)).toBe(1);
+      expect(usage.total()).toEqual({
+        ...ZERO_REVAMP_USAGE,
+        calls: {
+          [getMinkConfig().imageModel]: { rateLimited: 1, timeouts: 0 },
+        },
+      });
+    });
+
+    it("★★ a try that never left is no draw, stopped or not: nothing billed, the photo goes back", async () => {
+      h.owned.set(url("p1"), "media");
+      const { generate } = makeGenerate(() => {
+        throw new MinkImageNotSentError(
+          "image_provider_unavailable",
+          "Not drawn.",
+          503,
+        );
+      });
+      const usage = reported();
+      const run = await makeRevampProductPhotos(
+        roomyCtx(),
+        {
+          request: request([product("p1")]),
+          stored: [],
+          only: null,
+          onUsage: usage.onUsage,
+        },
+        { provider: "vertex", generate, prepare, wait: async () => true },
+      );
+      expect(run.failed).toEqual([{ key: "p1", reason: REASONS.failed }]);
+      expect(usage.reports).toEqual([]);
+      expect(sum(h.releases)).toBe(1);
+    });
   });
 });
 
@@ -2577,11 +2654,14 @@ describe("★★ a busy image service is waited out inside the step's budget (L2
     //   Theme Studio's, Nano Banana 2.1 at global.
     expect(config.imageModel).toBe(THEME_STUDIO_IMAGE_MODEL_KEY);
     expect(h.permitEvents).toEqual(["succeeded"]);
-    // ★ An attempt in flight at the deadline gives up before the hard stop.
+    // ★★ An attempt in flight at the deadline gives up before the hard stop,
+    //   with the margin to spare (D2): admitted until the drain, it ends
+    //   inside the grace, so the hard stop never cuts one off.
     const { REVAMP_DEADLINE_GRACE_MS } = await import("./runner");
-    expect(PRODUCT_PHOTO_ATTEMPT_TIMEOUT_MS).toBeLessThan(
-      REVAMP_DEADLINE_GRACE_MS,
-    );
+    const { REVAMP_LIMITS } = await import("./contract");
+    expect(
+      PRODUCT_PHOTO_ATTEMPT_TIMEOUT_MS + REVAMP_LIMITS.hardStopMarginMs,
+    ).toBeLessThanOrEqual(REVAMP_DEADLINE_GRACE_MS);
   });
 });
 
@@ -2752,6 +2832,55 @@ describe("★★ a studio photo draw takes its turn on its model's shared capaci
     expect(sum(h.releases)).toBe(0);
     // Not a 429, so the shared capacity was not paused.
     expect(h.permitEvents).toEqual([]);
+  });
+
+  it("★★ D3: the run's stop landing while a 429 is shared is no draw cut off on the wire: nothing billed, the photo goes back (B3)", async () => {
+    const controller = new AbortController();
+    const reason = new Error("revamp halted: cancelled");
+    const paused: number[] = [];
+    // The real coordinator, which gives up with the stop the moment it lands.
+    h.realCapacity = coordinatedProviderCapacity(
+      {
+        async claim(_key, id) {
+          return { id, epoch: 0 };
+        },
+        async renew() {
+          return true;
+        },
+        async release() {},
+        async pause(_key, delayMs) {
+          paused.push(delayMs);
+          // ★ The stop lands while the 429 is being shared.
+          controller.abort(reason);
+        },
+      },
+      "key",
+      { pacing: IMAGE_START_PACING },
+    );
+    h.mediaGenerate = async () => {
+      throw new MinkImageRateLimitedError("busy");
+    };
+    const reports: RevampUsage[] = [];
+    await expect(
+      makeRevampProductPhotos(
+        { ...roomy(), signal: controller.signal },
+        {
+          request: request([product("p1")]),
+          stored: [],
+          only: null,
+          onUsage: (usage) => reports.push(usage),
+        },
+        { provider: "vertex", prepare, wait: async () => true },
+      ),
+    ).rejects.toBe(reason);
+    expect(h.mediaGenerateCalls).toHaveLength(1);
+    expect(paused).toEqual([SHARED_RATE_LIMIT_PAUSE_MAX_MS]);
+    // ★ Only the 429 is counted, and the photo it never drew goes back.
+    expect(reports.reduce(addRevampUsage, { ...ZERO_REVAMP_USAGE })).toEqual({
+      ...ZERO_REVAMP_USAGE,
+      calls: { [getMinkConfig().imageModel]: { rateLimited: 1, timeouts: 0 } },
+    });
+    expect(sum(h.releases)).toBe(1);
   });
 });
 

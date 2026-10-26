@@ -1,4 +1,5 @@
 import {
+  ArrowUp,
   ArrowUpRight,
   BookOpen,
   Boxes,
@@ -8,7 +9,7 @@ import {
   PackageSearch,
   PanelsTopLeft,
 } from "lucide-react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { useId, type MouseEvent as ReactMouseEvent } from "react";
 import {
   MINK_PREFILL_LABELS,
   minkPrefillPath,
@@ -29,16 +30,76 @@ import { MinkBuilderProposalCard } from "./mink-builder-proposal-card";
 import { MinkLink } from "./mink-link";
 import { MinkChartCard } from "./mink-chart";
 
+/**
+ * The DOM id of a storefront redesign's card, so a later mention of the same
+ * redesign can scroll back to it. Only one chat surface (the side panel or
+ * the full view) renders at a time, so the id is unique on the page.
+ */
+export function revampCardElementId(revampId: string): string {
+  return `revamp-card-${revampId}`;
+}
+
+/** Scrolls to a redesign's card and moves focus onto it. */
+function showRevampCard(revampId: string) {
+  const card = document.getElementById(revampCardElementId(revampId));
+  if (!card) return;
+  const still =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  card.scrollIntoView?.({
+    block: "start",
+    behavior: still ? "auto" : "smooth",
+  });
+  card.focus({ preventScroll: true });
+}
+
+/**
+ * A later mention of a redesign whose card the thread already shows (owner's
+ * words, 25 Oct 2026): one line, and a button that goes to that card.
+ */
+function RevampCardPointer({ revampId }: { revampId: string }) {
+  const lineId = useId();
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#ded8f4] bg-[#fcfbff] px-3 py-2">
+      <p id={lineId} className="text-xs leading-5 text-[#29272d]">
+        Your storefront redesign card is above.
+      </p>
+      <button
+        type="button"
+        aria-describedby={lineId}
+        onClick={() => showRevampCard(revampId)}
+        className="inline-flex items-center gap-1 rounded-full border border-[#ded8f4] bg-white px-3 py-1.5 text-xs font-semibold text-[#5b3fd0] transition-colors hover:bg-[#f3f0fb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] pointer-coarse:min-h-11"
+      >
+        <ArrowUp className="h-3 w-3" aria-hidden="true" />
+        Show it
+      </button>
+    </div>
+  );
+}
+
 export function MinkArtifacts({
   artifacts,
   onPrompt,
   promptDisabled = false,
+  shownRevampIds,
 }: {
   artifacts: MinkArtifact[];
   onPrompt?: (prompt: string) => void;
   promptDisabled?: boolean;
+  /**
+   * Storefront redesigns whose card an earlier message in the thread already
+   * shows (`revampIdsShownBefore` in dashboard-chat.tsx).
+   */
+  shownRevampIds?: ReadonlySet<string>;
 }) {
   if (!artifacts.length) return null;
+  // ★★ ONE CARD PER REDESIGN IN A THREAD (owner's decision, 25 Oct 2026).
+  // The card polls its job and carries Apply, Publish and Undo, so a second
+  // copy is a second set of buttons for one redesign: Apply pressed on one,
+  // and the other still offers it. A repeat (in a later answer, or twice in
+  // one) is a line pointing back to the first. Local to this render, so the
+  // check covers repeats inside this message too.
+  const seenRevamps = new Set(shownRevampIds ?? []);
   return (
     <div className="mt-2 space-y-2">
       {artifacts.map((artifact, index) => {
@@ -145,11 +206,24 @@ export function MinkArtifacts({
           );
         }
         if (artifact.type === "storefront_revamp") {
+          if (seenRevamps.has(artifact.revampId)) {
+            return (
+              <RevampCardPointer
+                key={`${artifact.type}-${artifact.revampId}-again-${index}`}
+                revampId={artifact.revampId}
+              />
+            );
+          }
+          seenRevamps.add(artifact.revampId);
           return (
-            <MinkRevampCard
+            <div
               key={`${artifact.type}-${artifact.revampId}`}
-              artifact={artifact}
-            />
+              id={revampCardElementId(artifact.revampId)}
+              tabIndex={-1}
+              className="scroll-mt-4 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] focus-visible:ring-offset-2"
+            >
+              <MinkRevampCard artifact={artifact} />
+            </div>
           );
         }
         if (artifact.type === "storefront_design_proposal") {

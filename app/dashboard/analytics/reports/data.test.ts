@@ -96,7 +96,7 @@ describe("total sales report", () => {
 
     expect(rows[0]).toMatchObject({
       event: "Refund",
-      channel: "Point of sale",
+      channel: "POS",
       amount: -20,
     });
     expect(rows[1]).toMatchObject({

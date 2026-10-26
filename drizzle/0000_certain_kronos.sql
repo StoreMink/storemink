@@ -802,7 +802,6 @@ CREATE POLICY "Update admins" ON "admins" AS PERMISSIVE FOR UPDATE TO public USI
 CREATE POLICY "Superadmins can insert profiles" ON "admins" AS PERMISSIVE FOR INSERT TO public;--> statement-breakpoint
 CREATE POLICY "Superadmins can delete profiles" ON "admins" AS PERMISSIVE FOR DELETE TO public;--> statement-breakpoint
 CREATE POLICY "Read admins" ON "admins" AS PERMISSIVE FOR SELECT TO public;--> statement-breakpoint
-CREATE POLICY "Auth admin can read admins for token hook" ON "admins" AS PERMISSIVE FOR SELECT TO "supabase_auth_admin";--> statement-breakpoint
 CREATE POLICY "Public can read blog categories" ON "blog_categories" AS PERMISSIVE FOR SELECT TO public USING (true);--> statement-breakpoint
 CREATE POLICY "Admins can update blog categories" ON "blog_categories" AS PERMISSIVE FOR UPDATE TO public;--> statement-breakpoint
 CREATE POLICY "Admins can insert blog categories" ON "blog_categories" AS PERMISSIVE FOR INSERT TO public;--> statement-breakpoint
@@ -894,7 +893,6 @@ CREATE POLICY "Admins can read user_groups" ON "user_groups" AS PERMISSIVE FOR S
 CREATE POLICY "Customers can update own row" ON "users" AS PERMISSIVE FOR UPDATE TO public USING ((( SELECT auth.uid() AS uid) = id)) WITH CHECK ((( SELECT auth.uid() AS uid) = id));--> statement-breakpoint
 CREATE POLICY "Customers can read own row" ON "users" AS PERMISSIVE FOR SELECT TO public;--> statement-breakpoint
 CREATE POLICY "Customers can insert own row" ON "users" AS PERMISSIVE FOR INSERT TO public;--> statement-breakpoint
-CREATE POLICY "Auth admin can read users for token hook" ON "users" AS PERMISSIVE FOR SELECT TO "supabase_auth_admin";--> statement-breakpoint
 CREATE POLICY "Public can read coupon group links" ON "coupon_user_groups" AS PERMISSIVE FOR SELECT TO public USING (true);--> statement-breakpoint
 CREATE POLICY "Admins update coupon group links" ON "coupon_user_groups" AS PERMISSIVE FOR UPDATE TO public;--> statement-breakpoint
 CREATE POLICY "Admins insert coupon group links" ON "coupon_user_groups" AS PERMISSIVE FOR INSERT TO public;--> statement-breakpoint

@@ -1,10 +1,23 @@
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { consumeMinkSse, minkReadingStatus, useMinkAi } from "./mink-ai";
+import {
+  consumeMinkSse,
+  MINK_STOP_ACTED_STATUS,
+  MINK_STOP_FINISHING_STATUS,
+  MINK_STOP_REQUEST_TIMEOUT_MS,
+  MINK_STOP_RUN_ID_WAIT_MS,
+  MINK_STOPPING_STATUS,
+  minkReadingStatus,
+  useMinkAi,
+} from "./mink-ai";
+import type { MinkStopResult } from "@/lib/mink/run-stop-types";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // ★ A chat a test opened is remembered for the tab, and the restore now
+  //   reopens it whether or not History lists it: no test inherits another's.
+  window.sessionStorage.clear();
 });
 
 describe("consumeMinkSse", () => {
@@ -76,8 +89,12 @@ function rememberChat(id: string, minutesAgo: number) {
   );
 }
 
-/** History lists two chats; opening one returns its two messages. */
+/**
+ * History lists two chats; opening one returns its two messages. A chat it
+ * does not have (or one deleted meanwhile) answers 404, as the server does.
+ */
 function historyFetch() {
+  const deleted = new Set<string>();
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/mink/conversations") {
@@ -85,15 +102,27 @@ function historyFetch() {
         conversations: [
           summary(CHAT_ID, "Published products"),
           summary(OTHER_ID, "Older chat"),
-        ],
+        ].filter((row) => !deleted.has(row.id)),
       });
     }
+    const id = url.endsWith(OTHER_ID)
+      ? OTHER_ID
+      : url.endsWith(CHAT_ID)
+        ? CHAT_ID
+        : null;
     if (init?.method === "DELETE") {
-      return Response.json({
-        conversations: [summary(OTHER_ID, "Older chat")],
-      });
+      if (id) deleted.add(id);
+      // The previous bundle's list: the current client never reads it.
+      return Response.json({ conversations: [], nextCursor: null });
     }
-    const id = url.endsWith(OTHER_ID) ? OTHER_ID : CHAT_ID;
+    if (!id || deleted.has(id))
+      return Response.json(
+        {
+          error: "That Mink AI conversation is no longer available.",
+          code: "conversation_not_found",
+        },
+        { status: 404 },
+      );
     return Response.json({
       conversation: {
         id,
@@ -162,9 +191,46 @@ describe("★★ useMinkAi: when a chat continues and when a new one starts", ()
     const { result } = renderHook(() => useMinkAi({ enabled: true }));
 
     await waitFor(() => expect(result.current.conversations).toHaveLength(2));
+    // Asked for by itself (it need not be on History's first page), then
+    // forgotten without a word when the server no longer has it.
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem(ACTIVE_KEY)).toBeNull(),
+    );
     expect(result.current.activeConversationId).toBeNull();
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(window.sessionStorage.getItem(ACTIVE_KEY)).toBeNull();
+    expect(result.current.error).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("★ a reload continues this tab's chat even when it is not on History's first page, or History failed", async () => {
+    rememberChat(OTHER_ID, 5);
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/mink/conversations")
+        return Response.json({ error: "Down" }, { status: 503 });
+      return Response.json({
+        conversation: {
+          id: OTHER_ID,
+          title: "Older chat",
+          messages: [{ id: "m-1", role: "user", text: "How many?" }],
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+
+    await waitFor(() =>
+      expect(result.current.activeConversationId).toBe(OTHER_ID),
+    );
+    expect(fetch).toHaveBeenCalledWith(`/api/mink/conversations/${OTHER_ID}`, {
+      signal: expect.any(AbortSignal),
+    });
+    // ★ R18: History's failure is the sidebar's, never the chat's.
+    expect(result.current.error).toBeNull();
+    expect(result.current.historyStatus).toEqual({
+      loadingMore: false,
+      error: { code: "http_503", message: "Down" },
+      failed: "list",
+    });
   });
 
   it("opening Mink keeps a recent chat and starts a new one once it has gone quiet", async () => {
@@ -318,7 +384,20 @@ describe("★★ useMinkAi: when a chat continues and when a new one starts", ()
     expect(deleteError).toBeNull();
     expect(result.current.activeConversationId).toBeNull();
     expect(result.current.messages).toEqual([]);
-    expect(result.current.conversations).toHaveLength(1);
+    // Removed at once, and still gone after page 1 is merged in again.
+    expect(result.current.conversations.map((row) => row.id)).toEqual([
+      OTHER_ID,
+    ]);
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.filter(
+          ([url]) => String(url) === "/api/mink/conversations",
+        ),
+      ).toHaveLength(2),
+    );
+    expect(result.current.conversations.map((row) => row.id)).toEqual([
+      OTHER_ID,
+    ]);
     expect(window.sessionStorage.getItem(ACTIVE_KEY)).toBeNull();
     expect(fetch).toHaveBeenCalledWith(`/api/mink/conversations/${CHAT_ID}`, {
       method: "DELETE",
@@ -587,12 +666,21 @@ describe("★★ useMinkAi streaming", () => {
         if (String(input) === "/api/mink/conversations") {
           return Response.json({ conversations: [] });
         }
+        // The server confirms the stop: the run had done nothing yet.
+        if (String(input).endsWith("/stop")) {
+          return Response.json({ outcome: "stopped" });
+        }
         streams += 1;
         const first = streams === 1;
         const body = new ReadableStream<Uint8Array>({
           start(controller) {
             if (first) {
               // Mink is still thinking when the merchant carries on talking.
+              controller.enqueue(
+                encoder.encode(
+                  'event: status\ndata: {"runId":"33333333-3333-4333-8333-333333333333"}\n\n',
+                ),
+              );
               init?.signal?.addEventListener("abort", () =>
                 controller.error(new DOMException("Aborted", "AbortError")),
               );
@@ -621,7 +709,11 @@ describe("★★ useMinkAi streaming", () => {
       result.current.send("Show me sales for", { voice: true });
     });
     await waitFor(() => expect(result.current.isReplying).toBe(true));
-    act(() => result.current.cancel());
+    await act(async () => {
+      await expect(result.current.cancel()).resolves.toEqual({
+        outcome: "stopped",
+      });
+    });
     await waitFor(() => expect(result.current.isReplying).toBe(false));
     expect(result.current.messages.map((message) => message.text)).toEqual([
       "Show me sales for",
@@ -686,6 +778,47 @@ describe("★★ useMinkAi streaming", () => {
         status: "Reading orders…",
       }),
     ]);
+  });
+
+  it("★★ sends the page's path and screen with their contact details hidden", async () => {
+    // The Customers search writes what was typed into the address bar.
+    window.history.replaceState(
+      null,
+      "",
+      "/dashboard/users?q=priya%40example.com",
+    );
+    document.body.innerHTML = "<main><h1>Customers</h1></main>";
+    try {
+      const fetch = vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/mink/conversations") {
+          return Response.json({ conversations: [] });
+        }
+        return new Response(
+          sse([
+            'event: message\ndata: {"role":"assistant","text":"Done.","artifacts":[]}\n\n',
+            "event: done\ndata: {}\n\n",
+          ]),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        );
+      });
+      vi.stubGlobal("fetch", fetch);
+      const { result } = renderHook(() => useMinkAi({ enabled: true }));
+      await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+
+      act(() => result.current.send("Who is this?"));
+      await waitFor(() => expect(result.current.isReplying).toBe(false));
+
+      const streamCall = (
+        fetch.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit?]>
+      ).find(([input]) => String(input) === "/api/mink/stream");
+      const context = JSON.parse(String(streamCall?.[1]?.body)).context;
+      expect(context.currentPath).toBe("/dashboard/users?q=%5Bemail+hidden%5D");
+      expect(context.screen.query).toEqual({ q: "[email hidden]" });
+      expect(JSON.stringify(context)).not.toContain("priya");
+    } finally {
+      window.history.replaceState(null, "", "/");
+      document.body.innerHTML = "";
+    }
   });
 });
 
@@ -829,7 +962,8 @@ describe("★★ useMinkAi: a message with attachments goes into the chat at onc
   });
 
   it("Stop while Mink is reading gives the message back without an error", async () => {
-    vi.stubGlobal("fetch", streamFetch());
+    const fetch = streamFetch();
+    vi.stubGlobal("fetch", fetch);
     const { result } = renderHook(() => useMinkAi({ enabled: true }));
     const send = prepared(({ signal }) => untilAborted(signal));
 
@@ -837,12 +971,24 @@ describe("★★ useMinkAi: a message with attachments goes into the chat at onc
       result.current.sendPrepared(send);
     });
     expect(result.current.isReplying).toBe(true);
-    act(() => result.current.cancel());
+    // ★ Nothing has reached the server yet, so the stop is this tab's alone.
+    await act(async () => {
+      await expect(result.current.cancel()).resolves.toEqual({
+        outcome: "stopped",
+      });
+    });
 
     await waitFor(() => expect(result.current.isReplying).toBe(false));
     expect(send.restore).toHaveBeenCalledWith(null);
     expect(send.discard).not.toHaveBeenCalled();
     expect(result.current.messages).toEqual([]);
+    expect(
+      fetch.mock.calls.some(
+        ([input]) =>
+          String(input) === "/api/mink/stream" ||
+          String(input).endsWith("/stop"),
+      ),
+    ).toBe(false);
   });
 
   it("New chat while Mink is reading abandons the half-sent message", async () => {
@@ -1085,8 +1231,8 @@ describe("★★ useMinkAi: a new chat's title, like ChatGPT's", () => {
     expect(calls.filter(isList)).toHaveLength(2);
   });
 
-  it("drops the oldest from a full History, as the server did when it created the chat", async () => {
-    const full = Array.from({ length: 10 }, (_, index) =>
+  it("★ keeps every loaded chat when a new one starts: there is no cap", async () => {
+    const full = Array.from({ length: 45 }, (_, index) =>
       summary(
         `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, "0")}`,
         `Chat ${index}`,
@@ -1114,7 +1260,7 @@ describe("★★ useMinkAi: a new chat's title, like ChatGPT's", () => {
       ),
     );
     const { result } = renderHook(() => useMinkAi({ enabled: true }));
-    await waitFor(() => expect(result.current.conversations).toHaveLength(10));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(45));
 
     act(() => {
       result.current.send("Hi");
@@ -1122,8 +1268,8 @@ describe("★★ useMinkAi: a new chat's title, like ChatGPT's", () => {
     await waitFor(() =>
       expect(result.current.conversations[0]?.id).toBe(CHAT_ID),
     );
-    expect(result.current.conversations).toHaveLength(10);
-    expect(result.current.conversations.at(-1)?.title).toBe("Chat 8");
+    expect(result.current.conversations).toHaveLength(46);
+    expect(result.current.conversations.at(-1)?.title).toBe("Chat 44");
     act(() => release());
     await waitFor(() => expect(result.current.isReplying).toBe(false));
   });
@@ -1499,88 +1645,108 @@ describe("★★ useMinkAi: a reply stopped after it started a redesign keeps it
   };
 
   /**
-   * The first reply calls `tool` and then waits until the merchant stops
-   * it; any later reply answers at once. The chat, as the server has it,
-   * holds the kept card once `saved()` says so.
+   * The first reply calls `tool` and then waits; `cut()` drops its stream the
+   * way a lost connection does, with no answer. Any later reply answers at
+   * once. A stop request answers `stop` (default: the run had acted). The
+   * chat, as the server has it, holds the kept card once `saved()` says so.
+   * ★ Only the network leaves a reply like this now: a Stop the server
+   * confirmed means the run did nothing, and one it refused is read on.
    */
-  function stoppedReplyFetch(options: { tool?: string; saved: () => boolean }) {
+  function cutOffReplyFetch(options: {
+    tool?: string;
+    saved: () => boolean;
+    stop?: MinkStopResult["outcome"];
+  }) {
     let streams = 0;
+    let cut: (() => void) | null = null;
     const tool = options.tool ?? "start_storefront_revamp";
-    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "/api/mink/conversations") {
-        return Response.json({ conversations: [summary(CHAT_ID, "Redesign")] });
-      }
-      if (url === "/api/mink/stream") {
-        streams += 1;
-        const first = streams === 1;
-        const body = new ReadableStream<Uint8Array>({
-          start(controller) {
-            if (!first) {
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/mink/conversations") {
+          return Response.json({
+            conversations: [summary(CHAT_ID, "Redesign")],
+          });
+        }
+        if (url === `/api/mink/runs/${RUN_ID}/stop`) {
+          return Response.json({ outcome: options.stop ?? "acted" });
+        }
+        if (url === "/api/mink/stream") {
+          streams += 1;
+          const first = streams === 1;
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              if (!first) {
+                controller.enqueue(
+                  encoder.encode(
+                    'event: message\ndata: {"role":"assistant","text":"Twelve orders.","artifacts":[]}\n\n' +
+                      "event: done\ndata: {}\n\n",
+                  ),
+                );
+                controller.close();
+                return;
+              }
               controller.enqueue(
                 encoder.encode(
-                  'event: message\ndata: {"role":"assistant","text":"Twelve orders.","artifacts":[]}\n\n' +
-                    "event: done\ndata: {}\n\n",
+                  `event: status\ndata: {"conversationId":"${CHAT_ID}","runId":"${RUN_ID}"}\n\n` +
+                    `event: tool\ndata: {"state":"running","name":"${tool}","sequence":1}\n\n` +
+                    `event: tool\ndata: {"state":"completed","name":"${tool}","sequence":1}\n\n`,
                 ),
               );
-              controller.close();
-              return;
-            }
-            controller.enqueue(
-              encoder.encode(
-                `event: status\ndata: {"conversationId":"${CHAT_ID}","runId":"${RUN_ID}"}\n\n` +
-                  `event: tool\ndata: {"state":"running","name":"${tool}","sequence":1}\n\n` +
-                  `event: tool\ndata: {"state":"completed","name":"${tool}","sequence":1}\n\n`,
-              ),
-            );
-            init?.signal?.addEventListener("abort", () =>
-              controller.error(new DOMException("Aborted", "AbortError")),
-            );
+              cut = () => controller.error(new TypeError("Failed to fetch"));
+              init?.signal?.addEventListener("abort", () =>
+                controller.error(new DOMException("Aborted", "AbortError")),
+              );
+            },
+          });
+          return new Response(body, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        }
+        if (init?.method === "DELETE") {
+          return Response.json({ conversations: [] });
+        }
+        return Response.json({
+          conversation: {
+            id: CHAT_ID,
+            title: "Redesign",
+            messages: [
+              // An earlier run's card this tab never showed: not this stop's.
+              {
+                id: "old-1",
+                role: "assistant",
+                text: "Your storefront redesign is ready. You can review it here.",
+                runId: "66666666-6666-4666-8666-666666666666",
+                artifacts: [
+                  {
+                    ...REVAMP_CARD,
+                    revampId: "77777777-7777-4777-8777-777777777777",
+                    status: "ready",
+                  },
+                ],
+              },
+              { id: "m-1", role: "user", text: "Redesign my store" },
+              ...(options.saved() ? [keptMessage] : []),
+            ],
           },
         });
-        return new Response(body, {
-          status: 200,
-          headers: { "Content-Type": "text/event-stream" },
-        });
-      }
-      if (init?.method === "DELETE") {
-        return Response.json({ conversations: [] });
-      }
-      return Response.json({
-        conversation: {
-          id: CHAT_ID,
-          title: "Redesign",
-          messages: [
-            // An earlier run's card this tab never showed: not this stop's.
-            {
-              id: "old-1",
-              role: "assistant",
-              text: "Your storefront redesign is ready. You can review it here.",
-              runId: "66666666-6666-4666-8666-666666666666",
-              artifacts: [
-                {
-                  ...REVAMP_CARD,
-                  revampId: "77777777-7777-4777-8777-777777777777",
-                  status: "ready",
-                },
-              ],
-            },
-            { id: "m-1", role: "user", text: "Redesign my store" },
-            ...(options.saved() ? [keptMessage] : []),
-          ],
-        },
-      });
-    });
+      },
+    );
+    return Object.assign(fetch, { cut: () => cut?.() });
   }
   /** The chat's reads (a delete names the same address). */
-  const detailCalls = (fetch: ReturnType<typeof stoppedReplyFetch>) =>
+  const detailCalls = (fetch: ReturnType<typeof cutOffReplyFetch>) =>
     fetch.mock.calls.filter(
       ([input, init]) =>
         String(input) === `/api/mink/conversations/${CHAT_ID}` &&
         init?.method !== "DELETE",
     ).length;
+  const stopCalls = (fetch: ReturnType<typeof cutOffReplyFetch>) =>
+    fetch.mock.calls.filter(([input]) => String(input).endsWith("/stop"))
+      .length;
 
-  async function stopAfterTool(fetch: ReturnType<typeof stoppedReplyFetch>) {
+  async function replyAfterTool(fetch: ReturnType<typeof cutOffReplyFetch>) {
     vi.stubGlobal("fetch", fetch);
     const hook = renderHook(() => useMinkAi({ enabled: true }));
     await waitFor(() =>
@@ -1594,7 +1760,12 @@ describe("★★ useMinkAi: a reply stopped after it started a redesign keeps it
         hook.result.current.steps.some((step) => step.state === "completed"),
       ).toBe(true),
     );
-    act(() => hook.result.current.cancel());
+    return hook;
+  }
+
+  async function cutOffAfterTool(fetch: ReturnType<typeof cutOffReplyFetch>) {
+    const hook = await replyAfterTool(fetch);
+    act(() => fetch.cut());
     await waitFor(() => expect(hook.result.current.isReplying).toBe(false));
     return hook;
   }
@@ -1602,13 +1773,15 @@ describe("★★ useMinkAi: a reply stopped after it started a redesign keeps it
   it("★★ asks for the chat again until the card is saved, and shows it after the question", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let saved = false;
-    const fetch = stoppedReplyFetch({ saved: () => saved });
-    const { result } = await stopAfterTool(fetch);
-    // The stop sent nothing more: no card yet, and no error either.
+    const fetch = cutOffReplyFetch({ saved: () => saved });
+    const { result } = await cutOffAfterTool(fetch);
+    // The connection dropped with no answer: no card yet, and the failure is
+    // said (Retry is offered) while the card is asked for.
     expect(result.current.messages.map((m) => m.text)).toEqual([
       "Redesign my store",
     ]);
-    expect(result.current.error).toBeNull();
+    expect(result.current.error?.code).toBe("mink_failed");
+    expect(stopCalls(fetch)).toBe(0);
 
     // Asked once before the server recorded the stop: nothing changes.
     await act(async () => {
@@ -1639,8 +1812,8 @@ describe("★★ useMinkAi: a reply stopped after it started a redesign keeps it
   it("★ puts the card after the question it answers, even when the merchant asked something since", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let saved = false;
-    const fetch = stoppedReplyFetch({ saved: () => saved });
-    const { result } = await stopAfterTool(fetch);
+    const fetch = cutOffReplyFetch({ saved: () => saved });
+    const { result } = await cutOffAfterTool(fetch);
     act(() => {
       result.current.send("How many orders today?");
     });
@@ -1660,8 +1833,8 @@ describe("★★ useMinkAi: a reply stopped after it started a redesign keeps it
 
   it("★ never shows the card twice when the chat was opened again meanwhile", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const fetch = stoppedReplyFetch({ saved: () => true });
-    const { result } = await stopAfterTool(fetch);
+    const fetch = cutOffReplyFetch({ saved: () => true });
+    const { result } = await cutOffAfterTool(fetch);
     // Chosen again in History before the first ask: the card comes with it.
     await act(async () => {
       await result.current.loadConversation(CHAT_ID);
@@ -1682,14 +1855,14 @@ describe("★★ useMinkAi: a reply stopped after it started a redesign keeps it
     ]);
   });
 
-  it("asks nothing after a stop that started no redesign, or once the chat is left", async () => {
+  it("asks nothing after a reply that started no redesign, or once the chat is left", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     // Reading the store's context starts nothing.
-    const read = stoppedReplyFetch({
+    const read = cutOffReplyFetch({
       tool: "get_storefront_revamp_context",
       saved: () => true,
     });
-    const first = await stopAfterTool(read);
+    const first = await cutOffAfterTool(read);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(150_000);
     });
@@ -1699,8 +1872,8 @@ describe("★★ useMinkAi: a reply stopped after it started a redesign keeps it
     // A new tab: it restores no chat of its own.
     window.sessionStorage.clear();
 
-    const left = stoppedReplyFetch({ saved: () => true });
-    const second = await stopAfterTool(left);
+    const left = cutOffReplyFetch({ saved: () => true });
+    const second = await cutOffAfterTool(left);
     act(() => second.result.current.startNewChat());
     await act(async () => {
       await vi.advanceTimersByTimeAsync(150_000);
@@ -1711,8 +1884,8 @@ describe("★★ useMinkAi: a reply stopped after it started a redesign keeps it
     window.sessionStorage.clear();
 
     // Deleting the chat leaves it too.
-    const deleted = stoppedReplyFetch({ saved: () => true });
-    const third = await stopAfterTool(deleted);
+    const deleted = cutOffReplyFetch({ saved: () => true });
+    const third = await cutOffAfterTool(deleted);
     await act(async () => {
       await third.result.current.deleteConversation(CHAT_ID);
     });
@@ -1720,5 +1893,1586 @@ describe("★★ useMinkAi: a reply stopped after it started a redesign keeps it
       await vi.advanceTimersByTimeAsync(150_000);
     });
     expect(detailCalls(deleted)).toBe(0);
+  });
+
+  it("★★ never asks for a card after a stop the server confirmed: that run started nothing", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // A confirmed stop won before the run's first side effect, so whatever
+    // redesign tool it had called, no redesign exists to keep.
+    const fetch = cutOffReplyFetch({ saved: () => true, stop: "stopped" });
+    const { result } = await replyAfterTool(fetch);
+    await act(async () => {
+      await expect(result.current.cancel()).resolves.toEqual({
+        outcome: "stopped",
+      });
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.error).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150_000);
+    });
+    expect(stopCalls(fetch)).toBe(1);
+    expect(detailCalls(fetch)).toBe(0);
+    expect(result.current.messages.map((m) => m.text)).toEqual([
+      "Redesign my store",
+    ]);
+  });
+
+  it("★ a reply whose Stop was refused, and which then broke, still brings its card in", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetch = cutOffReplyFetch({ saved: () => true, stop: "acted" });
+    const { result } = await replyAfterTool(fetch);
+    await act(async () => {
+      await expect(result.current.cancel()).resolves.toEqual({
+        outcome: "acted",
+      });
+    });
+    // Refused: the reply is read on.
+    expect(result.current.isReplying).toBe(true);
+    expect(result.current.stopRefused).toBe(true);
+    act(() => fetch.cut());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.stopRefused).toBe(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+    expect(result.current.messages[1]).toMatchObject({
+      runId: RUN_ID,
+      artifacts: [REVAMP_CARD],
+    });
+  });
+});
+
+describe("★★ useMinkAi: Stop asks the server before it lets go (25 Oct 2026)", () => {
+  afterEach(() => {
+    window.sessionStorage.clear();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const STOP_RUN_ID = "88888888-8888-4888-8888-888888888888";
+  const STOP_URL = `/api/mink/runs/${STOP_RUN_ID}/stop`;
+  const encoder = new TextEncoder();
+
+  type Feed = { emit: (event: string, data: object) => void; close(): void };
+
+  /**
+   * Each reply's stream is fed by the test, and errors when its request is
+   * aborted, as a browser's does. A stop request answers `stop`. With
+   * `holdStream`, the first stream request gets no answer until
+   * `releaseStream()`.
+   */
+  function stopHarness(
+    stop: (attempt: number, init?: RequestInit) => Promise<Response> | Response,
+    options: { holdStream?: boolean } = {},
+  ) {
+    const feeds: Feed[] = [];
+    let attempts = 0;
+    let releaseStream: () => void = () => {};
+    const held = options.holdStream
+      ? new Promise<void>((resolve) => {
+          releaseStream = resolve;
+        })
+      : null;
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/mink/conversations")
+          return Response.json({ conversations: [] });
+        if (url === STOP_URL) {
+          attempts += 1;
+          return stop(attempts, init);
+        }
+        if (url === "/api/mink/stream") {
+          if (held && feeds.length === 0) await held;
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              feeds.push({
+                emit: (event, data) =>
+                  controller.enqueue(
+                    encoder.encode(
+                      `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+                    ),
+                  ),
+                close: () => controller.close(),
+              });
+              init?.signal?.addEventListener("abort", () =>
+                controller.error(new DOMException("Aborted", "AbortError")),
+              );
+            },
+          });
+          return new Response(body, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        }
+        return new Response(null, { status: 404 });
+      },
+    );
+    const stopRequests = () =>
+      fetch.mock.calls.filter(([input]) => String(input) === STOP_URL);
+    const streamRequest = () =>
+      fetch.mock.calls.find(([input]) => String(input) === "/api/mink/stream");
+    return {
+      fetch,
+      feeds,
+      stopRequests,
+      streamRequest,
+      releaseStream: () => releaseStream(),
+    };
+  }
+
+  /** A reply in progress; its run named unless `runId: false`. */
+  async function replying(
+    harness: ReturnType<typeof stopHarness>,
+    options: { runId?: boolean } = {},
+  ) {
+    vi.stubGlobal("fetch", harness.fetch);
+    const hook = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() =>
+      expect(hook.result.current.isHistoryLoading).toBe(false),
+    );
+    act(() => {
+      hook.result.current.send("Redesign my store");
+    });
+    await waitFor(() => expect(harness.feeds).toHaveLength(1));
+    if (options.runId !== false)
+      act(() =>
+        harness.feeds[0]?.emit("status", {
+          conversationId: CHAT_ID,
+          runId: STOP_RUN_ID,
+        }),
+      );
+    return hook;
+  }
+
+  function answer(harness: ReturnType<typeof stopHarness>) {
+    act(() => {
+      harness.feeds[0]?.emit("message", {
+        role: "assistant",
+        text: "Your storefront redesign has started.",
+        runId: STOP_RUN_ID,
+        artifacts: [REVAMP_CARD],
+      });
+      harness.feeds[0]?.emit("done", {});
+      harness.feeds[0]?.close();
+    });
+  }
+
+  it("★★ lets go only when the server says stopped: no error, no Retry, the question stays", async () => {
+    const h = stopHarness(() => Response.json({ outcome: "stopped" }));
+    const { result } = await replying(h);
+    let stop!: Promise<MinkStopResult>;
+    act(() => {
+      stop = result.current.cancel();
+    });
+    expect(result.current.statusText).toBe(MINK_STOPPING_STATUS);
+    await act(async () => {
+      await expect(stop).resolves.toEqual({ outcome: "stopped" });
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.error).toBeNull();
+    expect(result.current.stopRefused).toBe(false);
+    expect(result.current.statusText).toBeNull();
+    expect(result.current.messages.map((m) => m.text)).toEqual([
+      "Redesign my store",
+    ]);
+    expect(h.stopRequests()).toHaveLength(1);
+    expect(h.stopRequests()[0]?.[1]).toMatchObject({
+      method: "POST",
+      body: "{}",
+      cache: "no-store",
+    });
+  });
+
+  it("★ a stop asked before the run has an id waits for it, reading the stream meanwhile", async () => {
+    const h = stopHarness(() => Response.json({ outcome: "stopped" }));
+    const { result } = await replying(h, { runId: false });
+    let stop!: Promise<MinkStopResult>;
+    act(() => {
+      stop = result.current.cancel();
+    });
+    // Nothing to ask about yet, and nothing let go: the stream is read on,
+    // under the stop's own status line.
+    act(() => h.feeds[0]?.emit("delta", { text: "Let me look" }));
+    await waitFor(() =>
+      expect(result.current.streamingText).toBe("Let me look"),
+    );
+    expect(result.current.statusText).toBe(MINK_STOPPING_STATUS);
+    expect(result.current.isReplying).toBe(true);
+    expect(h.stopRequests()).toHaveLength(0);
+    // The server sends the run's id first; the stop is asked the moment it lands.
+    act(() =>
+      h.feeds[0]?.emit("status", {
+        conversationId: CHAT_ID,
+        runId: STOP_RUN_ID,
+      }),
+    );
+    await act(async () => {
+      await expect(stop).resolves.toEqual({ outcome: "stopped" });
+    });
+    expect(h.stopRequests()).toHaveLength(1);
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.error).toBeNull();
+  });
+
+  it("★★ acted: the reply is read to its end, its answer and card land, and the status line says why", async () => {
+    const h = stopHarness(() => Response.json({ outcome: "acted" }));
+    const { result } = await replying(h);
+    act(() =>
+      h.feeds[0]?.emit("tool", {
+        state: "running",
+        name: "start_storefront_revamp",
+        sequence: 1,
+      }),
+    );
+    await act(async () => {
+      await expect(result.current.cancel()).resolves.toEqual({
+        outcome: "acted",
+      });
+    });
+    expect(result.current.isReplying).toBe(true);
+    expect(result.current.stopRefused).toBe(true);
+    // The owner's words (25 Oct 2026).
+    expect(MINK_STOP_ACTED_STATUS).toBe(
+      "Mink has already started this, so it will finish.",
+    );
+    expect(result.current.statusText).toBe(MINK_STOP_ACTED_STATUS);
+    // ★ The stream's own status ("Writing…") does not overwrite the reason.
+    act(() => h.feeds[0]?.emit("delta", { text: "Your redesign" }));
+    await waitFor(() =>
+      expect(result.current.streamingText).toBe("Your redesign"),
+    );
+    expect(result.current.statusText).toBe(MINK_STOP_ACTED_STATUS);
+    answer(h);
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.error).toBeNull();
+    expect(result.current.stopRefused).toBe(false);
+    expect(result.current.statusText).toBeNull();
+    expect(result.current.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      runId: STOP_RUN_ID,
+      artifacts: [REVAMP_CARD],
+    });
+    expect(h.stopRequests()).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      "the run is over (404)",
+      () => new Response(null, { status: 404 }),
+      "finished",
+    ],
+    [
+      "the run had finished",
+      () => Response.json({ outcome: "finished", status: "succeeded" }),
+      "finished",
+    ],
+    ["a server error", () => new Response(null, { status: 500 }), "unknown"],
+    [
+      "an answer it cannot read",
+      () => Response.json({ outcome: "STOPPED" }),
+      "unknown",
+    ],
+  ] as const)(
+    "%s: the reply is read to its end under Finishing…",
+    async (_case, stop, answered) => {
+      const h = stopHarness(stop);
+      const { result } = await replying(h);
+      let got: MinkStopResult | null = null;
+      act(() => {
+        void result.current.cancel().then((value) => {
+          got = value;
+        });
+      });
+      await waitFor(() => expect(result.current.stopRefused).toBe(true));
+      expect(result.current.isReplying).toBe(true);
+      expect(result.current.statusText).toBe(MINK_STOP_FINISHING_STATUS);
+      expect(MINK_STOP_FINISHING_STATUS).toBe("Finishing…");
+      // ★ `finished` is the server's last word. `unknown` is not: the caller
+      //   hears how the reply ended instead.
+      if (answered === "finished")
+        await waitFor(() => expect(got).toMatchObject({ outcome: "finished" }));
+      else expect(got).toBeNull();
+      answer(h);
+      await waitFor(() => expect(result.current.isReplying).toBe(false));
+      expect(result.current.messages.at(-1)?.artifacts).toEqual([REVAMP_CARD]);
+      await waitFor(() => expect(got).toMatchObject({ outcome: "finished" }));
+    },
+  );
+
+  it("★ a network failure is asked once more; two leave the reply running", async () => {
+    const h = stopHarness(() => {
+      throw new TypeError("Failed to fetch");
+    });
+    const { result } = await replying(h);
+    let got: MinkStopResult | null = null;
+    act(() => {
+      void result.current.cancel().then((value) => {
+        got = value;
+      });
+    });
+    await waitFor(() => expect(result.current.stopRefused).toBe(true));
+    expect(h.stopRequests()).toHaveLength(2);
+    expect(result.current.isReplying).toBe(true);
+    expect(result.current.statusText).toBe(MINK_STOP_FINISHING_STATUS);
+    // Not known yet: the reply's end decides.
+    expect(got).toBeNull();
+    answer(h);
+    await waitFor(() => expect(got).toEqual({ outcome: "finished" }));
+    expect(h.stopRequests()).toHaveLength(2);
+  });
+
+  it("a network failure and then an answer: the answer counts", async () => {
+    const h = stopHarness((attempt) => {
+      if (attempt === 1) throw new TypeError("Failed to fetch");
+      return Response.json({ outcome: "stopped" });
+    });
+    const { result } = await replying(h);
+    await act(async () => {
+      await expect(result.current.cancel()).resolves.toEqual({
+        outcome: "stopped",
+      });
+    });
+    expect(h.stopRequests()).toHaveLength(2);
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+  });
+
+  it("★ a stop that gets no answer in time counts as unknown, and is not asked again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const h = stopHarness(
+      (_attempt, init) =>
+        new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }),
+    );
+    const { result } = await replying(h);
+    let got: MinkStopResult | null = null;
+    act(() => {
+      void result.current.cancel().then((value) => {
+        got = value;
+      });
+    });
+    await waitFor(() => expect(h.stopRequests()).toHaveLength(1));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MINK_STOP_REQUEST_TIMEOUT_MS);
+    });
+    await waitFor(() =>
+      expect(result.current.statusText).toBe(MINK_STOP_FINISHING_STATUS),
+    );
+    expect(result.current.isReplying).toBe(true);
+    expect(result.current.stopRefused).toBe(true);
+    expect(got).toBeNull();
+    answer(h);
+    await waitFor(() => expect(got).toEqual({ outcome: "finished" }));
+    expect(h.stopRequests()).toHaveLength(1);
+  });
+
+  it("no run id within the wait: nothing is asked, and the reply is read on", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const h = stopHarness(() => Response.json({ outcome: "stopped" }));
+    const { result } = await replying(h, { runId: false });
+    let got: MinkStopResult | null = null;
+    act(() => {
+      void result.current.cancel().then((value) => {
+        got = value;
+      });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MINK_STOP_RUN_ID_WAIT_MS);
+    });
+    await waitFor(() => expect(result.current.stopRefused).toBe(true));
+    expect(h.stopRequests()).toHaveLength(0);
+    expect(result.current.isReplying).toBe(true);
+    expect(got).toBeNull();
+    answer(h);
+    await waitFor(() => expect(got).toEqual({ outcome: "finished" }));
+    expect(h.stopRequests()).toHaveLength(0);
+  });
+
+  it("★ Stop twice (the voice loop and the button together) asks once", async () => {
+    let respond: ((response: Response) => void) | null = null;
+    const h = stopHarness(
+      () =>
+        new Promise<Response>((resolve) => {
+          respond = resolve;
+        }),
+    );
+    const { result } = await replying(h);
+    let first!: Promise<MinkStopResult>;
+    let second!: Promise<MinkStopResult>;
+    act(() => {
+      first = result.current.cancel();
+      second = result.current.cancel();
+    });
+    expect(second).toBe(first);
+    await waitFor(() => expect(h.stopRequests()).toHaveLength(1));
+    await act(async () => {
+      respond?.(Response.json({ outcome: "stopped" }));
+      await expect(first).resolves.toEqual({ outcome: "stopped" });
+    });
+    // Pressed again after it was answered: the same answer, not a new ask.
+    await act(async () => {
+      await expect(result.current.cancel()).resolves.toMatchObject({
+        outcome: expect.any(String),
+      });
+    });
+    expect(h.stopRequests()).toHaveLength(1);
+  });
+
+  it("★ the stream's own `stopped` reads like an abort: no error, no answer, no Retry", async () => {
+    const h = stopHarness(() => Response.json({ outcome: "stopped" }));
+    const { result } = await replying(h);
+    act(() => {
+      h.feeds[0]?.emit("stopped", { runId: STOP_RUN_ID });
+      h.feeds[0]?.emit("done", {});
+      h.feeds[0]?.close();
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.error).toBeNull();
+    expect(result.current.messages.map((m) => m.text)).toEqual([
+      "Redesign my store",
+    ]);
+  });
+
+  it("★ a stop whose answer was lost still counts when the run said it stopped", async () => {
+    let respond: ((response: Response) => void) | null = null;
+    const h = stopHarness(
+      () =>
+        new Promise<Response>((resolve) => {
+          respond = resolve;
+        }),
+    );
+    const { result } = await replying(h);
+    let stop!: Promise<MinkStopResult>;
+    act(() => {
+      stop = result.current.cancel();
+    });
+    await waitFor(() => expect(h.stopRequests()).toHaveLength(1));
+    act(() => {
+      h.feeds[0]?.emit("stopped", { runId: STOP_RUN_ID });
+      h.feeds[0]?.close();
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    await act(async () => {
+      respond?.(new Response(null, { status: 502 }));
+      await expect(stop).resolves.toEqual({ outcome: "stopped" });
+    });
+    expect(result.current.error).toBeNull();
+    expect(result.current.stopRefused).toBe(false);
+  });
+
+  it.each([
+    ["no answer in time", "the browser gives up first"],
+    ["no answer in time", "the run stops first"],
+    ["a 503", "the browser gives up first"],
+    ["a 503", "the run stops first"],
+  ] as const)(
+    "★★ %s, and the server stopped the run all the same (%s): the stop is `stopped`, never left at unknown",
+    async (failure, order) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      let fail: () => Promise<void> = async () => {};
+      const h = stopHarness(
+        (_attempt, init) =>
+          new Promise<Response>((resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError")),
+            );
+            fail =
+              failure === "a 503"
+                ? async () => resolve(new Response(null, { status: 503 }))
+                : async () => {
+                    await vi.advanceTimersByTimeAsync(
+                      MINK_STOP_REQUEST_TIMEOUT_MS,
+                    );
+                  };
+          }),
+      );
+      const { result } = await replying(h);
+      let got: MinkStopResult | null = null;
+      act(() => {
+        void result.current.cancel().then((value) => {
+          got = value;
+        });
+      });
+      await waitFor(() => expect(h.stopRequests()).toHaveLength(1));
+      // The run's own word, late: it stopped, with no answer.
+      const runStops = () =>
+        act(() => {
+          h.feeds[0]?.emit("stopped", { runId: STOP_RUN_ID });
+          h.feeds[0]?.emit("done", {});
+          h.feeds[0]?.close();
+        });
+      if (order === "the browser gives up first") {
+        await act(async () => {
+          await fail();
+        });
+        await waitFor(() => expect(result.current.stopRefused).toBe(true));
+        expect(result.current.statusText).toBe(MINK_STOP_FINISHING_STATUS);
+        expect(got).toBeNull();
+        runStops();
+      } else {
+        runStops();
+        await waitFor(() => expect(result.current.isReplying).toBe(false));
+        await act(async () => {
+          await fail();
+        });
+      }
+      // ★ The voice loop reads this to ask the stopped question again.
+      await waitFor(() => expect(got).toEqual({ outcome: "stopped" }));
+      expect(result.current.isReplying).toBe(false);
+      expect(result.current.error).toBeNull();
+      expect(result.current.stopRefused).toBe(false);
+      expect(result.current.messages.map((m) => m.text)).toEqual([
+        "Redesign my store",
+      ]);
+      expect(h.stopRequests()).toHaveLength(1);
+    },
+  );
+
+  it("★★ Stop while the request is still on its way never lets go: it asks once the run is named", async () => {
+    // From the moment POST /api/mink/stream leaves, the run may exist on the
+    // server before any answer reaches the browser: letting go here and
+    // calling it stopped is the 25 Oct incident again.
+    const h = stopHarness(() => Response.json({ outcome: "acted" }), {
+      holdStream: true,
+    });
+    vi.stubGlobal("fetch", h.fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+    act(() => {
+      result.current.send("Redesign my store");
+    });
+    await waitFor(() => expect(h.streamRequest()).toBeDefined());
+    let stop!: Promise<MinkStopResult>;
+    act(() => {
+      stop = result.current.cancel();
+    });
+    expect(h.streamRequest()?.[1]?.signal?.aborted).toBe(false);
+    expect(result.current.statusText).toBe(MINK_STOPPING_STATUS);
+    act(() => h.releaseStream());
+    await waitFor(() => expect(h.feeds).toHaveLength(1));
+    act(() =>
+      h.feeds[0]?.emit("status", {
+        conversationId: CHAT_ID,
+        runId: STOP_RUN_ID,
+      }),
+    );
+    await act(async () => {
+      await expect(stop).resolves.toEqual({ outcome: "acted" });
+    });
+    expect(h.stopRequests()).toHaveLength(1);
+    expect(h.streamRequest()?.[1]?.signal?.aborted).toBe(false);
+    expect(result.current.isReplying).toBe(true);
+    expect(result.current.statusText).toBe(MINK_STOP_ACTED_STATUS);
+  });
+
+  it("★ an answer to the stop of a reply that has ended never marks the next reply refused", async () => {
+    let respond: ((response: Response) => void) | null = null;
+    const h = stopHarness(
+      () =>
+        new Promise<Response>((resolve) => {
+          respond = resolve;
+        }),
+    );
+    const { result } = await replying(h);
+    let stop!: Promise<MinkStopResult>;
+    act(() => {
+      stop = result.current.cancel();
+    });
+    await waitFor(() => expect(h.stopRequests()).toHaveLength(1));
+    // The reply finishes before the stop is answered, and the merchant asks
+    // the next question at once.
+    answer(h);
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    act(() => {
+      result.current.send("How many orders today?");
+    });
+    await waitFor(() => expect(h.feeds).toHaveLength(2));
+    act(() =>
+      h.feeds[1]?.emit("status", {
+        conversationId: CHAT_ID,
+        runId: "99999999-9999-4999-8999-999999999999",
+      }),
+    );
+    await act(async () => {
+      respond?.(Response.json({ outcome: "finished", status: "succeeded" }));
+      await expect(stop).resolves.toMatchObject({ outcome: "finished" });
+    });
+    expect(result.current.isReplying).toBe(true);
+    expect(result.current.stopRefused).toBe(false);
+    expect(result.current.statusText).toBe("Thinking…");
+  });
+
+  it("★★ New chat only stops reading: it never asks the server to stop the run (owner's decision)", async () => {
+    const h = stopHarness(() => Response.json({ outcome: "stopped" }));
+    const { result } = await replying(h);
+    act(() => result.current.startNewChat());
+    expect(result.current.isReplying).toBe(false);
+    expect(result.current.messages).toEqual([]);
+    expect(h.streamRequest()?.[1]?.signal?.aborted).toBe(true);
+    // Nothing of this tab's is running now, so there is nothing to stop.
+    await act(async () => {
+      await expect(result.current.cancel()).resolves.toEqual({
+        outcome: "finished",
+      });
+    });
+    expect(h.stopRequests()).toHaveLength(0);
+  });
+
+  it("leaving the dashboard only stops reading too", async () => {
+    const h = stopHarness(() => Response.json({ outcome: "stopped" }));
+    const hook = await replying(h);
+    hook.unmount();
+    expect(h.streamRequest()?.[1]?.signal?.aborted).toBe(true);
+    expect(h.stopRequests()).toHaveLength(0);
+  });
+});
+
+describe("★★ useMinkAi: History pages, search and earlier messages (chat history, 26 Oct 2026)", () => {
+  const LIST = "/api/mink/conversations";
+  const SEARCH = "/api/mink/conversations/search";
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** Chats n.. newest first, a minute apart. */
+  function rows(from: number, count: number) {
+    return Array.from({ length: count }, (_, index) => {
+      const n = from + index;
+      return {
+        id: `aaaaaaaa-aaaa-4aaa-8aaa-${String(n).padStart(12, "0")}`,
+        title: `Chat ${n}`,
+        lastMessageAt: new Date(
+          Date.UTC(2026, 9, 26, 12) - n * 60_000,
+        ).toISOString(),
+        createdAt: "2026-10-01T00:00:00.000Z",
+      };
+    });
+  }
+  const ids = (items: Array<{ id: string }>) => items.map((item) => item.id);
+  const eventStream = (text: string) => {
+    const encoder = new TextEncoder();
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(text));
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "text/event-stream" } },
+    );
+  };
+  const urls = (fetch: ReturnType<typeof vi.fn>) =>
+    fetch.mock.calls.map(([input]) => String(input));
+
+  it("★ loads the next page on request, each chat once, and stops at the last page", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST)
+        return Response.json({
+          conversations: rows(0, 30),
+          nextCursor: "c-30",
+        });
+      if (url === `${LIST}?cursor=c-30`)
+        return Response.json({
+          // Row 29 again (a tie the server resolved since): shown once.
+          conversations: [...rows(29, 1), ...rows(30, 15)],
+          nextCursor: null,
+        });
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(30));
+    expect(result.current.hasMoreConversations).toBe(true);
+
+    await act(async () => {
+      await result.current.loadMoreConversations();
+    });
+    expect(ids(result.current.conversations)).toEqual(ids(rows(0, 45)));
+    expect(result.current.hasMoreConversations).toBe(false);
+    await act(async () => {
+      await result.current.loadMoreConversations();
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("★ R18: a next page that fails stays in the sidebar, keeps its cursor, and Try again asks for the same page", async () => {
+    let failNext = true;
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST)
+        return Response.json({
+          conversations: rows(0, 30),
+          nextCursor: "c-30",
+        });
+      if (failNext) {
+        failNext = false;
+        return Response.json({ error: "Busy" }, { status: 503 });
+      }
+      return Response.json({ conversations: rows(30, 5), nextCursor: null });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(30));
+
+    await act(async () => {
+      await result.current.loadMoreConversations();
+    });
+    expect(result.current.historyStatus).toEqual({
+      loadingMore: false,
+      error: { code: "http_503", message: "Busy" },
+      failed: "more",
+    });
+    // The welcome screen stays: no chat error, no dead Retry.
+    expect(result.current.error).toBeNull();
+    expect(result.current.hasMoreConversations).toBe(true);
+
+    await act(async () => {
+      await result.current.loadMoreConversations();
+    });
+    expect(urls(fetch).slice(1)).toEqual([
+      `${LIST}?cursor=c-30`,
+      `${LIST}?cursor=c-30`,
+    ]);
+    expect(result.current.conversations).toHaveLength(35);
+    expect(result.current.historyStatus.failed).toBeNull();
+  });
+
+  it("★ a next page that lands after a refresh is dropped", async () => {
+    let releasePage!: () => void;
+    const pageGate = new Promise<void>((resolve) => {
+      releasePage = resolve;
+    });
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST)
+        return Response.json({
+          conversations: rows(0, 30),
+          nextCursor: "c-30",
+        });
+      await pageGate;
+      return Response.json({ conversations: rows(30, 5), nextCursor: null });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(30));
+
+    let page!: Promise<void>;
+    act(() => {
+      page = result.current.loadMoreConversations();
+    });
+    await act(async () => {
+      await result.current.refreshConversations();
+    });
+    await act(async () => {
+      releasePage();
+      await page;
+    });
+    expect(result.current.conversations).toHaveLength(30);
+    expect(result.current.hasMoreConversations).toBe(true);
+  });
+
+  it("★ R13: the refresh after an answer keeps every chat scrolled in, and continues below them", async () => {
+    let listed = 0;
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST) {
+        listed += 1;
+        return Response.json(
+          listed === 1
+            ? { conversations: rows(0, 30), nextCursor: "c-30" }
+            : {
+                conversations: [
+                  summary(CHAT_ID, "Today's orders"),
+                  ...rows(0, 29),
+                ],
+                nextCursor: "c-29",
+              },
+        );
+      }
+      if (url === `${LIST}?cursor=c-30`)
+        return Response.json({
+          conversations: rows(30, 15),
+          nextCursor: "c-45",
+        });
+      if (url === `${LIST}?cursor=c-45`)
+        return Response.json({ conversations: rows(45, 3), nextCursor: null });
+      return eventStream(
+        `event: status\ndata: {"conversationId":"${CHAT_ID}"}\n\n` +
+          'event: title\ndata: {"conversationId":"' +
+          CHAT_ID +
+          '","title":"Today\'s orders"}\n\n' +
+          'event: message\ndata: {"role":"assistant","text":"Twelve.","artifacts":[]}\n\n',
+      );
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(30));
+    await act(async () => {
+      await result.current.loadMoreConversations();
+    });
+    expect(result.current.conversations).toHaveLength(45);
+
+    act(() => {
+      result.current.send("How many orders today?");
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    await waitFor(() => expect(listed).toBe(2));
+    // The new chat on top and all 45 loaded before it: nothing dropped.
+    expect(ids(result.current.conversations)).toEqual([
+      CHAT_ID,
+      ...ids(rows(0, 45)),
+    ]);
+    await act(async () => {
+      await result.current.loadMoreConversations();
+    });
+    expect(urls(fetch).at(-1)).toBe(`${LIST}?cursor=c-45`);
+    expect(result.current.conversations).toHaveLength(49);
+  });
+
+  it("★ R12: the history actions keep their identities through a refresh, a page, a search and a new chat", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST)
+        return Response.json({
+          conversations: rows(0, 30),
+          nextCursor: "c-30",
+        });
+      if (url.startsWith(`${LIST}?cursor=`))
+        return Response.json({ conversations: rows(30, 2), nextCursor: null });
+      if (url === SEARCH)
+        return Response.json({ conversations: rows(3, 1), nextCursor: null });
+      return eventStream(
+        `event: status\ndata: {"conversationId":"${CHAT_ID}"}\n\n` +
+          'event: message\ndata: {"role":"assistant","text":"Hi.","artifacts":[]}\n\n',
+      );
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(30));
+    const pick = () => ({
+      refreshConversations: result.current.refreshConversations,
+      loadMoreConversations: result.current.loadMoreConversations,
+      searchConversations: result.current.searchConversations,
+      loadMoreSearchResults: result.current.loadMoreSearchResults,
+      loadEarlierMessages: result.current.loadEarlierMessages,
+      setHistorySearchText: result.current.setHistorySearchText,
+      clearRevealTarget: result.current.clearRevealTarget,
+      loadConversation: result.current.loadConversation,
+      deleteConversation: result.current.deleteConversation,
+    });
+    const before = pick();
+
+    await act(async () => {
+      await result.current.refreshConversations();
+      await result.current.loadMoreConversations();
+    });
+    act(() => result.current.setHistorySearchText("chat"));
+    await act(async () => {
+      await result.current.searchConversations();
+    });
+    act(() => {
+      result.current.send("Hello");
+    });
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.conversations.length).toBeGreaterThan(30);
+
+    const after = pick();
+    for (const [name, fn] of Object.entries(before)) {
+      expect(after[name as keyof typeof after], name).toBe(fn);
+    }
+  });
+
+  it("★ R12: a reply streaming while History changes length under it still finishes", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const encoder = new TextEncoder();
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST)
+        return Response.json({
+          conversations: rows(0, 30),
+          nextCursor: "c-30",
+        });
+      if (url.startsWith(`${LIST}?cursor=`))
+        return Response.json({ conversations: rows(30, 15), nextCursor: null });
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `event: status\ndata: {"conversationId":"${CHAT_ID}"}\n\n`,
+              ),
+            );
+            await gate;
+            controller.enqueue(
+              encoder.encode(
+                'event: message\ndata: {"role":"assistant","text":"Twelve orders.","artifacts":[]}\n\n',
+              ),
+            );
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(30));
+
+    act(() => {
+      result.current.send("How many orders?");
+    });
+    await waitFor(() =>
+      expect(result.current.activeConversationId).toBe(CHAT_ID),
+    );
+    await act(async () => {
+      await result.current.loadMoreConversations();
+    });
+    expect(result.current.conversations).toHaveLength(46);
+
+    act(() => release());
+    await waitFor(() => expect(result.current.isReplying).toBe(false));
+    expect(result.current.messages.at(-1)?.text).toBe("Twelve orders.");
+  });
+
+  it("★ R10: searches with a POST whose body carries the words, never the URL, and reads snippets", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST) return Response.json({ conversations: rows(0, 2) });
+      if (url === SEARCH)
+        return Response.json({
+          conversations: [
+            {
+              ...summary(OTHER_ID, "Priya's order"),
+              hasRedesignCard: false,
+              snippet: "Call «Priya» on «9876543210»",
+              matchMessageId: "message-7",
+            },
+          ],
+          nextCursor: null,
+        });
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(2));
+
+    act(() => result.current.setHistorySearchText("  Priya   9876543210 "));
+    await act(async () => {
+      await result.current.searchConversations();
+    });
+
+    const [, init] = fetch.mock.calls.at(-1) as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(fetch.mock.calls.at(-1)?.[0]).toBe(SEARCH);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ q: "Priya 9876543210" });
+    for (const url of urls(fetch)) {
+      expect(url).not.toMatch(/priya|9876543210/i);
+    }
+    expect(result.current.historySearch).toMatchObject({
+      query: "Priya 9876543210",
+      words: ["priya", "9876543210"],
+      loading: false,
+      results: [
+        {
+          id: OTHER_ID,
+          snippet: "Call «Priya» on «9876543210»",
+          matchMessageId: "message-7",
+        },
+      ],
+    });
+    // The plain list is untouched by a search.
+    expect(result.current.conversations).toHaveLength(2);
+  });
+
+  it("★ R15: text with no searchable word asks nothing and leaves the hint's state", async () => {
+    const fetch = vi.fn(async () => Response.json({ conversations: [] }));
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    for (const text of ["a b", "??", "🙂"]) {
+      act(() => result.current.setHistorySearchText(text));
+      await act(async () => {
+        await result.current.searchConversations();
+      });
+      expect(result.current.historySearch).toMatchObject({
+        words: [],
+        results: [],
+        loading: false,
+      });
+    }
+    expect(urls(fetch)).not.toContain(SEARCH);
+  });
+
+  it("★ the same words again ask nothing; clearing them is back to the list at once", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === SEARCH
+        ? Response.json({ conversations: rows(1, 1), nextCursor: null })
+        : Response.json({ conversations: rows(0, 3) }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(3));
+
+    act(() => result.current.setHistorySearchText("coupon"));
+    await act(async () => {
+      await result.current.searchConversations();
+    });
+    // A remounted sidebar runs its debounce again with the same words.
+    await act(async () => {
+      await result.current.searchConversations();
+    });
+    expect(urls(fetch).filter((url) => url === SEARCH)).toHaveLength(1);
+
+    act(() => result.current.setHistorySearchText(""));
+    expect(result.current.historySearch).toBeNull();
+    expect(result.current.historySearchText).toBe("");
+  });
+
+  it("★ an answer for words no longer searched is ignored", async () => {
+    let releaseFirst!: (response: Response) => void;
+    const first = new Promise<Response>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) !== SEARCH)
+          return Response.json({ conversations: [] });
+        const { q } = JSON.parse(String(init?.body)) as { q: string };
+        if (q === "old words") return first;
+        return Response.json({ conversations: rows(7, 1), nextCursor: null });
+      },
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    act(() => result.current.setHistorySearchText("old words"));
+    let older!: Promise<void>;
+    act(() => {
+      older = result.current.searchConversations();
+    });
+    act(() => result.current.setHistorySearchText("new words"));
+    await act(async () => {
+      await result.current.searchConversations();
+    });
+    await act(async () => {
+      releaseFirst(
+        Response.json({ conversations: rows(1, 1), nextCursor: null }),
+      );
+      await older;
+    });
+    expect(result.current.historySearch?.query).toBe("new words");
+    expect(ids(result.current.historySearch?.results ?? [])).toEqual(
+      ids(rows(7, 1)),
+    );
+  });
+
+  it("★ R20: asks again while the server is still busy with the last search, three times at most", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetch = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === SEARCH
+        ? Response.json(
+            {
+              error: "Still searching your chats. Try again in a moment.",
+              code: "history_search_busy",
+            },
+            { status: 409 },
+          )
+        : Response.json({ conversations: [] }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    act(() => result.current.setHistorySearchText("coupon"));
+    let search!: Promise<void>;
+    act(() => {
+      search = result.current.searchConversations();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+      await search;
+    });
+    expect(urls(fetch).filter((url) => url === SEARCH)).toHaveLength(4);
+    expect(result.current.historySearch?.error).toEqual({
+      code: "history_search_busy",
+      message: "Still searching your chats. Try again in a moment.",
+    });
+    expect(result.current.error).toBeNull();
+  });
+
+  it("★ a delete removes the chat from the list and the results without replacing either; a failure goes to the dialog only", async () => {
+    let failDelete = false;
+    const deleted = new Set<string>();
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (init?.method === "DELETE") {
+          if (!failDelete) deleted.add(url.split("/").at(-1) ?? "");
+          if (failDelete)
+            return Response.json(
+              {
+                error:
+                  "A storefront redesign from this chat is still being made.",
+                code: "conversation_has_redesign",
+              },
+              { status: 409 },
+            );
+          // The previous bundle's list, which must not replace this one.
+          return Response.json({
+            conversations: rows(90, 1),
+            nextCursor: null,
+          });
+        }
+        if (url === SEARCH)
+          return Response.json({ conversations: rows(1, 2), nextCursor: null });
+        if (url === LIST)
+          return Response.json({
+            conversations: rows(0, 30).filter((row) => !deleted.has(row.id)),
+            nextCursor: "c-30",
+          });
+        return Response.json({
+          conversations: rows(30, 10),
+          nextCursor: "c-40",
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(30));
+    await act(async () => {
+      await result.current.loadMoreConversations();
+    });
+    act(() => result.current.setHistorySearchText("chat"));
+    await act(async () => {
+      await result.current.searchConversations();
+    });
+
+    const doomed = rows(1, 1)[0].id;
+    await act(async () => {
+      await expect(result.current.deleteConversation(doomed)).resolves.toBe(
+        null,
+      );
+    });
+    expect(ids(result.current.conversations)).not.toContain(doomed);
+    // Page 1 merged in again afterwards: everything scrolled in stays.
+    await waitFor(() =>
+      expect(urls(fetch).filter((url) => url === LIST)).toHaveLength(2),
+    );
+    expect(ids(result.current.conversations)).not.toContain(doomed);
+    expect(result.current.conversations).toHaveLength(39);
+    expect(ids(result.current.historySearch?.results ?? [])).toEqual(
+      ids(rows(2, 1)),
+    );
+    expect(ids(result.current.conversations)).not.toContain(rows(90, 1)[0].id);
+    expect(result.current.hasMoreConversations).toBe(true);
+
+    failDelete = true;
+    let failure: unknown;
+    await act(async () => {
+      failure = await result.current.deleteConversation(rows(5, 1)[0].id);
+    });
+    expect(failure).toMatchObject({ code: "conversation_has_redesign" });
+    expect(result.current.error).toBeNull();
+  });
+
+  it("★ a chat that is gone when chosen leaves both lists, and says so", async () => {
+    const gone = rows(1, 1)[0].id;
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST) return Response.json({ conversations: rows(0, 3) });
+      if (url === SEARCH)
+        return Response.json({ conversations: rows(1, 1), nextCursor: null });
+      return Response.json(
+        {
+          error: "That Mink AI conversation is no longer available.",
+          code: "conversation_not_found",
+        },
+        { status: 404 },
+      );
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(3));
+    act(() => result.current.setHistorySearchText("chat"));
+    await act(async () => {
+      await result.current.searchConversations();
+    });
+
+    await act(async () => {
+      await result.current.loadConversation(gone);
+    });
+    expect(ids(result.current.conversations)).not.toContain(gone);
+    expect(result.current.historySearch?.results).toEqual([]);
+    expect(result.current.error).toMatchObject({
+      code: "conversation_not_found",
+    });
+  });
+
+  it("★ R6: opening a result 120 messages back reads two earlier pages first, renders once, and marks the match", async () => {
+    // Messages m-000 (oldest) to m-119; the match is m-010, an answer.
+    const message = (n: number) => ({
+      id: `m-${String(n).padStart(3, "0")}`,
+      role: n % 2 ? "assistant" : "user",
+      text: `Message ${n}`,
+      runId: `run-${Math.floor(n / 2)}`,
+    });
+    const range = (from: number, to: number) =>
+      Array.from({ length: to - from }, (_, index) => message(from + index));
+    const detail = (messages: unknown[], earlierCursor: string | null) =>
+      Response.json({
+        conversation: { id: CHAT_ID, title: "Long", messages, earlierCursor },
+      });
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST) return Response.json({ conversations: [] });
+      if (url.endsWith("?before=e-70")) return detail(range(20, 70), "e-20");
+      if (url.endsWith("?before=e-20")) return detail(range(0, 20), null);
+      return detail(range(70, 120), "e-70");
+    });
+    vi.stubGlobal("fetch", fetch);
+    const lengths: number[] = [];
+    const { result } = renderHook(() => {
+      const value = useMinkAi({ enabled: true });
+      lengths.push(value.messages.length);
+      return value;
+    });
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await result.current.loadConversation(CHAT_ID, {
+        revealMessageId: "m-011",
+      });
+    });
+
+    expect(urls(fetch).slice(1)).toEqual([
+      `${LIST}/${CHAT_ID}`,
+      `${LIST}/${CHAT_ID}?before=e-70`,
+      `${LIST}/${CHAT_ID}?before=e-20`,
+    ]);
+    expect(result.current.messages).toHaveLength(120);
+    expect(result.current.messages[0]?.id).toBe("m-000");
+    // The thread went from empty to whole, never through a partial page.
+    expect(new Set(lengths)).toEqual(new Set([0, 120]));
+    expect(result.current.revealTarget).toEqual({
+      messageId: "m-011",
+      runId: "run-5",
+      role: "assistant",
+    });
+    expect(result.current.hasEarlierMessages).toBe(false);
+    act(() => result.current.clearRevealTarget());
+    expect(result.current.revealTarget).toBeNull();
+  });
+
+  describe("★ opening a search result whose match is hard to reach", () => {
+    // Messages m-000 (oldest) up; even ones are questions, each answer is in
+    // its question's run.
+    const message = (n: number) => ({
+      id: `m-${String(n).padStart(3, "0")}`,
+      role: n % 2 ? "assistant" : "user",
+      text: `Message ${n}`,
+      runId: `run-${Math.floor(n / 2)}`,
+    });
+    const range = (from: number, to: number) =>
+      Array.from({ length: to - from }, (_, index) => message(from + index));
+    const detail = (messages: unknown[], earlierCursor: string | null) =>
+      Response.json({
+        conversation: { id: CHAT_ID, title: "Long", messages, earlierCursor },
+      });
+
+    it("★ F11: a matched answer whose question is on the page before reads that page too, so the thread can scroll to it", async () => {
+      // The newest page begins with m-071, an answer; its question m-070 is
+      // on the page before.
+      const fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === LIST) return Response.json({ conversations: [] });
+        if (url.endsWith("?before=e-71")) return detail(range(21, 71), "e-21");
+        return detail(range(71, 121), "e-71");
+      });
+      vi.stubGlobal("fetch", fetch);
+      const { result } = renderHook(() => useMinkAi({ enabled: true }));
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        await result.current.loadConversation(CHAT_ID, {
+          revealMessageId: "m-071",
+        });
+      });
+
+      expect(urls(fetch).slice(1)).toEqual([
+        `${LIST}/${CHAT_ID}`,
+        `${LIST}/${CHAT_ID}?before=e-71`,
+      ]);
+      expect(result.current.messages[0]?.id).toBe("m-021");
+      expect(result.current.revealTarget).toEqual({
+        messageId: "m-071",
+        runId: "run-35",
+        role: "assistant",
+      });
+      expect(result.current.hasEarlierMessages).toBe(true);
+    });
+
+    it("★ F15: an earlier page that fails ends the reading: the chat opens with what loaded, and Show earlier asks for that page again", async () => {
+      let earlierAsked = 0;
+      const fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === LIST) return Response.json({ conversations: [] });
+        if (url.endsWith("?before=e-70")) {
+          earlierAsked += 1;
+          if (earlierAsked === 1)
+            return Response.json(
+              { error: "Too many requests.", code: "rate_limited" },
+              { status: 429 },
+            );
+          return detail(range(20, 70), "e-20");
+        }
+        return detail(range(70, 120), "e-70");
+      });
+      vi.stubGlobal("fetch", fetch);
+      const { result } = renderHook(() => useMinkAi({ enabled: true }));
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        await result.current.loadConversation(CHAT_ID, {
+          revealMessageId: "m-011",
+        });
+      });
+
+      expect(result.current.activeConversationId).toBe(CHAT_ID);
+      expect(result.current.messages).toHaveLength(50);
+      expect(result.current.messages[0]?.id).toBe("m-070");
+      // No error in the chat, and nothing to scroll to: it opens at its
+      // newest message (dashboard-chat.tsx).
+      expect(result.current.error).toBeNull();
+      expect(result.current.revealTarget).toBeNull();
+      expect(result.current.hasEarlierMessages).toBe(true);
+
+      await act(async () => {
+        await result.current.loadEarlierMessages();
+      });
+      expect(urls(fetch).at(-1)).toBe(`${LIST}/${CHAT_ID}?before=e-70`);
+      expect(result.current.messages).toHaveLength(100);
+    });
+  });
+
+  it("★ F12: an earlier page dropped because another chat was chosen leaves no spinner when that chat fails to open", async () => {
+    let releaseEarlier!: () => void;
+    const earlierGate = new Promise<void>((resolve) => {
+      releaseEarlier = resolve;
+    });
+    let earlierAsked = 0;
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST) return Response.json({ conversations: [] });
+      if (url.endsWith("?before=e-1")) {
+        earlierAsked += 1;
+        if (earlierAsked === 1) await earlierGate;
+        return Response.json({
+          conversation: {
+            id: CHAT_ID,
+            title: "Long",
+            messages: [{ id: "old-1", role: "user", text: "Older" }],
+            earlierCursor: null,
+          },
+        });
+      }
+      if (url.endsWith(OTHER_ID))
+        return Response.json({ error: "Busy" }, { status: 503 });
+      return Response.json({
+        conversation: {
+          id: CHAT_ID,
+          title: "Long",
+          messages: [{ id: "new-1", role: "user", text: "Newer" }],
+          earlierCursor: "e-1",
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await result.current.loadConversation(CHAT_ID);
+    });
+
+    let earlier!: Promise<void>;
+    act(() => {
+      earlier = result.current.loadEarlierMessages();
+    });
+    expect(result.current.earlierStatus.loading).toBe(true);
+    await act(async () => {
+      await result.current.loadConversation(OTHER_ID);
+    });
+    await act(async () => {
+      releaseEarlier();
+      await earlier;
+    });
+
+    // The long chat is still open, and its button works again.
+    expect(result.current.activeConversationId).toBe(CHAT_ID);
+    expect(result.current.earlierStatus).toEqual({
+      loading: false,
+      error: null,
+    });
+    expect(result.current.hasEarlierMessages).toBe(true);
+    await act(async () => {
+      await result.current.loadEarlierMessages();
+    });
+    expect(result.current.messages.map((row) => row.id)).toEqual([
+      "old-1",
+      "new-1",
+    ]);
+  });
+
+  it("★ F13: reads which chats hold a redesign card, in the list and in search results alike", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST)
+        return Response.json({
+          conversations: [
+            {
+              ...summary(CHAT_ID, "Storefront redesign"),
+              hasRedesignCard: true,
+            },
+            // A server that does not say: no card.
+            summary(OTHER_ID, "Redesign ideas"),
+          ],
+          nextCursor: null,
+        });
+      if (url === SEARCH)
+        return Response.json({
+          conversations: [
+            {
+              ...summary(OTHER_ID, "Redesign ideas"),
+              snippet: "«Redesign» ideas",
+              matchMessageId: "message-2",
+            },
+            {
+              ...summary(CHAT_ID, "Storefront redesign"),
+              hasRedesignCard: true,
+              snippet: "Your storefront «redesign» is ready",
+              matchMessageId: "message-9",
+            },
+          ],
+          nextCursor: null,
+        });
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(2));
+    expect(
+      result.current.conversations.map((row) => [row.id, row.hasRedesignCard]),
+    ).toEqual([
+      [CHAT_ID, true],
+      [OTHER_ID, false],
+    ]);
+
+    act(() => result.current.setHistorySearchText("redesign"));
+    await act(async () => {
+      await result.current.searchConversations();
+    });
+    expect(
+      result.current.historySearch?.results.map((row) => [
+        row.id,
+        row.hasRedesignCard,
+      ]),
+    ).toEqual([
+      [OTHER_ID, false],
+      [CHAT_ID, true],
+    ]);
+  });
+
+  it("★ R6: shows earlier messages above, each once, and drops a page that lands after another chat opened", async () => {
+    let releaseEarlier!: () => void;
+    const earlierGate = new Promise<void>((resolve) => {
+      releaseEarlier = resolve;
+    });
+    let gateEarlier = false;
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === LIST) return Response.json({ conversations: [] });
+      if (url.endsWith("?before=e-1")) {
+        if (gateEarlier) await earlierGate;
+        return Response.json({
+          conversation: {
+            id: CHAT_ID,
+            title: "Long",
+            messages: [
+              { id: "old-1", role: "user", text: "Older" },
+              // Already shown: once only.
+              { id: "new-1", role: "user", text: "Newer" },
+            ],
+            earlierCursor: null,
+          },
+        });
+      }
+      const id = url.endsWith(OTHER_ID) ? OTHER_ID : CHAT_ID;
+      return Response.json({
+        conversation: {
+          id,
+          title: id,
+          messages: [{ id: `${id}-new`, role: "user", text: "Newer" }].map(
+            (row) => (id === CHAT_ID ? { ...row, id: "new-1" } : row),
+          ),
+          earlierCursor: id === CHAT_ID ? "e-1" : null,
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useMinkAi({ enabled: true }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await result.current.loadConversation(CHAT_ID);
+    });
+    expect(result.current.hasEarlierMessages).toBe(true);
+
+    await act(async () => {
+      await result.current.loadEarlierMessages();
+    });
+    expect(result.current.messages.map((row) => row.id)).toEqual([
+      "old-1",
+      "new-1",
+    ]);
+    expect(result.current.hasEarlierMessages).toBe(false);
+
+    // Again, but another chat opens while the page is on its way.
+    await act(async () => {
+      await result.current.loadConversation(CHAT_ID);
+    });
+    gateEarlier = true;
+    let earlier!: Promise<void>;
+    act(() => {
+      earlier = result.current.loadEarlierMessages();
+    });
+    await act(async () => {
+      await result.current.loadConversation(OTHER_ID);
+    });
+    await act(async () => {
+      releaseEarlier();
+      await earlier;
+    });
+    expect(result.current.activeConversationId).toBe(OTHER_ID);
+    expect(result.current.messages.map((row) => row.id)).toEqual([
+      `${OTHER_ID}-new`,
+    ]);
+    expect(result.current.earlierStatus).toEqual({
+      loading: false,
+      error: null,
+    });
   });
 });

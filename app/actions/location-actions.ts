@@ -98,7 +98,7 @@ async function setPosEnabled(
 
   const plan = effectivePlan(store ?? {});
   if (enabled && !limitsFor(plan).posEnabled) {
-    return { error: "Point of Sale is available on the Pro plan." };
+    return { error: "POS is available on the Pro plan." };
   }
 
   // Ensure a default location exists before enabling (self-healing DB helper).

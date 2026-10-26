@@ -10,7 +10,7 @@ import { normalizeChrome, type StoreChrome } from "./types";
  * The PUBLISHED header + footer for a storefront render.
  *
  * Selects named columns, never `*`: `draft` is revoked from anon at the DB
- * layer (builder_01_store_chrome.sql) and a `*` here would fail — or worse,
+ * layer (store_chrome column grants) and a `*` here would fail — or worse,
  * succeed under a scope that can see it and leak unpublished chrome.
  *
  * A store with no row, or one that has never published, falls back to
@@ -40,7 +40,7 @@ export const getStoreChrome = cache(
  * Compatibility read: the old store_menus row, mapped into chrome.
  *
  * This exists so the deploy is ORDER-INDEPENDENT. Without it, shipping this
- * code before builder_01_store_chrome.sql runs would make every storefront
+ * code before the store_chrome table exists would make every storefront
  * silently fall back to DEFAULT_CHROME — every merchant's navigation replaced
  * by the platform's stock links, with no error anywhere to explain it. A schema
  * migration and a deploy are two separate events and they will not be

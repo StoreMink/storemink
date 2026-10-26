@@ -13,9 +13,9 @@ import { logError } from "@/lib/observability/logger";
 // Uploads add files to Google Cloud Storage; removing a URL from a row only
 // drops the reference, so without this the file would be orphaned in the bucket.
 //
-// GCS-only: media lives in GCS (storage.googleapis.com/<bucket>/…). Legacy
-// Supabase-hosted URLs (from before the Phase-3 migration) are left untouched —
-// they keep serving until the Supabase project is decommissioned.
+// GCS-only: media lives in GCS (storage.googleapis.com/<bucket>/…). URLs
+// outside our bucket (external hosts, or media from before the GCS migration)
+// are left untouched.
 
 // Escaped host for use inside a RegExp (dots are regex metachars).
 const GCS_HOST_RE = GCS_PUBLIC_HOST.replace(/\./g, "\\.");
@@ -35,8 +35,8 @@ export function extractMediaUrlsFromHtml(
 }
 
 // Best-effort deletion of GCS objects by their public URL. Never throws — a
-// storage hiccup must not fail the surrounding DB write. Non-GCS URLs (e.g.
-// legacy Supabase) cannot be deleted here and are counted for callers that need
+// storage hiccup must not fail the surrounding DB write. Non-GCS URLs
+// (external hosts) cannot be deleted here and are counted for callers that need
 // to surface an incomplete purge.
 /**
  * @param options.ownedByStoreId Refuse to delete an object that provably

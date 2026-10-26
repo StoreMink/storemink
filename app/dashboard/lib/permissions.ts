@@ -245,7 +245,10 @@ export const SECTIONS: DashboardSection[] = [
     // switched on (see app/dashboard/layout.tsx). Children are only surfaced
     // once POS is enabled.
     key: "pos",
-    label: "Point of Sale",
+    label: "POS",
+    // The section was "Point of Sale" until 2026-10-26, and people still call
+    // POS a register or a till (the words the app no longer uses).
+    searchAliases: ["point of sale", "register", "till"],
     href: "/dashboard/pos",
     icon: "pos",
     group: "Sell in person",

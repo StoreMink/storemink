@@ -88,6 +88,31 @@ export function isRefinableRevamp(entry: {
   return !entry.undoneAt && isFinishedRevampVersion(entry);
 }
 
+/**
+ * ★★ A REDESIGN'S STATE IN WORDS A MERCHANT CAN BE TOLD, never the job's own
+ *   status: the model recited "status queued" and "superseded" to a merchant
+ *   on 25 Oct 2026. One map for the redesign tools and the chat's per-turn
+ *   reference, so the two never describe one redesign differently.
+ */
+export const REVAMP_STATE_WORDS: Record<RevampStatus, string> = {
+  queued: "being made",
+  running: "being made",
+  ready: "ready to review",
+  superseded: "replaced by a newer version",
+  failed: "did not finish",
+  cancelled: "stopped",
+};
+
+/** See REVAMP_STATE_WORDS; an active redesign asked to stop is "stopping". */
+export function revampStateWord(entry: {
+  status: RevampStatus;
+  cancelRequested: boolean;
+}): string {
+  return entry.cancelRequested && ACTIVE_REVAMP_STATUSES.includes(entry.status)
+    ? "stopping"
+    : REVAMP_STATE_WORDS[entry.status];
+}
+
 export const REVAMP_KINDS = ["full", "refine"] as const;
 export type RevampKind = (typeof REVAMP_KINDS)[number];
 
@@ -216,6 +241,20 @@ export const REVAMP_LIMITS = {
   platformPhotosPerHour: 400,
   /** How long one runner invocation may work before it hands over. */
   runnerDeadlineMs: 18 * 60_000,
+  /**
+   * How long a step may drain after the deadline before it is stopped (the
+   * hard stop, runner.ts REVAMP_DEADLINE_GRACE_MS). The route runs for 1,200
+   * seconds, so 18 minutes and this still leave half a minute to hand over.
+   */
+  deadlineGraceMs: 90_000,
+  /**
+   * ★★ The least room left before the hard stop when an image call ends on
+   *   its own clock (D2): a shoot photo, a photo check or a studio photo is
+   *   admitted only while its whole per-try clock and this margin fit before
+   *   the hard stop (photos.ts `revampAdmissionDrain`). The planner and its
+   *   repairs are not held to it yet (runner.ts REVAMP_DEADLINE_GRACE_MS).
+   */
+  hardStopMarginMs: 5_000,
   /** The runner's lease, renewed while it works. */
   leaseMs: 5 * 60_000,
   leaseRenewMs: 60_000,

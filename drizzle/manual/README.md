@@ -1,45 +1,34 @@
-# drizzle/manual — the reproducible Cloud SQL schema (GCP migration Phase 5)
+# drizzle/manual: the migration ledger runbook
 
-These hand-maintained SQL files are the **source of truth for creating a fresh
-Cloud SQL database** (local scratch / staging / prod-at-cutover). Apply them
-**in order**, as the `postgres` (admin) user:
+Every schema change ships as a checksummed migration enrolled in
+[`../migrations/manifest.json`](../migrations/manifest.json); how to write one is
+in [`docs/migrations.md`](../../docs/migrations.md). This file documents the
+runner itself and the recovery-only `audit` / `adopt` path.
 
-```bash
-psql "$CONN" -v ON_ERROR_STOP=1 -f drizzle/manual/0000_compat_setup.sql
-psql "$CONN" -v ON_ERROR_STOP=1 -f drizzle/manual/0001_schema.sql
-psql "$CONN" -v ON_ERROR_STOP=1 -f drizzle/manual/0002_postflight.sql
-```
-
-| File                    | What it does                                                                                                                                                                                                   |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0000_compat_setup.sql` | `pg_trgm`; the `auth.uid()`/`auth.email()` GUC shim (the 2A tenancy model); the Supabase placeholder roles + the `app_user`/`app_service` roles + grants; a **stub `auth.users`** so the next file's FKs load. |
-| `0001_schema.sql`       | The **faithful full schema** (`pg_dump --schema-only` from the source Postgres): 38 functions, 43 tables, indexes, **99 complete RLS policies**, 21 triggers.                                                  |
-| `0002_postflight.sql`   | Drops the `auth.users` FKs + stub (identity is external), and re-grants the app roles over everything `0001` created.                                                                                          |
-
-Result: **43 tables · 38 functions · 21 triggers · 99 policies**.
+There is no fresh-database build in this repository. The ledger starts at
+`baseline:cloudsql-2026-08-14`, a verification baseline that asserts tables and
+columns exist and creates nothing; the schema before it was applied by hand and
+survives only in the running databases and in git history. For a working local
+database, copy the real one: `npm run db:local:sync` (`scripts/db-local-sync.sh`).
 
 ## Why not the `drizzle-kit` baseline (`drizzle/0000_*.sql`)?
 
 `drizzle-kit introspect` is **lossy** for a Postgres-heavy schema like ours:
 
-- It captures **0 functions and 0 triggers** (our 14 RPCs like `reserve_stock`,
+- It captures **0 functions and 0 triggers** (our RPCs like `reserve_stock`,
   the identifier generators, `updated_at` triggers).
-- It **drops policy expressions** — e.g. the `card_colors` INSERT/UPDATE/DELETE
+- It **drops policy expressions**: e.g. the `card_colors` INSERT/UPDATE/DELETE
   policies lose their `is_store_admin(store_id)` `WITH CHECK`/`USING`, which
   would create **wide-open (insecure) RLS** on a fresh DB.
 
-So the drizzle-kit baseline is kept ONLY as drizzle-kit's snapshot for generating
-**future incremental** table migrations. It is **never** used to build a database.
-Schema changes that drizzle-kit can't express (functions, triggers, policies) are
-added as new hand-written `drizzle/manual/NNNN_*.sql` files and folded into
-`0001`/an addendum.
+So the drizzle-kit baseline is kept ONLY as drizzle-kit's snapshot. It is
+**never** used to build a database, and no npm script runs drizzle-kit.
 
 ## Existing databases: the checksummed migration ledger
 
-The three files above are only the legacy **fresh-database baseline**. Existing
-staging and production databases must never be advanced with ad-hoc `psql -f`
-commands again. They use [`../migrations/manifest.json`](../migrations/manifest.json)
-and `npm run db:migrate` instead.
+Staging and production are never advanced with ad-hoc `psql -f` commands. They
+use [`../migrations/manifest.json`](../migrations/manifest.json) and
+`npm run db:migrate`.
 
 The runner:
 
@@ -198,8 +187,11 @@ owner-directed recovery from a database whose ledger had never been used, on an
 environment with zero orders, and every row it wrote is marked so it can be
 told apart from a verified one.
 
-The first enrolled migration is `supabase/logistics_01_shiprocket.sql`. Although
-it retains its historical location, it is immutable now: editing it will make
-verification fail anywhere it has been applied. Every new schema change gets a
+The first enrolled migration is `sql/20260814_0001_logistics_shiprocket.sql`.
+It and the next two ledger migrations (`20260818_0005`, `20260819_0006`) were
+moved into `sql/` byte for byte from the removed pre-ledger SQL folder; the
+manifest's `file` path is the one field the checksum leaves out, so every ledger
+row still matches. Like every applied migration they are immutable: editing one
+fails verification anywhere it has been applied. Every new schema change gets a
 new SQL file plus a manifest entry and postconditions; never edit an enrolled
 file.

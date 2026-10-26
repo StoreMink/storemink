@@ -1,3 +1,8 @@
+import {
+  redactScreenField,
+  redactScreenPath,
+  redactScreenText,
+} from "./screen-redaction";
 import type { MinkSelectedResource } from "./types";
 
 const UUID_PATTERN =
@@ -54,14 +59,27 @@ const SCREEN_LIMITS = {
 const SECRET_LABEL =
   /password|secret|token|api key|key id|otp|\bpin\b|credential/i;
 
-function boundedText(value: unknown, max: number): string | null {
+function plainText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const text = value
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (!text) return null;
+  return text || null;
+}
+
+function bounded(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text;
+}
+
+/**
+ * A screen string with its contact details hidden, then bounded. Masked
+ * before it is cut, as in the browser: a cut through an email or a phone
+ * would leave a fragment no rule recognises.
+ */
+function boundedText(value: unknown, max: number): string | null {
+  const text = plainText(value);
+  return text ? bounded(redactScreenText(text), max) : null;
 }
 
 function boundedList(value: unknown, max: number, each: number): string[] {
@@ -75,7 +93,13 @@ function boundedList(value: unknown, max: number, each: number): string[] {
   return out;
 }
 
-/** Keep only the screen facts the prompt renders, each bounded; null when nothing survives. */
+/**
+ * Keep only the screen facts the prompt renders, each bounded; null when
+ * nothing survives. ★ Every string has its email addresses, phone numbers and
+ * postal addresses hidden here as well as in the browser
+ * (lib/mink/screen-redaction.ts): a tab opened before the browser masked, or
+ * a hand-written request, must not get contact details to the model.
+ */
 export function normalizeMinkScreenContext(
   value: unknown,
 ): MinkScreenContext | null {
@@ -125,10 +149,17 @@ export function normalizeMinkScreenContext(
       if (fields.length >= SCREEN_LIMITS.fields) break;
       if (!item || typeof item !== "object") continue;
       const field = item as Record<string, unknown>;
-      const label = boundedText(field.label, SCREEN_LIMITS.fieldLabel);
-      const fieldValue = boundedText(field.value, SCREEN_LIMITS.fieldValue);
+      // The secret and address rules read the whole label, before any cut.
+      const label = plainText(field.label);
+      const fieldValue = plainText(field.value);
       if (!label || !fieldValue || SECRET_LABEL.test(label)) continue;
-      fields.push({ label, value: fieldValue });
+      fields.push({
+        label: bounded(redactScreenText(label), SCREEN_LIMITS.fieldLabel),
+        value: bounded(
+          redactScreenField(label, fieldValue),
+          SCREEN_LIMITS.fieldValue,
+        ),
+      });
     }
     if (fields.length) screen.fields = fields;
   }
@@ -155,12 +186,14 @@ export function normalizeMinkPageContext(
   input: MinkPageContextInput | undefined,
 ): MinkPageContext {
   const rawPath = input?.currentPath;
+  // The path reaches the prompt with its query string, and a search box
+  // writes what was typed there: masked like the screen, before the cut.
   const currentPath =
     typeof rawPath === "string" &&
     (rawPath === "/dashboard" || rawPath.startsWith("/dashboard/")) &&
     !rawPath.includes("\n") &&
     !rawPath.includes("\r")
-      ? rawPath.slice(0, 500)
+      ? redactScreenPath(rawPath).slice(0, 500)
       : null;
   const rawResource = input?.selectedResource;
   let selectedResource: MinkSelectedResource | null = null;

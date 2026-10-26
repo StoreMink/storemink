@@ -502,7 +502,7 @@ export async function updateOrderStatus(
     updateData.paymentStatus = paymentStatus;
   }
   // When the parcel actually landed — the return window counts from here, not
-  // from created_at (refunds_01_gateway.sql). COALESCE, deliberately: toggling
+  // from created_at (orders.delivered_at). COALESCE, deliberately: toggling
   // an order back to delivered must not restart the customer's window, and a
   // status flipped by mistake and corrected shouldn't hand them a fresh one.
   if (status === "delivered") {

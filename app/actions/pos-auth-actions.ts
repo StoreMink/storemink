@@ -831,7 +831,7 @@ export async function posLoginWithPin(
     return {
       needsPairing: true,
       error:
-        "This device isn't set up for the register yet. Enter a pairing code from Dashboard → POS → Devices.",
+        "This device isn't set up for POS yet. Enter a pairing code from Dashboard → POS → Devices.",
     };
   }
 

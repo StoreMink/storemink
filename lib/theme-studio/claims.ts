@@ -101,13 +101,18 @@ function numbersIn(text: string): Set<string> {
 }
 
 /** Theme copy that reads to a customer: pages, brand line, sample catalogue.
- * Menus and SEO fields are included; nothing a customer can't see is. */
+ * Menus and SEO fields are included; nothing a customer can't see is. The
+ * page templates (trust labels, accordion rows, rich text, promo tiles) and
+ * the announcement bar are copy on every product page or every page (v32+),
+ * and a revision carries them forward (v33+). */
 export function customerCopy(pkg: ThemePackageV2): string[] {
   const preset = pkg.definition.preset;
   return [
     ...collectStrings(preset.brand),
     ...collectStrings(preset.pages),
     ...collectStrings(preset.sampleData),
+    ...collectStrings(preset.templates),
+    ...collectStrings(preset.announcement),
   ];
 }
 

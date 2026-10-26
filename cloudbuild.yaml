@@ -685,6 +685,10 @@ substitutions:
   # removing a prod merchant's entry. DOMAIN_LB_IP is the reserved global
   # address merchants point their A record at — change it here and in the
   # forwarding rule together, or every new connection will be told a stale IP.
+  # It is also the client-IP anchor: lib/client-ip.ts takes the X-Forwarded-For
+  # entry before it, so with a wrong or empty value (or an IPv6 frontend it does
+  # not name) every visitor's rate-limit key falls back to the first entry,
+  # which a caller can forge (and the web service logs one error per instance).
   _DOMAIN_ENV: stg
   _DOMAIN_CERT_MAP: prod-cert-map
   _DOMAIN_LB_IP: 136.69.75.127

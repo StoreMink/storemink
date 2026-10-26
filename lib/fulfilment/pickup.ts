@@ -2,7 +2,8 @@ import "server-only";
 
 import { PICKUP_WARN_HOURS } from "@/lib/pos/collection-state";
 
-// Pick up in store (roadmap Phase F, supabase/locations_05_pickup.sql).
+// Pick up in store (roadmap Phase F: orders.fulfilment_type, pickup_location_id,
+// pickup_status, pickup_expires_at).
 //
 // Three rules the spec is right to insist on, all enforced here rather than in
 // the UI:

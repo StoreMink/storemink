@@ -286,7 +286,7 @@ export function SellClient({
       clearPosCart(config.storeId, config.locationId);
       // "held" is Hold's word, and the two must stay distinguishable.
       setError(
-        "The products from the sale in progress are no longer in the catalogue, so the register opened empty.",
+        "The products from the sale in progress are no longer in the catalogue, so the cart opened empty.",
       );
       return;
     }
@@ -824,7 +824,7 @@ export function SellClient({
           rzpOrderId: started.rzpOrderId,
           amountPaise: started.amountPaise,
           name: config.storeName,
-          description: `${config.locationName} · counter`,
+          description: `${config.locationName} · POS`,
           onSuccess: (r) => {
             void confirmPosGatewayPayment({
               rzpOrderId: r.razorpay_order_id,
@@ -912,7 +912,7 @@ export function SellClient({
         <div
           className="flex min-w-0 flex-1 rounded-xl bg-[var(--pos-surface-2)] p-1 lg:hidden"
           role="group"
-          aria-label="Register view"
+          aria-label="POS view"
         >
           <button
             type="button"

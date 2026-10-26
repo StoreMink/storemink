@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { MinkConfig } from "./config";
-import { MinkAgentError } from "./errors";
+import { MinkAgentError, MinkRunStoppedError } from "./errors";
 import type {
   MinkActorContext,
   MinkArtifact,
@@ -34,12 +34,19 @@ export async function runMinkAgent(input: {
   onEvent?: (event: MinkRunEvent) => void | Promise<void>;
   onProgress?: (progress: MinkRunProgress) => void;
   /**
-   * The run's own stop: its deadline, or the merchant leaving. ★ Passed to
-   *   every tool call (`registry.execute(..., { signal })`), so a stopped run
-   *   stops the paid work its tools are doing, and a tool that has not
-   *   started yet never starts.
+   * The run's own stop: its deadline, the merchant leaving, or a stop the
+   *   merchant asked for (its reason is then a `MinkRunStoppedError`). ★
+   *   Passed to every tool call (`registry.execute(..., { signal })`), so a
+   *   stopped run stops the paid work its tools are doing, and a tool that
+   *   has not started yet never starts.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Record that the run has acted, before a tool's first write
+   *   (lib/mink/run-stop.ts). Passed to every tool call; the registry decides
+   *   which tools claim. Absent outside a chat run.
+   */
+  claimAct?: () => Promise<void>;
 }): Promise<MinkRunResult> {
   const { actor, message, config, registry, session, onEvent, onProgress } =
     input;
@@ -83,6 +90,7 @@ export async function runMinkAgent(input: {
       void onEvent?.({ type: "text_reset", reason: "retry" });
     },
   };
+  throwIfStopped(input.abortSignal);
   let turn = await session.sendUserMessage(message, streamOptions);
   // The first prompt is a run-level baseline, not a counter. Copy the first
   // turn whole so a provider that omits its usage leaves the baseline UNKNOWN;
@@ -141,6 +149,7 @@ export async function runMinkAgent(input: {
       // The memo would answer the new attempt's first reads with "you
       // already requested this", which from its side it never did.
       memo.clear();
+      throwIfStopped(input.abortSignal);
       turn = await session.sendUserMessage(message, streamOptions);
       usage = { ...turn.usage };
       retryCount += turn.retryCount;
@@ -216,6 +225,7 @@ export async function runMinkAgent(input: {
           if (!registry.isRestartSafe(call.name)) sideEffects = true;
           const response = await registry.execute(actor, call, {
             signal: input.abortSignal,
+            ...(input.claimAct ? { claimAct: input.claimAct } : {}),
           });
           // ★ Only a SUCCESS is remembered. A failure is often transient, and
           // replaying it would deny the model its one legitimate retry.
@@ -242,6 +252,17 @@ export async function runMinkAgent(input: {
           });
         }),
       );
+      // ★★ A STOPPED RUN ASKS THE MODEL NOTHING MORE (25 Oct 2026). A tool
+      //   refused because the merchant's stop won (run-stop.ts) ends the run
+      //   here, before the next batch and before the model could be asked to
+      //   write an answer nobody will read; the stream route stores none.
+      if (
+        batchResponses.some(
+          (response) => toolErrorCode(response.response) === "run_stopped",
+        )
+      ) {
+        throw new MinkRunStoppedError();
+      }
       responses.push(...batchResponses);
       for (const { response, repeat } of batchResults) {
         // ⚠ A memo hit adds NO artifact: the card is already on screen from the
@@ -299,6 +320,7 @@ export async function runMinkAgent(input: {
     }
     steps += 1;
     onProgress?.({ steps, toolCalls, retryCount, usage: { ...usage } });
+    throwIfStopped(input.abortSignal);
     turn = await session.sendToolResponses(responses, streamOptions);
     usage = addUsage(usage, turn.usage);
     retryCount += turn.retryCount;
@@ -437,6 +459,18 @@ function repeatedResponse(
     // The artifact is deliberately dropped: it was already emitted.
     artifact: undefined,
   };
+}
+
+/**
+ * Never send the model another turn once the merchant's stop has been seen.
+ * ★ Only that stop: for the deadline or the merchant leaving, the session's
+ *   own sends observe the signal as before, and a run that has already acted
+ *   is never stopped this way (its stop answered "acted").
+ */
+function throwIfStopped(signal: AbortSignal | undefined): void {
+  if (signal?.aborted && signal.reason instanceof MinkRunStoppedError) {
+    throw signal.reason;
+  }
 }
 
 function toolErrorCode(response: Record<string, unknown>): string | undefined {

@@ -1,14 +1,13 @@
 import type { Metadata } from "next";
 import { STOREMINK_LOGO } from "@/lib/brand-assets";
-import Image from "next/image";
 import Link from "next/link";
-import posDevicesImage from "@/public/brand/storemink-pos-multidevice.png";
 import { brandOgImageUrl } from "@/lib/seo/og-card";
 import { serializeJsonLd } from "@/lib/seo/json-ld";
 import { PLATFORM_URL, POS_URL } from "@/lib/site";
 import { PLAN_LIMITS, PLAN_META } from "@/lib/plans";
 import { getPlanPricing, inr } from "@/lib/plans/pricing";
 import { BrandMark } from "../brand-mark";
+import { RegisterArt } from "../product-art";
 import { buildPosStructuredData } from "./structured-data";
 import {
   ArrowRight,
@@ -51,7 +50,7 @@ const POS_OG_IMAGE = new URL(
 ).toString();
 
 export const metadata: Metadata = {
-  title: "Point of Sale for connected retail | StoreMink",
+  title: "Point of Sale (POS) for connected retail | StoreMink",
   description:
     "Run fast in-store checkout, pickups, returns, multi-location stock, GST receipts and cash-up from the same StoreMink system as your website.",
   alternates: { canonical: POS_URL },
@@ -64,7 +63,7 @@ export const metadata: Metadata = {
     "online and in-store inventory",
   ],
   openGraph: {
-    title: "StoreMink Point of Sale",
+    title: "StoreMink Point of Sale (POS)",
     description:
       "One connected system for your website, checkout counter, stock and customers.",
     url: POS_URL,
@@ -81,7 +80,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "StoreMink Point of Sale",
+    title: "StoreMink Point of Sale (POS)",
     description:
       "One connected system for your website, checkout counter, stock and customers.",
     images: [POS_OG_IMAGE],
@@ -93,7 +92,7 @@ const RETAIL_JOURNEYS = [
     icon: ScanLine,
     eyebrow: "At the counter",
     title: "Move the queue, not the customer",
-    body: "Scan, search or tap a product, hold a sale, add a customer and finish checkout without leaving the register.",
+    body: "Scan, search or tap a product, hold a sale, add a customer and finish checkout without leaving POS.",
     href: "#checkout",
   },
   {
@@ -121,7 +120,7 @@ const OPERATIONS = [
   {
     icon: Banknote,
     title: "Shifts that close cleanly",
-    body: "Record float, cash drops, closing count and variance for each till.",
+    body: "Record float, cash drops, closing count and variance for each cash drawer.",
   },
   {
     icon: ShieldCheck,
@@ -140,7 +139,7 @@ const OPERATIONS = [
   },
   {
     icon: Building2,
-    title: "Authorised tills only",
+    title: "Authorised devices only",
     body: "Approve the devices that can sell for each location and revoke them whenever needed.",
   },
 ];
@@ -154,7 +153,7 @@ const FLOW = [
   {
     n: "02",
     title: "Authorise a device",
-    body: "Open the register on a browser and approve the till directly or pair it with a short code.",
+    body: "Open POS in a browser and approve the device directly, or pair it with a short code.",
   },
   {
     n: "03",
@@ -179,15 +178,15 @@ const FAQS = [
   },
   {
     q: "Do I have to use StoreMink for payments?",
-    a: "No. Cash, card, UPI and split payments can be recorded at the till whichever way the money moved. If you take online payments on your website, you connect your own gateway there too. StoreMink does not sit between you and your money.",
+    a: "No. Cash, card, UPI and split payments can be recorded in POS whichever way the money moved. If you take online payments on your website, you connect your own gateway there too. StoreMink does not sit between you and your money.",
   },
   {
     q: "Can a cashier give discounts?",
     a: "Only if you allow it. Discounts and price overrides belong to the store owner by default. You can give staff a percentage cap and require a manager PIN above it, with every markdown retained against the cashier who rang it.",
   },
   {
-    q: "How many locations and tills does Pro include?",
-    a: `Two locations, with up to ${PLAN_LIMITS.pro.posDevicesPerLocation} authorised tills at each. Additional locations are coming as a metered add-on; until then the two included with Pro are the limit.`,
+    q: "How many locations and POS devices does Pro include?",
+    a: `Two locations, with up to ${PLAN_LIMITS.pro.posDevicesPerLocation} authorised POS devices at each. Additional locations are coming as a metered add-on; until then the two included with Pro are the limit.`,
   },
   {
     q: "Is online stock separate from shop stock?",
@@ -221,7 +220,7 @@ function CheckoutPreview() {
     <div className="posx-ui posx-register-ui" aria-hidden="true">
       <div className="posx-ui-topbar">
         <span className="posx-ui-title">
-          <Store size={14} /> Register
+          <Store size={14} /> POS
         </span>
         <span className="posx-ui-location">
           <MapPin size={12} /> Connaught Place
@@ -416,15 +415,15 @@ export default async function PosMarketingPage() {
           <div className="posx-hero-glow" aria-hidden="true" />
           <div className="posx-container posx-hero-copy">
             <span className="posx-eyebrow posx-rise">
-              <span>New</span> Point of Sale is included with{" "}
+              <span>New</span> Point of Sale (POS) is included with{" "}
               {PLAN_META.pro.name}
             </span>
             <h1 className="posx-rise posx-rise-1">
               Sell in store. <em>Stay connected everywhere.</em>
             </h1>
             <p className="posx-rise posx-rise-2">
-              StoreMink POS turns the devices you already own into a fast retail
-              register, and keeps every checkout, pickup, return and stock
+              StoreMink POS turns the devices you already own into a fast
+              in-store checkout, and keeps every sale, pickup, return and stock
               movement in the same system as your website.
             </p>
             <div className="posx-hero-actions posx-rise posx-rise-3">
@@ -453,16 +452,14 @@ export default async function PosMarketingPage() {
 
           <div className="posx-container posx-hero-visual posx-rise posx-rise-3">
             <div className="posx-image-frame">
-              <Image
-                src={posDevicesImage}
-                alt="StoreMink Point of Sale running on a desktop, tablet and phone in a retail store"
-                loading="eager"
-                sizes="(max-width: 760px) 94vw, 1240px"
-                className="posx-hero-image"
-              />
+              {/* ★ DRAWN, NOT PHOTOGRAPHED, until a new product picture
+                  exists (owner, 26 Oct 2026): the multidevice picture shows
+                  "Register" on its screens, and the product says POS. */}
+              <div className="posx-hero-art">
+                <RegisterArt compact />
+              </div>
               <span className="posx-image-badge posx-image-badge-left">
-                <span className="posx-live-dot" /> Website + counter stock in
-                sync
+                <span className="posx-live-dot" /> Website + POS stock in sync
               </span>
               <span className="posx-image-badge posx-image-badge-right">
                 <ReceiptText size={16} /> GST-ready checkout
@@ -509,7 +506,7 @@ export default async function PosMarketingPage() {
           <div className="posx-container posx-story-grid">
             <div className="posx-story-copy">
               <span className="posx-label">01 · In-store checkout</span>
-              <h2>A register your team can learn before the queue forms.</h2>
+              <h2>A POS your team can learn before the queue forms.</h2>
               <p>
                 Products, customer history and the current cart stay within
                 reach. Scan with a barcode gun, use a phone camera or search the
@@ -591,7 +588,7 @@ export default async function PosMarketingPage() {
                 Route pickup orders to the right shop, prepare them from one
                 queue and complete collection where the customer arrives.
                 Returns stay connected to the original order instead of becoming
-                a note beside the till.
+                a note beside the cash drawer.
               </p>
               <div className="posx-mini-points">
                 <span>
@@ -648,7 +645,7 @@ export default async function PosMarketingPage() {
               <p>
                 Run your website and physical stores on the same plan. POS is
                 not priced per terminal and StoreMink adds no transaction fee to
-                a counter sale.
+                a POS sale.
               </p>
               <div className="posx-pricing-actions">
                 <Link
@@ -678,7 +675,7 @@ export default async function PosMarketingPage() {
                 </li>
                 <li>
                   <Check size={16} /> {PLAN_LIMITS.pro.posDevicesPerLocation}{" "}
-                  authorised tills per location
+                  authorised POS devices per location
                 </li>
                 <li>
                   <Check size={16} /> Unlimited products and staff

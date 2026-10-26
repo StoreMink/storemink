@@ -5,6 +5,7 @@ import { POS_URL, THEMES_URL } from "@/lib/site";
 import { BrandMark } from "./brand-mark";
 import { HomepageMobileNav } from "./homepage-mobile-nav";
 import { PRODUCT_PAGES } from "./marketing-routes";
+import { RegisterArt } from "./product-art";
 
 // The one platform header, shared by the apex homepage, the marketing pages
 // (Why StoreMink, Products, Pricing) and /legal/*.
@@ -34,7 +35,9 @@ export function SiteHeader() {
   };
 
   // The rail's two tiles are a picture of each product rather than an icon:
-  // Mink as the two lines of a chat, the register as its own photograph.
+  // Mink as the two lines of a chat, POS as a drawing of a sale in progress.
+  // ★ DRAWN, NOT PHOTOGRAPHED, until a new product picture exists (owner,
+  // 26 Oct 2026): the multidevice picture shows "Register" on its screens.
   const builtIn = (
     <div className="smh-mega-side">
       <small>Built into every store</small>
@@ -50,16 +53,10 @@ export function SiteHeader() {
       </Link>
       <Link href={POS_URL} className="smh-mega-tile is-mint">
         <span>
-          <Image
-            src="/brand/storemink-pos-multidevice.png"
-            alt=""
-            width={1536}
-            height={1024}
-            sizes="260px"
-          />
+          <RegisterArt compact />
         </span>
         <b>Point of Sale</b>
-        <small>The counter that shares stock with your site.</small>
+        <small>The POS that shares stock with your site.</small>
       </Link>
     </div>
   );
