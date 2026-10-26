@@ -14,8 +14,8 @@
 //
 // The two clauses version 1 of the Terms left open are settled: the
 // contracting party is STOREMINK LLP (registered office published as
-// "Faridkot, Punjab, India" only, on the owner's instruction), and the courts
-// at Faridkot, Punjab have exclusive jurisdiction.
+// "Bala ji Colony, Faridkot, Punjab, India", on the owner's instruction),
+// and the courts at Faridkot, Punjab have exclusive jurisdiction.
 //
 // ⚠ NEVER put a bracketed placeholder in a body below. These strings are
 // published verbatim into an immutable table; `legal.test.ts` fails the build
@@ -41,10 +41,11 @@ const COMPANY = "StoreMink";
 
 /**
  * Who StoreMink is in law, in the words all three policies use (owner,
- * 25 Oct 2026: the registered office is published as the city only).
+ * 27 Oct 2026: the registered office is published as Bala ji Colony,
+ * Faridkot, Punjab, India).
  */
 const ENTITY =
-  "STOREMINK LLP, a limited liability partnership registered with limited liability under the Limited Liability Partnership Act, 2008 (LLPIN ADC-5432), incorporated on 21 September 2026, with its registered office at Faridkot, Punjab, India";
+  "STOREMINK LLP, a limited liability partnership registered with limited liability under the Limited Liability Partnership Act, 2008 (LLPIN ADC-5432), incorporated on 21 September 2026, with its registered office at Bala ji Colony, Faridkot, Punjab, India";
 
 /** House style: a section with a heading and paragraphs. */
 function section(heading: string, ...paras: string[]): string {
@@ -285,7 +286,7 @@ const TERMS_BODY = [
     `If you have a complaint about ${COMPANY}, about something published on a store built on ${COMPANY}, or about how we handle personal data, write to our Grievance Officer:`,
     `Anurag Goyal, Grievance Officer, STOREMINK LLP`,
     `Email: <a href="mailto:support@storemink.com">support@storemink.com</a>`,
-    `Registered office: Faridkot, Punjab, India`,
+    `Registered office: Bala ji Colony, Faridkot, Punjab, India`,
     `Tell us who you are, how we can reach you, what the complaint is about, and the web address of the store or page it concerns.`,
     `We acknowledge every complaint within 24 hours and resolve it within 7 days. We resolve within 36 hours a request to remove content of a kind listed in section 2 of our Acceptable Use Policy, unless the only reason given is that the content belongs to someone else, infringes a patent, trademark, copyright or other right, or breaks any other law.`,
     `If content shows you, or a person you act for, fully or partly naked, with private parts exposed, or in any sexual act or conduct, or if it pretends to be you or that person, for example in a faked or morphed image, we remove it or block access to it within 2 hours of receiving your complaint. Write "Urgent" in the subject line so that we see it at once.`,
@@ -299,7 +300,7 @@ const TERMS_BODY = [
 
   section(
     "26. Contact",
-    `Questions about these Terms: <a href="mailto:support@storemink.com">support@storemink.com</a>. Our registered office is at Faridkot, Punjab, India.`,
+    `Questions about these Terms: <a href="mailto:support@storemink.com">support@storemink.com</a>. Our registered office is at Bala ji Colony, Faridkot, Punjab, India.`,
   ),
 ].join("\n");
 
@@ -472,7 +473,7 @@ const PRIVACY_BODY = [
     `If you have a complaint about ${COMPANY}, about something published on a store built on ${COMPANY}, or about how we handle personal data, write to our Grievance Officer:`,
     `Anurag Goyal, Grievance Officer, STOREMINK LLP`,
     `Email: <a href="mailto:support@storemink.com">support@storemink.com</a>`,
-    `Registered office: Faridkot, Punjab, India`,
+    `Registered office: Bala ji Colony, Faridkot, Punjab, India`,
     `Tell us who you are, how we can reach you, what the complaint is about, and the web address of the store or page it concerns.`,
     `We acknowledge every complaint within 24 hours and resolve it within 7 days. We resolve within 36 hours a request to remove content of a kind listed in section 2 of our Acceptable Use Policy, unless the only reason given is that the content belongs to someone else, infringes a patent, trademark, copyright or other right, or breaks any other law.`,
     `If content shows you, or a person you act for, fully or partly naked, with private parts exposed, or in any sexual act or conduct, or if it pretends to be you or that person, for example in a faked or morphed image, we remove it or block access to it within 2 hours of receiving your complaint. Write "Urgent" in the subject line so that we see it at once.`,
@@ -607,7 +608,7 @@ const AUP_BODY = [
     `If you have a complaint about ${COMPANY}, about something published on a store built on ${COMPANY}, or about how we handle personal data, write to our Grievance Officer:`,
     `Anurag Goyal, Grievance Officer, STOREMINK LLP`,
     `Email: <a href="mailto:support@storemink.com">support@storemink.com</a>`,
-    `Registered office: Faridkot, Punjab, India`,
+    `Registered office: Bala ji Colony, Faridkot, Punjab, India`,
     `Tell us who you are, how we can reach you, what the complaint is about, and the web address of the store or page it concerns.`,
     `We acknowledge every complaint within 24 hours and resolve it within 7 days. We resolve within 36 hours a request to remove content of a kind listed in section 2 of our Acceptable Use Policy, unless the only reason given is that the content belongs to someone else, infringes a patent, trademark, copyright or other right, or breaks any other law.`,
     `If content shows you, or a person you act for, fully or partly naked, with private parts exposed, or in any sexual act or conduct, or if it pretends to be you or that person, for example in a faked or morphed image, we remove it or block access to it within 2 hours of receiving your complaint. Write "Urgent" in the subject line so that we see it at once.`,

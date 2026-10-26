@@ -9611,17 +9611,17 @@
           },
           {
             "name": "the current Terms of Service is v2 or later, and v2 is the approved text, stored intact",
-            "sql": "select count(*)::text from public.legal_documents where kind = 'terms' and is_current and version >= 2 and (version <> 2 or (checksum = '4ec7f3b93724d34ed9f0a45c0640dfc0584f806a11f80cd9d241a1d3d3cc509d' and encode(sha256(convert_to(body, 'UTF8')), 'hex') = checksum))",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'terms' and is_current and version >= 2 and (version <> 2 or (checksum = 'c4d3a3fbce63ac3b823dbda7a685eeb3d0d102ccc49182c25f07f9c8e098d26b' and encode(sha256(convert_to(body, 'UTF8')), 'hex') = checksum))",
             "equals": "1"
           },
           {
             "name": "the current Privacy Policy is v4 or later, and v4 is the approved text, stored intact",
-            "sql": "select count(*)::text from public.legal_documents where kind = 'privacy' and is_current and version >= 4 and (version <> 4 or (checksum = '85599f989bb7fd963fec9bcbfeaf88a4573616db34d8bb28bc49df21a542ba0f' and encode(sha256(convert_to(body, 'UTF8')), 'hex') = checksum))",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'privacy' and is_current and version >= 4 and (version <> 4 or (checksum = 'b8d05838184cb491cfaabba308a92bcee76e849e068a8e4a7e6007a72d134a6d' and encode(sha256(convert_to(body, 'UTF8')), 'hex') = checksum))",
             "equals": "1"
           },
           {
             "name": "the current Acceptable Use Policy is v2 or later, and v2 is the approved text, stored intact",
-            "sql": "select count(*)::text from public.legal_documents where kind = 'acceptable-use' and is_current and version >= 2 and (version <> 2 or (checksum = '2da449b32ed366ef799d3017296ccdf82b20a03191ae7301273dc8065f36c8a4' and encode(sha256(convert_to(body, 'UTF8')), 'hex') = checksum))",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'acceptable-use' and is_current and version >= 2 and (version <> 2 or (checksum = 'f437890cfec18d5788241c01f6476cd766d6f65a7cd4fcf72443f1a034488795' and encode(sha256(convert_to(body, 'UTF8')), 'hex') = checksum))",
             "equals": "1"
           },
           {
@@ -9631,7 +9631,7 @@
           },
           {
             "name": "every row this migration made current is one of the three approved versions",
-            "sql": "select count(*)::text from public.legal_documents where xmin::text = (txid_current() % 4294967296)::text and is_current and not ((kind = 'terms' and version = 2 and checksum = '4ec7f3b93724d34ed9f0a45c0640dfc0584f806a11f80cd9d241a1d3d3cc509d') or (kind = 'privacy' and version = 4 and checksum = '85599f989bb7fd963fec9bcbfeaf88a4573616db34d8bb28bc49df21a542ba0f') or (kind = 'acceptable-use' and version = 2 and checksum = '2da449b32ed366ef799d3017296ccdf82b20a03191ae7301273dc8065f36c8a4'))",
+            "sql": "select count(*)::text from public.legal_documents where xmin::text = (txid_current() % 4294967296)::text and is_current and not ((kind = 'terms' and version = 2 and checksum = 'c4d3a3fbce63ac3b823dbda7a685eeb3d0d102ccc49182c25f07f9c8e098d26b') or (kind = 'privacy' and version = 4 and checksum = 'b8d05838184cb491cfaabba308a92bcee76e849e068a8e4a7e6007a72d134a6d') or (kind = 'acceptable-use' and version = 2 and checksum = 'f437890cfec18d5788241c01f6476cd766d6f65a7cd4fcf72443f1a034488795'))",
             "equals": "0"
           },
           {

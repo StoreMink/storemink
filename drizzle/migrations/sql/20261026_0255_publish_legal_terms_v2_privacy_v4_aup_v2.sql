@@ -48,7 +48,7 @@
 DO $$
 DECLARE
   v_terms_body CONSTANT text := $terms_v2_body$<p><em>Version 2</em></p>
-<p>These Terms are a contract between you and STOREMINK LLP, a limited liability partnership registered with limited liability under the Limited Liability Partnership Act, 2008 (LLPIN ADC-5432), incorporated on 21 September 2026, with its registered office at Faridkot, Punjab, India. In these Terms, "StoreMink", "we", "us" and "our" mean STOREMINK LLP.</p>
+<p>These Terms are a contract between you and STOREMINK LLP, a limited liability partnership registered with limited liability under the Limited Liability Partnership Act, 2008 (LLPIN ADC-5432), incorporated on 21 September 2026, with its registered office at Bala ji Colony, Faridkot, Punjab, India. In these Terms, "StoreMink", "we", "us" and "our" mean STOREMINK LLP.</p>
 <p>These Terms are available in English and, on request at <a href="mailto:support@storemink.com">support@storemink.com</a>, in any language listed in the Eighth Schedule to the Constitution of India.</p>
 <h2>1. Who we are, and what this covers</h2>
 <p>StoreMink provides software that lets you create and run an online store, sell in person, and manage the work behind both.</p>
@@ -192,7 +192,7 @@ DECLARE
 <p>If you have a complaint about StoreMink, about something published on a store built on StoreMink, or about how we handle personal data, write to our Grievance Officer:</p>
 <p>Anurag Goyal, Grievance Officer, STOREMINK LLP</p>
 <p>Email: <a href="mailto:support@storemink.com">support@storemink.com</a></p>
-<p>Registered office: Faridkot, Punjab, India</p>
+<p>Registered office: Bala ji Colony, Faridkot, Punjab, India</p>
 <p>Tell us who you are, how we can reach you, what the complaint is about, and the web address of the store or page it concerns.</p>
 <p>We acknowledge every complaint within 24 hours and resolve it within 7 days. We resolve within 36 hours a request to remove content of a kind listed in section 2 of our Acceptable Use Policy, unless the only reason given is that the content belongs to someone else, infringes a patent, trademark, copyright or other right, or breaks any other law.</p>
 <p>If content shows you, or a person you act for, fully or partly naked, with private parts exposed, or in any sexual act or conduct, or if it pretends to be you or that person, for example in a faked or morphed image, we remove it or block access to it within 2 hours of receiving your complaint. Write "Urgent" in the subject line so that we see it at once.</p>
@@ -200,10 +200,10 @@ DECLARE
 <h2>25. Governing law and courts</h2>
 <p>These Terms are governed by the laws of India. The courts at Faridkot, Punjab have exclusive jurisdiction over any dispute arising out of or relating to these Terms or StoreMink.</p>
 <h2>26. Contact</h2>
-<p>Questions about these Terms: <a href="mailto:support@storemink.com">support@storemink.com</a>. Our registered office is at Faridkot, Punjab, India.</p>$terms_v2_body$;
-  v_terms_checksum CONSTANT text := '4ec7f3b93724d34ed9f0a45c0640dfc0584f806a11f80cd9d241a1d3d3cc509d';
+<p>Questions about these Terms: <a href="mailto:support@storemink.com">support@storemink.com</a>. Our registered office is at Bala ji Colony, Faridkot, Punjab, India.</p>$terms_v2_body$;
+  v_terms_checksum CONSTANT text := 'c4d3a3fbce63ac3b823dbda7a685eeb3d0d102ccc49182c25f07f9c8e098d26b';
   v_privacy_body CONSTANT text := $privacy_v4_body$<p><em>Version 4</em></p>
-<p>This policy is published by STOREMINK LLP, a limited liability partnership registered with limited liability under the Limited Liability Partnership Act, 2008 (LLPIN ADC-5432), incorporated on 21 September 2026, with its registered office at Faridkot, Punjab, India. In this policy, "StoreMink", "we", "us" and "our" mean STOREMINK LLP.</p>
+<p>This policy is published by STOREMINK LLP, a limited liability partnership registered with limited liability under the Limited Liability Partnership Act, 2008 (LLPIN ADC-5432), incorporated on 21 September 2026, with its registered office at Bala ji Colony, Faridkot, Punjab, India. In this policy, "StoreMink", "we", "us" and "our" mean STOREMINK LLP.</p>
 <p>This policy is available in English and, on request at <a href="mailto:support@storemink.com">support@storemink.com</a>, in any language listed in the Eighth Schedule to the Constitution of India.</p>
 <h2>1. Who we are, and the two roles we play</h2>
 <p>We decide how and why we use the personal data in this paragraph, so for it we are the Data Fiduciary (the controller): the accounts of merchants and their staff; our billing; how you use our dashboard, POS and Mink AI; people who visit storemink.com and our Help, Themes and POS sites; people who use our Help Centre assistant; and people who write to us.</p>
@@ -330,7 +330,7 @@ DECLARE
 <p>If you have a complaint about StoreMink, about something published on a store built on StoreMink, or about how we handle personal data, write to our Grievance Officer:</p>
 <p>Anurag Goyal, Grievance Officer, STOREMINK LLP</p>
 <p>Email: <a href="mailto:support@storemink.com">support@storemink.com</a></p>
-<p>Registered office: Faridkot, Punjab, India</p>
+<p>Registered office: Bala ji Colony, Faridkot, Punjab, India</p>
 <p>Tell us who you are, how we can reach you, what the complaint is about, and the web address of the store or page it concerns.</p>
 <p>We acknowledge every complaint within 24 hours and resolve it within 7 days. We resolve within 36 hours a request to remove content of a kind listed in section 2 of our Acceptable Use Policy, unless the only reason given is that the content belongs to someone else, infringes a patent, trademark, copyright or other right, or breaks any other law.</p>
 <p>If content shows you, or a person you act for, fully or partly naked, with private parts exposed, or in any sexual act or conduct, or if it pretends to be you or that person, for example in a faked or morphed image, we remove it or block access to it within 2 hours of receiving your complaint. Write "Urgent" in the subject line so that we see it at once.</p>
@@ -338,9 +338,9 @@ DECLARE
 <p>For a request about your own personal data, see section 7. If we do not resolve a complaint about your personal data, you can complain to the Data Protection Board of India, which works online, once that right comes into force.</p>
 <h2>13. Changes and contact</h2>
 <p>We publish each version of this policy with a version number and the date it takes effect. When we publish a new version, we show it in your dashboard and ask you to accept it. We keep every earlier version and will send you a copy if you ask. Questions or requests: <a href="mailto:support@storemink.com">support@storemink.com</a>.</p>$privacy_v4_body$;
-  v_privacy_checksum CONSTANT text := '85599f989bb7fd963fec9bcbfeaf88a4573616db34d8bb28bc49df21a542ba0f';
+  v_privacy_checksum CONSTANT text := 'b8d05838184cb491cfaabba308a92bcee76e849e068a8e4a7e6007a72d134a6d';
   v_aup_body CONSTANT text := $aup_v2_body$<p><em>Version 2</em></p>
-<p>This policy forms part of the Terms of Service between you and STOREMINK LLP, a limited liability partnership registered with limited liability under the Limited Liability Partnership Act, 2008 (LLPIN ADC-5432), incorporated on 21 September 2026, with its registered office at Faridkot, Punjab, India. In this policy, "StoreMink", "we", "us" and "our" mean STOREMINK LLP.</p>
+<p>This policy forms part of the Terms of Service between you and STOREMINK LLP, a limited liability partnership registered with limited liability under the Limited Liability Partnership Act, 2008 (LLPIN ADC-5432), incorporated on 21 September 2026, with its registered office at Bala ji Colony, Faridkot, Punjab, India. In this policy, "StoreMink", "we", "us" and "our" mean STOREMINK LLP.</p>
 <p>This policy is available in English and, on request at <a href="mailto:support@storemink.com">support@storemink.com</a>, in any language listed in the Eighth Schedule to the Constitution of India.</p>
 <p>This policy applies to you, to everyone you give access to your store, and to what your customers post on your store. It exists so that one merchant's conduct cannot put every other merchant at risk.</p>
 <h2>1. What you may not sell</h2>
@@ -436,12 +436,12 @@ DECLARE
 <p>If you have a complaint about StoreMink, about something published on a store built on StoreMink, or about how we handle personal data, write to our Grievance Officer:</p>
 <p>Anurag Goyal, Grievance Officer, STOREMINK LLP</p>
 <p>Email: <a href="mailto:support@storemink.com">support@storemink.com</a></p>
-<p>Registered office: Faridkot, Punjab, India</p>
+<p>Registered office: Bala ji Colony, Faridkot, Punjab, India</p>
 <p>Tell us who you are, how we can reach you, what the complaint is about, and the web address of the store or page it concerns.</p>
 <p>We acknowledge every complaint within 24 hours and resolve it within 7 days. We resolve within 36 hours a request to remove content of a kind listed in section 2 of our Acceptable Use Policy, unless the only reason given is that the content belongs to someone else, infringes a patent, trademark, copyright or other right, or breaks any other law.</p>
 <p>If content shows you, or a person you act for, fully or partly naked, with private parts exposed, or in any sexual act or conduct, or if it pretends to be you or that person, for example in a faked or morphed image, we remove it or block access to it within 2 hours of receiving your complaint. Write "Urgent" in the subject line so that we see it at once.</p>
 <p>If you are not satisfied with our decision, or we do not resolve your complaint within these times, you can appeal to the Grievance Appellate Committee at gac.gov.in within 30 days.</p>$aup_v2_body$;
-  v_aup_checksum CONSTANT text := '2da449b32ed366ef799d3017296ccdf82b20a03191ae7301273dc8065f36c8a4';
+  v_aup_checksum CONSTANT text := 'f437890cfec18d5788241c01f6476cd766d6f65a7cd4fcf72443f1a034488795';
   v_kinds CONSTANT text[] := ARRAY['terms', 'privacy', 'acceptable-use'];
   v_versions CONSTANT integer[] := ARRAY[2, 4, 2];
   v_titles CONSTANT text[] := ARRAY['Terms of Service', 'Privacy Policy', 'Acceptable Use Policy'];

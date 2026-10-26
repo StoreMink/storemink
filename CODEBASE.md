@@ -20477,10 +20477,13 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       to the claim (Terms §16), merchant indemnity (Terms §17), and the
       merchant as Data Fiduciary with StoreMink as its Data Processor (Privacy
       §1). The Terms name the contracting party, STOREMINK LLP (registered
-      office published as "Faridkot, Punjab, India" only), and give the courts
-      at Faridkot, Punjab exclusive jurisdiction (Terms §25): the two clauses
-      Terms v1 left open. Any change to the wording is a new version and needs
-      the same review.
+      office published as "Bala ji Colony, Faridkot, Punjab, India" in all
+      three policies, on the owner's instruction of 27 Oct 2026; migration
+      0255 was regenerated in place for it, same id, new checksums), and give
+      the courts at Faridkot, Punjab exclusive jurisdiction (Terms §25): the
+      two clauses Terms v1 left open. Once a shared database has published a
+      version, any change to its wording is a new version and needs the same
+      review.
     - **EDITING A POLICY MEANS PUBLISHING A NEW VERSION.** There is no other
       way, and three things enforce it: the DB trigger rejects an UPDATE to a
       published body, `ensureLegalSeeded` skips a kind that already has a
